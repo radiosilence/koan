@@ -12,7 +12,7 @@ macOS-native (SwiftUI shell, Rust core). Bit-perfect playback, gapless transitio
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
 - **File watching** — FSEvents via notify, debounced 500ms, auto-updates DB on changes
 - **Subsonic/Navidrome** — parallel remote library sync (rayon), unified local+remote browsing, lazy parallel downloads
-- **CLI** — colourised output with tree-structured display, dynamic shell completions from library DB, fzf-powered interactive picker
+- **CLI** — colourised output with tree-structured display, dynamic shell completions from library DB, built-in fuzzy picker (nucleo)
 - **Track deduplication** — local+remote tracks merged into single rows, local path always wins for playback
 
 ## Architecture
@@ -84,7 +84,7 @@ koan scan              # uses folders from config
 # search (FTS5, prefix matching, tree-grouped output)
 koan search "radiohead"
 
-# interactive fuzzy picker (requires fzf)
+# interactive fuzzy picker (built-in, no external deps)
 koan pick               # search all tracks
 koan pick --album       # browse albums
 koan pick --artist      # browse artists → drill into albums
@@ -109,15 +109,17 @@ koan probe track.flac
 
 ### Playback controls
 
-| Key     | Action                   |
-| ------- | ------------------------ |
-| `space` | pause / resume           |
-| `< >`   | previous / next track    |
-| `, .`   | seek ±10s                |
-| `p`     | open fzf picker, enqueue |
-| `n`     | next track               |
-| arrows  | seek ±10s                |
-| `q`     | quit                     |
+| Key     | Action                 |
+| ------- | ---------------------- |
+| `space` | pause / resume         |
+| `< >`   | previous / next track  |
+| `, .`   | seek ±10s              |
+| `p`     | pick tracks to enqueue |
+| `a`     | pick album to enqueue  |
+| `r`     | pick artist to enqueue |
+| `n`     | next track             |
+| arrows  | seek ±10s              |
+| `q`     | quit                   |
 
 ### Remote (Subsonic/Navidrome)
 

@@ -69,9 +69,12 @@ impl log::Log for MpLogger {
 
     fn flush(&self) {}
 }
+mod picker;
+
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, SharedPlayerState};
 use owo_colors::OwoColorize;
+use picker::{Picker, PickerItem, PickerKey, PickerResult};
 
 #[derive(Parser)]
 #[command(name = "koan", about = "bit-perfect music player", version)]
@@ -436,32 +439,49 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                     tx.send(PlayerCommand::Seek(new_pos)).ok();
                 }
                 b'p' | b'a' | b'r' => {
-                    // Suspend UI, restore terminal, spawn fzf, enqueue, rebuild UI.
-                    let was_playing = state.playback_state() == PlaybackState::Playing;
-                    if was_playing {
-                        tx.send(PlayerCommand::Pause).ok();
-                    }
+                    // Hide bars, run in-process picker, restore bars.
+                    // Playback continues uninterrupted.
                     picking.store(true, Ordering::Relaxed);
                     pb.finish_and_clear();
                     controls.finish_and_clear();
-                    restore_cooked_mode();
 
-                    match byte {
-                        b'p' => pick_and_enqueue(&tx, &mp),
-                        b'a' => pick_album_and_enqueue(&tx, &mp),
-                        b'r' => pick_artist_and_enqueue(&tx, &mp),
+                    let ids = match byte {
+                        b'p' => inline_pick_tracks(&ev_rx),
+                        b'a' => inline_pick_album(&ev_rx),
+                        b'r' => inline_pick_artist(&ev_rx),
                         _ => unreachable!(),
-                    }
+                    };
 
-                    enter_raw_mode();
                     picking.store(false, Ordering::Relaxed);
                     current_track = None;
                     pb = make_playback_bar(&mp);
                     controls = make_controls_bar(&mp);
                     update_progress_bar(&mp, &pb, &state, &mut current_track);
 
-                    if was_playing {
-                        tx.send(PlayerCommand::Resume).ok();
+                    // Resolve and enqueue selected tracks in background.
+                    if !ids.is_empty() {
+                        let count = ids.len();
+                        let tx_bg = tx.clone();
+                        let mp_bg = mp.clone();
+                        std::thread::Builder::new()
+                            .name("koan-enqueue".into())
+                            .spawn(move || {
+                                for id in ids {
+                                    let path = resolve_single_track(id, Some(&mp_bg));
+                                    if tx_bg.send(PlayerCommand::Enqueue(path)).is_err() {
+                                        break;
+                                    }
+                                }
+                                mp_bg
+                                    .println(format!(
+                                        "{} {} track{} queued",
+                                        "✓".green(),
+                                        count,
+                                        if count == 1 { "" } else { "s" },
+                                    ))
+                                    .ok();
+                            })
+                            .ok();
                     }
                 }
                 0x1b => {
@@ -515,36 +535,127 @@ fn make_controls_bar(mp: &MultiProgress) -> ProgressBar {
     bar
 }
 
-/// Open fzf picker during playback — selected tracks are appended to the queue.
-fn pick_and_enqueue(tx: &crossbeam_channel::Sender<PlayerCommand>, mp: &MultiProgress) {
-    use std::process::{Command, Stdio};
+// --- Inline pickers (during playback) ---
+// These read key events from the playback event channel, so playback continues uninterrupted.
 
-    // Check fzf is available.
-    if Command::new("fzf")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_err()
-    {
-        mp.println(format!(
-            "{} fzf not found — install it: {}",
-            "error:".red().bold(),
-            "brew install fzf".bold()
-        ))
-        .ok();
-        return;
+fn make_event_key_reader<'a>(
+    ev_rx: &'a crossbeam_channel::Receiver<Event>,
+) -> impl FnMut() -> Option<PickerKey> + 'a {
+    move || loop {
+        match ev_rx.recv() {
+            Ok(Event::Key(byte)) => {
+                let key = picker::parse_key(byte, &mut || {
+                    // Read more bytes for escape sequences.
+                    match ev_rx.recv_timeout(Duration::from_millis(50)) {
+                        Ok(Event::Key(b)) => Some(b),
+                        _ => None,
+                    }
+                });
+                if let Some(k) = key {
+                    return Some(k);
+                }
+            }
+            Ok(Event::Tick) => continue, // ignore ticks during picking
+            Err(_) => return None,
+        }
     }
+}
 
+fn inline_pick_tracks(ev_rx: &crossbeam_channel::Receiver<Event>) -> Vec<i64> {
     let db = open_db();
     let tracks = queries::all_tracks(&db.conn).unwrap_or_default();
     if tracks.is_empty() {
-        mp.println(format!("{}", "no tracks in library".dimmed()))
-            .ok();
-        return;
+        return vec![];
     }
 
-    let lines: Vec<String> = tracks
+    let items = make_track_picker_items(&tracks);
+    let picker = Picker::new(items, "enqueue>", true);
+    let mut reader = make_event_key_reader(ev_rx);
+    match picker.run(&mut reader) {
+        PickerResult::Selected(ids) => ids,
+        PickerResult::Cancelled => vec![],
+    }
+}
+
+fn inline_pick_album(ev_rx: &crossbeam_channel::Receiver<Event>) -> Vec<i64> {
+    let db = open_db();
+    let albums = queries::all_albums(&db.conn).unwrap_or_default();
+    if albums.is_empty() {
+        return vec![];
+    }
+
+    let items = make_album_picker_items(&albums);
+    let picker = Picker::new(items, "album>", false);
+    let mut reader = make_event_key_reader(ev_rx);
+    match picker.run(&mut reader) {
+        PickerResult::Selected(ids) => {
+            let album_id = ids[0];
+            queries::tracks_for_album(&db.conn, album_id)
+                .unwrap_or_default()
+                .iter()
+                .map(|t| t.id)
+                .collect()
+        }
+        PickerResult::Cancelled => vec![],
+    }
+}
+
+fn inline_pick_artist(ev_rx: &crossbeam_channel::Receiver<Event>) -> Vec<i64> {
+    let db = open_db();
+    let artists = queries::all_artists(&db.conn).unwrap_or_default();
+    if artists.is_empty() {
+        return vec![];
+    }
+
+    let items = make_artist_picker_items(&artists);
+    let picker = Picker::new(items, "artist>", false);
+    let mut reader = make_event_key_reader(ev_rx);
+    let artist_id = match picker.run(&mut reader) {
+        PickerResult::Selected(ids) => ids[0],
+        PickerResult::Cancelled => return vec![],
+    };
+
+    // Drill down: pick album for this artist.
+    let albums = queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
+    if albums.is_empty() {
+        return queries::tracks_for_artist(&db.conn, artist_id)
+            .unwrap_or_default()
+            .iter()
+            .map(|t| t.id)
+            .collect();
+    }
+
+    // Build album picker with "all tracks" option.
+    let mut items = vec![PickerItem {
+        id: -1,
+        display: format!("{}", "all tracks".bold()),
+        match_text: "all tracks".into(),
+    }];
+    items.extend(make_album_picker_items(&albums));
+
+    let picker = Picker::new(items, "album>", false);
+    let mut reader = make_event_key_reader(ev_rx);
+    match picker.run(&mut reader) {
+        PickerResult::Selected(ids) if ids[0] == -1 => {
+            queries::tracks_for_artist(&db.conn, artist_id)
+                .unwrap_or_default()
+                .iter()
+                .map(|t| t.id)
+                .collect()
+        }
+        PickerResult::Selected(ids) => queries::tracks_for_album(&db.conn, ids[0])
+            .unwrap_or_default()
+            .iter()
+            .map(|t| t.id)
+            .collect(),
+        PickerResult::Cancelled => vec![],
+    }
+}
+
+// --- PickerItem builders ---
+
+fn make_track_picker_items(tracks: &[queries::TrackRow]) -> Vec<PickerItem> {
+    tracks
         .iter()
         .map(|t| {
             let dur = t
@@ -556,203 +667,62 @@ fn pick_and_enqueue(tx: &crossbeam_channel::Sender<PlayerCommand>, mp: &MultiPro
                 (_, Some(n)) => format!("{:02}", n),
                 _ => "  ".into(),
             };
-            format!(
-                "{} {} {} {} {} {}",
-                format!("[{}]", t.id).dimmed(),
-                track_num.dimmed(),
-                t.artist_name.cyan(),
-                "—".dimmed(),
-                t.title,
-                dur.dimmed(),
-            )
-        })
-        .collect();
-
-    let selected = run_fzf(&lines, "enqueue> ", true);
-    let ids: Vec<i64> = selected.iter().filter_map(|l| extract_id(l)).collect();
-
-    if ids.is_empty() {
-        return;
-    }
-
-    // Resolve and enqueue each track.
-    let count = ids.len();
-    for id in ids {
-        let path = resolve_single_track(id, Some(mp));
-        tx.send(PlayerCommand::Enqueue(path)).ok();
-    }
-
-    mp.println(format!(
-        "{} {} track{} queued",
-        "✓".green(),
-        count,
-        if count == 1 { "" } else { "s" },
-    ))
-    .ok();
-}
-
-/// Open fzf album picker during playback — all tracks from selected album enqueued.
-fn pick_album_and_enqueue(tx: &crossbeam_channel::Sender<PlayerCommand>, mp: &MultiProgress) {
-    let db = open_db();
-    let albums = queries::all_albums(&db.conn).unwrap_or_default();
-    if albums.is_empty() {
-        mp.println(format!("{}", "no albums in library".dimmed()))
-            .ok();
-        return;
-    }
-
-    let lines: Vec<String> = albums
-        .iter()
-        .map(|a| {
-            let year = a
-                .date
-                .as_deref()
-                .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
-                .map(|y| format!("({}) ", y).dimmed().to_string())
-                .unwrap_or_default();
-            let codec = a
-                .codec
-                .as_deref()
-                .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
-                .unwrap_or_default();
-            let title = a.title.green();
-            format!(
-                "{} {} {} {}{title}{codec}",
-                format!("[{}]", a.id).dimmed(),
-                a.artist_name.cyan(),
-                "—".dimmed(),
-                year,
-            )
-        })
-        .collect();
-
-    let selected = run_fzf(&lines, "album> ", false);
-    let album_id = match selected.first().and_then(|l| extract_id(l)) {
-        Some(id) => id,
-        None => return,
-    };
-
-    let tracks = queries::tracks_for_album(&db.conn, album_id).unwrap_or_default();
-    if tracks.is_empty() {
-        return;
-    }
-
-    let count = tracks.len();
-    for t in &tracks {
-        let path = resolve_single_track(t.id, Some(mp));
-        tx.send(PlayerCommand::Enqueue(path)).ok();
-    }
-
-    mp.println(format!(
-        "{} {} track{} queued",
-        "✓".green(),
-        count,
-        if count == 1 { "" } else { "s" },
-    ))
-    .ok();
-}
-
-/// Open fzf artist picker during playback — pick artist, then album, enqueue.
-fn pick_artist_and_enqueue(tx: &crossbeam_channel::Sender<PlayerCommand>, mp: &MultiProgress) {
-    let db = open_db();
-    let artists = queries::all_artists(&db.conn).unwrap_or_default();
-    if artists.is_empty() {
-        mp.println(format!("{}", "no artists in library".dimmed()))
-            .ok();
-        return;
-    }
-
-    let lines: Vec<String> = artists
-        .iter()
-        .map(|a| {
-            format!(
-                "{} {}",
-                format!("[{}]", a.id).dimmed(),
-                a.name.bold().cyan(),
-            )
-        })
-        .collect();
-
-    let selected = run_fzf(&lines, "artist> ", false);
-    let artist_id = match selected.first().and_then(|l| extract_id(l)) {
-        Some(id) => id,
-        None => return,
-    };
-
-    // Show albums for this artist.
-    let albums = queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
-
-    let track_ids: Vec<i64> = if albums.is_empty() {
-        // No albums — enqueue all tracks for this artist.
-        queries::tracks_for_artist(&db.conn, artist_id)
-            .unwrap_or_default()
-            .iter()
-            .map(|t| t.id)
-            .collect()
-    } else {
-        // Let them pick an album (with "all" option).
-        let mut album_lines: Vec<String> =
-            vec![format!("{} {}", "[all]".dimmed(), "all tracks".bold())];
-        album_lines.extend(albums.iter().map(|a| {
-            let year = a
-                .date
-                .as_deref()
-                .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
-                .map(|y| format!("({}) ", y).dimmed().to_string())
-                .unwrap_or_default();
-            let codec = a
-                .codec
-                .as_deref()
-                .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
-                .unwrap_or_default();
-            format!(
-                "{} {}{}{}",
-                format!("[{}]", a.id).dimmed(),
-                year,
-                a.title.green(),
-                codec,
-            )
-        }));
-
-        let album_selected = run_fzf(&album_lines, "album> ", false);
-        match album_selected.first() {
-            Some(line) if line.contains("[all]") => queries::tracks_for_artist(&db.conn, artist_id)
-                .unwrap_or_default()
-                .iter()
-                .map(|t| t.id)
-                .collect(),
-            Some(line) => {
-                if let Some(album_id) = extract_id(line) {
-                    queries::tracks_for_album(&db.conn, album_id)
-                        .unwrap_or_default()
-                        .iter()
-                        .map(|t| t.id)
-                        .collect()
-                } else {
-                    return;
-                }
+            PickerItem {
+                id: t.id,
+                display: format!(
+                    "{} {} {} {}  {}",
+                    track_num.dimmed(),
+                    t.artist_name.cyan(),
+                    "—".dimmed(),
+                    t.title,
+                    dur.dimmed(),
+                ),
+                match_text: format!("{} {} {}", t.artist_name, t.album_title, t.title),
             }
-            None => return,
-        }
-    };
+        })
+        .collect()
+}
 
-    if track_ids.is_empty() {
-        return;
-    }
+fn make_album_picker_items(albums: &[queries::AlbumRow]) -> Vec<PickerItem> {
+    albums
+        .iter()
+        .map(|a| {
+            let year = a
+                .date
+                .as_deref()
+                .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
+                .map(|y| format!("({}) ", y).dimmed().to_string())
+                .unwrap_or_default();
+            let codec = a
+                .codec
+                .as_deref()
+                .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
+                .unwrap_or_default();
+            PickerItem {
+                id: a.id,
+                display: format!(
+                    "{} {} {}{}{}",
+                    a.artist_name.cyan(),
+                    "—".dimmed(),
+                    year,
+                    a.title.green(),
+                    codec,
+                ),
+                match_text: format!("{} {}", a.artist_name, a.title),
+            }
+        })
+        .collect()
+}
 
-    let count = track_ids.len();
-    for id in track_ids {
-        let path = resolve_single_track(id, Some(mp));
-        tx.send(PlayerCommand::Enqueue(path)).ok();
-    }
-
-    mp.println(format!(
-        "{} {} track{} queued",
-        "✓".green(),
-        count,
-        if count == 1 { "" } else { "s" },
-    ))
-    .ok();
+fn make_artist_picker_items(artists: &[queries::ArtistRow]) -> Vec<PickerItem> {
+    artists
+        .iter()
+        .map(|a| PickerItem {
+            id: a.id,
+            display: a.name.bold().cyan().to_string(),
+            match_text: a.name.clone(),
+        })
+        .collect()
 }
 
 fn update_progress_bar(
@@ -1412,87 +1382,44 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
-// --- Pick (fzf) ---
+// --- Pick (standalone) ---
 
 fn cmd_pick(query: Option<&str>, album_mode: bool, artist_mode: bool) {
-    use std::process::{Command, Stdio};
-
-    // Check fzf is available.
-    if Command::new("fzf")
-        .arg("--version")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_err()
-    {
-        eprintln!(
-            "{} fzf not found — install it: {}",
-            "error:".red().bold(),
-            "brew install fzf".bold()
-        );
-        std::process::exit(1);
-    }
-
     let db = open_db();
 
     if album_mode {
-        pick_album(&db, query);
+        pick_album_standalone(&db, query);
     } else if artist_mode {
-        pick_artist(&db, query);
+        pick_artist_standalone(&db, query);
     } else {
-        pick_tracks(&db, query);
+        pick_tracks_standalone(&db, query);
     }
 }
 
-fn run_fzf(lines: &[String], prompt: &str, multi: bool) -> Vec<String> {
-    use std::process::{Command, Stdio};
-
-    let input = lines.join("\n");
-    let mut cmd = Command::new("fzf");
-    cmd.arg("--ansi")
-        .arg("--prompt")
-        .arg(prompt)
-        .arg("--reverse")
-        .arg("--no-sort");
-    if multi {
-        cmd.arg("--multi");
+/// Read keys from stdin in raw mode for standalone picker (no playback event loop).
+fn stdin_key_reader() -> impl FnMut() -> Option<PickerKey> {
+    let stdin = io::stdin();
+    move || {
+        let mut buf = [0u8; 1];
+        match stdin.lock().read(&mut buf) {
+            Ok(1) => {
+                let mut stdin_more = stdin.lock();
+                picker::parse_key(buf[0], &mut || {
+                    let mut b = [0u8; 1];
+                    // Non-blocking-ish: set a short timeout isn't easy with raw stdin,
+                    // but escape sequences arrive in rapid succession so a blocking read is fine.
+                    match stdin_more.read(&mut b) {
+                        Ok(1) => Some(b[0]),
+                        _ => None,
+                    }
+                })
+            }
+            _ => None,
+        }
     }
-    cmd.stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
-
-    let mut child = cmd.spawn().expect("failed to spawn fzf");
-    if let Some(ref mut stdin) = child.stdin {
-        use std::io::Write;
-        let _ = stdin.write_all(input.as_bytes());
-    }
-    drop(child.stdin.take());
-
-    let output = child.wait_with_output().expect("fzf failed");
-    if !output.status.success() {
-        // User pressed Escape/Ctrl-C in fzf — return empty, don't exit.
-        return vec![];
-    }
-
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .map(|l| l.to_string())
-        .collect()
 }
 
-/// Extract the numeric ID from the start of a fzf line — format: `[ID] ...` or `ID\t...`
-fn extract_id(line: &str) -> Option<i64> {
-    // Try [ID] format first.
-    if let Some(rest) = line.strip_prefix('[')
-        && let Some(end) = rest.find(']')
-    {
-        return rest[..end].trim().parse().ok();
-    }
-    // Fallback: first whitespace-delimited token.
-    line.split_whitespace().next().and_then(|s| s.parse().ok())
-}
-
-fn pick_tracks(db: &Database, query: Option<&str>) {
+fn pick_tracks_standalone(db: &Database, query: Option<&str>) {
     let tracks = if let Some(q) = query {
         queries::search_tracks(&db.conn, q).unwrap_or_default()
     } else {
@@ -1504,41 +1431,18 @@ fn pick_tracks(db: &Database, query: Option<&str>) {
         std::process::exit(1);
     }
 
-    let lines: Vec<String> = tracks
-        .iter()
-        .map(|t| {
-            let dur = t
-                .duration_ms
-                .map(|d| format_time(d as u64))
-                .unwrap_or_default();
-            let track_num = match (t.disc, t.track_number) {
-                (Some(d), Some(n)) if d > 1 => format!("{}.{:02}", d, n),
-                (_, Some(n)) => format!("{:02}", n),
-                _ => "  ".into(),
-            };
-            format!(
-                "{} {} {} {} {} {}",
-                format!("[{}]", t.id).dimmed(),
-                track_num.dimmed(),
-                t.artist_name.cyan(),
-                "—".dimmed(),
-                t.title,
-                dur.dimmed(),
-            )
-        })
-        .collect();
+    let items = make_track_picker_items(&tracks);
+    let picker = Picker::new(items, "track>", true);
 
-    let selected = run_fzf(&lines, "track> ", true);
-    let ids: Vec<i64> = selected.iter().filter_map(|l| extract_id(l)).collect();
-
-    if ids.is_empty() {
-        return;
+    let _raw = RawModeGuard::enter();
+    let mut reader = stdin_key_reader();
+    if let PickerResult::Selected(ids) = picker.run(&mut reader) {
+        drop(_raw); // restore terminal before playback
+        cmd_play(&[], &ids, None, None);
     }
-
-    cmd_play(&[], &ids, None, None);
 }
 
-fn pick_album(db: &Database, query: Option<&str>) {
+fn pick_album_standalone(db: &Database, query: Option<&str>) {
     let albums = if let Some(q) = query {
         let artists = queries::find_artists(&db.conn, q).unwrap_or_default();
         let mut all = Vec::new();
@@ -1548,7 +1452,6 @@ fn pick_album(db: &Database, query: Option<&str>) {
             }
         }
         if all.is_empty() {
-            // Try album title search too.
             queries::all_albums(&db.conn)
                 .unwrap_or_default()
                 .into_iter()
@@ -1566,38 +1469,18 @@ fn pick_album(db: &Database, query: Option<&str>) {
         std::process::exit(1);
     }
 
-    let lines: Vec<String> = albums
-        .iter()
-        .map(|a| {
-            let year = a
-                .date
-                .as_deref()
-                .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
-                .map(|y| format!("({}) ", y).dimmed().to_string())
-                .unwrap_or_default();
-            let codec = a
-                .codec
-                .as_deref()
-                .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
-                .unwrap_or_default();
-            let title = a.title.green();
-            format!(
-                "{} {} {} {}{title}{codec}",
-                format!("[{}]", a.id).dimmed(),
-                a.artist_name.cyan(),
-                "—".dimmed(),
-                year,
-            )
-        })
-        .collect();
+    let items = make_album_picker_items(&albums);
+    let picker = Picker::new(items, "album>", false);
 
-    let selected = run_fzf(&lines, "album> ", false);
-    if let Some(album_id) = selected.first().and_then(|l| extract_id(l)) {
-        cmd_play(&[], &[], Some(album_id), None);
+    let _raw = RawModeGuard::enter();
+    let mut reader = stdin_key_reader();
+    if let PickerResult::Selected(ids) = picker.run(&mut reader) {
+        drop(_raw);
+        cmd_play(&[], &[], Some(ids[0]), None);
     }
 }
 
-fn pick_artist(db: &Database, query: Option<&str>) {
+fn pick_artist_standalone(db: &Database, query: Option<&str>) {
     let artists = if let Some(q) = query {
         queries::find_artists(&db.conn, q).unwrap_or_default()
     } else {
@@ -1609,62 +1492,43 @@ fn pick_artist(db: &Database, query: Option<&str>) {
         std::process::exit(1);
     }
 
-    let lines: Vec<String> = artists
-        .iter()
-        .map(|a| {
-            format!(
-                "{} {}",
-                format!("[{}]", a.id).dimmed(),
-                a.name.bold().cyan(),
-            )
-        })
-        .collect();
+    let items = make_artist_picker_items(&artists);
+    let picker = Picker::new(items, "artist>", false);
 
-    let selected = run_fzf(&lines, "artist> ", false);
-    let artist_id = match selected.first().and_then(|l| extract_id(l)) {
-        Some(id) => id,
-        None => return,
+    let _raw = RawModeGuard::enter();
+    let mut reader = stdin_key_reader();
+    let artist_id = match picker.run(&mut reader) {
+        PickerResult::Selected(ids) => ids[0],
+        PickerResult::Cancelled => return,
     };
 
-    // Now show albums for this artist, let them pick one.
+    // Drill down: pick album.
     let albums = queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
     if albums.is_empty() {
-        // No albums — just play all tracks.
+        drop(_raw);
         cmd_play(&[], &[], None, Some(artist_id));
         return;
     }
 
-    // Add "all tracks" option at the top.
-    let mut album_lines: Vec<String> =
-        vec![format!("{} {}", "[all]".dimmed(), "all tracks".bold(),)];
-    album_lines.extend(albums.iter().map(|a| {
-        let year = a
-            .date
-            .as_deref()
-            .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
-            .map(|y| format!("({}) ", y).dimmed().to_string())
-            .unwrap_or_default();
-        let codec = a
-            .codec
-            .as_deref()
-            .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
-            .unwrap_or_default();
-        format!(
-            "{} {}{}{}",
-            format!("[{}]", a.id).dimmed(),
-            year,
-            a.title.green(),
-            codec,
-        )
-    }));
+    let mut items = vec![PickerItem {
+        id: -1,
+        display: format!("{}", "all tracks".bold()),
+        match_text: "all tracks".into(),
+    }];
+    items.extend(make_album_picker_items(&albums));
 
-    let album_selected = run_fzf(&album_lines, "album> ", false);
-    if let Some(line) = album_selected.first() {
-        if line.contains("[all]") {
+    let picker = Picker::new(items, "album>", false);
+    let mut reader = stdin_key_reader();
+    match picker.run(&mut reader) {
+        PickerResult::Selected(ids) if ids[0] == -1 => {
+            drop(_raw);
             cmd_play(&[], &[], None, Some(artist_id));
-        } else if let Some(album_id) = extract_id(line) {
-            cmd_play(&[], &[], Some(album_id), None);
         }
+        PickerResult::Selected(ids) => {
+            drop(_raw);
+            cmd_play(&[], &[], Some(ids[0]), None);
+        }
+        PickerResult::Cancelled => {}
     }
 }
 
@@ -1988,27 +1852,5 @@ impl Drop for RawModeGuard {
         unsafe {
             libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &self.original);
         }
-    }
-}
-
-/// Temporarily restore cooked mode so fzf gets a sane terminal.
-fn restore_cooked_mode() {
-    unsafe {
-        let mut current: libc::termios = std::mem::zeroed();
-        libc::tcgetattr(libc::STDIN_FILENO, &mut current);
-        current.c_lflag |= libc::ICANON | libc::ECHO | libc::ISIG;
-        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &current);
-    }
-}
-
-/// Re-enter raw mode after fzf exits.
-fn enter_raw_mode() {
-    unsafe {
-        let mut current: libc::termios = std::mem::zeroed();
-        libc::tcgetattr(libc::STDIN_FILENO, &mut current);
-        current.c_lflag &= !(libc::ICANON | libc::ECHO | libc::ISIG);
-        current.c_cc[libc::VMIN] = 1;
-        current.c_cc[libc::VTIME] = 0;
-        libc::tcsetattr(libc::STDIN_FILENO, libc::TCSANOW, &current);
     }
 }

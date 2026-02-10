@@ -15,9 +15,11 @@ indicatif = "0.17"
 koan-core = { path = "../koan-core" }
 libc = "0.2"
 log = "0.4"
+nucleo = "0.5"
 owo-colors = "4"
 rayon = "1.10"
 rpassword = "7.4"
 rusqlite = { version = "0.38", features = ["bundled-full"] }
 toml = "0.9"
+unicode-width = "0.2"
 walkdir = "2"
