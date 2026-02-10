@@ -247,27 +247,57 @@ impl QueueDisplay {
         };
         out.push_str(&format!("\x1b[2K{}\r\n", truncate_ansi(&sep_label, width)));
 
-        // --- Queue entries ---
+        // --- Queue entries (grouped by album) ---
         // Clamp cursor to queue bounds.
         if !queue.is_empty() && self.cursor >= queue.len() {
             self.cursor = queue.len() - 1;
         }
 
-        // Scroll window around cursor in edit mode.
-        let start = if self.mode == UiMode::Edit && self.cursor >= queue_lines {
-            self.cursor - queue_lines + 1
+        // Pre-render all display lines (headers + tracks) so we can scroll correctly.
+        // Each line is tagged with the queue index it belongs to (for cursor tracking).
+        let mut display_lines: Vec<(Option<usize>, String)> = Vec::new();
+        let mut current_album_key: Option<(String, String)> = None; // (album_artist, album)
+
+        for (i, entry) in queue.iter().enumerate() {
+            // Emit album header when album changes.
+            let album_key = (entry.album_artist.clone(), entry.album.clone());
+            let show_header = if entry.album.is_empty() {
+                false
+            } else {
+                current_album_key.as_ref() != Some(&album_key)
+            };
+
+            if show_header {
+                current_album_key = Some(album_key);
+                let header = self.render_album_header(entry, width);
+                display_lines.push((None, header));
+            }
+
+            let line = self.render_track_line(i, entry, width);
+            display_lines.push((Some(i), line));
+        }
+
+        // Find which display line the cursor is on (for scroll).
+        let cursor_display_line = display_lines
+            .iter()
+            .position(|(idx, _)| *idx == Some(self.cursor))
+            .unwrap_or(0);
+
+        // Scroll window.
+        let start = if self.mode == UiMode::Edit && cursor_display_line >= queue_lines {
+            cursor_display_line - queue_lines + 1
         } else {
             0
         };
-        let end = (start + queue_lines).min(queue.len());
+        let end = (start + queue_lines).min(display_lines.len());
 
-        for (i, entry) in queue.iter().enumerate().take(end).skip(start) {
-            let line = self.render_queue_entry(i, entry, width);
+        for (_idx, line) in display_lines.iter().take(end).skip(start) {
             out.push_str(&format!("\x1b[2K{}\r\n", line));
         }
 
         // Pad remaining queue lines.
-        for _ in (end - start)..queue_lines {
+        let rendered = end.saturating_sub(start);
+        for _ in rendered..queue_lines {
             out.push_str("\x1b[2K\r\n");
         }
 
@@ -286,7 +316,7 @@ impl QueueDisplay {
                 " {}  {}  {}  {}",
                 "↑↓ navigate".dimmed(),
                 "[d]elete".dimmed(),
-                "[J/K] move".dimmed(),
+                "[j/k] move".dimmed(),
                 "[esc] done".dimmed(),
             ),
         };
@@ -299,7 +329,31 @@ impl QueueDisplay {
         let _ = stdout.flush();
     }
 
-    fn render_queue_entry(&self, index: usize, entry: &QueueEntry, width: usize) -> String {
+    /// Render an album group header line.
+    fn render_album_header(&self, entry: &QueueEntry, width: usize) -> String {
+        let year = entry
+            .year
+            .as_deref()
+            .map(|y| format!("({}) ", y).dimmed().to_string())
+            .unwrap_or_default();
+        let codec = entry
+            .codec
+            .as_deref()
+            .map(|c| format!(" [{}]", c).dimmed().to_string())
+            .unwrap_or_default();
+        let header = format!(
+            "  {} {} {}{}{}",
+            entry.album_artist.bold().cyan(),
+            "—".dimmed(),
+            year,
+            entry.album.green(),
+            codec,
+        );
+        truncate_ansi(&header, width)
+    }
+
+    /// Render a single track line within a group.
+    fn render_track_line(&self, index: usize, entry: &QueueEntry, width: usize) -> String {
         let is_cursor = self.mode == UiMode::Edit && index == self.cursor;
 
         let status_icon = match entry.status {
@@ -309,69 +363,42 @@ impl QueueDisplay {
             QueueEntryStatus::Failed => "!!".red().to_string(),
         };
 
-        // Track number: disc.track or just track
         let track_num = match (entry.disc, entry.track_number) {
-            (Some(d), Some(n)) if d > 1 => format!("{}.{:02}", d, n),
+            (Some(d), Some(n)) if d > 1 => format!("{}-{:02}", d, n),
             (_, Some(n)) => format!("{:02}", n),
             _ => "  ".into(),
         };
 
         let dur = entry.duration_ms.map(format_time).unwrap_or_default();
 
-        let artist_part = if entry.artist.is_empty() {
-            String::new()
-        } else {
+        // Show track artist only if it differs from album artist.
+        let artist_part = if !entry.artist.is_empty() && entry.artist != entry.album_artist {
             format!("{} {} ", entry.artist.cyan(), "—".dimmed())
-        };
-
-        let album_part = if entry.album.is_empty() {
+        } else {
             String::new()
-        } else {
-            let year = entry
-                .year
-                .as_deref()
-                .map(|y| format!("({}) ", y).dimmed().to_string())
-                .unwrap_or_default();
-            let codec = entry
-                .codec
-                .as_deref()
-                .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
-                .unwrap_or_default();
-            format!(
-                " {} {}{}{}",
-                "on".dimmed(),
-                year,
-                entry.album.green(),
-                codec,
-            )
         };
 
-        let cursor_marker = if is_cursor { ">" } else { " " };
-
-        let line = if is_cursor {
-            format!(
-                " {} {} {} {} {}{}  {}{}",
-                cursor_marker.cyan().bold(),
-                status_icon,
-                track_num.dimmed(),
-                artist_part,
-                entry.title.bold(),
-                album_part,
-                dur.dimmed(),
-                "",
-            )
+        let cursor_marker = if is_cursor {
+            ">".cyan().bold().to_string()
         } else {
-            format!(
-                " {} {} {} {}{}{}  {}",
-                cursor_marker,
-                status_icon,
-                track_num.dimmed(),
-                artist_part,
-                entry.title,
-                album_part,
-                dur.dimmed(),
-            )
+            " ".to_string()
         };
+
+        let title = if is_cursor {
+            entry.title.bold().to_string()
+        } else {
+            entry.title.clone()
+        };
+
+        let line = format!(
+            "   {} {} {} {}{}  {}",
+            cursor_marker,
+            status_icon,
+            track_num.dimmed(),
+            artist_part,
+            title,
+            dur.dimmed(),
+        );
 
         truncate_ansi(&line, width)
     }
