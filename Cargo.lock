@@ -1257,6 +1257,7 @@ dependencies = [
  "libc",
  "log",
  "owo-colors",
+ "rayon",
  "rpassword",
  "rusqlite",
  "toml",

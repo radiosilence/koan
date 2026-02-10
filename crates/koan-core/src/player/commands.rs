@@ -8,6 +8,8 @@ pub enum PlayerCommand {
     Play(PathBuf),
     /// Queue tracks for gapless playback. Replaces the current queue.
     PlayQueue(Vec<PathBuf>),
+    /// Append a track to the end of the queue without interrupting playback.
+    Enqueue(PathBuf),
     Pause,
     Resume,
     Stop,

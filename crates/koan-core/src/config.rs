@@ -51,6 +51,9 @@ pub struct RemoteConfig {
     pub enabled: bool,
     pub url: String,
     pub username: String,
+    /// Password — stored in config.local.toml (gitignored), not Keychain.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub password: String,
     /// original | opus-128 | mp3-320
     pub transcode_quality: String,
     /// Defaults to config_dir()/cache if empty.
@@ -83,6 +86,7 @@ impl Default for RemoteConfig {
             enabled: false,
             url: String::new(),
             username: String::new(),
+            password: String::new(),
             transcode_quality: "original".into(),
             cache_dir: None,
         }
@@ -119,9 +123,20 @@ impl Config {
         Ok(config)
     }
 
-    /// Write config to disk, creating directories if needed.
+    /// Write config to the base config.toml.
     pub fn save(&self) -> Result<(), ConfigError> {
         let path = config_file_path();
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let contents = toml::to_string_pretty(self)?;
+        fs::write(&path, contents)?;
+        Ok(())
+    }
+
+    /// Write config to config.local.toml (for machine-specific / sensitive values).
+    pub fn save_local(&self) -> Result<(), ConfigError> {
+        let path = config_local_file_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -145,6 +160,9 @@ impl Config {
         }
         if !other.remote.username.is_empty() {
             self.remote.username = other.remote.username;
+        }
+        if !other.remote.password.is_empty() {
+            self.remote.password = other.remote.password;
         }
         if !other.remote.transcode_quality.is_empty() {
             self.remote.transcode_quality = other.remote.transcode_quality;

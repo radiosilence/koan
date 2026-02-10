@@ -178,8 +178,7 @@ impl Player {
         Ok(())
     }
 
-    /// Seek within the current track. Rebuilds the decode pipeline but keeps queue.
-    /// Clamps to track duration so seeking past the end doesn't crash Symphonia.
+    /// Seek within the current track. If past the end, skip to next track.
     pub fn seek(&mut self, position_ms: u64) {
         let info = match self.shared_state.track_info() {
             Some(info) => info,
@@ -188,16 +187,14 @@ impl Player {
         let path = info.path.clone();
         let duration = info.duration_ms;
 
-        // Clamp to just before the end. Seeking to exactly the end or beyond
-        // causes Symphonia to return "seek timestamp out-of-range".
-        let clamped = if duration > 0 {
-            position_ms.min(duration.saturating_sub(500))
-        } else {
-            position_ms
-        };
+        // Past the end → next track.
+        if duration > 0 && position_ms >= duration {
+            self.next_track();
+            return;
+        }
 
         // Don't clear the queue on seek — just rebuild decode for this track.
-        if let Err(e) = self.start_playback(&path, clamped) {
+        if let Err(e) = self.start_playback(&path, position_ms) {
             log::error!("seek failed: {}", e);
         }
     }
@@ -251,6 +248,11 @@ impl Player {
         self.shared_state.set_track_info(None);
     }
 
+    /// Append a track to the queue without interrupting playback.
+    pub fn enqueue(&mut self, path: &Path) {
+        self.queue.push_back(path.to_path_buf());
+    }
+
     /// Process a single command.
     pub fn process_command(&mut self, cmd: PlayerCommand) {
         match cmd {
@@ -264,6 +266,7 @@ impl Player {
                     log::error!("play queue failed: {}", e);
                 }
             }
+            PlayerCommand::Enqueue(path) => self.enqueue(&path),
             PlayerCommand::Pause => self.pause(),
             PlayerCommand::Resume => self.resume(),
             PlayerCommand::Stop => self.stop(),

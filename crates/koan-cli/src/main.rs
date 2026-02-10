@@ -179,7 +179,8 @@ enum Event {
 }
 
 fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i64>) {
-    let paths: Vec<PathBuf> = if let Some(album_id) = album {
+    // Gather track IDs to resolve, or raw file paths.
+    let track_ids: Option<Vec<i64>> = if let Some(album_id) = album {
         let db = open_db();
         let tracks = queries::tracks_for_album(&db.conn, album_id).unwrap_or_else(|e| {
             eprintln!("{} {}", "error:".red().bold(), e);
@@ -189,8 +190,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
             eprintln!("no tracks found for album {}", album_id);
             std::process::exit(1);
         }
-        let track_ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
-        resolve_track_ids(&track_ids)
+        Some(tracks.iter().map(|t| t.id).collect())
     } else if let Some(artist_id) = artist {
         let db = open_db();
         let tracks = queries::tracks_for_artist(&db.conn, artist_id).unwrap_or_else(|e| {
@@ -201,11 +201,43 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
             eprintln!("no tracks found for artist {}", artist_id);
             std::process::exit(1);
         }
-        let track_ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
-        resolve_track_ids(&track_ids)
+        Some(tracks.iter().map(|t| t.id).collect())
     } else if !ids.is_empty() {
-        resolve_track_ids(ids)
+        Some(ids.to_vec())
     } else {
+        None
+    };
+
+    let (state, tx) = Player::spawn();
+
+    if let Some(ids) = track_ids {
+        // Resolve first track immediately, start playback, download rest in background.
+        let first_path = resolve_single_track(ids[0]);
+        tx.send(PlayerCommand::Play(first_path))
+            .expect("player thread died");
+
+        if ids.len() > 1 {
+            let remaining = ids[1..].to_vec();
+            let tx_bg = tx.clone();
+            std::thread::Builder::new()
+                .name("koan-resolve".into())
+                .spawn(move || {
+                    use rayon::prelude::*;
+                    // Download remaining tracks in parallel, enqueue in order.
+                    let resolved: Vec<PathBuf> = remaining
+                        .par_iter()
+                        .map(|&id| resolve_single_track(id))
+                        .collect();
+                    for path in resolved {
+                        if tx_bg.send(PlayerCommand::Enqueue(path)).is_err() {
+                            break;
+                        }
+                    }
+                })
+                .expect("failed to spawn resolve thread");
+        }
+    } else {
+        // Raw file paths — no resolution needed.
         if paths.is_empty() {
             eprintln!("provide file paths, --id, --album, or --artist");
             std::process::exit(1);
@@ -216,14 +248,9 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                 std::process::exit(1);
             }
         }
-        paths.to_vec()
-    };
-    let paths = &paths;
-
-    let (state, tx) = Player::spawn();
-
-    tx.send(PlayerCommand::PlayQueue(paths.to_vec()))
-        .expect("player thread died");
+        tx.send(PlayerCommand::PlayQueue(paths.to_vec()))
+            .expect("player thread died");
+    }
 
     wait_for_playing(&state);
 
@@ -808,21 +835,17 @@ fn cmd_remote_login(url: &str, username: &str) {
         }
     }
 
-    if let Err(e) = koan_core::credentials::store_password(url, &password) {
-        eprintln!("{} {}", "keychain error:".red().bold(), e);
-        std::process::exit(1);
-    }
-    println!("{}", "password stored in Keychain".green());
-
-    let mut cfg = config::Config::load().unwrap_or_default();
-    cfg.remote.enabled = true;
-    cfg.remote.url = url.to_string();
-    cfg.remote.username = username.to_string();
-    if let Err(e) = cfg.save() {
+    // Write to config.local.toml (gitignored) — password stays local.
+    let mut local_cfg = config::Config::default();
+    local_cfg.remote.enabled = true;
+    local_cfg.remote.url = url.to_string();
+    local_cfg.remote.username = username.to_string();
+    local_cfg.remote.password = password;
+    if let Err(e) = local_cfg.save_local() {
         eprintln!("{} {}", "config error:".red().bold(), e);
         std::process::exit(1);
     }
-    println!("{}", "config updated".green());
+    println!("{}", "credentials saved to config.local.toml".green());
 }
 
 fn cmd_remote_sync() {
@@ -836,14 +859,7 @@ fn cmd_remote_sync() {
         std::process::exit(1);
     }
 
-    let password = match koan_core::credentials::get_password(&cfg.remote.url) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("{} {}", "keychain error:".red().bold(), e);
-            eprintln!("run {} to re-authenticate", "koan remote login".bold());
-            std::process::exit(1);
-        }
-    };
+    let password = get_remote_password(&cfg);
 
     let client = koan_core::remote::client::SubsonicClient::new(
         &cfg.remote.url,
@@ -883,23 +899,22 @@ fn cmd_remote_status() {
     println!("{} {}", "server:".cyan(), cfg.remote.url);
     println!("{} {}", "username:".cyan(), cfg.remote.username);
 
-    let has_password = koan_core::credentials::get_password(&cfg.remote.url).is_ok();
+    let has_password = !cfg.remote.password.is_empty();
     println!(
         "{} {}",
         "password:".cyan(),
         if has_password {
-            "stored in Keychain".green().to_string()
+            "configured".green().to_string()
         } else {
-            "not found".red().to_string()
+            "not set".red().to_string()
         }
     );
 
     if has_password {
-        let password = koan_core::credentials::get_password(&cfg.remote.url).unwrap();
         let client = koan_core::remote::client::SubsonicClient::new(
             &cfg.remote.url,
             &cfg.remote.username,
-            &password,
+            &cfg.remote.password,
         );
         match client.ping() {
             Ok(()) => println!("{} {}", "status:".cyan(), "connected".green()),
@@ -982,6 +997,25 @@ fn cmd_devices() {
 
 // --- Helpers ---
 
+/// Get the remote password from config, falling back to Keychain for backwards compat.
+fn get_remote_password(cfg: &config::Config) -> String {
+    if !cfg.remote.password.is_empty() {
+        return cfg.remote.password.clone();
+    }
+    // Fallback to Keychain for users who set up before the config change.
+    match koan_core::credentials::get_password(&cfg.remote.url) {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!(
+                "{} no password configured — run {} to set up",
+                "error:".red().bold(),
+                "koan remote login".bold()
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Sanitise a string for use as a filename — strip chars that are illegal on macOS/Windows.
 fn sanitise_filename(s: &str) -> String {
     s.chars()
@@ -1040,99 +1074,86 @@ fn cache_path_for_track(
         .join(format!("{}.{}", filename, ext))
 }
 
-fn resolve_track_ids(ids: &[i64]) -> Vec<PathBuf> {
+/// Resolve a single track ID to a playback path.
+/// Downloads from remote if needed, using structured cache paths.
+fn resolve_single_track(id: i64) -> PathBuf {
     let db = open_db();
     let cfg = config::Config::load().unwrap_or_default();
-    let mut paths = Vec::new();
 
-    for &id in ids {
-        match queries::resolve_playback_path(&db.conn, id) {
-            Ok(Some(queries::PlaybackSource::Local(p))) => paths.push(p),
-            Ok(Some(queries::PlaybackSource::Cached(p))) => paths.push(p),
-            Ok(Some(queries::PlaybackSource::Remote(_url))) => {
-                // Get full track metadata for structured cache path.
-                let track = match queries::get_track_row(&db.conn, id) {
-                    Ok(Some(t)) => t,
-                    Ok(None) => {
-                        eprintln!("{} track {} not found", "error:".red().bold(), id);
-                        std::process::exit(1);
-                    }
-                    Err(e) => {
-                        eprintln!("{} {}", "error:".red().bold(), e);
-                        std::process::exit(1);
-                    }
-                };
-
-                let remote_id = match &track.remote_id {
-                    Some(rid) => rid.clone(),
-                    None => {
-                        eprintln!("{} track {} has no remote_id", "error:".red().bold(), id);
-                        std::process::exit(1);
-                    }
-                };
-
-                // Get album date for the cache path.
-                let album_date: Option<String> = track.album_id.and_then(|aid| {
-                    db.conn
-                        .query_row(
-                            "SELECT date FROM albums WHERE id = ?1",
-                            rusqlite::params![aid],
-                            |row| row.get(0),
-                        )
-                        .ok()
-                        .flatten()
-                });
-
-                let cache_dir = cfg.cache_dir();
-                let dest = cache_path_for_track(&cache_dir, &track, album_date.as_deref());
-
-                if dest.exists() {
-                    paths.push(dest);
-                    continue;
-                }
-
-                eprintln!(
-                    "{} {} — {} ...",
-                    "downloading".cyan(),
-                    track.title.bold(),
-                    track.artist_name.dimmed(),
-                );
-
-                let password = match koan_core::credentials::get_password(&cfg.remote.url) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        eprintln!("{} {}", "keychain error:".red().bold(), e);
-                        std::process::exit(1);
-                    }
-                };
-                let client = koan_core::remote::client::SubsonicClient::new(
-                    &cfg.remote.url,
-                    &cfg.remote.username,
-                    &password,
-                );
-
-                if let Err(e) = client.download(&remote_id, &dest) {
-                    eprintln!("{} {}", "download failed:".red().bold(), e);
+    match queries::resolve_playback_path(&db.conn, id) {
+        Ok(Some(queries::PlaybackSource::Local(p))) => p,
+        Ok(Some(queries::PlaybackSource::Cached(p))) => p,
+        Ok(Some(queries::PlaybackSource::Remote(_url))) => {
+            let track = match queries::get_track_row(&db.conn, id) {
+                Ok(Some(t)) => t,
+                Ok(None) => {
+                    eprintln!("{} track {} not found", "error:".red().bold(), id);
                     std::process::exit(1);
                 }
+                Err(e) => {
+                    eprintln!("{} {}", "error:".red().bold(), e);
+                    std::process::exit(1);
+                }
+            };
 
-                // Update DB with cached path so resolve_playback_path finds it next time.
-                let _ = queries::set_cached_path(&db.conn, id, &dest.to_string_lossy());
+            let remote_id = match &track.remote_id {
+                Some(rid) => rid.clone(),
+                None => {
+                    eprintln!("{} track {} has no remote_id", "error:".red().bold(), id);
+                    std::process::exit(1);
+                }
+            };
 
-                paths.push(dest);
+            let album_date: Option<String> = track.album_id.and_then(|aid| {
+                db.conn
+                    .query_row(
+                        "SELECT date FROM albums WHERE id = ?1",
+                        rusqlite::params![aid],
+                        |row| row.get(0),
+                    )
+                    .ok()
+                    .flatten()
+            });
+
+            let cache_dir = cfg.cache_dir();
+            let dest = cache_path_for_track(&cache_dir, &track, album_date.as_deref());
+
+            if dest.exists() {
+                return dest;
             }
-            Ok(None) => {
-                eprintln!("{} track {} not found", "error:".red().bold(), id);
+
+            eprintln!(
+                "{} {} — {} ...",
+                "downloading".cyan(),
+                track.title.bold(),
+                track.artist_name.dimmed(),
+            );
+
+            let password = get_remote_password(&cfg);
+            let client = koan_core::remote::client::SubsonicClient::new(
+                &cfg.remote.url,
+                &cfg.remote.username,
+                &password,
+            );
+
+            if let Err(e) = client.download(&remote_id, &dest) {
+                eprintln!("{} {}", "download failed:".red().bold(), e);
                 std::process::exit(1);
             }
-            Err(e) => {
-                eprintln!("{} {}", "error:".red().bold(), e);
-                std::process::exit(1);
-            }
+
+            let _ = queries::set_cached_path(&db.conn, id, &dest.to_string_lossy());
+
+            dest
+        }
+        Ok(None) => {
+            eprintln!("{} track {} not found", "error:".red().bold(), id);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("{} {}", "error:".red().bold(), e);
+            std::process::exit(1);
         }
     }
-
-    paths
 }
 
 fn open_db() -> Database {
