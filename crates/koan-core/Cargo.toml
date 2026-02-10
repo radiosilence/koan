@@ -1,0 +1,26 @@
+[package]
+name = "koan-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# CoreAudio
+coreaudio-sys = "0.2"
+crossbeam-channel = "0.5"
+env_logger = "0.11"
+# Metadata
+lofty = "0.23"
+log = "0.4"
+# File watching
+notify = "8"
+notify-debouncer-full = "0.5"
+# Async/threading
+parking_lot = "0.12"
+rayon = "1"
+rtrb = "0.3"
+# Database
+rusqlite = { version = "0.38", features = ["bundled-full"] }
+# Audio
+symphonia = { version = "0.5", features = ["all"] }
+# Utilities
+thiserror = "2"

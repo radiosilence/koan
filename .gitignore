@@ -1,0 +1,29 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Swift
+swift/.build/
+swift/.swiftpm/
+swift/KoanRust.xcframework/
+swift/Generated/
+
+# macOS
+.DS_Store
+*.xcuserdata
+
+# Test media
+*.flac
+*.mp3
+*.ogg
+*.opus
+*.wav
+*.aiff
+*.m4a
+*.wv
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
