@@ -109,12 +109,15 @@ koan probe track.flac
 
 ### Playback controls
 
-| Key             | Action         |
-| --------------- | -------------- |
-| `space`         | pause / resume |
-| `n`             | next track     |
-| `< >` or arrows | seek ±10s      |
-| `q`             | quit           |
+| Key     | Action                   |
+| ------- | ------------------------ |
+| `space` | pause / resume           |
+| `< >`   | previous / next track    |
+| `, .`   | seek ±10s                |
+| `p`     | open fzf picker, enqueue |
+| `n`     | next track               |
+| arrows  | seek ±10s                |
+| `q`     | quit                     |
 
 ### Remote (Subsonic/Navidrome)
 

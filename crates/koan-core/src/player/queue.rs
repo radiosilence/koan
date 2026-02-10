@@ -41,6 +41,11 @@ impl TrackQueue {
         self.tracks.lock().unwrap().push_back(path);
     }
 
+    /// Push a track to the front (for going back).
+    pub fn push_front(&self, path: PathBuf) {
+        self.tracks.lock().unwrap().push_front(path);
+    }
+
     /// Clear the queue.
     pub fn clear(&self) {
         self.tracks.lock().unwrap().clear();

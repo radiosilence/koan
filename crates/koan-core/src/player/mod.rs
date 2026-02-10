@@ -2,7 +2,8 @@ pub mod commands;
 pub mod queue;
 pub mod state;
 
-use std::path::Path;
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::thread;
 
@@ -32,6 +33,8 @@ pub struct Player {
     shared_state: Arc<SharedPlayerState>,
     commands: CommandChannel,
     queue: Arc<TrackQueue>,
+    /// Tracks we've already played — for going back with PrevTrack.
+    history: VecDeque<PathBuf>,
     active_playback: Option<ActivePlayback>,
 }
 
@@ -53,6 +56,7 @@ impl Player {
             shared_state: SharedPlayerState::new(),
             commands: CommandChannel::new(),
             queue: Arc::new(TrackQueue::new()),
+            history: VecDeque::new(),
             active_playback: None,
         }
     }
@@ -199,8 +203,13 @@ impl Player {
         }
     }
 
-    /// Skip to next track in queue.
+    /// Skip to next track in queue. Pushes current track onto history.
     pub fn next_track(&mut self) {
+        // Save current track to history so we can go back.
+        if let Some(info) = self.shared_state.track_info() {
+            self.history.push_back(info.path);
+        }
+
         let next = self.queue.pop_front();
         match next {
             Some(path) => {
@@ -212,6 +221,31 @@ impl Player {
                 log::info!("no more tracks in queue");
                 self.stop_playback_no_clear();
             }
+        }
+    }
+
+    /// Go back to previous track. Pushes current track back onto queue front.
+    pub fn prev_track(&mut self) {
+        let prev = match self.history.pop_back() {
+            Some(p) => p,
+            None => {
+                // No history — restart current track from the beginning.
+                if let Some(info) = self.shared_state.track_info()
+                    && let Err(e) = self.start_playback(&info.path, 0)
+                {
+                    log::error!("restart failed: {}", e);
+                }
+                return;
+            }
+        };
+
+        // Push current track back to front of queue.
+        if let Some(info) = self.shared_state.track_info() {
+            self.queue.push_front(info.path);
+        }
+
+        if let Err(e) = self.start_playback(&prev, 0) {
+            log::error!("prev track failed: {}", e);
         }
     }
 
@@ -272,6 +306,7 @@ impl Player {
             PlayerCommand::Stop => self.stop(),
             PlayerCommand::Seek(pos) => self.seek(pos),
             PlayerCommand::NextTrack => self.next_track(),
+            PlayerCommand::PrevTrack => self.prev_track(),
         }
     }
 

@@ -287,18 +287,8 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
 
     wait_for_playing(&state);
 
-    mp.println(format!(
-        "{}",
-        "controls: [space] pause/resume  [</>] seek 10s  [n] next  [q] quit\n".dimmed()
-    ))
-    .ok();
-
-    let pb = mp.add(ProgressBar::new(0));
-    pb.set_style(
-        ProgressStyle::with_template("{prefix} {bar:40.cyan/dim} {msg}")
-            .unwrap()
-            .progress_chars("━╸─"),
-    );
+    let mut pb = make_playback_bar(&mp);
+    let mut controls = make_controls_bar(&mp);
 
     let quit = Arc::new(AtomicBool::new(false));
     let (ev_tx, ev_rx) = crossbeam_channel::unbounded::<Event>();
@@ -351,6 +341,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                     && current_track.is_some()
                 {
                     pb.finish_and_clear();
+                    controls.finish_and_clear();
                     mp.println(format!("{}", "done.".dimmed())).ok();
                     quit.store(true, Ordering::Relaxed);
                     break;
@@ -360,12 +351,16 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                 b'q' | 3 => {
                     tx.send(PlayerCommand::Stop).ok();
                     pb.finish_and_clear();
+                    controls.finish_and_clear();
                     mp.println(format!("{}", "stopped.".dimmed())).ok();
                     quit.store(true, Ordering::Relaxed);
                     break;
                 }
-                b'n' => {
+                b'n' | b'>' => {
                     tx.send(PlayerCommand::NextTrack).ok();
+                }
+                b'<' => {
+                    tx.send(PlayerCommand::PrevTrack).ok();
                 }
                 b' ' => {
                     if state.playback_state() == PlaybackState::Playing {
@@ -382,6 +377,27 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                         pos.saturating_sub(10_000)
                     };
                     tx.send(PlayerCommand::Seek(new_pos)).ok();
+                }
+                b'p' => {
+                    // Pause, clear bars, spawn fzf, enqueue results, rebuild bars, resume.
+                    let was_playing = state.playback_state() == PlaybackState::Playing;
+                    if was_playing {
+                        tx.send(PlayerCommand::Pause).ok();
+                    }
+                    pb.finish_and_clear();
+                    controls.finish_and_clear();
+
+                    pick_and_enqueue(&tx, &mp);
+
+                    // Rebuild bars after fzf exits.
+                    current_track = None; // force track info reprint
+                    pb = make_playback_bar(&mp);
+                    controls = make_controls_bar(&mp);
+                    update_progress_bar(&mp, &pb, &state, &mut current_track);
+
+                    if was_playing {
+                        tx.send(PlayerCommand::Resume).ok();
+                    }
                 }
                 0x1b => {
                     if let (Ok(Event::Key(b'[')), Ok(Event::Key(arrow))) =
@@ -407,6 +423,107 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
     }
 
     std::thread::sleep(Duration::from_millis(100));
+}
+
+fn make_playback_bar(mp: &MultiProgress) -> ProgressBar {
+    let pb = mp.add(ProgressBar::new(0));
+    pb.set_style(
+        ProgressStyle::with_template("{prefix} {bar:40.cyan/dim} {msg}")
+            .unwrap()
+            .progress_chars("━╸─"),
+    );
+    pb
+}
+
+fn make_controls_bar(mp: &MultiProgress) -> ProgressBar {
+    let bar = mp.add(ProgressBar::new(0));
+    bar.set_style(ProgressStyle::with_template("{msg}").unwrap());
+    bar.set_message(format!(
+        "{}  {}  {}  {}  {}  {}",
+        "[space]".dimmed(),
+        "[< >] skip".dimmed(),
+        "[,/.] seek".dimmed(),
+        "[p] pick".dimmed(),
+        "[n] next".dimmed(),
+        "[q] quit".dimmed(),
+    ));
+    bar
+}
+
+/// Open fzf picker during playback — selected tracks are appended to the queue.
+fn pick_and_enqueue(tx: &crossbeam_channel::Sender<PlayerCommand>, mp: &MultiProgress) {
+    use std::process::{Command, Stdio};
+
+    // Check fzf is available.
+    if Command::new("fzf")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_err()
+    {
+        mp.println(format!(
+            "{} fzf not found — install it: {}",
+            "error:".red().bold(),
+            "brew install fzf".bold()
+        ))
+        .ok();
+        return;
+    }
+
+    let db = open_db();
+    let tracks = queries::all_tracks(&db.conn).unwrap_or_default();
+    if tracks.is_empty() {
+        mp.println(format!("{}", "no tracks in library".dimmed()))
+            .ok();
+        return;
+    }
+
+    let lines: Vec<String> = tracks
+        .iter()
+        .map(|t| {
+            let dur = t
+                .duration_ms
+                .map(|d| format_time(d as u64))
+                .unwrap_or_default();
+            let track_num = match (t.disc, t.track_number) {
+                (Some(d), Some(n)) if d > 1 => format!("{}.{:02}", d, n),
+                (_, Some(n)) => format!("{:02}", n),
+                _ => "  ".into(),
+            };
+            format!(
+                "{} {} {} {} {} {}",
+                format!("[{}]", t.id).dimmed(),
+                track_num.dimmed(),
+                t.artist_name.cyan(),
+                "—".dimmed(),
+                t.title,
+                dur.dimmed(),
+            )
+        })
+        .collect();
+
+    let selected = run_fzf(&lines, "enqueue> ", true);
+    let ids: Vec<i64> = selected.iter().filter_map(|l| extract_id(l)).collect();
+
+    if ids.is_empty() {
+        return;
+    }
+
+    // Resolve and enqueue each track.
+    let count = ids.len();
+    for id in ids {
+        let path = resolve_single_track(id, Some(mp));
+        tx.send(PlayerCommand::Enqueue(path)).ok();
+    }
+
+    mp.println(format!(
+        "{} {} track{} queued",
+        "✓".green(),
+        count,
+        if count == 1 { "" } else { "s" },
+    ))
+    .ok();
 }
 
 fn update_progress_bar(

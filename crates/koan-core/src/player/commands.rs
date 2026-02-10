@@ -15,6 +15,7 @@ pub enum PlayerCommand {
     Stop,
     Seek(u64), // position in ms
     NextTrack, // skip to next in queue
+    PrevTrack, // go back to previous track
 }
 
 /// Bounded SPSC command channel.

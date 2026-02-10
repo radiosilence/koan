@@ -16,7 +16,9 @@
 - **`koan config`** — shows source files (config.toml, config.local.toml) and the resolved merged config
 - **`koan pick`** — interactive fzf-powered library picker: fuzzy-find tracks, albums, or artists and play immediately. `--album`/`--artist` modes with drill-down flows
 - **`koan cache status/clear`** — view cache size + file count, nuke all cached downloads (clears DB cached_path too)
-- **MultiProgress playback UI** — parallel download spinners render cleanly alongside the playback progress bar, track changes don't stomp the display
+- **MultiProgress playback UI** — parallel download spinners render cleanly alongside the playback progress bar, track changes don't stomp the display, persistent controls bar
+- **Previous track** — `<` goes back through play history, `>` skips forward. History stack in player tracks what's been played
+- **Inline picker** — press `p` during playback to open fzf, multi-select tracks to append to queue without interrupting playback
 - **Lazy parallel downloads** — first track plays immediately, remaining tracks download in parallel via rayon and enqueue as they complete
 - **Password in config** — Navidrome password stored in `config.local.toml` instead of Keychain, with Keychain fallback for backwards compat
 - **26 unit tests** — config, DB (CRUD, FTS5 search, dedup, playback resolution, scan cache, stats), metadata
