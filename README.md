@@ -109,6 +109,8 @@ koan probe track.flac
 
 ### Playback controls
 
+During playback, the full queue is visible with download status. Press `e` to enter edit mode for reordering/removing tracks.
+
 | Key     | Action                 |
 | ------- | ---------------------- |
 | `space` | pause / resume         |
@@ -117,9 +119,19 @@ koan probe track.flac
 | `p`     | pick tracks to enqueue |
 | `a`     | pick album to enqueue  |
 | `r`     | pick artist to enqueue |
+| `e`     | edit queue             |
 | `n`     | next track             |
 | arrows  | seek ±10s              |
 | `q`     | quit                   |
+
+**Queue edit mode** (`e`):
+
+| Key       | Action             |
+| --------- | ------------------ |
+| `up/down` | navigate           |
+| `d`       | remove track       |
+| `J` / `K` | move track down/up |
+| `Esc`     | exit edit mode     |
 
 ### Remote (Subsonic/Navidrome)
 

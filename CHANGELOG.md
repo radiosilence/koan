@@ -16,7 +16,7 @@
 - **`koan config`** — shows source files (config.toml, config.local.toml) and the resolved merged config
 - **`koan pick`** — built-in fuzzy picker (nucleo engine): fuzzy-find tracks, albums, or artists and play immediately. `--album`/`--artist` modes with drill-down flows. No external dependencies (fzf removed)
 - **`koan cache status/clear`** — view cache size + file count, nuke all cached downloads (clears DB cached_path too)
-- **MultiProgress playback UI** — parallel download spinners render cleanly alongside the playback progress bar, track changes don't stomp the display, persistent controls bar
+- **Queue display** — full-screen playback UI replaces indicatif progress bars. Shows now-playing info, progress bar, and the full queue with download status icons (`..` downloading, `!!` failed). Edit mode (`e`) lets you navigate, delete (`d`), and reorder (`J`/`K`) tracks in the queue
 - **Previous track** — `<` goes back through play history, `>` skips forward. History stack in player tracks what's been played
 - **Inline picker** — press `p`/`a`/`r` during playback to fuzzy-pick tracks/albums/artists and append to queue. Runs in-process — playback continues uninterrupted, no terminal mode switching
 - **Lazy parallel downloads** — first track plays immediately, remaining tracks download in parallel via rayon and enqueue as they complete

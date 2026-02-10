@@ -7,46 +7,45 @@ use std::time::Duration;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::engine::{ArgValueCandidates, CompletionCandidate};
 use clap_complete::env::CompleteEnv;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use koan_core::audio::{buffer, device};
 use koan_core::config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::player::Player;
 
-// --- MultiProgress-aware logger ---
-// Routes log output through mp.println() during playback so it doesn't stomp the progress bars.
-// Falls back to stderr when no MultiProgress is registered.
+// --- Log buffer ---
+// During playback, log messages are buffered and drained by the queue display.
+// Outside playback, they go straight to stderr.
 
-static LOGGER: OnceLock<MpLogger> = OnceLock::new();
+static LOGGER: OnceLock<BufferedLogger> = OnceLock::new();
 
-struct MpLogger {
-    mp: Mutex<Option<Arc<MultiProgress>>>,
+struct BufferedLogger {
+    buffer: Mutex<Option<Arc<Mutex<Vec<String>>>>>,
 }
 
-impl MpLogger {
+impl BufferedLogger {
     fn init() {
-        let logger = LOGGER.get_or_init(|| MpLogger {
-            mp: Mutex::new(None),
+        let logger = LOGGER.get_or_init(|| BufferedLogger {
+            buffer: Mutex::new(None),
         });
         log::set_logger(logger).expect("failed to set logger");
         log::set_max_level(log::LevelFilter::Info);
     }
 
-    fn set_mp(mp: Arc<MultiProgress>) {
+    fn set_buffer(buf: Arc<Mutex<Vec<String>>>) {
         if let Some(logger) = LOGGER.get() {
-            *logger.mp.lock().unwrap() = Some(mp);
+            *logger.buffer.lock().unwrap() = Some(buf);
         }
     }
 
-    fn clear_mp() {
+    fn clear_buffer() {
         if let Some(logger) = LOGGER.get() {
-            *logger.mp.lock().unwrap() = None;
+            *logger.buffer.lock().unwrap() = None;
         }
     }
 }
 
-impl log::Log for MpLogger {
+impl log::Log for BufferedLogger {
     fn enabled(&self, metadata: &log::Metadata) -> bool {
         metadata.level() <= log::Level::Info
     }
@@ -60,8 +59,8 @@ impl log::Log for MpLogger {
             record.level().as_str().to_lowercase(),
             record.args()
         );
-        if let Some(mp) = self.mp.lock().unwrap().as_ref() {
-            mp.println(&msg).ok();
+        if let Some(buf) = self.buffer.lock().unwrap().as_ref() {
+            buf.lock().unwrap().push(msg);
         } else {
             eprintln!("{}", msg);
         }
@@ -70,6 +69,7 @@ impl log::Log for MpLogger {
     fn flush(&self) {}
 }
 mod picker;
+mod queue_display;
 
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, SharedPlayerState};
@@ -189,7 +189,7 @@ fn main() {
     // Dynamic shell completions — handles COMPLETE=zsh/bash/fish env var.
     CompleteEnv::with_factory(Cli::command).complete();
 
-    MpLogger::init();
+    BufferedLogger::init();
 
     let cli = Cli::parse();
 
@@ -267,6 +267,8 @@ enum Event {
 }
 
 fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i64>) {
+    use queue_display::UiMode;
+
     // Gather track IDs to resolve, or raw file paths.
     let track_ids: Option<Vec<i64>> = if let Some(album_id) = album {
         let db = open_db();
@@ -296,28 +298,30 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
         None
     };
 
-    // MultiProgress owns all bars — downloads + playback render cleanly together.
-    let mp = Arc::new(MultiProgress::new());
-    MpLogger::set_mp(mp.clone());
+    // Shared log buffer — background threads push, render loop drains.
+    let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    BufferedLogger::set_buffer(log_buffer.clone());
+
     let (state, tx) = Player::spawn();
 
     if let Some(ids) = track_ids {
         // Resolve first track immediately, start playback, download rest in background.
-        let first_path = resolve_single_track(ids[0], Some(&mp));
+        let first_path = resolve_single_track(ids[0], Some(&log_buffer), Some(&state));
         tx.send(PlayerCommand::Play(first_path))
             .expect("player thread died");
 
         if ids.len() > 1 {
             let remaining = ids[1..].to_vec();
             let tx_bg = tx.clone();
-            let mp_bg = mp.clone();
+            let log_bg = log_buffer.clone();
+            let state_bg = state.clone();
             std::thread::Builder::new()
                 .name("koan-resolve".into())
                 .spawn(move || {
                     use rayon::prelude::*;
                     let resolved: Vec<PathBuf> = remaining
                         .par_iter()
-                        .map(|&id| resolve_single_track(id, Some(&mp_bg)))
+                        .map(|&id| resolve_single_track(id, Some(&log_bg), Some(&state_bg)))
                         .collect();
                     for path in resolved {
                         if tx_bg.send(PlayerCommand::Enqueue(path)).is_err() {
@@ -345,8 +349,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
 
     wait_for_playing(&state);
 
-    let mut pb = make_playback_bar(&mp);
-    let mut controls = make_controls_bar(&mp);
+    let mut display = queue_display::QueueDisplay::new(state.clone());
 
     let quit = Arc::new(AtomicBool::new(false));
     let picking = Arc::new(AtomicBool::new(false));
@@ -389,150 +392,197 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
         })
         .expect("failed to spawn tick thread");
 
-    let mut current_track: Option<PathBuf> = None;
-    update_progress_bar(&mp, &pb, &state, &mut current_track);
+    display.render();
 
     while let Ok(event) = ev_rx.recv() {
         match event {
             Event::Tick => {
-                update_progress_bar(&mp, &pb, &state, &mut current_track);
-                if state.playback_state() == PlaybackState::Stopped
-                    && state.track_info().is_none()
-                    && current_track.is_some()
+                // Drain log buffer into display.
                 {
-                    pb.finish_and_clear();
-                    controls.finish_and_clear();
-                    mp.println(format!("{}", "done.".dimmed())).ok();
+                    let mut logs = log_buffer.lock().unwrap();
+                    for msg in logs.drain(..) {
+                        display.log(msg);
+                    }
+                }
+                display.render();
+
+                if state.playback_state() == PlaybackState::Stopped && state.track_info().is_none()
+                {
+                    display.clear();
+                    println!("{}", "done.".dimmed());
                     quit.store(true, Ordering::Relaxed);
                     break;
                 }
             }
-            Event::Key(byte) => match byte {
-                b'q' | 3 => {
-                    tx.send(PlayerCommand::Stop).ok();
-                    pb.finish_and_clear();
-                    controls.finish_and_clear();
-                    mp.println(format!("{}", "stopped.".dimmed())).ok();
-                    quit.store(true, Ordering::Relaxed);
-                    break;
-                }
-                b'n' | b'>' => {
-                    tx.send(PlayerCommand::NextTrack).ok();
-                }
-                b'<' => {
-                    tx.send(PlayerCommand::PrevTrack).ok();
-                }
-                b' ' => {
-                    if state.playback_state() == PlaybackState::Playing {
-                        tx.send(PlayerCommand::Pause).ok();
-                    } else {
-                        tx.send(PlayerCommand::Resume).ok();
-                    }
-                }
-                b',' | b'.' => {
-                    let pos = state.position_ms();
-                    let new_pos = if byte == b'.' {
-                        pos.saturating_add(10_000)
-                    } else {
-                        pos.saturating_sub(10_000)
-                    };
-                    tx.send(PlayerCommand::Seek(new_pos)).ok();
-                }
-                b'p' | b'a' | b'r' => {
-                    // Hide bars, run in-process picker, restore bars.
-                    // Playback continues uninterrupted.
-                    picking.store(true, Ordering::Relaxed);
-                    pb.finish_and_clear();
-                    controls.finish_and_clear();
-
-                    let ids = match byte {
-                        b'p' => inline_pick_tracks(&ev_rx),
-                        b'a' => inline_pick_album(&ev_rx),
-                        b'r' => inline_pick_artist(&ev_rx),
-                        _ => unreachable!(),
-                    };
-
-                    picking.store(false, Ordering::Relaxed);
-                    current_track = None;
-                    pb = make_playback_bar(&mp);
-                    controls = make_controls_bar(&mp);
-                    update_progress_bar(&mp, &pb, &state, &mut current_track);
-
-                    // Resolve and enqueue selected tracks in background.
-                    if !ids.is_empty() {
-                        let count = ids.len();
-                        let tx_bg = tx.clone();
-                        let mp_bg = mp.clone();
-                        std::thread::Builder::new()
-                            .name("koan-enqueue".into())
-                            .spawn(move || {
-                                for id in ids {
-                                    let path = resolve_single_track(id, Some(&mp_bg));
-                                    if tx_bg.send(PlayerCommand::Enqueue(path)).is_err() {
-                                        break;
+            Event::Key(byte) => {
+                if display.mode() == UiMode::Edit {
+                    // --- Edit mode keys ---
+                    match byte {
+                        0x1b => {
+                            // Could be Esc or arrow key sequence.
+                            match ev_rx.recv_timeout(Duration::from_millis(50)) {
+                                Ok(Event::Key(b'[')) => {
+                                    if let Ok(Event::Key(arrow)) = ev_rx.recv() {
+                                        match arrow {
+                                            b'A' => display.move_cursor_up(),
+                                            b'B' => display.move_cursor_down(),
+                                            _ => {}
+                                        }
                                     }
                                 }
-                                mp_bg
-                                    .println(format!(
-                                        "{} {} track{} queued",
-                                        "✓".green(),
-                                        count,
-                                        if count == 1 { "" } else { "s" },
-                                    ))
-                                    .ok();
-                            })
-                            .ok();
-                    }
-                }
-                0x1b => {
-                    if let (Ok(Event::Key(b'[')), Ok(Event::Key(arrow))) =
-                        (ev_rx.recv(), ev_rx.recv())
-                    {
-                        let pos = state.position_ms();
-                        match arrow {
-                            b'C' => {
-                                tx.send(PlayerCommand::Seek(pos.saturating_add(10_000)))
-                                    .ok();
+                                _ => {
+                                    // Plain Esc — exit edit mode.
+                                    display.set_mode(UiMode::Normal);
+                                }
                             }
-                            b'D' => {
-                                tx.send(PlayerCommand::Seek(pos.saturating_sub(10_000)))
-                                    .ok();
-                            }
-                            _ => {}
                         }
+                        b'd' | 0x7f => {
+                            // Delete track at cursor.
+                            let idx = display.cursor();
+                            tx.send(PlayerCommand::RemoveFromQueue(idx)).ok();
+                        }
+                        b'J' => {
+                            // Move track down.
+                            let idx = display.cursor();
+                            let queue = state.queue_snapshot();
+                            if idx + 1 < queue.len() {
+                                tx.send(PlayerCommand::MoveInQueue {
+                                    from: idx,
+                                    to: idx + 1,
+                                })
+                                .ok();
+                                display.move_cursor_down();
+                            }
+                        }
+                        b'K' => {
+                            // Move track up.
+                            let idx = display.cursor();
+                            if idx > 0 {
+                                tx.send(PlayerCommand::MoveInQueue {
+                                    from: idx,
+                                    to: idx - 1,
+                                })
+                                .ok();
+                                display.move_cursor_up();
+                            }
+                        }
+                        b'q' | 3 => {
+                            // Quit from edit mode too.
+                            tx.send(PlayerCommand::Stop).ok();
+                            display.clear();
+                            println!("{}", "stopped.".dimmed());
+                            quit.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        _ => {}
+                    }
+                } else {
+                    // --- Normal mode keys ---
+                    match byte {
+                        b'q' | 3 => {
+                            tx.send(PlayerCommand::Stop).ok();
+                            display.clear();
+                            println!("{}", "stopped.".dimmed());
+                            quit.store(true, Ordering::Relaxed);
+                            break;
+                        }
+                        b'n' | b'>' => {
+                            tx.send(PlayerCommand::NextTrack).ok();
+                        }
+                        b'<' => {
+                            tx.send(PlayerCommand::PrevTrack).ok();
+                        }
+                        b' ' => {
+                            if state.playback_state() == PlaybackState::Playing {
+                                tx.send(PlayerCommand::Pause).ok();
+                            } else {
+                                tx.send(PlayerCommand::Resume).ok();
+                            }
+                        }
+                        b',' | b'.' => {
+                            let pos = state.position_ms();
+                            let new_pos = if byte == b'.' {
+                                pos.saturating_add(10_000)
+                            } else {
+                                pos.saturating_sub(10_000)
+                            };
+                            tx.send(PlayerCommand::Seek(new_pos)).ok();
+                        }
+                        b'e' => {
+                            display.set_mode(UiMode::Edit);
+                        }
+                        b'p' | b'a' | b'r' => {
+                            // Hide display, run in-process picker, restore.
+                            picking.store(true, Ordering::Relaxed);
+                            display.clear();
+
+                            let ids = match byte {
+                                b'p' => inline_pick_tracks(&ev_rx),
+                                b'a' => inline_pick_album(&ev_rx),
+                                b'r' => inline_pick_artist(&ev_rx),
+                                _ => unreachable!(),
+                            };
+
+                            picking.store(false, Ordering::Relaxed);
+                            display.reset();
+                            display.render();
+
+                            // Resolve and enqueue selected tracks in background.
+                            if !ids.is_empty() {
+                                let count = ids.len();
+                                let tx_bg = tx.clone();
+                                let log_bg = log_buffer.clone();
+                                let state_bg = state.clone();
+                                std::thread::Builder::new()
+                                    .name("koan-enqueue".into())
+                                    .spawn(move || {
+                                        for id in ids {
+                                            let path = resolve_single_track(
+                                                id,
+                                                Some(&log_bg),
+                                                Some(&state_bg),
+                                            );
+                                            if tx_bg.send(PlayerCommand::Enqueue(path)).is_err() {
+                                                break;
+                                            }
+                                        }
+                                        log_bg.lock().unwrap().push(format!(
+                                            "{} {} track{} queued",
+                                            "+".green(),
+                                            count,
+                                            if count == 1 { "" } else { "s" },
+                                        ));
+                                    })
+                                    .ok();
+                            }
+                        }
+                        0x1b => {
+                            if let (Ok(Event::Key(b'[')), Ok(Event::Key(arrow))) =
+                                (ev_rx.recv(), ev_rx.recv())
+                            {
+                                let pos = state.position_ms();
+                                match arrow {
+                                    b'C' => {
+                                        tx.send(PlayerCommand::Seek(pos.saturating_add(10_000)))
+                                            .ok();
+                                    }
+                                    b'D' => {
+                                        tx.send(PlayerCommand::Seek(pos.saturating_sub(10_000)))
+                                            .ok();
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                _ => {}
-            },
+            }
         }
     }
 
-    MpLogger::clear_mp();
+    BufferedLogger::clear_buffer();
     std::thread::sleep(Duration::from_millis(100));
-}
-
-fn make_playback_bar(mp: &MultiProgress) -> ProgressBar {
-    let pb = mp.add(ProgressBar::new(0));
-    pb.set_style(
-        ProgressStyle::with_template("{prefix} {wide_bar:.cyan/dim} {msg}")
-            .unwrap()
-            .progress_chars("━╸─"),
-    );
-    pb
-}
-
-fn make_controls_bar(mp: &MultiProgress) -> ProgressBar {
-    let bar = mp.add(ProgressBar::new(0));
-    bar.set_style(ProgressStyle::with_template("{msg}").unwrap());
-    bar.set_message(format!(
-        "{}  {}  {}  {}  {}",
-        "[space]".dimmed(),
-        "[< >] skip".dimmed(),
-        "[,/.] seek".dimmed(),
-        "[p]track [a]lbum [r]artist".dimmed(),
-        "[q] quit".dimmed(),
-    ));
-    bar
 }
 
 // --- Inline pickers (during playback) ---
@@ -723,50 +773,6 @@ fn make_artist_picker_items(artists: &[queries::ArtistRow]) -> Vec<PickerItem> {
             match_text: a.name.clone(),
         })
         .collect()
-}
-
-fn update_progress_bar(
-    mp: &MultiProgress,
-    pb: &ProgressBar,
-    state: &Arc<SharedPlayerState>,
-    current_track: &mut Option<PathBuf>,
-) {
-    let Some(info) = state.track_info() else {
-        return;
-    };
-
-    if current_track.as_ref() != Some(&info.path) {
-        let display_name = info.path.file_stem().unwrap_or_default().to_string_lossy();
-
-        // Use mp.println so output goes above all managed bars — no redraw stomping.
-        mp.println(format!("\n{}", display_name.bold())).ok();
-        mp.println(format!(
-            "  {} {} {} {} {}",
-            info.codec.yellow().dimmed(),
-            "|".dimmed(),
-            format!("{}Hz", info.sample_rate).dimmed(),
-            format!("{}bit", info.bit_depth).dimmed(),
-            format!("{}ch", info.channels).dimmed(),
-        ))
-        .ok();
-        pb.set_length(info.duration_ms);
-        *current_track = Some(info.path.clone());
-    }
-
-    let pos = state.position_ms();
-    let status = match state.playback_state() {
-        PlaybackState::Playing => "▶".cyan().to_string(),
-        PlaybackState::Paused => "⏸".yellow().to_string(),
-        PlaybackState::Stopped => "■".dimmed().to_string(),
-    };
-
-    pb.set_prefix(status);
-    pb.set_position(pos);
-    pb.set_message(format!(
-        "{}/{}",
-        format_time(pos),
-        format_time(info.duration_ms).dimmed()
-    ));
 }
 
 fn wait_for_playing(state: &Arc<SharedPlayerState>) {
@@ -1688,8 +1694,14 @@ fn cache_path_for_track(
 
 /// Resolve a single track ID to a playback path.
 /// Downloads from remote if needed, using structured cache paths.
-/// When `mp` is provided, creates a spinner bar for download progress.
-fn resolve_single_track(id: i64, mp: Option<&MultiProgress>) -> PathBuf {
+/// Updates track metadata in shared state for queue display.
+fn resolve_single_track(
+    id: i64,
+    log_buf: Option<&Arc<Mutex<Vec<String>>>>,
+    shared_state: Option<&Arc<SharedPlayerState>>,
+) -> PathBuf {
+    use koan_core::player::state::{QueueEntryMeta, QueueEntryStatus};
+
     let db = open_db();
     let cfg = config::Config::load().unwrap_or_default();
 
@@ -1732,30 +1744,33 @@ fn resolve_single_track(id: i64, mp: Option<&MultiProgress>) -> PathBuf {
             let dest = cache_path_for_track(&cache_dir, &track, album_date.as_deref());
 
             if dest.exists() {
+                // Register metadata even for cached tracks.
+                if let Some(state) = shared_state {
+                    state.set_track_meta(
+                        dest.clone(),
+                        QueueEntryMeta {
+                            title: track.title.clone(),
+                            artist: track.artist_name.clone(),
+                            duration_ms: track.duration_ms.map(|d| d as u64),
+                            status: QueueEntryStatus::Queued,
+                        },
+                    );
+                }
                 return dest;
             }
 
-            // Create a spinner bar for this download, managed by MultiProgress.
-            let label = format!(
-                "{} {} — {}",
-                "↓".cyan(),
-                track.title.bold(),
-                track.artist_name.dimmed(),
-            );
-            let spinner = if let Some(mp) = mp {
-                let sp = mp.add(ProgressBar::new_spinner());
-                sp.set_style(
-                    ProgressStyle::with_template("{spinner:.cyan} {msg}")
-                        .unwrap()
-                        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+            // Register as downloading in shared state.
+            if let Some(state) = shared_state {
+                state.set_track_meta(
+                    dest.clone(),
+                    QueueEntryMeta {
+                        title: track.title.clone(),
+                        artist: track.artist_name.clone(),
+                        duration_ms: track.duration_ms.map(|d| d as u64),
+                        status: QueueEntryStatus::Downloading,
+                    },
                 );
-                sp.set_message(label.clone());
-                sp.enable_steady_tick(Duration::from_millis(80));
-                Some(sp)
-            } else {
-                eprintln!("{}", label);
-                None
-            };
+            }
 
             let password = get_remote_password(&cfg);
             let client = koan_core::remote::client::SubsonicClient::new(
@@ -1766,29 +1781,32 @@ fn resolve_single_track(id: i64, mp: Option<&MultiProgress>) -> PathBuf {
 
             let result = client.download(&remote_id, &dest);
 
-            if let Some(sp) = &spinner {
-                sp.finish_and_clear();
-            }
-
             if let Err(e) = result {
-                if let Some(mp) = mp {
-                    mp.println(format!("{} {} — {}", "✗".red().bold(), track.title, e))
-                        .ok();
+                if let Some(state) = shared_state {
+                    state.update_track_status(&dest, QueueEntryStatus::Failed);
+                }
+                let msg = format!("{} {} — {}", "x".red().bold(), track.title, e);
+                if let Some(buf) = log_buf {
+                    buf.lock().unwrap().push(msg);
                 } else {
-                    eprintln!("{} {}", "download failed:".red().bold(), e);
+                    eprintln!("{}", msg);
                 }
                 std::process::exit(1);
             }
 
-            // Log completion above the bars.
-            if let Some(mp) = mp {
-                mp.println(format!(
-                    "{} {} — {}",
-                    "✓".green(),
-                    track.title,
-                    track.artist_name.dimmed(),
-                ))
-                .ok();
+            // Mark as queued (downloaded successfully).
+            if let Some(state) = shared_state {
+                state.update_track_status(&dest, QueueEntryStatus::Queued);
+            }
+
+            let msg = format!(
+                "{} {} — {}",
+                "+".green(),
+                track.title,
+                track.artist_name.dimmed(),
+            );
+            if let Some(buf) = log_buf {
+                buf.lock().unwrap().push(msg);
             }
 
             let _ = queries::set_cached_path(&db.conn, id, &dest.to_string_lossy());

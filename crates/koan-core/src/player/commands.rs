@@ -13,9 +13,14 @@ pub enum PlayerCommand {
     Pause,
     Resume,
     Stop,
-    Seek(u64), // position in ms
-    NextTrack, // skip to next in queue
-    PrevTrack, // go back to previous track
+    Seek(u64),              // position in ms
+    NextTrack,              // skip to next in queue
+    PrevTrack,              // go back to previous track
+    RemoveFromQueue(usize), // remove track at index
+    MoveInQueue {
+        from: usize,
+        to: usize,
+    }, // reorder track
 }
 
 /// Bounded SPSC command channel.

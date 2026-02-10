@@ -59,4 +59,25 @@ impl TrackQueue {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
+
+    /// Clone all queued paths for UI display. Non-destructive.
+    pub fn snapshot(&self) -> Vec<PathBuf> {
+        self.tracks.lock().unwrap().iter().cloned().collect()
+    }
+
+    /// Remove the track at `index`. Returns it if valid.
+    pub fn remove(&self, index: usize) -> Option<PathBuf> {
+        self.tracks.lock().unwrap().remove(index)
+    }
+
+    /// Move a track from one position to another.
+    pub fn move_track(&self, from: usize, to: usize) {
+        let mut q = self.tracks.lock().unwrap();
+        if from < q.len()
+            && to < q.len()
+            && let Some(track) = q.remove(from)
+        {
+            q.insert(to, track);
+        }
+    }
 }

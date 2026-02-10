@@ -13,6 +13,7 @@ use crate::audio::{buffer, device, engine};
 use buffer::DecodeCallbacks;
 use commands::{CommandChannel, PlayerCommand};
 use queue::TrackQueue;
+use state::QueueEntry;
 use state::{PlaybackState, SharedPlayerState, TrackInfo};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
@@ -86,6 +87,7 @@ impl Player {
 
         // Start playing the first track — the decode thread will handle the rest.
         self.start_playback(paths[0].as_ref(), 0)?;
+        self.rebuild_queue_snapshot();
         Ok(())
     }
 
@@ -222,6 +224,7 @@ impl Player {
                 self.stop_playback_no_clear();
             }
         }
+        self.rebuild_queue_snapshot();
     }
 
     /// Go back to previous track. Pushes current track back onto queue front.
@@ -247,6 +250,7 @@ impl Player {
         if let Err(e) = self.start_playback(&prev, 0) {
             log::error!("prev track failed: {}", e);
         }
+        self.rebuild_queue_snapshot();
     }
 
     /// Pause playback.
@@ -269,6 +273,7 @@ impl Player {
     pub fn stop(&mut self) {
         self.queue.clear();
         self.stop_playback_no_clear();
+        self.rebuild_queue_snapshot();
     }
 
     /// Stop playback without clearing the queue.
@@ -285,6 +290,46 @@ impl Player {
     /// Append a track to the queue without interrupting playback.
     pub fn enqueue(&mut self, path: &Path) {
         self.queue.push_back(path.to_path_buf());
+        self.rebuild_queue_snapshot();
+    }
+
+    /// Remove a track from the queue by index.
+    pub fn remove_from_queue(&mut self, index: usize) {
+        self.queue.remove(index);
+        self.rebuild_queue_snapshot();
+    }
+
+    /// Move a track within the queue.
+    pub fn move_in_queue(&mut self, from: usize, to: usize) {
+        self.queue.move_track(from, to);
+        self.rebuild_queue_snapshot();
+    }
+
+    /// Rebuild the shadow queue snapshot for the UI.
+    fn rebuild_queue_snapshot(&self) {
+        let paths = self.queue.snapshot();
+        let entries: Vec<QueueEntry> = paths
+            .into_iter()
+            .map(|path| {
+                let meta = self.shared_state.track_meta(&path);
+                QueueEntry {
+                    title: meta.as_ref().map(|m| m.title.clone()).unwrap_or_else(|| {
+                        path.file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into()
+                    }),
+                    artist: meta.as_ref().map(|m| m.artist.clone()).unwrap_or_default(),
+                    duration_ms: meta.as_ref().and_then(|m| m.duration_ms),
+                    status: meta
+                        .as_ref()
+                        .map(|m| m.status)
+                        .unwrap_or(state::QueueEntryStatus::Queued),
+                    path,
+                }
+            })
+            .collect();
+        self.shared_state.set_queue_snapshot(entries);
     }
 
     /// Process a single command.
@@ -307,6 +352,8 @@ impl Player {
             PlayerCommand::Seek(pos) => self.seek(pos),
             PlayerCommand::NextTrack => self.next_track(),
             PlayerCommand::PrevTrack => self.prev_track(),
+            PlayerCommand::RemoveFromQueue(index) => self.remove_from_queue(index),
+            PlayerCommand::MoveInQueue { from, to } => self.move_in_queue(from, to),
         }
     }
 
