@@ -17,4 +17,5 @@ koan-core = { path = "../koan-core" }
 libc = "0.2"
 log = "0.4"
 rpassword = "7.4"
+rusqlite = { version = "0.38", features = ["bundled-full"] }
 toml = "0.9"

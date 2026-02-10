@@ -24,11 +24,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Play audio file(s)
+    /// Play audio file(s) or tracks by ID
     Play {
         /// Paths to audio files
-        #[arg(required = true)]
+        #[arg(required_unless_present = "ids")]
         paths: Vec<PathBuf>,
+        /// Track IDs from the library database
+        #[arg(long = "id", num_args = 1..)]
+        ids: Vec<i64>,
     },
     /// Probe a file and show format info
     Probe {
@@ -80,6 +83,11 @@ enum RemoteCommands {
 }
 
 fn main() {
+    // Ensure Ctrl+C kills the process immediately, even during blocking I/O.
+    unsafe {
+        libc::signal(libc::SIGINT, libc::SIG_DFL);
+    }
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
         .init();
@@ -87,7 +95,7 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Play { paths } => cmd_play(&paths),
+        Commands::Play { paths, ids } => cmd_play(&paths, &ids),
         Commands::Probe { path } => cmd_probe(&path),
         Commands::Devices => cmd_devices(),
         Commands::Scan { path, force } => cmd_scan(path.as_deref(), force),
@@ -112,13 +120,19 @@ enum Event {
     Tick,
 }
 
-fn cmd_play(paths: &[PathBuf]) {
-    for path in paths {
-        if !path.exists() {
-            eprintln!("file not found: {}", path.display());
-            std::process::exit(1);
+fn cmd_play(paths: &[PathBuf], ids: &[i64]) {
+    let paths: Vec<PathBuf> = if !ids.is_empty() {
+        resolve_track_ids(ids)
+    } else {
+        for path in paths {
+            if !path.exists() {
+                eprintln!("file not found: {}", path.display());
+                std::process::exit(1);
+            }
         }
-    }
+        paths.to_vec()
+    };
+    let paths = &paths;
 
     let (state, tx) = Player::spawn();
 
@@ -350,8 +364,8 @@ fn cmd_search(query: &str) {
                     _ => "",
                 };
                 println!(
-                    "  {} - {} - {}{}",
-                    t.artist_name, t.album_title, t.title, source_tag
+                    "  [{}] {} - {} - {}{}",
+                    t.id, t.artist_name, t.album_title, t.title, source_tag
                 );
                 if let Some(ref codec) = t.codec {
                     let rate = t
@@ -366,7 +380,7 @@ fn cmd_search(query: &str) {
                         .duration_ms
                         .map(|d| format!(" {}", format_time(d as u64)))
                         .unwrap_or_default();
-                    println!("    {}{}{}{}", codec, rate, depth, dur);
+                    println!("       {}{}{}{}", codec, rate, depth, dur);
                 }
             }
         }
@@ -398,11 +412,25 @@ fn cmd_library() {
 }
 
 fn cmd_config() {
-    let cfg = config::Config::load().unwrap_or_default();
-    println!("config: {}", config::config_file_path().display());
-    println!("data:   {}", config::data_dir().display());
-    println!("db:     {}", config::db_path().display());
+    let base_path = config::config_file_path();
+    let local_path = config::config_local_file_path();
+
+    println!("sources:");
+    if base_path.exists() {
+        println!("  config:       {}", base_path.display());
+    } else {
+        println!("  config:       {} (not found)", base_path.display());
+    }
+    if local_path.exists() {
+        println!("  config.local: {}", local_path.display());
+    } else {
+        println!("  config.local: {} (not found)", local_path.display());
+    }
+    println!("  db:           {}", config::db_path().display());
     println!();
+
+    println!("resolved:");
+    let cfg = config::Config::load().unwrap_or_default();
     match toml::to_string_pretty(&cfg) {
         Ok(s) => print!("{}", s),
         Err(e) => eprintln!("failed to serialize config: {}", e),
@@ -577,6 +605,93 @@ fn cmd_devices() {
 }
 
 // --- Helpers ---
+
+fn resolve_track_ids(ids: &[i64]) -> Vec<PathBuf> {
+    let db = open_db();
+    let cfg = config::Config::load().unwrap_or_default();
+    let mut paths = Vec::new();
+
+    for &id in ids {
+        match queries::resolve_playback_path(&db.conn, id) {
+            Ok(Some(queries::PlaybackSource::Local(p))) => paths.push(p),
+            Ok(Some(queries::PlaybackSource::Cached(p))) => paths.push(p),
+            Ok(Some(queries::PlaybackSource::Remote(_url))) => {
+                // Download to cache, then play from there.
+                let cache_dir = cfg.cache_dir();
+                let dest = cache_dir.join(format!("track_{}", id));
+                if dest.exists() {
+                    paths.push(dest);
+                    continue;
+                }
+
+                eprintln!("downloading track {} from remote...", id);
+                let password = match koan_core::credentials::get_password(&cfg.remote.url) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("failed to get password from Keychain: {}", e);
+                        std::process::exit(1);
+                    }
+                };
+                let client = koan_core::remote::client::SubsonicClient::new(
+                    &cfg.remote.url,
+                    &cfg.remote.username,
+                    &password,
+                );
+
+                // Get the remote_id for this track.
+                let remote_id: Option<String> = db
+                    .conn
+                    .query_row(
+                        "SELECT remote_id FROM tracks WHERE id = ?1",
+                        rusqlite::params![id],
+                        |row| row.get(0),
+                    )
+                    .ok()
+                    .flatten();
+
+                match remote_id {
+                    Some(rid) => {
+                        // Determine file extension from suffix/codec.
+                        let suffix: Option<String> = db
+                            .conn
+                            .query_row(
+                                "SELECT codec FROM tracks WHERE id = ?1",
+                                rusqlite::params![id],
+                                |row| row.get(0),
+                            )
+                            .ok()
+                            .flatten();
+                        let ext = suffix
+                            .as_deref()
+                            .map(|s| s.to_lowercase())
+                            .unwrap_or_else(|| "flac".into());
+                        let dest = cache_dir.join(format!("track_{}.{}", id, ext));
+
+                        if let Err(e) = client.download(&rid, &dest) {
+                            eprintln!("download failed for track {}: {}", id, e);
+                            std::process::exit(1);
+                        }
+                        paths.push(dest);
+                    }
+                    None => {
+                        eprintln!("track {} has no remote_id", id);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            Ok(None) => {
+                eprintln!("track {} not found", id);
+                std::process::exit(1);
+            }
+            Err(e) => {
+                eprintln!("failed to resolve track {}: {}", id, e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    paths
+}
 
 fn open_db() -> Database {
     Database::open_default().unwrap_or_else(|e| {

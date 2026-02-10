@@ -1245,6 +1245,7 @@ dependencies = [
  "libc",
  "log",
  "rpassword",
+ "rusqlite",
  "toml",
 ]
 

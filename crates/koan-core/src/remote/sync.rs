@@ -1,7 +1,8 @@
 use crate::db::connection::Database;
 use crate::db::queries::{self, TrackMeta};
-use crate::remote::client::SubsonicClient;
+use crate::remote::client::{SubsonicAlbum, SubsonicAlbumFull, SubsonicClient};
 
+use rayon::prelude::*;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -22,53 +23,55 @@ pub struct SyncResult {
 
 /// Pull the entire Navidrome/Subsonic library into the local DB as remote tracks.
 ///
-/// Existing remote tracks are cleared first (full re-sync). Local tracks are
-/// never touched. After sync, we try to match remote tracks against local ones
-/// — if a local file has the same artist + album + title + track#, the local
-/// path takes priority for playback.
+/// Pipeline: paginate album list → fetch album details in parallel (rayon) →
+/// batch-write each page in a single transaction. Local tracks are never touched.
+/// After sync, matches remote tracks against local (same artist+album+title+track#)
+/// so local files take playback priority.
 pub fn sync_library(db: &Database, client: &SubsonicClient) -> Result<SyncResult, SyncError> {
     let mut result = SyncResult::default();
 
-    // Clear old remote-only tracks. This doesn't touch local or cached tracks.
+    // Clear old remote-only tracks. Doesn't touch local or cached.
     let removed = queries::remove_tracks_by_source(&db.conn, "remote")?;
     if removed > 0 {
         log::info!("cleared {} stale remote tracks", removed);
     }
 
-    db.conn
-        .execute_batch("BEGIN")
-        .map_err(crate::db::connection::DbError::from)?;
-
-    // Fetch all artists from the server.
+    // Count artists for the result (cheap call).
     let artists = client.get_artists()?;
     result.artists_synced = artists.len();
     log::info!("syncing {} artists from remote", artists.len());
 
-    // We don't need to iterate artists individually — getAlbumList2 gives us
-    // everything with full track info. Artists get created via upsert_track.
-
-    // Paginate through all albums on the server.
+    // Paginate through all albums, fetch details in parallel, batch write.
     let mut offset = 0u32;
     let page_size = 500u32;
 
     loop {
-        let albums = client.get_album_list("alphabeticalByName", page_size, offset)?;
-        if albums.is_empty() {
+        let album_summaries = client.get_album_list("alphabeticalByName", page_size, offset)?;
+        if album_summaries.is_empty() {
             break;
         }
 
-        for album_summary in &albums {
-            // Fetch full album with tracks.
-            let album = match client.get_album(&album_summary.id) {
-                Ok(a) => a,
+        let page_count = album_summaries.len();
+
+        // Parallel fetch: get full album details (with tracks) concurrently.
+        let fetched: Vec<(SubsonicAlbum, SubsonicAlbumFull)> = album_summaries
+            .into_par_iter()
+            .filter_map(|summary| match client.get_album(&summary.id) {
+                Ok(full) => Some((summary, full)),
                 Err(e) => {
-                    log::warn!("failed to fetch album {}: {}", album_summary.id, e);
-                    continue;
+                    log::warn!("failed to fetch album {}: {}", summary.id, e);
+                    None
                 }
-            };
+            })
+            .collect();
 
+        // Batch write in a single transaction.
+        db.conn
+            .execute_batch("BEGIN")
+            .map_err(crate::db::connection::DbError::from)?;
+
+        for (_, album) in &fetched {
             result.albums_synced += 1;
-
             let artist_name = album.artist.as_deref().unwrap_or("Unknown Artist");
 
             for song in &album.song {
@@ -85,7 +88,7 @@ pub fn sync_library(db: &Database, client: &SubsonicClient) -> Result<SyncResult
                     track_number: song.track,
                     genre: song.genre.clone().or_else(|| album.genre.clone()),
                     label: None,
-                    duration_ms: song.duration.map(|d| d * 1000), // Subsonic returns seconds
+                    duration_ms: song.duration.map(|d| d * 1000),
                     codec: song.suffix.clone(),
                     sample_rate: None,
                     bit_depth: None,
@@ -93,7 +96,7 @@ pub fn sync_library(db: &Database, client: &SubsonicClient) -> Result<SyncResult
                     bitrate: song.bit_rate,
                     size_bytes: None,
                     mtime: None,
-                    path: None, // No local path — it's remote.
+                    path: None,
                     source: "remote".to_string(),
                     remote_id: Some(song.id.clone()),
                     remote_url: Some(client.stream_url(&song.id)),
@@ -106,19 +109,21 @@ pub fn sync_library(db: &Database, client: &SubsonicClient) -> Result<SyncResult
             }
         }
 
-        offset += albums.len() as u32;
-        log::info!("synced {} albums so far...", result.albums_synced);
+        db.conn
+            .execute_batch("COMMIT")
+            .map_err(crate::db::connection::DbError::from)?;
+
+        offset += page_count as u32;
+        log::info!(
+            "synced {} albums ({} tracks) so far...",
+            result.albums_synced,
+            result.tracks_synced
+        );
     }
 
     // Match remote tracks against local ones.
-    // If a local track has the same artist + album + title + track#, mark it
-    // so resolve_playback_path will prefer the local file.
     let matched = match_remote_to_local(&db.conn);
     result.matched_local = matched;
-
-    db.conn
-        .execute_batch("COMMIT")
-        .map_err(crate::db::connection::DbError::from)?;
 
     log::info!(
         "sync complete: {} artists, {} albums, {} tracks, {} matched to local",

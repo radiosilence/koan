@@ -107,6 +107,7 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
     })
 }
 
+/// Map lofty file type to a human-readable codec string.
 fn codec_from_file_type(ft: lofty::file::FileType) -> String {
     match ft {
         lofty::file::FileType::Flac => "FLAC",
@@ -121,4 +122,49 @@ fn codec_from_file_type(ft: lofty::file::FileType) -> String {
         _ => "Unknown",
     }
     .to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_audio_file() {
+        assert!(is_audio_file(Path::new("track.flac")));
+        assert!(is_audio_file(Path::new("track.FLAC")));
+        assert!(is_audio_file(Path::new("track.mp3")));
+        assert!(is_audio_file(Path::new("track.m4a")));
+        assert!(is_audio_file(Path::new("track.ogg")));
+        assert!(is_audio_file(Path::new("track.opus")));
+        assert!(is_audio_file(Path::new("track.wv")));
+        assert!(is_audio_file(Path::new("track.wav")));
+        assert!(is_audio_file(Path::new("track.aiff")));
+        assert!(is_audio_file(Path::new("track.ape")));
+
+        assert!(!is_audio_file(Path::new("cover.jpg")));
+        assert!(!is_audio_file(Path::new("notes.txt")));
+        assert!(!is_audio_file(Path::new("playlist.m3u")));
+        assert!(!is_audio_file(Path::new("track.pdf")));
+        assert!(!is_audio_file(Path::new("noext")));
+    }
+
+    #[test]
+    fn test_is_audio_file_paths() {
+        assert!(is_audio_file(Path::new("/music/artist/album/01.flac")));
+        assert!(!is_audio_file(Path::new("/music/artist/album/cover.png")));
+    }
+
+    #[test]
+    fn test_read_metadata_nonexistent() {
+        let result = read_metadata(Path::new("/nonexistent/track.flac"));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_codec_from_file_type() {
+        assert_eq!(codec_from_file_type(lofty::file::FileType::Flac), "FLAC");
+        assert_eq!(codec_from_file_type(lofty::file::FileType::Mpeg), "MP3");
+        assert_eq!(codec_from_file_type(lofty::file::FileType::Opus), "Opus");
+        assert_eq!(codec_from_file_type(lofty::file::FileType::Wav), "WAV");
+    }
 }

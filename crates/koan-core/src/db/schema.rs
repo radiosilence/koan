@@ -60,8 +60,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             title,
             artist_name,
             album_title,
-            genre,
-            content=''
+            genre
         );
 
         CREATE TABLE IF NOT EXISTS library_folders (

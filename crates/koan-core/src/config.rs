@@ -53,7 +53,7 @@ pub struct RemoteConfig {
     pub username: String,
     /// original | opus-128 | mp3-320
     pub transcode_quality: String,
-    /// Defaults to data_dir()/cache if empty.
+    /// Defaults to config_dir()/cache if empty.
     pub cache_dir: Option<PathBuf>,
 }
 
@@ -90,14 +90,25 @@ impl Default for RemoteConfig {
 }
 
 impl Config {
-    /// Load config from disk, falling back to defaults if missing.
+    /// Load config.toml then overlay config.local.toml on top.
+    /// Local overrides win — use it for machine-specific paths, credentials, etc.
     pub fn load() -> Result<Self, ConfigError> {
-        let path = config_file_path();
-        if !path.exists() {
-            return Ok(Self::default());
+        let base_path = config_file_path();
+        let local_path = config_local_file_path();
+
+        let mut config = if base_path.exists() {
+            let contents = fs::read_to_string(&base_path)?;
+            toml::from_str(&contents)?
+        } else {
+            Self::default()
+        };
+
+        if local_path.exists() {
+            let local_contents = fs::read_to_string(&local_path)?;
+            let local: Config = toml::from_str(&local_contents)?;
+            config.merge(local);
         }
-        let contents = fs::read_to_string(&path)?;
-        let config: Config = toml::from_str(&contents)?;
+
         Ok(config)
     }
 
@@ -119,12 +130,36 @@ impl Config {
         Ok(())
     }
 
-    /// Resolved cache directory — uses explicit setting or defaults to data_dir/cache.
+    /// Merge another config on top — non-default/non-empty values from `other` win.
+    fn merge(&mut self, other: Config) {
+        if !other.library.folders.is_empty() {
+            self.library.folders = other.library.folders;
+        }
+        self.library.watch = other.library.watch;
+        self.playback = other.playback;
+        if other.remote.enabled {
+            self.remote.enabled = true;
+        }
+        if !other.remote.url.is_empty() {
+            self.remote.url = other.remote.url;
+        }
+        if !other.remote.username.is_empty() {
+            self.remote.username = other.remote.username;
+        }
+        if !other.remote.transcode_quality.is_empty() {
+            self.remote.transcode_quality = other.remote.transcode_quality;
+        }
+        if other.remote.cache_dir.is_some() {
+            self.remote.cache_dir = other.remote.cache_dir;
+        }
+    }
+
+    /// Resolved cache directory — uses explicit setting or defaults to config_dir/cache.
     pub fn cache_dir(&self) -> PathBuf {
         self.remote
             .cache_dir
             .clone()
-            .unwrap_or_else(|| data_dir().join("cache"))
+            .unwrap_or_else(|| config_dir().join("cache"))
     }
 }
 
@@ -136,21 +171,140 @@ pub fn config_dir() -> PathBuf {
         .join("koan")
 }
 
-/// `~/.local/share/koan/`
-pub fn data_dir() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".local")
-        .join("share")
-        .join("koan")
-}
-
-/// Path to the config TOML file.
+/// Path to the base config TOML file (committable to dotfiles).
 pub fn config_file_path() -> PathBuf {
     config_dir().join("config.toml")
 }
 
+/// Path to the local override config (gitignored, machine-specific).
+pub fn config_local_file_path() -> PathBuf {
+    config_dir().join("config.local.toml")
+}
+
 /// Path to the database file.
 pub fn db_path() -> PathBuf {
-    data_dir().join("koan.db")
+    config_dir().join("koan.db")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn tmp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("koan-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_defaults() {
+        let cfg = Config::default();
+        assert!(cfg.library.watch);
+        assert!(!cfg.playback.exclusive_mode);
+        assert_eq!(cfg.playback.replaygain, ReplayGainMode::Album);
+        assert!(!cfg.remote.enabled);
+        assert_eq!(cfg.remote.transcode_quality, "original");
+    }
+
+    #[test]
+    fn test_roundtrip_toml() {
+        let cfg = Config::default();
+        let serialized = toml::to_string_pretty(&cfg).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.library.watch, cfg.library.watch);
+        assert_eq!(deserialized.playback.replaygain, cfg.playback.replaygain);
+        assert_eq!(
+            deserialized.remote.transcode_quality,
+            cfg.remote.transcode_quality
+        );
+    }
+
+    #[test]
+    fn test_load_from_file() {
+        let dir = tmp_dir();
+        let path = dir.join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[library]
+folders = ["/tmp/music"]
+watch = false
+
+[playback]
+replaygain = "track"
+"#,
+        )
+        .unwrap();
+
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(cfg.library.folders, vec![PathBuf::from("/tmp/music")]);
+        assert!(!cfg.library.watch);
+        assert_eq!(cfg.playback.replaygain, ReplayGainMode::Track);
+        // Remote should be default since not in file.
+        assert!(!cfg.remote.enabled);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_partial_toml_uses_defaults() {
+        let dir = tmp_dir();
+        let path = dir.join("partial.toml");
+        fs::write(&path, "[playback]\nexclusive_mode = true\n").unwrap();
+
+        let cfg = Config::load_from(&path).unwrap();
+        assert!(cfg.playback.exclusive_mode);
+        // Library should get defaults.
+        assert!(cfg.library.watch);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_merge_local_overrides_base() {
+        let mut base = Config::default();
+        base.library.folders = vec![PathBuf::from("/base/music")];
+        base.remote.url = "https://base.example.com".into();
+
+        let mut local = Config::default();
+        local.library.folders = vec![PathBuf::from("/local/music")];
+        local.remote.enabled = true;
+        local.remote.url = "https://local.example.com".into();
+        local.remote.username = "admin".into();
+
+        base.merge(local);
+
+        assert_eq!(base.library.folders, vec![PathBuf::from("/local/music")]);
+        assert!(base.remote.enabled);
+        assert_eq!(base.remote.url, "https://local.example.com");
+        assert_eq!(base.remote.username, "admin");
+    }
+
+    #[test]
+    fn test_merge_empty_fields_dont_clobber() {
+        let mut base = Config::default();
+        base.remote.url = "https://keep.me".into();
+        base.remote.username = "keepuser".into();
+
+        let local = Config::default(); // empty remote fields
+        base.merge(local);
+
+        // Empty strings shouldn't overwrite.
+        assert_eq!(base.remote.url, "https://keep.me");
+        assert_eq!(base.remote.username, "keepuser");
+    }
+
+    #[test]
+    fn test_cache_dir_default() {
+        let cfg = Config::default();
+        assert!(cfg.cache_dir().ends_with("cache"));
+    }
+
+    #[test]
+    fn test_cache_dir_explicit() {
+        let mut cfg = Config::default();
+        cfg.remote.cache_dir = Some(PathBuf::from("/custom/cache"));
+        assert_eq!(cfg.cache_dir(), PathBuf::from("/custom/cache"));
+    }
 }

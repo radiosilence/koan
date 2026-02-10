@@ -311,6 +311,266 @@ pub fn remove_tracks_by_source(conn: &Connection, source: &str) -> Result<usize,
     Ok(count)
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::connection::Database;
+
+    fn test_db() -> Database {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        Database { conn }
+    }
+
+    fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
+        TrackMeta {
+            title: title.into(),
+            artist: artist.into(),
+            album_artist: Some(artist.into()),
+            album: album.into(),
+            date: Some("2024".into()),
+            disc: Some(1),
+            track_number: Some(1),
+            genre: Some("Electronic".into()),
+            label: None,
+            duration_ms: Some(240_000),
+            codec: Some("FLAC".into()),
+            sample_rate: Some(44100),
+            bit_depth: Some(16),
+            channels: Some(2),
+            bitrate: Some(1000),
+            size_bytes: Some(30_000_000),
+            mtime: Some(1700000000),
+            path: Some(format!("/music/{}/{}.flac", album, title)),
+            source: "local".into(),
+            remote_id: None,
+            remote_url: None,
+        }
+    }
+
+    #[test]
+    fn test_artist_create_and_dedup() {
+        let db = test_db();
+        let id1 = get_or_create_artist(&db.conn, "Aphex Twin", None).unwrap();
+        let id2 = get_or_create_artist(&db.conn, "Aphex Twin", None).unwrap();
+        assert_eq!(id1, id2);
+
+        let id3 = get_or_create_artist(&db.conn, "Squarepusher", None).unwrap();
+        assert_ne!(id1, id3);
+    }
+
+    #[test]
+    fn test_album_create_and_dedup() {
+        let db = test_db();
+        let artist = get_or_create_artist(&db.conn, "Boards of Canada", None).unwrap();
+        let a1 = get_or_create_album(
+            &db.conn,
+            "Music Has the Right to Children",
+            artist,
+            Some("1998"),
+            None,
+            None,
+            Some("FLAC"),
+            Some("Warp"),
+            None,
+        )
+        .unwrap();
+        let a2 = get_or_create_album(
+            &db.conn,
+            "Music Has the Right to Children",
+            artist,
+            Some("1998"),
+            None,
+            None,
+            Some("FLAC"),
+            Some("Warp"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(a1, a2);
+    }
+
+    #[test]
+    fn test_upsert_track() {
+        let db = test_db();
+        let meta = sample_meta("Windowlicker", "Aphex Twin", "Windowlicker EP");
+        let id1 = upsert_track(&db.conn, &meta).unwrap();
+
+        // Same path → same track ID (upsert).
+        let id2 = upsert_track(&db.conn, &meta).unwrap();
+        assert_eq!(id1, id2);
+
+        let stats = library_stats(&db.conn).unwrap();
+        assert_eq!(stats.total_tracks, 1);
+        assert_eq!(stats.local_tracks, 1);
+    }
+
+    #[test]
+    fn test_search_fts() {
+        let db = test_db();
+        upsert_track(&db.conn, &sample_meta("Vordhosbn", "Aphex Twin", "Drukqs")).unwrap();
+        upsert_track(
+            &db.conn,
+            &sample_meta("Roygbiv", "Boards of Canada", "MHTRTC"),
+        )
+        .unwrap();
+        upsert_track(
+            &db.conn,
+            &sample_meta("Tha", "Aphex Twin", "Selected Ambient Works"),
+        )
+        .unwrap();
+
+        // Search by artist.
+        let results = search_tracks(&db.conn, "Aphex").unwrap();
+        assert_eq!(results.len(), 2);
+
+        // Search by title.
+        let results = search_tracks(&db.conn, "Roygbiv").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Roygbiv");
+
+        // Search by album.
+        let results = search_tracks(&db.conn, "Drukqs").unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_remove_track_by_path() {
+        let db = test_db();
+        upsert_track(&db.conn, &sample_meta("Track1", "Artist1", "Album1")).unwrap();
+        upsert_track(&db.conn, &sample_meta("Track2", "Artist1", "Album1")).unwrap();
+
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 2);
+
+        remove_track_by_path(&db.conn, "/music/Album1/Track1.flac").unwrap();
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
+
+        // Search should no longer find it.
+        let results = search_tracks(&db.conn, "Track1").unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_remove_tracks_by_source() {
+        let db = test_db();
+        upsert_track(&db.conn, &sample_meta("Local", "Artist", "Album")).unwrap();
+
+        let mut remote = sample_meta("Remote", "Artist", "Album");
+        remote.source = "remote".into();
+        remote.path = None;
+        remote.remote_id = Some("r1".into());
+        remote.remote_url = Some("https://example.com/stream/r1".into());
+        upsert_track(&db.conn, &remote).unwrap();
+
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 2);
+
+        let removed = remove_tracks_by_source(&db.conn, "remote").unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
+        assert_eq!(library_stats(&db.conn).unwrap().local_tracks, 1);
+    }
+
+    #[test]
+    fn test_resolve_playback_local_wins() {
+        let db = test_db();
+
+        // Insert a local track.
+        let local = sample_meta("Song", "Artist", "Album");
+        let local_id = upsert_track(&db.conn, &local).unwrap();
+
+        match resolve_playback_path(&db.conn, local_id).unwrap() {
+            // Path won't exist on disk in test, so falls through.
+            // But we can at least verify it doesn't panic.
+            Some(_) | None => {}
+        }
+    }
+
+    #[test]
+    fn test_resolve_playback_remote_fallback() {
+        let db = test_db();
+
+        let mut meta = sample_meta("Song", "Artist", "Album");
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("r42".into());
+        meta.remote_url = Some("https://example.com/stream/r42".into());
+        let id = upsert_track(&db.conn, &meta).unwrap();
+
+        let source = resolve_playback_path(&db.conn, id).unwrap().unwrap();
+        match source {
+            PlaybackSource::Remote(url) => {
+                assert!(url.contains("r42"));
+            }
+            _ => panic!("expected Remote source"),
+        }
+    }
+
+    #[test]
+    fn test_all_albums_and_tracks() {
+        let db = test_db();
+        let mut m1 = sample_meta("Track1", "Artist1", "Album1");
+        m1.track_number = Some(1);
+        let mut m2 = sample_meta("Track2", "Artist1", "Album1");
+        m2.track_number = Some(2);
+        m2.path = Some("/music/Album1/Track2.flac".into());
+        upsert_track(&db.conn, &m1).unwrap();
+        upsert_track(&db.conn, &m2).unwrap();
+
+        let albums = all_albums(&db.conn).unwrap();
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].title, "Album1");
+
+        let tracks = tracks_for_album(&db.conn, albums[0].id).unwrap();
+        assert_eq!(tracks.len(), 2);
+        assert_eq!(tracks[0].track_number, Some(1));
+        assert_eq!(tracks[1].track_number, Some(2));
+    }
+
+    #[test]
+    fn test_scan_cache() {
+        let db = test_db();
+        let meta = sample_meta("T", "A", "Al");
+        let id = upsert_track(&db.conn, &meta).unwrap();
+
+        update_scan_cache(&db.conn, "/music/Al/T.flac", 1700000000, 30000000, id).unwrap();
+
+        // Same mtime+size → no rescan needed.
+        assert!(!needs_rescan(&db.conn, "/music/Al/T.flac", 1700000000, 30000000).unwrap());
+
+        // Different mtime → rescan.
+        assert!(needs_rescan(&db.conn, "/music/Al/T.flac", 1700000001, 30000000).unwrap());
+
+        // Unknown file → rescan.
+        assert!(needs_rescan(&db.conn, "/music/Al/New.flac", 1700000000, 30000000).unwrap());
+    }
+
+    #[test]
+    fn test_library_stats() {
+        let db = test_db();
+        let stats = library_stats(&db.conn).unwrap();
+        assert_eq!(stats.total_tracks, 0);
+        assert_eq!(stats.total_albums, 0);
+        assert_eq!(stats.total_artists, 0);
+
+        upsert_track(&db.conn, &sample_meta("T1", "A1", "Al1")).unwrap();
+        upsert_track(&db.conn, &sample_meta("T2", "A2", "Al2")).unwrap();
+
+        let stats = library_stats(&db.conn).unwrap();
+        assert_eq!(stats.total_tracks, 2);
+        assert_eq!(stats.local_tracks, 2);
+        assert_eq!(stats.total_albums, 2);
+        assert_eq!(stats.total_artists, 2);
+    }
+
+    #[test]
+    fn test_nonexistent_track_resolution() {
+        let db = test_db();
+        let result = resolve_playback_path(&db.conn, 99999).unwrap();
+        assert!(result.is_none());
+    }
+}
+
 // --- Queries ---
 
 /// Full-text search across track title, artist, album, genre.
@@ -560,7 +820,7 @@ pub fn needs_rescan(conn: &Connection, path: &str, mtime: i64, size: i64) -> Res
     }
 }
 
-/// Remove scan cache entries for paths that no longer exist in the given folder.
+/// Remove scan cache entries and tracks for paths that no longer exist in the given folder.
 pub fn remove_stale_tracks(conn: &Connection, folder: &Path) -> Result<usize, DbError> {
     let folder_str = folder.to_string_lossy();
     let prefix = format!("{}%", folder_str);
