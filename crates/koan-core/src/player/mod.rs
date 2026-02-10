@@ -320,6 +320,15 @@ impl Player {
                             .into()
                     }),
                     artist: meta.as_ref().map(|m| m.artist.clone()).unwrap_or_default(),
+                    album_artist: meta
+                        .as_ref()
+                        .map(|m| m.album_artist.clone())
+                        .unwrap_or_default(),
+                    album: meta.as_ref().map(|m| m.album.clone()).unwrap_or_default(),
+                    year: meta.as_ref().and_then(|m| m.year.clone()),
+                    codec: meta.as_ref().and_then(|m| m.codec.clone()),
+                    track_number: meta.as_ref().and_then(|m| m.track_number),
+                    disc: meta.as_ref().and_then(|m| m.disc),
                     duration_ms: meta.as_ref().and_then(|m| m.duration_ms),
                     status: meta
                         .as_ref()

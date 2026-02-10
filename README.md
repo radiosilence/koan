@@ -97,6 +97,9 @@ koan library
 koan cache status       # show cache size + location
 koan cache clear        # nuke all cached downloads
 
+# initialise config dir with defaults
+koan init
+
 # show config sources + resolved values
 koan config
 
@@ -130,7 +133,7 @@ During playback, the full queue is visible with download status. Press `e` to en
 | --------- | ------------------ |
 | `up/down` | navigate           |
 | `d`       | remove track       |
-| `J` / `K` | move track down/up |
+| `j` / `k` | move track down/up |
 | `Esc`     | exit edit mode     |
 
 ### Remote (Subsonic/Navidrome)

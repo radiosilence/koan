@@ -1,4 +1,5 @@
-use std::io::{self, Read};
+use std::fs::OpenOptions;
+use std::io::{self, Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -13,20 +14,30 @@ use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::player::Player;
 
-// --- Log buffer ---
-// During playback, log messages are buffered and drained by the queue display.
-// Outside playback, they go straight to stderr.
+// --- Logger ---
+// All log messages go to ~/.config/koan/koan.log.
+// During playback, they're also buffered for the queue display.
+// Outside playback, they also go to stderr.
 
 static LOGGER: OnceLock<BufferedLogger> = OnceLock::new();
 
 struct BufferedLogger {
     buffer: Mutex<Option<Arc<Mutex<Vec<String>>>>>,
+    log_file: Mutex<Option<std::fs::File>>,
 }
 
 impl BufferedLogger {
     fn init() {
+        let log_path = config::config_dir().join("koan.log");
+        let log_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .ok();
+
         let logger = LOGGER.get_or_init(|| BufferedLogger {
             buffer: Mutex::new(None),
+            log_file: Mutex::new(log_file),
         });
         log::set_logger(logger).expect("failed to set logger");
         log::set_max_level(log::LevelFilter::Info);
@@ -59,6 +70,13 @@ impl log::Log for BufferedLogger {
             record.level().as_str().to_lowercase(),
             record.args()
         );
+
+        // Always write to log file.
+        if let Some(file) = self.log_file.lock().unwrap().as_mut() {
+            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+            let _ = writeln!(file, "[{}] {}", now, msg);
+        }
+
         if let Some(buf) = self.buffer.lock().unwrap().as_ref() {
             buf.lock().unwrap().push(msg);
         } else {
@@ -147,6 +165,8 @@ enum Commands {
         #[arg(long)]
         artist: bool,
     },
+    /// Initialise config directory with default config
+    Init,
     /// Manage the download cache
     #[command(subcommand)]
     Cache(CacheCommands),
@@ -218,6 +238,7 @@ fn main() {
             album,
             artist,
         } => cmd_pick(query.as_deref(), album, artist),
+        Commands::Init => cmd_init(),
         Commands::Cache(sub) => match sub {
             CacheCommands::Status => cmd_cache_status(),
             CacheCommands::Clear => cmd_cache_clear(),
@@ -305,6 +326,51 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
     let (state, tx) = Player::spawn();
 
     if let Some(ids) = track_ids {
+        // Pre-populate pending queue so the UI shows all tracks immediately.
+        if ids.len() > 1 {
+            use koan_core::player::state::{QueueEntry, QueueEntryStatus};
+            let db = open_db();
+            let pending: Vec<QueueEntry> = ids[1..]
+                .iter()
+                .filter_map(|&id| {
+                    let track = queries::get_track_row(&db.conn, id).ok()??;
+                    let album_date: Option<String> = track.album_id.and_then(|aid| {
+                        db.conn
+                            .query_row(
+                                "SELECT date FROM albums WHERE id = ?1",
+                                rusqlite::params![aid],
+                                |row| row.get(0),
+                            )
+                            .ok()
+                            .flatten()
+                    });
+                    let cfg = config::Config::load().unwrap_or_default();
+                    let dest =
+                        cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
+                    let status = if dest.exists() {
+                        QueueEntryStatus::Queued
+                    } else {
+                        QueueEntryStatus::Downloading
+                    };
+                    let meta = meta_from_track(&track, album_date.as_deref(), status);
+                    Some(QueueEntry {
+                        path: dest,
+                        title: meta.title,
+                        artist: meta.artist,
+                        album_artist: meta.album_artist,
+                        album: meta.album,
+                        year: meta.year,
+                        codec: meta.codec,
+                        track_number: meta.track_number,
+                        disc: meta.disc,
+                        duration_ms: meta.duration_ms,
+                        status: meta.status,
+                    })
+                })
+                .collect();
+            state.set_pending_queue(pending);
+        }
+
         // Resolve first track immediately, start playback, download rest in background.
         let first_path = resolve_single_track(ids[0], Some(&log_buffer), Some(&state));
         tx.send(PlayerCommand::Play(first_path))
@@ -324,6 +390,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                         .map(|&id| resolve_single_track(id, Some(&log_bg), Some(&state_bg)))
                         .collect();
                     for path in resolved {
+                        state_bg.remove_pending(&path);
                         if tx_bg.send(PlayerCommand::Enqueue(path)).is_err() {
                             break;
                         }
@@ -394,6 +461,8 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
 
     display.render();
 
+    let mut has_played = false;
+
     while let Ok(event) = ev_rx.recv() {
         match event {
             Event::Tick => {
@@ -406,7 +475,15 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                 }
                 display.render();
 
-                if state.playback_state() == PlaybackState::Stopped && state.track_info().is_none()
+                if state.playback_state() == PlaybackState::Playing {
+                    has_played = true;
+                }
+
+                // Only exit when we've actually played something and then fully stopped.
+                if has_played
+                    && state.playback_state() == PlaybackState::Stopped
+                    && state.track_info().is_none()
+                    && state.full_queue().is_empty()
                 {
                     display.clear();
                     println!("{}", "done.".dimmed());
@@ -441,10 +518,10 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                             let idx = display.cursor();
                             tx.send(PlayerCommand::RemoveFromQueue(idx)).ok();
                         }
-                        b'J' => {
+                        b'j' => {
                             // Move track down.
                             let idx = display.cursor();
-                            let queue = state.queue_snapshot();
+                            let queue = state.full_queue();
                             if idx + 1 < queue.len() {
                                 tx.send(PlayerCommand::MoveInQueue {
                                     from: idx,
@@ -454,7 +531,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                                 display.move_cursor_down();
                             }
                         }
-                        b'K' => {
+                        b'k' => {
                             // Move track up.
                             let idx = display.cursor();
                             if idx > 0 {
@@ -1175,6 +1252,117 @@ fn cmd_config() {
     }
 }
 
+// --- Init ---
+
+fn cmd_init() {
+    let dir = config::config_dir();
+    let config_path = config::config_file_path();
+    let local_path = config::config_local_file_path();
+    let cache_dir = config::Config::default().cache_dir();
+
+    // Create directories.
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("{} {}", "error:".red().bold(), e);
+        std::process::exit(1);
+    }
+    if let Err(e) = std::fs::create_dir_all(&cache_dir) {
+        eprintln!("{} {}", "error:".red().bold(), e);
+        std::process::exit(1);
+    }
+
+    println!("{} {}", "dir".cyan(), dir.display());
+
+    // Write default config.toml if it doesn't exist.
+    if config_path.exists() {
+        println!(
+            "  {} {} {}",
+            "config:".cyan(),
+            config_path.display(),
+            "(exists)".dimmed()
+        );
+    } else {
+        let default_cfg = config::Config::default();
+        match toml::to_string_pretty(&default_cfg) {
+            Ok(content) => {
+                if let Err(e) = std::fs::write(&config_path, &content) {
+                    eprintln!("{} {}", "error:".red().bold(), e);
+                } else {
+                    println!(
+                        "  {} {} {}",
+                        "config:".cyan(),
+                        config_path.display(),
+                        "created".green()
+                    );
+                }
+            }
+            Err(e) => eprintln!("{} {}", "error:".red().bold(), e),
+        }
+    }
+
+    // Write config.local.toml if it doesn't exist.
+    if local_path.exists() {
+        println!(
+            "  {} {} {}",
+            "config.local:".cyan(),
+            local_path.display(),
+            "(exists)".dimmed()
+        );
+    } else {
+        let local_content = "\
+# Machine-specific overrides (gitignored)
+# Uncomment and edit as needed.
+
+# [library]
+# folders = [\"/path/to/music\"]
+
+# [remote]
+# enabled = true
+# url = \"https://music.example.com\"
+# username = \"admin\"
+# password = \"\"
+";
+        if let Err(e) = std::fs::write(&local_path, local_content) {
+            eprintln!("{} {}", "error:".red().bold(), e);
+        } else {
+            println!(
+                "  {} {} {}",
+                "config.local:".cyan(),
+                local_path.display(),
+                "created".green()
+            );
+        }
+    }
+
+    // Ensure DB exists.
+    let db_path = config::db_path();
+    if db_path.exists() {
+        println!(
+            "  {} {} {}",
+            "db:".cyan(),
+            db_path.display(),
+            "(exists)".dimmed()
+        );
+    } else {
+        match Database::open_default() {
+            Ok(_) => println!(
+                "  {} {} {}",
+                "db:".cyan(),
+                db_path.display(),
+                "created".green()
+            ),
+            Err(e) => eprintln!("{} {}", "error:".red().bold(), e),
+        }
+    }
+
+    println!(
+        "  {} {} {}",
+        "cache:".cyan(),
+        cache_dir.display(),
+        "ready".green()
+    );
+    println!("  {} {}", "log:".cyan(), dir.join("koan.log").display());
+}
+
 // --- Remote ---
 
 fn cmd_remote_login(url: &str, username: &str) {
@@ -1692,6 +1880,34 @@ fn cache_path_for_track(
         .join(format!("{}.{}", filename, ext))
 }
 
+/// Build a QueueEntryMeta from a TrackRow + album date.
+fn meta_from_track(
+    track: &queries::TrackRow,
+    album_date: Option<&str>,
+    status: koan_core::player::state::QueueEntryStatus,
+) -> koan_core::player::state::QueueEntryMeta {
+    use koan_core::player::state::QueueEntryMeta;
+    let year = album_date.and_then(|d| {
+        if d.len() >= 4 {
+            Some(d[..4].to_string())
+        } else {
+            None
+        }
+    });
+    QueueEntryMeta {
+        title: track.title.clone(),
+        artist: track.artist_name.clone(),
+        album_artist: track.artist_name.clone(), // TrackRow doesn't distinguish album artist
+        album: track.album_title.clone(),
+        year,
+        codec: track.codec.clone(),
+        track_number: track.track_number.map(|n| n as i64),
+        disc: track.disc.map(|n| n as i64),
+        duration_ms: track.duration_ms.map(|d| d as u64),
+        status,
+    }
+}
+
 /// Resolve a single track ID to a playback path.
 /// Downloads from remote if needed, using structured cache paths.
 /// Updates track metadata in shared state for queue display.
@@ -1700,7 +1916,7 @@ fn resolve_single_track(
     log_buf: Option<&Arc<Mutex<Vec<String>>>>,
     shared_state: Option<&Arc<SharedPlayerState>>,
 ) -> PathBuf {
-    use koan_core::player::state::{QueueEntryMeta, QueueEntryStatus};
+    use koan_core::player::state::QueueEntryStatus;
 
     let db = open_db();
     let cfg = config::Config::load().unwrap_or_default();
@@ -1748,12 +1964,7 @@ fn resolve_single_track(
                 if let Some(state) = shared_state {
                     state.set_track_meta(
                         dest.clone(),
-                        QueueEntryMeta {
-                            title: track.title.clone(),
-                            artist: track.artist_name.clone(),
-                            duration_ms: track.duration_ms.map(|d| d as u64),
-                            status: QueueEntryStatus::Queued,
-                        },
+                        meta_from_track(&track, album_date.as_deref(), QueueEntryStatus::Queued),
                     );
                 }
                 return dest;
@@ -1763,12 +1974,7 @@ fn resolve_single_track(
             if let Some(state) = shared_state {
                 state.set_track_meta(
                     dest.clone(),
-                    QueueEntryMeta {
-                        title: track.title.clone(),
-                        artist: track.artist_name.clone(),
-                        duration_ms: track.duration_ms.map(|d| d as u64),
-                        status: QueueEntryStatus::Downloading,
-                    },
+                    meta_from_track(&track, album_date.as_deref(), QueueEntryStatus::Downloading),
                 );
             }
 

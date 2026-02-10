@@ -47,6 +47,12 @@ pub enum QueueEntryStatus {
 pub struct QueueEntryMeta {
     pub title: String,
     pub artist: String,
+    pub album_artist: String,
+    pub album: String,
+    pub year: Option<String>,
+    pub codec: Option<String>,
+    pub track_number: Option<i64>,
+    pub disc: Option<i64>,
     pub duration_ms: Option<u64>,
     pub status: QueueEntryStatus,
 }
@@ -57,6 +63,12 @@ pub struct QueueEntry {
     pub path: PathBuf,
     pub title: String,
     pub artist: String,
+    pub album_artist: String,
+    pub album: String,
+    pub year: Option<String>,
+    pub codec: Option<String>,
+    pub track_number: Option<i64>,
+    pub disc: Option<i64>,
     pub duration_ms: Option<u64>,
     pub status: QueueEntryStatus,
 }
@@ -75,6 +87,9 @@ pub struct SharedPlayerState {
     queue_version: AtomicU64,
     /// Metadata cache keyed by path — set by resolve/download thread, read by queue builder.
     track_metadata: parking_lot::RwLock<HashMap<PathBuf, QueueEntryMeta>>,
+    /// Pending queue — tracks being resolved/downloaded, not yet in the player queue.
+    /// The UI appends these after the real queue snapshot.
+    pending_queue: parking_lot::RwLock<Vec<QueueEntry>>,
 }
 
 impl SharedPlayerState {
@@ -86,6 +101,7 @@ impl SharedPlayerState {
             queue_snapshot: parking_lot::RwLock::new(Vec::new()),
             queue_version: AtomicU64::new(0),
             track_metadata: parking_lot::RwLock::new(HashMap::new()),
+            pending_queue: parking_lot::RwLock::new(Vec::new()),
         })
     }
 
@@ -142,5 +158,26 @@ impl SharedPlayerState {
         if let Some(meta) = self.track_metadata.write().get_mut(path) {
             meta.status = status;
         }
+    }
+
+    // --- Pending queue (pre-download) ---
+
+    pub fn set_pending_queue(&self, entries: Vec<QueueEntry>) {
+        *self.pending_queue.write() = entries;
+        self.queue_version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Remove a track from the pending queue (e.g. after it's been enqueued in the real queue).
+    pub fn remove_pending(&self, path: &PathBuf) {
+        let mut pending = self.pending_queue.write();
+        pending.retain(|e| &e.path != path);
+        self.queue_version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get the combined queue: real queue snapshot + pending entries.
+    pub fn full_queue(&self) -> Vec<QueueEntry> {
+        let mut combined = self.queue_snapshot.read().clone();
+        combined.extend(self.pending_queue.read().clone());
+        combined
     }
 }

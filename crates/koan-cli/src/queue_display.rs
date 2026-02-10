@@ -74,7 +74,7 @@ impl QueueDisplay {
     }
 
     pub fn move_cursor_down(&mut self) {
-        let queue = self.state.queue_snapshot();
+        let queue = self.state.full_queue();
         if self.cursor + 1 < queue.len() {
             self.cursor += 1;
         }
@@ -117,7 +117,7 @@ impl QueueDisplay {
         let width = term_w as usize;
 
         let track_info = self.state.track_info();
-        let queue = self.state.queue_snapshot();
+        let queue = self.state.full_queue();
 
         // Layout:
         // [log messages — printed above, scroll up]
@@ -303,38 +303,72 @@ impl QueueDisplay {
         let is_cursor = self.mode == UiMode::Edit && index == self.cursor;
 
         let status_icon = match entry.status {
-            QueueEntryStatus::Queued => " ".to_string(),
+            QueueEntryStatus::Queued => "  ".to_string(),
             QueueEntryStatus::Playing => ">>".cyan().to_string(),
             QueueEntryStatus::Downloading => "..".yellow().to_string(),
             QueueEntryStatus::Failed => "!!".red().to_string(),
         };
 
-        let num = format!("{:>3}", index + 1);
+        // Track number: disc.track or just track
+        let track_num = match (entry.disc, entry.track_number) {
+            (Some(d), Some(n)) if d > 1 => format!("{}.{:02}", d, n),
+            (_, Some(n)) => format!("{:02}", n),
+            _ => "  ".into(),
+        };
+
         let dur = entry.duration_ms.map(format_time).unwrap_or_default();
 
         let artist_part = if entry.artist.is_empty() {
             String::new()
         } else {
-            format!("{} {} ", entry.artist.dimmed(), "—".dimmed())
+            format!("{} {} ", entry.artist.cyan(), "—".dimmed())
         };
+
+        let album_part = if entry.album.is_empty() {
+            String::new()
+        } else {
+            let year = entry
+                .year
+                .as_deref()
+                .map(|y| format!("({}) ", y).dimmed().to_string())
+                .unwrap_or_default();
+            let codec = entry
+                .codec
+                .as_deref()
+                .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
+                .unwrap_or_default();
+            format!(
+                " {} {}{}{}",
+                "on".dimmed(),
+                year,
+                entry.album.green(),
+                codec,
+            )
+        };
+
+        let cursor_marker = if is_cursor { ">" } else { " " };
 
         let line = if is_cursor {
             format!(
-                " {} {} {} {}{}  {}",
-                ">".cyan().bold(),
+                " {} {} {} {} {}{}  {}{}",
+                cursor_marker.cyan().bold(),
                 status_icon,
-                num.dimmed(),
+                track_num.dimmed(),
                 artist_part,
                 entry.title.bold(),
+                album_part,
                 dur.dimmed(),
+                "",
             )
         } else {
             format!(
-                "   {} {} {}{}  {}",
+                " {} {} {} {}{}{}  {}",
+                cursor_marker,
                 status_icon,
-                num.dimmed(),
+                track_num.dimmed(),
                 artist_part,
                 entry.title,
+                album_part,
                 dur.dimmed(),
             )
         };
