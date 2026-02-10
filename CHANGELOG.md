@@ -4,42 +4,43 @@
 
 ### Added
 
-- **Colourised CLI** — full owo-colors integration, meaningful colour coding across all commands (artists cyan, albums green, IDs dimmed, codecs yellow, errors red, etc.)
-- **Tree-structured output** — search results, albums, and errors displayed with `├──`/`└──` tree glyphs for visual hierarchy
-- **Dynamic shell completions** — `source <(COMPLETE=zsh koan)` enables tab-completion of artist/album IDs from the library DB (clap_complete CompleteEnv)
-- **Structured cache paths** — remote downloads cached as `Album Artist/(Year) Album [Codec]/01. Artist - Title.flac` instead of `track_40866.flac`
-- **Play by track ID** — `koan play --id 42 43 44` resolves tracks from DB, downloads remote tracks to cache for playback
-- **Browse commands** — `koan artists [query]`, `koan albums [query]` with IDs for playback
+- **Queue display** — full-screen playback UI with album-grouped headers, rich metadata (track number, artist, title, album, year, codec, duration), animated braille spinners for downloads, pending queue shown before downloads complete
+- **Queue editing** — press `e` during playback to enter edit mode: navigate with arrows, `d` to delete, `j`/`k` to reorder
+- **Inline picker** — press `p`/`a`/`r` during playback to fuzzy-pick tracks/albums/artists and append to queue without interrupting playback
+- **Parallel batched downloads** — first track plays immediately, remaining download in batches of 4 using `std::thread::scope`, queue order preserved
+- **Built-in fuzzy picker** — nucleo-powered in-process picker replaces fzf dependency. `koan pick`, `--album`/`--artist` modes with drill-down
+- **Colourised CLI** — owo-colors integration across all commands (artists cyan, albums green, IDs dimmed, tree glyphs)
+- **Tree-structured output** — search results, albums, and errors displayed with `├──`/`└──` hierarchy
+- **Dynamic shell completions** — `source <(COMPLETE=zsh koan)` enables tab-completion of artist/album IDs from the library DB
+- **Structured cache paths** — remote downloads cached as `Album Artist/(Year) Album [Codec]/01. Artist - Title.flac`
+- **Play by track ID** — `koan play --id 42 43 44` resolves tracks from DB, downloads remote tracks for playback
 - **Play by album/artist** — `koan play --album 5`, `koan play --artist 3`
-- **Parallel remote sync** — album detail fetches parallelized with rayon, batch DB writes per page
-- **Config local overlay** — `config.local.toml` for machine-specific overrides (gitignored), base `config.toml` committable to dotfiles
-- **`koan config`** — shows source files (config.toml, config.local.toml) and the resolved merged config
-- **`koan pick`** — built-in fuzzy picker (nucleo engine): fuzzy-find tracks, albums, or artists and play immediately. `--album`/`--artist` modes with drill-down flows. No external dependencies (fzf removed)
-- **`koan cache status/clear`** — view cache size + file count, nuke all cached downloads (clears DB cached_path too)
-- **Queue display** — full-screen playback UI replaces indicatif progress bars. Shows now-playing info, progress bar, and the full queue with rich metadata (track number, artist, title, album, year, codec, duration). Download status icons (`..` downloading, `!!` failed). Edit mode (`e`) lets you navigate, delete (`d`), and reorder (`j`/`k`) tracks. Pending downloads shown immediately before they complete.
-- **`koan init`** — scaffolds `~/.config/koan/` with default `config.toml`, commented `config.local.toml` template, database, and cache directory
-- **File logging** — all log output written to `~/.config/koan/koan.log` with timestamps for debugging
-- **Previous track** — `<` goes back through play history, `>` skips forward. History stack in player tracks what's been played
-- **Inline picker** — press `p`/`a`/`r` during playback to fuzzy-pick tracks/albums/artists and append to queue. Runs in-process — playback continues uninterrupted, no terminal mode switching
-- **Lazy parallel downloads** — first track plays immediately, remaining tracks download in parallel via rayon and enqueue as they complete
-- **Password in config** — Navidrome password stored in `config.local.toml` instead of Keychain, with Keychain fallback for backwards compat
+- **Browse commands** — `koan artists [query]`, `koan albums [query]` with IDs for playback
+- **Previous track** — `<` goes back through play history
+- **Parallel remote sync** — album detail fetches parallelized with rayon, batch DB writes
+- **Config local overlay** — `config.local.toml` for machine-specific overrides, base `config.toml` committable to dotfiles
+- **`koan init`** — scaffolds `~/.config/koan/` with default configs, database, and cache directory
+- **`koan cache status/clear`** — view cache size, nuke all cached downloads
+- **File logging** — all log output written to `~/.config/koan/koan.log` with timestamps
+- **Password in config** — stored in `config.local.toml` instead of Keychain, with Keychain fallback
 - **26 unit tests** — config, DB (CRUD, FTS5 search, dedup, playback resolution, scan cache, stats), metadata
-- **Ctrl+C handling** — SIGINT resets to default so blocking operations die immediately
-- **Track deduplication** — local+remote tracks merged into single rows via 3-level matching (path, remote_id, content match). Local path always wins for playback.
 
 ### Fixed
 
-- **Seek past end of track** — skips to next track instead of crashing Symphonia with "seek timestamp out-of-range"
-- **FTS5 deletes** — switched from contentless to content-managed FTS5 (contentless can't DELETE)
+- **Track artist vs album artist** — track artist now stored separately from album artist in DB. Compilations/VA albums display per-track artists correctly. Album grouping uses album artist. FTS indexes both. Requires DB nuke + re-scan.
+- **Queue metadata for local/cached tracks** — metadata wasn't registered for local and cached playback sources, causing blank queue display with no colours or headers
+- **Seek past end of track** — skips to next track instead of crashing Symphonia
+- **Exit on prev-track** — transient stop state during prev-track no longer triggers premature exit
+- **FTS5 deletes** — switched from contentless to content-managed FTS5
 - **Search ordering** — results grouped by artist/album/disc/track instead of FTS rank
-- **Cached path persisted** — `cached_path` column updated after download so subsequent plays skip re-download
+- **Cached path persisted** — `cached_path` column updated after download
 
 ### Changed
 
 - Config/data paths: `~/.config/koan/` (was `~/Library/Application Support/koan/`)
-- DB lives at `~/.config/koan/koan.db` (next to config)
+- Queue display replaces indicatif progress bars — custom ANSI renderer with save/restore cursor
+- Downloads use `std::thread::scope` batches instead of rayon (ordering control)
 - Search results show disc/track numbers, grouped by artist/album with album IDs
-- Progress bar shows track name from file stem (works with structured cache names)
 
 ## 0.1.0
 
@@ -54,4 +55,4 @@
 - **Unified library** — every track has source (local/remote/cached), `resolve_playback_path` prefers local > cached > remote
 - **CLI commands** — play, scan, search, library, config, probe, devices, remote login/sync/status, completions
 - **Config** — TOML at `~/.config/koan/config.toml`, library folders, playback settings, remote server config
-- **Justfile** — build, check, fmt, cli recipes
+- **Track deduplication** — local+remote tracks merged via 3-level matching (path, remote_id, content match)
