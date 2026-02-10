@@ -326,56 +326,13 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
     let (state, tx) = Player::spawn();
 
     if let Some(ids) = track_ids {
-        // Pre-populate pending queue so the UI shows all tracks immediately.
-        if ids.len() > 1 {
-            use koan_core::player::state::{QueueEntry, QueueEntryStatus};
-            let db = open_db();
-            let pending: Vec<QueueEntry> = ids[1..]
-                .iter()
-                .filter_map(|&id| {
-                    let track = queries::get_track_row(&db.conn, id).ok()??;
-                    let album_date: Option<String> = track.album_id.and_then(|aid| {
-                        db.conn
-                            .query_row(
-                                "SELECT date FROM albums WHERE id = ?1",
-                                rusqlite::params![aid],
-                                |row| row.get(0),
-                            )
-                            .ok()
-                            .flatten()
-                    });
-                    let cfg = config::Config::load().unwrap_or_default();
-                    let dest =
-                        cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
-                    let status = if dest.exists() {
-                        QueueEntryStatus::Queued
-                    } else {
-                        QueueEntryStatus::Downloading
-                    };
-                    let meta = meta_from_track(&track, album_date.as_deref(), status);
-                    Some(QueueEntry {
-                        path: dest,
-                        title: meta.title,
-                        artist: meta.artist,
-                        album_artist: meta.album_artist,
-                        album: meta.album,
-                        year: meta.year,
-                        codec: meta.codec,
-                        track_number: meta.track_number,
-                        disc: meta.disc,
-                        duration_ms: meta.duration_ms,
-                        status: meta.status,
-                    })
-                })
-                .collect();
-            state.set_pending_queue(pending);
-        }
-
-        // Resolve first track immediately, start playback, download rest in background.
+        // Resolve first track immediately so playback starts ASAP.
         let first_path = resolve_single_track(ids[0], Some(&log_buffer), Some(&state));
         tx.send(PlayerCommand::Play(first_path))
             .expect("player thread died");
 
+        // Background: build pending queue metadata, then download remaining
+        // tracks in parallel batches, prioritizing queue order.
         if ids.len() > 1 {
             let remaining = ids[1..].to_vec();
             let tx_bg = tx.clone();
@@ -384,17 +341,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
             std::thread::Builder::new()
                 .name("koan-resolve".into())
                 .spawn(move || {
-                    use rayon::prelude::*;
-                    let resolved: Vec<PathBuf> = remaining
-                        .par_iter()
-                        .map(|&id| resolve_single_track(id, Some(&log_bg), Some(&state_bg)))
-                        .collect();
-                    for path in resolved {
-                        state_bg.remove_pending(&path);
-                        if tx_bg.send(PlayerCommand::Enqueue(path)).is_err() {
-                            break;
-                        }
-                    }
+                    resolve_and_enqueue_batch(remaining, tx_bg, log_bg, state_bg);
                 })
                 .expect("failed to spawn resolve thread");
         }
@@ -606,29 +553,13 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
 
                             // Resolve and enqueue selected tracks in background.
                             if !ids.is_empty() {
-                                let count = ids.len();
                                 let tx_bg = tx.clone();
                                 let log_bg = log_buffer.clone();
                                 let state_bg = state.clone();
                                 std::thread::Builder::new()
                                     .name("koan-enqueue".into())
                                     .spawn(move || {
-                                        for id in ids {
-                                            let path = resolve_single_track(
-                                                id,
-                                                Some(&log_bg),
-                                                Some(&state_bg),
-                                            );
-                                            if tx_bg.send(PlayerCommand::Enqueue(path)).is_err() {
-                                                break;
-                                            }
-                                        }
-                                        log_bg.lock().unwrap().push(format!(
-                                            "{} {} track{} queued",
-                                            "+".green(),
-                                            count,
-                                            if count == 1 { "" } else { "s" },
-                                        ));
+                                        resolve_and_enqueue_batch(ids, tx_bg, log_bg, state_bg);
                                     })
                                     .ok();
                             }
@@ -1905,6 +1836,95 @@ fn meta_from_track(
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
         status,
+    }
+}
+
+/// Resolve a batch of track IDs: populate pending queue immediately,
+/// then download in parallel batches (4 concurrent), enqueuing each as it finishes.
+/// Tracks are processed in queue order so the top of the queue downloads first.
+fn resolve_and_enqueue_batch(
+    ids: Vec<i64>,
+    tx: crossbeam_channel::Sender<PlayerCommand>,
+    log_buf: Arc<Mutex<Vec<String>>>,
+    state: Arc<SharedPlayerState>,
+) {
+    use koan_core::player::state::{QueueEntry, QueueEntryStatus};
+
+    let db = open_db();
+    let cfg = config::Config::load().unwrap_or_default();
+
+    // Phase 1: Build pending queue metadata from DB (fast, no downloads).
+    // This populates the UI immediately so the user sees what's coming.
+    let mut track_info: Vec<(i64, queries::TrackRow, Option<String>)> = Vec::new();
+    let mut pending: Vec<QueueEntry> = Vec::new();
+
+    for &id in &ids {
+        let Some(track) = queries::get_track_row(&db.conn, id).ok().flatten() else {
+            continue;
+        };
+        let album_date: Option<String> = track.album_id.and_then(|aid| {
+            db.conn
+                .query_row(
+                    "SELECT date FROM albums WHERE id = ?1",
+                    rusqlite::params![aid],
+                    |row| row.get(0),
+                )
+                .ok()
+                .flatten()
+        });
+        let dest = cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
+        let status = if dest.exists() {
+            QueueEntryStatus::Queued
+        } else {
+            QueueEntryStatus::Downloading
+        };
+        let meta = meta_from_track(&track, album_date.as_deref(), status);
+        pending.push(QueueEntry {
+            path: dest,
+            title: meta.title,
+            artist: meta.artist,
+            album_artist: meta.album_artist,
+            album: meta.album,
+            year: meta.year,
+            codec: meta.codec,
+            track_number: meta.track_number,
+            disc: meta.disc,
+            duration_ms: meta.duration_ms,
+            status: meta.status,
+        });
+        track_info.push((id, track, album_date));
+    }
+
+    state.set_pending_queue(pending);
+
+    // Phase 2: Download/resolve in parallel batches, queue order.
+    // 4 concurrent downloads, each enqueued as it completes.
+    const BATCH_SIZE: usize = 4;
+
+    for chunk in track_info.chunks(BATCH_SIZE) {
+        let results: Vec<(i64, PathBuf)> = std::thread::scope(|s| {
+            let handles: Vec<_> = chunk
+                .iter()
+                .map(|(id, _track, _date)| {
+                    let log_ref = &log_buf;
+                    let state_ref = &state;
+                    let track_id = *id;
+                    s.spawn(move || {
+                        let path = resolve_single_track(track_id, Some(log_ref), Some(state_ref));
+                        (track_id, path)
+                    })
+                })
+                .collect();
+            handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        });
+
+        // Enqueue in original order within the batch.
+        for (_id, path) in results {
+            state.remove_pending(&path);
+            if tx.send(PlayerCommand::Enqueue(path)).is_err() {
+                return;
+            }
+        }
     }
 }
 

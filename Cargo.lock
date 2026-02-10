@@ -1225,7 +1225,6 @@ dependencies = [
  "log",
  "nucleo",
  "owo-colors",
- "rayon",
  "rpassword",
  "rusqlite",
  "toml",
