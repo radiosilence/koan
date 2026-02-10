@@ -28,9 +28,47 @@ pub struct Picker {
     multi: bool,
 }
 
-/// Total lines the picker occupies: prompt + max_visible results + hint bar.
-const fn picker_height(max_visible: usize) -> usize {
-    max_visible + 2
+fn term_size() -> (u16, u16) {
+    unsafe {
+        let mut ws: libc::winsize = std::mem::zeroed();
+        if libc::ioctl(libc::STDOUT_FILENO, libc::TIOCGWINSZ, &mut ws) == 0
+            && ws.ws_col > 0
+            && ws.ws_row > 0
+        {
+            (ws.ws_col, ws.ws_row)
+        } else {
+            (80, 24)
+        }
+    }
+}
+
+/// Strip ANSI escape sequences and truncate to `max_width` visible characters.
+/// Returns a string that renders at most `max_width` columns.
+fn truncate_ansi(s: &str, max_width: usize) -> String {
+    let mut out = String::new();
+    let mut visible = 0;
+    let mut in_escape = false;
+
+    for c in s.chars() {
+        if in_escape {
+            out.push(c);
+            if c.is_ascii_alphabetic() || c == 'm' {
+                in_escape = false;
+            }
+            continue;
+        }
+        if c == '\x1b' {
+            in_escape = true;
+            out.push(c);
+            continue;
+        }
+        if visible >= max_width {
+            break;
+        }
+        out.push(c);
+        visible += 1;
+    }
+    out
 }
 
 impl Picker {
@@ -46,8 +84,11 @@ impl Picker {
     /// `read_key` is called to get the next keypress — this lets the caller
     /// control the input source (same raw mode stdin as playback).
     pub fn run(self, read_key: &mut dyn FnMut() -> Option<PickerKey>) -> PickerResult {
-        let max_visible: usize = 20;
-        let height = picker_height(max_visible);
+        let (term_w, term_h) = term_size();
+        // Reserve 2 lines for prompt + hint bar, leave 1 line margin.
+        let max_visible = (term_h as usize).saturating_sub(3);
+        let height = max_visible + 2; // prompt + results + hint
+        let width = term_w as usize;
 
         let nucleo: Nucleo<u32> = Nucleo::new(
             Config::DEFAULT,
@@ -73,20 +114,26 @@ impl Picker {
         // Initial tick to populate.
         nucleo.tick(10);
 
-        // Reserve screen space — print empty lines, then move back up.
+        // Reserve screen space and save the top-of-picker cursor position.
         {
             let mut stdout = io::stdout().lock();
+            // Save position, print blank lines to scroll if needed, then position cursor.
+            let _ = write!(stdout, "\x1b[?25l"); // hide cursor
             for _ in 0..height {
                 let _ = stdout.write_all(b"\n");
             }
+            // Move back up to top of reserved area.
             let _ = write!(stdout, "\x1b[{}A", height);
+            // Save this position — all renders will restore to here.
+            let _ = write!(stdout, "\x1b[s");
             let _ = stdout.flush();
         }
 
-        self.render(&nucleo, &query, cursor, &selected, max_visible);
+        self.render(&nucleo, &query, cursor, &selected, max_visible, width);
 
         loop {
             let Some(key) = read_key() else {
+                self.clear_display(height);
                 return PickerResult::Cancelled;
             };
 
@@ -125,7 +172,6 @@ impl Picker {
                     }
                 }
                 PickerKey::Tab if self.multi => {
-                    // Toggle selection on current item.
                     let snap = nucleo.snapshot();
                     if let Some(item) = snap.get_matched_item(cursor as u32) {
                         let idx = *item.data;
@@ -134,7 +180,6 @@ impl Picker {
                         } else {
                             selected.push(idx as usize);
                         }
-                        // Move cursor down after toggle.
                         let count = snap.matched_item_count() as usize;
                         if cursor + 1 < count {
                             cursor += 1;
@@ -142,12 +187,11 @@ impl Picker {
                     }
                 }
                 PickerKey::Enter => {
-                    self.clear_display(max_visible);
+                    self.clear_display(height);
                     if self.multi && !selected.is_empty() {
                         let ids: Vec<i64> = selected.iter().map(|&i| self.items[i].id).collect();
                         return PickerResult::Selected(ids);
                     }
-                    // Single select — use cursor position.
                     let snap = nucleo.snapshot();
                     if let Some(item) = snap.get_matched_item(cursor as u32) {
                         let idx = *item.data as usize;
@@ -156,14 +200,14 @@ impl Picker {
                     return PickerResult::Cancelled;
                 }
                 PickerKey::Escape => {
-                    self.clear_display(max_visible);
+                    self.clear_display(height);
                     return PickerResult::Cancelled;
                 }
                 _ => {}
             }
 
             nucleo.tick(10);
-            self.render(&nucleo, &query, cursor, &selected, max_visible);
+            self.render(&nucleo, &query, cursor, &selected, max_visible, width);
         }
     }
 
@@ -174,27 +218,27 @@ impl Picker {
         cursor: usize,
         selected: &[usize],
         max_visible: usize,
+        width: usize,
     ) {
         let snap = nucleo.snapshot();
         let matched = snap.matched_item_count() as usize;
         let total = snap.item_count() as usize;
-        let height = picker_height(max_visible);
 
         let mut out = String::new();
 
-        // Hide cursor during redraw to avoid flicker.
-        out.push_str("\x1b[?25l");
+        // Hide cursor + restore to saved position (top of picker area).
+        out.push_str("\x1b[?25l\x1b[u");
 
-        // Move to start of picker area (we reserved space on init).
-        out.push('\r'); // column 0
-        out.push_str(&format!("\x1b[{}A", height - 1)); // move to top of reserved area
-
-        // Prompt line.
-        out.push_str(&format!(
-            "\x1b[2K  {} {}{}\r\n",
+        // Prompt line — clear then write.
+        let prompt_line = format!(
+            "  {} {}{}",
             self.prompt.cyan().bold(),
             query,
             format!("  {}/{}", matched, total).dimmed(),
+        );
+        out.push_str(&format!(
+            "\x1b[2K{}\r\n",
+            truncate_ansi(&prompt_line, width)
         ));
 
         // Results.
@@ -220,11 +264,12 @@ impl Picker {
                 };
 
                 let line = &self.items[idx].display;
-                if is_cursor {
-                    out.push_str(&format!("\x1b[2K  {}{}\r\n", marker, line.bold()));
+                let full = if is_cursor {
+                    format!("  {}{}", marker, line.bold())
                 } else {
-                    out.push_str(&format!("\x1b[2K  {}{}\r\n", marker, line));
-                }
+                    format!("  {}{}", marker, line)
+                };
+                out.push_str(&format!("\x1b[2K{}\r\n", truncate_ansi(&full, width)));
             }
         }
 
@@ -237,21 +282,21 @@ impl Picker {
         // Hint bar.
         let hint = if self.multi {
             format!(
-                "{}  {}  {}",
+                "  {}  {}  {}",
                 "↑↓ navigate".dimmed(),
                 "tab select".dimmed(),
                 "enter confirm  esc cancel".dimmed()
             )
         } else {
             format!(
-                "{}  {}",
+                "  {}  {}",
                 "↑↓ navigate".dimmed(),
                 "enter select  esc cancel".dimmed()
             )
         };
-        out.push_str(&format!("\x1b[2K  {}", hint));
+        out.push_str(&format!("\x1b[2K{}", truncate_ansi(&hint, width)));
 
-        // Show cursor again.
+        // Show cursor.
         out.push_str("\x1b[?25h");
 
         let mut stdout = io::stdout().lock();
@@ -259,16 +304,17 @@ impl Picker {
         let _ = stdout.flush();
     }
 
-    fn clear_display(&self, max_visible: usize) {
-        let height = picker_height(max_visible);
+    fn clear_display(&self, height: usize) {
         let mut out = String::new();
-        out.push('\r');
-        out.push_str(&format!("\x1b[{}A", height - 1));
+        // Restore to saved position.
+        out.push_str("\x1b[u");
         for _ in 0..height {
             out.push_str("\x1b[2K\n");
         }
-        // Move back up to where we started.
-        out.push_str(&format!("\x1b[{}A", height));
+        // Move back to saved position.
+        out.push_str("\x1b[u");
+        // Show cursor.
+        out.push_str("\x1b[?25h");
 
         let mut stdout = io::stdout().lock();
         let _ = stdout.write_all(out.as_bytes());
@@ -292,14 +338,13 @@ pub enum PickerKey {
 pub fn parse_key(byte: u8, read_more: &mut dyn FnMut() -> Option<u8>) -> Option<PickerKey> {
     match byte {
         0x1b => {
-            // Escape sequence or bare Escape.
             let Some(b'[') = read_more() else {
                 return Some(PickerKey::Escape);
             };
             match read_more() {
                 Some(b'A') => Some(PickerKey::Up),
                 Some(b'B') => Some(PickerKey::Down),
-                _ => None, // ignore other sequences
+                _ => None,
             }
         }
         0x0d | 0x0a => Some(PickerKey::Enter),

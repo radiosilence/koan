@@ -514,7 +514,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
 fn make_playback_bar(mp: &MultiProgress) -> ProgressBar {
     let pb = mp.add(ProgressBar::new(0));
     pb.set_style(
-        ProgressStyle::with_template("{prefix} {bar:40.cyan/dim} {msg}")
+        ProgressStyle::with_template("{prefix} {wide_bar:.cyan/dim} {msg}")
             .unwrap()
             .progress_chars("━╸─"),
     );
