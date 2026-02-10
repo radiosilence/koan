@@ -1,7 +1,7 @@
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -13,6 +13,62 @@ use koan_core::config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::player::Player;
+
+// --- MultiProgress-aware logger ---
+// Routes log output through mp.println() during playback so it doesn't stomp the progress bars.
+// Falls back to stderr when no MultiProgress is registered.
+
+static LOGGER: OnceLock<MpLogger> = OnceLock::new();
+
+struct MpLogger {
+    mp: Mutex<Option<Arc<MultiProgress>>>,
+}
+
+impl MpLogger {
+    fn init() {
+        let logger = LOGGER.get_or_init(|| MpLogger {
+            mp: Mutex::new(None),
+        });
+        log::set_logger(logger).expect("failed to set logger");
+        log::set_max_level(log::LevelFilter::Info);
+    }
+
+    fn set_mp(mp: Arc<MultiProgress>) {
+        if let Some(logger) = LOGGER.get() {
+            *logger.mp.lock().unwrap() = Some(mp);
+        }
+    }
+
+    fn clear_mp() {
+        if let Some(logger) = LOGGER.get() {
+            *logger.mp.lock().unwrap() = None;
+        }
+    }
+}
+
+impl log::Log for MpLogger {
+    fn enabled(&self, metadata: &log::Metadata) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let msg = format!(
+            "{}: {}",
+            record.level().as_str().to_lowercase(),
+            record.args()
+        );
+        if let Some(mp) = self.mp.lock().unwrap().as_ref() {
+            mp.println(&msg).ok();
+        } else {
+            eprintln!("{}", msg);
+        }
+    }
+
+    fn flush(&self) {}
+}
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, SharedPlayerState};
 use owo_colors::OwoColorize;
@@ -130,9 +186,7 @@ fn main() {
     // Dynamic shell completions — handles COMPLETE=zsh/bash/fish env var.
     CompleteEnv::with_factory(Cli::command).complete();
 
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
-        .format_timestamp_millis()
-        .init();
+    MpLogger::init();
 
     let cli = Cli::parse();
 
@@ -241,6 +295,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
 
     // MultiProgress owns all bars — downloads + playback render cleanly together.
     let mp = Arc::new(MultiProgress::new());
+    MpLogger::set_mp(mp.clone());
     let (state, tx) = Player::spawn();
 
     if let Some(ids) = track_ids {
@@ -432,6 +487,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
         }
     }
 
+    MpLogger::clear_mp();
     std::thread::sleep(Duration::from_millis(100));
 }
 

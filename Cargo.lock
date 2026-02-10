@@ -1251,7 +1251,6 @@ dependencies = [
  "clap",
  "clap_complete",
  "crossbeam-channel",
- "env_logger",
  "indicatif",
  "koan-core",
  "libc",
