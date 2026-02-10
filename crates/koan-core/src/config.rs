@@ -128,17 +128,20 @@ impl Config {
     }
 }
 
-/// `~/Library/Application Support/koan/` on macOS.
+/// `~/.config/koan/`
 pub fn config_dir() -> PathBuf {
-    dirs::config_dir()
+    dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config")
         .join("koan")
 }
 
-/// `~/Library/Application Support/koan/` on macOS (same as config on mac).
+/// `~/.local/share/koan/`
 pub fn data_dir() -> PathBuf {
-    dirs::data_dir()
+    dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
+        .join(".local")
+        .join("share")
         .join("koan")
 }
 
