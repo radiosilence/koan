@@ -814,7 +814,16 @@ fn cmd_scan(path: Option<&Path>, force: bool) {
     }
 
     let start = std::time::Instant::now();
-    let result = koan_core::index::scanner::full_scan(&db, &folders, force);
+    let on_track = |ev: koan_core::index::scanner::ScanEvent| {
+        println!(
+            "  {} {} {} {}",
+            "+".green(),
+            ev.artist.cyan(),
+            "—".dimmed(),
+            ev.title,
+        );
+    };
+    let result = koan_core::index::scanner::full_scan(&db, &folders, force, Some(&on_track));
     let elapsed = start.elapsed();
 
     println!(

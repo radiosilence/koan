@@ -18,8 +18,23 @@ pub struct ScanResult {
     pub errors: Vec<(PathBuf, String)>,
 }
 
+/// Info about a scanned track, passed to the progress callback.
+pub struct ScanEvent<'a> {
+    pub artist: &'a str,
+    pub album: &'a str,
+    pub title: &'a str,
+    pub path: &'a Path,
+    pub is_new: bool,
+}
+
 /// Scan a folder recursively for audio files and index them into the database.
-pub fn scan_folder(db: &Database, path: &Path, force: bool) -> ScanResult {
+/// The optional `on_track` callback is invoked for each successfully indexed track.
+pub fn scan_folder(
+    db: &Database,
+    path: &Path,
+    force: bool,
+    on_track: Option<&dyn Fn(ScanEvent)>,
+) -> ScanResult {
     let mut result = ScanResult::default();
 
     // Collect audio files via walkdir.
@@ -80,6 +95,15 @@ pub fn scan_folder(db: &Database, path: &Path, force: bool) -> ScanResult {
             Ok(meta) => match queries::upsert_track(&db.conn, &meta) {
                 Ok(track_id) => {
                     result.added += 1;
+                    if let Some(cb) = &on_track {
+                        cb(ScanEvent {
+                            artist: &meta.artist,
+                            album: &meta.album,
+                            title: &meta.title,
+                            path: &file_path,
+                            is_new: true,
+                        });
+                    }
                     let _ = queries::update_scan_cache(
                         &db.conn,
                         meta.path.as_deref().unwrap_or(""),
@@ -110,14 +134,19 @@ pub fn scan_folder(db: &Database, path: &Path, force: bool) -> ScanResult {
 }
 
 /// Scan all configured library folders.
-pub fn full_scan(db: &Database, folders: &[PathBuf], force: bool) -> ScanResult {
+pub fn full_scan(
+    db: &Database,
+    folders: &[PathBuf],
+    force: bool,
+    on_track: Option<&dyn Fn(ScanEvent)>,
+) -> ScanResult {
     let mut total = ScanResult::default();
     for folder in folders {
         if !folder.exists() {
             log::warn!("library folder does not exist: {}", folder.display());
             continue;
         }
-        let r = scan_folder(db, folder, force);
+        let r = scan_folder(db, folder, force, on_track);
         total.added += r.added;
         total.updated += r.updated;
         total.removed += r.removed;
