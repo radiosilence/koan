@@ -12,7 +12,8 @@ macOS-native (SwiftUI shell, Rust core). Bit-perfect playback, gapless transitio
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
 - **File watching** — FSEvents via notify, debounced 500ms, auto-updates DB on changes
 - **Subsonic/Navidrome** — parallel remote library sync (rayon), unified local+remote browsing, Keychain credential storage
-- **CLI** — play, scan, search, probe, device listing, remote management
+- **CLI** — colourised output with tree-structured display, dynamic shell completions from library DB
+- **Track deduplication** — local+remote tracks merged into single rows, local path always wins for playback
 
 ## Architecture
 
@@ -42,17 +43,45 @@ cargo install --path crates/koan-cli
 
 Requires macOS (CoreAudio).
 
+## Shell completions
+
+Dynamic completions that know your library — artist/album IDs tab-complete from the DB.
+
+```bash
+# zsh (add to .zshrc)
+source <(COMPLETE=zsh koan)
+
+# bash
+source <(COMPLETE=bash koan)
+
+# fish
+COMPLETE=fish koan | source
+```
+
+Then `koan play --album <TAB>` shows your actual albums with artist names.
+
 ## Usage
 
 ```bash
 # play files (gapless across tracks)
 koan play ~/Music/album/*.flac
 
+# play by track/album/artist ID (from search/browse results)
+koan play --id 42 43 44
+koan play --album 5
+koan play --artist 3
+
+# browse library
+koan artists              # list all artists with IDs
+koan artists "aphex"      # filter artists
+koan albums               # list all albums grouped by artist
+koan albums "boards"      # albums for matching artists
+
 # scan library (path or configured folders)
 koan scan /path/to/music
 koan scan              # uses folders from config
 
-# search (FTS5, prefix matching)
+# search (FTS5, prefix matching, tree-grouped output)
 koan search "radiohead"
 
 # library stats

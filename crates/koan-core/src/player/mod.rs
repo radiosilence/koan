@@ -179,13 +179,25 @@ impl Player {
     }
 
     /// Seek within the current track. Rebuilds the decode pipeline but keeps queue.
+    /// Clamps to track duration so seeking past the end doesn't crash Symphonia.
     pub fn seek(&mut self, position_ms: u64) {
-        let path = match self.shared_state.track_info() {
-            Some(info) => info.path.clone(),
+        let info = match self.shared_state.track_info() {
+            Some(info) => info,
             None => return,
         };
+        let path = info.path.clone();
+        let duration = info.duration_ms;
+
+        // Clamp to just before the end. Seeking to exactly the end or beyond
+        // causes Symphonia to return "seek timestamp out-of-range".
+        let clamped = if duration > 0 {
+            position_ms.min(duration.saturating_sub(500))
+        } else {
+            position_ms
+        };
+
         // Don't clear the queue on seek — just rebuild decode for this track.
-        if let Err(e) = self.start_playback(&path, position_ms) {
+        if let Err(e) = self.start_playback(&path, clamped) {
             log::error!("seek failed: {}", e);
         }
     }

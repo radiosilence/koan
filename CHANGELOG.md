@@ -4,19 +4,33 @@
 
 ### Added
 
+- **Colourised CLI** — full owo-colors integration, meaningful colour coding across all commands (artists cyan, albums green, IDs dimmed, codecs yellow, errors red, etc.)
+- **Tree-structured output** — search results, albums, and errors displayed with `├──`/`└──` tree glyphs for visual hierarchy
+- **Dynamic shell completions** — `source <(COMPLETE=zsh koan)` enables tab-completion of artist/album IDs from the library DB (clap_complete CompleteEnv)
+- **Structured cache paths** — remote downloads cached as `Album Artist/(Year) Album [Codec]/01. Artist - Title.flac` instead of `track_40866.flac`
 - **Play by track ID** — `koan play --id 42 43 44` resolves tracks from DB, downloads remote tracks to cache for playback
+- **Browse commands** — `koan artists [query]`, `koan albums [query]` with IDs for playback
+- **Play by album/artist** — `koan play --album 5`, `koan play --artist 3`
 - **Parallel remote sync** — album detail fetches parallelized with rayon, batch DB writes per page
 - **Config local overlay** — `config.local.toml` for machine-specific overrides (gitignored), base `config.toml` committable to dotfiles
 - **`koan config`** — shows source files (config.toml, config.local.toml) and the resolved merged config
-- **24 unit tests** — config (load, merge, overlay), DB (CRUD, FTS5 search, upsert, playback resolution, scan cache, stats), metadata (audio detection, codec mapping)
+- **26 unit tests** — config, DB (CRUD, FTS5 search, dedup, playback resolution, scan cache, stats), metadata
 - **Ctrl+C handling** — SIGINT resets to default so blocking operations die immediately
-- **FTS5 fix** — switched from contentless to content-managed FTS5 table (deletes actually work now)
+- **Track deduplication** — local+remote tracks merged into single rows via 3-level matching (path, remote_id, content match). Local path always wins for playback.
+
+### Fixed
+
+- **Seek past end of track** — clamped to 500ms before duration instead of crashing Symphonia with "seek timestamp out-of-range"
+- **FTS5 deletes** — switched from contentless to content-managed FTS5 (contentless can't DELETE)
+- **Search ordering** — results grouped by artist/album/disc/track instead of FTS rank
+- **Cached path persisted** — `cached_path` column updated after download so subsequent plays skip re-download
 
 ### Changed
 
 - Config/data paths: `~/.config/koan/` (was `~/Library/Application Support/koan/`)
 - DB lives at `~/.config/koan/koan.db` (next to config)
-- Search results now show track IDs: `[42] Artist - Album - Title`
+- Search results show disc/track numbers, grouped by artist/album with album IDs
+- Progress bar shows track name from file stem (works with structured cache names)
 
 ## 0.1.0
 

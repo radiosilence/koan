@@ -813,7 +813,7 @@ pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, Db
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          WHERE tracks_fts MATCH ?1
-         ORDER BY rank
+         ORDER BY a.name, al.date, al.title, t.disc, t.track_number
          LIMIT 100",
     )?;
 
@@ -844,6 +844,59 @@ pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, Db
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
+}
+
+/// Get a single track by ID with full metadata.
+pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow>, DbError> {
+    let result = conn.query_row(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         WHERE t.id = ?1",
+        params![track_id],
+        |row| {
+            Ok(TrackRow {
+                id: row.get(0)?,
+                album_id: row.get(1)?,
+                artist_id: row.get(2)?,
+                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                album_title: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                disc: row.get(5)?,
+                track_number: row.get(6)?,
+                title: row.get(7)?,
+                duration_ms: row.get(8)?,
+                path: row.get(9)?,
+                codec: row.get(10)?,
+                sample_rate: row.get(11)?,
+                bit_depth: row.get(12)?,
+                channels: row.get(13)?,
+                bitrate: row.get(14)?,
+                genre: row.get(15)?,
+                source: row.get(16)?,
+                remote_id: row.get(17)?,
+                cached_path: row.get(18)?,
+            })
+        },
+    );
+
+    match result {
+        Ok(row) => Ok(Some(row)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Update the cached_path for a track after downloading.
+pub fn set_cached_path(conn: &Connection, track_id: i64, path: &str) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE tracks SET cached_path = ?1 WHERE id = ?2",
+        params![path, track_id],
+    )?;
+    Ok(())
 }
 
 /// Resolve the best playback source for a track. Local > Cached > Remote.

@@ -5,7 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use clap::{CommandFactory, Parser, Subcommand};
-use clap_complete::Shell;
+use clap_complete::engine::{ArgValueCandidates, CompletionCandidate};
+use clap_complete::env::CompleteEnv;
 use indicatif::{ProgressBar, ProgressStyle};
 use koan_core::audio::{buffer, device};
 use koan_core::config;
@@ -14,6 +15,7 @@ use koan_core::db::queries;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, SharedPlayerState};
+use owo_colors::OwoColorize;
 
 #[derive(Parser)]
 #[command(name = "koan", about = "bit-perfect music player", version)]
@@ -32,10 +34,10 @@ enum Commands {
         #[arg(long = "id", num_args = 1..)]
         ids: Vec<i64>,
         /// Play an album by ID (from `koan albums`)
-        #[arg(long)]
+        #[arg(long, add = ArgValueCandidates::new(complete_albums))]
         album: Option<i64>,
         /// Play all tracks by an artist ID (from `koan artists`)
-        #[arg(long)]
+        #[arg(long, add = ArgValueCandidates::new(complete_artists))]
         artist: Option<i64>,
     },
     /// Probe a file and show format info
@@ -75,10 +77,10 @@ enum Commands {
     /// Manage remote Subsonic/Navidrome server
     #[command(subcommand)]
     Remote(RemoteCommands),
-    /// Generate shell completions
+    /// Generate shell completions (legacy static)
     Completions {
         /// Shell to generate for
-        shell: Shell,
+        shell: clap_complete::Shell,
     },
 }
 
@@ -102,6 +104,9 @@ fn main() {
     unsafe {
         libc::signal(libc::SIGINT, libc::SIG_DFL);
     }
+
+    // Dynamic shell completions — handles COMPLETE=zsh/bash/fish env var.
+    CompleteEnv::with_factory(Cli::command).complete();
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_millis()
@@ -135,6 +140,37 @@ fn main() {
     }
 }
 
+// --- Dynamic completions ---
+
+fn complete_artists() -> Vec<CompletionCandidate> {
+    let Ok(db) = Database::open_default() else {
+        return vec![];
+    };
+    let Ok(artists) = queries::all_artists(&db.conn) else {
+        return vec![];
+    };
+    artists
+        .into_iter()
+        .map(|a| CompletionCandidate::new(a.id.to_string()).help(Some(a.name.into())))
+        .collect()
+}
+
+fn complete_albums() -> Vec<CompletionCandidate> {
+    let Ok(db) = Database::open_default() else {
+        return vec![];
+    };
+    let Ok(albums) = queries::all_albums(&db.conn) else {
+        return vec![];
+    };
+    albums
+        .into_iter()
+        .map(|a| {
+            let label = format!("{} — {}", a.artist_name, a.title);
+            CompletionCandidate::new(a.id.to_string()).help(Some(label.into()))
+        })
+        .collect()
+}
+
 // --- Playback ---
 
 enum Event {
@@ -146,7 +182,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
     let paths: Vec<PathBuf> = if let Some(album_id) = album {
         let db = open_db();
         let tracks = queries::tracks_for_album(&db.conn, album_id).unwrap_or_else(|e| {
-            eprintln!("failed to get album tracks: {}", e);
+            eprintln!("{} {}", "error:".red().bold(), e);
             std::process::exit(1);
         });
         if tracks.is_empty() {
@@ -158,7 +194,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
     } else if let Some(artist_id) = artist {
         let db = open_db();
         let tracks = queries::tracks_for_artist(&db.conn, artist_id).unwrap_or_else(|e| {
-            eprintln!("failed to get artist tracks: {}", e);
+            eprintln!("{} {}", "error:".red().bold(), e);
             std::process::exit(1);
         });
         if tracks.is_empty() {
@@ -176,7 +212,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
         }
         for path in paths {
             if !path.exists() {
-                eprintln!("file not found: {}", path.display());
+                eprintln!("{} {}", "not found:".red().bold(), path.display());
                 std::process::exit(1);
             }
         }
@@ -191,7 +227,10 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
 
     wait_for_playing(&state);
 
-    println!("controls: [space] pause/resume  [</>] seek 10s  [n] next  [q] quit\n");
+    println!(
+        "{}",
+        "controls: [space] pause/resume  [</>] seek 10s  [n] next  [q] quit\n".dimmed()
+    );
 
     let pb = ProgressBar::new(0);
     pb.set_style(
@@ -251,7 +290,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                     && current_track.is_some()
                 {
                     pb.finish_and_clear();
-                    println!("done.");
+                    println!("{}", "done.".dimmed());
                     quit.store(true, Ordering::Relaxed);
                     break;
                 }
@@ -260,7 +299,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                 b'q' | 3 => {
                     tx.send(PlayerCommand::Stop).ok();
                     pb.finish_and_clear();
-                    println!("stopped.");
+                    println!("{}", "stopped.".dimmed());
                     quit.store(true, Ordering::Relaxed);
                     break;
                 }
@@ -319,13 +358,18 @@ fn update_progress_bar(
     };
 
     if current_track.as_ref() != Some(&info.path) {
+        // Try to show a nice name from the filename — works for both local files
+        // and structured cache paths (which contain artist/title info).
+        let display_name = info.path.file_stem().unwrap_or_default().to_string_lossy();
+
+        pb.println(format!("\n{}", display_name.bold()));
         pb.println(format!(
-            "\n{}",
-            info.path.file_name().unwrap_or_default().to_string_lossy()
-        ));
-        pb.println(format!(
-            "  {} | {}Hz | {}bit | {}ch",
-            info.codec, info.sample_rate, info.bit_depth, info.channels,
+            "  {} {} {} {} {}",
+            info.codec.yellow().dimmed(),
+            "|".dimmed(),
+            format!("{}Hz", info.sample_rate).dimmed(),
+            format!("{}bit", info.bit_depth).dimmed(),
+            format!("{}ch", info.channels).dimmed(),
         ));
         pb.set_length(info.duration_ms);
         *current_track = Some(info.path.clone());
@@ -333,17 +377,17 @@ fn update_progress_bar(
 
     let pos = state.position_ms();
     let status = match state.playback_state() {
-        PlaybackState::Playing => "▶",
-        PlaybackState::Paused => "⏸",
-        PlaybackState::Stopped => "■",
+        PlaybackState::Playing => "▶".cyan().to_string(),
+        PlaybackState::Paused => "⏸".yellow().to_string(),
+        PlaybackState::Stopped => "■".dimmed().to_string(),
     };
 
-    pb.set_prefix(status.to_string());
+    pb.set_prefix(status);
     pb.set_position(pos);
     pb.set_message(format!(
         "{}/{}",
         format_time(pos),
-        format_time(info.duration_ms)
+        format_time(info.duration_ms).dimmed()
     ));
 }
 
@@ -354,7 +398,7 @@ fn wait_for_playing(state: &Arc<SharedPlayerState>) {
             return;
         }
     }
-    eprintln!("playback failed to start");
+    eprintln!("{}", "playback failed to start".red());
 }
 
 // --- Library ---
@@ -370,7 +414,10 @@ fn cmd_scan(path: Option<&Path>, force: bool) {
     };
 
     if folders.is_empty() {
-        eprintln!("no folders to scan — pass a path or configure library.folders");
+        eprintln!(
+            "{} no folders to scan — pass a path or configure library.folders",
+            "error:".red().bold()
+        );
         std::process::exit(1);
     }
 
@@ -379,21 +426,31 @@ fn cmd_scan(path: Option<&Path>, force: bool) {
     let elapsed = start.elapsed();
 
     println!(
-        "scan complete in {:.1}s: {} added, {} updated, {} removed, {} skipped",
-        elapsed.as_secs_f64(),
-        result.added,
-        result.updated,
-        result.removed,
-        result.skipped
+        "{} {} {} added, {} updated, {} removed, {} skipped",
+        "scan complete".green().bold(),
+        format!("({:.1}s)", elapsed.as_secs_f64()).dimmed(),
+        result.added.to_string().green(),
+        result.updated.to_string().yellow(),
+        result.removed.to_string().red(),
+        result.skipped.to_string().dimmed(),
     );
 
     if !result.errors.is_empty() {
-        println!("{} errors:", result.errors.len());
+        println!("{} {}:", "errors".red().bold(), result.errors.len());
         for (path, err) in result.errors.iter().take(10) {
-            println!("  {} — {}", path.display(), err);
+            println!(
+                "  {} {} {}",
+                "│".dimmed(),
+                path.display().to_string().dimmed(),
+                format!("— {}", err).red()
+            );
         }
         if result.errors.len() > 10 {
-            println!("  ... and {} more", result.errors.len() - 10);
+            println!(
+                "  {} {}",
+                "└".dimmed(),
+                format!("... and {} more", result.errors.len() - 10).dimmed()
+            );
         }
     }
 }
@@ -403,41 +460,147 @@ fn cmd_search(query: &str) {
     match queries::search_tracks(&db.conn, query) {
         Ok(tracks) => {
             if tracks.is_empty() {
-                println!("no results for \"{}\"", query);
+                println!("no results for {}", format!("\"{}\"", query).dimmed());
                 return;
             }
-            println!("{} results for \"{}\":\n", tracks.len(), query);
-            for t in &tracks {
-                let has_remote = t.remote_id.is_some();
-                let has_local = t.path.is_some();
-                let source_tag = match (has_local, has_remote) {
-                    (true, true) => " [local+remote]",
-                    (false, true) => " [remote]",
-                    _ => "",
+            println!(
+                "{} results for {}\n",
+                tracks.len().to_string().bold(),
+                format!("\"{}\"", query).dimmed()
+            );
+
+            // Group tracks by artist → album for tree display.
+            struct AlbumGroup {
+                title: String,
+                album_id: Option<i64>,
+                codec: Option<String>,
+                has_local: bool,
+                has_remote: bool,
+                tracks: Vec<queries::TrackRow>,
+            }
+            struct ArtistGroup {
+                name: String,
+                albums: Vec<AlbumGroup>,
+            }
+
+            let mut artists: Vec<ArtistGroup> = Vec::new();
+
+            for t in tracks {
+                let artist = artists.iter_mut().find(|a| a.name == t.artist_name);
+                let artist = match artist {
+                    Some(a) => a,
+                    None => {
+                        artists.push(ArtistGroup {
+                            name: t.artist_name.clone(),
+                            albums: Vec::new(),
+                        });
+                        artists.last_mut().unwrap()
+                    }
                 };
-                println!(
-                    "  [{}] {} - {} - {}{}",
-                    t.id, t.artist_name, t.album_title, t.title, source_tag
-                );
-                if let Some(ref codec) = t.codec {
-                    let rate = t
-                        .sample_rate
-                        .map(|r| format!(" {}Hz", r))
+
+                let album = artist
+                    .albums
+                    .iter_mut()
+                    .find(|a| a.title == t.album_title && a.album_id == t.album_id);
+                let album = match album {
+                    Some(a) => a,
+                    None => {
+                        artist.albums.push(AlbumGroup {
+                            title: t.album_title.clone(),
+                            album_id: t.album_id,
+                            codec: t.codec.clone(),
+                            has_local: false,
+                            has_remote: false,
+                            tracks: Vec::new(),
+                        });
+                        artist.albums.last_mut().unwrap()
+                    }
+                };
+
+                if t.path.is_some() {
+                    album.has_local = true;
+                }
+                if t.remote_id.is_some() {
+                    album.has_remote = true;
+                }
+                album.tracks.push(t);
+            }
+
+            // Render tree.
+            for (ai, artist) in artists.iter().enumerate() {
+                let is_last_artist = ai == artists.len() - 1;
+                println!("{}", artist.name.bold().cyan());
+
+                for (ali, album) in artist.albums.iter().enumerate() {
+                    let is_last_album = ali == artist.albums.len() - 1;
+                    let branch = if is_last_album {
+                        "└── "
+                    } else {
+                        "├── "
+                    };
+
+                    let codec_tag = album
+                        .codec
+                        .as_deref()
+                        .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
                         .unwrap_or_default();
-                    let depth = t
-                        .bit_depth
-                        .map(|b| format!("/{}bit", b))
+                    let source_tag = match (album.has_local, album.has_remote) {
+                        (true, true) => format!(" {}", "[local+remote]".magenta().dimmed()),
+                        (false, true) => format!(" {}", "[remote]".magenta().dimmed()),
+                        _ => String::new(),
+                    };
+                    let album_id = album
+                        .album_id
+                        .map(|id| format!(" {}", format!("[album:{}]", id).dimmed()))
                         .unwrap_or_default();
-                    let dur = t
-                        .duration_ms
-                        .map(|d| format!(" {}", format_time(d as u64)))
-                        .unwrap_or_default();
-                    println!("       {}{}{}{}", codec, rate, depth, dur);
+
+                    println!(
+                        "{}{}{}{}{}",
+                        branch.dimmed(),
+                        album.title.green(),
+                        codec_tag,
+                        source_tag,
+                        album_id,
+                    );
+
+                    let pipe = if is_last_album { "    " } else { "│   " };
+                    for (ti, t) in album.tracks.iter().enumerate() {
+                        let is_last_track = ti == album.tracks.len() - 1;
+                        let track_branch = if is_last_track {
+                            "└── "
+                        } else {
+                            "├── "
+                        };
+
+                        let disc_track = match (t.disc, t.track_number) {
+                            (Some(d), Some(n)) if d > 1 => format!("{}.{:02}", d, n),
+                            (_, Some(n)) => format!("{:02}", n),
+                            _ => "  ".into(),
+                        };
+
+                        let dur = t
+                            .duration_ms
+                            .map(|d| format_time(d as u64))
+                            .unwrap_or_default();
+
+                        println!(
+                            "{}{}{} {} {}  {}",
+                            pipe.dimmed(),
+                            track_branch.dimmed(),
+                            disc_track.dimmed(),
+                            format!("[{}]", t.id).dimmed(),
+                            t.title,
+                            dur.dimmed(),
+                        );
+                    }
+                }
+                if !is_last_artist {
+                    println!();
                 }
             }
         }
         Err(e) => {
-            eprintln!("search failed: {}", e);
+            eprintln!("{} {}", "search failed:".red().bold(), e);
             std::process::exit(1);
         }
     }
@@ -459,15 +622,20 @@ fn cmd_artists(query: Option<&str>) {
             }
             for a in &artists {
                 let remote_tag = if a.remote_id.is_some() {
-                    " [remote]"
+                    format!(" {}", "[remote]".magenta().dimmed())
                 } else {
-                    ""
+                    String::new()
                 };
-                println!("  [{}] {}{}", a.id, a.name, remote_tag);
+                println!(
+                    "  {} {}{}",
+                    format!("[{}]", a.id).dimmed(),
+                    a.name.bold().cyan(),
+                    remote_tag,
+                );
             }
         }
         Err(e) => {
-            eprintln!("failed to list artists: {}", e);
+            eprintln!("{} {}", "error:".red().bold(), e);
             std::process::exit(1);
         }
     }
@@ -477,10 +645,9 @@ fn cmd_albums(query: Option<&str>) {
     let db = open_db();
 
     let albums = if let Some(q) = query {
-        // Find artist first, then list their albums.
         let artists = queries::find_artists(&db.conn, q).unwrap_or_default();
         if artists.is_empty() {
-            println!("no artist matching \"{}\"", q);
+            println!("no artist matching {}", format!("\"{}\"", q).dimmed());
             return;
         }
         let mut all_albums = Vec::new();
@@ -501,29 +668,60 @@ fn cmd_albums(query: Option<&str>) {
                 return;
             }
             let mut current_artist = String::new();
+            let mut artist_albums: Vec<&queries::AlbumRow> = Vec::new();
+
+            // Collect albums per artist for tree rendering.
+            let mut grouped: Vec<(String, Vec<&queries::AlbumRow>)> = Vec::new();
             for al in &albums {
                 if al.artist_name != current_artist {
+                    if !artist_albums.is_empty() {
+                        grouped.push((current_artist.clone(), artist_albums.clone()));
+                    }
                     current_artist = al.artist_name.clone();
-                    println!("\n{}:", current_artist);
+                    artist_albums = Vec::new();
                 }
-                let year = al
-                    .date
-                    .as_deref()
-                    .map(|d| {
-                        let y = if d.len() >= 4 { &d[..4] } else { d };
-                        format!("({}) ", y)
-                    })
-                    .unwrap_or_default();
-                let codec = al
-                    .codec
-                    .as_deref()
-                    .map(|c| format!(" [{}]", c))
-                    .unwrap_or_default();
-                println!("  [{}] {}{}{}", al.id, year, al.title, codec);
+                artist_albums.push(al);
+            }
+            if !artist_albums.is_empty() {
+                grouped.push((current_artist, artist_albums));
+            }
+
+            for (gi, (artist_name, als)) in grouped.iter().enumerate() {
+                if gi > 0 {
+                    println!();
+                }
+                println!("{}", artist_name.bold().cyan());
+                for (i, al) in als.iter().enumerate() {
+                    let is_last = i == als.len() - 1;
+                    let branch = if is_last { "└── " } else { "├── " };
+
+                    let year = al
+                        .date
+                        .as_deref()
+                        .map(|d| {
+                            let y = if d.len() >= 4 { &d[..4] } else { d };
+                            format!("({}) ", y).dimmed().to_string()
+                        })
+                        .unwrap_or_default();
+                    let codec = al
+                        .codec
+                        .as_deref()
+                        .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
+                        .unwrap_or_default();
+
+                    println!(
+                        "{}{}{}{} {}",
+                        branch.dimmed(),
+                        year,
+                        al.title.green(),
+                        codec,
+                        format!("[{}]", al.id).dimmed(),
+                    );
+                }
             }
         }
         Err(e) => {
-            eprintln!("failed to list albums: {}", e);
+            eprintln!("{} {}", "error:".red().bold(), e);
             std::process::exit(1);
         }
     }
@@ -533,17 +731,25 @@ fn cmd_library() {
     let db = open_db();
     match queries::library_stats(&db.conn) {
         Ok(stats) => {
-            println!("library:");
-            println!("  tracks:  {} total", stats.total_tracks);
-            println!("    local:  {}", stats.local_tracks);
-            println!("    remote: {}", stats.remote_tracks);
-            println!("    cached: {}", stats.cached_tracks);
-            println!("  albums:  {}", stats.total_albums);
-            println!("  artists: {}", stats.total_artists);
-            println!("\ndb: {}", config::db_path().display());
+            println!("{}", "library".bold());
+            println!(
+                "  {} {}",
+                "tracks:".cyan(),
+                format!("{} total", stats.total_tracks).bold(),
+            );
+            println!("    {} {}", "local:".dimmed(), stats.local_tracks,);
+            println!("    {} {}", "remote:".dimmed(), stats.remote_tracks,);
+            println!("    {} {}", "cached:".dimmed(), stats.cached_tracks,);
+            println!("  {} {}", "albums:".cyan(), stats.total_albums);
+            println!("  {} {}", "artists:".cyan(), stats.total_artists);
+            println!(
+                "\n{} {}",
+                "db:".cyan(),
+                config::db_path().display().to_string().dimmed()
+            );
         }
         Err(e) => {
-            eprintln!("failed to get library stats: {}", e);
+            eprintln!("{} {}", "error:".red().bold(), e);
             std::process::exit(1);
         }
     }
@@ -553,25 +759,35 @@ fn cmd_config() {
     let base_path = config::config_file_path();
     let local_path = config::config_local_file_path();
 
-    println!("sources:");
+    println!("{}", "sources".bold());
     if base_path.exists() {
-        println!("  config:       {}", base_path.display());
+        println!("  {} {}", "config:".cyan(), base_path.display());
     } else {
-        println!("  config:       {} (not found)", base_path.display());
+        println!(
+            "  {} {} {}",
+            "config:".cyan(),
+            base_path.display(),
+            "(not found)".red().dimmed()
+        );
     }
     if local_path.exists() {
-        println!("  config.local: {}", local_path.display());
+        println!("  {} {}", "config.local:".cyan(), local_path.display());
     } else {
-        println!("  config.local: {} (not found)", local_path.display());
+        println!(
+            "  {} {} {}",
+            "config.local:".cyan(),
+            local_path.display(),
+            "(not found)".dimmed()
+        );
     }
-    println!("  db:           {}", config::db_path().display());
+    println!("  {} {}", "db:".cyan(), config::db_path().display());
     println!();
 
-    println!("resolved:");
+    println!("{}", "resolved".bold());
     let cfg = config::Config::load().unwrap_or_default();
     match toml::to_string_pretty(&cfg) {
         Ok(s) => print!("{}", s),
-        Err(e) => eprintln!("failed to serialize config: {}", e),
+        Err(e) => eprintln!("{} {}", "error:".red().bold(), e),
     }
 }
 
@@ -579,51 +795,52 @@ fn cmd_config() {
 
 fn cmd_remote_login(url: &str, username: &str) {
     let password = rpassword::prompt_password("password: ").unwrap_or_else(|e| {
-        eprintln!("failed to read password: {}", e);
+        eprintln!("{} {}", "error:".red().bold(), e);
         std::process::exit(1);
     });
 
-    // Test connection.
     let client = koan_core::remote::client::SubsonicClient::new(url, username, &password);
     match client.ping() {
-        Ok(()) => println!("connected to {}", url),
+        Ok(()) => println!("{} {}", "connected".green(), url),
         Err(e) => {
-            eprintln!("connection failed: {}", e);
+            eprintln!("{} {}", "connection failed:".red().bold(), e);
             std::process::exit(1);
         }
     }
 
-    // Store credentials.
     if let Err(e) = koan_core::credentials::store_password(url, &password) {
-        eprintln!("failed to store password in Keychain: {}", e);
+        eprintln!("{} {}", "keychain error:".red().bold(), e);
         std::process::exit(1);
     }
-    println!("password stored in Keychain");
+    println!("{}", "password stored in Keychain".green());
 
-    // Update config.
     let mut cfg = config::Config::load().unwrap_or_default();
     cfg.remote.enabled = true;
     cfg.remote.url = url.to_string();
     cfg.remote.username = username.to_string();
     if let Err(e) = cfg.save() {
-        eprintln!("failed to save config: {}", e);
+        eprintln!("{} {}", "config error:".red().bold(), e);
         std::process::exit(1);
     }
-    println!("config updated");
+    println!("{}", "config updated".green());
 }
 
 fn cmd_remote_sync() {
     let cfg = config::Config::load().unwrap_or_default();
     if !cfg.remote.enabled || cfg.remote.url.is_empty() {
-        eprintln!("no remote server configured — run `koan remote login` first");
+        eprintln!(
+            "{} no remote server configured — run {} first",
+            "error:".red().bold(),
+            "koan remote login".bold()
+        );
         std::process::exit(1);
     }
 
     let password = match koan_core::credentials::get_password(&cfg.remote.url) {
         Ok(p) => p,
         Err(e) => {
-            eprintln!("failed to get password from Keychain: {}", e);
-            eprintln!("run `koan remote login` to re-authenticate");
+            eprintln!("{} {}", "keychain error:".red().bold(), e);
+            eprintln!("run {} to re-authenticate", "koan remote login".bold());
             std::process::exit(1);
         }
     };
@@ -641,15 +858,16 @@ fn cmd_remote_sync() {
         Ok(result) => {
             let elapsed = start.elapsed();
             println!(
-                "sync complete in {:.1}s: {} artists, {} albums, {} tracks",
-                elapsed.as_secs_f64(),
-                result.artists_synced,
-                result.albums_synced,
-                result.tracks_synced,
+                "{} {} {} artists, {} albums, {} tracks",
+                "sync complete".green().bold(),
+                format!("({:.1}s)", elapsed.as_secs_f64()).dimmed(),
+                result.artists_synced.to_string().bold(),
+                result.albums_synced.to_string().bold(),
+                result.tracks_synced.to_string().bold(),
             );
         }
         Err(e) => {
-            eprintln!("sync failed: {}", e);
+            eprintln!("{} {}", "sync failed:".red().bold(), e);
             std::process::exit(1);
         }
     }
@@ -662,16 +880,17 @@ fn cmd_remote_status() {
         return;
     }
 
-    println!("server:   {}", cfg.remote.url);
-    println!("username: {}", cfg.remote.username);
+    println!("{} {}", "server:".cyan(), cfg.remote.url);
+    println!("{} {}", "username:".cyan(), cfg.remote.username);
 
     let has_password = koan_core::credentials::get_password(&cfg.remote.url).is_ok();
     println!(
-        "password: {}",
+        "{} {}",
+        "password:".cyan(),
         if has_password {
-            "stored in Keychain"
+            "stored in Keychain".green().to_string()
         } else {
-            "not found"
+            "not found".red().to_string()
         }
     );
 
@@ -683,8 +902,13 @@ fn cmd_remote_status() {
             &password,
         );
         match client.ping() {
-            Ok(()) => println!("status:   connected"),
-            Err(e) => println!("status:   error — {}", e),
+            Ok(()) => println!("{} {}", "status:".cyan(), "connected".green()),
+            Err(e) => println!(
+                "{} {} {}",
+                "status:".cyan(),
+                "error".red(),
+                format!("— {}", e).dimmed()
+            ),
         }
     }
 }
@@ -693,25 +917,26 @@ fn cmd_remote_status() {
 
 fn cmd_probe(path: &Path) {
     if !path.exists() {
-        eprintln!("file not found: {}", path.display());
+        eprintln!("{} {}", "not found:".red().bold(), path.display());
         std::process::exit(1);
     }
 
     match buffer::probe_file(path) {
         Ok(info) => {
-            println!("file:        {}", path.display());
-            println!("codec:       {}", info.codec);
-            println!("sample rate: {} Hz", info.sample_rate);
-            println!("bit depth:   {}", info.bit_depth);
-            println!("channels:    {}", info.channels);
+            println!("{} {}", "file:".cyan(), path.display());
+            println!("{} {}", "codec:".cyan(), info.codec.yellow());
+            println!("{} {} Hz", "sample rate:".cyan(), info.sample_rate);
+            println!("{} {}", "bit depth:".cyan(), info.bit_depth);
+            println!("{} {}", "channels:".cyan(), info.channels);
             println!(
-                "duration:    {} ({}ms)",
+                "{} {} {}",
+                "duration:".cyan(),
                 format_time(info.duration_ms),
-                info.duration_ms
+                format!("({}ms)", info.duration_ms).dimmed()
             );
         }
         Err(e) => {
-            eprintln!("probe failed: {}", e);
+            eprintln!("{} {}", "probe failed:".red().bold(), e);
             std::process::exit(1);
         }
     }
@@ -722,26 +947,98 @@ fn cmd_devices() {
         Ok(devices) => {
             let default_id = device::default_output_device().ok();
             for dev in &devices {
-                let marker = if Some(dev.id) == default_id { " *" } else { "" };
-                println!("[{}]{} {}", dev.id, marker, dev.name);
+                let is_default = Some(dev.id) == default_id;
+                let marker = if is_default {
+                    " *".yellow().bold().to_string()
+                } else {
+                    String::new()
+                };
+                println!(
+                    "{} {}{}",
+                    format!("[{}]", dev.id).dimmed(),
+                    if is_default {
+                        dev.name.bold().to_string()
+                    } else {
+                        dev.name.to_string()
+                    },
+                    marker,
+                );
                 if !dev.sample_rates.is_empty() {
                     let rates: Vec<String> = dev
                         .sample_rates
                         .iter()
                         .map(|r| format!("{}Hz", *r as u32))
                         .collect();
-                    println!("  rates: {}", rates.join(", "));
+                    println!("  {} {}", "rates:".dimmed(), rates.join(", ").dimmed());
                 }
             }
         }
         Err(e) => {
-            eprintln!("failed to list devices: {}", e);
+            eprintln!("{} {}", "error:".red().bold(), e);
             std::process::exit(1);
         }
     }
 }
 
 // --- Helpers ---
+
+/// Sanitise a string for use as a filename — strip chars that are illegal on macOS/Windows.
+fn sanitise_filename(s: &str) -> String {
+    s.chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            _ => c,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+/// Build a structured cache path for a track:
+///   cache_dir/Album Artist/(Year) Album [Codec]/01. Track Artist - Title.ext
+fn cache_path_for_track(
+    cache_dir: &Path,
+    track: &queries::TrackRow,
+    album_date: Option<&str>,
+) -> PathBuf {
+    let artist_dir = sanitise_filename(&track.artist_name);
+
+    let year = album_date
+        .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
+        .map(|y| format!("({}) ", y))
+        .unwrap_or_default();
+    let codec = track
+        .codec
+        .as_deref()
+        .map(|c| format!(" [{}]", c))
+        .unwrap_or_default();
+    let album_dir = sanitise_filename(&format!("{}{}{}", year, track.album_title, codec));
+
+    let disc_prefix = match track.disc {
+        Some(d) if d > 1 => format!("{}-", d),
+        _ => String::new(),
+    };
+    let track_num = track
+        .track_number
+        .map(|n| format!("{:02}. ", n))
+        .unwrap_or_default();
+
+    let ext = track
+        .codec
+        .as_deref()
+        .map(|c| c.to_lowercase())
+        .unwrap_or_else(|| "flac".into());
+
+    let filename = sanitise_filename(&format!(
+        "{}{}{} - {}",
+        disc_prefix, track_num, track.artist_name, track.title
+    ));
+
+    cache_dir
+        .join(artist_dir)
+        .join(album_dir)
+        .join(format!("{}.{}", filename, ext))
+}
 
 fn resolve_track_ids(ids: &[i64]) -> Vec<PathBuf> {
     let db = open_db();
@@ -753,19 +1050,58 @@ fn resolve_track_ids(ids: &[i64]) -> Vec<PathBuf> {
             Ok(Some(queries::PlaybackSource::Local(p))) => paths.push(p),
             Ok(Some(queries::PlaybackSource::Cached(p))) => paths.push(p),
             Ok(Some(queries::PlaybackSource::Remote(_url))) => {
-                // Download to cache, then play from there.
+                // Get full track metadata for structured cache path.
+                let track = match queries::get_track_row(&db.conn, id) {
+                    Ok(Some(t)) => t,
+                    Ok(None) => {
+                        eprintln!("{} track {} not found", "error:".red().bold(), id);
+                        std::process::exit(1);
+                    }
+                    Err(e) => {
+                        eprintln!("{} {}", "error:".red().bold(), e);
+                        std::process::exit(1);
+                    }
+                };
+
+                let remote_id = match &track.remote_id {
+                    Some(rid) => rid.clone(),
+                    None => {
+                        eprintln!("{} track {} has no remote_id", "error:".red().bold(), id);
+                        std::process::exit(1);
+                    }
+                };
+
+                // Get album date for the cache path.
+                let album_date: Option<String> = track.album_id.and_then(|aid| {
+                    db.conn
+                        .query_row(
+                            "SELECT date FROM albums WHERE id = ?1",
+                            rusqlite::params![aid],
+                            |row| row.get(0),
+                        )
+                        .ok()
+                        .flatten()
+                });
+
                 let cache_dir = cfg.cache_dir();
-                let dest = cache_dir.join(format!("track_{}", id));
+                let dest = cache_path_for_track(&cache_dir, &track, album_date.as_deref());
+
                 if dest.exists() {
                     paths.push(dest);
                     continue;
                 }
 
-                eprintln!("downloading track {} from remote...", id);
+                eprintln!(
+                    "{} {} — {} ...",
+                    "downloading".cyan(),
+                    track.title.bold(),
+                    track.artist_name.dimmed(),
+                );
+
                 let password = match koan_core::credentials::get_password(&cfg.remote.url) {
                     Ok(p) => p,
                     Err(e) => {
-                        eprintln!("failed to get password from Keychain: {}", e);
+                        eprintln!("{} {}", "keychain error:".red().bold(), e);
                         std::process::exit(1);
                     }
                 };
@@ -775,53 +1111,22 @@ fn resolve_track_ids(ids: &[i64]) -> Vec<PathBuf> {
                     &password,
                 );
 
-                // Get the remote_id for this track.
-                let remote_id: Option<String> = db
-                    .conn
-                    .query_row(
-                        "SELECT remote_id FROM tracks WHERE id = ?1",
-                        rusqlite::params![id],
-                        |row| row.get(0),
-                    )
-                    .ok()
-                    .flatten();
-
-                match remote_id {
-                    Some(rid) => {
-                        // Determine file extension from suffix/codec.
-                        let suffix: Option<String> = db
-                            .conn
-                            .query_row(
-                                "SELECT codec FROM tracks WHERE id = ?1",
-                                rusqlite::params![id],
-                                |row| row.get(0),
-                            )
-                            .ok()
-                            .flatten();
-                        let ext = suffix
-                            .as_deref()
-                            .map(|s| s.to_lowercase())
-                            .unwrap_or_else(|| "flac".into());
-                        let dest = cache_dir.join(format!("track_{}.{}", id, ext));
-
-                        if let Err(e) = client.download(&rid, &dest) {
-                            eprintln!("download failed for track {}: {}", id, e);
-                            std::process::exit(1);
-                        }
-                        paths.push(dest);
-                    }
-                    None => {
-                        eprintln!("track {} has no remote_id", id);
-                        std::process::exit(1);
-                    }
+                if let Err(e) = client.download(&remote_id, &dest) {
+                    eprintln!("{} {}", "download failed:".red().bold(), e);
+                    std::process::exit(1);
                 }
+
+                // Update DB with cached path so resolve_playback_path finds it next time.
+                let _ = queries::set_cached_path(&db.conn, id, &dest.to_string_lossy());
+
+                paths.push(dest);
             }
             Ok(None) => {
-                eprintln!("track {} not found", id);
+                eprintln!("{} track {} not found", "error:".red().bold(), id);
                 std::process::exit(1);
             }
             Err(e) => {
-                eprintln!("failed to resolve track {}: {}", id, e);
+                eprintln!("{} {}", "error:".red().bold(), e);
                 std::process::exit(1);
             }
         }
@@ -832,7 +1137,7 @@ fn resolve_track_ids(ids: &[i64]) -> Vec<PathBuf> {
 
 fn open_db() -> Database {
     Database::open_default().unwrap_or_else(|e| {
-        eprintln!("failed to open database: {}", e);
+        eprintln!("{} {}", "db error:".red().bold(), e);
         std::process::exit(1);
     })
 }
