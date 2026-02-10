@@ -18,30 +18,23 @@ pub struct SyncResult {
     pub artists_synced: usize,
     pub albums_synced: usize,
     pub tracks_synced: usize,
-    pub matched_local: usize,
 }
 
-/// Pull the entire Navidrome/Subsonic library into the local DB as remote tracks.
+/// Pull the entire Navidrome/Subsonic library into the local DB.
 ///
 /// Pipeline: paginate album list → fetch album details in parallel (rayon) →
-/// batch-write each page in a single transaction. Local tracks are never touched.
-/// After sync, matches remote tracks against local (same artist+album+title+track#)
-/// so local files take playback priority.
+/// batch-write each page in a single transaction.
+///
+/// Deduplication happens in `upsert_track` — if a local track already exists
+/// with the same artist + album + title + track#, the remote_id and remote_url
+/// are merged onto the existing row instead of creating a duplicate.
 pub fn sync_library(db: &Database, client: &SubsonicClient) -> Result<SyncResult, SyncError> {
     let mut result = SyncResult::default();
 
-    // Clear old remote-only tracks. Doesn't touch local or cached.
-    let removed = queries::remove_tracks_by_source(&db.conn, "remote")?;
-    if removed > 0 {
-        log::info!("cleared {} stale remote tracks", removed);
-    }
-
-    // Count artists for the result (cheap call).
     let artists = client.get_artists()?;
     result.artists_synced = artists.len();
     log::info!("syncing {} artists from remote", artists.len());
 
-    // Paginate through all albums, fetch details in parallel, batch write.
     let mut offset = 0u32;
     let page_size = 500u32;
 
@@ -121,58 +114,12 @@ pub fn sync_library(db: &Database, client: &SubsonicClient) -> Result<SyncResult
         );
     }
 
-    // Match remote tracks against local ones.
-    let matched = match_remote_to_local(&db.conn);
-    result.matched_local = matched;
-
     log::info!(
-        "sync complete: {} artists, {} albums, {} tracks, {} matched to local",
+        "sync complete: {} artists, {} albums, {} tracks",
         result.artists_synced,
         result.albums_synced,
         result.tracks_synced,
-        result.matched_local
     );
 
     Ok(result)
-}
-
-/// For remote tracks that have a matching local track (same artist, album, title, track#),
-/// copy the local path onto the remote track so playback uses the local file.
-fn match_remote_to_local(conn: &rusqlite::Connection) -> usize {
-    // Find remote tracks that match a local track.
-    let result = conn.execute(
-        "UPDATE tracks SET path = (
-            SELECT l.path FROM tracks l
-            WHERE l.source = 'local'
-              AND l.title = tracks.title
-              AND l.artist_id = tracks.artist_id
-              AND l.album_id = tracks.album_id
-              AND COALESCE(l.track_number, -1) = COALESCE(tracks.track_number, -1)
-            LIMIT 1
-        )
-        WHERE source = 'remote'
-          AND path IS NULL
-          AND EXISTS (
-            SELECT 1 FROM tracks l
-            WHERE l.source = 'local'
-              AND l.title = tracks.title
-              AND l.artist_id = tracks.artist_id
-              AND l.album_id = tracks.album_id
-              AND COALESCE(l.track_number, -1) = COALESCE(tracks.track_number, -1)
-        )",
-        [],
-    );
-
-    match result {
-        Ok(count) => {
-            if count > 0 {
-                log::info!("{} remote tracks matched to local files", count);
-            }
-            count
-        }
-        Err(e) => {
-            log::error!("failed to match remote tracks to local: {}", e);
-            0
-        }
-    }
 }

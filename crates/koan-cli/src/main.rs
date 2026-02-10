@@ -24,14 +24,19 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Play audio file(s) or tracks by ID
+    /// Play audio file(s), tracks by ID, or an album/artist
     Play {
         /// Paths to audio files
-        #[arg(required_unless_present = "ids")]
         paths: Vec<PathBuf>,
         /// Track IDs from the library database
         #[arg(long = "id", num_args = 1..)]
         ids: Vec<i64>,
+        /// Play an album by ID (from `koan albums`)
+        #[arg(long)]
+        album: Option<i64>,
+        /// Play all tracks by an artist ID (from `koan artists`)
+        #[arg(long)]
+        artist: Option<i64>,
     },
     /// Probe a file and show format info
     Probe {
@@ -52,6 +57,16 @@ enum Commands {
     Search {
         /// Search query
         query: String,
+    },
+    /// List artists (optionally filter by name)
+    Artists {
+        /// Filter by name
+        query: Option<String>,
+    },
+    /// List albums (optionally for an artist)
+    Albums {
+        /// Artist name to filter by
+        query: Option<String>,
     },
     /// Show library statistics
     Library,
@@ -95,11 +110,18 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Play { paths, ids } => cmd_play(&paths, &ids),
+        Commands::Play {
+            paths,
+            ids,
+            album,
+            artist,
+        } => cmd_play(&paths, &ids, album, artist),
         Commands::Probe { path } => cmd_probe(&path),
         Commands::Devices => cmd_devices(),
         Commands::Scan { path, force } => cmd_scan(path.as_deref(), force),
         Commands::Search { query } => cmd_search(&query),
+        Commands::Artists { query } => cmd_artists(query.as_deref()),
+        Commands::Albums { query } => cmd_albums(query.as_deref()),
         Commands::Library => cmd_library(),
         Commands::Config => cmd_config(),
         Commands::Remote(sub) => match sub {
@@ -120,10 +142,38 @@ enum Event {
     Tick,
 }
 
-fn cmd_play(paths: &[PathBuf], ids: &[i64]) {
-    let paths: Vec<PathBuf> = if !ids.is_empty() {
+fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i64>) {
+    let paths: Vec<PathBuf> = if let Some(album_id) = album {
+        let db = open_db();
+        let tracks = queries::tracks_for_album(&db.conn, album_id).unwrap_or_else(|e| {
+            eprintln!("failed to get album tracks: {}", e);
+            std::process::exit(1);
+        });
+        if tracks.is_empty() {
+            eprintln!("no tracks found for album {}", album_id);
+            std::process::exit(1);
+        }
+        let track_ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+        resolve_track_ids(&track_ids)
+    } else if let Some(artist_id) = artist {
+        let db = open_db();
+        let tracks = queries::tracks_for_artist(&db.conn, artist_id).unwrap_or_else(|e| {
+            eprintln!("failed to get artist tracks: {}", e);
+            std::process::exit(1);
+        });
+        if tracks.is_empty() {
+            eprintln!("no tracks found for artist {}", artist_id);
+            std::process::exit(1);
+        }
+        let track_ids: Vec<i64> = tracks.iter().map(|t| t.id).collect();
+        resolve_track_ids(&track_ids)
+    } else if !ids.is_empty() {
         resolve_track_ids(ids)
     } else {
+        if paths.is_empty() {
+            eprintln!("provide file paths, --id, --album, or --artist");
+            std::process::exit(1);
+        }
         for path in paths {
             if !path.exists() {
                 eprintln!("file not found: {}", path.display());
@@ -358,9 +408,11 @@ fn cmd_search(query: &str) {
             }
             println!("{} results for \"{}\":\n", tracks.len(), query);
             for t in &tracks {
-                let source_tag = match t.source.as_str() {
-                    "remote" => " [remote]",
-                    "cached" => " [cached]",
+                let has_remote = t.remote_id.is_some();
+                let has_local = t.path.is_some();
+                let source_tag = match (has_local, has_remote) {
+                    (true, true) => " [local+remote]",
+                    (false, true) => " [remote]",
                     _ => "",
                 };
                 println!(
@@ -386,6 +438,92 @@ fn cmd_search(query: &str) {
         }
         Err(e) => {
             eprintln!("search failed: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_artists(query: Option<&str>) {
+    let db = open_db();
+    let artists = if let Some(q) = query {
+        queries::find_artists(&db.conn, q)
+    } else {
+        queries::all_artists(&db.conn)
+    };
+
+    match artists {
+        Ok(artists) => {
+            if artists.is_empty() {
+                println!("no artists found");
+                return;
+            }
+            for a in &artists {
+                let remote_tag = if a.remote_id.is_some() {
+                    " [remote]"
+                } else {
+                    ""
+                };
+                println!("  [{}] {}{}", a.id, a.name, remote_tag);
+            }
+        }
+        Err(e) => {
+            eprintln!("failed to list artists: {}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn cmd_albums(query: Option<&str>) {
+    let db = open_db();
+
+    let albums = if let Some(q) = query {
+        // Find artist first, then list their albums.
+        let artists = queries::find_artists(&db.conn, q).unwrap_or_default();
+        if artists.is_empty() {
+            println!("no artist matching \"{}\"", q);
+            return;
+        }
+        let mut all_albums = Vec::new();
+        for a in &artists {
+            if let Ok(mut albums) = queries::albums_for_artist(&db.conn, a.id) {
+                all_albums.append(&mut albums);
+            }
+        }
+        Ok(all_albums)
+    } else {
+        queries::all_albums(&db.conn)
+    };
+
+    match albums {
+        Ok(albums) => {
+            if albums.is_empty() {
+                println!("no albums found");
+                return;
+            }
+            let mut current_artist = String::new();
+            for al in &albums {
+                if al.artist_name != current_artist {
+                    current_artist = al.artist_name.clone();
+                    println!("\n{}:", current_artist);
+                }
+                let year = al
+                    .date
+                    .as_deref()
+                    .map(|d| {
+                        let y = if d.len() >= 4 { &d[..4] } else { d };
+                        format!("({}) ", y)
+                    })
+                    .unwrap_or_default();
+                let codec = al
+                    .codec
+                    .as_deref()
+                    .map(|c| format!(" [{}]", c))
+                    .unwrap_or_default();
+                println!("  [{}] {}{}{}", al.id, year, al.title, codec);
+            }
+        }
+        Err(e) => {
+            eprintln!("failed to list albums: {}", e);
             std::process::exit(1);
         }
     }
@@ -503,12 +641,11 @@ fn cmd_remote_sync() {
         Ok(result) => {
             let elapsed = start.elapsed();
             println!(
-                "sync complete in {:.1}s: {} artists, {} albums, {} tracks, {} matched to local",
+                "sync complete in {:.1}s: {} artists, {} albums, {} tracks",
                 elapsed.as_secs_f64(),
                 result.artists_synced,
                 result.albums_synced,
                 result.tracks_synced,
-                result.matched_local
             );
         }
         Err(e) => {

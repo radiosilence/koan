@@ -169,7 +169,15 @@ pub struct TrackMeta {
     pub remote_url: Option<String>,
 }
 
-/// Insert or update a track. Auto-creates artist/album.
+/// Insert or update a track. Deduplicates local+remote: one row per logical track.
+///
+/// Matching priority:
+/// 1. By path (local tracks)
+/// 2. By remote_id (remote tracks)
+/// 3. By content match: same artist_id + album_id + title + track# (cross-source merge)
+///
+/// When merging, local metadata (codec, sample_rate, etc.) wins over remote.
+/// The `source` field reflects what's available: "local" if path exists, "remote" if remote-only.
 pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError> {
     let artist_name = meta.album_artist.as_deref().unwrap_or(&meta.artist);
     let artist_id = get_or_create_artist(conn, artist_name, None)?;
@@ -185,7 +193,7 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
         None,
     )?;
 
-    // Use path as the unique key for local tracks, remote_id for remote.
+    // 1. Match by path.
     let track_id: Option<i64> = if let Some(ref path) = meta.path {
         conn.query_row(
             "SELECT id FROM tracks WHERE path = ?1",
@@ -193,18 +201,61 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
             |row| row.get(0),
         )
         .ok()
-    } else if let Some(ref rid) = meta.remote_id {
-        conn.query_row(
-            "SELECT id FROM tracks WHERE remote_id = ?1",
-            params![rid],
-            |row| row.get(0),
-        )
-        .ok()
     } else {
         None
     };
 
+    // 2. Match by remote_id.
+    let track_id = track_id.or_else(|| {
+        meta.remote_id.as_ref().and_then(|rid| {
+            conn.query_row(
+                "SELECT id FROM tracks WHERE remote_id = ?1",
+                params![rid],
+                |row| row.get(0),
+            )
+            .ok()
+        })
+    });
+
+    // 3. Content match: same artist + album + title + track# (cross-source dedup).
+    let track_id = track_id.or_else(|| {
+        conn.query_row(
+            "SELECT id FROM tracks
+             WHERE artist_id = ?1 AND album_id = ?2 AND title = ?3
+               AND COALESCE(track_number, -1) = COALESCE(?4, -1)",
+            params![artist_id, album_id, meta.title, meta.track_number],
+            |row| row.get(0),
+        )
+        .ok()
+    });
+
     if let Some(id) = track_id {
+        // Merge: preserve existing fields that the incoming meta doesn't have.
+        // Local scan provides path + high-quality metadata.
+        // Remote sync provides remote_id + remote_url.
+        let (existing_path, existing_remote_id, existing_remote_url): (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ) = conn
+            .query_row(
+                "SELECT path, remote_id, remote_url FROM tracks WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap_or((None, None, None));
+
+        let merged_path = meta.path.as_ref().or(existing_path.as_ref());
+        let merged_remote_id = meta.remote_id.as_ref().or(existing_remote_id.as_ref());
+        let merged_remote_url = meta.remote_url.as_ref().or(existing_remote_url.as_ref());
+
+        // Source reflects what's available: local path wins.
+        let source = if merged_path.is_some() {
+            "local"
+        } else {
+            &meta.source
+        };
+
         conn.execute(
             "UPDATE tracks SET album_id=?1, artist_id=?2, disc=?3, track_number=?4,
              title=?5, duration_ms=?6, codec=?7, sample_rate=?8, bit_depth=?9,
@@ -226,15 +277,14 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
                 meta.size_bytes,
                 meta.mtime,
                 meta.genre,
-                meta.source,
-                meta.remote_id,
-                meta.remote_url,
-                meta.path,
+                source,
+                merged_remote_id,
+                merged_remote_url,
+                merged_path,
                 id
             ],
         )?;
 
-        // Update FTS.
         conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![id])?;
         conn.execute(
             "INSERT INTO tracks_fts (rowid, title, artist_name, album_title, genre)
@@ -244,6 +294,12 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
 
         Ok(id)
     } else {
+        let source = if meta.path.is_some() {
+            "local"
+        } else {
+            &meta.source
+        };
+
         conn.execute(
             "INSERT INTO tracks (album_id, artist_id, disc, track_number, title,
              duration_ms, path, codec, sample_rate, bit_depth, channels, bitrate,
@@ -265,7 +321,7 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
                 meta.size_bytes,
                 meta.mtime,
                 meta.genre,
-                meta.source,
+                source,
                 meta.remote_id,
                 meta.remote_url
             ],
@@ -309,6 +365,97 @@ pub fn remove_tracks_by_source(conn: &Connection, source: &str) -> Result<usize,
     )?;
     let count = conn.execute("DELETE FROM tracks WHERE source = ?1", params![source])?;
     Ok(count)
+}
+
+/// Find artists by name (case-insensitive substring match).
+pub fn find_artists(conn: &Connection, query: &str) -> Result<Vec<ArtistRow>, DbError> {
+    let pattern = format!("%{}%", query);
+    let mut stmt = conn.prepare(
+        "SELECT id, name, sort_name, remote_id FROM artists
+         WHERE name LIKE ?1 COLLATE NOCASE
+         ORDER BY COALESCE(sort_name, name)",
+    )?;
+    let rows = stmt
+        .query_map(params![pattern], |row| {
+            Ok(ArtistRow {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                sort_name: row.get(2)?,
+                remote_id: row.get(3)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Get albums for a specific artist, ordered chronologically.
+pub fn albums_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<AlbumRow>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT al.id, al.title, al.artist_id, a.name, al.date,
+                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id
+         FROM albums al
+         LEFT JOIN artists a ON al.artist_id = a.id
+         WHERE al.artist_id = ?1
+         ORDER BY al.date, al.title",
+    )?;
+    let rows = stmt
+        .query_map(params![artist_id], |row| {
+            Ok(AlbumRow {
+                id: row.get(0)?,
+                title: row.get(1)?,
+                artist_id: row.get(2)?,
+                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                date: row.get(4)?,
+                total_discs: row.get(5)?,
+                total_tracks: row.get(6)?,
+                codec: row.get(7)?,
+                label: row.get(8)?,
+                remote_id: row.get(9)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Get all tracks for an artist, ordered chronologically (album date, disc, track#).
+pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackRow>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         WHERE t.artist_id = ?1
+         ORDER BY al.date, al.title, t.disc, t.track_number",
+    )?;
+    let rows = stmt
+        .query_map(params![artist_id], |row| {
+            Ok(TrackRow {
+                id: row.get(0)?,
+                album_id: row.get(1)?,
+                artist_id: row.get(2)?,
+                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                album_title: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                disc: row.get(5)?,
+                track_number: row.get(6)?,
+                title: row.get(7)?,
+                duration_ms: row.get(8)?,
+                path: row.get(9)?,
+                codec: row.get(10)?,
+                sample_rate: row.get(11)?,
+                bit_depth: row.get(12)?,
+                channels: row.get(13)?,
+                bitrate: row.get(14)?,
+                genre: row.get(15)?,
+                source: row.get(16)?,
+                remote_id: row.get(17)?,
+                cached_path: row.get(18)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 #[cfg(test)]
@@ -568,6 +715,84 @@ mod tests {
         let db = test_db();
         let result = resolve_playback_path(&db.conn, 99999).unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_dedup_local_then_remote() {
+        let db = test_db();
+
+        // Insert local track first.
+        let local = sample_meta("Windowlicker", "Aphex Twin", "Windowlicker EP");
+        let local_id = upsert_track(&db.conn, &local).unwrap();
+
+        // Sync same track from remote — should merge, not duplicate.
+        let mut remote = sample_meta("Windowlicker", "Aphex Twin", "Windowlicker EP");
+        remote.source = "remote".into();
+        remote.path = None;
+        remote.remote_id = Some("sub-42".into());
+        remote.remote_url = Some("https://example.com/stream/sub-42".into());
+        let remote_id = upsert_track(&db.conn, &remote).unwrap();
+
+        // Same row.
+        assert_eq!(local_id, remote_id);
+
+        // Only 1 track total.
+        let stats = library_stats(&db.conn).unwrap();
+        assert_eq!(stats.total_tracks, 1);
+
+        // Source should be "local" since it has a path.
+        assert_eq!(stats.local_tracks, 1);
+        assert_eq!(stats.remote_tracks, 0);
+
+        // But it should have the remote_id merged in.
+        let row: (Option<String>, Option<String>, Option<String>) = db
+            .conn
+            .query_row(
+                "SELECT path, remote_id, remote_url FROM tracks WHERE id = ?1",
+                params![local_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert!(row.0.is_some()); // local path preserved
+        assert_eq!(row.1.as_deref(), Some("sub-42")); // remote_id merged
+        assert!(row.2.is_some()); // remote_url merged
+    }
+
+    #[test]
+    fn test_dedup_remote_then_local() {
+        let db = test_db();
+
+        // Insert remote track first.
+        let mut remote = sample_meta("Vordhosbn", "Aphex Twin", "Drukqs");
+        remote.source = "remote".into();
+        remote.path = None;
+        remote.remote_id = Some("sub-99".into());
+        remote.remote_url = Some("https://example.com/stream/sub-99".into());
+        let remote_id = upsert_track(&db.conn, &remote).unwrap();
+
+        // Scan local file — same track, should merge.
+        let local = sample_meta("Vordhosbn", "Aphex Twin", "Drukqs");
+        let local_id = upsert_track(&db.conn, &local).unwrap();
+
+        // Same row.
+        assert_eq!(remote_id, local_id);
+
+        // Only 1 track.
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
+
+        // Source flipped to "local" since it now has a path.
+        assert_eq!(library_stats(&db.conn).unwrap().local_tracks, 1);
+
+        // Remote info preserved.
+        let rid: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT remote_id FROM tracks WHERE id = ?1",
+                params![local_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rid.as_deref(), Some("sub-99"));
     }
 }
 
