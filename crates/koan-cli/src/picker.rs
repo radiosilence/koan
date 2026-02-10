@@ -28,6 +28,11 @@ pub struct Picker {
     multi: bool,
 }
 
+/// Total lines the picker occupies: prompt + max_visible results + hint bar.
+const fn picker_height(max_visible: usize) -> usize {
+    max_visible + 2
+}
+
 impl Picker {
     pub fn new(items: Vec<PickerItem>, prompt: &str, multi: bool) -> Self {
         Self {
@@ -42,6 +47,7 @@ impl Picker {
     /// control the input source (same raw mode stdin as playback).
     pub fn run(self, read_key: &mut dyn FnMut() -> Option<PickerKey>) -> PickerResult {
         let max_visible: usize = 20;
+        let height = picker_height(max_visible);
 
         let nucleo: Nucleo<u32> = Nucleo::new(
             Config::DEFAULT,
@@ -66,6 +72,16 @@ impl Picker {
 
         // Initial tick to populate.
         nucleo.tick(10);
+
+        // Reserve screen space — print empty lines, then move back up.
+        {
+            let mut stdout = io::stdout().lock();
+            for _ in 0..height {
+                let _ = stdout.write_all(b"\n");
+            }
+            let _ = write!(stdout, "\x1b[{}A", height);
+            let _ = stdout.flush();
+        }
 
         self.render(&nucleo, &query, cursor, &selected, max_visible);
 
@@ -162,29 +178,26 @@ impl Picker {
         let snap = nucleo.snapshot();
         let matched = snap.matched_item_count() as usize;
         let total = snap.item_count() as usize;
+        let height = picker_height(max_visible);
 
         let mut out = String::new();
 
-        // Move to start of picker area and clear.
-        // Save cursor, move up to clear previous render, then redraw.
-        out.push_str("\x1b[s"); // save cursor
-        out.push_str(&format!("\x1b[{}A", max_visible + 2)); // move up
-        for _ in 0..max_visible + 2 {
-            out.push_str("\x1b[2K\n"); // clear line
-        }
-        out.push_str(&format!("\x1b[{}A", max_visible + 2)); // move back up
+        // Hide cursor during redraw to avoid flicker.
+        out.push_str("\x1b[?25l");
+
+        // Move to start of picker area (we reserved space on init).
+        out.push('\r'); // column 0
+        out.push_str(&format!("\x1b[{}A", height - 1)); // move to top of reserved area
 
         // Prompt line.
         out.push_str(&format!(
-            "  {} {}{}\n",
+            "\x1b[2K  {} {}{}\r\n",
             self.prompt.cyan().bold(),
             query,
             format!("  {}/{}", matched, total).dimmed(),
         ));
 
         // Results.
-        let visible_count = matched.min(max_visible);
-        // Window around cursor.
         let start = if cursor >= max_visible {
             cursor - max_visible + 1
         } else {
@@ -208,19 +221,20 @@ impl Picker {
 
                 let line = &self.items[idx].display;
                 if is_cursor {
-                    out.push_str(&format!("  {}{}\n", marker, line.bold()));
+                    out.push_str(&format!("\x1b[2K  {}{}\r\n", marker, line.bold()));
                 } else {
-                    out.push_str(&format!("  {}{}\n", marker, line));
+                    out.push_str(&format!("\x1b[2K  {}{}\r\n", marker, line));
                 }
             }
         }
 
         // Pad remaining lines.
-        for _ in visible_count..max_visible {
-            out.push_str("\x1b[2K\n");
+        let rendered = end - start;
+        for _ in rendered..max_visible {
+            out.push_str("\x1b[2K\r\n");
         }
 
-        // Bottom border.
+        // Hint bar.
         let hint = if self.multi {
             format!(
                 "{}  {}  {}",
@@ -235,7 +249,10 @@ impl Picker {
                 "enter select  esc cancel".dimmed()
             )
         };
-        out.push_str(&format!("  {}", hint));
+        out.push_str(&format!("\x1b[2K  {}", hint));
+
+        // Show cursor again.
+        out.push_str("\x1b[?25h");
 
         let mut stdout = io::stdout().lock();
         let _ = stdout.write_all(out.as_bytes());
@@ -243,12 +260,15 @@ impl Picker {
     }
 
     fn clear_display(&self, max_visible: usize) {
+        let height = picker_height(max_visible);
         let mut out = String::new();
-        out.push_str(&format!("\x1b[{}A", max_visible + 2));
-        for _ in 0..max_visible + 2 {
+        out.push('\r');
+        out.push_str(&format!("\x1b[{}A", height - 1));
+        for _ in 0..height {
             out.push_str("\x1b[2K\n");
         }
-        out.push_str(&format!("\x1b[{}A", max_visible + 2));
+        // Move back up to where we started.
+        out.push_str(&format!("\x1b[{}A", height));
 
         let mut stdout = io::stdout().lock();
         let _ = stdout.write_all(out.as_bytes());

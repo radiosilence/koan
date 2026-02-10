@@ -1400,20 +1400,16 @@ fn cmd_pick(query: Option<&str>, album_mode: bool, artist_mode: bool) {
 fn stdin_key_reader() -> impl FnMut() -> Option<PickerKey> {
     let stdin = io::stdin();
     move || {
+        let mut handle = stdin.lock();
         let mut buf = [0u8; 1];
-        match stdin.lock().read(&mut buf) {
-            Ok(1) => {
-                let mut stdin_more = stdin.lock();
-                picker::parse_key(buf[0], &mut || {
-                    let mut b = [0u8; 1];
-                    // Non-blocking-ish: set a short timeout isn't easy with raw stdin,
-                    // but escape sequences arrive in rapid succession so a blocking read is fine.
-                    match stdin_more.read(&mut b) {
-                        Ok(1) => Some(b[0]),
-                        _ => None,
-                    }
-                })
-            }
+        match handle.read(&mut buf) {
+            Ok(1) => picker::parse_key(buf[0], &mut || {
+                let mut b = [0u8; 1];
+                match handle.read(&mut b) {
+                    Ok(1) => Some(b[0]),
+                    _ => None,
+                }
+            }),
             _ => None,
         }
     }
