@@ -30,7 +30,11 @@ pub struct QueueDisplay {
     initialised: bool,
     /// Pending log messages to show above the queue.
     pending_logs: Vec<String>,
+    /// Spinner tick — advances each render for download animation.
+    spinner_tick: usize,
 }
+
+const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
 
 impl QueueDisplay {
     pub fn new(state: Arc<SharedPlayerState>) -> Self {
@@ -43,6 +47,7 @@ impl QueueDisplay {
             last_playback_state: PlaybackState::Stopped,
             initialised: false,
             pending_logs: Vec::new(),
+            spinner_tick: 0,
         }
     }
 
@@ -99,13 +104,21 @@ impl QueueDisplay {
         let position_ms = self.state.position_ms();
         let playback_state = self.state.playback_state();
 
+        // Always advance spinner so downloading entries animate.
+        self.spinner_tick = self.spinner_tick.wrapping_add(1);
+
         // Check if anything changed.
         let queue_changed = queue_version != self.last_queue_version;
         let position_changed = position_ms != self.last_position_ms;
         let state_changed = playback_state != self.last_playback_state;
         let has_logs = !self.pending_logs.is_empty();
 
-        if !queue_changed && !position_changed && !state_changed && !has_logs {
+        let queue = self.state.full_queue();
+        let has_downloads = queue
+            .iter()
+            .any(|e| e.status == QueueEntryStatus::Downloading);
+
+        if !queue_changed && !position_changed && !state_changed && !has_logs && !has_downloads {
             return;
         }
 
@@ -117,7 +130,6 @@ impl QueueDisplay {
         let width = term_w as usize;
 
         let track_info = self.state.track_info();
-        let queue = self.state.full_queue();
 
         // Layout:
         // [log messages — printed above, scroll up]
@@ -359,7 +371,10 @@ impl QueueDisplay {
         let status_icon = match entry.status {
             QueueEntryStatus::Queued => " ".to_string(),
             QueueEntryStatus::Playing => ">".cyan().to_string(),
-            QueueEntryStatus::Downloading => "~".yellow().to_string(),
+            QueueEntryStatus::Downloading => {
+                let frame = SPINNER_FRAMES[self.spinner_tick % SPINNER_FRAMES.len()];
+                frame.to_string().cyan().to_string()
+            }
             QueueEntryStatus::Failed => "!".red().to_string(),
         };
 
