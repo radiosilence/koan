@@ -1527,16 +1527,28 @@ fn get_remote_password(cfg: &config::Config) -> String {
     }
 }
 
-/// Sanitise a string for use as a filename — strip chars that are illegal on macOS/Windows.
+/// Sanitise and truncate a string for use as a path component.
+/// Strips illegal chars and caps at 240 bytes (macOS 255-byte filename limit minus room for ext).
 fn sanitise_filename(s: &str) -> String {
-    s.chars()
+    let cleaned: String = s
+        .chars()
         .map(|c| match c {
             '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             _ => c,
         })
         .collect::<String>()
         .trim()
-        .to_string()
+        .to_string();
+
+    // Truncate on a char boundary to stay under 240 bytes.
+    if cleaned.len() <= 240 {
+        return cleaned;
+    }
+    let mut end = 240;
+    while !cleaned.is_char_boundary(end) && end > 0 {
+        end -= 1;
+    }
+    cleaned[..end].trim_end().to_string()
 }
 
 /// Build a structured cache path for a track:
