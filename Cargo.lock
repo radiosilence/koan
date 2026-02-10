@@ -1261,6 +1261,7 @@ dependencies = [
  "rpassword",
  "rusqlite",
  "toml",
+ "walkdir",
 ]
 
 [[package]]

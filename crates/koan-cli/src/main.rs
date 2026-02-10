@@ -7,7 +7,7 @@ use std::time::Duration;
 use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::engine::{ArgValueCandidates, CompletionCandidate};
 use clap_complete::env::CompleteEnv;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use koan_core::audio::{buffer, device};
 use koan_core::config;
 use koan_core::db::connection::Database;
@@ -77,6 +77,20 @@ enum Commands {
     /// Manage remote Subsonic/Navidrome server
     #[command(subcommand)]
     Remote(RemoteCommands),
+    /// Interactive fuzzy picker (requires fzf)
+    Pick {
+        /// Optional search query to pre-filter
+        query: Option<String>,
+        /// Pick an album to play
+        #[arg(long)]
+        album: bool,
+        /// Pick an artist to play
+        #[arg(long)]
+        artist: bool,
+    },
+    /// Manage the download cache
+    #[command(subcommand)]
+    Cache(CacheCommands),
     /// Generate shell completions (legacy static)
     Completions {
         /// Shell to generate for
@@ -97,6 +111,14 @@ enum RemoteCommands {
     Sync,
     /// Show remote server status
     Status,
+}
+
+#[derive(Subcommand)]
+enum CacheCommands {
+    /// Show cache size and location
+    Status,
+    /// Clear all cached downloads
+    Clear,
 }
 
 fn main() {
@@ -133,6 +155,15 @@ fn main() {
             RemoteCommands::Login { url, username } => cmd_remote_login(&url, &username),
             RemoteCommands::Sync => cmd_remote_sync(),
             RemoteCommands::Status => cmd_remote_status(),
+        },
+        Commands::Pick {
+            query,
+            album,
+            artist,
+        } => cmd_pick(query.as_deref(), album, artist),
+        Commands::Cache(sub) => match sub {
+            CacheCommands::Status => cmd_cache_status(),
+            CacheCommands::Clear => cmd_cache_clear(),
         },
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
@@ -208,25 +239,27 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
         None
     };
 
+    // MultiProgress owns all bars — downloads + playback render cleanly together.
+    let mp = Arc::new(MultiProgress::new());
     let (state, tx) = Player::spawn();
 
     if let Some(ids) = track_ids {
         // Resolve first track immediately, start playback, download rest in background.
-        let first_path = resolve_single_track(ids[0]);
+        let first_path = resolve_single_track(ids[0], Some(&mp));
         tx.send(PlayerCommand::Play(first_path))
             .expect("player thread died");
 
         if ids.len() > 1 {
             let remaining = ids[1..].to_vec();
             let tx_bg = tx.clone();
+            let mp_bg = mp.clone();
             std::thread::Builder::new()
                 .name("koan-resolve".into())
                 .spawn(move || {
                     use rayon::prelude::*;
-                    // Download remaining tracks in parallel, enqueue in order.
                     let resolved: Vec<PathBuf> = remaining
                         .par_iter()
-                        .map(|&id| resolve_single_track(id))
+                        .map(|&id| resolve_single_track(id, Some(&mp_bg)))
                         .collect();
                     for path in resolved {
                         if tx_bg.send(PlayerCommand::Enqueue(path)).is_err() {
@@ -254,12 +287,13 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
 
     wait_for_playing(&state);
 
-    println!(
+    mp.println(format!(
         "{}",
         "controls: [space] pause/resume  [</>] seek 10s  [n] next  [q] quit\n".dimmed()
-    );
+    ))
+    .ok();
 
-    let pb = ProgressBar::new(0);
+    let pb = mp.add(ProgressBar::new(0));
     pb.set_style(
         ProgressStyle::with_template("{prefix} {bar:40.cyan/dim} {msg}")
             .unwrap()
@@ -306,18 +340,18 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
         .expect("failed to spawn tick thread");
 
     let mut current_track: Option<PathBuf> = None;
-    update_progress_bar(&pb, &state, &mut current_track);
+    update_progress_bar(&mp, &pb, &state, &mut current_track);
 
     while let Ok(event) = ev_rx.recv() {
         match event {
             Event::Tick => {
-                update_progress_bar(&pb, &state, &mut current_track);
+                update_progress_bar(&mp, &pb, &state, &mut current_track);
                 if state.playback_state() == PlaybackState::Stopped
                     && state.track_info().is_none()
                     && current_track.is_some()
                 {
                     pb.finish_and_clear();
-                    println!("{}", "done.".dimmed());
+                    mp.println(format!("{}", "done.".dimmed())).ok();
                     quit.store(true, Ordering::Relaxed);
                     break;
                 }
@@ -326,7 +360,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
                 b'q' | 3 => {
                     tx.send(PlayerCommand::Stop).ok();
                     pb.finish_and_clear();
-                    println!("{}", "stopped.".dimmed());
+                    mp.println(format!("{}", "stopped.".dimmed())).ok();
                     quit.store(true, Ordering::Relaxed);
                     break;
                 }
@@ -376,6 +410,7 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
 }
 
 fn update_progress_bar(
+    mp: &MultiProgress,
     pb: &ProgressBar,
     state: &Arc<SharedPlayerState>,
     current_track: &mut Option<PathBuf>,
@@ -385,19 +420,19 @@ fn update_progress_bar(
     };
 
     if current_track.as_ref() != Some(&info.path) {
-        // Try to show a nice name from the filename — works for both local files
-        // and structured cache paths (which contain artist/title info).
         let display_name = info.path.file_stem().unwrap_or_default().to_string_lossy();
 
-        pb.println(format!("\n{}", display_name.bold()));
-        pb.println(format!(
+        // Use mp.println so output goes above all managed bars — no redraw stomping.
+        mp.println(format!("\n{}", display_name.bold())).ok();
+        mp.println(format!(
             "  {} {} {} {} {}",
             info.codec.yellow().dimmed(),
             "|".dimmed(),
             format!("{}Hz", info.sample_rate).dimmed(),
             format!("{}bit", info.bit_depth).dimmed(),
             format!("{}ch", info.channels).dimmed(),
-        ));
+        ))
+        .ok();
         pb.set_length(info.duration_ms);
         *current_track = Some(info.path.clone());
     }
@@ -835,8 +870,13 @@ fn cmd_remote_login(url: &str, username: &str) {
         }
     }
 
-    // Write to config.local.toml (gitignored) — password stays local.
-    let mut local_cfg = config::Config::default();
+    // Load existing local config (preserve folders etc), update remote fields.
+    let local_path = config::config_local_file_path();
+    let mut local_cfg = if local_path.exists() {
+        config::Config::load_from(&local_path).unwrap_or_default()
+    } else {
+        config::Config::default()
+    };
     local_cfg.remote.enabled = true;
     local_cfg.remote.url = url.to_string();
     local_cfg.remote.username = username.to_string();
@@ -924,6 +964,360 @@ fn cmd_remote_status() {
                 "error".red(),
                 format!("— {}", e).dimmed()
             ),
+        }
+    }
+}
+
+// --- Cache ---
+
+fn cmd_cache_status() {
+    let cfg = config::Config::load().unwrap_or_default();
+    let cache_dir = cfg.cache_dir();
+
+    println!("{} {}", "path:".cyan(), cache_dir.display());
+
+    if !cache_dir.exists() {
+        println!(
+            "{} {}",
+            "size:".cyan(),
+            "empty (no cache directory)".dimmed()
+        );
+        return;
+    }
+
+    let mut total_bytes: u64 = 0;
+    let mut file_count: u64 = 0;
+    for entry in walkdir::WalkDir::new(&cache_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        if let Ok(meta) = entry.metadata() {
+            total_bytes += meta.len();
+            file_count += 1;
+        }
+    }
+
+    let size = format_bytes(total_bytes);
+    println!(
+        "{} {} {}",
+        "size:".cyan(),
+        size.bold(),
+        format!("({} files)", file_count).dimmed(),
+    );
+}
+
+fn cmd_cache_clear() {
+    let cfg = config::Config::load().unwrap_or_default();
+    let cache_dir = cfg.cache_dir();
+
+    if !cache_dir.exists() {
+        println!("{}", "cache already empty".dimmed());
+        return;
+    }
+
+    // Count what we're about to nuke.
+    let mut total_bytes: u64 = 0;
+    let mut file_count: u64 = 0;
+    for entry in walkdir::WalkDir::new(&cache_dir)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+    {
+        if let Ok(meta) = entry.metadata() {
+            total_bytes += meta.len();
+            file_count += 1;
+        }
+    }
+
+    if file_count == 0 {
+        println!("{}", "cache already empty".dimmed());
+        return;
+    }
+
+    if let Err(e) = std::fs::remove_dir_all(&cache_dir) {
+        eprintln!("{} {}", "error:".red().bold(), e);
+        std::process::exit(1);
+    }
+
+    // Clear cached_path in DB so tracks get re-downloaded next time.
+    let db = open_db();
+    let _ = db
+        .conn
+        .execute("UPDATE tracks SET cached_path = NULL", rusqlite::params![]);
+
+    println!(
+        "{} {} {}",
+        "cache cleared".green().bold(),
+        format_bytes(total_bytes),
+        format!("({} files removed)", file_count).dimmed(),
+    );
+}
+
+fn format_bytes(bytes: u64) -> String {
+    const KB: u64 = 1024;
+    const MB: u64 = KB * 1024;
+    const GB: u64 = MB * 1024;
+    match bytes {
+        b if b >= GB => format!("{:.1} GB", b as f64 / GB as f64),
+        b if b >= MB => format!("{:.1} MB", b as f64 / MB as f64),
+        b if b >= KB => format!("{:.1} KB", b as f64 / KB as f64),
+        b => format!("{} B", b),
+    }
+}
+
+// --- Pick (fzf) ---
+
+fn cmd_pick(query: Option<&str>, album_mode: bool, artist_mode: bool) {
+    use std::process::{Command, Stdio};
+
+    // Check fzf is available.
+    if Command::new("fzf")
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_err()
+    {
+        eprintln!(
+            "{} fzf not found — install it: {}",
+            "error:".red().bold(),
+            "brew install fzf".bold()
+        );
+        std::process::exit(1);
+    }
+
+    let db = open_db();
+
+    if album_mode {
+        pick_album(&db, query);
+    } else if artist_mode {
+        pick_artist(&db, query);
+    } else {
+        pick_tracks(&db, query);
+    }
+}
+
+fn run_fzf(lines: &[String], prompt: &str, multi: bool) -> Vec<String> {
+    use std::process::{Command, Stdio};
+
+    let input = lines.join("\n");
+    let mut cmd = Command::new("fzf");
+    cmd.arg("--ansi")
+        .arg("--prompt")
+        .arg(prompt)
+        .arg("--reverse")
+        .arg("--no-sort");
+    if multi {
+        cmd.arg("--multi");
+    }
+    cmd.stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit());
+
+    let mut child = cmd.spawn().expect("failed to spawn fzf");
+    if let Some(ref mut stdin) = child.stdin {
+        use std::io::Write;
+        let _ = stdin.write_all(input.as_bytes());
+    }
+    drop(child.stdin.take());
+
+    let output = child.wait_with_output().expect("fzf failed");
+    if !output.status.success() {
+        // User pressed Escape/Ctrl-C in fzf.
+        std::process::exit(0);
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect()
+}
+
+/// Extract the numeric ID from the start of a fzf line — format: `[ID] ...` or `ID\t...`
+fn extract_id(line: &str) -> Option<i64> {
+    // Try [ID] format first.
+    if let Some(rest) = line.strip_prefix('[')
+        && let Some(end) = rest.find(']')
+    {
+        return rest[..end].trim().parse().ok();
+    }
+    // Fallback: first whitespace-delimited token.
+    line.split_whitespace().next().and_then(|s| s.parse().ok())
+}
+
+fn pick_tracks(db: &Database, query: Option<&str>) {
+    let tracks = if let Some(q) = query {
+        queries::search_tracks(&db.conn, q).unwrap_or_default()
+    } else {
+        queries::all_tracks(&db.conn).unwrap_or_default()
+    };
+
+    if tracks.is_empty() {
+        eprintln!("no tracks found");
+        std::process::exit(1);
+    }
+
+    let lines: Vec<String> = tracks
+        .iter()
+        .map(|t| {
+            let dur = t
+                .duration_ms
+                .map(|d| format_time(d as u64))
+                .unwrap_or_default();
+            let track_num = match (t.disc, t.track_number) {
+                (Some(d), Some(n)) if d > 1 => format!("{}.{:02}", d, n),
+                (_, Some(n)) => format!("{:02}", n),
+                _ => "  ".into(),
+            };
+            format!(
+                "{} {} {} {} {} {}",
+                format!("[{}]", t.id).dimmed(),
+                track_num.dimmed(),
+                t.artist_name.cyan(),
+                "—".dimmed(),
+                t.title,
+                dur.dimmed(),
+            )
+        })
+        .collect();
+
+    let selected = run_fzf(&lines, "track> ", true);
+    let ids: Vec<i64> = selected.iter().filter_map(|l| extract_id(l)).collect();
+
+    if ids.is_empty() {
+        return;
+    }
+
+    cmd_play(&[], &ids, None, None);
+}
+
+fn pick_album(db: &Database, query: Option<&str>) {
+    let albums = if let Some(q) = query {
+        let artists = queries::find_artists(&db.conn, q).unwrap_or_default();
+        let mut all = Vec::new();
+        for a in &artists {
+            if let Ok(mut als) = queries::albums_for_artist(&db.conn, a.id) {
+                all.append(&mut als);
+            }
+        }
+        if all.is_empty() {
+            // Try album title search too.
+            queries::all_albums(&db.conn)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|a| a.title.to_lowercase().contains(&q.to_lowercase()))
+                .collect()
+        } else {
+            all
+        }
+    } else {
+        queries::all_albums(&db.conn).unwrap_or_default()
+    };
+
+    if albums.is_empty() {
+        eprintln!("no albums found");
+        std::process::exit(1);
+    }
+
+    let lines: Vec<String> = albums
+        .iter()
+        .map(|a| {
+            let year = a
+                .date
+                .as_deref()
+                .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
+                .map(|y| format!("({}) ", y).dimmed().to_string())
+                .unwrap_or_default();
+            let codec = a
+                .codec
+                .as_deref()
+                .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
+                .unwrap_or_default();
+            let title = a.title.green();
+            format!(
+                "{} {} {} {}{title}{codec}",
+                format!("[{}]", a.id).dimmed(),
+                a.artist_name.cyan(),
+                "—".dimmed(),
+                year,
+            )
+        })
+        .collect();
+
+    let selected = run_fzf(&lines, "album> ", false);
+    if let Some(album_id) = selected.first().and_then(|l| extract_id(l)) {
+        cmd_play(&[], &[], Some(album_id), None);
+    }
+}
+
+fn pick_artist(db: &Database, query: Option<&str>) {
+    let artists = if let Some(q) = query {
+        queries::find_artists(&db.conn, q).unwrap_or_default()
+    } else {
+        queries::all_artists(&db.conn).unwrap_or_default()
+    };
+
+    if artists.is_empty() {
+        eprintln!("no artists found");
+        std::process::exit(1);
+    }
+
+    let lines: Vec<String> = artists
+        .iter()
+        .map(|a| {
+            format!(
+                "{} {}",
+                format!("[{}]", a.id).dimmed(),
+                a.name.bold().cyan(),
+            )
+        })
+        .collect();
+
+    let selected = run_fzf(&lines, "artist> ", false);
+    let artist_id = match selected.first().and_then(|l| extract_id(l)) {
+        Some(id) => id,
+        None => return,
+    };
+
+    // Now show albums for this artist, let them pick one.
+    let albums = queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
+    if albums.is_empty() {
+        // No albums — just play all tracks.
+        cmd_play(&[], &[], None, Some(artist_id));
+        return;
+    }
+
+    // Add "all tracks" option at the top.
+    let mut album_lines: Vec<String> =
+        vec![format!("{} {}", "[all]".dimmed(), "all tracks".bold(),)];
+    album_lines.extend(albums.iter().map(|a| {
+        let year = a
+            .date
+            .as_deref()
+            .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
+            .map(|y| format!("({}) ", y).dimmed().to_string())
+            .unwrap_or_default();
+        let codec = a
+            .codec
+            .as_deref()
+            .map(|c| format!(" [{}]", c).yellow().dimmed().to_string())
+            .unwrap_or_default();
+        format!(
+            "{} {}{}{}",
+            format!("[{}]", a.id).dimmed(),
+            year,
+            a.title.green(),
+            codec,
+        )
+    }));
+
+    let album_selected = run_fzf(&album_lines, "album> ", false);
+    if let Some(line) = album_selected.first() {
+        if line.contains("[all]") {
+            cmd_play(&[], &[], None, Some(artist_id));
+        } else if let Some(album_id) = extract_id(line) {
+            cmd_play(&[], &[], Some(album_id), None);
         }
     }
 }
@@ -1076,7 +1470,8 @@ fn cache_path_for_track(
 
 /// Resolve a single track ID to a playback path.
 /// Downloads from remote if needed, using structured cache paths.
-fn resolve_single_track(id: i64) -> PathBuf {
+/// When `mp` is provided, creates a spinner bar for download progress.
+fn resolve_single_track(id: i64, mp: Option<&MultiProgress>) -> PathBuf {
     let db = open_db();
     let cfg = config::Config::load().unwrap_or_default();
 
@@ -1122,12 +1517,27 @@ fn resolve_single_track(id: i64) -> PathBuf {
                 return dest;
             }
 
-            eprintln!(
-                "{} {} — {} ...",
-                "downloading".cyan(),
+            // Create a spinner bar for this download, managed by MultiProgress.
+            let label = format!(
+                "{} {} — {}",
+                "↓".cyan(),
                 track.title.bold(),
                 track.artist_name.dimmed(),
             );
+            let spinner = if let Some(mp) = mp {
+                let sp = mp.add(ProgressBar::new_spinner());
+                sp.set_style(
+                    ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                        .unwrap()
+                        .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+                );
+                sp.set_message(label.clone());
+                sp.enable_steady_tick(Duration::from_millis(80));
+                Some(sp)
+            } else {
+                eprintln!("{}", label);
+                None
+            };
 
             let password = get_remote_password(&cfg);
             let client = koan_core::remote::client::SubsonicClient::new(
@@ -1136,9 +1546,31 @@ fn resolve_single_track(id: i64) -> PathBuf {
                 &password,
             );
 
-            if let Err(e) = client.download(&remote_id, &dest) {
-                eprintln!("{} {}", "download failed:".red().bold(), e);
+            let result = client.download(&remote_id, &dest);
+
+            if let Some(sp) = &spinner {
+                sp.finish_and_clear();
+            }
+
+            if let Err(e) = result {
+                if let Some(mp) = mp {
+                    mp.println(format!("{} {} — {}", "✗".red().bold(), track.title, e))
+                        .ok();
+                } else {
+                    eprintln!("{} {}", "download failed:".red().bold(), e);
+                }
                 std::process::exit(1);
+            }
+
+            // Log completion above the bars.
+            if let Some(mp) = mp {
+                mp.println(format!(
+                    "{} {} — {}",
+                    "✓".green(),
+                    track.title,
+                    track.artist_name.dimmed(),
+                ))
+                .ok();
             }
 
             let _ = queries::set_cached_path(&db.conn, id, &dest.to_string_lossy());

@@ -846,6 +846,48 @@ pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, Db
     Ok(rows)
 }
 
+/// Get all tracks in the library, ordered by artist/album/disc/track.
+pub fn all_tracks(conn: &Connection) -> Result<Vec<TrackRow>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         ORDER BY a.name, al.date, al.title, t.disc, t.track_number",
+    )?;
+
+    let rows = stmt
+        .query_map(params![], |row| {
+            Ok(TrackRow {
+                id: row.get(0)?,
+                album_id: row.get(1)?,
+                artist_id: row.get(2)?,
+                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                album_title: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
+                disc: row.get(5)?,
+                track_number: row.get(6)?,
+                title: row.get(7)?,
+                duration_ms: row.get(8)?,
+                path: row.get(9)?,
+                codec: row.get(10)?,
+                sample_rate: row.get(11)?,
+                bit_depth: row.get(12)?,
+                channels: row.get(13)?,
+                bitrate: row.get(14)?,
+                genre: row.get(15)?,
+                source: row.get(16)?,
+                remote_id: row.get(17)?,
+                cached_path: row.get(18)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
 /// Get a single track by ID with full metadata.
 pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow>, DbError> {
     let result = conn.query_row(
