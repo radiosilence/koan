@@ -180,12 +180,18 @@ pub struct TrackMeta {
 /// When merging, local metadata (codec, sample_rate, etc.) wins over remote.
 /// The `source` field reflects what's available: "local" if path exists, "remote" if remote-only.
 pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError> {
-    let artist_name = meta.album_artist.as_deref().unwrap_or(&meta.artist);
-    let artist_id = get_or_create_artist(conn, artist_name, None)?;
+    let album_artist_name = meta.album_artist.as_deref().unwrap_or(&meta.artist);
+    let album_artist_id = get_or_create_artist(conn, album_artist_name, None)?;
+    // Track artist — may differ from album artist (e.g. compilations, VA albums).
+    let track_artist_id = if meta.artist == album_artist_name {
+        album_artist_id
+    } else {
+        get_or_create_artist(conn, &meta.artist, None)?
+    };
     let album_id = get_or_create_album(
         conn,
         &meta.album,
-        artist_id,
+        album_artist_id,
         meta.date.as_deref(),
         None,
         None,
@@ -224,7 +230,7 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
             "SELECT id FROM tracks
              WHERE artist_id = ?1 AND album_id = ?2 AND title = ?3
                AND COALESCE(track_number, -1) = COALESCE(?4, -1)",
-            params![artist_id, album_id, meta.title, meta.track_number],
+            params![track_artist_id, album_id, meta.title, meta.track_number],
             |row| row.get(0),
         )
         .ok()
@@ -265,7 +271,7 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
              WHERE id=?19",
             params![
                 album_id,
-                artist_id,
+                track_artist_id,
                 meta.disc,
                 meta.track_number,
                 meta.title,
@@ -287,10 +293,16 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
         )?;
 
         conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![id])?;
+        // Index both track artist and album artist for FTS searchability.
+        let fts_artist = if meta.artist == album_artist_name {
+            meta.artist.clone()
+        } else {
+            format!("{} {}", meta.artist, album_artist_name)
+        };
         conn.execute(
             "INSERT INTO tracks_fts (rowid, title, artist_name, album_title, genre)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, meta.title, artist_name, meta.album, meta.genre],
+            params![id, meta.title, fts_artist, meta.album, meta.genre],
         )?;
 
         Ok(id)
@@ -308,7 +320,7 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
              VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
             params![
                 album_id,
-                artist_id,
+                track_artist_id,
                 meta.disc,
                 meta.track_number,
                 meta.title,
@@ -329,10 +341,15 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
         )?;
 
         let id = conn.last_insert_rowid();
+        let fts_artist = if meta.artist == album_artist_name {
+            meta.artist.clone()
+        } else {
+            format!("{} {}", meta.artist, album_artist_name)
+        };
         conn.execute(
             "INSERT INTO tracks_fts (rowid, title, artist_name, album_title, genre)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, meta.title, artist_name, meta.album, meta.genre],
+            params![id, meta.title, fts_artist, meta.album, meta.genre],
         )?;
 
         Ok(id)
@@ -429,7 +446,7 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         WHERE t.artist_id = ?1
+         WHERE t.artist_id = ?1 OR al.artist_id = ?1
          ORDER BY al.date, al.title, t.disc, t.track_number",
     )?;
     let rows = stmt
