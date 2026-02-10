@@ -1828,7 +1828,7 @@ fn meta_from_track(
     QueueEntryMeta {
         title: track.title.clone(),
         artist: track.artist_name.clone(),
-        album_artist: track.artist_name.clone(), // TrackRow doesn't distinguish album artist
+        album_artist: track.album_artist_name.clone(),
         album: track.album_title.clone(),
         year,
         codec: track.codec.clone(),
@@ -1941,9 +1941,40 @@ fn resolve_single_track(
     let db = open_db();
     let cfg = config::Config::load().unwrap_or_default();
 
+    // Helper: register track metadata in shared state for queue display.
+    let register_meta = |path: &PathBuf, state: Option<&Arc<SharedPlayerState>>| {
+        let Some(state) = state else { return };
+        if let Ok(Some(track)) = queries::get_track_row(&db.conn, id) {
+            let album_date: Option<String> = track.album_id.and_then(|aid| {
+                db.conn
+                    .query_row(
+                        "SELECT date FROM albums WHERE id = ?1",
+                        rusqlite::params![aid],
+                        |row| row.get(0),
+                    )
+                    .ok()
+                    .flatten()
+            });
+            state.set_track_meta(
+                path.clone(),
+                meta_from_track(
+                    &track,
+                    album_date.as_deref(),
+                    koan_core::player::state::QueueEntryStatus::Queued,
+                ),
+            );
+        }
+    };
+
     match queries::resolve_playback_path(&db.conn, id) {
-        Ok(Some(queries::PlaybackSource::Local(p))) => p,
-        Ok(Some(queries::PlaybackSource::Cached(p))) => p,
+        Ok(Some(queries::PlaybackSource::Local(p))) => {
+            register_meta(&p, shared_state);
+            p
+        }
+        Ok(Some(queries::PlaybackSource::Cached(p))) => {
+            register_meta(&p, shared_state);
+            p
+        }
         Ok(Some(queries::PlaybackSource::Remote(_url))) => {
             let track = match queries::get_track_row(&db.conn, id) {
                 Ok(Some(t)) => t,

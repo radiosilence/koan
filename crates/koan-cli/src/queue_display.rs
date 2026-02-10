@@ -342,7 +342,7 @@ impl QueueDisplay {
             .map(|c| format!(" [{}]", c).dimmed().to_string())
             .unwrap_or_default();
         let header = format!(
-            "  {} {} {}{}{}",
+            " {} {} {}{}{}",
             entry.album_artist.bold().cyan(),
             "—".dimmed(),
             year,
@@ -357,10 +357,10 @@ impl QueueDisplay {
         let is_cursor = self.mode == UiMode::Edit && index == self.cursor;
 
         let status_icon = match entry.status {
-            QueueEntryStatus::Queued => "  ".to_string(),
-            QueueEntryStatus::Playing => ">>".cyan().to_string(),
-            QueueEntryStatus::Downloading => "..".yellow().to_string(),
-            QueueEntryStatus::Failed => "!!".red().to_string(),
+            QueueEntryStatus::Queued => " ".to_string(),
+            QueueEntryStatus::Playing => ">".cyan().to_string(),
+            QueueEntryStatus::Downloading => "~".yellow().to_string(),
+            QueueEntryStatus::Failed => "!".red().to_string(),
         };
 
         let track_num = match (entry.disc, entry.track_number) {
@@ -391,7 +391,7 @@ impl QueueDisplay {
         };
 
         let line = format!(
-            "   {} {} {} {}{}  {}",
+            "  {}{} {} {}{}  {}",
             cursor_marker,
             status_icon,
             track_num.dimmed(),

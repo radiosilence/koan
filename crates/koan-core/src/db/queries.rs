@@ -34,6 +34,7 @@ pub struct TrackRow {
     pub album_id: Option<i64>,
     pub artist_id: Option<i64>,
     pub artist_name: String,
+    pub album_artist_name: String,
     pub album_title: String,
     pub disc: Option<i32>,
     pub track_number: Option<i32>,
@@ -420,38 +421,41 @@ pub fn albums_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<AlbumR
 /// Get all tracks for an artist, ordered chronologically (album date, disc, track#).
 pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackRow>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.album_id, t.artist_id, a.name, al.title,
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                 t.genre, t.source, t.remote_id, t.cached_path
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE t.artist_id = ?1
          ORDER BY al.date, al.title, t.disc, t.track_number",
     )?;
     let rows = stmt
         .query_map(params![artist_id], |row| {
+            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
             Ok(TrackRow {
                 id: row.get(0)?,
                 album_id: row.get(1)?,
                 artist_id: row.get(2)?,
-                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                album_title: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                disc: row.get(5)?,
-                track_number: row.get(6)?,
-                title: row.get(7)?,
-                duration_ms: row.get(8)?,
-                path: row.get(9)?,
-                codec: row.get(10)?,
-                sample_rate: row.get(11)?,
-                bit_depth: row.get(12)?,
-                channels: row.get(13)?,
-                bitrate: row.get(14)?,
-                genre: row.get(15)?,
-                source: row.get(16)?,
-                remote_id: row.get(17)?,
-                cached_path: row.get(18)?,
+                artist_name: artist_name.clone(),
+                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
+                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                disc: row.get(6)?,
+                track_number: row.get(7)?,
+                title: row.get(8)?,
+                duration_ms: row.get(9)?,
+                path: row.get(10)?,
+                codec: row.get(11)?,
+                sample_rate: row.get(12)?,
+                bit_depth: row.get(13)?,
+                channels: row.get(14)?,
+                bitrate: row.get(15)?,
+                genre: row.get(16)?,
+                source: row.get(17)?,
+                remote_id: row.get(18)?,
+                cached_path: row.get(19)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -804,7 +808,7 @@ pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, Db
     let fts_query = format!("{}*", query.trim());
 
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.album_id, t.artist_id, a.name, al.title,
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                 t.genre, t.source, t.remote_id, t.cached_path
@@ -812,6 +816,7 @@ pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, Db
          JOIN tracks t ON t.id = f.rowid
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE tracks_fts MATCH ?1
          ORDER BY a.name, al.date, al.title, t.disc, t.track_number
          LIMIT 100",
@@ -819,26 +824,28 @@ pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, Db
 
     let rows = stmt
         .query_map(params![fts_query], |row| {
+            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
             Ok(TrackRow {
                 id: row.get(0)?,
                 album_id: row.get(1)?,
                 artist_id: row.get(2)?,
-                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                album_title: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                disc: row.get(5)?,
-                track_number: row.get(6)?,
-                title: row.get(7)?,
-                duration_ms: row.get(8)?,
-                path: row.get(9)?,
-                codec: row.get(10)?,
-                sample_rate: row.get(11)?,
-                bit_depth: row.get(12)?,
-                channels: row.get(13)?,
-                bitrate: row.get(14)?,
-                genre: row.get(15)?,
-                source: row.get(16)?,
-                remote_id: row.get(17)?,
-                cached_path: row.get(18)?,
+                artist_name: artist_name.clone(),
+                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
+                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                disc: row.get(6)?,
+                track_number: row.get(7)?,
+                title: row.get(8)?,
+                duration_ms: row.get(9)?,
+                path: row.get(10)?,
+                codec: row.get(11)?,
+                sample_rate: row.get(12)?,
+                bit_depth: row.get(13)?,
+                channels: row.get(14)?,
+                bitrate: row.get(15)?,
+                genre: row.get(16)?,
+                source: row.get(17)?,
+                remote_id: row.get(18)?,
+                cached_path: row.get(19)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -849,38 +856,41 @@ pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, Db
 /// Get all tracks in the library, ordered by artist/album/disc/track.
 pub fn all_tracks(conn: &Connection) -> Result<Vec<TrackRow>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.album_id, t.artist_id, a.name, al.title,
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                 t.genre, t.source, t.remote_id, t.cached_path
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
          ORDER BY a.name, al.date, al.title, t.disc, t.track_number",
     )?;
 
     let rows = stmt
         .query_map(params![], |row| {
+            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
             Ok(TrackRow {
                 id: row.get(0)?,
                 album_id: row.get(1)?,
                 artist_id: row.get(2)?,
-                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                album_title: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                disc: row.get(5)?,
-                track_number: row.get(6)?,
-                title: row.get(7)?,
-                duration_ms: row.get(8)?,
-                path: row.get(9)?,
-                codec: row.get(10)?,
-                sample_rate: row.get(11)?,
-                bit_depth: row.get(12)?,
-                channels: row.get(13)?,
-                bitrate: row.get(14)?,
-                genre: row.get(15)?,
-                source: row.get(16)?,
-                remote_id: row.get(17)?,
-                cached_path: row.get(18)?,
+                artist_name: artist_name.clone(),
+                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
+                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                disc: row.get(6)?,
+                track_number: row.get(7)?,
+                title: row.get(8)?,
+                duration_ms: row.get(9)?,
+                path: row.get(10)?,
+                codec: row.get(11)?,
+                sample_rate: row.get(12)?,
+                bit_depth: row.get(13)?,
+                channels: row.get(14)?,
+                bitrate: row.get(15)?,
+                genre: row.get(16)?,
+                source: row.get(17)?,
+                remote_id: row.get(18)?,
+                cached_path: row.get(19)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -891,36 +901,39 @@ pub fn all_tracks(conn: &Connection) -> Result<Vec<TrackRow>, DbError> {
 /// Get a single track by ID with full metadata.
 pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow>, DbError> {
     let result = conn.query_row(
-        "SELECT t.id, t.album_id, t.artist_id, a.name, al.title,
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                 t.genre, t.source, t.remote_id, t.cached_path
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE t.id = ?1",
         params![track_id],
         |row| {
+            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
             Ok(TrackRow {
                 id: row.get(0)?,
                 album_id: row.get(1)?,
                 artist_id: row.get(2)?,
-                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                album_title: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                disc: row.get(5)?,
-                track_number: row.get(6)?,
-                title: row.get(7)?,
-                duration_ms: row.get(8)?,
-                path: row.get(9)?,
-                codec: row.get(10)?,
-                sample_rate: row.get(11)?,
-                bit_depth: row.get(12)?,
-                channels: row.get(13)?,
-                bitrate: row.get(14)?,
-                genre: row.get(15)?,
-                source: row.get(16)?,
-                remote_id: row.get(17)?,
-                cached_path: row.get(18)?,
+                artist_name: artist_name.clone(),
+                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
+                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                disc: row.get(6)?,
+                track_number: row.get(7)?,
+                title: row.get(8)?,
+                duration_ms: row.get(9)?,
+                path: row.get(10)?,
+                codec: row.get(11)?,
+                sample_rate: row.get(12)?,
+                bit_depth: row.get(13)?,
+                channels: row.get(14)?,
+                bitrate: row.get(15)?,
+                genre: row.get(16)?,
+                source: row.get(17)?,
+                remote_id: row.get(18)?,
+                cached_path: row.get(19)?,
             })
         },
     );
@@ -1019,39 +1032,42 @@ pub fn all_albums(conn: &Connection) -> Result<Vec<AlbumRow>, DbError> {
 /// Get tracks for a specific album, ordered by disc/track number.
 pub fn tracks_for_album(conn: &Connection, album_id: i64) -> Result<Vec<TrackRow>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.album_id, t.artist_id, a.name, al.title,
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                 t.genre, t.source, t.remote_id, t.cached_path
          FROM tracks t
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE t.album_id = ?1
          ORDER BY t.disc, t.track_number",
     )?;
 
     let rows = stmt
         .query_map(params![album_id], |row| {
+            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
             Ok(TrackRow {
                 id: row.get(0)?,
                 album_id: row.get(1)?,
                 artist_id: row.get(2)?,
-                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                album_title: row.get::<_, Option<String>>(4)?.unwrap_or_default(),
-                disc: row.get(5)?,
-                track_number: row.get(6)?,
-                title: row.get(7)?,
-                duration_ms: row.get(8)?,
-                path: row.get(9)?,
-                codec: row.get(10)?,
-                sample_rate: row.get(11)?,
-                bit_depth: row.get(12)?,
-                channels: row.get(13)?,
-                bitrate: row.get(14)?,
-                genre: row.get(15)?,
-                source: row.get(16)?,
-                remote_id: row.get(17)?,
-                cached_path: row.get(18)?,
+                artist_name: artist_name.clone(),
+                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
+                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+                disc: row.get(6)?,
+                track_number: row.get(7)?,
+                title: row.get(8)?,
+                duration_ms: row.get(9)?,
+                path: row.get(10)?,
+                codec: row.get(11)?,
+                sample_rate: row.get(12)?,
+                bit_depth: row.get(13)?,
+                channels: row.get(14)?,
+                bitrate: row.get(15)?,
+                genre: row.get(16)?,
+                source: row.get(17)?,
+                remote_id: row.get(18)?,
+                cached_path: row.get(19)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
