@@ -1918,45 +1918,70 @@ fn build_and_enqueue_playlist(
         return;
     }
 
-    // Phase 2: Download pending items with N parallel workers.
-    // Workers pull from a shared queue. Priority tracks (cursor) get
-    // pushed to the front so the next free worker picks them up immediately.
-    const NUM_WORKERS: usize = 4;
+    // Phase 2: Download pending items.
+    //
+    // N worker threads drain the shared queue in order. When the cursor changes
+    // to a pending track, we yank it (+ the next track) OUT of the queue and
+    // spin up extra threads immediately — no waiting for a worker to free up.
+    let num_workers = cfg.remote.download_workers.max(1);
 
     let work_queue: Arc<Mutex<std::collections::VecDeque<(i64, QueueItemId)>>> =
         Arc::new(Mutex::new(pending_downloads.into()));
 
     std::thread::scope(|s| {
-        // Spawn a watcher that promotes cursor-priority items to the front.
+        // Watcher: detect cursor changes → spawn priority download threads.
         let wq = work_queue.clone();
         let state_ref = &state;
+        let tx_ref = &tx;
+        let log_ref = &log_buf;
+        let cfg_ref = &cfg;
         s.spawn(move || {
             let mut last_cursor: Option<QueueItemId> = None;
             loop {
-                std::thread::sleep(std::time::Duration::from_millis(50));
+                std::thread::sleep(std::time::Duration::from_millis(30));
+
+                // Exit when queue is fully drained.
+                if wq.lock().unwrap().is_empty() {
+                    break;
+                }
+
                 let current = state_ref.cursor();
-                if current != last_cursor {
-                    last_cursor = current;
-                    if let Some(cursor_id) = current {
-                        let mut q = wq.lock().unwrap();
-                        if let Some(pos) = q.iter().position(|(_, qid)| *qid == cursor_id) {
-                            let item = q.remove(pos).unwrap();
-                            q.push_front(item);
-                            log::info!(
-                                "priority: promoted cursor track to front of download queue"
-                            );
+                if current == last_cursor {
+                    continue;
+                }
+                last_cursor = current;
+
+                let Some(cursor_id) = current else {
+                    continue;
+                };
+
+                // Pull cursor track (and the one after it) from the queue
+                // so workers don't also download them.
+                let mut priority_items = Vec::new();
+                {
+                    let mut q = wq.lock().unwrap();
+                    if let Some(pos) = q.iter().position(|(_, qid)| *qid == cursor_id) {
+                        priority_items.push(q.remove(pos).unwrap());
+                        // Also grab the next track (for gapless lookahead).
+                        if let Some(next) = q.front().copied() {
+                            priority_items.push(q.pop_front().unwrap());
+                            let _ = next; // suppress unused warning
                         }
                     }
                 }
-                // Exit when queue is drained.
-                if wq.lock().unwrap().is_empty() {
-                    break;
+
+                // Fire off immediate download threads for priority items.
+                for (db_id, queue_id) in priority_items {
+                    log::info!("priority: spawning immediate download for {:?}", queue_id);
+                    s.spawn(move || {
+                        download_single_track(db_id, queue_id, tx_ref, log_ref, state_ref, cfg_ref);
+                    });
                 }
             }
         });
 
-        // Spawn download workers.
-        for _ in 0..NUM_WORKERS {
+        // Worker pool: drain the queue in order.
+        for _ in 0..num_workers {
             let wq = work_queue.clone();
             let tx_ref = &tx;
             let log_ref = &log_buf;
