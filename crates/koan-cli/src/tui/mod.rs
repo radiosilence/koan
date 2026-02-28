@@ -5,5 +5,6 @@ pub mod library;
 pub mod picker;
 pub mod queue;
 pub mod theme;
+pub mod track_info;
 pub mod transport;
 pub mod ui;

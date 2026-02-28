@@ -89,7 +89,7 @@ mod media_keys;
 mod tui;
 
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{PlaybackState, SharedPlayerState};
+use koan_core::player::state::SharedPlayerState;
 use owo_colors::OwoColorize;
 
 use tui::picker::{PickerItem, PickerKind, PickerState};
@@ -98,7 +98,7 @@ use tui::picker::{PickerItem, PickerKind, PickerState};
 #[command(name = "koan", about = "bit-perfect music player", version)]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
@@ -116,6 +116,9 @@ enum Commands {
         /// Play all tracks by an artist ID (from `koan artists`)
         #[arg(long, add = ArgValueCandidates::new(complete_artists))]
         artist: Option<i64>,
+        /// Open the TUI in library browse mode
+        #[arg(long, short = 'l')]
+        library: bool,
     },
     /// Probe a file and show format info
     Probe {
@@ -229,42 +232,45 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Play {
+        // No subcommand — open TUI with library browser.
+        None => cmd_play(&[], &[], None, None, true),
+        Some(Commands::Play {
             paths,
             ids,
             album,
             artist,
-        } => cmd_play(&paths, &ids, album, artist),
-        Commands::Probe { path } => cmd_probe(&path),
-        Commands::Devices => cmd_devices(),
-        Commands::Scan { path, force } => cmd_scan(path.as_deref(), force),
-        Commands::Search { query } => cmd_search(&query),
-        Commands::Artists { query } => cmd_artists(query.as_deref()),
-        Commands::Albums { query } => cmd_albums(query.as_deref()),
-        Commands::Library => cmd_library(),
-        Commands::Config => cmd_config(),
-        Commands::Remote(sub) => match sub {
+            library,
+        }) => cmd_play(&paths, &ids, album, artist, library),
+        Some(Commands::Probe { path }) => cmd_probe(&path),
+        Some(Commands::Devices) => cmd_devices(),
+        Some(Commands::Scan { path, force }) => cmd_scan(path.as_deref(), force),
+        Some(Commands::Search { query }) => cmd_search(&query),
+        Some(Commands::Artists { query }) => cmd_artists(query.as_deref()),
+        Some(Commands::Albums { query }) => cmd_albums(query.as_deref()),
+        Some(Commands::Library) => cmd_library(),
+        Some(Commands::Config) => cmd_config(),
+        Some(Commands::Remote(sub)) => match sub {
             RemoteCommands::Login { url, username } => cmd_remote_login(&url, &username),
             RemoteCommands::Sync => cmd_remote_sync(),
             RemoteCommands::Status => cmd_remote_status(),
         },
-        Commands::Pick {
+        Some(Commands::Pick {
             query,
             album,
             artist,
-        } => cmd_pick(query.as_deref(), album, artist),
-        Commands::Init => cmd_init(),
-        Commands::Cache(sub) => match sub {
+        }) => cmd_pick(query.as_deref(), album, artist),
+        Some(Commands::Init) => cmd_init(),
+        Some(Commands::Cache(sub)) => match sub {
             CacheCommands::Status => cmd_cache_status(),
             CacheCommands::Clear => cmd_cache_clear(),
         },
-        Commands::Organize {
+        Some(Commands::Organize {
             pattern,
             base_dir,
             execute,
             undo,
-        } => cmd_organize(pattern.as_deref(), base_dir.as_deref(), execute, undo),
-        Commands::Completions { shell } => {
+        }) => cmd_organize(pattern.as_deref(), base_dir.as_deref(), execute, undo),
+        Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }
     }
@@ -303,7 +309,13 @@ fn complete_albums() -> Vec<CompletionCandidate> {
 
 // --- Playback ---
 
-fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i64>) {
+fn cmd_play(
+    paths: &[PathBuf],
+    ids: &[i64],
+    album: Option<i64>,
+    artist: Option<i64>,
+    start_in_library: bool,
+) {
     // Gather track IDs to resolve, or raw file paths.
     let track_ids: Option<Vec<i64>> = if let Some(album_id) = album {
         let db = open_db();
@@ -340,31 +352,29 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
     let (state, tx) = Player::spawn();
 
     if let Some(ids) = track_ids {
-        // Resolve first track immediately so playback starts ASAP.
-        let first_path = resolve_single_track(ids[0], Some(&log_buffer), Some(&state));
-        tx.send(PlayerCommand::Play(first_path))
-            .expect("player thread died");
+        // Resolve ALL tracks in the background — the TUI starts immediately
+        // with a loading overlay. No more blank terminal during downloads.
+        let tx_bg = tx.clone();
+        let log_bg = log_buffer.clone();
+        let state_bg = state.clone();
+        std::thread::Builder::new()
+            .name("koan-resolve".into())
+            .spawn(move || {
+                // Resolve first track and start playback ASAP.
+                let first_path = resolve_single_track(ids[0], Some(&log_bg), Some(&state_bg));
+                tx_bg
+                    .send(PlayerCommand::Play(first_path))
+                    .expect("player thread died");
 
-        // Background: build pending queue metadata, then download remaining
-        // tracks in parallel batches, prioritizing queue order.
-        if ids.len() > 1 {
-            let remaining = ids[1..].to_vec();
-            let tx_bg = tx.clone();
-            let log_bg = log_buffer.clone();
-            let state_bg = state.clone();
-            std::thread::Builder::new()
-                .name("koan-resolve".into())
-                .spawn(move || {
+                // Remaining tracks: build pending queue then download in batches.
+                if ids.len() > 1 {
+                    let remaining = ids[1..].to_vec();
                     resolve_and_enqueue_batch(remaining, tx_bg, log_bg, state_bg);
-                })
-                .expect("failed to spawn resolve thread");
-        }
-    } else {
+                }
+            })
+            .expect("failed to spawn resolve thread");
+    } else if !paths.is_empty() {
         // Raw file paths — no resolution needed.
-        if paths.is_empty() {
-            eprintln!("provide file paths, --id, --album, or --artist");
-            std::process::exit(1);
-        }
         for path in paths {
             if !path.exists() {
                 eprintln!("{} {}", "not found:".red().bold(), path.display());
@@ -373,12 +383,14 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
         }
         tx.send(PlayerCommand::PlayQueue(paths.to_vec()))
             .expect("player thread died");
+    } else if !start_in_library {
+        eprintln!("provide file paths, --id, --album, --artist, or --library");
+        std::process::exit(1);
     }
 
-    wait_for_playing(&state);
-
-    // Run the Ratatui TUI.
-    if let Err(e) = run_tui(state, tx, log_buffer) {
+    // Run the Ratatui TUI immediately — don't wait for playback to start.
+    // The TUI shows a loading overlay until playback begins.
+    if let Err(e) = run_tui(state, tx, log_buffer, start_in_library) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
 
@@ -386,10 +398,27 @@ fn cmd_play(paths: &[PathBuf], ids: &[i64], album: Option<i64>, artist: Option<i
     std::thread::sleep(Duration::from_millis(100));
 }
 
+/// Install a panic hook that restores the terminal before printing the panic message.
+/// Returns a guard that restores the original hook on drop.
+fn install_terminal_panic_hook() {
+    use crossterm::{
+        event::DisableMouseCapture,
+        execute,
+        terminal::{LeaveAlternateScreen, disable_raw_mode},
+    };
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        original_hook(panic);
+    }));
+}
+
 fn run_tui(
     state: Arc<SharedPlayerState>,
     tx: crossbeam_channel::Sender<PlayerCommand>,
     log_buffer: Arc<Mutex<Vec<String>>>,
+    start_in_library: bool,
 ) -> std::io::Result<()> {
     use crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture},
@@ -399,13 +428,7 @@ fn run_tui(
     use ratatui::Terminal;
     use ratatui::backend::CrosstermBackend;
 
-    // Set panic hook to restore terminal.
-    let original_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic| {
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
-        original_hook(panic);
-    }));
+    install_terminal_panic_hook();
 
     // Setup terminal.
     enable_raw_mode()?;
@@ -416,6 +439,10 @@ fn run_tui(
 
     let db_path = config::db_path();
     let mut app = tui::app::App::new(state, tx.clone(), log_buffer, db_path);
+
+    if start_in_library {
+        app.open_library();
+    }
 
     // Media keys (macOS Control Center integration).
     let mut media = media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
@@ -465,12 +492,13 @@ fn run_tui(
                     .map(|t| t.id)
                     .collect();
                 if !track_ids.is_empty() {
-                    app.picker_result = Some(track_ids);
+                    app.picker_result = Some((PickerKind::Track, track_ids));
                 }
             } else {
-                // Open album picker for this artist.
+                // Open album picker for this artist. Use negative artist ID
+                // as the "all tracks" sentinel — resolved in picker_result handler.
                 let mut items = vec![PickerItem {
-                    id: -1,
+                    id: -artist_id,
                     display: "all tracks".to_string(),
                     match_text: "all tracks".into(),
                 }];
@@ -478,49 +506,50 @@ fn run_tui(
                 app.mode = tui::app::Mode::Picker(PickerKind::Album);
                 let picker = PickerState::new(PickerKind::Album, items, false);
                 app.picker = Some(picker);
-                // Store artist_id for if they pick "all tracks".
-                // We'll handle this by checking if result ID is -1.
-                // Actually, the confirm() method returns the PickerItem.id,
-                // so -1 means "all tracks" for this artist.
-                // We need to stash the artist_id somewhere.
-                // Let's just process the result below.
             }
         }
 
         // Handle picker result — enqueue in background.
-        if let Some(ids) = app.picker_result.take() {
-            // Check for "all tracks" sentinel from artist drill-down.
-            // (Not needed — the drill-down already resolved to track IDs above.)
+        if let Some((kind, ids)) = app.picker_result.take() {
             let tx_bg = tx.clone();
             let log_bg = app.log_buffer.clone();
             let state_bg = app.state.clone();
 
-            // If it's album picker results from artist drill-down, resolve album tracks.
-            let track_ids = if ids.len() == 1 && ids[0] < 0 {
-                // "All tracks" sentinel — should have been handled above.
-                vec![]
-            } else {
-                // Check if these are album IDs (from album picker) or track IDs.
-                // Album picker returns album IDs — need to expand to tracks.
-                // Track picker returns track IDs directly.
-                // We can tell by looking at the mode that was active... but it's
-                // already changed back to Normal. Let's just check the DB.
-                // Actually, the picker kind determines this:
-                // Track picker → ids are track IDs
-                // Album picker → ids are album IDs → expand
-                // For simplicity: try album expansion first, fall back to track IDs.
-                // Actually no — let's just tag the result properly.
-                ids
-            };
+            app.loading_message = Some("loading...".into());
 
-            if !track_ids.is_empty() {
-                std::thread::Builder::new()
-                    .name("koan-enqueue".into())
-                    .spawn(move || {
+            // Everything happens on a background thread — album expansion + downloads.
+            std::thread::Builder::new()
+                .name("koan-enqueue".into())
+                .spawn(move || {
+                    // Expand album IDs to track IDs if needed.
+                    let track_ids = match kind {
+                        PickerKind::Album => {
+                            let db = open_db();
+                            let mut expanded = Vec::new();
+                            for album_id in &ids {
+                                if *album_id < 0 {
+                                    // Negative ID = "all tracks" sentinel. The absolute
+                                    // value is the artist_id, encoded by drill-down.
+                                    let artist_id = album_id.unsigned_abs() as i64;
+                                    let tracks = queries::tracks_for_artist(&db.conn, artist_id)
+                                        .unwrap_or_default();
+                                    expanded.extend(tracks.iter().map(|t| t.id));
+                                    continue;
+                                }
+                                let tracks = queries::tracks_for_album(&db.conn, *album_id)
+                                    .unwrap_or_default();
+                                expanded.extend(tracks.iter().map(|t| t.id));
+                            }
+                            expanded
+                        }
+                        _ => ids,
+                    };
+
+                    if !track_ids.is_empty() {
                         resolve_and_enqueue_batch(track_ids, tx_bg, log_bg, state_bg);
-                    })
-                    .ok();
-            }
+                    }
+                })
+                .ok();
         }
 
         if app.quit {
@@ -615,16 +644,6 @@ fn make_artist_picker_items(artists: &[queries::ArtistRow]) -> Vec<PickerItem> {
             match_text: a.name.clone(),
         })
         .collect()
-}
-
-fn wait_for_playing(state: &Arc<SharedPlayerState>) {
-    for _ in 0..200 {
-        std::thread::sleep(Duration::from_millis(10));
-        if state.playback_state() == PlaybackState::Playing {
-            return;
-        }
-    }
-    eprintln!("{}", "playback failed to start".red());
 }
 
 // --- Library ---
@@ -1504,6 +1523,7 @@ fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
     let mut picker = PickerState::new(kind, items, multi);
 
     // Setup terminal for picker.
+    install_terminal_panic_hook();
     enable_raw_mode().expect("failed to enable raw mode");
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen).expect("failed to enter alt screen");
@@ -1550,11 +1570,11 @@ fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
     if let Some(ids) = result {
         match kind {
             PickerKind::Track => {
-                cmd_play(&[], &ids, None, None);
+                cmd_play(&[], &ids, None, None, false);
             }
             PickerKind::Album => {
                 if let Some(&album_id) = ids.first() {
-                    cmd_play(&[], &[], Some(album_id), None);
+                    cmd_play(&[], &[], Some(album_id), None, false);
                 }
             }
             PickerKind::Artist => {
@@ -1563,11 +1583,11 @@ fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
                     let albums =
                         queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
                     if albums.is_empty() {
-                        cmd_play(&[], &[], None, Some(artist_id));
+                        cmd_play(&[], &[], None, Some(artist_id), false);
                     } else {
                         // Show album picker for this artist.
                         let mut items = vec![PickerItem {
-                            id: -1,
+                            id: -artist_id,
                             display: "all tracks".to_string(),
                             match_text: "all tracks".into(),
                         }];
@@ -1621,10 +1641,10 @@ fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
                         terminal2.show_cursor().ok();
 
                         if let Some(album_ids) = album_result {
-                            if album_ids[0] == -1 {
-                                cmd_play(&[], &[], None, Some(artist_id));
+                            if album_ids[0] < 0 {
+                                cmd_play(&[], &[], None, Some(artist_id), false);
                             } else {
-                                cmd_play(&[], &[], Some(album_ids[0]), None);
+                                cmd_play(&[], &[], Some(album_ids[0]), None, false);
                             }
                         }
                     }
@@ -1879,10 +1899,43 @@ fn resolve_and_enqueue_batch(
     state.set_pending_queue(pending);
 
     // Phase 2: Download/resolve in parallel batches, queue order.
-    // 4 concurrent downloads, each enqueued as it completes.
+    // Between batches, check for priority play targets (user double-clicked
+    // a pending track) and download them immediately.
     const BATCH_SIZE: usize = 4;
 
-    for chunk in track_info.chunks(BATCH_SIZE) {
+    let mut remaining: std::collections::VecDeque<_> = track_info.into();
+
+    while !remaining.is_empty() {
+        // Priority check: if the user double-clicked a pending track,
+        // pull it from the remaining queue and download it NOW.
+        if let Some(priority_path) = state.priority_play_path() {
+            if let Some(pos) = remaining.iter().position(|(_id, track, date)| {
+                let dest = cache_path_for_track(&cfg.cache_dir(), track, date.as_deref());
+                dest == priority_path
+            }) {
+                log::info!("priority play: downloading track at pos {} from remaining", pos);
+                let (id, _track, _date) = remaining.remove(pos).unwrap();
+                let path = resolve_single_track(id, Some(&log_buf), Some(&state));
+                state.remove_pending(&path);
+                state.take_priority_play();
+                log::info!("priority play: sending PlayInterrupt for {}", path.display());
+                if tx.send(PlayerCommand::PlayInterrupt(path)).is_err() {
+                    return;
+                }
+                continue; // Re-check for another priority before next batch.
+            } else {
+                log::info!(
+                    "priority play: path {} not found in remaining ({} items)",
+                    priority_path.display(),
+                    remaining.len()
+                );
+            }
+        }
+
+        // Normal batch: take up to BATCH_SIZE items.
+        let batch_size = BATCH_SIZE.min(remaining.len());
+        let chunk: Vec<_> = remaining.drain(..batch_size).collect();
+
         let results: Vec<(i64, PathBuf)> = std::thread::scope(|s| {
             let handles: Vec<_> = chunk
                 .iter()
@@ -1899,10 +1952,17 @@ fn resolve_and_enqueue_batch(
             handles.into_iter().filter_map(|h| h.join().ok()).collect()
         });
 
-        // Enqueue in original order within the batch.
         for (_id, path) in results {
             state.remove_pending(&path);
-            if tx.send(PlayerCommand::Enqueue(path)).is_err() {
+            // Check priority again — user might have clicked during this batch.
+            let is_priority = state.priority_play_path().is_some_and(|p| p == path);
+            if is_priority {
+                state.take_priority_play();
+                log::info!("priority play (post-batch): PlayInterrupt for {}", path.display());
+                if tx.send(PlayerCommand::PlayInterrupt(path)).is_err() {
+                    return;
+                }
+            } else if tx.send(PlayerCommand::Enqueue(path)).is_err() {
                 return;
             }
         }
@@ -2017,10 +2077,17 @@ fn resolve_single_track(
                 &password,
             );
 
-            let result = client.download(&remote_id, &dest);
+            let progress_dest = dest.clone();
+            let progress_state = shared_state.map(Arc::clone);
+            let result = client.download_with_progress(&remote_id, &dest, |downloaded, total| {
+                if let Some(ref state) = progress_state {
+                    state.set_download_progress(progress_dest.clone(), downloaded, total);
+                }
+            });
 
             if let Err(e) = result {
                 if let Some(state) = shared_state {
+                    state.clear_download_progress(&dest);
                     state.update_track_status(&dest, QueueEntryStatus::Failed);
                 }
                 let msg = format!("{} {} — {}", "x".red().bold(), track.title, e);
@@ -2032,8 +2099,9 @@ fn resolve_single_track(
                 std::process::exit(1);
             }
 
-            // Mark as queued (downloaded successfully).
+            // Mark as queued (downloaded successfully) and clear progress.
             if let Some(state) = shared_state {
+                state.clear_download_progress(&dest);
                 state.update_track_status(&dest, QueueEntryStatus::Queued);
             }
 

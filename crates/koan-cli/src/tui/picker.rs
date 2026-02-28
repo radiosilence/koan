@@ -141,6 +141,31 @@ impl PickerState {
     }
 }
 
+/// Calculate the popup rect centered in the given area.
+pub fn picker_popup_rect(area: Rect) -> Rect {
+    let popup_width = (area.width as f32 * 0.6).max(40.0).min(area.width as f32) as u16;
+    let popup_height = (area.height as f32 * 0.7).max(10.0).min(area.height as f32) as u16;
+    let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+    let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+    Rect::new(x, y, popup_width, popup_height)
+}
+
+/// Given the popup rect, return the results list area (inner minus query and hint rows).
+pub fn picker_results_rect(popup: Rect) -> Rect {
+    let block = Block::default().borders(Borders::ALL);
+    let inner = block.inner(popup);
+    if inner.height < 3 {
+        return Rect::default();
+    }
+    // query (1) + results (inner.height - 2) + hints (1)
+    Rect::new(
+        inner.x,
+        inner.y + 1,
+        inner.width,
+        inner.height.saturating_sub(2),
+    )
+}
+
 pub struct PickerOverlay<'a> {
     state: &'a PickerState,
     theme: &'a Theme,
@@ -214,32 +239,36 @@ impl Widget for PickerOverlay<'_> {
                 let is_cursor = i == self.state.cursor;
                 let is_selected = self.state.selected.contains(&idx);
 
-                let marker = if is_selected {
-                    Span::styled("\u{25C6} ", self.theme.album_header_album)
-                } else if is_cursor {
-                    Span::styled("\u{25B8} ", self.theme.track_playing)
-                } else {
-                    Span::raw("  ")
-                };
-
-                let display = &self.state.items[idx].display;
-                let style = if is_cursor {
-                    self.theme.track_cursor
+                let row_style = if is_cursor {
+                    self.theme.picker_cursor
+                } else if is_selected {
+                    self.theme.album_header_album
                 } else {
                     self.theme.track_normal
                 };
 
+                let marker = if is_selected && !is_cursor {
+                    "\u{25C6} "
+                } else if is_cursor {
+                    "\u{25B8} "
+                } else {
+                    "  "
+                };
+
+                let display = &self.state.items[idx].display;
+
+                // Fill entire row with the style for a visible highlight bar.
+                let row_y = chunks[1].y + row as u16;
+                for col in chunks[1].x..chunks[1].x + chunks[1].width {
+                    buf[(col, row_y)].set_style(row_style);
+                }
+
                 let line = Line::from(vec![
-                    Span::raw(" "),
-                    marker,
-                    Span::styled(display.clone(), style),
+                    Span::styled(" ", row_style),
+                    Span::styled(marker, row_style),
+                    Span::styled(display.clone(), row_style),
                 ]);
-                buf.set_line(
-                    chunks[1].x,
-                    chunks[1].y + row as u16,
-                    &line,
-                    chunks[1].width,
-                );
+                buf.set_line(chunks[1].x, row_y, &line, chunks[1].width);
             }
         }
 

@@ -1,4 +1,5 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::path::PathBuf;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -12,9 +13,9 @@ use super::app::Mode;
 use super::theme::Theme;
 use super::transport::format_time;
 
-const SPINNER_FRAMES: &[char] = &[
-    '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}', '\u{2827}',
-    '\u{2807}', '\u{280F}',
+const SPINNER: &[char] = &[
+    '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
+    '\u{2827}',
 ];
 
 pub struct QueueView<'a> {
@@ -22,31 +23,35 @@ pub struct QueueView<'a> {
     mode: &'a Mode,
     cursor: usize,
     scroll_offset: usize,
-    spinner_tick: usize,
     theme: &'a Theme,
     drag_target: Option<usize>,
     selected: &'a HashSet<usize>,
+    download_progress: &'a HashMap<PathBuf, (u64, u64)>,
+    spinner_tick: usize,
 }
 
 impl<'a> QueueView<'a> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         entries: &'a [QueueEntry],
         mode: &'a Mode,
         cursor: usize,
         scroll_offset: usize,
-        spinner_tick: usize,
         theme: &'a Theme,
         selected: &'a HashSet<usize>,
+        download_progress: &'a HashMap<PathBuf, (u64, u64)>,
+        spinner_tick: usize,
     ) -> Self {
         Self {
             entries,
             mode,
             cursor,
             scroll_offset,
-            spinner_tick,
             theme,
             drag_target: None,
             selected,
+            download_progress,
+            spinner_tick,
         }
     }
 
@@ -135,6 +140,18 @@ impl Widget for QueueView<'_> {
             return;
         }
 
+        // Pre-compute whether each album group is fully played.
+        let mut album_fully_played: HashMap<(String, String), bool> = HashMap::new();
+        for entry in self.entries {
+            if !entry.album.is_empty() {
+                let key = (entry.album_artist.clone(), entry.album.clone());
+                let fully_played = album_fully_played.entry(key).or_insert(true);
+                if entry.status != QueueEntryStatus::Played {
+                    *fully_played = false;
+                }
+            }
+        }
+
         // Build all display lines.
         let mut display_lines: Vec<(Option<usize>, Line)> = Vec::new();
         let mut current_album_key: Option<(String, String)> = None;
@@ -148,21 +165,24 @@ impl Widget for QueueView<'_> {
             };
 
             if show_header {
-                current_album_key = Some(album_key);
-                let header = render_album_header(entry, self.theme);
+                current_album_key = Some(album_key.clone());
+                let played = album_fully_played.get(&album_key).copied().unwrap_or(false);
+                let header = render_album_header(entry, played, self.theme);
                 display_lines.push((None, header));
             }
 
             let is_cursor = is_edit && i == self.cursor;
             let is_selected = self.selected.contains(&i);
             let is_drag_target = self.drag_target == Some(i);
+            let progress = self.download_progress.get(&entry.path);
             let line = render_track_line(
                 entry,
                 is_cursor,
                 is_selected,
                 is_drag_target,
-                self.spinner_tick,
                 self.theme,
+                progress,
+                self.spinner_tick,
             );
             display_lines.push((Some(i), line));
         }
@@ -198,7 +218,7 @@ impl Widget for QueueView<'_> {
     }
 }
 
-fn render_album_header<'a>(entry: &QueueEntry, theme: &Theme) -> Line<'a> {
+fn render_album_header<'a>(entry: &QueueEntry, played: bool, theme: &Theme) -> Line<'a> {
     let year = entry
         .year
         .as_deref()
@@ -210,13 +230,29 @@ fn render_album_header<'a>(entry: &QueueEntry, theme: &Theme) -> Line<'a> {
         .map(|c| format!(" [{}]", c))
         .unwrap_or_default();
 
+    let artist_style = if played {
+        theme.track_played
+    } else {
+        theme.album_header_artist
+    };
+    let album_style = if played {
+        theme.track_played
+    } else {
+        theme.album_header_album
+    };
+    let dim = if played {
+        theme.track_played
+    } else {
+        theme.hint_desc
+    };
+
     Line::from(vec![
         Span::raw(" "),
-        Span::styled(entry.album_artist.clone(), theme.album_header_artist),
-        Span::styled(" \u{2014} ", theme.hint_desc),
-        Span::styled(year, theme.hint_desc),
-        Span::styled(entry.album.clone(), theme.album_header_album),
-        Span::styled(codec, theme.hint_desc),
+        Span::styled(entry.album_artist.clone(), artist_style),
+        Span::styled(" \u{2014} ", dim),
+        Span::styled(year, dim),
+        Span::styled(entry.album.clone(), album_style),
+        Span::styled(codec, dim),
     ])
 }
 
@@ -225,15 +261,45 @@ fn render_track_line<'a>(
     is_cursor: bool,
     is_selected: bool,
     is_drag_target: bool,
-    spinner_tick: usize,
     theme: &Theme,
+    progress: Option<&(u64, u64)>,
+    spinner_tick: usize,
 ) -> Line<'a> {
+    let is_played = entry.status == QueueEntryStatus::Played;
+    let spin_char = SPINNER[spinner_tick % SPINNER.len()];
+
     let status_icon = match entry.status {
         QueueEntryStatus::Queued => Span::raw(" "),
         QueueEntryStatus::Playing => Span::styled(">", theme.track_playing),
+        QueueEntryStatus::Played => Span::styled(" ", theme.track_played),
         QueueEntryStatus::Downloading => {
-            let frame = SPINNER_FRAMES[spinner_tick % SPINNER_FRAMES.len()];
-            Span::styled(frame.to_string(), theme.spinner)
+            if let Some(&(downloaded, total)) = progress {
+                if total > 0 {
+                    let pct = (downloaded * 100 / total).min(99);
+                    Span::styled(format!("{:2}%", pct), theme.spinner)
+                } else {
+                    // No Content-Length — show bytes downloaded.
+                    let kb = downloaded / 1024;
+                    Span::styled(format!("{}K", kb), theme.spinner)
+                }
+            } else {
+                // Waiting to start download (queued for batch).
+                Span::styled(format!(" {} ", spin_char), theme.hint_desc)
+            }
+        }
+        QueueEntryStatus::PriorityPending => {
+            // User wants this track — show > with progress or spinner.
+            if let Some(&(downloaded, total)) = progress {
+                if total > 0 {
+                    let pct = (downloaded * 100 / total).min(99);
+                    Span::styled(format!("{:2}%", pct), theme.track_playing)
+                } else {
+                    let kb = downloaded / 1024;
+                    Span::styled(format!("{}K", kb), theme.track_playing)
+                }
+            } else {
+                Span::styled(format!(">{} ", spin_char), theme.track_playing)
+            }
         }
         QueueEntryStatus::Failed => Span::styled("!", theme.failed),
     };
@@ -247,9 +313,19 @@ fn render_track_line<'a>(
     let dur = entry.duration_ms.map(format_time).unwrap_or_default();
 
     let artist_part = if !entry.artist.is_empty() && entry.artist != entry.album_artist {
+        let artist_style = if is_played {
+            theme.track_played
+        } else {
+            theme.track_playing
+        };
+        let sep_style = if is_played {
+            theme.track_played
+        } else {
+            theme.hint_desc
+        };
         vec![
-            Span::styled(entry.artist.clone(), theme.track_playing),
-            Span::styled(" \u{2014} ", theme.hint_desc),
+            Span::styled(entry.artist.clone(), artist_style),
+            Span::styled(" \u{2014} ", sep_style),
         ]
     } else {
         vec![]
@@ -270,18 +346,24 @@ fn render_track_line<'a>(
         theme.track_cursor
     } else if is_selected {
         theme.track_selected
+    } else if is_played {
+        theme.track_played
     } else {
         theme.track_normal
     };
 
     let num_style = if is_selected {
         theme.track_selected
+    } else if is_played {
+        theme.track_played
     } else {
         theme.track_number
     };
 
     let dur_style = if is_selected {
         theme.track_selected
+    } else if is_played {
+        theme.track_played
     } else {
         theme.hint_desc
     };

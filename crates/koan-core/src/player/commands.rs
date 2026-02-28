@@ -10,6 +10,9 @@ pub enum PlayerCommand {
     PlayQueue(Vec<PathBuf>),
     /// Append a track to the end of the queue without interrupting playback.
     Enqueue(PathBuf),
+    /// Interrupt: start playing this track NOW, pushing current to finished.
+    /// Unlike Play, does NOT clear the queue or history.
+    PlayInterrupt(PathBuf),
     Pause,
     Resume,
     Stop,
@@ -21,6 +24,8 @@ pub enum PlayerCommand {
         from: usize,
         to: usize,
     }, // reorder track
+    SkipTo(usize),          // skip to queue index (push skipped tracks to finished)
+    SkipBack(usize),        // skip back to finished track at index
 }
 
 /// Bounded SPSC command channel.

@@ -142,17 +142,44 @@ impl SubsonicClient {
 
     /// Download a track to a local path.
     pub fn download(&self, track_id: &str, dest: &Path) -> Result<(), SubsonicError> {
+        self.download_with_progress(track_id, dest, |_, _| {})
+    }
+
+    /// Download a track with progress reporting.
+    /// The callback receives (bytes_downloaded, total_bytes). Total may be 0
+    /// if the server doesn't send Content-Length.
+    pub fn download_with_progress(
+        &self,
+        track_id: &str,
+        dest: &Path,
+        on_progress: impl Fn(u64, u64),
+    ) -> Result<(), SubsonicError> {
+        use std::io::Write;
+
         let url = format!("{}/rest/download", self.base_url);
         let mut params = self.auth_params();
         params.insert("id".into(), track_id.to_string());
 
-        let resp = self.http.get(&url).query(&params).send()?;
-        let bytes = resp.bytes()?;
+        let mut resp = self.http.get(&url).query(&params).send()?;
+        let total = resp.content_length().unwrap_or(0);
 
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(dest, &bytes)?;
+
+        let mut file = std::fs::File::create(dest)?;
+        let mut downloaded: u64 = 0;
+        let mut buf = [0u8; 64 * 1024]; // 64KB chunks
+        loop {
+            let n = std::io::Read::read(&mut resp, &mut buf).map_err(SubsonicError::Io)?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n])?;
+            downloaded += n as u64;
+            on_progress(downloaded, total);
+        }
+        file.flush()?;
         Ok(())
     }
 

@@ -1,14 +1,21 @@
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{App, LibraryFocus, Mode};
 use super::keys::HintBar;
 use super::library::LibraryView;
-use super::picker::PickerOverlay;
+use super::picker::{PickerOverlay, picker_popup_rect};
 use super::queue::QueueView;
+use super::track_info::TrackInfoOverlay;
 use super::transport::TransportBar;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
+    // Refresh the visible queue cache once per frame so all reads
+    // within this render cycle see a consistent snapshot.
+    app.refresh_visible_queue();
+
     let area = frame.area();
 
     // Main layout: transport (3) | content (flex) | hints (1)
@@ -70,28 +77,77 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if let Mode::Picker(_) = &app.mode
         && let Some(ref picker) = app.picker
     {
+        app.picker_area = picker_popup_rect(area);
         let overlay = PickerOverlay::new(picker, &app.theme);
         frame.render_widget(overlay, area);
+    }
+
+    // Track info overlay.
+    if let Mode::TrackInfo(idx) = app.mode {
+        let visible = app.visible_queue();
+        if let Some(entry) = visible.get(idx) {
+            let current_track_info = app.state.track_info();
+            let is_playing = entry.status == koan_core::player::state::QueueEntryStatus::Playing;
+            let ti_ref = if is_playing {
+                current_track_info.as_ref()
+            } else {
+                None
+            };
+
+            // Calculate popup rect for mouse hit-testing.
+            let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
+            let popup_height = (area.height as f32 * 0.6).max(12.0).min(area.height as f32) as u16;
+            let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+            let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+            app.track_info_area = Rect::new(x, y, popup_width, popup_height);
+
+            let overlay = TrackInfoOverlay::new(entry, ti_ref, &app.theme);
+            frame.render_widget(overlay, area);
+        }
+    }
+
+    // Loading overlay with braille spinner.
+    if let Some(ref msg) = app.loading_message {
+        const SPINNER: &[char] = &[
+            '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
+            '\u{2827}',
+        ];
+        let frame_char = SPINNER[app.spinner_tick % SPINNER.len()];
+        let display = format!("{} {}", frame_char, msg);
+        let text_len = display.len() as u16 + 4;
+        let w = text_len.max(20).min(area.width);
+        let x = area.x + (area.width.saturating_sub(w)) / 2;
+        let y = area.y + area.height / 2;
+        let popup = Rect::new(x, y, w, 1);
+        Clear.render(popup, frame.buffer_mut());
+        let line = Line::from(vec![
+            Span::styled("  ", app.theme.hint_desc),
+            Span::styled(display, app.theme.spinner),
+            Span::styled("  ", app.theme.hint_desc),
+        ]);
+        frame.render_widget(Paragraph::new(line), popup);
     }
 }
 
 fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
-    let queue = app.state.full_queue();
+    let visible = app.visible_queue();
 
     // Clamp cursor.
-    if !queue.is_empty() && app.queue_cursor >= queue.len() {
-        app.queue_cursor = queue.len() - 1;
+    if !visible.is_empty() && app.queue_cursor >= visible.len() {
+        app.queue_cursor = visible.len() - 1;
     }
 
     let drag_target = app.drag_target_index();
+    let dl_progress = app.state.all_download_progress();
     let queue_view = QueueView::new(
-        &queue,
+        &visible,
         &app.mode,
         app.queue_cursor,
         app.queue_scroll_offset,
-        app.spinner_tick,
         &app.theme,
         &app.selected_indices,
+        &dl_progress,
+        app.spinner_tick,
     )
     .with_drag_target(drag_target);
     frame.render_widget(queue_view, area);
