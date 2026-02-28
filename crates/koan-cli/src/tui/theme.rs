@@ -26,6 +26,13 @@ pub struct Theme {
     pub library_cursor: Style,
 }
 
+impl Theme {
+    /// Dim a style for played tracks — override fg to played color, keep modifiers.
+    pub fn dim(&self, style: Style) -> Style {
+        style.fg(self.track_played.fg.unwrap_or(Color::DarkGray))
+    }
+}
+
 impl Default for Theme {
     fn default() -> Self {
         Self {

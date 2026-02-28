@@ -223,21 +223,10 @@ fn render_album_header<'a>(entry: &QueueEntry, played: bool, theme: &Theme) -> L
         .map(|c| format!(" [{}]", c))
         .unwrap_or_default();
 
-    let artist_style = if played {
-        theme.track_played
-    } else {
-        theme.album_header_artist
-    };
-    let album_style = if played {
-        theme.track_played
-    } else {
-        theme.album_header_album
-    };
-    let dim = if played {
-        theme.track_played
-    } else {
-        theme.hint_desc
-    };
+    let maybe_dim = |s| if played { theme.dim(s) } else { s };
+    let artist_style = maybe_dim(theme.album_header_artist);
+    let album_style = maybe_dim(theme.album_header_album);
+    let dim = maybe_dim(theme.hint_desc);
 
     Line::from(vec![
         Span::raw(" "),
@@ -269,7 +258,7 @@ fn render_track_line<'a>(
             if is_selected {
                 Span::styled(" ", theme.track_selected)
             } else {
-                Span::styled(" ", theme.track_played)
+                Span::raw(" ")
             }
         }
         QueueEntryStatus::Downloading => {
@@ -309,20 +298,18 @@ fn render_track_line<'a>(
 
     let dur = entry.duration_ms.map(format_time).unwrap_or_default();
 
+    let maybe_dim = |s| if is_played { theme.dim(s) } else { s };
+
     let artist_part = if !entry.artist.is_empty() && entry.artist != entry.album_artist {
         let artist_style = if is_selected {
             theme.track_selected
-        } else if is_played {
-            theme.track_played
         } else {
-            theme.track_playing
+            maybe_dim(theme.track_playing)
         };
         let sep_style = if is_selected {
             theme.track_selected
-        } else if is_played {
-            theme.track_played
         } else {
-            theme.hint_desc
+            maybe_dim(theme.hint_desc)
         };
         vec![
             Span::styled(entry.artist.clone(), artist_style),
@@ -347,26 +334,20 @@ fn render_track_line<'a>(
         theme.track_cursor
     } else if is_selected {
         theme.track_selected
-    } else if is_played {
-        theme.track_played
     } else {
-        theme.track_normal
+        maybe_dim(theme.track_normal)
     };
 
     let num_style = if is_selected {
         theme.track_selected
-    } else if is_played {
-        theme.track_played
     } else {
-        theme.track_number
+        maybe_dim(theme.track_number)
     };
 
     let dur_style = if is_selected {
         theme.track_selected
-    } else if is_played {
-        theme.track_played
     } else {
-        theme.hint_desc
+        maybe_dim(theme.hint_desc)
     };
 
     let mut spans = vec![
