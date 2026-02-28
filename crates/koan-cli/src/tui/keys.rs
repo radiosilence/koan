@@ -31,6 +31,7 @@ impl Widget for HintBar<'_> {
                 ("l", "library"),
                 ("e", "edit"),
                 ("i", "info"),
+                ("z", "art"),
                 ("q", "quit"),
             ],
             Mode::QueueEdit => vec![
@@ -44,6 +45,7 @@ impl Widget for HintBar<'_> {
                 ("q", "quit"),
             ],
             Mode::TrackInfo(_) => vec![("esc", "close"), ("i", "close")],
+            Mode::CoverArtZoom => vec![("esc", "close"), ("z", "close")],
             Mode::LibraryBrowse => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("\u{2192}/enter", "expand"),

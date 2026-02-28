@@ -4,12 +4,13 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
-use koan_core::player::state::{PlaybackState, TrackInfo};
+use koan_core::player::state::{PlaybackState, QueueEntry, TrackInfo};
 
 use super::theme::Theme;
 
 pub struct TransportBar<'a> {
     track_info: Option<&'a TrackInfo>,
+    playing_entry: Option<&'a QueueEntry>,
     playback_state: PlaybackState,
     position_ms: u64,
     theme: &'a Theme,
@@ -18,12 +19,14 @@ pub struct TransportBar<'a> {
 impl<'a> TransportBar<'a> {
     pub fn new(
         track_info: Option<&'a TrackInfo>,
+        playing_entry: Option<&'a QueueEntry>,
         playback_state: PlaybackState,
         position_ms: u64,
         theme: &'a Theme,
     ) -> Self {
         Self {
             track_info,
+            playing_entry,
             playback_state,
             position_ms,
             theme,
@@ -60,7 +63,7 @@ impl<'a> TransportBar<'a> {
 
 impl Widget for TransportBar<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        if area.height < 3 {
+        if area.height < 2 {
             return;
         }
 
@@ -109,33 +112,78 @@ impl Widget for TransportBar<'_> {
         ]);
         buf.set_line(area.x, area.y, &progress_line, area.width);
 
-        // Line 2: Artist - Title | Album | codec info
-        let artist = info
-            .path
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        // Line 2: Artist — Title (from QueueEntry metadata, or fallback to filename)
+        if let Some(entry) = self.playing_entry {
+            let mut spans = vec![Span::raw(" ")];
 
-        let format_info = format!(
-            "{} {}Hz/{}bit/{}ch",
-            info.codec, info.sample_rate, info.bit_depth, info.channels
-        );
+            if !entry.artist.is_empty() {
+                spans.push(Span::styled(
+                    entry.artist.clone(),
+                    self.theme.track_playing,
+                ));
+                spans.push(Span::styled(" \u{2014} ", self.theme.hint_desc));
+            }
 
-        let info_line = Line::from(vec![
-            Span::raw(" "),
-            Span::styled(
-                &artist,
+            spans.push(Span::styled(
+                entry.title.clone(),
                 self.theme.track_normal.add_modifier(Modifier::BOLD),
-            ),
-            Span::styled("  ", self.theme.hint_desc),
-            Span::styled(format_info, self.theme.hint_desc),
-        ]);
-        buf.set_line(area.x, area.y + 1, &info_line, area.width);
+            ));
 
-        // Line 3: blank separator
-        let blank = Line::from("");
-        buf.set_line(area.x, area.y + 2, &blank, area.width);
+            let title_line = Line::from(spans);
+            buf.set_line(area.x, area.y + 1, &title_line, area.width);
+
+            // Line 3: Album (Year) · codec info (if we have enough height)
+            if area.height >= 3 {
+                let mut album_spans = vec![Span::raw(" ")];
+
+                if !entry.album.is_empty() {
+                    album_spans.push(Span::styled(
+                        entry.album.clone(),
+                        self.theme.album_header_album,
+                    ));
+                }
+
+                if let Some(ref year) = entry.year {
+                    album_spans.push(Span::styled(
+                        format!(" ({})", year),
+                        self.theme.hint_desc,
+                    ));
+                }
+
+                let format_info = format!(
+                    " \u{00B7} {} {}Hz/{}bit/{}ch",
+                    info.codec, info.sample_rate, info.bit_depth, info.channels
+                );
+                album_spans.push(Span::styled(format_info, self.theme.hint_desc));
+
+                let album_line = Line::from(album_spans);
+                buf.set_line(area.x, area.y + 2, &album_line, area.width);
+            }
+        } else {
+            // Fallback: filename + codec info
+            let artist = info
+                .path
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            let format_info = format!(
+                "{} {}Hz/{}bit/{}ch",
+                info.codec, info.sample_rate, info.bit_depth, info.channels
+            );
+
+            let info_line = Line::from(vec![
+                Span::raw(" "),
+                Span::styled(
+                    &artist,
+                    self.theme.track_normal.add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ", self.theme.hint_desc),
+                Span::styled(format_info, self.theme.hint_desc),
+            ]);
+            buf.set_line(area.x, area.y + 1, &info_line, area.width);
+        }
     }
 }
 

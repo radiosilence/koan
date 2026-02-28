@@ -23,6 +23,7 @@ pub enum Mode {
     Picker(PickerKind),
     LibraryBrowse,
     TrackInfo(usize),
+    CoverArtZoom,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,10 +107,19 @@ pub struct App {
 
     /// Cached visible queue snapshot — refreshed once per frame.
     /// All queue-related methods use this for consistency within a frame.
-    vq_cache: VisibleQueueSnapshot,
+    pub(super) vq_cache: VisibleQueueSnapshot,
 
-    /// Cached cover art (loaded on demand, reused across frames).
+    /// Cached cover art for track info modal.
     pub cover_art: super::cover_art::CoverArtCache,
+
+    /// Cached cover art for now-playing transport display.
+    pub now_playing_art: super::cover_art::CoverArtCache,
+
+    /// Area of the now-playing art thumbnail (for click-to-zoom).
+    pub now_playing_art_area: ratatui::layout::Rect,
+
+    /// Area of the transport text (seek bar) — excludes art.
+    pub transport_text_area: ratatui::layout::Rect,
 }
 
 impl App {
@@ -151,6 +161,9 @@ impl App {
             db_path,
             vq_cache: VisibleQueueSnapshot::default(),
             cover_art: super::cover_art::CoverArtCache::new(),
+            now_playing_art: super::cover_art::CoverArtCache::new(),
+            now_playing_art_area: ratatui::layout::Rect::default(),
+            transport_text_area: ratatui::layout::Rect::default(),
         }
     }
 
@@ -179,6 +192,11 @@ impl App {
         // Tick picker if active.
         if let Some(ref mut picker) = self.picker {
             picker.tick();
+        }
+
+        // Update now-playing cover art cache when track changes.
+        if let Some(ref info) = self.state.track_info() {
+            self.now_playing_art.get(&info.path);
         }
 
         // In normal mode, auto-scroll to playing track on actual track change.
@@ -225,6 +243,7 @@ impl App {
             Mode::QueueEdit => self.handle_edit_key(key),
             Mode::LibraryBrowse => self.handle_library_key(key),
             Mode::TrackInfo(_) => self.handle_info_key(key),
+            Mode::CoverArtZoom => self.handle_zoom_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -304,6 +323,11 @@ impl App {
             }
             KeyCode::Char('i') => {
                 self.open_track_info(self.queue_cursor);
+            }
+            KeyCode::Char('z') => {
+                if self.now_playing_art.cached().is_some() {
+                    self.mode = Mode::CoverArtZoom;
+                }
             }
             _ => {}
         }
@@ -420,6 +444,15 @@ impl App {
         }
     }
 
+    fn handle_zoom_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('z') | KeyCode::Char('q') => {
+                self.mode = Mode::Normal;
+            }
+            _ => {}
+        }
+    }
+
     fn open_track_info(&mut self, idx: usize) {
         let visible = self.visible_queue();
         if visible.is_empty() || idx >= visible.len() {
@@ -432,6 +465,14 @@ impl App {
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent) {
+        // Cover art zoom intercepts all mouse events.
+        if self.mode == Mode::CoverArtZoom {
+            if let MouseEventKind::Down(MouseButton::Left) = event.kind {
+                self.mode = Mode::Normal;
+            }
+            return;
+        }
+
         // Track info intercepts all mouse events when active.
         if matches!(self.mode, Mode::TrackInfo(_)) {
             if let MouseEventKind::Down(MouseButton::Left) = event.kind
@@ -559,11 +600,20 @@ impl App {
                     return;
                 }
 
+                // Click on now-playing art → zoom.
+                if self.now_playing_art.cached().is_some()
+                    && self.now_playing_art_area.width > 0
+                    && self.is_in_rect(event.column, event.row, self.now_playing_art_area)
+                {
+                    self.mode = Mode::CoverArtZoom;
+                    return;
+                }
+
                 // Transport area click -> seek.
-                if self.is_in_rect(event.column, event.row, self.transport_area)
+                if self.is_in_rect(event.column, event.row, self.transport_text_area)
                     && let Some(info) = self.state.track_info()
                     && let Some(pos) = TransportBar::seek_from_click(
-                        self.transport_area,
+                        self.transport_text_area,
                         event.column,
                         &info,
                         self.state.position_ms(),
