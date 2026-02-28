@@ -58,7 +58,7 @@ pub struct RemoteConfig {
     pub transcode_quality: String,
     /// Defaults to config_dir()/cache if empty.
     pub cache_dir: Option<PathBuf>,
-    /// Parallel download workers for remote tracks (default: 20).
+    /// Parallel download workers for remote tracks (default: 5).
     pub download_workers: usize,
 }
 
@@ -91,7 +91,7 @@ impl Default for RemoteConfig {
             password: String::new(),
             transcode_quality: "original".into(),
             cache_dir: None,
-            download_workers: 20,
+            download_workers: 5,
         }
     }
 }
