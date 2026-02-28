@@ -63,6 +63,25 @@ impl CoverArtCache {
         self.image.as_ref()
     }
 
+    /// Compute how many terminal rows the cached image would occupy at a given
+    /// column width, preserving aspect ratio. Returns 0 if no image is cached.
+    pub fn cell_height_for_width(&self, width: u16) -> u16 {
+        let Some(ref img) = self.image else {
+            return 0;
+        };
+        if width == 0 {
+            return 0;
+        }
+        let (iw, ih) = (img.width(), img.height());
+        if iw == 0 || ih == 0 {
+            return 0;
+        }
+        // Target pixel height (2 pixels per cell row via halfblocks).
+        let target_ph = (width as u32) * ih / iw;
+        // Convert pixel rows → cell rows (ceiling).
+        (target_ph.div_ceil(2)) as u16
+    }
+
     /// Clear the cache.
     pub fn clear(&mut self) {
         self.path = None;

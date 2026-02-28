@@ -12,10 +12,10 @@ use super::queue::QueueView;
 use super::track_info::TrackInfoOverlay;
 use super::transport::TransportBar;
 
-/// Height of the transport bar when album art is displayed.
-const TRANSPORT_HEIGHT_WITH_ART: u16 = 24;
 /// Height of the transport bar without album art.
 const TRANSPORT_HEIGHT_DEFAULT: u16 = 3;
+/// Desired art width in columns. Art is square-ish so height ≈ width/2 cells.
+const ART_WIDTH: u16 = 24;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     // Refresh the visible queue cache once per frame so all reads
@@ -26,7 +26,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let has_art = app.now_playing_art.cached().is_some();
     let transport_height = if has_art {
-        TRANSPORT_HEIGHT_WITH_ART
+        // Derive height from actual image aspect ratio at desired width.
+        let art_h = app.now_playing_art.cell_height_for_width(ART_WIDTH);
+        art_h.max(TRANSPORT_HEIGHT_DEFAULT)
     } else {
         TRANSPORT_HEIGHT_DEFAULT
     };
@@ -54,16 +56,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .cloned();
 
     if has_art {
-        let art_width = transport_height; // square-ish
-        let art_area = Rect::new(chunks[0].x, chunks[0].y, art_width, transport_height);
+        let art_area = Rect::new(chunks[0].x, chunks[0].y, ART_WIDTH, transport_height);
 
         // Bottom-align the transport text (3 lines) within the full height.
         let text_height = 3u16.min(transport_height);
         let text_y = chunks[0].y + transport_height - text_height;
         let text_area = Rect::new(
-            chunks[0].x + art_width + 1,
+            chunks[0].x + ART_WIDTH + 1,
             text_y,
-            chunks[0].width.saturating_sub(art_width + 1),
+            chunks[0].width.saturating_sub(ART_WIDTH + 1),
             text_height,
         );
 
