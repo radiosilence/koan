@@ -85,6 +85,7 @@ impl log::Log for BufferedLogger {
 
     fn flush(&self) {}
 }
+mod media_keys;
 mod tui;
 
 use koan_core::player::commands::PlayerCommand;
@@ -413,7 +414,12 @@ fn run_tui(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = tui::app::App::new(state, tx.clone(), log_buffer);
+    let db_path = config::db_path();
+    let mut app = tui::app::App::new(state, tx.clone(), log_buffer, db_path);
+
+    // Media keys (macOS Control Center integration).
+    let mut media = media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
+    let mut last_track_path: Option<PathBuf> = None;
 
     loop {
         terminal.draw(|f| tui::ui::render(f, &mut app))?;
@@ -423,7 +429,19 @@ fn run_tui(
         match event {
             tui::event::Event::Key(key) => app.handle_key(key),
             tui::event::Event::Mouse(mouse) => app.handle_mouse(mouse),
-            tui::event::Event::Tick => app.handle_tick(),
+            tui::event::Event::Tick => {
+                app.handle_tick();
+
+                // Update media keys.
+                if let Some(ref mut mk) = media {
+                    mk.update_playback(&app.state);
+                    let current = app.state.track_info().map(|t| t.path.clone());
+                    if current != last_track_path {
+                        last_track_path = current;
+                        mk.update_metadata(&app.state);
+                    }
+                }
+            }
         }
 
         // Handle picker opening — load items from DB.
