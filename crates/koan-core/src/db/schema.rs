@@ -83,6 +83,15 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             username  TEXT NOT NULL,
             last_sync INTEGER
         );
+
+        CREATE TABLE IF NOT EXISTS organize_log (
+            id         INTEGER PRIMARY KEY,
+            batch_id   TEXT NOT NULL,
+            track_id   INTEGER,
+            from_path  TEXT NOT NULL,
+            to_path    TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        );
         ",
     )?;
     Ok(())
