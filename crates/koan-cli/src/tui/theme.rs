@@ -5,7 +5,6 @@ pub struct Theme {
     pub album_header_artist: Style,
     pub album_header_album: Style,
     pub track_playing: Style,
-    pub track_played: Style,
     pub track_normal: Style,
     pub track_cursor: Style,
     pub track_selected: Style,
@@ -27,9 +26,9 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Dim a style for played tracks — override fg to played color, keep modifiers.
+    /// Dim a style for played tracks — add DIM modifier, keeping colors intact.
     pub fn dim(&self, style: Style) -> Style {
-        style.fg(self.track_played.fg.unwrap_or(Color::DarkGray))
+        style.add_modifier(Modifier::DIM)
     }
 }
 
@@ -40,7 +39,6 @@ impl Default for Theme {
             album_header_artist: Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             album_header_album: Style::new().fg(Color::Green),
             track_playing: Style::new().fg(Color::Cyan),
-            track_played: Style::new().fg(Color::DarkGray),
             track_normal: Style::new(),
             track_cursor: Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
             track_selected: Style::new().fg(Color::Blue),
