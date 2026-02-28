@@ -67,9 +67,11 @@ pub struct App {
     // Picker result — set when picker confirms, consumed by main loop.
     pub picker_result: Option<Vec<i64>>,
 
-    // Artist drill-down: when picker is artist, after selecting artist,
-    // we need to open an album picker for that artist.
+    // Picker result type — distinguish album IDs from track IDs.
     pub artist_drill_down: Option<i64>,
+
+    // Last playing track index — for auto-scroll on track change only.
+    pub last_playing_idx: Option<usize>,
 }
 
 impl App {
@@ -98,6 +100,7 @@ impl App {
             queue_area: ratatui::layout::Rect::default(),
             picker_result: None,
             artist_drill_down: None,
+            last_playing_idx: None,
         }
     }
 
@@ -117,6 +120,26 @@ impl App {
         // Tick picker if active.
         if let Some(ref mut picker) = self.picker {
             picker.tick();
+        }
+
+        // In normal mode, auto-scroll to playing track on track change.
+        if self.mode == Mode::Normal {
+            let queue = self.state.full_queue();
+            let playing_idx = queue
+                .iter()
+                .position(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing);
+            if playing_idx != self.last_playing_idx {
+                self.last_playing_idx = playing_idx;
+                if let Some(idx) = playing_idx {
+                    let visible_height = self.queue_area.height.max(5) as usize;
+                    self.queue_scroll_offset = queue::scroll_for_cursor(
+                        &queue,
+                        idx,
+                        self.queue_scroll_offset,
+                        visible_height,
+                    );
+                }
+            }
         }
 
         // Auto-quit when playback finishes.
