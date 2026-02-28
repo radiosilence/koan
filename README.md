@@ -131,6 +131,7 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `a`     | pick album to enqueue  |
 | `r`     | pick artist to enqueue |
 | `i`     | track info             |
+| `z`     | zoom album art         |
 | `l`     | library browser        |
 | `f`/`/` | filter library (in library mode) |
 | `e`     | edit queue             |
