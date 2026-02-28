@@ -85,7 +85,7 @@ impl CoverArtCache {
             .is_none_or(|r| r.width != area.width || r.height != area.height);
 
         if needs_render {
-            self.rendered = Some(pre_render(img, area.width, area.height));
+            self.rendered = Some(pre_render(img, area.width, area.height, false));
         }
 
         // Blit cached cells.
@@ -104,7 +104,8 @@ impl CoverArtCache {
 }
 
 /// Pre-render a DynamicImage into halfblock cells at a given cell size.
-fn pre_render(img: &DynamicImage, width: u16, height: u16) -> RenderedArt {
+/// When `center` is true, the image is centered in the area; otherwise top-left aligned.
+fn pre_render(img: &DynamicImage, width: u16, height: u16, center: bool) -> RenderedArt {
     let target_w = width as u32;
     let target_h = (height as u32) * 2;
 
@@ -112,9 +113,15 @@ fn pre_render(img: &DynamicImage, width: u16, height: u16) -> RenderedArt {
     let rgba = resized.to_rgba8();
     let (img_w, img_h) = rgba.dimensions();
 
-    let x_offset = (width.saturating_sub(img_w as u16)) / 2;
     let y_cell_count = img_h.div_ceil(2);
-    let y_offset = (height.saturating_sub(y_cell_count as u16)) / 2;
+    let (x_offset, y_offset) = if center {
+        (
+            (width.saturating_sub(img_w as u16)) / 2,
+            (height.saturating_sub(y_cell_count as u16)) / 2,
+        )
+    } else {
+        (0, 0)
+    };
 
     let mut cells = Vec::new();
 
@@ -173,7 +180,7 @@ impl Widget for CoverArt<'_> {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let rendered = pre_render(self.image, area.width, area.height);
+        let rendered = pre_render(self.image, area.width, area.height, true);
         for cell in &rendered.cells {
             if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
                 area.x + cell.rx,

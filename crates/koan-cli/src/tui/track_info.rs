@@ -165,7 +165,12 @@ impl Widget for TrackInfoOverlay<'_> {
         // Split text area into content + hint row.
         let content_height = text_area.height.saturating_sub(1);
         let content_area = Rect::new(text_area.x, text_area.y, text_area.width, content_height);
-        let hint_area = Rect::new(text_area.x, text_area.y + content_height, text_area.width, 1);
+        let hint_area = Rect::new(
+            text_area.x,
+            text_area.y + content_height,
+            text_area.width,
+            1,
+        );
 
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })

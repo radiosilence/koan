@@ -13,7 +13,7 @@ use super::track_info::TrackInfoOverlay;
 use super::transport::TransportBar;
 
 /// Height of the transport bar when album art is displayed.
-const TRANSPORT_HEIGHT_WITH_ART: u16 = 12;
+const TRANSPORT_HEIGHT_WITH_ART: u16 = 24;
 /// Height of the transport bar without album art.
 const TRANSPORT_HEIGHT_DEFAULT: u16 = 3;
 
@@ -34,7 +34,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Main layout: transport | content (flex) | hints (1)
     let chunks = Layout::vertical([
         Constraint::Length(transport_height),
-        Constraint::Min(3), // content area
+        Constraint::Min(3),    // content area
         Constraint::Length(1), // hint bar
     ])
     .split(area);
@@ -56,11 +56,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if has_art {
         let art_width = transport_height; // square-ish
         let art_area = Rect::new(chunks[0].x, chunks[0].y, art_width, transport_height);
+
+        // Bottom-align the transport text (3 lines) within the full height.
+        let text_height = 3u16.min(transport_height);
+        let text_y = chunks[0].y + transport_height - text_height;
         let text_area = Rect::new(
             chunks[0].x + art_width + 1,
-            chunks[0].y,
+            text_y,
             chunks[0].width.saturating_sub(art_width + 1),
-            transport_height,
+            text_height,
         );
 
         // Store areas for click interaction.
@@ -168,8 +172,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         CoverArt::new(img).render(art_area, frame.buffer_mut());
 
         // Hint at bottom.
-        let hint_area =
-            Rect::new(area.x, area.y + area.height.saturating_sub(1), area.width, 1);
+        let hint_area = Rect::new(
+            area.x,
+            area.y + area.height.saturating_sub(1),
+            area.width,
+            1,
+        );
         let hint = Line::from(vec![
             Span::styled(" [esc]", app.theme.hint_key),
             Span::styled(" close  ", app.theme.hint_desc),

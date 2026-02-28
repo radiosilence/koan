@@ -117,10 +117,7 @@ impl Widget for TransportBar<'_> {
             let mut spans = vec![Span::raw(" ")];
 
             if !entry.artist.is_empty() {
-                spans.push(Span::styled(
-                    entry.artist.clone(),
-                    self.theme.track_playing,
-                ));
+                spans.push(Span::styled(entry.artist.clone(), self.theme.track_playing));
                 spans.push(Span::styled(" \u{2014} ", self.theme.hint_desc));
             }
 
@@ -144,10 +141,7 @@ impl Widget for TransportBar<'_> {
                 }
 
                 if let Some(ref year) = entry.year {
-                    album_spans.push(Span::styled(
-                        format!(" ({})", year),
-                        self.theme.hint_desc,
-                    ));
+                    album_spans.push(Span::styled(format!(" ({})", year), self.theme.hint_desc));
                 }
 
                 let format_info = format!(
