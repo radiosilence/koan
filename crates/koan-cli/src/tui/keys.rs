@@ -33,8 +33,10 @@ impl Widget for HintBar<'_> {
             ],
             Mode::QueueEdit => vec![
                 ("\u{2191}\u{2193}", "navigate"),
+                ("S-\u{2191}\u{2193}", "select"),
                 ("d", "delete"),
                 ("j/k", "move"),
+                ("\u{2325}-click", "toggle"),
                 ("esc", "done"),
                 ("q", "quit"),
             ],
