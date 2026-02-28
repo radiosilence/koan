@@ -18,6 +18,10 @@ pub struct Theme {
     pub status_stopped: Style,
     pub spinner: Style,
     pub failed: Style,
+    pub library_artist: Style,
+    pub library_album: Style,
+    pub library_track: Style,
+    pub library_cursor: Style,
 }
 
 impl Default for Theme {
@@ -40,6 +44,12 @@ impl Default for Theme {
             status_stopped: Style::new().fg(Color::DarkGray),
             spinner: Style::new().fg(Color::Cyan),
             failed: Style::new().fg(Color::Red),
+            library_artist: Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            library_album: Style::new().fg(Color::Green),
+            library_track: Style::new(),
+            library_cursor: Style::new()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD | Modifier::REVERSED),
         }
     }
 }

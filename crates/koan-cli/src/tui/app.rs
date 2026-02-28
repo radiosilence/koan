@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use crossbeam_channel::Sender;
@@ -7,6 +8,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, SharedPlayerState};
 
+use super::library::LibraryState;
 use super::picker::{PickerKind, PickerState};
 use super::queue;
 use super::theme::Theme;
@@ -17,6 +19,13 @@ pub enum Mode {
     Normal,
     QueueEdit,
     Picker(PickerKind),
+    LibraryBrowse,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LibraryFocus {
+    Library,
+    Queue,
 }
 
 pub struct DragState {
@@ -67,11 +76,16 @@ pub struct App {
     // Picker result — set when picker confirms, consumed by main loop.
     pub picker_result: Option<Vec<i64>>,
 
-    // Picker result type — distinguish album IDs from track IDs.
     pub artist_drill_down: Option<i64>,
 
-    // Last playing track index — for auto-scroll on track change only.
+    // Auto-scroll on track change only.
     pub last_playing_idx: Option<usize>,
+
+    // Library browser.
+    pub library: Option<LibraryState>,
+    pub library_focus: LibraryFocus,
+    pub library_area: ratatui::layout::Rect,
+    pub db_path: PathBuf,
 }
 
 impl App {
@@ -79,6 +93,7 @@ impl App {
         state: Arc<SharedPlayerState>,
         tx: Sender<PlayerCommand>,
         log_buffer: Arc<Mutex<Vec<String>>>,
+        db_path: PathBuf,
     ) -> Self {
         Self {
             mode: Mode::Normal,
@@ -101,6 +116,10 @@ impl App {
             picker_result: None,
             artist_drill_down: None,
             last_playing_idx: None,
+            library: None,
+            library_focus: LibraryFocus::Library,
+            library_area: ratatui::layout::Rect::default(),
+            db_path,
         }
     }
 
@@ -163,6 +182,7 @@ impl App {
         match &self.mode {
             Mode::Picker(_) => self.handle_picker_key(key),
             Mode::QueueEdit => self.handle_edit_key(key),
+            Mode::LibraryBrowse => self.handle_library_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -211,6 +231,9 @@ impl App {
             }
             KeyCode::Char('r') => {
                 self.open_picker(PickerKind::Artist);
+            }
+            KeyCode::Char('l') => {
+                self.open_library();
             }
             _ => {}
         }
@@ -640,6 +663,76 @@ impl App {
             self.queue_cursor = target_idx;
             self.anchor_index = Some(target_idx.saturating_sub(count - 1));
         }
+    }
+
+    fn handle_library_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.library = None;
+                self.mode = Mode::Normal;
+            }
+            KeyCode::Char('q') => {
+                self.tx.send(PlayerCommand::Stop).ok();
+                self.quit = true;
+            }
+            KeyCode::Tab => {
+                self.library_focus = match self.library_focus {
+                    LibraryFocus::Library => LibraryFocus::Queue,
+                    LibraryFocus::Queue => LibraryFocus::Library,
+                };
+            }
+            KeyCode::Char(' ') => {
+                if self.state.playback_state() == PlaybackState::Playing {
+                    self.tx.send(PlayerCommand::Pause).ok();
+                } else {
+                    self.tx.send(PlayerCommand::Resume).ok();
+                }
+            }
+            KeyCode::Char('>') | KeyCode::Char('n') => {
+                self.tx.send(PlayerCommand::NextTrack).ok();
+            }
+            KeyCode::Char('<') => {
+                self.tx.send(PlayerCommand::PrevTrack).ok();
+            }
+            _ => {
+                if self.library_focus == LibraryFocus::Library {
+                    self.handle_library_browse_key(key);
+                }
+            }
+        }
+    }
+
+    fn handle_library_browse_key(&mut self, key: KeyEvent) {
+        let Some(ref mut lib) = self.library else {
+            return;
+        };
+        match key.code {
+            KeyCode::Up => lib.move_up(),
+            KeyCode::Down => lib.move_down(),
+            KeyCode::Enter | KeyCode::Right => {
+                if let Some(ids) = lib.expand_or_enter() {
+                    self.picker_result = Some(ids);
+                }
+            }
+            KeyCode::Left | KeyCode::Backspace => {
+                lib.collapse_or_parent();
+            }
+            KeyCode::Char('a') => {
+                let ids = lib.enqueue_all_under_cursor();
+                if !ids.is_empty() {
+                    self.picker_result = Some(ids);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn open_library(&mut self) {
+        if self.library.is_none() {
+            self.library = Some(LibraryState::new(&self.db_path));
+        }
+        self.mode = Mode::LibraryBrowse;
+        self.library_focus = LibraryFocus::Library;
     }
 
     fn open_picker(&mut self, kind: PickerKind) {

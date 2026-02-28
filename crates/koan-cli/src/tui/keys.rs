@@ -28,6 +28,7 @@ impl Widget for HintBar<'_> {
                 ("p", "track"),
                 ("a", "album"),
                 ("r", "artist"),
+                ("l", "library"),
                 ("e", "edit"),
                 ("q", "quit"),
             ],
@@ -39,6 +40,15 @@ impl Widget for HintBar<'_> {
                 ("\u{2325}-click", "toggle"),
                 ("esc", "done"),
                 ("q", "quit"),
+            ],
+            Mode::LibraryBrowse => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("\u{2192}/enter", "expand"),
+                ("\u{2190}", "collapse"),
+                ("a", "enqueue"),
+                ("tab", "focus"),
+                ("space", "pause"),
+                ("esc", "close"),
             ],
             Mode::Picker(_) => vec![
                 ("\u{2191}\u{2193}", "navigate"),

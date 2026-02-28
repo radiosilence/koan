@@ -1,6 +1,7 @@
 pub mod app;
 pub mod event;
 pub mod keys;
+pub mod library;
 pub mod picker;
 pub mod queue;
 pub mod theme;
