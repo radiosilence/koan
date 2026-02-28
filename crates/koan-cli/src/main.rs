@@ -1918,45 +1918,61 @@ fn build_and_enqueue_playlist(
         return;
     }
 
-    // Phase 2: Download pending items in parallel batches.
-    const BATCH_SIZE: usize = 4;
-    let mut remaining: std::collections::VecDeque<_> = pending_downloads.into();
+    // Phase 2: Download pending items with N parallel workers.
+    // Workers pull from a shared queue. Priority tracks (cursor) get
+    // pushed to the front so the next free worker picks them up immediately.
+    const NUM_WORKERS: usize = 4;
 
-    while !remaining.is_empty() {
-        // Priority check: if cursor is on an unloaded item ahead in the list,
-        // download it next.
-        if let Some(cursor_id) = state.cursor()
-            && let Some(pos) = remaining.iter().position(|(_, qid)| *qid == cursor_id)
-        {
-            log::info!("priority: downloading cursor track at pos {}", pos);
-            let (db_id, queue_id) = remaining.remove(pos).unwrap();
-            download_single_track(db_id, queue_id, &tx, &log_buf, &state, &cfg);
-            continue;
-        }
+    let work_queue: Arc<Mutex<std::collections::VecDeque<(i64, QueueItemId)>>> =
+        Arc::new(Mutex::new(pending_downloads.into()));
 
-        let batch_size = BATCH_SIZE.min(remaining.len());
-        let chunk: Vec<_> = remaining.drain(..batch_size).collect();
-
-        std::thread::scope(|s| {
-            let handles: Vec<_> = chunk
-                .iter()
-                .map(|(db_id, queue_id)| {
-                    let log_ref = &log_buf;
-                    let state_ref = &state;
-                    let tx_ref = &tx;
-                    let cfg_ref = &cfg;
-                    let track_id = *db_id;
-                    let qid = *queue_id;
-                    s.spawn(move || {
-                        download_single_track(track_id, qid, tx_ref, log_ref, state_ref, cfg_ref);
-                    })
-                })
-                .collect();
-            for h in handles {
-                let _ = h.join();
+    std::thread::scope(|s| {
+        // Spawn a watcher that promotes cursor-priority items to the front.
+        let wq = work_queue.clone();
+        let state_ref = &state;
+        s.spawn(move || {
+            let mut last_cursor: Option<QueueItemId> = None;
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                let current = state_ref.cursor();
+                if current != last_cursor {
+                    last_cursor = current;
+                    if let Some(cursor_id) = current {
+                        let mut q = wq.lock().unwrap();
+                        if let Some(pos) = q.iter().position(|(_, qid)| *qid == cursor_id) {
+                            let item = q.remove(pos).unwrap();
+                            q.push_front(item);
+                            log::info!(
+                                "priority: promoted cursor track to front of download queue"
+                            );
+                        }
+                    }
+                }
+                // Exit when queue is drained.
+                if wq.lock().unwrap().is_empty() {
+                    break;
+                }
             }
         });
-    }
+
+        // Spawn download workers.
+        for _ in 0..NUM_WORKERS {
+            let wq = work_queue.clone();
+            let tx_ref = &tx;
+            let log_ref = &log_buf;
+            let state_ref = &state;
+            let cfg_ref = &cfg;
+            s.spawn(move || {
+                loop {
+                    let item = wq.lock().unwrap().pop_front();
+                    let Some((db_id, queue_id)) = item else {
+                        break;
+                    };
+                    download_single_track(db_id, queue_id, tx_ref, log_ref, state_ref, cfg_ref);
+                }
+            });
+        }
+    });
 }
 
 /// Resolve a track to its path + load state (without downloading).
