@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -23,6 +25,7 @@ pub struct QueueView<'a> {
     spinner_tick: usize,
     theme: &'a Theme,
     drag_target: Option<usize>,
+    selected: &'a HashSet<usize>,
 }
 
 impl<'a> QueueView<'a> {
@@ -33,6 +36,7 @@ impl<'a> QueueView<'a> {
         scroll_offset: usize,
         spinner_tick: usize,
         theme: &'a Theme,
+        selected: &'a HashSet<usize>,
     ) -> Self {
         Self {
             entries,
@@ -42,6 +46,7 @@ impl<'a> QueueView<'a> {
             spinner_tick,
             theme,
             drag_target: None,
+            selected,
         }
     }
 
@@ -60,10 +65,10 @@ impl<'a> QueueView<'a> {
     ) -> Option<usize> {
         let rel_y = (y.saturating_sub(area.y)) as usize;
 
-        // Build display lines to figure out which queue index is at this y.
         let display_lines = build_display_lines(entries);
 
-        let target_line = scroll_offset + rel_y;
+        // +1 to account for the block border (TOP) consuming the first row.
+        let target_line = scroll_offset + rel_y.saturating_sub(1);
         if target_line < display_lines.len() {
             display_lines[target_line].0
         } else {
@@ -99,7 +104,6 @@ impl Widget for QueueView<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let is_edit = matches!(self.mode, Mode::QueueEdit);
 
-        // Build header label.
         let header_spans = if is_edit {
             vec![
                 Span::styled(
@@ -150,11 +154,12 @@ impl Widget for QueueView<'_> {
             }
 
             let is_cursor = is_edit && i == self.cursor;
+            let is_selected = self.selected.contains(&i);
             let is_drag_target = self.drag_target == Some(i);
             let line = render_track_line(
-                i,
                 entry,
                 is_cursor,
+                is_selected,
                 is_drag_target,
                 self.spinner_tick,
                 self.theme,
@@ -168,10 +173,8 @@ impl Widget for QueueView<'_> {
             .position(|(idx, _)| *idx == Some(self.cursor))
             .unwrap_or(0);
 
-        // Calculate scroll window.
         let visible_height = inner.height as usize;
         let start = if is_edit {
-            // Keep cursor visible.
             let mut s = self.scroll_offset;
             if cursor_display_line < s {
                 s = cursor_display_line;
@@ -218,9 +221,9 @@ fn render_album_header<'a>(entry: &QueueEntry, theme: &Theme) -> Line<'a> {
 }
 
 fn render_track_line<'a>(
-    _index: usize,
     entry: &QueueEntry,
     is_cursor: bool,
+    is_selected: bool,
     is_drag_target: bool,
     spinner_tick: usize,
     theme: &Theme,
@@ -252,18 +255,35 @@ fn render_track_line<'a>(
         vec![]
     };
 
+    // Visual markers: cursor > selected, with drag insert line.
     let cursor_marker = if is_cursor {
         Span::styled(">", theme.track_cursor)
     } else if is_drag_target {
         Span::styled("\u{2500}", theme.track_playing)
+    } else if is_selected {
+        Span::styled("\u{2502}", theme.track_selected)
     } else {
         Span::raw(" ")
     };
 
     let title_style = if is_cursor {
         theme.track_cursor
+    } else if is_selected {
+        theme.track_selected
     } else {
         theme.track_normal
+    };
+
+    let num_style = if is_selected {
+        theme.track_selected
+    } else {
+        theme.track_number
+    };
+
+    let dur_style = if is_selected {
+        theme.track_selected
+    } else {
+        theme.hint_desc
     };
 
     let mut spans = vec![
@@ -271,13 +291,13 @@ fn render_track_line<'a>(
         cursor_marker,
         status_icon,
         Span::raw(" "),
-        Span::styled(track_num, theme.track_number),
+        Span::styled(track_num, num_style),
         Span::raw(" "),
     ];
     spans.extend(artist_part);
     spans.push(Span::styled(entry.title.clone(), title_style));
     spans.push(Span::raw("  "));
-    spans.push(Span::styled(dur, theme.hint_desc));
+    spans.push(Span::styled(dur, dur_style));
 
     Line::from(spans)
 }

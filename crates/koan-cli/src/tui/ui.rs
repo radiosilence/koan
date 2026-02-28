@@ -48,6 +48,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.queue_scroll_offset,
         app.spinner_tick,
         &app.theme,
+        &app.selected_indices,
     )
     .with_drag_target(drag_target);
     frame.render_widget(queue_view, chunks[1]);
