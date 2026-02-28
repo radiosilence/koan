@@ -3,7 +3,7 @@ use std::time::Duration;
 
 use crossbeam_channel::Sender;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{PlaybackState, QueueEntryStatus, SharedPlayerState};
+use koan_core::player::state::{PlaybackState, SharedPlayerState};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
@@ -54,23 +54,28 @@ impl MediaKeyHandler {
     }
 
     pub fn update_metadata(&mut self, state: &SharedPlayerState) {
-        let queue = state.full_queue();
-        let playing = queue.iter().find(|e| e.status == QueueEntryStatus::Playing);
+        let Some(info) = state.track_info() else {
+            return;
+        };
 
-        if let Some(entry) = playing {
-            let title = entry.title.clone();
-            let artist = entry.artist.clone();
-            let album = entry.album.clone();
-            self.controls
-                .set_metadata(MediaMetadata {
-                    title: Some(&title),
-                    artist: Some(&artist),
-                    album: Some(&album),
-                    cover_url: None,
-                    duration: entry.duration_ms.map(Duration::from_millis),
-                })
-                .ok();
-        }
+        // Get metadata from playlist for the currently playing track.
+        let vq = state.derive_visible_queue();
+        let entry = vq.entries.iter().find(|e| e.id == info.id);
+
+        let title = entry.map(|e| e.title.clone()).unwrap_or_default();
+        let artist = entry.map(|e| e.artist.clone()).unwrap_or_default();
+        let album = entry.map(|e| e.album.clone()).unwrap_or_default();
+        let duration = entry.and_then(|e| e.duration_ms).or(Some(info.duration_ms));
+
+        self.controls
+            .set_metadata(MediaMetadata {
+                title: Some(&title),
+                artist: Some(&artist),
+                album: Some(&album),
+                cover_url: None,
+                duration: duration.map(Duration::from_millis),
+            })
+            .ok();
     }
 
     pub fn update_playback(&mut self, state: &SharedPlayerState) {

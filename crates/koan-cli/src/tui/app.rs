@@ -25,15 +25,6 @@ pub enum Mode {
     TrackInfo(usize),
 }
 
-/// Which segment of visible_queue() an index falls into.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QueueSegment {
-    Finished(usize),
-    Playing,
-    Queued(usize),
-    Pending(usize),
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryFocus {
     Library,
@@ -175,13 +166,8 @@ impl App {
             self.has_played = true;
         }
 
-        // Show loading overlay while waiting for first track to resolve.
-        // Clear once playback starts or pending queue populates.
-        if !self.has_played && self.state.track_info().is_none() && self.vq_cache.entries.is_empty()
-        {
-            self.loading_message = Some("loading...".into());
-        } else if self.loading_message.is_some()
-            && (self.has_played || !self.vq_cache.entries.is_empty())
+        // Clear loading overlay once playback starts or pending queue populates.
+        if self.loading_message.is_some() && (self.has_played || !self.vq_cache.entries.is_empty())
         {
             self.loading_message = None;
         }
@@ -289,6 +275,25 @@ impl App {
             }
             KeyCode::Char('l') => {
                 self.open_library();
+            }
+            KeyCode::Up => {
+                let visible = self.visible_queue();
+                if !visible.is_empty() {
+                    self.queue_cursor = self.queue_cursor.saturating_sub(1);
+                    self.select_single(self.queue_cursor);
+                    self.update_scroll();
+                }
+            }
+            KeyCode::Down => {
+                let visible = self.visible_queue();
+                if !visible.is_empty() && self.queue_cursor + 1 < visible.len() {
+                    self.queue_cursor += 1;
+                    self.select_single(self.queue_cursor);
+                    self.update_scroll();
+                }
+            }
+            KeyCode::Enter => {
+                self.play_at_cursor();
             }
             KeyCode::Char('i') => {
                 if !self.visible_queue().is_empty() {
@@ -595,42 +600,11 @@ impl App {
                         .is_some_and(|t| now.duration_since(t).as_millis() < 400);
 
                 if is_double_click {
-                    // Double-click → skip to track.
+                    // Double-click → play the track at cursor.
                     self.last_click_idx = None;
                     self.last_click_time = None;
-                    match self.segment_for_index(idx) {
-                        QueueSegment::Finished(i) => {
-                            self.tx.send(PlayerCommand::SkipBack(i)).ok();
-                        }
-                        QueueSegment::Queued(i) => {
-                            self.tx.send(PlayerCommand::SkipTo(i)).ok();
-                        }
-                        QueueSegment::Pending(_) => {
-                            // Track might already be cached (batch loop just hasn't
-                            // reached it yet). If so, play immediately.
-                            let visible = self.visible_queue();
-                            if let Some(entry) = visible.get(idx) {
-                                if entry.path.exists() {
-                                    // Already cached — play now, skip the batch loop.
-                                    self.state.remove_pending(&entry.path);
-                                    self.tx
-                                        .send(PlayerCommand::PlayInterrupt(entry.path.clone()))
-                                        .ok();
-                                } else {
-                                    // Still downloading — set priority play target.
-                                    // Resolve thread downloads it next and plays it.
-                                    self.state.set_priority_play(entry.path.clone());
-                                    // Mark as priority in the UI so user sees feedback.
-                                    self.state.update_track_status(
-                                        &entry.path,
-                                        QueueEntryStatus::PriorityPending,
-                                    );
-                                    self.state.rebuild_visible_queue();
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
+                    self.queue_cursor = idx;
+                    self.play_at_cursor();
                 } else {
                     self.last_click_idx = Some(idx);
                     self.last_click_time = Some(now);
@@ -790,7 +764,18 @@ impl App {
         self.anchor_index = Some(idx);
     }
 
-    /// Delete all selected tracks (handles playing, queued, and pending segments).
+    /// Play the track at the current cursor position (Enter / double-click).
+    fn play_at_cursor(&mut self) {
+        let idx = self.queue_cursor;
+        let visible = self.visible_queue();
+        if let Some(entry) = visible.get(idx)
+            && entry.status != QueueEntryStatus::Playing
+        {
+            self.tx.send(PlayerCommand::Play(entry.id)).ok();
+        }
+    }
+
+    /// Delete all selected tracks.
     fn delete_selected(&mut self) {
         let indices: Vec<usize> = if self.selected_indices.is_empty() {
             vec![self.queue_cursor]
@@ -798,34 +783,13 @@ impl App {
             self.selected_indices.iter().copied().collect()
         };
 
-        let mut queued: Vec<usize> = Vec::new();
-        let mut pending: Vec<usize> = Vec::new();
-        let mut delete_playing = false;
-
+        let visible = self.visible_queue();
         for idx in &indices {
-            match self.segment_for_index(*idx) {
-                QueueSegment::Playing => delete_playing = true,
-                QueueSegment::Queued(qi) => queued.push(qi),
-                QueueSegment::Pending(pi) => pending.push(pi),
-                QueueSegment::Finished(_) => {}
+            if let Some(entry) = visible.get(*idx) {
+                self.tx
+                    .send(PlayerCommand::RemoveFromPlaylist(entry.id))
+                    .ok();
             }
-        }
-
-        // Delete pending tracks (highest first).
-        pending.sort_unstable_by(|a, b| b.cmp(a));
-        for idx in pending {
-            self.state.remove_pending_at(idx);
-        }
-
-        // Delete queued tracks (highest first).
-        queued.sort_unstable_by(|a, b| b.cmp(a));
-        for idx in queued {
-            self.tx.send(PlayerCommand::RemoveFromQueue(idx)).ok();
-        }
-
-        // Delete playing track last → skip to next.
-        if delete_playing {
-            self.tx.send(PlayerCommand::NextTrack).ok();
         }
 
         self.selected_indices.clear();
@@ -905,41 +869,24 @@ impl App {
         self.update_scroll();
     }
 
-    /// Send a move command dispatched to the correct segment.
+    /// Send a move command for a visible queue index pair.
     fn send_move(&self, from_visible: usize, to_visible: usize) {
-        let queue_len = self.vq_cache.queue_count;
+        let visible = self.visible_queue();
+        let Some(from_entry) = visible.get(from_visible) else {
+            return;
+        };
+        let Some(to_entry) = visible.get(to_visible) else {
+            return;
+        };
 
-        let from_seg = self.segment_for_index(from_visible);
-        let to_seg = self.segment_for_index(to_visible);
-
-        match (from_seg, to_seg) {
-            (QueueSegment::Queued(f), QueueSegment::Queued(t)) => {
-                self.tx
-                    .send(PlayerCommand::MoveInQueue { from: f, to: t })
-                    .ok();
-            }
-            (QueueSegment::Pending(f), QueueSegment::Pending(t)) => {
-                self.state.move_pending(f, t);
-            }
-            // Cross-segment: queued ↔ pending boundary — clamp within segment.
-            (QueueSegment::Queued(f), QueueSegment::Pending(_)) => {
-                if queue_len > 1 {
-                    self.tx
-                        .send(PlayerCommand::MoveInQueue {
-                            from: f,
-                            to: queue_len - 1,
-                        })
-                        .ok();
-                }
-            }
-            (QueueSegment::Pending(f), QueueSegment::Queued(_)) => {
-                let pending_len = self.state.pending_queue_len();
-                if pending_len > 1 {
-                    self.state.move_pending(f, 0);
-                }
-            }
-            _ => {} // Can't move finished/playing
-        }
+        let after = to_visible > from_visible;
+        self.tx
+            .send(PlayerCommand::MoveInPlaylist {
+                id: from_entry.id,
+                target: to_entry.id,
+                after,
+            })
+            .ok();
     }
 
     /// Move all selected tracks so the group lands at `target_idx` (visible space).
@@ -1124,11 +1071,10 @@ impl App {
         )
     }
 
-    /// Build a combined queue: finished (played) + currently playing + upcoming.
     /// Refresh the cached visible queue snapshot from shared state.
     /// Call once per frame before any queue-related reads.
     pub fn refresh_visible_queue(&mut self) {
-        self.vq_cache = self.state.visible_queue();
+        self.vq_cache = self.state.derive_visible_queue();
     }
 
     pub fn visible_queue(&self) -> Vec<QueueEntry> {
@@ -1144,23 +1090,5 @@ impl App {
     /// Minimum cursor position in edit mode (can reach playing track).
     pub fn queue_cursor_min(&self) -> usize {
         self.vq_cache.finished_count
-    }
-
-    /// Categorise a visible_queue index into its source segment.
-    pub fn segment_for_index(&self, idx: usize) -> QueueSegment {
-        let finished = self.vq_cache.finished_count;
-        let has_playing = self.vq_cache.has_playing;
-        let offset = finished + usize::from(has_playing);
-        let queue_len = self.vq_cache.queue_count;
-
-        if idx < finished {
-            QueueSegment::Finished(idx)
-        } else if has_playing && idx == finished {
-            QueueSegment::Playing
-        } else if idx < offset + queue_len {
-            QueueSegment::Queued(idx.saturating_sub(offset))
-        } else {
-            QueueSegment::Pending(idx.saturating_sub(offset).saturating_sub(queue_len))
-        }
     }
 }

@@ -17,7 +17,7 @@ use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 use thiserror::Error;
 
-use crate::player::queue::TrackQueue;
+use crate::player::state::QueueItemId;
 
 #[derive(Debug, Error)]
 pub enum DecodeError {
@@ -67,12 +67,12 @@ impl Drop for DecodeHandle {
 pub struct DecodeCallbacks<F, G>
 where
     F: Fn(u64) + Send + 'static,
-    G: Fn(PathBuf, StreamInfo) + Send + 'static,
+    G: Fn(QueueItemId, PathBuf, StreamInfo) + Send + 'static,
 {
     /// Called periodically with current decode position in ms.
     pub on_position: F,
     /// Called when a new track starts playing (gapless transition or initial).
-    /// Receives the path and stream info of the new track.
+    /// Receives the queue item ID, path, and stream info of the new track.
     pub on_track_change: G,
 }
 
@@ -120,21 +120,24 @@ pub fn probe_file(path: &Path) -> Result<StreamInfo, DecodeError> {
     })
 }
 
-/// Start decoding a file (with optional queue for gapless) into the ring buffer.
+/// Start decoding a file into the ring buffer.
 ///
+/// `initial_id` — the QueueItemId of the first track.
 /// `seek_ms` — if > 0, seek to this position before decoding the first track.
-/// `queue` — remaining tracks for gapless playback. The decode thread pops from
-///           this when the current track hits EOF.
-pub fn start_decode<F, G>(
+/// `next_track` — closure that returns the next (id, path) for gapless playback.
+///                Called on EOF. Returns None when the playlist is exhausted.
+pub fn start_decode<F, G, N>(
+    initial_id: QueueItemId,
     path: &Path,
     producer: rtrb::Producer<f32>,
     seek_ms: u64,
-    queue: Arc<TrackQueue>,
+    next_track: N,
     callbacks: DecodeCallbacks<F, G>,
 ) -> Result<(StreamInfo, DecodeHandle), DecodeError>
 where
     F: Fn(u64) + Send + 'static,
-    G: Fn(PathBuf, StreamInfo) + Send + 'static,
+    G: Fn(QueueItemId, PathBuf, StreamInfo) + Send + 'static,
+    N: Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static,
 {
     let info = probe_file(path)?;
     let path = path.to_path_buf();
@@ -144,7 +147,15 @@ where
     let thread = thread::Builder::new()
         .name("koan-decode".into())
         .spawn(move || {
-            decode_queue_loop(&path, producer, &stop_clone, seek_ms, &queue, &callbacks);
+            decode_queue_loop(
+                initial_id,
+                &path,
+                producer,
+                &stop_clone,
+                seek_ms,
+                &next_track,
+                &callbacks,
+            );
         })
         .map_err(DecodeError::Io)?;
 
@@ -157,23 +168,32 @@ where
     ))
 }
 
-/// Gapless decode loop: decodes the first file, then pops from the queue on EOF.
+/// Gapless decode loop: decodes the first file, then calls next_track on EOF.
 ///
 /// The key insight: the producer (ring buffer write end) stays alive across track
 /// boundaries. The AudioUnit keeps draining the consumer. Zero gap.
-fn decode_queue_loop<F, G>(
+fn decode_queue_loop<F, G, N>(
+    initial_id: QueueItemId,
     first_path: &Path,
     mut producer: rtrb::Producer<f32>,
     stop: &AtomicBool,
     initial_seek_ms: u64,
-    queue: &TrackQueue,
+    next_track: &N,
     callbacks: &DecodeCallbacks<F, G>,
 ) where
     F: Fn(u64) + Send,
-    G: Fn(PathBuf, StreamInfo) + Send,
+    G: Fn(QueueItemId, PathBuf, StreamInfo) + Send,
+    N: Fn() -> Option<(QueueItemId, PathBuf)>,
 {
     // Decode the first track.
-    let result = decode_single(first_path, &mut producer, stop, initial_seek_ms, callbacks);
+    let result = decode_single(
+        initial_id,
+        first_path,
+        &mut producer,
+        stop,
+        initial_seek_ms,
+        callbacks,
+    );
 
     if let Err(e) = &result {
         if !stop.load(Ordering::Relaxed) {
@@ -182,18 +202,16 @@ fn decode_queue_loop<F, G>(
         return;
     }
 
-    // Gapless: keep going through the queue.
+    // Gapless: keep going through the playlist.
     while !stop.load(Ordering::Relaxed) {
-        let next = queue.pop_front();
-        let Some(next_path) = next else {
-            // Queue empty — we're done.
-            log::info!("queue empty, decode thread finishing");
+        let Some((next_id, next_path)) = (next_track)() else {
+            log::info!("playlist exhausted, decode thread finishing");
             break;
         };
 
         log::info!("gapless transition → {}", next_path.display());
 
-        let result = decode_single(&next_path, &mut producer, stop, 0, callbacks);
+        let result = decode_single(next_id, &next_path, &mut producer, stop, 0, callbacks);
         if let Err(e) = &result {
             if !stop.load(Ordering::Relaxed) {
                 log::error!("decode error on {}: {}", next_path.display(), e);
@@ -205,6 +223,7 @@ fn decode_queue_loop<F, G>(
 
 /// Decode a single file into the producer. Returns Ok(()) on clean EOF.
 fn decode_single<F, G>(
+    queue_item_id: QueueItemId,
     path: &Path,
     producer: &mut rtrb::Producer<f32>,
     stop: &AtomicBool,
@@ -213,7 +232,7 @@ fn decode_single<F, G>(
 ) -> Result<(), DecodeError>
 where
     F: Fn(u64) + Send,
-    G: Fn(PathBuf, StreamInfo) + Send,
+    G: Fn(QueueItemId, PathBuf, StreamInfo) + Send,
 {
     let file = File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -251,7 +270,7 @@ where
     };
 
     // Notify player of track change.
-    (callbacks.on_track_change)(path.to_path_buf(), info);
+    (callbacks.on_track_change)(queue_item_id, path.to_path_buf(), info);
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())

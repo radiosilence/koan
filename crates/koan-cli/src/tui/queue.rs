@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -14,8 +13,7 @@ use super::theme::Theme;
 use super::transport::format_time;
 
 const SPINNER: &[char] = &[
-    '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
-    '\u{2827}',
+    '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}', '\u{2827}',
 ];
 
 pub struct QueueView<'a> {
@@ -26,7 +24,6 @@ pub struct QueueView<'a> {
     theme: &'a Theme,
     drag_target: Option<usize>,
     selected: &'a HashSet<usize>,
-    download_progress: &'a HashMap<PathBuf, (u64, u64)>,
     spinner_tick: usize,
 }
 
@@ -39,7 +36,6 @@ impl<'a> QueueView<'a> {
         scroll_offset: usize,
         theme: &'a Theme,
         selected: &'a HashSet<usize>,
-        download_progress: &'a HashMap<PathBuf, (u64, u64)>,
         spinner_tick: usize,
     ) -> Self {
         Self {
@@ -50,7 +46,6 @@ impl<'a> QueueView<'a> {
             theme,
             drag_target: None,
             selected,
-            download_progress,
             spinner_tick,
         }
     }
@@ -174,14 +169,12 @@ impl Widget for QueueView<'_> {
             let is_cursor = is_edit && i == self.cursor;
             let is_selected = self.selected.contains(&i);
             let is_drag_target = self.drag_target == Some(i);
-            let progress = self.download_progress.get(&entry.path);
             let line = render_track_line(
                 entry,
                 is_cursor,
                 is_selected,
                 is_drag_target,
                 self.theme,
-                progress,
                 self.spinner_tick,
             );
             display_lines.push((Some(i), line));
@@ -262,33 +255,37 @@ fn render_track_line<'a>(
     is_selected: bool,
     is_drag_target: bool,
     theme: &Theme,
-    progress: Option<&(u64, u64)>,
     spinner_tick: usize,
 ) -> Line<'a> {
     let is_played = entry.status == QueueEntryStatus::Played;
     let spin_char = SPINNER[spinner_tick % SPINNER.len()];
 
+    let progress = entry.download_progress.as_ref();
+
     let status_icon = match entry.status {
         QueueEntryStatus::Queued => Span::raw(" "),
         QueueEntryStatus::Playing => Span::styled(">", theme.track_playing),
-        QueueEntryStatus::Played => Span::styled(" ", theme.track_played),
+        QueueEntryStatus::Played => {
+            if is_selected {
+                Span::styled(" ", theme.track_selected)
+            } else {
+                Span::styled(" ", theme.track_played)
+            }
+        }
         QueueEntryStatus::Downloading => {
             if let Some(&(downloaded, total)) = progress {
                 if total > 0 {
                     let pct = (downloaded * 100 / total).min(99);
                     Span::styled(format!("{:2}%", pct), theme.spinner)
                 } else {
-                    // No Content-Length — show bytes downloaded.
                     let kb = downloaded / 1024;
                     Span::styled(format!("{}K", kb), theme.spinner)
                 }
             } else {
-                // Waiting to start download (queued for batch).
                 Span::styled(format!(" {} ", spin_char), theme.hint_desc)
             }
         }
         QueueEntryStatus::PriorityPending => {
-            // User wants this track — show > with progress or spinner.
             if let Some(&(downloaded, total)) = progress {
                 if total > 0 {
                     let pct = (downloaded * 100 / total).min(99);
@@ -313,12 +310,16 @@ fn render_track_line<'a>(
     let dur = entry.duration_ms.map(format_time).unwrap_or_default();
 
     let artist_part = if !entry.artist.is_empty() && entry.artist != entry.album_artist {
-        let artist_style = if is_played {
+        let artist_style = if is_selected {
+            theme.track_selected
+        } else if is_played {
             theme.track_played
         } else {
             theme.track_playing
         };
-        let sep_style = if is_played {
+        let sep_style = if is_selected {
+            theme.track_selected
+        } else if is_played {
             theme.track_played
         } else {
             theme.hint_desc

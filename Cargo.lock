@@ -1520,6 +1520,7 @@ dependencies = [
  "symphonia",
  "thiserror 2.0.18",
  "toml",
+ "uuid",
  "walkdir",
 ]
 
@@ -3388,6 +3389,7 @@ version = "1.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee48d38b119b0cd71fe4141b30f5ba9c7c5d9f4e7a3a8b4a674e4b6ef789976f"
 dependencies = [
+ "getrandom 0.3.4",
  "js-sys",
  "wasm-bindgen",
 ]

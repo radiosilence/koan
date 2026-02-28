@@ -138,7 +138,6 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     }
 
     let drag_target = app.drag_target_index();
-    let dl_progress = app.state.all_download_progress();
     let queue_view = QueueView::new(
         &visible,
         &app.mode,
@@ -146,7 +145,6 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         app.queue_scroll_offset,
         &app.theme,
         &app.selected_indices,
-        &dl_progress,
         app.spinner_tick,
     )
     .with_drag_target(drag_target);

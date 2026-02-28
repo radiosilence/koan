@@ -12,6 +12,7 @@ use koan_core::config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::player::Player;
+use koan_core::player::state::{LoadState, PlaylistItem, QueueItemId};
 
 // --- Logger ---
 // All log messages go to ~/.config/koan/koan.log.
@@ -232,8 +233,8 @@ fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        // No subcommand — open TUI with library browser.
-        None => cmd_play(&[], &[], None, None, true),
+        // No subcommand — open TUI (use `l` to browse library).
+        None => cmd_play(&[], &[], None, None, false),
         Some(Commands::Play {
             paths,
             ids,
@@ -351,6 +352,8 @@ fn cmd_play(
 
     let (state, tx) = Player::spawn();
 
+    let expects_playback = track_ids.is_some() || !paths.is_empty();
+
     if let Some(ids) = track_ids {
         // Resolve ALL tracks in the background — the TUI starts immediately
         // with a loading overlay. No more blank terminal during downloads.
@@ -360,17 +363,8 @@ fn cmd_play(
         std::thread::Builder::new()
             .name("koan-resolve".into())
             .spawn(move || {
-                // Resolve first track and start playback ASAP.
-                let first_path = resolve_single_track(ids[0], Some(&log_bg), Some(&state_bg));
-                tx_bg
-                    .send(PlayerCommand::Play(first_path))
-                    .expect("player thread died");
-
-                // Remaining tracks: build pending queue then download in batches.
-                if ids.len() > 1 {
-                    let remaining = ids[1..].to_vec();
-                    resolve_and_enqueue_batch(remaining, tx_bg, log_bg, state_bg);
-                }
+                // Build PlaylistItems from DB, add all to playlist, play first.
+                build_and_enqueue_playlist(ids, tx_bg, log_bg, state_bg);
             })
             .expect("failed to spawn resolve thread");
     } else if !paths.is_empty() {
@@ -381,16 +375,42 @@ fn cmd_play(
                 std::process::exit(1);
             }
         }
-        tx.send(PlayerCommand::PlayQueue(paths.to_vec()))
+        let items: Vec<PlaylistItem> = paths
+            .iter()
+            .map(|p| {
+                let title = p
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                PlaylistItem {
+                    id: QueueItemId::new(),
+                    path: p.clone(),
+                    title,
+                    artist: String::new(),
+                    album_artist: String::new(),
+                    album: String::new(),
+                    year: None,
+                    codec: None,
+                    track_number: None,
+                    disc: None,
+                    duration_ms: None,
+                    load_state: LoadState::Ready,
+                }
+            })
+            .collect();
+        let first_id = items[0].id;
+        tx.send(PlayerCommand::AddToPlaylist(items))
             .expect("player thread died");
-    } else if !start_in_library {
-        eprintln!("provide file paths, --id, --album, --artist, or --library");
-        std::process::exit(1);
+        tx.send(PlayerCommand::Play(first_id))
+            .expect("player thread died");
     }
+    // No paths/ids and no library — just open the TUI empty.
+    // User can add tracks via pickers (p/a/r) or library browser (l).
 
     // Run the Ratatui TUI immediately — don't wait for playback to start.
     // The TUI shows a loading overlay until playback begins.
-    if let Err(e) = run_tui(state, tx, log_buffer, start_in_library) {
+    if let Err(e) = run_tui(state, tx, log_buffer, start_in_library, expects_playback) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
 
@@ -419,6 +439,7 @@ fn run_tui(
     tx: crossbeam_channel::Sender<PlayerCommand>,
     log_buffer: Arc<Mutex<Vec<String>>>,
     start_in_library: bool,
+    expects_playback: bool,
 ) -> std::io::Result<()> {
     use crossterm::{
         event::{DisableMouseCapture, EnableMouseCapture},
@@ -439,6 +460,10 @@ fn run_tui(
 
     let db_path = config::db_path();
     let mut app = tui::app::App::new(state, tx.clone(), log_buffer, db_path);
+
+    if expects_playback {
+        app.loading_message = Some("loading...".into());
+    }
 
     if start_in_library {
         app.open_library();
@@ -528,8 +553,6 @@ fn run_tui(
                             let mut expanded = Vec::new();
                             for album_id in &ids {
                                 if *album_id < 0 {
-                                    // Negative ID = "all tracks" sentinel. The absolute
-                                    // value is the artist_id, encoded by drill-down.
                                     let artist_id = album_id.unsigned_abs() as i64;
                                     let tracks = queries::tracks_for_artist(&db.conn, artist_id)
                                         .unwrap_or_default();
@@ -546,7 +569,7 @@ fn run_tui(
                     };
 
                     if !track_ids.is_empty() {
-                        resolve_and_enqueue_batch(track_ids, tx_bg, log_bg, state_bg);
+                        build_and_enqueue_playlist(track_ids, tx_bg, log_bg, state_bg);
                     }
                 })
                 .ok();
@@ -1812,13 +1835,13 @@ fn cache_path_for_track(
         .join(format!("{}.{}", filename, ext))
 }
 
-/// Build a QueueEntryMeta from a TrackRow + album date.
-fn meta_from_track(
+/// Build a PlaylistItem from a TrackRow + album date + cache path.
+fn playlist_item_from_track(
     track: &queries::TrackRow,
     album_date: Option<&str>,
-    status: koan_core::player::state::QueueEntryStatus,
-) -> koan_core::player::state::QueueEntryMeta {
-    use koan_core::player::state::QueueEntryMeta;
+    dest: PathBuf,
+    load_state: LoadState,
+) -> PlaylistItem {
     let year = album_date.and_then(|d| {
         if d.len() >= 4 {
             Some(d[..4].to_string())
@@ -1826,7 +1849,9 @@ fn meta_from_track(
             None
         }
     });
-    QueueEntryMeta {
+    PlaylistItem {
+        id: QueueItemId::new(),
+        path: dest,
         title: track.title.clone(),
         artist: track.artist_name.clone(),
         album_artist: track.album_artist_name.clone(),
@@ -1836,28 +1861,24 @@ fn meta_from_track(
         track_number: track.track_number.map(|n| n as i64),
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
-        status,
+        load_state,
     }
 }
 
-/// Resolve a batch of track IDs: populate pending queue immediately,
-/// then download in parallel batches (4 concurrent), enqueuing each as it finishes.
-/// Tracks are processed in queue order so the top of the queue downloads first.
-fn resolve_and_enqueue_batch(
+/// Build PlaylistItems from track IDs, add them all to the playlist at once,
+/// play the first one, then download pending items in the background.
+fn build_and_enqueue_playlist(
     ids: Vec<i64>,
     tx: crossbeam_channel::Sender<PlayerCommand>,
     log_buf: Arc<Mutex<Vec<String>>>,
     state: Arc<SharedPlayerState>,
 ) {
-    use koan_core::player::state::{QueueEntry, QueueEntryStatus};
-
     let db = open_db();
     let cfg = config::Config::load().unwrap_or_default();
 
-    // Phase 1: Build pending queue metadata from DB (fast, no downloads).
-    // This populates the UI immediately so the user sees what's coming.
-    let mut track_info: Vec<(i64, queries::TrackRow, Option<String>)> = Vec::new();
-    let mut pending: Vec<QueueEntry> = Vec::new();
+    // Phase 1: Build all PlaylistItems from DB (fast, no downloads).
+    let mut items: Vec<PlaylistItem> = Vec::new();
+    let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
 
     for &id in &ids {
         let Some(track) = queries::get_track_row(&db.conn, id).ok().flatten() else {
@@ -1873,260 +1894,183 @@ fn resolve_and_enqueue_batch(
                 .ok()
                 .flatten()
         });
-        let dest = cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
-        let status = if dest.exists() {
-            QueueEntryStatus::Queued
-        } else {
-            QueueEntryStatus::Downloading
-        };
-        let meta = meta_from_track(&track, album_date.as_deref(), status);
-        pending.push(QueueEntry {
-            path: dest,
-            title: meta.title,
-            artist: meta.artist,
-            album_artist: meta.album_artist,
-            album: meta.album,
-            year: meta.year,
-            codec: meta.codec,
-            track_number: meta.track_number,
-            disc: meta.disc,
-            duration_ms: meta.duration_ms,
-            status: meta.status,
-        });
-        track_info.push((id, track, album_date));
+
+        // Resolve the path — local, cached, or needs download.
+        let (dest, load_state) = resolve_item_path(&db, &cfg, id, &track, album_date.as_deref());
+
+        let item = playlist_item_from_track(&track, album_date.as_deref(), dest, load_state);
+        if matches!(item.load_state, LoadState::Pending) {
+            pending_downloads.push((id, item.id));
+        }
+        items.push(item);
     }
 
-    state.set_pending_queue(pending);
+    if items.is_empty() {
+        return;
+    }
 
-    // Phase 2: Download/resolve in parallel batches, queue order.
-    // Between batches, check for priority play targets (user double-clicked
-    // a pending track) and download them immediately.
+    // Add all items to the playlist at once — UI sees them immediately.
+    let first_id = items[0].id;
+    if tx.send(PlayerCommand::AddToPlaylist(items)).is_err() {
+        return;
+    }
+    if tx.send(PlayerCommand::Play(first_id)).is_err() {
+        return;
+    }
+
+    // Phase 2: Download pending items in parallel batches.
     const BATCH_SIZE: usize = 4;
-
-    let mut remaining: std::collections::VecDeque<_> = track_info.into();
+    let mut remaining: std::collections::VecDeque<_> = pending_downloads.into();
 
     while !remaining.is_empty() {
-        // Priority check: if the user double-clicked a pending track,
-        // pull it from the remaining queue and download it NOW.
-        if let Some(priority_path) = state.priority_play_path() {
-            if let Some(pos) = remaining.iter().position(|(_id, track, date)| {
-                let dest = cache_path_for_track(&cfg.cache_dir(), track, date.as_deref());
-                dest == priority_path
-            }) {
-                log::info!("priority play: downloading track at pos {} from remaining", pos);
-                let (id, _track, _date) = remaining.remove(pos).unwrap();
-                let path = resolve_single_track(id, Some(&log_buf), Some(&state));
-                state.remove_pending(&path);
-                state.take_priority_play();
-                log::info!("priority play: sending PlayInterrupt for {}", path.display());
-                if tx.send(PlayerCommand::PlayInterrupt(path)).is_err() {
-                    return;
-                }
-                continue; // Re-check for another priority before next batch.
-            } else {
-                log::info!(
-                    "priority play: path {} not found in remaining ({} items)",
-                    priority_path.display(),
-                    remaining.len()
-                );
-            }
+        // Priority check: if cursor is on an unloaded item ahead in the list,
+        // download it next.
+        if let Some(cursor_id) = state.cursor()
+            && let Some(pos) = remaining.iter().position(|(_, qid)| *qid == cursor_id)
+        {
+            log::info!("priority: downloading cursor track at pos {}", pos);
+            let (db_id, queue_id) = remaining.remove(pos).unwrap();
+            download_single_track(db_id, queue_id, &tx, &log_buf, &state, &cfg);
+            continue;
         }
 
-        // Normal batch: take up to BATCH_SIZE items.
         let batch_size = BATCH_SIZE.min(remaining.len());
         let chunk: Vec<_> = remaining.drain(..batch_size).collect();
 
-        let results: Vec<(i64, PathBuf)> = std::thread::scope(|s| {
+        std::thread::scope(|s| {
             let handles: Vec<_> = chunk
                 .iter()
-                .map(|(id, _track, _date)| {
+                .map(|(db_id, queue_id)| {
                     let log_ref = &log_buf;
                     let state_ref = &state;
-                    let track_id = *id;
+                    let tx_ref = &tx;
+                    let cfg_ref = &cfg;
+                    let track_id = *db_id;
+                    let qid = *queue_id;
                     s.spawn(move || {
-                        let path = resolve_single_track(track_id, Some(log_ref), Some(state_ref));
-                        (track_id, path)
+                        download_single_track(track_id, qid, tx_ref, log_ref, state_ref, cfg_ref);
                     })
                 })
                 .collect();
-            handles.into_iter().filter_map(|h| h.join().ok()).collect()
-        });
-
-        for (_id, path) in results {
-            state.remove_pending(&path);
-            // Check priority again — user might have clicked during this batch.
-            let is_priority = state.priority_play_path().is_some_and(|p| p == path);
-            if is_priority {
-                state.take_priority_play();
-                log::info!("priority play (post-batch): PlayInterrupt for {}", path.display());
-                if tx.send(PlayerCommand::PlayInterrupt(path)).is_err() {
-                    return;
-                }
-            } else if tx.send(PlayerCommand::Enqueue(path)).is_err() {
-                return;
+            for h in handles {
+                let _ = h.join();
             }
+        });
+    }
+}
+
+/// Resolve a track to its path + load state (without downloading).
+/// Returns (path, LoadState::Ready) for local/cached, (cache_path, LoadState::Pending) for remote.
+fn resolve_item_path(
+    db: &Database,
+    cfg: &config::Config,
+    id: i64,
+    track: &queries::TrackRow,
+    album_date: Option<&str>,
+) -> (PathBuf, LoadState) {
+    match queries::resolve_playback_path(&db.conn, id) {
+        Ok(Some(queries::PlaybackSource::Local(p))) => (p, LoadState::Ready),
+        Ok(Some(queries::PlaybackSource::Cached(p))) => (p, LoadState::Ready),
+        Ok(Some(queries::PlaybackSource::Remote(_))) => {
+            let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
+            if dest.exists() {
+                (dest, LoadState::Ready)
+            } else {
+                (dest, LoadState::Pending)
+            }
+        }
+        _ => {
+            // Fallback: construct a cache path and mark pending.
+            let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
+            (dest, LoadState::Pending)
         }
     }
 }
 
-/// Resolve a single track ID to a playback path.
-/// Downloads from remote if needed, using structured cache paths.
-/// Updates track metadata in shared state for queue display.
-fn resolve_single_track(
-    id: i64,
-    log_buf: Option<&Arc<Mutex<Vec<String>>>>,
-    shared_state: Option<&Arc<SharedPlayerState>>,
-) -> PathBuf {
-    use koan_core::player::state::QueueEntryStatus;
-
+/// Download a single track and update playlist state.
+fn download_single_track(
+    db_id: i64,
+    queue_id: QueueItemId,
+    tx: &crossbeam_channel::Sender<PlayerCommand>,
+    log_buf: &Arc<Mutex<Vec<String>>>,
+    state: &Arc<SharedPlayerState>,
+    cfg: &config::Config,
+) {
     let db = open_db();
-    let cfg = config::Config::load().unwrap_or_default();
-
-    // Helper: register track metadata in shared state for queue display.
-    let register_meta = |path: &PathBuf, state: Option<&Arc<SharedPlayerState>>| {
-        let Some(state) = state else { return };
-        if let Ok(Some(track)) = queries::get_track_row(&db.conn, id) {
-            let album_date: Option<String> = track.album_id.and_then(|aid| {
-                db.conn
-                    .query_row(
-                        "SELECT date FROM albums WHERE id = ?1",
-                        rusqlite::params![aid],
-                        |row| row.get(0),
-                    )
-                    .ok()
-                    .flatten()
-            });
-            state.set_track_meta(
-                path.clone(),
-                meta_from_track(
-                    &track,
-                    album_date.as_deref(),
-                    koan_core::player::state::QueueEntryStatus::Queued,
-                ),
-            );
+    let track = match queries::get_track_row(&db.conn, db_id) {
+        Ok(Some(t)) => t,
+        _ => {
+            state.update_load_state(queue_id, LoadState::Failed("track not found".into()));
+            return;
         }
     };
 
-    match queries::resolve_playback_path(&db.conn, id) {
-        Ok(Some(queries::PlaybackSource::Local(p))) => {
-            register_meta(&p, shared_state);
-            p
+    let remote_id = match &track.remote_id {
+        Some(rid) => rid.clone(),
+        None => {
+            state.update_load_state(queue_id, LoadState::Failed("no remote_id".into()));
+            return;
         }
-        Ok(Some(queries::PlaybackSource::Cached(p))) => {
-            register_meta(&p, shared_state);
-            p
+    };
+
+    let album_date: Option<String> = track.album_id.and_then(|aid| {
+        db.conn
+            .query_row(
+                "SELECT date FROM albums WHERE id = ?1",
+                rusqlite::params![aid],
+                |row| row.get(0),
+            )
+            .ok()
+            .flatten()
+    });
+
+    let dest = cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
+
+    // Already downloaded (race with another batch).
+    if dest.exists() {
+        state.update_load_state(queue_id, LoadState::Ready);
+        if state.is_cursor(queue_id) {
+            tx.send(PlayerCommand::TrackReady(queue_id)).ok();
         }
-        Ok(Some(queries::PlaybackSource::Remote(_url))) => {
-            let track = match queries::get_track_row(&db.conn, id) {
-                Ok(Some(t)) => t,
-                Ok(None) => {
-                    eprintln!("{} track {} not found", "error:".red().bold(), id);
-                    std::process::exit(1);
-                }
-                Err(e) => {
-                    eprintln!("{} {}", "error:".red().bold(), e);
-                    std::process::exit(1);
-                }
-            };
+        return;
+    }
 
-            let remote_id = match &track.remote_id {
-                Some(rid) => rid.clone(),
-                None => {
-                    eprintln!("{} track {} has no remote_id", "error:".red().bold(), id);
-                    std::process::exit(1);
-                }
-            };
+    let password = get_remote_password(cfg);
+    let client = koan_core::remote::client::SubsonicClient::new(
+        &cfg.remote.url,
+        &cfg.remote.username,
+        &password,
+    );
 
-            let album_date: Option<String> = track.album_id.and_then(|aid| {
-                db.conn
-                    .query_row(
-                        "SELECT date FROM albums WHERE id = ?1",
-                        rusqlite::params![aid],
-                        |row| row.get(0),
-                    )
-                    .ok()
-                    .flatten()
-            });
+    let progress_state = state.clone();
+    let progress_qid = queue_id;
+    let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
+        progress_state
+            .update_load_state(progress_qid, LoadState::Downloading { downloaded, total });
+    });
 
-            let cache_dir = cfg.cache_dir();
-            let dest = cache_path_for_track(&cache_dir, &track, album_date.as_deref());
+    if let Err(e) = result {
+        state.update_load_state(queue_id, LoadState::Failed(e.to_string()));
+        let msg = format!("{} {} — {}", "x".red().bold(), track.title, e);
+        log_buf.lock().unwrap().push(msg);
+        return;
+    }
 
-            if dest.exists() {
-                // Register metadata even for cached tracks.
-                if let Some(state) = shared_state {
-                    state.set_track_meta(
-                        dest.clone(),
-                        meta_from_track(&track, album_date.as_deref(), QueueEntryStatus::Queued),
-                    );
-                }
-                return dest;
-            }
+    // Download succeeded — mark ready.
+    state.update_load_state(queue_id, LoadState::Ready);
+    let _ = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy());
 
-            // Register as downloading in shared state.
-            if let Some(state) = shared_state {
-                state.set_track_meta(
-                    dest.clone(),
-                    meta_from_track(&track, album_date.as_deref(), QueueEntryStatus::Downloading),
-                );
-            }
+    let msg = format!(
+        "{} {} — {}",
+        "+".green(),
+        track.title,
+        track.artist_name.dimmed(),
+    );
+    log_buf.lock().unwrap().push(msg);
 
-            let password = get_remote_password(&cfg);
-            let client = koan_core::remote::client::SubsonicClient::new(
-                &cfg.remote.url,
-                &cfg.remote.username,
-                &password,
-            );
-
-            let progress_dest = dest.clone();
-            let progress_state = shared_state.map(Arc::clone);
-            let result = client.download_with_progress(&remote_id, &dest, |downloaded, total| {
-                if let Some(ref state) = progress_state {
-                    state.set_download_progress(progress_dest.clone(), downloaded, total);
-                }
-            });
-
-            if let Err(e) = result {
-                if let Some(state) = shared_state {
-                    state.clear_download_progress(&dest);
-                    state.update_track_status(&dest, QueueEntryStatus::Failed);
-                }
-                let msg = format!("{} {} — {}", "x".red().bold(), track.title, e);
-                if let Some(buf) = log_buf {
-                    buf.lock().unwrap().push(msg);
-                } else {
-                    eprintln!("{}", msg);
-                }
-                std::process::exit(1);
-            }
-
-            // Mark as queued (downloaded successfully) and clear progress.
-            if let Some(state) = shared_state {
-                state.clear_download_progress(&dest);
-                state.update_track_status(&dest, QueueEntryStatus::Queued);
-            }
-
-            let msg = format!(
-                "{} {} — {}",
-                "+".green(),
-                track.title,
-                track.artist_name.dimmed(),
-            );
-            if let Some(buf) = log_buf {
-                buf.lock().unwrap().push(msg);
-            }
-
-            let _ = queries::set_cached_path(&db.conn, id, &dest.to_string_lossy());
-
-            dest
-        }
-        Ok(None) => {
-            eprintln!("{} track {} not found", "error:".red().bold(), id);
-            std::process::exit(1);
-        }
-        Err(e) => {
-            eprintln!("{} {}", "error:".red().bold(), e);
-            std::process::exit(1);
-        }
+    // If cursor is waiting on this track, tell the player.
+    if state.is_cursor(queue_id) {
+        tx.send(PlayerCommand::TrackReady(queue_id)).ok();
     }
 }
 

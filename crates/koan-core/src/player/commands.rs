@@ -1,31 +1,27 @@
-use std::path::PathBuf;
-
 use crossbeam_channel::{Receiver, Sender, bounded};
+
+use super::state::{PlaylistItem, QueueItemId};
 
 /// Commands from the UI/FFI layer to the audio engine.
 #[derive(Debug)]
 pub enum PlayerCommand {
-    Play(PathBuf),
-    /// Queue tracks for gapless playback. Replaces the current queue.
-    PlayQueue(Vec<PathBuf>),
-    /// Append a track to the end of the queue without interrupting playback.
-    Enqueue(PathBuf),
-    /// Interrupt: start playing this track NOW, pushing current to finished.
-    /// Unlike Play, does NOT clear the queue or history.
-    PlayInterrupt(PathBuf),
+    /// Set cursor + start playback. Replaces Play/SkipTo/SkipBack/PlayInterrupt.
+    Play(QueueItemId),
     Pause,
     Resume,
     Stop,
-    Seek(u64),              // position in ms
-    NextTrack,              // skip to next in queue
-    PrevTrack,              // go back to previous track
-    RemoveFromQueue(usize), // remove track at index
-    MoveInQueue {
-        from: usize,
-        to: usize,
-    }, // reorder track
-    SkipTo(usize),          // skip to queue index (push skipped tracks to finished)
-    SkipBack(usize),        // skip back to finished track at index
+    Seek(u64), // position in ms
+    NextTrack,
+    PrevTrack,
+    AddToPlaylist(Vec<PlaylistItem>),
+    RemoveFromPlaylist(QueueItemId),
+    MoveInPlaylist {
+        id: QueueItemId,
+        target: QueueItemId,
+        after: bool,
+    },
+    /// Download complete — check if cursor is waiting on this item.
+    TrackReady(QueueItemId),
 }
 
 /// Bounded SPSC command channel.

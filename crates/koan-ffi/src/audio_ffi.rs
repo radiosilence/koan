@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::SharedPlayerState;
+use koan_core::player::state::{LoadState, PlaylistItem, QueueItemId, SharedPlayerState};
 
 struct PlayerHandle {
     state: std::sync::Arc<SharedPlayerState>,
@@ -44,10 +44,35 @@ pub extern "C" fn koan_play(path: *const c_char) -> c_int {
         Err(_) => return -1,
     };
     let handle = player();
-    match handle
+    let id = QueueItemId::new();
+    let path_buf = std::path::PathBuf::from(path_str);
+    let title = path_buf
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    let item = PlaylistItem {
+        id,
+        path: path_buf,
+        title,
+        artist: String::new(),
+        album_artist: String::new(),
+        album: String::new(),
+        year: None,
+        codec: None,
+        track_number: None,
+        disc: None,
+        duration_ms: None,
+        load_state: LoadState::Ready,
+    };
+    if handle
         .tx
-        .send(PlayerCommand::Play(std::path::PathBuf::from(path_str)))
+        .send(PlayerCommand::AddToPlaylist(vec![item]))
+        .is_err()
     {
+        return -1;
+    }
+    match handle.tx.send(PlayerCommand::Play(id)) {
         Ok(()) => 0,
         Err(_) => -1,
     }
