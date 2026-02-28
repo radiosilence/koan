@@ -25,10 +25,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     let has_art = app.now_playing_art.cached().is_some();
-    let transport_height = if has_art {
-        // Derive height from actual image aspect ratio at desired width.
-        let art_h = app.now_playing_art.cell_height_for_width(ART_WIDTH);
-        art_h.max(TRANSPORT_HEIGHT_DEFAULT)
+    // Derive height from actual image aspect ratio at desired width.
+    // Always reserve art-sized space once we've had art, so the UI
+    // doesn't jump when switching between tracks with/without art.
+    let art_h = app.now_playing_art.cell_height_for_width(ART_WIDTH);
+    if art_h > 0 {
+        app.last_art_height = art_h;
+    }
+    let transport_height = if app.last_art_height > 0 {
+        app.last_art_height.max(TRANSPORT_HEIGHT_DEFAULT)
     } else {
         TRANSPORT_HEIGHT_DEFAULT
     };
@@ -82,7 +87,28 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             &app.theme,
         );
         frame.render_widget(transport, text_area);
+    } else if app.last_art_height > 0 {
+        // No art but we've had art before — keep the same layout so UI doesn't jump.
+        app.now_playing_art_area = Rect::default();
+        let text_height = 3u16.min(transport_height);
+        let text_y = chunks[0].y + transport_height - text_height;
+        let text_area = Rect::new(
+            chunks[0].x + ART_WIDTH + 1,
+            text_y,
+            chunks[0].width.saturating_sub(ART_WIDTH + 1),
+            text_height,
+        );
+        app.transport_text_area = text_area;
+        let transport = TransportBar::new(
+            track_info.as_ref(),
+            playing_entry.as_ref(),
+            app.state.playback_state(),
+            app.state.position_ms(),
+            &app.theme,
+        );
+        frame.render_widget(transport, text_area);
     } else {
+        // Never had art — compact layout.
         app.now_playing_art_area = Rect::default();
         app.transport_text_area = chunks[0];
         let transport = TransportBar::new(

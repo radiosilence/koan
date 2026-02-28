@@ -120,6 +120,9 @@ pub struct App {
 
     /// Area of the transport text (seek bar) — excludes art.
     pub transport_text_area: ratatui::layout::Rect,
+
+    /// Last computed art height so layout stays stable when art disappears.
+    pub last_art_height: u16,
 }
 
 impl App {
@@ -164,6 +167,7 @@ impl App {
             now_playing_art: super::cover_art::CoverArtCache::new(),
             now_playing_art_area: ratatui::layout::Rect::default(),
             transport_text_area: ratatui::layout::Rect::default(),
+            last_art_height: 0,
         }
     }
 
