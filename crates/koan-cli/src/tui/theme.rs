@@ -25,13 +25,6 @@ pub struct Theme {
     pub library_cursor: Style,
 }
 
-impl Theme {
-    /// Dim a style for played tracks — add DIM modifier, keeping colors intact.
-    pub fn dim(&self, style: Style) -> Style {
-        style.add_modifier(Modifier::DIM)
-    }
-}
-
 impl Default for Theme {
     fn default() -> Self {
         Self {

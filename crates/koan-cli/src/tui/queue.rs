@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -135,18 +135,6 @@ impl Widget for QueueView<'_> {
             return;
         }
 
-        // Pre-compute whether each album group is fully played.
-        let mut album_fully_played: HashMap<(String, String), bool> = HashMap::new();
-        for entry in self.entries {
-            if !entry.album.is_empty() {
-                let key = (entry.album_artist.clone(), entry.album.clone());
-                let fully_played = album_fully_played.entry(key).or_insert(true);
-                if entry.status != QueueEntryStatus::Played {
-                    *fully_played = false;
-                }
-            }
-        }
-
         // Build all display lines.
         let mut display_lines: Vec<(Option<usize>, Line)> = Vec::new();
         let mut current_album_key: Option<(String, String)> = None;
@@ -161,8 +149,7 @@ impl Widget for QueueView<'_> {
 
             if show_header {
                 current_album_key = Some(album_key.clone());
-                let played = album_fully_played.get(&album_key).copied().unwrap_or(false);
-                let header = render_album_header(entry, played, self.theme);
+                let header = render_album_header(entry, self.theme);
                 display_lines.push((None, header));
             }
 
@@ -211,7 +198,7 @@ impl Widget for QueueView<'_> {
     }
 }
 
-fn render_album_header<'a>(entry: &QueueEntry, played: bool, theme: &Theme) -> Line<'a> {
+fn render_album_header<'a>(entry: &QueueEntry, theme: &Theme) -> Line<'a> {
     let year = entry
         .year
         .as_deref()
@@ -223,10 +210,9 @@ fn render_album_header<'a>(entry: &QueueEntry, played: bool, theme: &Theme) -> L
         .map(|c| format!(" [{}]", c))
         .unwrap_or_default();
 
-    let maybe_dim = |s| if played { theme.dim(s) } else { s };
-    let artist_style = maybe_dim(theme.album_header_artist);
-    let album_style = maybe_dim(theme.album_header_album);
-    let dim = maybe_dim(theme.hint_desc);
+    let artist_style = theme.album_header_artist;
+    let album_style = theme.album_header_album;
+    let dim = theme.hint_desc;
 
     Line::from(vec![
         Span::raw(" "),
@@ -246,7 +232,6 @@ fn render_track_line<'a>(
     theme: &Theme,
     spinner_tick: usize,
 ) -> Line<'a> {
-    let is_played = entry.status == QueueEntryStatus::Played;
     let spin_char = SPINNER[spinner_tick % SPINNER.len()];
 
     let progress = entry.download_progress.as_ref();
@@ -298,18 +283,16 @@ fn render_track_line<'a>(
 
     let dur = entry.duration_ms.map(format_time).unwrap_or_default();
 
-    let maybe_dim = |s| if is_played { theme.dim(s) } else { s };
-
     let artist_part = if !entry.artist.is_empty() && entry.artist != entry.album_artist {
         let artist_style = if is_selected {
             theme.track_selected
         } else {
-            maybe_dim(theme.track_playing)
+            theme.track_playing
         };
         let sep_style = if is_selected {
             theme.track_selected
         } else {
-            maybe_dim(theme.hint_desc)
+            theme.hint_desc
         };
         vec![
             Span::styled(entry.artist.clone(), artist_style),
@@ -335,19 +318,19 @@ fn render_track_line<'a>(
     } else if is_selected {
         theme.track_selected
     } else {
-        maybe_dim(theme.track_normal)
+        theme.track_normal
     };
 
     let num_style = if is_selected {
         theme.track_selected
     } else {
-        maybe_dim(theme.track_number)
+        theme.track_number
     };
 
     let dur_style = if is_selected {
         theme.track_selected
     } else {
-        maybe_dim(theme.hint_desc)
+        theme.hint_desc
     };
 
     let mut spans = vec![

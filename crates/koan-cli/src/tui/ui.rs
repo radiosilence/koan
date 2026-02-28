@@ -13,7 +13,7 @@ use super::track_info::TrackInfoOverlay;
 use super::transport::TransportBar;
 
 /// Height of the transport bar when album art is displayed.
-const TRANSPORT_HEIGHT_WITH_ART: u16 = 6;
+const TRANSPORT_HEIGHT_WITH_ART: u16 = 12;
 /// Height of the transport bar without album art.
 const TRANSPORT_HEIGHT_DEFAULT: u16 = 3;
 
@@ -67,9 +67,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.now_playing_art_area = art_area;
         app.transport_text_area = text_area;
 
-        if let Some(img) = app.now_playing_art.cached() {
-            CoverArt::new(img).render(art_area, frame.buffer_mut());
-        }
+        app.now_playing_art.render_to(art_area, frame.buffer_mut());
 
         let transport = TransportBar::new(
             track_info.as_ref(),

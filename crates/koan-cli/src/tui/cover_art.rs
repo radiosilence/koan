@@ -6,13 +6,29 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::Widget;
 
+/// A pre-rendered cell: relative position + fg/bg colors.
+struct RenderedCell {
+    rx: u16,
+    ry: u16,
+    fg: Color,
+    bg: Color,
+}
+
+/// Cached rendered output at a specific size. Avoids re-running
+/// Lanczos3 resize + pixel iteration every frame.
+struct RenderedArt {
+    width: u16,
+    height: u16,
+    cells: Vec<RenderedCell>,
+}
+
 /// Transparent single-entry cache for cover art images.
-/// Calling `get()` with a path returns the image if cached,
-/// or extracts and decodes it on the spot. Subsequent calls
-/// with the same path are free.
+/// Caches both the decoded image AND the rendered halfblock output
+/// so frames that don't change size are a cheap blit.
 pub struct CoverArtCache {
     path: Option<PathBuf>,
     image: Option<DynamicImage>,
+    rendered: Option<RenderedArt>,
 }
 
 impl Default for CoverArtCache {
@@ -26,6 +42,7 @@ impl CoverArtCache {
         Self {
             path: None,
             image: None,
+            rendered: None,
         }
     }
 
@@ -36,6 +53,7 @@ impl CoverArtCache {
             self.path = Some(path.to_path_buf());
             self.image = koan_core::index::metadata::extract_cover_art(path)
                 .and_then(|bytes| image::load_from_memory(&bytes).ok());
+            self.rendered = None; // invalidate render cache on new image
         }
         self.image.as_ref()
     }
@@ -45,16 +63,101 @@ impl CoverArtCache {
         self.image.as_ref()
     }
 
-    /// Clear the cache (e.g. when closing a modal).
+    /// Clear the cache.
     pub fn clear(&mut self) {
         self.path = None;
         self.image = None;
+        self.rendered = None;
+    }
+
+    /// Render cached art into a buffer. Uses a pre-rendered cell cache
+    /// so repeated calls at the same size skip the resize + pixel work.
+    pub fn render_to(&mut self, area: Rect, buf: &mut Buffer) {
+        let Some(ref img) = self.image else { return };
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        // Check if we have a cached render at this size.
+        let needs_render = self
+            .rendered
+            .as_ref()
+            .is_none_or(|r| r.width != area.width || r.height != area.height);
+
+        if needs_render {
+            self.rendered = Some(pre_render(img, area.width, area.height));
+        }
+
+        // Blit cached cells.
+        if let Some(ref rendered) = self.rendered {
+            for cell in &rendered.cells {
+                if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
+                    area.x + cell.rx,
+                    area.y + cell.ry,
+                )) {
+                    c.set_char('\u{2580}')
+                        .set_style(Style::new().fg(cell.fg).bg(cell.bg));
+                }
+            }
+        }
+    }
+}
+
+/// Pre-render a DynamicImage into halfblock cells at a given cell size.
+fn pre_render(img: &DynamicImage, width: u16, height: u16) -> RenderedArt {
+    let target_w = width as u32;
+    let target_h = (height as u32) * 2;
+
+    let resized = img.resize(target_w, target_h, image::imageops::FilterType::Lanczos3);
+    let rgba = resized.to_rgba8();
+    let (img_w, img_h) = rgba.dimensions();
+
+    let x_offset = (width.saturating_sub(img_w as u16)) / 2;
+    let y_cell_count = img_h.div_ceil(2);
+    let y_offset = (height.saturating_sub(y_cell_count as u16)) / 2;
+
+    let mut cells = Vec::new();
+
+    for cy in 0..height {
+        for cx in 0..width {
+            if cx < x_offset
+                || cx >= x_offset + img_w as u16
+                || cy < y_offset
+                || cy >= y_offset + y_cell_count as u16
+            {
+                continue;
+            }
+
+            let px = cx.saturating_sub(x_offset) as u32;
+            let top_py = (cy.saturating_sub(y_offset) as u32) * 2;
+            let bot_py = top_py + 1;
+
+            let top = rgba.get_pixel(px.min(img_w - 1), top_py.min(img_h - 1));
+            let bot = if bot_py < img_h {
+                *rgba.get_pixel(px.min(img_w - 1), bot_py)
+            } else {
+                image::Rgba([0, 0, 0, 255])
+            };
+
+            cells.push(RenderedCell {
+                rx: cx,
+                ry: cy,
+                fg: Color::Rgb(top[0], top[1], top[2]),
+                bg: Color::Rgb(bot[0], bot[1], bot[2]),
+            });
+        }
+    }
+
+    RenderedArt {
+        width,
+        height,
+        cells,
     }
 }
 
 /// Widget that renders a `DynamicImage` using Unicode halfblock characters.
-/// Each cell displays 2 vertical pixels: top as foreground, bottom as background.
-/// Works in any terminal with Unicode + true color support.
+/// Use this for one-shot renders (e.g. track info modal, zoom overlay).
+/// For repeated renders at the same size, prefer `CoverArtCache::render_to()`.
 pub struct CoverArt<'a> {
     image: &'a DynamicImage,
 }
@@ -67,60 +170,17 @@ impl<'a> CoverArt<'a> {
 
 impl Widget for CoverArt<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        render_halfblocks(self.image, area, buf);
-    }
-}
-
-/// Render a DynamicImage into a buffer region using Unicode halfblock characters.
-/// Each cell displays 2 vertical pixels: top pixel as fg, bottom pixel as bg.
-fn render_halfblocks(img: &DynamicImage, area: Rect, buf: &mut Buffer) {
-    if area.width == 0 || area.height == 0 {
-        return;
-    }
-
-    let target_w = area.width as u32;
-    let target_h = (area.height as u32) * 2; // 2 pixels per cell vertically
-
-    let resized = img.resize(target_w, target_h, image::imageops::FilterType::Lanczos3);
-    let rgba = resized.to_rgba8();
-    let (img_w, img_h) = rgba.dimensions();
-
-    // Center the image if it's smaller than the area (aspect ratio preserved).
-    let x_offset = (area.width.saturating_sub(img_w as u16)) / 2;
-    let y_cell_count = img_h.div_ceil(2);
-    let y_offset = (area.height.saturating_sub(y_cell_count as u16)) / 2;
-
-    for cy in 0..area.height {
-        for cx in 0..area.width {
-            let px = cx.saturating_sub(x_offset) as u32;
-            let top_py = (cy.saturating_sub(y_offset) as u32) * 2;
-            let bot_py = top_py + 1;
-
-            // Outside image bounds → skip.
-            if cx < x_offset
-                || cx >= x_offset + img_w as u16
-                || cy < y_offset
-                || cy >= y_offset + y_cell_count as u16
-            {
-                continue;
-            }
-
-            let top = rgba.get_pixel(px.min(img_w - 1), top_py.min(img_h - 1));
-            let bot = if bot_py < img_h {
-                *rgba.get_pixel(px.min(img_w - 1), bot_py)
-            } else {
-                image::Rgba([0, 0, 0, 255])
-            };
-
-            if let Some(cell) =
-                buf.cell_mut(ratatui::layout::Position::new(area.x + cx, area.y + cy))
-            {
-                cell.set_char('\u{2580}') // ▀ upper half block
-                    .set_style(
-                        Style::new()
-                            .fg(Color::Rgb(top[0], top[1], top[2]))
-                            .bg(Color::Rgb(bot[0], bot[1], bot[2])),
-                    );
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        let rendered = pre_render(self.image, area.width, area.height);
+        for cell in &rendered.cells {
+            if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
+                area.x + cell.rx,
+                area.y + cell.ry,
+            )) {
+                c.set_char('\u{2580}')
+                    .set_style(Style::new().fg(cell.fg).bg(cell.bg));
             }
         }
     }
