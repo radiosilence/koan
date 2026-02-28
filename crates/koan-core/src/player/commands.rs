@@ -20,6 +20,12 @@ pub enum PlayerCommand {
         target: QueueItemId,
         after: bool,
     },
+    /// Batch move: extract `ids` and reinsert them at `target` position.
+    MoveItemsInPlaylist {
+        ids: Vec<QueueItemId>,
+        target: QueueItemId,
+        after: bool,
+    },
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
 }

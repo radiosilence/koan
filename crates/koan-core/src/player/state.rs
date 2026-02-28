@@ -255,6 +255,47 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
+    /// Batch move: extract items by ID, reinsert them at `target` position.
+    /// Preserves the relative order of the moved items.
+    pub fn move_items(&self, ids: &[QueueItemId], target: QueueItemId, after: bool) {
+        use std::collections::HashSet;
+        let id_set: HashSet<QueueItemId> = ids.iter().copied().collect();
+
+        let mut pl = self.playlist.write();
+
+        // Partition: extract moved items, keep the rest.
+        let mut remaining = Vec::with_capacity(pl.items.len());
+        let mut moved = Vec::with_capacity(ids.len());
+        for item in pl.items.drain(..) {
+            if id_set.contains(&item.id) {
+                moved.push(item);
+            } else {
+                remaining.push(item);
+            }
+        }
+
+        // Find target in the remaining items.
+        let insert_at = match remaining.iter().position(|item| item.id == target) {
+            Some(pos) => {
+                if after {
+                    pos + 1
+                } else {
+                    pos
+                }
+            }
+            None => remaining.len(),
+        };
+
+        // Splice moved items in at the target position.
+        for (i, item) in moved.into_iter().enumerate() {
+            remaining.insert(insert_at + i, item);
+        }
+
+        pl.items = remaining;
+        drop(pl);
+        self.bump_version();
+    }
+
     /// Set the cursor (what's playing / should play).
     pub fn set_cursor(&self, id: Option<QueueItemId>) {
         let mut pl = self.playlist.write();

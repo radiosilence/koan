@@ -36,25 +36,24 @@ impl<'a> TransportBar<'a> {
         area: Rect,
         click_x: u16,
         track_info: &TrackInfo,
-        position_ms: u64,
+        _position_ms: u64,
     ) -> Option<u64> {
-        // The progress bar starts after " >> " (4 chars) and ends before " time " section.
-        let time_str = format!(
-            " {}/{}",
-            format_time(position_ms),
-            format_time(track_info.duration_ms)
-        );
-        let chrome_left: u16 = 4; // " >> " or " || "
-        let chrome_right = time_str.len() as u16 + 1;
-        let bar_start = area.x + chrome_left;
-        let bar_end = area.x + area.width.saturating_sub(chrome_right);
-        let bar_width = bar_end.saturating_sub(bar_start);
+        // Must match render layout exactly:
+        //   " " icon(2) " " [===bar===] " " time
+        // Use duration for time width since position length varies.
+        let time_width =
+            format!("{}/{}", format_time(0), format_time(track_info.duration_ms)).len() as u16;
+        let chrome_width = 1 + 2 + 1 + 1 + time_width;
+        let bar_width = area.width.saturating_sub(chrome_width);
+        let bar_start = area.x + 4; // " " + icon(2) + " "
+        let bar_end = bar_start + bar_width;
 
         if click_x < bar_start || click_x >= bar_end || bar_width == 0 {
             return None;
         }
 
-        let frac = (click_x - bar_start) as f64 / bar_width as f64;
+        // Use center of cell for sub-cell accuracy.
+        let frac = ((click_x - bar_start) as f64 + 0.5) / bar_width as f64;
         Some((frac * track_info.duration_ms as f64) as u64)
     }
 }
@@ -85,8 +84,8 @@ impl Widget for TransportBar<'_> {
             format_time(info.duration_ms)
         );
 
-        // Bar width: total - " " - icon(2) - " " - " " - time - " "
-        let chrome_width = 1 + 2 + 1 + 1 + time_str.len() as u16 + 1;
+        // Bar width: total - " " - icon(2) - " " - " " - time
+        let chrome_width = 1 + 2 + 1 + 1 + time_str.len() as u16;
         let bar_width = area.width.saturating_sub(chrome_width) as usize;
 
         let progress = if info.duration_ms > 0 {

@@ -258,10 +258,13 @@ impl App {
             }
             KeyCode::Char('e') => {
                 self.mode = Mode::QueueEdit;
-                // Preserve mouse selection from normal mode.
                 let min = self.queue_cursor_min();
                 if self.queue_cursor < min {
                     self.queue_cursor = min;
+                }
+                // Sync selection to cursor so j/k work immediately.
+                if self.selected_indices.len() <= 1 {
+                    self.select_single(self.queue_cursor);
                 }
             }
             KeyCode::Char('p') => {
@@ -296,9 +299,9 @@ impl App {
                 self.play_at_cursor();
             }
             KeyCode::Char('i') => {
-                if !self.visible_queue().is_empty() {
-                    let idx = self.playing_index().unwrap_or(0);
-                    self.mode = Mode::TrackInfo(idx);
+                let visible = self.visible_queue();
+                if !visible.is_empty() && self.queue_cursor < visible.len() {
+                    self.mode = Mode::TrackInfo(self.queue_cursor);
                 }
             }
             _ => {}
@@ -416,13 +419,6 @@ impl App {
             }
             _ => {}
         }
-    }
-
-    /// Index of the currently playing track in visible_queue().
-    fn playing_index(&self) -> Option<usize> {
-        self.visible_queue()
-            .iter()
-            .position(|e| e.status == QueueEntryStatus::Playing)
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent) {
@@ -804,7 +800,9 @@ impl App {
     fn move_selected_down(&mut self) {
         let visible_len = self.visible_queue().len();
         let offset = self.queue_edit_offset();
-        if self.selected_indices.is_empty() {
+
+        // Single item: move the track under cursor.
+        if self.selected_indices.len() <= 1 {
             if self.queue_cursor + 1 < visible_len && self.queue_cursor >= offset {
                 self.send_move(self.queue_cursor, self.queue_cursor + 1);
                 self.queue_cursor += 1;
@@ -817,18 +815,18 @@ impl App {
         let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
         indices.sort_unstable();
 
-        if indices.last().copied().unwrap_or(0) + 1 >= visible_len {
+        let max_idx = indices.last().copied().unwrap_or(0);
+        if max_idx + 1 >= visible_len {
             return;
         }
+        let min_idx = indices.first().copied().unwrap_or(0);
 
-        // Move from bottom to top to avoid index shifts.
-        let mut new_selected = HashSet::new();
-        for &idx in indices.iter().rev() {
-            if idx >= offset {
-                self.send_move(idx, idx + 1);
-            }
-            new_selected.insert(idx + 1);
+        // Swap the item BELOW the group to ABOVE it — single atomic move.
+        if max_idx + 1 < visible_len && min_idx >= offset {
+            self.send_move(max_idx + 1, min_idx);
         }
+
+        let new_selected: HashSet<usize> = indices.iter().map(|&i| i + 1).collect();
         self.selected_indices = new_selected;
         self.queue_cursor += 1;
         self.anchor_index = self.anchor_index.map(|a| a + 1);
@@ -838,7 +836,9 @@ impl App {
     /// Move all selected tracks up by one position.
     fn move_selected_up(&mut self) {
         let offset = self.queue_edit_offset();
-        if self.selected_indices.is_empty() {
+
+        // Single item: move the track under cursor.
+        if self.selected_indices.len() <= 1 {
             if self.queue_cursor > offset {
                 self.send_move(self.queue_cursor, self.queue_cursor - 1);
                 self.queue_cursor -= 1;
@@ -851,18 +851,16 @@ impl App {
         let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
         indices.sort_unstable();
 
-        if indices.first().copied().unwrap_or(offset) <= offset {
+        let min_idx = indices.first().copied().unwrap_or(offset);
+        if min_idx <= offset {
             return;
         }
+        let max_idx = indices.last().copied().unwrap_or(0);
 
-        // Move from top to bottom.
-        let mut new_selected = HashSet::new();
-        for &idx in &indices {
-            if idx >= offset {
-                self.send_move(idx, idx - 1);
-            }
-            new_selected.insert(idx - 1);
-        }
+        // Swap the item ABOVE the group to BELOW it — single atomic move.
+        self.send_move(min_idx - 1, max_idx);
+
+        let new_selected: HashSet<usize> = indices.iter().map(|&i| i - 1).collect();
         self.selected_indices = new_selected;
         self.queue_cursor -= 1;
         self.anchor_index = self.anchor_index.map(|a| a.saturating_sub(1));
@@ -896,37 +894,56 @@ impl App {
         }
 
         let edit_offset = self.queue_edit_offset();
+        let visible = self.visible_queue();
         let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
         indices.sort_unstable();
 
+        // Collect IDs of selected items (in order).
+        let ids: Vec<_> = indices
+            .iter()
+            .filter(|&&i| i >= edit_offset)
+            .filter_map(|&i| visible.get(i).map(|e| e.id))
+            .collect();
+
+        if ids.is_empty() {
+            return;
+        }
+
+        let count = ids.len();
         let group_start = *indices.first().unwrap();
 
-        if target_idx < group_start {
-            let mut new_selected = HashSet::new();
-            for (i, &idx) in indices.iter().enumerate() {
-                let dest = target_idx + i;
-                if idx >= edit_offset && dest >= edit_offset {
-                    self.send_move(idx, dest);
-                }
-                new_selected.insert(dest);
-            }
-            self.selected_indices = new_selected;
-            self.queue_cursor = target_idx;
-            self.anchor_index = Some(target_idx);
+        // Find the target entry to place relative to.
+        let (target_id, after) = if target_idx < group_start {
+            // Moving up: place before the item at target_idx.
+            let Some(entry) = visible.get(target_idx.max(edit_offset)) else {
+                return;
+            };
+            (entry.id, false)
         } else {
-            let count = indices.len();
-            let mut new_selected = HashSet::new();
-            for (i, &idx) in indices.iter().rev().enumerate() {
-                let dest = target_idx.saturating_sub(i);
-                if idx >= edit_offset && dest >= edit_offset {
-                    self.send_move(idx, dest);
-                }
-                new_selected.insert(dest);
-            }
-            self.selected_indices = new_selected;
-            self.queue_cursor = target_idx;
-            self.anchor_index = Some(target_idx.saturating_sub(count - 1));
-        }
+            // Moving down: place after the item at target_idx.
+            let Some(entry) = visible.get(target_idx) else {
+                return;
+            };
+            (entry.id, true)
+        };
+
+        self.tx
+            .send(PlayerCommand::MoveItemsInPlaylist {
+                ids,
+                target: target_id,
+                after,
+            })
+            .ok();
+
+        // Update local selection to where the group will land.
+        let new_start = if target_idx < group_start {
+            target_idx.max(edit_offset)
+        } else {
+            target_idx + 1 - count
+        };
+        self.selected_indices = (new_start..new_start + count).collect();
+        self.queue_cursor = target_idx;
+        self.anchor_index = Some(new_start);
     }
 
     fn handle_library_key(&mut self, key: KeyEvent) {

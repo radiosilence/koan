@@ -345,6 +345,9 @@ impl Player {
             PlayerCommand::MoveInPlaylist { id, target, after } => {
                 self.shared_state.move_item(id, target, after);
             }
+            PlayerCommand::MoveItemsInPlaylist { ids, target, after } => {
+                self.shared_state.move_items(&ids, target, after);
+            }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
         }
     }
