@@ -1918,44 +1918,23 @@ fn build_and_enqueue_playlist(
         return;
     }
 
-    // Phase 2: Download pending items in parallel batches.
-    const BATCH_SIZE: usize = 4;
+    // Phase 2: Download pending items one at a time, checking for priority
+    // before each download. This ensures cursor-priority tracks start immediately
+    // instead of waiting for a 4-wide batch to finish.
     let mut remaining: std::collections::VecDeque<_> = pending_downloads.into();
 
     while !remaining.is_empty() {
-        // Priority check: if cursor is on an unloaded item ahead in the list,
-        // download it next.
-        if let Some(cursor_id) = state.cursor()
+        // Priority: if cursor is on a pending item, download it next.
+        let (db_id, queue_id) = if let Some(cursor_id) = state.cursor()
             && let Some(pos) = remaining.iter().position(|(_, qid)| *qid == cursor_id)
         {
-            log::info!("priority: downloading cursor track at pos {}", pos);
-            let (db_id, queue_id) = remaining.remove(pos).unwrap();
-            download_single_track(db_id, queue_id, &tx, &log_buf, &state, &cfg);
-            continue;
-        }
+            log::info!("priority: downloading cursor track");
+            remaining.remove(pos).unwrap()
+        } else {
+            remaining.pop_front().unwrap()
+        };
 
-        let batch_size = BATCH_SIZE.min(remaining.len());
-        let chunk: Vec<_> = remaining.drain(..batch_size).collect();
-
-        std::thread::scope(|s| {
-            let handles: Vec<_> = chunk
-                .iter()
-                .map(|(db_id, queue_id)| {
-                    let log_ref = &log_buf;
-                    let state_ref = &state;
-                    let tx_ref = &tx;
-                    let cfg_ref = &cfg;
-                    let track_id = *db_id;
-                    let qid = *queue_id;
-                    s.spawn(move || {
-                        download_single_track(track_id, qid, tx_ref, log_ref, state_ref, cfg_ref);
-                    })
-                })
-                .collect();
-            for h in handles {
-                let _ = h.join();
-            }
-        });
+        download_single_track(db_id, queue_id, &tx, &log_buf, &state, &cfg);
     }
 }
 
