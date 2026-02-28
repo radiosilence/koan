@@ -4,6 +4,10 @@
 
 ### Added
 
+- **Ratatui TUI** — full-screen terminal UI replaces custom ANSI rendering. Transport bar with click-to-seek gauge, album-grouped queue view, fuzzy picker as centered overlay, context-sensitive key hints, mouse support (click, drag reorder, scroll wheel). Uses crossterm alternate screen with panic-safe terminal restore.
+- **Format string engine** — fb2k-compatible title formatting: `%field%` references, `[conditional]` blocks, `$function(args)` calls. 18 built-in functions (string, logic, numeric, path). Drives library views and file organization.
+- **File organization** — `koan organize --pattern '...'` renames/moves library files using format strings. Dry-run preview by default, `--execute` to apply, `--undo` to revert. Moves ancillary files (cover.jpg, .cue, .log), cleans empty dirs. Move log stored in SQLite for undo.
+- **Mouse support** — click seek bar to jump, scroll wheel in queue, drag-to-reorder tracks in edit mode
 - **Queue display** — full-screen playback UI with album-grouped headers, rich metadata (track number, artist, title, album, year, codec, duration), animated braille spinners for downloads, pending queue shown before downloads complete
 - **Queue editing** — press `e` during playback to enter edit mode: navigate with arrows, `d` to delete, `j`/`k` to reorder
 - **Inline picker** — press `p`/`a`/`r` during playback to fuzzy-pick tracks/albums/artists and append to queue without interrupting playback

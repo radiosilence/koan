@@ -2,17 +2,19 @@
 
 A music player for people who give a shit about audio quality.
 
-macOS-native (SwiftUI shell, Rust core). Bit-perfect playback, gapless transitions, fast library indexing, Subsonic/Navidrome integration. No Electron. No subscriptions. No bullshit.
+Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library indexing, Subsonic/Navidrome integration, fb2k-style format strings. No Electron. No subscriptions. No bullshit.
 
 ## What works
 
 - **Bit-perfect playback** — CoreAudio AUHAL, no resampling, automatic device sample rate switching
 - **Gapless** — decode thread keeps the ring buffer alive across track boundaries, AudioUnit never stops
 - **Format support** — FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
+- **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, mouse support (click-to-seek, drag-to-reorder, scroll wheel)
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
 - **File watching** — FSEvents via notify, debounced 500ms, auto-updates DB on changes
 - **Subsonic/Navidrome** — parallel remote library sync, unified local+remote browsing, lazy parallel downloads
-- **CLI** — colourised output with tree-structured display, dynamic shell completions from library DB, built-in fuzzy picker (nucleo)
+- **Format string engine** — fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for library views and file organization
+- **File organization** — `koan organize` renames/moves files using format strings, with dry-run preview and undo
 - **Queue management** — grouped album headers, edit mode with reorder/delete, animated download spinners, pending queue shown before downloads complete
 - **Track deduplication** — local+remote tracks merged into single rows, local path always wins for playback
 - **Proper artist handling** — track artist stored separately from album artist; compilations/VA albums display correctly
@@ -20,18 +22,17 @@ macOS-native (SwiftUI shell, Rust core). Bit-perfect playback, gapless transitio
 ## Architecture
 
 ```
-PCM never crosses FFI.
+Pure Rust, top to bottom.
 
 File → Symphonia → f32 samples → rtrb ring buffer → CoreAudio render callback → DAC
 
-All in Rust. Lock-free audio thread.
+Lock-free audio thread. No FFI boundaries.
 ```
 
-Three crates:
+Two crates:
 
-- `koan-core` — audio engine, player, database, indexer, remote client
-- `koan-ffi` — UniFFI (control plane) + C FFI via cbindgen (audio data plane)
-- `koan-cli` — `koan` binary
+- `koan-core` — audio engine, player, database, indexer, format strings, file organization, remote client
+- `koan-cli` — `koan` binary (Ratatui TUI)
 
 ## Install
 
@@ -91,6 +92,11 @@ koan albums
 koan albums "boards"
 koan library
 
+# organize files using format strings
+koan organize --pattern '%album artist%/(%date%) %album%/%tracknumber%. %title%'
+koan organize --pattern '...' --execute   # actually move (default is dry-run)
+koan organize --undo                      # revert last organize
+
 # remote server
 koan remote login https://music.example.com admin
 koan remote sync
@@ -106,9 +112,9 @@ koan devices
 koan probe track.flac
 ```
 
-### Playback controls
+### Playback TUI
 
-During playback the queue is displayed with album-grouped headers, track metadata, and download status (animated spinners for in-progress downloads). Press `e` to enter edit mode.
+During playback, a full-screen Ratatui TUI shows the transport bar, queue, and key hints. The queue never goes blank during downloads — pending tracks appear immediately with animated spinners.
 
 | Key     | Action                 |
 | ------- | ---------------------- |
@@ -121,6 +127,8 @@ During playback the queue is displayed with album-grouped headers, track metadat
 | `r`     | pick artist to enqueue |
 | `e`     | edit queue             |
 | `q`     | quit                   |
+
+**Mouse:** click the seek bar to jump, scroll wheel in queue, drag tracks to reorder in edit mode.
 
 **Queue edit mode** (`e`):
 
@@ -142,6 +150,23 @@ Tracks are grouped by album with headers showing album artist, year, album title
      03 SPL — Fade                                 1:52
      04 Icicle                                     2:27
 ```
+
+### File organization
+
+Rename and reorganize your music library using fb2k-compatible format strings. Default is dry-run (preview), add `--execute` to apply. Undo with `--undo`.
+
+```bash
+# preview
+koan organize --pattern '%album artist%/(%date%) %album%/%tracknumber%. %title%'
+
+# apply
+koan organize --pattern '...' --execute
+
+# revert
+koan organize --undo
+```
+
+Ancillary files (cover.jpg, .cue, .log) move with the music. Empty directories are cleaned up.
 
 ### Remote (Subsonic/Navidrome)
 
@@ -190,7 +215,6 @@ Local values override base. `koan config` shows both sources and the resolved re
 just check    # test + clippy
 just fmt      # cargo fmt
 just cli      # cargo run -p koan-cli -- <args>
-just build    # full build (rust + bindings + xcframework)
 ```
 
 ## License
