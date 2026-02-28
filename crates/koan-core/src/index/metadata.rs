@@ -124,6 +124,24 @@ fn codec_from_file_type(ft: lofty::file::FileType) -> String {
     .to_string()
 }
 
+/// Extract embedded front cover art bytes from an audio file.
+/// Returns raw image bytes (JPEG/PNG/etc.) or None.
+pub fn extract_cover_art(path: &Path) -> Option<Vec<u8>> {
+    let tagged_file = lofty::read_from_path(path).ok()?;
+    let tag = tagged_file
+        .primary_tag()
+        .or_else(|| tagged_file.first_tag())?;
+
+    // Prefer CoverFront, fall back to first picture.
+    let pictures = tag.pictures();
+    let pic = pictures
+        .iter()
+        .find(|p| p.pic_type() == lofty::picture::PictureType::CoverFront)
+        .or_else(|| pictures.first())?;
+
+    Some(pic.data().to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

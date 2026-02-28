@@ -1,3 +1,4 @@
+use image::DynamicImage;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -6,19 +7,27 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap};
 
 use koan_core::player::state::{QueueEntry, QueueEntryStatus, TrackInfo};
 
+use super::cover_art::CoverArt;
 use super::theme::Theme;
 
 pub struct TrackInfoOverlay<'a> {
     entry: &'a QueueEntry,
     track_info: Option<&'a TrackInfo>,
+    cover_art: Option<&'a DynamicImage>,
     theme: &'a Theme,
 }
 
 impl<'a> TrackInfoOverlay<'a> {
-    pub fn new(entry: &'a QueueEntry, track_info: Option<&'a TrackInfo>, theme: &'a Theme) -> Self {
+    pub fn new(
+        entry: &'a QueueEntry,
+        track_info: Option<&'a TrackInfo>,
+        cover_art: Option<&'a DynamicImage>,
+        theme: &'a Theme,
+    ) -> Self {
         Self {
             entry,
             track_info,
+            cover_art,
             theme,
         }
     }
@@ -45,7 +54,7 @@ fn status_str(status: QueueEntryStatus) -> &'static str {
 impl Widget for TrackInfoOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
-        let popup_height = (area.height as f32 * 0.6).max(12.0).min(area.height as f32) as u16;
+        let popup_height = (area.height as f32 * 0.7).max(14.0).min(area.height as f32) as u16;
         let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
         let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
         let popup_area = Rect::new(x, y, popup_width, popup_height);
@@ -66,6 +75,30 @@ impl Widget for TrackInfoOverlay<'_> {
             return;
         }
 
+        // Layout: if we have cover art, put it on the left.
+        let (text_area, art_area) = if self.cover_art.is_some() && inner.width > 30 {
+            // Art takes a square-ish area on the left. Width ≈ height works
+            // because halfblocks give 2 vertical pixels per cell, roughly
+            // matching the ~2:1 cell aspect ratio.
+            let art_size = inner.height.saturating_sub(1).min(inner.width / 3);
+            let art_rect = Rect::new(inner.x + 1, inner.y, art_size, art_size);
+            let text_rect = Rect::new(
+                inner.x + art_size + 2,
+                inner.y,
+                inner.width.saturating_sub(art_size + 3),
+                inner.height,
+            );
+            (text_rect, Some(art_rect))
+        } else {
+            (inner, None)
+        };
+
+        // Render cover art.
+        if let (Some(img), Some(art_rect)) = (self.cover_art, art_area) {
+            CoverArt::new(img).render(art_rect, buf);
+        }
+
+        // Render text fields.
         let key_style = self.theme.hint_key.add_modifier(Modifier::BOLD);
         let val_style = self.theme.track_normal;
 
@@ -73,7 +106,7 @@ impl Widget for TrackInfoOverlay<'_> {
 
         let mut field = |label: &str, value: &str| {
             lines.push(Line::from(vec![
-                Span::styled(format!("  {:<14}", label), key_style),
+                Span::styled(format!(" {:<14}", label), key_style),
                 Span::styled(value.to_string(), val_style),
             ]));
         };
@@ -119,7 +152,7 @@ impl Widget for TrackInfoOverlay<'_> {
         // Blank line before path.
         lines.push(Line::raw(""));
         lines.push(Line::from(vec![
-            Span::styled(format!("  {:<14}", "Path"), key_style),
+            Span::styled(format!(" {:<14}", "Path"), key_style),
             Span::styled(self.entry.path.display().to_string(), val_style),
         ]));
 
@@ -129,10 +162,10 @@ impl Widget for TrackInfoOverlay<'_> {
             Span::styled(" close", self.theme.hint_desc),
         ]);
 
-        // Split inner into content + hint row.
-        let content_height = inner.height.saturating_sub(1);
-        let content_area = Rect::new(inner.x, inner.y, inner.width, content_height);
-        let hint_area = Rect::new(inner.x, inner.y + content_height, inner.width, 1);
+        // Split text area into content + hint row.
+        let content_height = text_area.height.saturating_sub(1);
+        let content_area = Rect::new(text_area.x, text_area.y, text_area.width, content_height);
+        let hint_area = Rect::new(text_area.x, text_area.y + content_height, text_area.width, 1);
 
         Paragraph::new(lines)
             .wrap(Wrap { trim: false })

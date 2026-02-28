@@ -96,12 +96,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
             // Calculate popup rect for mouse hit-testing.
             let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
-            let popup_height = (area.height as f32 * 0.6).max(12.0).min(area.height as f32) as u16;
+            let popup_height = (area.height as f32 * 0.7).max(14.0).min(area.height as f32) as u16;
             let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
             let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
             app.track_info_area = Rect::new(x, y, popup_width, popup_height);
 
-            let overlay = TrackInfoOverlay::new(entry, ti_ref, &app.theme);
+            let overlay = TrackInfoOverlay::new(entry, ti_ref, app.cover_art.cached(), &app.theme);
             frame.render_widget(overlay, area);
         }
     }

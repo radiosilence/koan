@@ -1,4 +1,5 @@
 pub mod app;
+pub mod cover_art;
 pub mod event;
 pub mod keys;
 pub mod library;

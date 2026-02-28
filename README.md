@@ -9,7 +9,7 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 - **Bit-perfect playback** — CoreAudio AUHAL, no resampling, automatic device sample rate switching
 - **Gapless** — decode thread keeps the ring buffer alive across track boundaries, AudioUnit never stops
 - **Format support** — FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
-- **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal, mouse support (click-to-seek, click-to-play, drag-to-reorder, scroll wheel)
+- **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal with embedded album art (halfblock rendering), mouse support (click-to-seek, click-to-play, drag-to-reorder, scroll wheel)
 - **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, now playing info)
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
 - **File watching** — FSEvents via notify, debounced 500ms, auto-updates DB on changes

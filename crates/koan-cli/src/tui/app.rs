@@ -107,6 +107,9 @@ pub struct App {
     /// Cached visible queue snapshot — refreshed once per frame.
     /// All queue-related methods use this for consistency within a frame.
     vq_cache: VisibleQueueSnapshot,
+
+    /// Cached cover art (loaded on demand, reused across frames).
+    pub cover_art: super::cover_art::CoverArtCache,
 }
 
 impl App {
@@ -147,6 +150,7 @@ impl App {
             library_area: ratatui::layout::Rect::default(),
             db_path,
             vq_cache: VisibleQueueSnapshot::default(),
+            cover_art: super::cover_art::CoverArtCache::new(),
         }
     }
 
@@ -299,10 +303,7 @@ impl App {
                 self.play_at_cursor();
             }
             KeyCode::Char('i') => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() && self.queue_cursor < visible.len() {
-                    self.mode = Mode::TrackInfo(self.queue_cursor);
-                }
+                self.open_track_info(self.queue_cursor);
             }
             _ => {}
         }
@@ -367,10 +368,7 @@ impl App {
                 }
             }
             KeyCode::Char('i') => {
-                let visible = self.visible_queue();
-                if !visible.is_empty() && self.queue_cursor < visible.len() {
-                    self.mode = Mode::TrackInfo(self.queue_cursor);
-                }
+                self.open_track_info(self.queue_cursor);
             }
             _ => {}
         }
@@ -416,9 +414,21 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Char('i') | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
+                self.cover_art.clear();
             }
             _ => {}
         }
+    }
+
+    fn open_track_info(&mut self, idx: usize) {
+        let visible = self.visible_queue();
+        if visible.is_empty() || idx >= visible.len() {
+            return;
+        }
+        self.mode = Mode::TrackInfo(idx);
+        // Prime the cache for this track's path.
+        let path = visible[idx].path.clone();
+        self.cover_art.get(&path);
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent) {
@@ -428,6 +438,7 @@ impl App {
                 && !self.is_in_rect(event.column, event.row, self.track_info_area)
             {
                 self.mode = Mode::Normal;
+                self.cover_art.clear();
             }
             return;
         }
