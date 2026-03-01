@@ -39,25 +39,54 @@ pub struct DragState {
     pub multi: bool,
 }
 
+/// Queue cursor, selection, scroll, drag, and cached snapshot.
+#[derive(Default)]
+pub struct QueueState {
+    pub cursor: usize,
+    pub scroll_offset: usize,
+    pub selected_indices: HashSet<usize>,
+    pub anchor_index: Option<usize>,
+    pub drag: Option<DragState>,
+    /// Cached visible queue snapshot — refreshed once per frame.
+    pub(super) vq_cache: VisibleQueueSnapshot,
+}
+
+/// Cached layout rects from last render, used for mouse hit-testing.
+#[derive(Default)]
+pub struct LayoutRects {
+    pub transport_area: ratatui::layout::Rect,
+    pub queue_area: ratatui::layout::Rect,
+    pub picker_area: ratatui::layout::Rect,
+    pub track_info_area: ratatui::layout::Rect,
+    pub library_area: ratatui::layout::Rect,
+    pub now_playing_art_area: ratatui::layout::Rect,
+    pub transport_text_area: ratatui::layout::Rect,
+    pub seek_bar_start: u16,
+    pub seek_bar_width: u16,
+}
+
+/// Cover art caches and stable height tracking.
+#[derive(Default)]
+pub struct ArtState {
+    /// Cached cover art for track info modal.
+    pub cover_art: super::cover_art::CoverArtCache,
+    /// Cached cover art for now-playing transport display.
+    pub now_playing_art: super::cover_art::CoverArtCache,
+    /// Last computed art height so layout stays stable when art disappears.
+    pub last_art_height: u16,
+}
+
 pub struct App {
     pub mode: Mode,
     pub state: Arc<SharedPlayerState>,
     pub tx: Sender<PlayerCommand>,
     pub quit: bool,
 
-    // Queue state.
-    pub queue_cursor: usize,
-    pub queue_scroll_offset: usize,
-
-    // Selection state (Finder-style).
-    pub selected_indices: HashSet<usize>,
-    pub anchor_index: Option<usize>,
+    /// Queue cursor, selection, scroll, and cached snapshot.
+    pub queue: QueueState,
 
     // Picker state (when in Picker mode).
     pub picker: Option<PickerState>,
-
-    // Mouse state.
-    pub drag: Option<DragState>,
 
     // Spinner tick for download animation.
     pub spinner_tick: usize,
@@ -76,16 +105,8 @@ pub struct App {
     // Theme.
     pub theme: Theme,
 
-    // Transport area rect, stored after render for click-to-seek.
-    pub transport_area: ratatui::layout::Rect,
-    // Queue area rect, stored after render for mouse interaction.
-    pub queue_area: ratatui::layout::Rect,
-
-    // Picker overlay area, stored after render for mouse interaction.
-    pub picker_area: ratatui::layout::Rect,
-
-    // Track info overlay area, stored after render for mouse interaction.
-    pub track_info_area: ratatui::layout::Rect,
+    /// Cached layout rects from last render for mouse hit-testing.
+    pub layout: LayoutRects,
 
     // Picker result — set when picker confirms, consumed by main loop.
     // Tagged with the picker kind so album IDs can be expanded to track IDs.
@@ -102,31 +123,10 @@ pub struct App {
     // Library browser.
     pub library: Option<LibraryState>,
     pub library_focus: LibraryFocus,
-    pub library_area: ratatui::layout::Rect,
     pub db_path: PathBuf,
 
-    /// Cached visible queue snapshot — refreshed once per frame.
-    /// All queue-related methods use this for consistency within a frame.
-    pub(super) vq_cache: VisibleQueueSnapshot,
-
-    /// Cached cover art for track info modal.
-    pub cover_art: super::cover_art::CoverArtCache,
-
-    /// Cached cover art for now-playing transport display.
-    pub now_playing_art: super::cover_art::CoverArtCache,
-
-    /// Area of the now-playing art thumbnail (for click-to-zoom).
-    pub now_playing_art_area: ratatui::layout::Rect,
-
-    /// Area of the transport text (seek bar) — excludes art.
-    pub transport_text_area: ratatui::layout::Rect,
-
-    /// Seek bar layout from last render — absolute x start and width in cells.
-    pub seek_bar_start: u16,
-    pub seek_bar_width: u16,
-
-    /// Last computed art height so layout stays stable when art disappears.
-    pub last_art_height: u16,
+    /// Cover art caches.
+    pub art: ArtState,
 }
 
 impl App {
@@ -141,12 +141,8 @@ impl App {
             state,
             tx,
             quit: false,
-            queue_cursor: 0,
-            queue_scroll_offset: 0,
-            selected_indices: HashSet::new(),
-            anchor_index: None,
+            queue: QueueState::default(),
             picker: None,
-            drag: None,
             spinner_tick: 0,
             last_click_time: None,
             last_click_idx: None,
@@ -154,26 +150,15 @@ impl App {
             log_messages: Vec::new(),
             has_played: false,
             theme: Theme::default(),
-            transport_area: ratatui::layout::Rect::default(),
-            queue_area: ratatui::layout::Rect::default(),
+            layout: LayoutRects::default(),
             loading_message: None,
-            picker_area: ratatui::layout::Rect::default(),
-            track_info_area: ratatui::layout::Rect::default(),
             picker_result: None,
             artist_drill_down: None,
             last_playing_path: None,
             library: None,
             library_focus: LibraryFocus::Library,
-            library_area: ratatui::layout::Rect::default(),
             db_path,
-            vq_cache: VisibleQueueSnapshot::default(),
-            cover_art: super::cover_art::CoverArtCache::new(),
-            now_playing_art: super::cover_art::CoverArtCache::new(),
-            now_playing_art_area: ratatui::layout::Rect::default(),
-            transport_text_area: ratatui::layout::Rect::default(),
-            seek_bar_start: 0,
-            seek_bar_width: 0,
-            last_art_height: 0,
+            art: ArtState::default(),
         }
     }
 
@@ -194,7 +179,8 @@ impl App {
         }
 
         // Clear loading overlay once playback starts or pending queue populates.
-        if self.loading_message.is_some() && (self.has_played || !self.vq_cache.entries.is_empty())
+        if self.loading_message.is_some()
+            && (self.has_played || !self.queue.vq_cache.entries.is_empty())
         {
             self.loading_message = None;
         }
@@ -206,7 +192,7 @@ impl App {
 
         // Update now-playing cover art cache when track changes.
         if let Some(ref info) = self.state.track_info() {
-            self.now_playing_art.get(&info.path);
+            self.art.now_playing_art.get(&info.path);
         }
 
         // In normal mode, auto-scroll to playing track on actual track change.
@@ -215,6 +201,7 @@ impl App {
         // queue is rebuilt, causing a 1-frame scroll offset jump.
         if self.mode == Mode::Normal {
             let current_playing = self
+                .queue
                 .vq_cache
                 .entries
                 .iter()
@@ -223,16 +210,17 @@ impl App {
             if current_playing != self.last_playing_path {
                 self.last_playing_path = current_playing;
                 if let Some(idx) = self
+                    .queue
                     .vq_cache
                     .entries
                     .iter()
                     .position(|e| e.status == QueueEntryStatus::Playing)
                 {
-                    let visible_height = self.queue_area.height.max(5) as usize;
-                    self.queue_scroll_offset = queue::scroll_for_cursor(
+                    let visible_height = self.layout.queue_area.height.max(5) as usize;
+                    self.queue.scroll_offset = queue::scroll_for_cursor(
                         &self.visible_queue(),
                         idx,
-                        self.queue_scroll_offset,
+                        self.queue.scroll_offset,
                         visible_height,
                     );
                 }
@@ -292,12 +280,12 @@ impl App {
             KeyCode::Char('e') => {
                 self.mode = Mode::QueueEdit;
                 let min = self.queue_cursor_min();
-                if self.queue_cursor < min {
-                    self.queue_cursor = min;
+                if self.queue.cursor < min {
+                    self.queue.cursor = min;
                 }
                 // Sync selection to cursor so j/k work immediately.
-                if self.selected_indices.len() <= 1 {
-                    self.select_single(self.queue_cursor);
+                if self.queue.selected_indices.len() <= 1 {
+                    self.select_single(self.queue.cursor);
                 }
             }
             KeyCode::Char('p') => {
@@ -315,16 +303,16 @@ impl App {
             KeyCode::Up => {
                 let visible = self.visible_queue();
                 if !visible.is_empty() {
-                    self.queue_cursor = self.queue_cursor.saturating_sub(1);
-                    self.select_single(self.queue_cursor);
+                    self.queue.cursor = self.queue.cursor.saturating_sub(1);
+                    self.select_single(self.queue.cursor);
                     self.update_scroll();
                 }
             }
             KeyCode::Down => {
                 let visible = self.visible_queue();
-                if !visible.is_empty() && self.queue_cursor + 1 < visible.len() {
-                    self.queue_cursor += 1;
-                    self.select_single(self.queue_cursor);
+                if !visible.is_empty() && self.queue.cursor + 1 < visible.len() {
+                    self.queue.cursor += 1;
+                    self.select_single(self.queue.cursor);
                     self.update_scroll();
                 }
             }
@@ -332,10 +320,10 @@ impl App {
                 self.play_at_cursor();
             }
             KeyCode::Char('i') => {
-                self.open_track_info(self.queue_cursor);
+                self.open_track_info(self.queue.cursor);
             }
             KeyCode::Char('z') => {
-                if self.now_playing_art.cached().is_some() {
+                if self.art.now_playing_art.cached().is_some() {
                     self.mode = Mode::CoverArtZoom;
                 }
             }
@@ -352,31 +340,31 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                self.selected_indices.clear();
-                self.anchor_index = None;
+                self.queue.selected_indices.clear();
+                self.queue.anchor_index = None;
             }
             KeyCode::Char('q') => {
                 self.tx.send(PlayerCommand::Stop).ok();
                 self.quit = true;
             }
             KeyCode::Up => {
-                self.queue_cursor = self.queue_cursor.saturating_sub(1).max(min);
+                self.queue.cursor = self.queue.cursor.saturating_sub(1).max(min);
                 if shift {
-                    self.extend_selection_to(self.queue_cursor);
+                    self.extend_selection_to(self.queue.cursor);
                 } else {
-                    self.select_single(self.queue_cursor);
+                    self.select_single(self.queue.cursor);
                 }
                 self.update_scroll();
             }
             KeyCode::Down => {
                 let visible = self.visible_queue();
-                if self.queue_cursor + 1 < visible.len() {
-                    self.queue_cursor += 1;
+                if self.queue.cursor + 1 < visible.len() {
+                    self.queue.cursor += 1;
                 }
                 if shift {
-                    self.extend_selection_to(self.queue_cursor);
+                    self.extend_selection_to(self.queue.cursor);
                 } else {
-                    self.select_single(self.queue_cursor);
+                    self.select_single(self.queue.cursor);
                 }
                 self.update_scroll();
             }
@@ -391,21 +379,21 @@ impl App {
             }
             KeyCode::Char('J') => {
                 let visible_len = self.visible_queue().len();
-                if self.queue_cursor + 1 < visible_len {
-                    self.queue_cursor += 1;
-                    self.extend_selection_to(self.queue_cursor);
+                if self.queue.cursor + 1 < visible_len {
+                    self.queue.cursor += 1;
+                    self.extend_selection_to(self.queue.cursor);
                     self.update_scroll();
                 }
             }
             KeyCode::Char('K') => {
-                if self.queue_cursor > min {
-                    self.queue_cursor -= 1;
-                    self.extend_selection_to(self.queue_cursor);
+                if self.queue.cursor > min {
+                    self.queue.cursor -= 1;
+                    self.extend_selection_to(self.queue.cursor);
                     self.update_scroll();
                 }
             }
             KeyCode::Char('i') => {
-                self.open_track_info(self.queue_cursor);
+                self.open_track_info(self.queue.cursor);
             }
             _ => {}
         }
@@ -440,7 +428,7 @@ impl App {
                             let visible = self.visible_queue();
                             if let Some(entry) = visible.get(idx) {
                                 self.tx.send(PlayerCommand::Play(entry.id)).ok();
-                                self.queue_cursor = idx;
+                                self.queue.cursor = idx;
                                 self.update_scroll();
                             }
                         }
@@ -460,7 +448,7 @@ impl App {
         match key.code {
             KeyCode::Esc | KeyCode::Char('i') | KeyCode::Char('q') => {
                 self.mode = Mode::Normal;
-                self.cover_art.clear();
+                self.art.cover_art.clear();
             }
             _ => {}
         }
@@ -483,7 +471,7 @@ impl App {
         self.mode = Mode::TrackInfo(idx);
         // Prime the cache for this track's path.
         let path = visible[idx].path.clone();
-        self.cover_art.get(&path);
+        self.art.cover_art.get(&path);
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent) {
@@ -498,17 +486,17 @@ impl App {
         // Track info intercepts all mouse events when active.
         if matches!(self.mode, Mode::TrackInfo(_)) {
             if let MouseEventKind::Down(MouseButton::Left) = event.kind
-                && !self.is_in_rect(event.column, event.row, self.track_info_area)
+                && !self.is_in_rect(event.column, event.row, self.layout.track_info_area)
             {
                 self.mode = Mode::Normal;
-                self.cover_art.clear();
+                self.art.cover_art.clear();
             }
             return;
         }
 
         // Picker intercepts all mouse events when active.
         if let Mode::Picker(_) = &self.mode {
-            let picker_area = self.picker_area;
+            let picker_area = self.layout.picker_area;
             let results = picker_results_rect(picker_area);
             let in_results = self.is_in_rect(event.column, event.row, results);
             let in_popup = self.is_in_rect(event.column, event.row, picker_area);
@@ -552,7 +540,7 @@ impl App {
                                             let visible = self.visible_queue();
                                             if let Some(entry) = visible.get(idx) {
                                                 self.tx.send(PlayerCommand::Play(entry.id)).ok();
-                                                self.queue_cursor = idx;
+                                                self.queue.cursor = idx;
                                                 self.update_scroll();
                                             }
                                         }
@@ -566,7 +554,7 @@ impl App {
                         }
                     }
                 } else if !in_popup {
-                    // Click outside picker → close.
+                    // Click outside picker -> close.
                     self.picker = None;
                     self.mode = Mode::Normal;
                 }
@@ -587,13 +575,13 @@ impl App {
             MouseEventKind::Down(MouseButton::Left) => {
                 // Library pane click.
                 if self.mode == Mode::LibraryBrowse
-                    && self.is_in_rect(event.column, event.row, self.library_area)
+                    && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
                     self.library_focus = LibraryFocus::Library;
                     if let Some(ref mut lib) = self.library {
-                        let inner_x = self.library_area.x + 1;
-                        let inner_y = self.library_area.y + 1;
-                        let inner_h = self.library_area.height.saturating_sub(2) as usize;
+                        let inner_x = self.layout.library_area.x + 1;
+                        let inner_y = self.layout.library_area.y + 1;
+                        let inner_h = self.layout.library_area.height.saturating_sub(2) as usize;
                         if event.row >= inner_y && (event.row - inner_y) < inner_h as u16 {
                             let row = (event.row - inner_y) as usize;
                             let col = event.column.saturating_sub(inner_x) as usize;
@@ -601,8 +589,8 @@ impl App {
                             if item_idx < lib.nodes.len() {
                                 lib.cursor = item_idx;
 
-                                // Click on arrow area (first ~4 chars) → expand/collapse.
-                                // Click on text → double-click to enqueue.
+                                // Click on arrow area (first ~4 chars) -> expand/collapse.
+                                // Click on text -> double-click to enqueue.
                                 if col < 4 {
                                     lib.toggle_expand();
                                     self.last_click_idx = None;
@@ -631,27 +619,28 @@ impl App {
                     return;
                 }
 
-                // Click on now-playing art → zoom.
-                if self.now_playing_art.cached().is_some()
-                    && self.now_playing_art_area.width > 0
-                    && self.is_in_rect(event.column, event.row, self.now_playing_art_area)
+                // Click on now-playing art -> zoom.
+                if self.art.now_playing_art.cached().is_some()
+                    && self.layout.now_playing_art_area.width > 0
+                    && self.is_in_rect(event.column, event.row, self.layout.now_playing_art_area)
                 {
                     self.mode = Mode::CoverArtZoom;
                     return;
                 }
 
                 // Seek bar click — only the first row of the transport area.
-                if event.row == self.transport_text_area.y
-                    && event.column >= self.transport_text_area.x
-                    && event.column < self.transport_text_area.x + self.transport_text_area.width
+                if event.row == self.layout.transport_text_area.y
+                    && event.column >= self.layout.transport_text_area.x
+                    && event.column
+                        < self.layout.transport_text_area.x + self.layout.transport_text_area.width
                     && let Some(info) = self.state.track_info()
                 {
                     let click_x = event.column;
                     let dur = info.duration_ms;
 
                     if let Some(pos) = TransportBar::seek_from_click(
-                        self.seek_bar_start,
-                        self.seek_bar_width,
+                        self.layout.seek_bar_start,
+                        self.layout.seek_bar_width,
                         click_x,
                         dur,
                     ) {
@@ -661,7 +650,7 @@ impl App {
                 }
 
                 // Queue area click.
-                if !self.is_in_rect(event.column, event.row, self.queue_area) {
+                if !self.is_in_rect(event.column, event.row, self.layout.queue_area) {
                     return;
                 }
 
@@ -673,8 +662,8 @@ impl App {
                 let visible = self.visible_queue();
                 let Some(idx) = queue::QueueView::queue_index_at_y(
                     &visible,
-                    self.queue_area,
-                    self.queue_scroll_offset,
+                    self.layout.queue_area,
+                    self.queue.scroll_offset,
                     event.row,
                 ) else {
                     return;
@@ -694,10 +683,10 @@ impl App {
                         .is_some_and(|t| now.duration_since(t).as_millis() < 400);
 
                 if is_double_click {
-                    // Double-click → play the track at cursor.
+                    // Double-click -> play the track at cursor.
                     self.last_click_idx = None;
                     self.last_click_time = None;
-                    self.queue_cursor = idx;
+                    self.queue.cursor = idx;
                     self.play_at_cursor();
                 } else {
                     self.last_click_idx = Some(idx);
@@ -712,10 +701,10 @@ impl App {
                         } else {
                             self.select_single(idx);
                         }
-                        self.queue_cursor = idx;
+                        self.queue.cursor = idx;
 
-                        let multi = self.selected_indices.len() > 1;
-                        self.drag = Some(DragState {
+                        let multi = self.queue.selected_indices.len() > 1;
+                        self.queue.drag = Some(DragState {
                             from_index: idx,
                             current_y: event.row,
                             multi,
@@ -724,36 +713,36 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if let Some(ref mut drag) = self.drag {
+                if let Some(ref mut drag) = self.queue.drag {
                     drag.current_y = event.row;
 
                     // Shift-drag: extend selection continuously.
                     if event.modifiers.contains(KeyModifiers::SHIFT)
-                        && self.is_in_rect(event.column, event.row, self.queue_area)
+                        && self.is_in_rect(event.column, event.row, self.layout.queue_area)
                     {
                         let visible = self.visible_queue();
                         if let Some(idx) = queue::QueueView::queue_index_at_y(
                             &visible,
-                            self.queue_area,
-                            self.queue_scroll_offset,
+                            self.layout.queue_area,
+                            self.queue.scroll_offset,
                             event.row,
                         ) {
                             let offset = self.queue_edit_offset();
                             if idx >= offset {
                                 self.extend_selection_to(idx);
-                                self.queue_cursor = idx;
+                                self.queue.cursor = idx;
                             }
                         }
                     }
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if let Some(drag) = self.drag.take() {
+                if let Some(drag) = self.queue.drag.take() {
                     let visible = self.visible_queue();
                     let Some(to_idx) = queue::QueueView::queue_index_at_y(
                         &visible,
-                        self.queue_area,
-                        self.queue_scroll_offset,
+                        self.layout.queue_area,
+                        self.queue.scroll_offset,
                         drag.current_y,
                     ) else {
                         return;
@@ -768,11 +757,11 @@ impl App {
                         return; // click, not drag
                     }
 
-                    if drag.multi && self.selected_indices.len() > 1 {
+                    if drag.multi && self.queue.selected_indices.len() > 1 {
                         self.move_selected_to(to_idx);
                     } else {
                         self.send_move(drag.from_index, to_idx);
-                        self.queue_cursor = to_idx;
+                        self.queue.cursor = to_idx;
                         self.select_single(to_idx);
                     }
                 }
@@ -785,7 +774,7 @@ impl App {
                         picker.move_up();
                     }
                 } else if self.mode == Mode::LibraryBrowse
-                    && self.is_in_rect(event.column, event.row, self.library_area)
+                    && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
                     if let Some(ref mut lib) = self.library {
                         lib.move_up();
@@ -793,7 +782,7 @@ impl App {
                         lib.move_up();
                     }
                 } else {
-                    self.queue_scroll_offset = self.queue_scroll_offset.saturating_sub(3);
+                    self.queue.scroll_offset = self.queue.scroll_offset.saturating_sub(3);
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -804,7 +793,7 @@ impl App {
                         picker.move_down();
                     }
                 } else if self.mode == Mode::LibraryBrowse
-                    && self.is_in_rect(event.column, event.row, self.library_area)
+                    && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
                     if let Some(ref mut lib) = self.library {
                         lib.move_down();
@@ -815,7 +804,7 @@ impl App {
                     // Clamp scroll to prevent scrolling past end.
                     let visible_len = self.visible_queue().len();
                     let max_scroll = visible_len.saturating_sub(1);
-                    self.queue_scroll_offset = (self.queue_scroll_offset + 3).min(max_scroll);
+                    self.queue.scroll_offset = (self.queue.scroll_offset + 3).min(max_scroll);
                 }
             }
             _ => {}
@@ -826,41 +815,41 @@ impl App {
 
     /// Plain click / arrow: clear selection, select one track, set anchor.
     fn select_single(&mut self, idx: usize) {
-        self.selected_indices.clear();
-        self.selected_indices.insert(idx);
-        self.anchor_index = Some(idx);
+        self.queue.selected_indices.clear();
+        self.queue.selected_indices.insert(idx);
+        self.queue.anchor_index = Some(idx);
     }
 
     /// Shift-click/arrow: select range from anchor to idx (inclusive).
     fn extend_selection_to(&mut self, idx: usize) {
-        let anchor = self.anchor_index.unwrap_or(self.queue_cursor);
+        let anchor = self.queue.anchor_index.unwrap_or(self.queue.cursor);
         let lo = anchor.min(idx);
         let hi = anchor.max(idx);
         // Don't clear — shift extends. But we replace the range from anchor.
-        self.selected_indices.clear();
+        self.queue.selected_indices.clear();
         for i in lo..=hi {
-            self.selected_indices.insert(i);
+            self.queue.selected_indices.insert(i);
         }
         // Keep anchor where it was.
-        if self.anchor_index.is_none() {
-            self.anchor_index = Some(anchor);
+        if self.queue.anchor_index.is_none() {
+            self.queue.anchor_index = Some(anchor);
         }
     }
 
     /// Alt-click: toggle one track in/out of selection set.
     fn toggle_selection(&mut self, idx: usize) {
-        if self.selected_indices.contains(&idx) {
-            self.selected_indices.remove(&idx);
+        if self.queue.selected_indices.contains(&idx) {
+            self.queue.selected_indices.remove(&idx);
         } else {
-            self.selected_indices.insert(idx);
+            self.queue.selected_indices.insert(idx);
         }
         // Move anchor to last toggled.
-        self.anchor_index = Some(idx);
+        self.queue.anchor_index = Some(idx);
     }
 
     /// Play the track at the current cursor position (Enter / double-click).
     fn play_at_cursor(&mut self) {
-        let idx = self.queue_cursor;
+        let idx = self.queue.cursor;
         let visible = self.visible_queue();
         if let Some(entry) = visible.get(idx)
             && entry.status != QueueEntryStatus::Playing
@@ -871,10 +860,10 @@ impl App {
 
     /// Delete all selected tracks.
     fn delete_selected(&mut self) {
-        let indices: Vec<usize> = if self.selected_indices.is_empty() {
-            vec![self.queue_cursor]
+        let indices: Vec<usize> = if self.queue.selected_indices.is_empty() {
+            vec![self.queue.cursor]
         } else {
-            self.selected_indices.iter().copied().collect()
+            self.queue.selected_indices.iter().copied().collect()
         };
 
         let visible = self.visible_queue();
@@ -886,11 +875,11 @@ impl App {
             }
         }
 
-        self.selected_indices.clear();
+        self.queue.selected_indices.clear();
         let min = self.queue_cursor_min();
         let visible_len = self.visible_queue().len();
-        if visible_len > min && self.queue_cursor >= visible_len {
-            self.queue_cursor = visible_len - 1;
+        if visible_len > min && self.queue.cursor >= visible_len {
+            self.queue.cursor = visible_len - 1;
         }
     }
 
@@ -900,17 +889,17 @@ impl App {
         let offset = self.queue_edit_offset();
 
         // Single item: move the track under cursor.
-        if self.selected_indices.len() <= 1 {
-            if self.queue_cursor + 1 < visible_len && self.queue_cursor >= offset {
-                self.send_move(self.queue_cursor, self.queue_cursor + 1);
-                self.queue_cursor += 1;
-                self.select_single(self.queue_cursor);
+        if self.queue.selected_indices.len() <= 1 {
+            if self.queue.cursor + 1 < visible_len && self.queue.cursor >= offset {
+                self.send_move(self.queue.cursor, self.queue.cursor + 1);
+                self.queue.cursor += 1;
+                self.select_single(self.queue.cursor);
                 self.update_scroll();
             }
             return;
         }
 
-        let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
+        let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
         indices.sort_unstable();
 
         let max_idx = indices.last().copied().unwrap_or(0);
@@ -925,9 +914,9 @@ impl App {
         }
 
         let new_selected: HashSet<usize> = indices.iter().map(|&i| i + 1).collect();
-        self.selected_indices = new_selected;
-        self.queue_cursor += 1;
-        self.anchor_index = self.anchor_index.map(|a| a + 1);
+        self.queue.selected_indices = new_selected;
+        self.queue.cursor += 1;
+        self.queue.anchor_index = self.queue.anchor_index.map(|a| a + 1);
         self.update_scroll();
     }
 
@@ -936,17 +925,17 @@ impl App {
         let offset = self.queue_edit_offset();
 
         // Single item: move the track under cursor.
-        if self.selected_indices.len() <= 1 {
-            if self.queue_cursor > offset {
-                self.send_move(self.queue_cursor, self.queue_cursor - 1);
-                self.queue_cursor -= 1;
-                self.select_single(self.queue_cursor);
+        if self.queue.selected_indices.len() <= 1 {
+            if self.queue.cursor > offset {
+                self.send_move(self.queue.cursor, self.queue.cursor - 1);
+                self.queue.cursor -= 1;
+                self.select_single(self.queue.cursor);
                 self.update_scroll();
             }
             return;
         }
 
-        let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
+        let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
         indices.sort_unstable();
 
         let min_idx = indices.first().copied().unwrap_or(offset);
@@ -959,9 +948,9 @@ impl App {
         self.send_move(min_idx - 1, max_idx);
 
         let new_selected: HashSet<usize> = indices.iter().map(|&i| i - 1).collect();
-        self.selected_indices = new_selected;
-        self.queue_cursor -= 1;
-        self.anchor_index = self.anchor_index.map(|a| a.saturating_sub(1));
+        self.queue.selected_indices = new_selected;
+        self.queue.cursor -= 1;
+        self.queue.anchor_index = self.queue.anchor_index.map(|a| a.saturating_sub(1));
         self.update_scroll();
     }
 
@@ -987,13 +976,13 @@ impl App {
 
     /// Move all selected tracks so the group lands at `target_idx` (visible space).
     fn move_selected_to(&mut self, target_idx: usize) {
-        if self.selected_indices.is_empty() {
+        if self.queue.selected_indices.is_empty() {
             return;
         }
 
         let edit_offset = self.queue_edit_offset();
         let visible = self.visible_queue();
-        let mut indices: Vec<usize> = self.selected_indices.iter().copied().collect();
+        let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
         indices.sort_unstable();
 
         // Collect IDs of selected items (in order).
@@ -1039,9 +1028,9 @@ impl App {
         } else {
             target_idx + 1 - count
         };
-        self.selected_indices = (new_start..new_start + count).collect();
-        self.queue_cursor = target_idx;
-        self.anchor_index = Some(new_start);
+        self.queue.selected_indices = (new_start..new_start + count).collect();
+        self.queue.cursor = target_idx;
+        self.queue.anchor_index = Some(new_start);
     }
 
     fn handle_library_key(&mut self, key: KeyEvent) {
@@ -1170,14 +1159,14 @@ impl App {
             .map(|(i, e)| {
                 let has_artist = !e.artist.is_empty() && e.artist != e.album_artist;
                 let display = if has_artist {
-                    format!("{} — {}", e.artist, e.title)
+                    format!("{} \u{2014} {}", e.artist, e.title)
                 } else {
                     e.title.clone()
                 };
                 let parts = if has_artist {
                     vec![
                         (e.artist.clone(), PickerPartKind::Artist),
-                        (" — ".into(), PickerPartKind::Separator),
+                        (" \u{2014} ".into(), PickerPartKind::Separator),
                         (e.title.clone(), PickerPartKind::Title),
                     ]
                 } else {
@@ -1198,11 +1187,11 @@ impl App {
 
     fn update_scroll(&mut self) {
         let visible = self.visible_queue();
-        let visible_height = self.queue_area.height.max(10) as usize;
-        self.queue_scroll_offset = queue::scroll_for_cursor(
+        let visible_height = self.layout.queue_area.height.max(10) as usize;
+        self.queue.scroll_offset = queue::scroll_for_cursor(
             &visible,
-            self.queue_cursor,
-            self.queue_scroll_offset,
+            self.queue.cursor,
+            self.queue.scroll_offset,
             visible_height,
         );
     }
@@ -1213,12 +1202,12 @@ impl App {
 
     /// Get the drag target index (for visual feedback in queue).
     pub fn drag_target_index(&self) -> Option<usize> {
-        let drag = self.drag.as_ref()?;
+        let drag = self.queue.drag.as_ref()?;
         let visible = self.visible_queue();
         queue::QueueView::queue_index_at_y(
             &visible,
-            self.queue_area,
-            self.queue_scroll_offset,
+            self.layout.queue_area,
+            self.queue.scroll_offset,
             drag.current_y,
         )
     }
@@ -1226,21 +1215,21 @@ impl App {
     /// Refresh the cached visible queue snapshot from shared state.
     /// Call once per frame before any queue-related reads.
     pub fn refresh_visible_queue(&mut self) {
-        self.vq_cache = self.state.derive_visible_queue();
+        self.queue.vq_cache = self.state.derive_visible_queue();
     }
 
     pub fn visible_queue(&self) -> Vec<QueueEntry> {
-        self.vq_cache.entries.clone()
+        self.queue.vq_cache.entries.clone()
     }
 
     /// Offset into visible_queue() where the player queue entries start
     /// (after finished + playing).
     pub fn queue_edit_offset(&self) -> usize {
-        self.vq_cache.finished_count + usize::from(self.vq_cache.has_playing)
+        self.queue.vq_cache.finished_count + usize::from(self.queue.vq_cache.has_playing)
     }
 
     /// Minimum cursor position in edit mode (can reach playing track).
     pub fn queue_cursor_min(&self) -> usize {
-        self.vq_cache.finished_count
+        self.queue.vq_cache.finished_count
     }
 }

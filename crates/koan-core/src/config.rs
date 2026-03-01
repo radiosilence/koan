@@ -64,7 +64,11 @@ pub struct RemoteConfig {
 
 impl Default for LibraryConfig {
     fn default() -> Self {
-        let music_dir = dirs::audio_dir().unwrap_or_else(|| PathBuf::from("~/Music"));
+        let music_dir = dirs::audio_dir().unwrap_or_else(|| {
+            dirs::home_dir()
+                .map(|h| h.join("Music"))
+                .unwrap_or_else(|| PathBuf::from("/Music"))
+        });
         Self {
             folders: vec![music_dir],
             watch: true,

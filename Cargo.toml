@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/koan-cli", "crates/koan-core", "crates/koan-ffi"]
+members = ["crates/koan-cli", "crates/koan-core"]
 
 [workspace.package]
 version = "0.2.0"

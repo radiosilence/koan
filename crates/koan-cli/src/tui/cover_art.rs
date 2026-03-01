@@ -186,11 +186,20 @@ fn pre_render(img: &DynamicImage, width: u16, height: u16, center: bool) -> Rend
 /// For repeated renders at the same size, prefer `CoverArtCache::render_to()`.
 pub struct CoverArt<'a> {
     image: &'a DynamicImage,
+    center: bool,
 }
 
 impl<'a> CoverArt<'a> {
     pub fn new(image: &'a DynamicImage) -> Self {
-        Self { image }
+        Self {
+            image,
+            center: false,
+        }
+    }
+
+    pub fn centered(mut self) -> Self {
+        self.center = true;
+        self
     }
 }
 
@@ -199,7 +208,7 @@ impl Widget for CoverArt<'_> {
         if area.width == 0 || area.height == 0 {
             return;
         }
-        let rendered = pre_render(self.image, area.width, area.height, true);
+        let rendered = pre_render(self.image, area.width, area.height, self.center);
         for cell in &rendered.cells {
             if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
                 area.x + cell.rx,

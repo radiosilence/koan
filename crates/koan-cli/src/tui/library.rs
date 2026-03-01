@@ -41,6 +41,8 @@ pub struct LibraryState {
     pub filter: String,
     /// Whether the filter input box is focused (typing mode).
     pub filter_active: bool,
+    /// Cached unfiltered artist list — avoids re-querying DB on every filter keystroke.
+    all_artists: Vec<LibraryNode>,
 }
 
 impl LibraryState {
@@ -52,6 +54,7 @@ impl LibraryState {
             db_path: db_path.to_path_buf(),
             filter: String::new(),
             filter_active: false,
+            all_artists: Vec::new(),
         };
         state.load_artists();
         state
@@ -64,7 +67,7 @@ impl LibraryState {
     fn load_artists(&mut self) {
         let Some(db) = self.open_db() else { return };
         let artists = queries::all_artists(&db.conn).unwrap_or_default();
-        self.nodes = artists
+        self.all_artists = artists
             .into_iter()
             .map(|a| LibraryNode::Artist {
                 id: a.id,
@@ -72,32 +75,23 @@ impl LibraryState {
                 expanded: false,
             })
             .collect();
+        self.nodes = self.all_artists.clone();
     }
 
-    /// Reload artist list applying the current filter (case-insensitive substring).
+    /// Filter the cached artist list (case-insensitive substring). No DB query.
     pub fn apply_filter(&mut self) {
-        let Some(db) = self.open_db() else { return };
-        let artists = queries::all_artists(&db.conn).unwrap_or_default();
-
         if self.filter.is_empty() {
-            self.nodes = artists
-                .into_iter()
-                .map(|a| LibraryNode::Artist {
-                    id: a.id,
-                    name: a.name,
-                    expanded: false,
-                })
-                .collect();
+            self.nodes = self.all_artists.clone();
         } else {
             let query = self.filter.to_lowercase();
-            self.nodes = artists
-                .into_iter()
-                .filter(|a| a.name.to_lowercase().contains(&query))
-                .map(|a| LibraryNode::Artist {
-                    id: a.id,
-                    name: a.name,
-                    expanded: false,
+            self.nodes = self
+                .all_artists
+                .iter()
+                .filter(|node| match node {
+                    LibraryNode::Artist { name, .. } => name.to_lowercase().contains(&query),
+                    _ => false,
                 })
+                .cloned()
                 .collect();
         }
 

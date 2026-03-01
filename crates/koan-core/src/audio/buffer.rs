@@ -152,16 +152,15 @@ impl PlaybackTimeline {
             return None;
         }
 
-        // Find which track the playback head is in.
-        // Walk boundaries to find the last one whose offset <= played.
-        let mut current = &bounds[0];
-        for b in bounds.iter() {
-            if b.sample_offset <= played {
-                current = b;
-            } else {
-                break;
-            }
-        }
+        // Find which track the playback head is in via binary search.
+        // partition_point returns first index where offset > played;
+        // the track we want is one before that.
+        let idx = bounds.partition_point(|b| b.sample_offset <= played);
+        let current = if idx > 0 {
+            &bounds[idx - 1]
+        } else {
+            return None;
+        };
 
         let ch = current.info.channels as u64;
         let rate = current.info.sample_rate as u64;

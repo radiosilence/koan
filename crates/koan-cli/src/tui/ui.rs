@@ -14,7 +14,7 @@ use super::transport::TransportBar;
 
 /// Height of the transport bar without album art.
 const TRANSPORT_HEIGHT_DEFAULT: u16 = 3;
-/// Desired art width in columns. Art is square-ish so height ≈ width/2 cells.
+/// Desired art width in columns. Art is square-ish so height ~ width/2 cells.
 const ART_WIDTH: u16 = 24;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
@@ -24,16 +24,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let area = frame.area();
 
-    let has_art = app.now_playing_art.cached().is_some();
+    let has_art = app.art.now_playing_art.cached().is_some();
     // Derive height from actual image aspect ratio at desired width.
     // Always reserve art-sized space once we've had art, so the UI
     // doesn't jump when switching between tracks with/without art.
-    let art_h = app.now_playing_art.cell_height_for_width(ART_WIDTH);
+    let art_h = app.art.now_playing_art.cell_height_for_width(ART_WIDTH);
     if art_h > 0 {
-        app.last_art_height = art_h;
+        app.art.last_art_height = art_h;
     }
-    let transport_height = if app.last_art_height > 0 {
-        app.last_art_height.max(TRANSPORT_HEIGHT_DEFAULT)
+    let transport_height = if app.art.last_art_height > 0 {
+        app.art.last_art_height.max(TRANSPORT_HEIGHT_DEFAULT)
     } else {
         TRANSPORT_HEIGHT_DEFAULT
     };
@@ -47,99 +47,62 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     .split(area);
 
     // Store areas for mouse interaction.
-    app.transport_area = chunks[0];
+    app.layout.transport_area = chunks[0];
 
     // Transport — with optional album art on the left.
     let track_info = app.state.track_info();
 
     // Find the currently playing QueueEntry for rich metadata.
     let playing_entry = app
+        .queue
         .vq_cache
         .entries
         .iter()
         .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
         .cloned();
 
-    if has_art {
-        let art_area = Rect::new(chunks[0].x, chunks[0].y, ART_WIDTH, transport_height);
-
+    // Determine art area and text area based on art presence.
+    let reserve_art_space = has_art || app.art.last_art_height > 0;
+    let text_area = if reserve_art_space {
         // Bottom-align the transport text (3 lines) within the full height.
         let text_height = 3u16.min(transport_height);
         let text_y = chunks[0].y + transport_height - text_height;
-        let text_area = Rect::new(
+        Rect::new(
             chunks[0].x + ART_WIDTH + 1,
             text_y,
             chunks[0].width.saturating_sub(ART_WIDTH + 1),
             text_height,
-        );
-
-        // Store areas for click interaction.
-        app.now_playing_art_area = art_area;
-        app.transport_text_area = text_area;
-
-        app.now_playing_art.render_to(art_area, frame.buffer_mut());
-
-        let pos_ms = app.state.position_ms();
-        let dur_ms = track_info.as_ref().map_or(0, |t| t.duration_ms);
-        let (bs, bw) = TransportBar::bar_metrics(text_area, pos_ms, dur_ms);
-        app.seek_bar_start = bs;
-        app.seek_bar_width = bw;
-
-        let transport = TransportBar::new(
-            track_info.as_ref(),
-            playing_entry.as_ref(),
-            app.state.playback_state(),
-            pos_ms,
-            &app.theme,
-        );
-        frame.render_widget(transport, text_area);
-    } else if app.last_art_height > 0 {
-        // No art but we've had art before — keep the same layout so UI doesn't jump.
-        app.now_playing_art_area = Rect::default();
-        let text_height = 3u16.min(transport_height);
-        let text_y = chunks[0].y + transport_height - text_height;
-        let text_area = Rect::new(
-            chunks[0].x + ART_WIDTH + 1,
-            text_y,
-            chunks[0].width.saturating_sub(ART_WIDTH + 1),
-            text_height,
-        );
-        app.transport_text_area = text_area;
-
-        let pos_ms = app.state.position_ms();
-        let dur_ms = track_info.as_ref().map_or(0, |t| t.duration_ms);
-        let (bs, bw) = TransportBar::bar_metrics(text_area, pos_ms, dur_ms);
-        app.seek_bar_start = bs;
-        app.seek_bar_width = bw;
-
-        let transport = TransportBar::new(
-            track_info.as_ref(),
-            playing_entry.as_ref(),
-            app.state.playback_state(),
-            pos_ms,
-            &app.theme,
-        );
-        frame.render_widget(transport, text_area);
+        )
     } else {
-        // Never had art — compact layout.
-        app.now_playing_art_area = Rect::default();
-        app.transport_text_area = chunks[0];
+        chunks[0]
+    };
 
-        let pos_ms = app.state.position_ms();
-        let dur_ms = track_info.as_ref().map_or(0, |t| t.duration_ms);
-        let (bs, bw) = TransportBar::bar_metrics(chunks[0], pos_ms, dur_ms);
-        app.seek_bar_start = bs;
-        app.seek_bar_width = bw;
-
-        let transport = TransportBar::new(
-            track_info.as_ref(),
-            playing_entry.as_ref(),
-            app.state.playback_state(),
-            pos_ms,
-            &app.theme,
-        );
-        frame.render_widget(transport, chunks[0]);
+    if has_art {
+        let art_area = Rect::new(chunks[0].x, chunks[0].y, ART_WIDTH, transport_height);
+        app.layout.now_playing_art_area = art_area;
+        app.art
+            .now_playing_art
+            .render_to(art_area, frame.buffer_mut());
+    } else {
+        app.layout.now_playing_art_area = Rect::default();
     }
+    app.layout.transport_text_area = text_area;
+
+    // Seek bar metrics + transport widget — rendered once.
+    let pos_ms = app.state.position_ms();
+    let dur_ms = track_info.as_ref().map_or(0, |t| t.duration_ms);
+    let (bs, bw) = TransportBar::bar_metrics(text_area, pos_ms, dur_ms);
+    app.layout.seek_bar_start = bs;
+    app.layout.seek_bar_width = bw;
+
+    let transport = TransportBar::new(
+        track_info.as_ref(),
+        playing_entry.as_ref(),
+        app.state.playback_state(),
+        pos_ms,
+        &app.theme,
+    );
+    frame.render_widget(transport, text_area);
 
     // Content area: library + queue side-by-side, or just queue.
     let content_area = chunks[1];
@@ -152,8 +115,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         ])
         .split(content_area);
 
-        app.library_area = panes[0];
-        app.queue_area = panes[1];
+        app.layout.library_area = panes[0];
+        app.layout.queue_area = panes[1];
 
         // Library pane.
         if let Some(ref mut lib) = app.library {
@@ -167,7 +130,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         // Queue pane.
         render_queue(frame, app, panes[1]);
     } else {
-        app.queue_area = content_area;
+        app.layout.queue_area = content_area;
         render_queue(frame, app, content_area);
     }
 
@@ -179,44 +142,45 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if let Mode::Picker(_) = &app.mode
         && let Some(ref picker) = app.picker
     {
-        app.picker_area = picker_popup_rect(area);
+        app.layout.picker_area = picker_popup_rect(area);
         let overlay = PickerOverlay::new(picker, &app.theme);
         frame.render_widget(overlay, area);
     }
 
     // Track info overlay.
-    if let Mode::TrackInfo(idx) = app.mode {
-        let visible = app.visible_queue();
-        if let Some(entry) = visible.get(idx) {
-            let current_track_info = app.state.track_info();
-            let is_playing = entry.status == koan_core::player::state::QueueEntryStatus::Playing;
-            let ti_ref = if is_playing {
-                current_track_info.as_ref()
-            } else {
-                None
-            };
+    if let Mode::TrackInfo(idx) = app.mode
+        && let Some(entry) = app.queue.vq_cache.entries.get(idx).cloned()
+    {
+        let current_track_info = app.state.track_info();
+        let is_playing = entry.status == koan_core::player::state::QueueEntryStatus::Playing;
+        let ti_ref = if is_playing {
+            current_track_info.as_ref()
+        } else {
+            None
+        };
 
-            // Calculate popup rect for mouse hit-testing.
-            let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
-            let popup_height = (area.height as f32 * 0.7).max(14.0).min(area.height as f32) as u16;
-            let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
-            let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
-            app.track_info_area = Rect::new(x, y, popup_width, popup_height);
+        // Calculate popup rect for mouse hit-testing.
+        let popup_width = (area.width as f32 * 0.7).max(40.0).min(area.width as f32) as u16;
+        let popup_height = (area.height as f32 * 0.7).max(14.0).min(area.height as f32) as u16;
+        let x = area.x + (area.width.saturating_sub(popup_width)) / 2;
+        let y = area.y + (area.height.saturating_sub(popup_height)) / 2;
+        app.layout.track_info_area = Rect::new(x, y, popup_width, popup_height);
 
-            let overlay = TrackInfoOverlay::new(entry, ti_ref, app.cover_art.cached(), &app.theme);
-            frame.render_widget(overlay, area);
-        }
+        let overlay = TrackInfoOverlay::new(&entry, ti_ref, app.art.cover_art.cached(), &app.theme);
+        frame.render_widget(overlay, area);
     }
 
     // Cover art zoom overlay — fullscreen, 1:1 aspect ratio.
     if app.mode == Mode::CoverArtZoom
-        && let Some(img) = app.now_playing_art.cached()
+        && let Some(img) = app.art.now_playing_art.cached()
     {
         Clear.render(area, frame.buffer_mut());
 
         // Use the full area minus 1 row for hint.
         let art_area = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
-        CoverArt::new(img).render(art_area, frame.buffer_mut());
+        CoverArt::new(img)
+            .centered()
+            .render(art_area, frame.buffer_mut());
 
         // Hint at bottom.
         let hint_area = Rect::new(
@@ -258,21 +222,21 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 }
 
 fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
-    let visible = app.visible_queue();
-
-    // Clamp cursor.
-    if !visible.is_empty() && app.queue_cursor >= visible.len() {
-        app.queue_cursor = visible.len() - 1;
+    // Clamp cursor before borrowing visible queue.
+    let vq_len = app.queue.vq_cache.entries.len();
+    if vq_len > 0 && app.queue.cursor >= vq_len {
+        app.queue.cursor = vq_len - 1;
     }
 
+    let visible = app.visible_queue();
     let drag_target = app.drag_target_index();
     let queue_view = QueueView::new(
         &visible,
         &app.mode,
-        app.queue_cursor,
-        app.queue_scroll_offset,
+        app.queue.cursor,
+        app.queue.scroll_offset,
         &app.theme,
-        &app.selected_indices,
+        &app.queue.selected_indices,
         app.spinner_tick,
     )
     .with_drag_target(drag_target);
