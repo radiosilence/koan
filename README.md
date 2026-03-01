@@ -4,6 +4,79 @@ A music player for people who give a shit about audio quality.
 
 Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library indexing, Subsonic/Navidrome integration, fb2k-style format strings. No Electron. No subscriptions. No bullshit.
 
+## Getting started
+
+### Install
+
+```bash
+cargo install --path crates/koan-cli
+```
+
+Requires macOS (CoreAudio). That's it — single binary, no runtime dependencies.
+
+### First run
+
+```bash
+# Create config directory with sensible defaults
+koan init
+
+# Point it at your music
+koan scan /path/to/music
+```
+
+kōan indexes your library in parallel — metadata extraction is fast even for large collections. The database lives at `~/.config/koan/` and auto-updates when files change (FSEvents file watcher, debounced).
+
+### Play something
+
+```bash
+# Just open the TUI — browse your library, pick tracks, build a queue
+koan
+
+# Or play files/directories directly
+koan play ~/Music/Aphex\ Twin/
+koan play ~/Music/album/*.flac
+
+# Fuzzy search your library
+koan pick "boards of canada"
+koan pick --album "geogaddi"
+koan pick --artist "autechre"
+```
+
+The TUI launches immediately — no waiting. If tracks need downloading (remote library) or scanning, they appear in the queue with animated spinners while loading in the background.
+
+### The TUI
+
+kōan is built around a full-screen terminal interface. The transport bar shows what's playing with album art (halfblock rendering), the queue groups tracks by album, and a hint bar at the bottom shows available keys for the current mode.
+
+**The basics:** `space` to pause, `<`/`>` to skip tracks, `,`/`.` or arrow keys to seek. `p` opens a fuzzy track picker, `a` for albums, `r` for artists. `l` opens the library browser for tree-style browsing. `i` shows track info with cover art. `q` to quit.
+
+**Building a queue:** Use the pickers (`p`/`a`/`r`) or library browser (`l`) to find music. `Enter` appends to the queue, `Ctrl+Enter` appends and starts playing, `Ctrl+R` replaces the entire queue. You can also drag files from Finder straight into the terminal.
+
+**Editing the queue:** Press `e` to enter edit mode. Select tracks with shift-arrows or ctrl-click, `d` to delete, `j`/`k` to reorder. `Ctrl+Z` undoes any queue change, `Ctrl+Y` or `Ctrl+Shift+Z` to redo. Everything is mouse-friendly too — click, drag, scroll wheel all work.
+
+**Your DAC matters:** kōan sends bit-perfect audio to CoreAudio with automatic sample rate switching. No resampling, no mixing — the bits that left the encoder are the bits that hit your DAC. Run `koan devices` to see your audio outputs.
+
+### Remote music (Navidrome/Subsonic)
+
+If you run a Navidrome or Subsonic server, kōan can sync and stream from it:
+
+```bash
+koan remote login https://music.example.com admin
+koan remote sync
+```
+
+Remote and local tracks merge into one library. Local files always win for playback. Remote tracks download on first play and cache locally in a structured directory.
+
+### Configuration
+
+```bash
+koan config  # show resolved config from both layers
+```
+
+Two-layer config at `~/.config/koan/` — `config.toml` for defaults you'd commit to dotfiles, `config.local.toml` for machine-specific paths and credentials (gitignored). See the [Configuration](#configuration-1) section below for details.
+
+---
+
 ## What works
 
 - **Bit-perfect playback** — CoreAudio AUHAL, no resampling, automatic device sample rate switching
@@ -34,15 +107,6 @@ Two crates:
 
 - `koan-core` — audio engine, player, database, indexer, format strings, file organization, remote client
 - `koan-cli` — `koan` binary (Ratatui TUI)
-
-## Install
-
-```bash
-cargo build --release
-cargo install --path crates/koan-cli
-```
-
-Requires macOS (CoreAudio).
 
 ## Shell completions
 
