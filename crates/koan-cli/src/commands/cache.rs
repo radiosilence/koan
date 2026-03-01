@@ -1,7 +1,7 @@
 use koan_core::config;
 use owo_colors::OwoColorize;
 
-use super::{format_bytes, open_db};
+use super::{confirm, format_bytes, open_db};
 
 pub fn cmd_cache_status() {
     let cfg = config::Config::load().unwrap_or_default();
@@ -40,7 +40,7 @@ pub fn cmd_cache_status() {
     );
 }
 
-pub fn cmd_cache_clear() {
+pub fn cmd_cache_clear(skip_confirm: bool) {
     let cfg = config::Config::load().unwrap_or_default();
     let cache_dir = cfg.cache_dir();
 
@@ -65,6 +65,20 @@ pub fn cmd_cache_clear() {
 
     if file_count == 0 {
         println!("{}", "cache already empty".dimmed());
+        return;
+    }
+
+    // Show what will be deleted and confirm.
+    println!(
+        "{} {} ({} files) at {}",
+        "will delete:".yellow().bold(),
+        format_bytes(total_bytes).bold(),
+        file_count,
+        cache_dir.display().to_string().dimmed(),
+    );
+
+    if !skip_confirm && !confirm("proceed?") {
+        println!("{}", "aborted".dimmed());
         return;
     }
 

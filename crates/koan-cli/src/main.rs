@@ -168,7 +168,7 @@ enum Commands {
     Cache(CacheCommands),
     /// Organize/rename library files using format strings
     Organize {
-        /// Format string pattern for the new path (e.g. '%album artist%/(%date%) %album%/%tracknumber%. %title%')
+        /// Format string pattern or named pattern from config (e.g. 'standard' or '%album artist%/...')
         #[arg(long)]
         pattern: Option<String>,
         /// Base directory (defaults to first library folder)
@@ -180,6 +180,12 @@ enum Commands {
         /// Undo the most recent organize operation
         #[arg(long)]
         undo: bool,
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+        /// List configured named patterns
+        #[arg(long)]
+        list: bool,
     },
     /// Generate shell completions (legacy static)
     Completions {
@@ -208,7 +214,11 @@ enum CacheCommands {
     /// Show cache size and location
     Status,
     /// Clear all cached downloads
-    Clear,
+    Clear {
+        /// Skip confirmation prompt
+        #[arg(long, short = 'y')]
+        yes: bool,
+    },
 }
 
 fn main() {
@@ -255,14 +265,23 @@ fn main() {
         Some(Commands::Init) => commands::cmd_init(),
         Some(Commands::Cache(sub)) => match sub {
             CacheCommands::Status => commands::cmd_cache_status(),
-            CacheCommands::Clear => commands::cmd_cache_clear(),
+            CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
         },
         Some(Commands::Organize {
             pattern,
             base_dir,
             execute,
             undo,
-        }) => commands::cmd_organize(pattern.as_deref(), base_dir.as_deref(), execute, undo),
+            yes,
+            list,
+        }) => commands::cmd_organize(
+            pattern.as_deref(),
+            base_dir.as_deref(),
+            execute,
+            undo,
+            yes,
+            list,
+        ),
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }

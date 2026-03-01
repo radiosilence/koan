@@ -100,8 +100,11 @@ koan library
 
 # organize files using format strings
 koan organize --pattern '%album artist%/(%date%) %album%/%tracknumber%. %title%'
+koan organize --pattern standard          # use named pattern from config
+koan organize                             # use default pattern from config
 koan organize --pattern '...' --execute   # actually move (default is dry-run)
 koan organize --undo                      # revert last organize
+koan organize --list                      # show configured patterns
 
 # remote server
 koan remote login https://music.example.com admin
@@ -175,7 +178,7 @@ Tracks are grouped by album with headers showing album artist, year, album title
 
 ### File organization
 
-Rename and reorganize your music library using fb2k-compatible format strings. Default is dry-run (preview), add `--execute` to apply. Undo with `--undo`.
+Rename and reorganize your music library using fb2k-compatible format strings. Default is dry-run (preview), add `--execute` to apply. Undo with `--undo`. See [docs/format-strings.md](docs/format-strings.md) for the full syntax reference, all available fields/functions, and examples.
 
 ```bash
 # preview
@@ -214,6 +217,13 @@ watch = true
 exclusive_mode = false
 software_volume = false
 replaygain = "album"  # off | track | album
+
+[organize]
+default = "standard"
+
+[organize.patterns]
+standard = "%album artist%/(%date%) %album%/%tracknumber%. %title%"
+va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$left(%date%,4)')' ])%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%"
 ```
 
 `~/.config/koan/config.local.toml` (gitignored)

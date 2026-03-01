@@ -190,6 +190,14 @@ mod tests {
     }
 
     #[test]
+    fn field_with_spaces() {
+        assert_eq!(
+            parse("%album artist%").unwrap(),
+            vec![Token::Field("album artist".into())]
+        );
+    }
+
+    #[test]
     fn literal_and_field() {
         assert_eq!(
             parse("Track: %title%").unwrap(),
@@ -253,6 +261,121 @@ mod tests {
     }
 
     #[test]
+    fn quoted_brackets() {
+        // '[' should be a literal bracket, not start a conditional
+        let result = parse("'['%codec%']'").unwrap();
+        assert_eq!(
+            result,
+            vec![
+                Token::Literal("[".into()),
+                Token::Field("codec".into()),
+                Token::Literal("]".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn quoted_parens_in_conditional() {
+        // ['(' ... ')' ] — quoted parens inside a conditional
+        let result = parse("['('%date%')' ]").unwrap();
+        assert_eq!(
+            result,
+            vec![Token::Conditional(vec![
+                Token::Literal("(".into()),
+                Token::Field("date".into()),
+                Token::Literal(")".into()),
+                Token::Literal(" ".into()),
+            ])]
+        );
+    }
+
+    #[test]
+    fn empty_function_arg() {
+        // $if(x,,y) — the middle arg is empty
+        let result = parse("$if(x,,y)").unwrap();
+        assert_eq!(
+            result,
+            vec![Token::Function {
+                name: "if".into(),
+                args: vec![
+                    vec![Token::Literal("x".into())],
+                    vec![], // empty arg between commas
+                    vec![Token::Literal("y".into())],
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn nested_function_calls() {
+        let result = parse("$upper($left(%artist%,3))").unwrap();
+        assert_eq!(
+            result,
+            vec![Token::Function {
+                name: "upper".into(),
+                args: vec![vec![Token::Function {
+                    name: "left".into(),
+                    args: vec![
+                        vec![Token::Field("artist".into())],
+                        vec![Token::Literal("3".into())],
+                    ],
+                }]],
+            }]
+        );
+    }
+
+    #[test]
+    fn stricmp_in_if_pattern() {
+        // The exact structure from pattern 1: $if($stricmp(%album artist%,Various Artists),,else)
+        let result = parse("$if($stricmp(%album artist%,Various Artists),,fallback)").unwrap();
+        match &result[0] {
+            Token::Function { name, args } => {
+                assert_eq!(name, "if");
+                assert_eq!(args.len(), 3);
+                // arg 0: $stricmp(...)
+                assert!(matches!(&args[0][0], Token::Function { name, .. } if name == "stricmp"));
+                // arg 1: empty
+                assert!(args[1].is_empty());
+                // arg 2: literal
+                assert_eq!(args[2], vec![Token::Literal("fallback".into())]);
+            }
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn conditional_with_function_inside() {
+        // [$num(%discnumber%,2)] — function inside conditional
+        let result = parse("[$num(%discnumber%,2)]").unwrap();
+        assert_eq!(
+            result,
+            vec![Token::Conditional(vec![Token::Function {
+                name: "num".into(),
+                args: vec![
+                    vec![Token::Field("discnumber".into())],
+                    vec![Token::Literal("2".into())],
+                ],
+            }])]
+        );
+    }
+
+    #[test]
+    fn multiple_adjacent_conditionals() {
+        let result = parse("[%disc%][%track%. ]%title%").unwrap();
+        assert_eq!(
+            result,
+            vec![
+                Token::Conditional(vec![Token::Field("disc".into())]),
+                Token::Conditional(vec![
+                    Token::Field("track".into()),
+                    Token::Literal(". ".into()),
+                ]),
+                Token::Field("title".into()),
+            ]
+        );
+    }
+
+    #[test]
     fn unclosed_field() {
         assert!(matches!(
             parse("%title"),
@@ -298,5 +421,25 @@ mod tests {
                 ]),
             ])]
         );
+    }
+
+    #[test]
+    fn empty_field_name() {
+        // %% — empty field name
+        assert_eq!(parse("%%").unwrap(), vec![Token::Field("".into())]);
+    }
+
+    #[test]
+    fn pattern1_parses_successfully() {
+        // Full pattern 1 must parse without error
+        let pat = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$left(%date%,4)')' ])%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%";
+        assert!(parse(pat).is_ok());
+    }
+
+    #[test]
+    fn pattern2_parses_successfully() {
+        // Full pattern 2 must parse without error
+        let pat = "$if2(%label%,%album artist%)/%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%";
+        assert!(parse(pat).is_ok());
     }
 }

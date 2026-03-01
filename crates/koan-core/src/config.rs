@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -20,6 +21,7 @@ pub struct Config {
     pub library: LibraryConfig,
     pub playback: PlaybackConfig,
     pub remote: RemoteConfig,
+    pub organize: OrganizeConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -100,6 +102,36 @@ impl Default for RemoteConfig {
     }
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OrganizeConfig {
+    /// Default named pattern to use when --pattern is omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<String>,
+    /// Named patterns — keys are names, values are format strings.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub patterns: HashMap<String, String>,
+}
+
+impl OrganizeConfig {
+    /// Resolve a pattern argument: if it matches a named pattern, return the stored
+    /// format string. Otherwise return it as-is (raw format string).
+    pub fn resolve_pattern<'a>(&'a self, name_or_raw: &'a str) -> &'a str {
+        self.patterns
+            .get(name_or_raw)
+            .map(|s| s.as_str())
+            .unwrap_or(name_or_raw)
+    }
+
+    /// Get the default pattern's format string, if configured.
+    pub fn default_pattern(&self) -> Option<&str> {
+        self.default
+            .as_ref()
+            .and_then(|name| self.patterns.get(name))
+            .map(|s| s.as_str())
+    }
+}
+
 impl Config {
     /// Load config.toml then overlay config.local.toml on top.
     /// Local overrides win — use it for machine-specific paths, credentials, etc.
@@ -176,6 +208,13 @@ impl Config {
         }
         if other.remote.cache_dir.is_some() {
             self.remote.cache_dir = other.remote.cache_dir;
+        }
+        // Organize: merge patterns (local additions/overrides win), override default.
+        for (k, v) in other.organize.patterns {
+            self.organize.patterns.insert(k, v);
+        }
+        if other.organize.default.is_some() {
+            self.organize.default = other.organize.default;
         }
     }
 
@@ -331,5 +370,109 @@ replaygain = "track"
         let mut cfg = Config::default();
         cfg.remote.cache_dir = Some(PathBuf::from("/custom/cache"));
         assert_eq!(cfg.cache_dir(), PathBuf::from("/custom/cache"));
+    }
+
+    #[test]
+    fn test_organize_config_defaults() {
+        let cfg = Config::default();
+        assert!(cfg.organize.default.is_none());
+        assert!(cfg.organize.patterns.is_empty());
+    }
+
+    #[test]
+    fn test_organize_config_from_toml() {
+        let dir = tmp_dir();
+        let path = dir.join("organize.toml");
+        fs::write(
+            &path,
+            r#"
+[organize]
+default = "standard"
+
+[organize.patterns]
+standard = "%album artist%/(%date%) %album%/%tracknumber%. %title%"
+va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,%album%)"
+"#,
+        )
+        .unwrap();
+
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(cfg.organize.default.as_deref(), Some("standard"));
+        assert_eq!(cfg.organize.patterns.len(), 2);
+        assert!(cfg.organize.patterns.contains_key("standard"));
+        assert!(cfg.organize.patterns.contains_key("va-aware"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn test_organize_resolve_named_pattern() {
+        let mut cfg = OrganizeConfig::default();
+        cfg.patterns
+            .insert("standard".into(), "%artist%/%title%".into());
+
+        assert_eq!(cfg.resolve_pattern("standard"), "%artist%/%title%");
+        // Unknown name falls through as raw pattern
+        assert_eq!(cfg.resolve_pattern("%raw%pattern%"), "%raw%pattern%");
+    }
+
+    #[test]
+    fn test_organize_default_pattern() {
+        let mut cfg = OrganizeConfig::default();
+        cfg.default = Some("standard".into());
+        cfg.patterns
+            .insert("standard".into(), "%artist%/%title%".into());
+
+        assert_eq!(cfg.default_pattern(), Some("%artist%/%title%"));
+    }
+
+    #[test]
+    fn test_organize_default_pattern_missing_name() {
+        let mut cfg = OrganizeConfig::default();
+        cfg.default = Some("nonexistent".into());
+        // Name doesn't match any pattern → None
+        assert_eq!(cfg.default_pattern(), None);
+    }
+
+    #[test]
+    fn test_merge_organize_patterns() {
+        let mut base = Config::default();
+        base.organize.default = Some("standard".into());
+        base.organize
+            .patterns
+            .insert("standard".into(), "base-pattern".into());
+
+        let mut local = Config::default();
+        local
+            .organize
+            .patterns
+            .insert("custom".into(), "local-pattern".into());
+        local.organize.default = Some("custom".into());
+
+        base.merge(local);
+
+        // Local default wins
+        assert_eq!(base.organize.default.as_deref(), Some("custom"));
+        // Both patterns present (base + local)
+        assert_eq!(base.organize.patterns.len(), 2);
+        assert_eq!(base.organize.patterns["standard"], "base-pattern");
+        assert_eq!(base.organize.patterns["custom"], "local-pattern");
+    }
+
+    #[test]
+    fn test_organize_config_roundtrip() {
+        let mut cfg = Config::default();
+        cfg.organize.default = Some("standard".into());
+        cfg.organize
+            .patterns
+            .insert("standard".into(), "%artist%/%title%".into());
+
+        let serialized = toml::to_string_pretty(&cfg).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.organize.default.as_deref(), Some("standard"));
+        assert_eq!(
+            deserialized.organize.patterns["standard"],
+            "%artist%/%title%"
+        );
     }
 }
