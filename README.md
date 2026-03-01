@@ -16,7 +16,7 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 - **Subsonic/Navidrome** — parallel remote library sync, unified local+remote browsing, lazy parallel downloads
 - **Format string engine** — fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for library views and file organization
 - **File organization** — `koan organize` CLI or in-TUI organize modal (select tracks → context menu → pattern picker → preview → execute). Format strings, dry-run preview, undo
-- **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag. Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward). Drag/drop files from Finder into the terminal to add them to the queue
+- **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag, undo/redo (Ctrl+Z/Y, 100-deep stack covering all playlist operations). Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward). Drag/drop files from Finder into the terminal to add them to the queue
 - **Track deduplication** — local+remote tracks merged into single rows, local path always wins for playback
 - **Proper artist handling** — track artist stored separately from album artist; compilations/VA albums display correctly
 
@@ -137,6 +137,7 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `r`     | pick artist            |
 | `i`     | track info             |
 | `z`     | zoom album art         |
+| `Ctrl+Z` | undo last queue change |
 | `l`     | library browser        |
 | `f`     | filter library (in library mode) |
 | `e`     | edit queue             |
@@ -166,6 +167,7 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `Shift+↑` `↓` | extend selection         |
 | `d`           | remove selected track(s) |
 | `j` / `k`     | move selected down/up    |
+| `Ctrl+Z` / `Ctrl+Y` | undo / redo      |
 | `Space`        | context menu (organize)  |
 | `g`           | jump to start            |
 | `G`           | jump to end (shift-extends) |
