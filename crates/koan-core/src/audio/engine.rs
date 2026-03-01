@@ -2,7 +2,7 @@ use std::mem;
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use coreaudio_sys::*;
 use thiserror::Error;
@@ -33,6 +33,9 @@ fn check(status: OSStatus) -> Result<()> {
 struct CallbackData {
     consumer: rtrb::Consumer<f32>,
     running: Arc<AtomicBool>,
+    /// Cumulative samples played — incremented by the render callback,
+    /// read by the UI to derive current track + position.
+    samples_played: Arc<AtomicU64>,
 }
 
 // rtrb::Consumer isn't Send by default but it's safe for our single-consumer pattern.
@@ -58,6 +61,7 @@ impl AudioEngine {
         sample_rate: f64,
         channels: u32,
         consumer: rtrb::Consumer<f32>,
+        samples_played: Arc<AtomicU64>,
     ) -> Result<Self> {
         let running = Arc::new(AtomicBool::new(false));
 
@@ -119,6 +123,7 @@ impl AudioEngine {
         let callback_data = Box::into_raw(Box::new(CallbackData {
             consumer,
             running: running.clone(),
+            samples_played,
         }));
 
         let render_cb = AURenderCallbackStruct {
@@ -218,6 +223,8 @@ unsafe extern "C" fn render_callback(
             }
         }
         chunk.commit_all();
+        data.samples_played
+            .fetch_add(to_read as u64, Ordering::Relaxed);
     }
 
     // Zero remaining frames on underrun — silence > glitches.

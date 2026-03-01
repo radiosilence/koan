@@ -1,5 +1,7 @@
 use ratatui::style::{Color, Modifier, Style};
 
+use super::picker::PickerPartKind;
+
 pub struct Theme {
     pub warning: Color,
     pub album_header_artist: Style,
@@ -23,6 +25,22 @@ pub struct Theme {
     pub library_album: Style,
     pub library_track: Style,
     pub library_cursor: Style,
+}
+
+impl Theme {
+    pub fn picker_part_style(&self, kind: PickerPartKind) -> Style {
+        match kind {
+            PickerPartKind::Artist => Style::new().fg(Color::Cyan),
+            PickerPartKind::Album => Style::new().fg(Color::Green),
+            PickerPartKind::Title => Style::new(),
+            PickerPartKind::Date => Style::new().fg(Color::Yellow),
+            PickerPartKind::TrackNum => Style::new().fg(Color::DarkGray),
+            PickerPartKind::Duration => Style::new().fg(Color::DarkGray),
+            PickerPartKind::Separator => Style::new().fg(Color::DarkGray),
+            PickerPartKind::Codec => Style::new().fg(Color::DarkGray),
+            PickerPartKind::Plain => Style::new(),
+        }
+    }
 }
 
 impl Default for Theme {

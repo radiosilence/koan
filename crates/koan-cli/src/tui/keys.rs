@@ -25,6 +25,7 @@ impl Widget for HintBar<'_> {
                 ("space", "pause"),
                 ("<>", "skip"),
                 (",.", "seek"),
+                ("/", "search"),
                 ("p", "track"),
                 ("a", "album"),
                 ("r", "artist"),

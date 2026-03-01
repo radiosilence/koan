@@ -93,7 +93,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
 use owo_colors::OwoColorize;
 
-use tui::picker::{PickerItem, PickerKind, PickerState};
+use tui::picker::{PickerItem, PickerKind, PickerPartKind, PickerState};
 
 #[derive(Parser)]
 #[command(name = "koan", about = "bit-perfect music player", version)]
@@ -350,7 +350,7 @@ fn cmd_play(
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
 
-    let (state, tx) = Player::spawn();
+    let (state, _timeline, tx) = Player::spawn();
 
     let expects_playback = track_ids.is_some() || !paths.is_empty();
 
@@ -484,7 +484,7 @@ fn run_tui(
             tui::event::Event::Tick => {
                 app.handle_tick();
 
-                // Update media keys.
+                // Update media keys + pump macOS run loop for event dispatch.
                 if let Some(ref mut mk) = media {
                     mk.update_playback(&app.state);
                     let current = app.state.track_info().map(|t| t.path.clone());
@@ -493,6 +493,7 @@ fn run_tui(
                         mk.update_metadata(&app.state);
                     }
                 }
+                media_keys::pump_run_loop();
             }
         }
 
@@ -526,6 +527,7 @@ fn run_tui(
                     id: -artist_id,
                     display: "all tracks".to_string(),
                     match_text: "all tracks".into(),
+                    parts: vec![("all tracks".into(), PickerPartKind::Plain)],
                 }];
                 items.extend(make_album_picker_items(&albums));
                 app.mode = tui::app::Mode::Picker(PickerKind::Album);
@@ -607,6 +609,8 @@ fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
             let artists = queries::all_artists(&db.conn).unwrap_or_default();
             make_artist_picker_items(&artists)
         }
+        // QueueJump items are created eagerly in app.rs, never lazy-loaded.
+        PickerKind::QueueJump => vec![],
     }
 }
 
@@ -625,10 +629,20 @@ fn make_track_picker_items(tracks: &[queries::TrackRow]) -> Vec<PickerItem> {
                 (_, Some(n)) => format!("{:02}", n),
                 _ => "  ".into(),
             };
+            let mut parts = vec![
+                (format!("{} ", track_num), PickerPartKind::TrackNum),
+                (t.artist_name.clone(), PickerPartKind::Artist),
+                (" - ".into(), PickerPartKind::Separator),
+                (t.title.clone(), PickerPartKind::Title),
+            ];
+            if !dur.is_empty() {
+                parts.push((format!(" {}", dur), PickerPartKind::Duration));
+            }
             PickerItem {
                 id: t.id,
-                display: format!("{} {} - {} {}", track_num, t.artist_name, t.title, dur,),
+                display: format!("{} {} - {} {}", track_num, t.artist_name, t.title, dur),
                 match_text: format!("{} {} {}", t.artist_name, t.album_title, t.title),
+                parts,
             }
         })
         .collect()
@@ -641,18 +655,26 @@ fn make_album_picker_items(albums: &[queries::AlbumRow]) -> Vec<PickerItem> {
             let year = a
                 .date
                 .as_deref()
-                .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
-                .map(|y| format!("({}) ", y))
-                .unwrap_or_default();
-            let codec = a
-                .codec
-                .as_deref()
-                .map(|c| format!(" [{}]", c))
-                .unwrap_or_default();
+                .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None });
+            let codec = a.codec.as_deref();
+            let mut parts = vec![
+                (a.artist_name.clone(), PickerPartKind::Artist),
+                (" - ".into(), PickerPartKind::Separator),
+            ];
+            if let Some(y) = year {
+                parts.push((format!("({}) ", y), PickerPartKind::Date));
+            }
+            parts.push((a.title.clone(), PickerPartKind::Album));
+            if let Some(c) = codec {
+                parts.push((format!(" [{}]", c), PickerPartKind::Codec));
+            }
+            let year_str = year.map(|y| format!("({}) ", y)).unwrap_or_default();
+            let codec_str = codec.map(|c| format!(" [{}]", c)).unwrap_or_default();
             PickerItem {
                 id: a.id,
-                display: format!("{} - {}{}{}", a.artist_name, year, a.title, codec,),
+                display: format!("{} - {}{}{}", a.artist_name, year_str, a.title, codec_str),
                 match_text: format!("{} {}", a.artist_name, a.title),
+                parts,
             }
         })
         .collect()
@@ -665,6 +687,7 @@ fn make_artist_picker_items(artists: &[queries::ArtistRow]) -> Vec<PickerItem> {
             id: a.id,
             display: a.name.clone(),
             match_text: a.name.clone(),
+            parts: vec![(a.name.clone(), PickerPartKind::Artist)],
         })
         .collect()
 }
@@ -1613,6 +1636,7 @@ fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
                             id: -artist_id,
                             display: "all tracks".to_string(),
                             match_text: "all tracks".into(),
+                            parts: vec![("all tracks".into(), PickerPartKind::Plain)],
                         }];
                         items.extend(make_album_picker_items(&albums));
 
@@ -1673,6 +1697,8 @@ fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
                     }
                 }
             }
+            // QueueJump is only used in the TUI playback loop, not standalone picker.
+            PickerKind::QueueJump => {}
         }
     }
 }

@@ -1,7 +1,7 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
 use symphonia::core::audio::SampleBuffer;
@@ -63,17 +63,125 @@ impl Drop for DecodeHandle {
     }
 }
 
-/// Callbacks fired by the decode thread to inform the player of state changes.
-pub struct DecodeCallbacks<F, G>
-where
-    F: Fn(u64) + Send + 'static,
-    G: Fn(QueueItemId, PathBuf, StreamInfo) + Send + 'static,
-{
-    /// Called periodically with current decode position in ms.
-    pub on_position: F,
-    /// Called when a new track starts playing (gapless transition or initial).
-    /// Receives the queue item ID, path, and stream info of the new track.
-    pub on_track_change: G,
+// --- Playback timeline: the source of truth for "what's playing" ---
+
+/// A track boundary in the playback stream. At `sample_offset` cumulative
+/// samples written to the ring buffer, this track starts.
+#[derive(Debug, Clone)]
+pub struct TrackBoundary {
+    pub id: QueueItemId,
+    pub path: PathBuf,
+    pub info: StreamInfo,
+    /// Cumulative interleaved samples written to the ring buffer when this
+    /// track's first sample was pushed. For the first track this is 0
+    /// (or seek_samples if seeking).
+    pub sample_offset: u64,
+    /// Samples of this track's audio written to ring buffer so far.
+    /// Updated as decode progresses. At EOF, equals total decoded samples.
+    pub samples_written: u64,
+    /// The seek offset in samples for this track (non-zero only if user seeked).
+    pub seek_samples: u64,
+}
+
+/// Shared timeline that the decode thread writes and the UI reads.
+/// The decode thread appends boundaries; the UI reads them + samples_played
+/// to derive current track and position.
+pub struct PlaybackTimeline {
+    boundaries: parking_lot::RwLock<Vec<TrackBoundary>>,
+    /// Total interleaved samples written to the ring buffer across all tracks.
+    samples_written: AtomicU64,
+    /// Total interleaved samples consumed (played) by the audio engine.
+    /// Written by CoreAudio render callback, read by UI.
+    pub samples_played: Arc<AtomicU64>,
+    /// Channel count — needed to convert samples → frames for position calc.
+    channels: AtomicU64,
+    /// Sample rate — needed for position calc.
+    sample_rate: AtomicU64,
+}
+
+impl PlaybackTimeline {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            boundaries: parking_lot::RwLock::new(Vec::new()),
+            samples_written: AtomicU64::new(0),
+            samples_played: Arc::new(AtomicU64::new(0)),
+            channels: AtomicU64::new(2),
+            sample_rate: AtomicU64::new(44100),
+        })
+    }
+
+    /// Called by decode thread when starting a new track.
+    fn push_boundary(&self, boundary: TrackBoundary) {
+        self.channels
+            .store(boundary.info.channels as u64, Ordering::Relaxed);
+        self.sample_rate
+            .store(boundary.info.sample_rate as u64, Ordering::Relaxed);
+        self.boundaries.write().push(boundary);
+    }
+
+    /// Called by decode thread after pushing samples.
+    fn add_written(&self, count: u64) {
+        self.samples_written.fetch_add(count, Ordering::Relaxed);
+        // Also update the last boundary's samples_written.
+        let mut bounds = self.boundaries.write();
+        if let Some(last) = bounds.last_mut() {
+            last.samples_written += count;
+        }
+    }
+
+    /// Reset for a new playback session.
+    pub fn reset(&self) {
+        self.boundaries.write().clear();
+        self.samples_written.store(0, Ordering::Relaxed);
+        self.samples_played.store(0, Ordering::Relaxed);
+    }
+
+    /// Get a clone of the samples_played Arc for the audio engine.
+    pub fn samples_played_counter(&self) -> Arc<AtomicU64> {
+        self.samples_played.clone()
+    }
+
+    /// Derive current track info and position from the playback head.
+    /// Called by the UI on every tick.
+    /// Returns (id, path, stream_info, position_ms).
+    pub fn current_playback(&self) -> Option<(QueueItemId, PathBuf, StreamInfo, u64)> {
+        let played = self.samples_played.load(Ordering::Relaxed);
+        let bounds = self.boundaries.read();
+
+        if bounds.is_empty() {
+            return None;
+        }
+
+        // Find which track the playback head is in.
+        // Walk boundaries to find the last one whose offset <= played.
+        let mut current = &bounds[0];
+        for b in bounds.iter() {
+            if b.sample_offset <= played {
+                current = b;
+            } else {
+                break;
+            }
+        }
+
+        let ch = current.info.channels as u64;
+        let rate = current.info.sample_rate as u64;
+        if ch == 0 || rate == 0 {
+            return None;
+        }
+
+        // Position within this track: (played - track_start) converted to ms.
+        // Add seek offset since that's where playback started within the track.
+        let track_samples = played.saturating_sub(current.sample_offset);
+        let position_ms =
+            (track_samples / ch) * 1000 / rate + (current.seek_samples / ch) * 1000 / rate;
+
+        Some((
+            current.id,
+            current.path.clone(),
+            current.info.clone(),
+            position_ms,
+        ))
+    }
 }
 
 /// Probe a file and return stream info without decoding.
@@ -126,17 +234,15 @@ pub fn probe_file(path: &Path) -> Result<StreamInfo, DecodeError> {
 /// `seek_ms` — if > 0, seek to this position before decoding the first track.
 /// `next_track` — closure that returns the next (id, path) for gapless playback.
 ///                Called on EOF. Returns None when the playlist is exhausted.
-pub fn start_decode<F, G, N>(
+pub fn start_decode<N>(
     initial_id: QueueItemId,
     path: &Path,
     producer: rtrb::Producer<f32>,
     seek_ms: u64,
     next_track: N,
-    callbacks: DecodeCallbacks<F, G>,
+    timeline: Arc<PlaybackTimeline>,
 ) -> Result<(StreamInfo, DecodeHandle), DecodeError>
 where
-    F: Fn(u64) + Send + 'static,
-    G: Fn(QueueItemId, PathBuf, StreamInfo) + Send + 'static,
     N: Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static,
 {
     let info = probe_file(path)?;
@@ -154,7 +260,7 @@ where
                 &stop_clone,
                 seek_ms,
                 &next_track,
-                &callbacks,
+                &timeline,
             );
         })
         .map_err(DecodeError::Io)?;
@@ -172,30 +278,26 @@ where
 ///
 /// The key insight: the producer (ring buffer write end) stays alive across track
 /// boundaries. The AudioUnit keeps draining the consumer. Zero gap.
-fn decode_queue_loop<F, G, N>(
+fn decode_queue_loop<N>(
     initial_id: QueueItemId,
     first_path: &Path,
     mut producer: rtrb::Producer<f32>,
     stop: &AtomicBool,
     initial_seek_ms: u64,
     next_track: &N,
-    callbacks: &DecodeCallbacks<F, G>,
+    timeline: &PlaybackTimeline,
 ) where
-    F: Fn(u64) + Send,
-    G: Fn(QueueItemId, PathBuf, StreamInfo) + Send,
     N: Fn() -> Option<(QueueItemId, PathBuf)>,
 {
     // Decode the first track.
-    let result = decode_single(
+    if let Err(e) = decode_single(
         initial_id,
         first_path,
         &mut producer,
         stop,
         initial_seek_ms,
-        callbacks,
-    );
-
-    if let Err(e) = &result {
+        timeline,
+    ) {
         if !stop.load(Ordering::Relaxed) {
             log::error!("decode error on {}: {}", first_path.display(), e);
         }
@@ -211,8 +313,7 @@ fn decode_queue_loop<F, G, N>(
 
         log::info!("gapless transition → {}", next_path.display());
 
-        let result = decode_single(next_id, &next_path, &mut producer, stop, 0, callbacks);
-        if let Err(e) = &result {
+        if let Err(e) = decode_single(next_id, &next_path, &mut producer, stop, 0, timeline) {
             if !stop.load(Ordering::Relaxed) {
                 log::error!("decode error on {}: {}", next_path.display(), e);
             }
@@ -222,18 +323,14 @@ fn decode_queue_loop<F, G, N>(
 }
 
 /// Decode a single file into the producer. Returns Ok(()) on clean EOF.
-fn decode_single<F, G>(
+fn decode_single(
     queue_item_id: QueueItemId,
     path: &Path,
     producer: &mut rtrb::Producer<f32>,
     stop: &AtomicBool,
     seek_ms: u64,
-    callbacks: &DecodeCallbacks<F, G>,
-) -> Result<(), DecodeError>
-where
-    F: Fn(u64) + Send,
-    G: Fn(QueueItemId, PathBuf, StreamInfo) + Send,
-{
+    timeline: &PlaybackTimeline,
+) -> Result<(), DecodeError> {
     let file = File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
 
@@ -269,8 +366,18 @@ where
             .unwrap_or(0),
     };
 
-    // Notify player of track change.
-    (callbacks.on_track_change)(queue_item_id, path.to_path_buf(), info);
+    let seek_samples = seek_ms * sample_rate as u64 * channels as u64 / 1000;
+
+    // Record this track's boundary in the timeline.
+    let write_offset = timeline.samples_written.load(Ordering::Relaxed);
+    timeline.push_boundary(TrackBoundary {
+        id: queue_item_id,
+        path: path.to_path_buf(),
+        info,
+        sample_offset: write_offset,
+        samples_written: 0,
+        seek_samples,
+    });
 
     let mut decoder = symphonia::default::get_codecs()
         .make(&track.codec_params, &DecoderOptions::default())
@@ -293,7 +400,6 @@ where
     }
 
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
-    let mut samples_decoded: u64 = seek_ms * sample_rate as u64 * channels as u64 / 1000;
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -305,7 +411,6 @@ where
             Err(symphonia::core::errors::Error::IoError(ref e))
                 if e.kind() == std::io::ErrorKind::UnexpectedEof =>
             {
-                // EOF — this track is done. Return cleanly for gapless to pick up next.
                 return Ok(());
             }
             Err(e) => return Err(DecodeError::Decode(e.to_string())),
@@ -363,12 +468,7 @@ where
             }
         }
 
-        samples_decoded += samples.len() as u64;
-        let ch = spec.channels.count() as u64;
-        if ch > 0 {
-            let position_ms = (samples_decoded / ch) * 1000 / sample_rate as u64;
-            (callbacks.on_position)(position_ms);
-        }
+        timeline.add_written(samples.len() as u64);
     }
 }
 

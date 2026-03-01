@@ -79,11 +79,17 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
         app.now_playing_art.render_to(art_area, frame.buffer_mut());
 
+        let pos_ms = app.state.position_ms();
+        let dur_ms = track_info.as_ref().map_or(0, |t| t.duration_ms);
+        let (bs, bw) = TransportBar::bar_metrics(text_area, pos_ms, dur_ms);
+        app.seek_bar_start = bs;
+        app.seek_bar_width = bw;
+
         let transport = TransportBar::new(
             track_info.as_ref(),
             playing_entry.as_ref(),
             app.state.playback_state(),
-            app.state.position_ms(),
+            pos_ms,
             &app.theme,
         );
         frame.render_widget(transport, text_area);
@@ -99,11 +105,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             text_height,
         );
         app.transport_text_area = text_area;
+
+        let pos_ms = app.state.position_ms();
+        let dur_ms = track_info.as_ref().map_or(0, |t| t.duration_ms);
+        let (bs, bw) = TransportBar::bar_metrics(text_area, pos_ms, dur_ms);
+        app.seek_bar_start = bs;
+        app.seek_bar_width = bw;
+
         let transport = TransportBar::new(
             track_info.as_ref(),
             playing_entry.as_ref(),
             app.state.playback_state(),
-            app.state.position_ms(),
+            pos_ms,
             &app.theme,
         );
         frame.render_widget(transport, text_area);
@@ -111,11 +124,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         // Never had art — compact layout.
         app.now_playing_art_area = Rect::default();
         app.transport_text_area = chunks[0];
+
+        let pos_ms = app.state.position_ms();
+        let dur_ms = track_info.as_ref().map_or(0, |t| t.duration_ms);
+        let (bs, bw) = TransportBar::bar_metrics(chunks[0], pos_ms, dur_ms);
+        app.seek_bar_start = bs;
+        app.seek_bar_width = bw;
+
         let transport = TransportBar::new(
             track_info.as_ref(),
             playing_entry.as_ref(),
             app.state.playback_state(),
-            app.state.position_ms(),
+            pos_ms,
             &app.theme,
         );
         frame.render_widget(transport, chunks[0]);

@@ -321,7 +321,7 @@ impl SharedPlayerState {
     // --- Called from decode thread (gapless) ---
 
     /// Advance cursor to the next Ready item. Returns (id, path) if found.
-    /// Called from the decode thread on EOF for gapless transitions.
+    /// Moves the cursor. Used for explicit next-track commands.
     pub fn advance_cursor(&self) -> Option<(QueueItemId, PathBuf)> {
         let mut pl = self.playlist.write();
         let cursor_pos = match pl.cursor {
@@ -343,6 +343,27 @@ impl SharedPlayerState {
                 drop(pl);
                 self.bump_version();
                 return Some(result);
+            }
+        }
+        None
+    }
+
+    /// Peek at the next Ready item after a given item ID WITHOUT moving the cursor.
+    /// Used by the decode thread for gapless lookahead — the cursor is moved
+    /// later by update_playback_state when playback actually reaches the track.
+    pub fn peek_next_ready_after(&self, after_id: QueueItemId) -> Option<(QueueItemId, PathBuf)> {
+        let pl = self.playlist.read();
+        let pos = pl.items.iter().position(|item| item.id == after_id);
+
+        let start = match pos {
+            Some(p) => p + 1,
+            None => 0,
+        };
+
+        for i in start..pl.items.len() {
+            if matches!(pl.items[i].load_state, LoadState::Ready) {
+                let item = &pl.items[i];
+                return Some((item.id, item.path.clone()));
             }
         }
         None

@@ -8,6 +8,20 @@ use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
 
+/// Pump the macOS run loop so MPRemoteCommandCenter handlers fire.
+/// Terminal apps don't have a Cocoa event loop, so without this the
+/// media key callbacks registered by souvlaki never get dispatched.
+#[cfg(target_os = "macos")]
+pub fn pump_run_loop() {
+    use core_foundation::runloop::{CFRunLoopRunInMode, kCFRunLoopDefaultMode};
+    unsafe {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, 1);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn pump_run_loop() {}
+
 pub struct MediaKeyHandler {
     controls: MediaControls,
 }

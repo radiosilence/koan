@@ -14,7 +14,7 @@ static PLAYER: OnceLock<PlayerHandle> = OnceLock::new();
 
 fn player() -> &'static PlayerHandle {
     PLAYER.get_or_init(|| {
-        let (state, tx) = Player::spawn();
+        let (state, _timeline, tx) = Player::spawn();
         PlayerHandle { state, tx }
     })
 }

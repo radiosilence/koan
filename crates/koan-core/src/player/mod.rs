@@ -8,7 +8,7 @@ use std::thread;
 use thiserror::Error;
 
 use crate::audio::{buffer, device, engine};
-use buffer::DecodeCallbacks;
+use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
 use state::{LoadState, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
 
@@ -30,6 +30,7 @@ pub struct Player {
     shared_state: Arc<SharedPlayerState>,
     commands: CommandChannel,
     active_playback: Option<ActivePlayback>,
+    timeline: Arc<PlaybackTimeline>,
 }
 
 /// Holds the resources for an active playback session.
@@ -50,12 +51,18 @@ impl Player {
             shared_state: SharedPlayerState::new(),
             commands: CommandChannel::new(),
             active_playback: None,
+            timeline: PlaybackTimeline::new(),
         }
     }
 
     /// Get a clone of the shared state for UI/FFI reads.
     pub fn shared_state(&self) -> Arc<SharedPlayerState> {
         self.shared_state.clone()
+    }
+
+    /// Get the playback timeline for UI reads.
+    pub fn timeline(&self) -> Arc<PlaybackTimeline> {
+        self.timeline.clone()
     }
 
     /// Get a command sender for the UI/FFI layer.
@@ -141,56 +148,43 @@ impl Player {
 
         let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
 
-        let generation = self.shared_state.bump_generation();
+        let _generation = self.shared_state.bump_generation();
 
-        // Callbacks for the decode thread.
-        let pos_state = self.shared_state.clone();
-        let pos_gen = generation;
-        let track_state = self.shared_state.clone();
+        // Reset timeline for new playback session and start decode.
+        self.timeline.reset();
 
-        let callbacks = DecodeCallbacks {
-            on_position: move |pos_ms| {
-                if pos_state.generation() == pos_gen {
-                    pos_state.set_position_ms(pos_ms);
-                }
-            },
-            on_track_change: move |new_id, path, stream_info| {
-                if track_state.generation() != generation {
-                    log::info!(
-                        "ignoring stale on_track_change for {} (generation {} != {})",
-                        path.display(),
-                        generation,
-                        track_state.generation()
-                    );
-                    return;
-                }
-                // For gapless advance: update track_info to the new track.
-                // The cursor was already moved by advance_cursor().
-                log::info!("now playing: {} ({:?})", path.display(), new_id);
-                track_state.set_track_info(Some(TrackInfo {
-                    id: new_id,
-                    path,
-                    codec: stream_info.codec,
-                    sample_rate: stream_info.sample_rate,
-                    bit_depth: stream_info.bit_depth,
-                    channels: stream_info.channels,
-                    duration_ms: stream_info.duration_ms,
-                }));
-                track_state.set_position_ms(0);
-            },
+        // Gapless lookahead: the decode thread maintains its own cursor
+        // (separate from the UI cursor) so it can look ahead through the
+        // playlist without affecting what the UI shows as "now playing".
+        let advance_state = self.shared_state.clone();
+        let decode_cursor = std::sync::Mutex::new(Some(id));
+        let next_track = move || {
+            let current = decode_cursor.lock().unwrap().take()?;
+            let next = advance_state.peek_next_ready_after(current);
+            if let Some((next_id, _)) = &next {
+                *decode_cursor.lock().unwrap() = Some(*next_id);
+            }
+            next
         };
 
-        // Create the next_track closure that calls advance_cursor.
-        let advance_state = self.shared_state.clone();
-        let next_track = move || advance_state.advance_cursor();
+        let (_stream_info, decode_handle) = buffer::start_decode(
+            id,
+            path,
+            producer,
+            seek_ms,
+            next_track,
+            self.timeline.clone(),
+        )?;
 
-        let (_stream_info, decode_handle) =
-            buffer::start_decode(id, path, producer, seek_ms, next_track, callbacks)?;
-
-        // Create and start audio engine.
+        // Create and start audio engine with the timeline's sample counter.
         let actual_rate = device::get_device_sample_rate(device_id).unwrap_or(source_rate);
-        let engine =
-            engine::AudioEngine::new(device_id, actual_rate, info.channels as u32, consumer)?;
+        let engine = engine::AudioEngine::new(
+            device_id,
+            actual_rate,
+            info.channels as u32,
+            consumer,
+            self.timeline.samples_played_counter(),
+        )?;
         engine.start()?;
 
         self.shared_state.set_playback_state(PlaybackState::Playing);
@@ -203,7 +197,8 @@ impl Player {
         Ok(())
     }
 
-    /// Seek within the current track. If past the end, skip to next track.
+    /// Seek within the current track. Clamps to just before the end to avoid
+    /// accidentally skipping. Preserves pause state.
     pub fn seek(&mut self, position_ms: u64) {
         let info = match self.shared_state.track_info() {
             Some(info) => info,
@@ -213,13 +208,22 @@ impl Player {
         let path = info.path.clone();
         let duration = info.duration_ms;
 
-        if duration > 0 && position_ms >= duration {
-            self.next_track();
+        // Clamp to just before the end so we don't skip to the next track.
+        let clamped = if duration > 0 {
+            position_ms.min(duration.saturating_sub(500))
+        } else {
+            position_ms
+        };
+
+        let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
+
+        if let Err(e) = self.start_playback(id, &path, clamped) {
+            log::error!("seek failed: {}", e);
             return;
         }
 
-        if let Err(e) = self.start_playback(id, &path, position_ms) {
-            log::error!("seek failed: {}", e);
+        if was_paused {
+            self.pause();
         }
     }
 
@@ -295,6 +299,7 @@ impl Player {
     /// Full stop: tear down engine + clear all display state.
     fn stop_playback_and_clear_state(&mut self) {
         self.stop_engine();
+        self.timeline.reset();
         self.shared_state.set_playback_state(PlaybackState::Stopped);
         self.shared_state.set_position_ms(0);
         self.shared_state.set_track_info(None);
@@ -328,6 +333,35 @@ impl Player {
         }
     }
 
+    /// Poll the timeline and update shared state with current track/position.
+    /// Called from the command loop on each tick.
+    pub fn update_playback_state(&self) {
+        if self.active_playback.is_none() {
+            return;
+        }
+
+        if let Some((id, path, info, position_ms)) = self.timeline.current_playback() {
+            self.shared_state.set_position_ms(position_ms);
+
+            // Update track_info + cursor if the timeline shows a different track
+            // (gapless transition happened).
+            let current_id = self.shared_state.track_info().map(|t| t.id);
+            if current_id != Some(id) {
+                log::info!("timeline: now playing {:?}", id);
+                self.shared_state.set_track_info(Some(TrackInfo {
+                    id,
+                    path,
+                    codec: info.codec,
+                    sample_rate: info.sample_rate,
+                    bit_depth: info.bit_depth,
+                    channels: info.channels,
+                    duration_ms: info.duration_ms,
+                }));
+                self.shared_state.set_cursor(Some(id));
+            }
+        }
+    }
+
     /// Process a single command.
     pub fn process_command(&mut self, cmd: PlayerCommand) {
         match cmd {
@@ -354,20 +388,31 @@ impl Player {
 
     /// Run the command loop. Blocks until the sender is dropped.
     pub fn run(&mut self) {
+        use std::time::Duration;
+
         let rx = self.commands.rx.clone();
-        while let Ok(cmd) = rx.recv() {
-            self.process_command(cmd);
+        loop {
+            // Poll with timeout so we update position even without commands.
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(cmd) => self.process_command(cmd),
+                Err(crossbeam_channel::RecvTimeoutError::Timeout) => {}
+                Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+            }
+            self.update_playback_state();
         }
         self.stop();
     }
 
-    /// Spawn the player on a background thread, returning the shared state and command sender.
+    /// Spawn the player on a background thread, returning the shared state,
+    /// timeline, and command sender.
     pub fn spawn() -> (
         Arc<SharedPlayerState>,
+        Arc<PlaybackTimeline>,
         crossbeam_channel::Sender<PlayerCommand>,
     ) {
         let mut player = Self::new();
         let state = player.shared_state();
+        let timeline = player.timeline();
         let tx = player.command_sender();
 
         thread::Builder::new()
@@ -375,6 +420,6 @@ impl Player {
             .spawn(move || player.run())
             .expect("failed to spawn player thread");
 
-        (state, tx)
+        (state, timeline, tx)
     }
 }

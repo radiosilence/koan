@@ -14,12 +14,27 @@ pub enum PickerKind {
     Track,
     Album,
     Artist,
+    QueueJump,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerPartKind {
+    Artist,
+    Album,
+    Title,
+    Date,
+    TrackNum,
+    Duration,
+    Separator,
+    Codec,
+    Plain,
 }
 
 pub struct PickerItem {
     pub id: i64,
     pub display: String,
     pub match_text: String,
+    pub parts: Vec<(String, PickerPartKind)>,
 }
 
 pub struct PickerState {
@@ -62,6 +77,7 @@ impl PickerState {
             PickerKind::Track => "enqueue>",
             PickerKind::Album => "album>",
             PickerKind::Artist => "artist>",
+            PickerKind::QueueJump => "jump>",
         }
     }
 
@@ -255,7 +271,7 @@ impl Widget for PickerOverlay<'_> {
                     "  "
                 };
 
-                let display = &self.state.items[idx].display;
+                let item = &self.state.items[idx];
 
                 // Fill entire row with the style for a visible highlight bar.
                 let row_y = chunks[1].y + row as u16;
@@ -263,11 +279,21 @@ impl Widget for PickerOverlay<'_> {
                     buf[(col, row_y)].set_style(row_style);
                 }
 
-                let line = Line::from(vec![
+                let mut spans = vec![
                     Span::styled(" ", row_style),
                     Span::styled(marker, row_style),
-                    Span::styled(display.clone(), row_style),
-                ]);
+                ];
+
+                if item.parts.is_empty() {
+                    spans.push(Span::styled(item.display.clone(), row_style));
+                } else {
+                    for (text, kind) in &item.parts {
+                        let part_style = self.theme.picker_part_style(*kind).patch(row_style);
+                        spans.push(Span::styled(text.clone(), part_style));
+                    }
+                }
+
+                let line = Line::from(spans);
                 buf.set_line(chunks[1].x, row_y, &line, chunks[1].width);
             }
         }

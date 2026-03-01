@@ -11,7 +11,7 @@ use koan_core::player::state::{
 };
 
 use super::library::LibraryState;
-use super::picker::{PickerKind, PickerState, picker_results_rect};
+use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect};
 use super::queue;
 use super::theme::Theme;
 use super::transport::TransportBar;
@@ -121,6 +121,10 @@ pub struct App {
     /// Area of the transport text (seek bar) — excludes art.
     pub transport_text_area: ratatui::layout::Rect,
 
+    /// Seek bar layout from last render — absolute x start and width in cells.
+    pub seek_bar_start: u16,
+    pub seek_bar_width: u16,
+
     /// Last computed art height so layout stays stable when art disappears.
     pub last_art_height: u16,
 }
@@ -167,6 +171,8 @@ impl App {
             now_playing_art: super::cover_art::CoverArtCache::new(),
             now_playing_art_area: ratatui::layout::Rect::default(),
             transport_text_area: ratatui::layout::Rect::default(),
+            seek_bar_start: 0,
+            seek_bar_width: 0,
             last_art_height: 0,
         }
     }
@@ -333,6 +339,9 @@ impl App {
                     self.mode = Mode::CoverArtZoom;
                 }
             }
+            KeyCode::Char('/') => {
+                self.open_queue_jump();
+            }
             _ => {}
         }
     }
@@ -425,6 +434,15 @@ impl App {
                         }
                         PickerKind::Artist => {
                             self.artist_drill_down = Some(ids[0]);
+                        }
+                        PickerKind::QueueJump => {
+                            let idx = ids[0] as usize;
+                            let visible = self.visible_queue();
+                            if let Some(entry) = visible.get(idx) {
+                                self.tx.send(PlayerCommand::Play(entry.id)).ok();
+                                self.queue_cursor = idx;
+                                self.update_scroll();
+                            }
                         }
                     }
                 }
@@ -529,6 +547,15 @@ impl App {
                                         PickerKind::Artist => {
                                             self.artist_drill_down = Some(ids[0]);
                                         }
+                                        PickerKind::QueueJump => {
+                                            let idx = ids[0] as usize;
+                                            let visible = self.visible_queue();
+                                            if let Some(entry) = visible.get(idx) {
+                                                self.tx.send(PlayerCommand::Play(entry.id)).ok();
+                                                self.queue_cursor = idx;
+                                                self.update_scroll();
+                                            }
+                                        }
                                     }
                                 }
                             } else {
@@ -613,17 +640,23 @@ impl App {
                     return;
                 }
 
-                // Transport area click -> seek.
-                if self.is_in_rect(event.column, event.row, self.transport_text_area)
+                // Seek bar click — only the first row of the transport area.
+                if event.row == self.transport_text_area.y
+                    && event.column >= self.transport_text_area.x
+                    && event.column < self.transport_text_area.x + self.transport_text_area.width
                     && let Some(info) = self.state.track_info()
-                    && let Some(pos) = TransportBar::seek_from_click(
-                        self.transport_text_area,
-                        event.column,
-                        &info,
-                        self.state.position_ms(),
-                    )
                 {
-                    self.tx.send(PlayerCommand::Seek(pos)).ok();
+                    let click_x = event.column;
+                    let dur = info.duration_ms;
+
+                    if let Some(pos) = TransportBar::seek_from_click(
+                        self.seek_bar_start,
+                        self.seek_bar_width,
+                        click_x,
+                        dur,
+                    ) {
+                        self.tx.send(PlayerCommand::Seek(pos)).ok();
+                    }
                     return;
                 }
 
@@ -1124,6 +1157,43 @@ impl App {
 
     fn open_picker(&mut self, kind: PickerKind) {
         self.mode = Mode::Picker(kind);
+    }
+
+    fn open_queue_jump(&mut self) {
+        let visible = self.visible_queue();
+        if visible.is_empty() {
+            return;
+        }
+        let items: Vec<super::picker::PickerItem> = visible
+            .iter()
+            .enumerate()
+            .map(|(i, e)| {
+                let has_artist = !e.artist.is_empty() && e.artist != e.album_artist;
+                let display = if has_artist {
+                    format!("{} — {}", e.artist, e.title)
+                } else {
+                    e.title.clone()
+                };
+                let parts = if has_artist {
+                    vec![
+                        (e.artist.clone(), PickerPartKind::Artist),
+                        (" — ".into(), PickerPartKind::Separator),
+                        (e.title.clone(), PickerPartKind::Title),
+                    ]
+                } else {
+                    vec![(e.title.clone(), PickerPartKind::Title)]
+                };
+                let match_text = format!("{} {} {} {}", e.artist, e.album_artist, e.album, e.title);
+                super::picker::PickerItem {
+                    id: i as i64,
+                    display,
+                    match_text,
+                    parts,
+                }
+            })
+            .collect();
+        self.picker = Some(PickerState::new(PickerKind::QueueJump, items, false));
+        self.mode = Mode::Picker(PickerKind::QueueJump);
     }
 
     fn update_scroll(&mut self) {

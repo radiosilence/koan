@@ -33,31 +33,31 @@ impl<'a> TransportBar<'a> {
         }
     }
 
-    /// Calculate seek position from a click's x coordinate within the transport area.
-    /// Returns None if no track is playing or click is outside the gauge.
-    pub fn seek_from_click(
-        area: Rect,
-        click_x: u16,
-        track_info: &TrackInfo,
-        _position_ms: u64,
-    ) -> Option<u64> {
-        // Must match render layout exactly:
-        //   " " icon(2) " " [===bar===] " " time
-        // Use duration for time width since position length varies.
+    /// Compute the seek bar start (absolute x) and width for the given area.
+    /// Call this before render and store the results for click-to-seek.
+    pub fn bar_metrics(area: Rect, position_ms: u64, duration_ms: u64) -> (u16, u16) {
         let time_width =
-            format!("{}/{}", format_time(0), format_time(track_info.duration_ms)).len() as u16;
+            format!("{}/{}", format_time(position_ms), format_time(duration_ms)).len() as u16;
         let chrome_width = 1 + 2 + 1 + 1 + time_width;
+        let bar_start = area.x + 4;
         let bar_width = area.width.saturating_sub(chrome_width);
-        let bar_start = area.x + 4; // " " + icon(2) + " "
-        let bar_end = bar_start + bar_width;
+        (bar_start, bar_width)
+    }
 
+    /// Seek from a click using the bar metrics stored from the last render.
+    /// This guarantees the click handler uses the exact same bar layout as what's on screen.
+    pub fn seek_from_click(
+        bar_start: u16,
+        bar_width: u16,
+        click_x: u16,
+        duration_ms: u64,
+    ) -> Option<u64> {
+        let bar_end = bar_start + bar_width;
         if click_x < bar_start || click_x >= bar_end || bar_width == 0 {
             return None;
         }
-
-        // Use center of cell for sub-cell accuracy.
-        let frac = ((click_x - bar_start) as f64 + 0.5) / bar_width as f64;
-        Some((frac * track_info.duration_ms as f64) as u64)
+        let frac = (click_x - bar_start) as f64 / bar_width as f64;
+        Some((frac * duration_ms as f64) as u64)
     }
 }
 
