@@ -2,7 +2,6 @@ mod cache;
 mod config;
 mod enqueue;
 mod library;
-mod organize;
 mod pick;
 mod picker_items;
 mod play;
@@ -16,7 +15,6 @@ pub use cache::{cmd_cache_clear, cmd_cache_status};
 pub use config::{cmd_config, cmd_init};
 pub use enqueue::enqueue_playlist;
 pub use library::{cmd_albums, cmd_artists, cmd_library};
-pub use organize::cmd_organize;
 pub use pick::cmd_pick;
 pub use picker_items::{
     load_picker_items, make_album_picker_items, make_artist_picker_items, make_track_picker_items,

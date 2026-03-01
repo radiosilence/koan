@@ -65,21 +65,32 @@ pub fn cmd_init() {
             "(exists)".dimmed()
         );
     } else {
-        let default_cfg = config::Config::default();
-        match toml::to_string_pretty(&default_cfg) {
-            Ok(content) => {
-                if let Err(e) = std::fs::write(&config_path, &content) {
-                    eprintln!("{} {}", "error:".red().bold(), e);
-                } else {
-                    println!(
-                        "  {} {} {}",
-                        "config:".cyan(),
-                        config_path.display(),
-                        "created".green()
-                    );
-                }
-            }
-            Err(e) => eprintln!("{} {}", "error:".red().bold(), e),
+        let base_content = r#"# koan — shareable defaults (safe to commit to dotfiles)
+
+[library]
+watch = true
+
+[playback]
+exclusive_mode = false
+software_volume = false
+replaygain = "album"  # off | track | album
+
+[organize]
+default = "standard"
+
+[organize.patterns]
+standard = "%album artist%/(%date%) %album%/%tracknumber%. %title%"
+va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$left(%date%,4)')' ])%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%"
+"#;
+        if let Err(e) = std::fs::write(&config_path, base_content) {
+            eprintln!("{} {}", "error:".red().bold(), e);
+        } else {
+            println!(
+                "  {} {} {}",
+                "config:".cyan(),
+                config_path.display(),
+                "created".green()
+            );
         }
     }
 
@@ -92,19 +103,21 @@ pub fn cmd_init() {
             "(exists)".dimmed()
         );
     } else {
-        let local_content = "\
-# Machine-specific overrides (gitignored)
-# Uncomment and edit as needed.
+        let local_content = r#"# koan — machine-specific overrides (gitignored)
+# Edit the paths below, then run: koan scan
 
-# [library]
-# folders = [\"/path/to/music\"]
+[library]
+folders = ["/path/to/music"]
 
+# Uncomment to connect a Navidrome/Subsonic server:
+# (run `koan remote login URL username` instead for interactive setup)
+#
 # [remote]
 # enabled = true
-# url = \"https://music.example.com\"
-# username = \"admin\"
-# password = \"\"
-";
+# url = "https://music.example.com"
+# username = "admin"
+# password = ""
+"#;
         if let Err(e) = std::fs::write(&local_path, local_content) {
             eprintln!("{} {}", "error:".red().bold(), e);
         } else {

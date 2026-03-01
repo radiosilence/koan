@@ -154,7 +154,7 @@ enum Commands {
     /// Manage remote Subsonic/Navidrome server
     #[command(subcommand)]
     Remote(RemoteCommands),
-    /// Interactive fuzzy picker (requires fzf)
+    /// Interactive fuzzy picker
     Pick {
         /// Optional search query to pre-filter
         query: Option<String>,
@@ -170,27 +170,6 @@ enum Commands {
     /// Manage the download cache
     #[command(subcommand)]
     Cache(CacheCommands),
-    /// Organize/rename library files using format strings
-    Organize {
-        /// Format string pattern or named pattern from config (e.g. 'standard' or '%album artist%/...')
-        #[arg(long)]
-        pattern: Option<String>,
-        /// Base directory (defaults to first library folder)
-        #[arg(long)]
-        base_dir: Option<PathBuf>,
-        /// Actually move files (default is dry-run/preview)
-        #[arg(long)]
-        execute: bool,
-        /// Undo the most recent organize operation
-        #[arg(long)]
-        undo: bool,
-        /// Skip confirmation prompt
-        #[arg(long, short = 'y')]
-        yes: bool,
-        /// List configured named patterns
-        #[arg(long)]
-        list: bool,
-    },
     /// Generate shell completions (legacy static)
     Completions {
         /// Shell to generate for
@@ -271,21 +250,6 @@ fn main() {
             CacheCommands::Status => commands::cmd_cache_status(),
             CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
         },
-        Some(Commands::Organize {
-            pattern,
-            base_dir,
-            execute,
-            undo,
-            yes,
-            list,
-        }) => commands::cmd_organize(
-            pattern.as_deref(),
-            base_dir.as_deref(),
-            execute,
-            undo,
-            yes,
-            list,
-        ),
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }
