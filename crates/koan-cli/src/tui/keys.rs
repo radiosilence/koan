@@ -40,6 +40,7 @@ impl Widget for HintBar<'_> {
                 ("S-\u{2191}\u{2193}", "select"),
                 ("d", "delete"),
                 ("j/k", "move"),
+                ("space", "actions"),
                 ("i", "info"),
                 ("\u{2325}-click", "toggle"),
                 ("esc", "done"),
