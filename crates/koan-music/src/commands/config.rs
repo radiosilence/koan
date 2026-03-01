@@ -130,6 +130,22 @@ folders = ["/path/to/music"]
         }
     }
 
+    // Write .gitignore if it doesn't exist (keeps logs, db, and local config out of dotfile repos).
+    let gitignore_path = dir.join(".gitignore");
+    if !gitignore_path.exists() {
+        let gitignore_content = "*.log\n*.db\nconfig.local.toml\ncache/\n";
+        if let Err(e) = std::fs::write(&gitignore_path, gitignore_content) {
+            eprintln!("{} {}", "error:".red().bold(), e);
+        } else {
+            println!(
+                "  {} {} {}",
+                ".gitignore:".cyan(),
+                gitignore_path.display(),
+                "created".green()
+            );
+        }
+    }
+
     // Ensure DB exists.
     let db_path = config::db_path();
     if db_path.exists() {
