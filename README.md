@@ -12,7 +12,8 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 # pre-built binary via mise (recommended)
 mise use -g github:radiosilence/koan@latest
 
-# or from source
+# or build from source
+git clone https://github.com/radiosilence/koan.git && cd koan
 cargo install --path crates/koan-cli
 ```
 
