@@ -175,20 +175,20 @@ Tracks are grouped by album with headers showing album artist, year, album title
 
 ### File organization
 
-Rename and reorganize your music library using fb2k-compatible format strings. Default is dry-run (preview), add `--execute` to apply. Undo with `--undo`.
+Rename and reorganize your music library using fb2k-compatible format strings. Default is dry-run (preview), `--execute` previews then asks for confirmation before applying. See [FORMAT_STRINGS.md](FORMAT_STRINGS.md) for the full syntax reference, all available fields/functions, and examples.
 
 ```bash
-# preview
+# preview what would change
 koan organize --pattern '%album artist%/(%date%) %album%/%tracknumber%. %title%'
 
-# apply
+# preview + confirm + apply
 koan organize --pattern '...' --execute
 
-# revert
+# revert last batch
 koan organize --undo
 ```
 
-Ancillary files (cover.jpg, .cue, .log) move with the music. Empty directories are cleaned up.
+Ancillary files (cover.jpg, .cue, .log) move with the music. Empty directories are cleaned up. Illegal filename characters are sanitized automatically.
 
 ### Remote (Subsonic/Navidrome)
 
