@@ -17,27 +17,55 @@ cargo install koan-music
 
 # or build from source
 git clone https://github.com/radiosilence/koan.git && cd koan
-cargo install --path crates/koan-cli
+cargo install --path crates/koan-music
 ```
 
 Requires macOS (CoreAudio). Single binary, no runtime dependencies.
 
-### First run
+### Set up your music
 
 ```bash
 # Create config directory with sensible defaults
 koan init
+```
 
-# Point it at your music
+kōan needs at least one music source — local files, a remote server, or both.
+
+**Local files:**
+
+```bash
 koan scan /path/to/music
 ```
 
 kōan indexes your library in parallel — metadata extraction is fast even for large collections. The database lives at `~/.config/koan/` and auto-updates when files change (FSEvents file watcher, debounced).
 
+To make the scan path permanent, add it to your config:
+
+```toml
+# ~/.config/koan/config.local.toml
+[library]
+folders = ["/Volumes/Music/library"]
+```
+
+Then `koan scan` (no path argument) re-scans configured folders.
+
+**Remote server (Navidrome/Subsonic):**
+
+If you run Navidrome, Subsonic, or anything with a Subsonic-compatible API:
+
+```bash
+koan remote login https://music.example.com admin
+koan remote sync
+```
+
+Remote and local tracks merge into one library. Local files always take playback priority. Remote tracks download on first play and cache locally — subsequent plays are instant.
+
+You can use both sources together. Run `koan remote sync` periodically (or after adding music to your server) to pull new tracks.
+
 ### Play something
 
 ```bash
-# Just open the TUI — browse your library, pick tracks, build a queue
+# Open the TUI — browse your library, pick tracks, build a queue
 koan
 
 # Or play files/directories directly
@@ -50,7 +78,7 @@ koan pick --album "geogaddi"
 koan pick --artist "autechre"
 ```
 
-The TUI launches immediately — no waiting. If tracks need downloading (remote library) or scanning, they appear in the queue with animated spinners while loading in the background.
+The TUI launches immediately — no waiting. If tracks need downloading (remote library), they appear in the queue with animated spinners while loading in the background.
 
 ### The TUI
 
@@ -63,17 +91,6 @@ kōan is built around a full-screen terminal interface. The transport bar shows 
 **Editing the queue:** Press `e` to enter edit mode. Select tracks with shift-arrows or ctrl-click, `d` to delete, `j`/`k` to reorder. `Ctrl+Z` undoes any queue change, `Ctrl+Y` or `Ctrl+Shift+Z` to redo. Everything is mouse-friendly too — click, drag, scroll wheel all work.
 
 **Your DAC matters:** kōan sends bit-perfect audio to CoreAudio with automatic sample rate switching. No resampling, no mixing — the bits that left the encoder are the bits that hit your DAC. Run `koan devices` to see your audio outputs.
-
-### Remote music (Navidrome/Subsonic)
-
-If you run a Navidrome or Subsonic server, kōan can sync and stream from it:
-
-```bash
-koan remote login https://music.example.com admin
-koan remote sync
-```
-
-Remote and local tracks merge into one library. Local files always win for playback. Remote tracks download on first play and cache locally in a structured directory.
 
 ### Configuration
 
@@ -281,16 +298,6 @@ koan organize --undo
 ```
 
 Ancillary files (cover.jpg, .cue, .log) move with the music. Empty directories are cleaned up.
-
-### Remote (Subsonic/Navidrome)
-
-```bash
-koan remote login https://music.example.com admin
-koan remote sync
-koan remote status
-```
-
-Remote and local tracks appear in the same library. Local files take playback priority. Remote tracks are downloaded to a structured cache (`Album Artist/(Year) Album [Codec]/01. Artist - Title.ext`) on first play, then cached for subsequent plays.
 
 ## Configuration
 

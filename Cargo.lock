@@ -1346,30 +1346,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "koan-cli"
-version = "0.2.0"
-dependencies = [
- "chrono",
- "clap",
- "clap_complete",
- "core-foundation 0.9.4",
- "crossbeam-channel",
- "crossterm",
- "image",
- "koan-core",
- "libc",
- "log",
- "nucleo",
- "owo-colors",
- "ratatui",
- "rpassword",
- "rusqlite",
- "souvlaki",
- "toml",
- "walkdir",
-]
-
-[[package]]
 name = "koan-core"
 version = "0.2.0"
 dependencies = [
@@ -1393,6 +1369,30 @@ dependencies = [
  "thiserror 2.0.18",
  "toml",
  "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "koan-music"
+version = "0.2.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "clap_complete",
+ "core-foundation 0.9.4",
+ "crossbeam-channel",
+ "crossterm",
+ "image",
+ "koan-core",
+ "libc",
+ "log",
+ "nucleo",
+ "owo-colors",
+ "ratatui",
+ "rpassword",
+ "rusqlite",
+ "souvlaki",
+ "toml",
  "walkdir",
 ]
 

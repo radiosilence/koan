@@ -59,7 +59,7 @@ impl Player {
         }
     }
 
-    /// Get a clone of the shared state for UI/FFI reads.
+    /// Get a clone of the shared state for UI reads.
     pub fn shared_state(&self) -> Arc<SharedPlayerState> {
         self.shared_state.clone()
     }
@@ -74,7 +74,7 @@ impl Player {
         &self.undo_stack
     }
 
-    /// Get a command sender for the UI/FFI layer.
+    /// Get a command sender for the UI layer.
     pub fn command_sender(&self) -> crossbeam_channel::Sender<PlayerCommand> {
         self.commands.tx.clone()
     }

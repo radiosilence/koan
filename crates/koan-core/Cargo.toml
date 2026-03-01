@@ -2,6 +2,11 @@
 name = "koan-core"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Core library for koan — bit-perfect macOS music player. Audio engine, player, database, format strings."
+keywords = ["audio", "music", "player", "coreaudio"]
+categories = ["multimedia::audio"]
 
 [dependencies]
 # CoreAudio

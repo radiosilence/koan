@@ -28,7 +28,7 @@ impl fmt::Debug for QueueItemId {
     }
 }
 
-/// Playback state — maps to wire values for FFI.
+/// Playback state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PlaybackState {
@@ -138,7 +138,7 @@ pub struct VisibleQueueSnapshot {
 
 /// Shared player state — atomics for lock-free reads from UI thread.
 ///
-/// The engine writes these, the UI/FFI reads them. No mutexes in the hot path.
+/// The engine writes these, the UI reads them. No mutexes in the hot path.
 #[derive(Debug)]
 pub struct SharedPlayerState {
     state: AtomicU8,

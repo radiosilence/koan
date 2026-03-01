@@ -2,6 +2,11 @@
 name = "koan-music"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Bit-perfect macOS music player — Ratatui TUI, gapless playback, Navidrome/Subsonic integration."
+keywords = ["audio", "music", "player", "tui"]
+categories = ["multimedia::audio"]
 
 [[bin]]
 name = "koan"
@@ -14,7 +19,7 @@ clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 crossbeam-channel = "0.5"
 crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
-koan-core = { path = "../koan-core" }
+koan-core = { path = "../koan-core", version = "0.2" }
 libc = "0.2"
 log = "0.4"
 nucleo = "0.5"

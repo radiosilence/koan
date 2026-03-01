@@ -10,12 +10,12 @@ crates/
 │                  format strings, file organization, remote client.
 │                  No UI code, no terminal deps.
 │
-└── koan-cli/      Binary crate. The `koan` executable.
+└── koan-music/      Binary crate. The `koan` executable.
                    Ratatui TUI, CLI arg parsing, media keys.
                    Depends on koan-core.
 ```
 
-Two crates, one workspace. `koan-core` is the engine, `koan-cli` is the interface. If you wanted a different UI (GUI, web, whatever), you'd write a new crate that depends on `koan-core` — the CLI doesn't own any business logic.
+Two crates, one workspace. `koan-core` is the engine, `koan-music` is the interface. If you wanted a different UI (GUI, web, whatever), you'd write a new crate that depends on `koan-core` — the CLI doesn't own any business logic.
 
 ## Threading model
 
@@ -210,7 +210,7 @@ fb2k-compatible template engine.
 | `credentials.rs` | macOS Keychain integration via security-framework |
 | `organize.rs` | File renaming using format strings. Preview/execute/undo. Scoped operations via `preview_for_tracks()`/`execute_for_tracks()` (used by TUI modal). Moves ancillary files (cover art, cue sheets). Logs moves for undo. |
 
-## koan-cli modules
+## koan-music modules
 
 ### `main.rs`
 
@@ -296,7 +296,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **Audio path:** `audio/buffer.rs` has `start_decode` → `decode_queue_loop` → `decode_single` (the actual Symphonia decode loop). `audio/engine.rs` has the CoreAudio setup and render callback.
 
-**TUI:** `koan-cli/src/tui/app.rs` is the state machine. Follow `handle_normal_key()` for the main mode, `handle_tick()` for the per-frame update cycle. `ui.rs` is the render pipeline.
+**TUI:** `koan-music/src/tui/app.rs` is the state machine. Follow `handle_normal_key()` for the main mode, `handle_tick()` for the per-frame update cycle. `ui.rs` is the render pipeline.
 
 **Database:** Start at `db/schema.rs` for the table definitions, then `db/queries/tracks.rs` for the dedup logic in `upsert_track`.
 

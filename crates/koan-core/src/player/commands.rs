@@ -4,7 +4,7 @@ use crossbeam_channel::{Receiver, Sender, bounded};
 
 use super::state::{PlaylistItem, QueueItemId};
 
-/// Commands from the UI/FFI layer to the audio engine.
+/// Commands from the UI layer to the audio engine.
 #[derive(Debug)]
 pub enum PlayerCommand {
     /// Set cursor + start playback. Replaces Play/SkipTo/SkipBack/PlayInterrupt.
