@@ -103,8 +103,8 @@ jobs:
 
       - name: Package binary
         run: |
-          cp target/${{ matrix.target }}/release/koan "${{ matrix.binary_name }}"
-          tar czf "${{ matrix.binary_name }}.tar.gz" "${{ matrix.binary_name }}"
+          cp target/${{ matrix.target }}/release/koan koan
+          tar czf "${{ matrix.binary_name }}.tar.gz" koan
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
