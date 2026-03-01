@@ -101,7 +101,9 @@ impl Player {
 
         let info = buffer::probe_file(path)?;
 
-        // Set track_info immediately so the UI never sees a "no playing track" state.
+        // Set track_info + position immediately so the UI never sees a gap.
+        // For seeks, this keeps the bar at the target position instead of
+        // flashing to 0 while the new timeline spins up.
         self.shared_state.set_track_info(Some(TrackInfo {
             id,
             path: path.to_path_buf(),
@@ -111,7 +113,7 @@ impl Player {
             channels: info.channels,
             duration_ms: info.duration_ms,
         }));
-        self.shared_state.set_position_ms(0);
+        self.shared_state.set_position_ms(seek_ms);
         log::info!(
             "playing: {} ({:?}) — {} {}Hz/{}bit/{}ch, {}ms{}",
             path.display(),
