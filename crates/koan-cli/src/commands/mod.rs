@@ -34,6 +34,19 @@ use koan_core::db::queries;
 use koan_core::player::state::{LoadState, PlaylistItem, QueueItemId};
 use owo_colors::OwoColorize;
 
+/// Prompt the user to confirm a destructive action. Returns true if confirmed.
+/// Accepts y/yes (case-insensitive), anything else is a no.
+pub(crate) fn confirm(prompt: &str) -> bool {
+    use std::io::{Write, stdin, stdout};
+    print!("{} [y/N] ", prompt);
+    stdout().flush().ok();
+    let mut input = String::new();
+    if stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
+}
+
 pub(crate) fn open_db() -> Database {
     Database::open_default().unwrap_or_else(|e| {
         eprintln!("{} {}", "db error:".red().bold(), e);
