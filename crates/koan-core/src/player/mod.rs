@@ -422,6 +422,25 @@ impl Player {
                     });
                 }
             }
+            PlayerCommand::RemoveFromPlaylistBatch(ids) => {
+                // Snapshot all items with their predecessors before removing any.
+                let items_with_pos: Vec<_> = ids
+                    .iter()
+                    .filter_map(|&id| {
+                        let item = self.shared_state.get_item(id)?;
+                        let after = self.shared_state.item_before(id);
+                        Some((Box::new(item), after))
+                    })
+                    .collect();
+                for &id in &ids {
+                    self.remove_from_playlist(id);
+                }
+                if !items_with_pos.is_empty() {
+                    self.undo_stack.push(UndoEntry::Removed {
+                        items: items_with_pos,
+                    });
+                }
+            }
             PlayerCommand::MoveInPlaylist { id, target, after } => {
                 let was_after = self.shared_state.item_before(id);
                 self.shared_state.move_item(id, target, after);
@@ -656,6 +675,38 @@ mod tests {
 
         player.process_command(PlayerCommand::Undo);
         assert_eq!(playlist_titles(&player), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn undo_batch_remove_restores_all() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C"), make_item("D")];
+        let b_id = items[1].id;
+        let c_id = items[2].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::RemoveFromPlaylistBatch(vec![b_id, c_id]));
+        assert_eq!(playlist_titles(&player), vec!["A", "D"]);
+
+        // Single undo restores both
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C", "D"]);
+    }
+
+    #[test]
+    fn redo_batch_remove() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+        let a_id = items[0].id;
+        let b_id = items[1].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::RemoveFromPlaylistBatch(vec![a_id, b_id]));
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+
+        player.process_command(PlayerCommand::Redo);
+        assert_eq!(playlist_titles(&player), vec!["C"]);
     }
 
     #[test]

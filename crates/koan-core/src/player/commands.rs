@@ -17,6 +17,8 @@ pub enum PlayerCommand {
     PrevTrack,
     AddToPlaylist(Vec<PlaylistItem>),
     RemoveFromPlaylist(QueueItemId),
+    /// Batch remove: delete multiple items as a single undoable operation.
+    RemoveFromPlaylistBatch(Vec<QueueItemId>),
     MoveInPlaylist {
         id: QueueItemId,
         target: QueueItemId,

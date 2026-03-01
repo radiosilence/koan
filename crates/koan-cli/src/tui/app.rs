@@ -1196,12 +1196,14 @@ impl App {
         };
 
         let visible = self.visible_queue();
-        for idx in &indices {
-            if let Some(entry) = visible.get(*idx) {
-                self.tx
-                    .send(PlayerCommand::RemoveFromPlaylist(entry.id))
-                    .ok();
-            }
+        let ids: Vec<_> = indices
+            .iter()
+            .filter_map(|&idx| visible.get(idx).map(|e| e.id))
+            .collect();
+        if !ids.is_empty() {
+            self.tx
+                .send(PlayerCommand::RemoveFromPlaylistBatch(ids))
+                .ok();
         }
 
         self.queue.selected_indices.clear();
