@@ -214,19 +214,39 @@ fb2k-compatible template engine.
 
 ### `main.rs`
 
-CLI entry point (clap). All subcommands dispatched here. The TUI event loop lives here too — it's a big file because it wires everything together (player spawn, picker item loading, background enqueue threads, download workers).
+CLI entry point (clap). Struct definitions, match dispatch, logger. Delegates everything to `commands/` modules.
+
+### `commands/`
+
+Subcommand handlers split into focused modules:
+
+| File | Functions |
+|---|---|
+| `mod.rs` | Shared helpers: `open_db`, `format_time`, `format_bytes`, `install_terminal_panic_hook`, `get_remote_password`, `sanitise_filename`, `cache_path_for_track`, `playlist_item_from_track` |
+| `play.rs` | `cmd_play` (path resolution, player spawn), `run_tui` (event loop, picker loading, enqueue routing) |
+| `probe.rs` | `cmd_probe`, `cmd_devices` |
+| `scan.rs` | `cmd_scan` |
+| `search.rs` | `cmd_search` (FTS5 search with tree-grouped output) |
+| `library.rs` | `cmd_artists`, `cmd_albums`, `cmd_library` |
+| `config.rs` | `cmd_config`, `cmd_init` |
+| `remote.rs` | `cmd_remote_login`, `cmd_remote_sync`, `cmd_remote_status` |
+| `cache.rs` | `cmd_cache_status`, `cmd_cache_clear` |
+| `organize.rs` | `cmd_organize` |
+| `pick.rs` | `cmd_pick` (standalone fuzzy picker TUI) |
+| `enqueue.rs` | `enqueue_playlist` (action-aware: append/play/replace), `resolve_item_path`, `download_single_track` |
+| `picker_items.rs` | `load_picker_items`, `make_track_picker_items`, `make_album_picker_items`, `make_artist_picker_items` |
 
 ### `tui/`
 
 | File | Purpose |
 |---|---|
-| `app.rs` | `App` struct (state machine), `Mode` enum, event handlers (key/mouse per mode). Sub-state structs: `QueueState`, `LayoutRects`, `ArtState`. |
+| `app.rs` | `App` struct (state machine), `Mode` enum, `PickerAction` enum, event handlers (key/mouse per mode). Sub-state structs: `QueueState`, `LayoutRects`, `ArtState`. |
 | `ui.rs` | Render pipeline: layout computation → transport bar → content area (queue ± library) → overlays (picker, track info, cover art zoom) → hint bar |
 | `transport.rs` | `TransportBar` widget: seek bar (━─), current track info, click-to-seek |
 | `queue.rs` | `QueueView` widget: album-grouped display with headers, status icons, selection markers, drag target line |
 | `library.rs` | `LibraryState` + `LibraryView`: flattened tree (artist→album→track), expand/collapse, substring filter with cached artist list |
 | `picker.rs` | `PickerState`: Nucleo fuzzy search engine, multi-select, colored result parts. Sentinel helpers for artist drill-down. |
-| `cover_art.rs` | Halfblock rendering: extract from tags → resize with Lanczos3 → 2 pixels per terminal cell (upper half block char with FG/BG colors) |
+| `cover_art.rs` | Halfblock rendering: extract from tags → resize with Lanczos3 → 2 pixels per terminal cell (upper half block char with FG/BG colors). Forces even pixel height to prevent black bar artifacts. |
 | `track_info.rs` | `TrackInfoOverlay`: modal with full metadata fields + embedded album art |
 | `theme.rs` | Color palette. Cyan for active/cursor, green for albums, DarkGray for hints. |
 | `event.rs` | Event enum wrapper |
@@ -235,6 +255,18 @@ CLI entry point (clap). All subcommands dispatched here. The TUI event loop live
 ### `media_keys.rs`
 
 macOS Control Center integration via souvlaki. Pumps CFRunLoop manually (terminal apps don't have a Cocoa event loop). Maps hardware play/pause/next/prev to PlayerCommands.
+
+## Picker actions
+
+The picker (track/album/artist search) has three confirm actions:
+
+| Key | Action | Behaviour |
+|---|---|---|
+| `Enter` | Append | Add to end of queue, don't play |
+| `Ctrl+Enter` | Append & Play | Add to end, start playing first added track |
+| `Ctrl+R` | Replace | Clear entire queue, add tracks, play from top |
+
+Library browser and artist drill-down default to Append & Play. The `PickerAction` enum flows through `picker_result` → `enqueue_playlist()` → `PlayerCommand` sequence.
 
 ## TUI modes
 

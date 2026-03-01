@@ -71,8 +71,9 @@ koan init
 koan scan /path/to/music
 koan scan
 
-# play files
+# play files or directories (dirs are walked recursively for audio files)
 koan play ~/Music/album/*.flac
+koan play ~/Music/100\ gecs/
 
 # play by track/album/artist ID
 koan play --id 42 43 44
@@ -128,15 +129,23 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `, .`   | seek ±10s              |
 | `←` `→` | seek ±10s              |
 | `/`     | search queue (jump to track) |
-| `p`     | pick tracks to enqueue |
-| `a`     | pick album to enqueue  |
-| `r`     | pick artist to enqueue |
+| `p`     | pick tracks            |
+| `a`     | pick album             |
+| `r`     | pick artist            |
 | `i`     | track info             |
 | `z`     | zoom album art         |
 | `l`     | library browser        |
 | `f`     | filter library (in library mode) |
 | `e`     | edit queue             |
 | `q`     | quit                   |
+
+**Picker confirm actions** (track/album/artist picker):
+
+| Key          | Action                                 |
+| ------------ | -------------------------------------- |
+| `Enter`      | Append to queue (don't start playing)  |
+| `Ctrl+Enter` | Append and play first added track      |
+| `Ctrl+R`     | Replace entire queue and play          |
 
 **Mouse** (works in any mode — modality is keyboard-only): double-click a queue track to skip to it (forward or backward); double-click a downloading track to prioritize and play it as soon as it finishes. Click the seek bar to jump, scroll wheel in queue. Single-click selects, drag to reorder. Shift-click for range selection, Option-click to toggle individual tracks, drag selected group to reorder. In the fuzzy picker, click items to select, double-click to confirm, click outside to dismiss. In the library browser, click to select, double-click to expand/enter/enqueue; click queue pane to switch focus.
 

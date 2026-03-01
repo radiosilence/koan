@@ -26,6 +26,8 @@ pub enum PlayerCommand {
         target: QueueItemId,
         after: bool,
     },
+    /// Clear the entire playlist (stop + remove all items).
+    ClearPlaylist,
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
 }

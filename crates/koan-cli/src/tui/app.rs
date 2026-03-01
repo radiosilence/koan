@@ -26,6 +26,17 @@ pub enum Mode {
     CoverArtZoom,
 }
 
+/// What to do when the picker confirms a selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerAction {
+    /// Append to end of queue (don't start playing).
+    Append,
+    /// Append and immediately play the first added track.
+    AppendAndPlay,
+    /// Clear queue, add tracks, play from the top.
+    ReplaceQueue,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LibraryFocus {
     Library,
@@ -109,8 +120,9 @@ pub struct App {
     pub layout: LayoutRects,
 
     // Picker result — set when picker confirms, consumed by main loop.
-    // Tagged with the picker kind so album IDs can be expanded to track IDs.
-    pub picker_result: Option<(PickerKind, Vec<i64>)>,
+    // Tagged with the picker kind and action so album IDs can be expanded
+    // and the right enqueue behaviour is applied.
+    pub picker_result: Option<(PickerKind, Vec<i64>, PickerAction)>,
 
     pub artist_drill_down: Option<i64>,
 
@@ -404,36 +416,50 @@ impl App {
             return;
         };
 
+        // Determine if this keypress is a confirm action.
+        let action = match (key.code, key.modifiers) {
+            (KeyCode::Enter, m) if m.contains(KeyModifiers::CONTROL) => {
+                Some(PickerAction::AppendAndPlay)
+            }
+            (KeyCode::Char('r'), m) if m.contains(KeyModifiers::CONTROL) => {
+                Some(PickerAction::ReplaceQueue)
+            }
+            (KeyCode::Enter, _) => Some(PickerAction::Append),
+            _ => None,
+        };
+
+        if let Some(action) = action {
+            let ids = picker.confirm();
+            let kind = picker.kind;
+            self.picker = None;
+            self.mode = Mode::Normal;
+
+            if !ids.is_empty() {
+                match kind {
+                    PickerKind::Track | PickerKind::Album => {
+                        self.picker_result = Some((kind, ids, action));
+                    }
+                    PickerKind::Artist => {
+                        self.artist_drill_down = Some(ids[0]);
+                    }
+                    PickerKind::QueueJump => {
+                        let idx = ids[0] as usize;
+                        let visible = self.visible_queue();
+                        if let Some(entry) = visible.get(idx) {
+                            self.tx.send(PlayerCommand::Play(entry.id)).ok();
+                            self.queue.cursor = idx;
+                            self.update_scroll();
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         match key.code {
             KeyCode::Esc => {
                 self.picker = None;
                 self.mode = Mode::Normal;
-            }
-            KeyCode::Enter => {
-                let ids = picker.confirm();
-                let kind = picker.kind;
-                self.picker = None;
-                self.mode = Mode::Normal;
-
-                if !ids.is_empty() {
-                    match kind {
-                        PickerKind::Track | PickerKind::Album => {
-                            self.picker_result = Some((kind, ids));
-                        }
-                        PickerKind::Artist => {
-                            self.artist_drill_down = Some(ids[0]);
-                        }
-                        PickerKind::QueueJump => {
-                            let idx = ids[0] as usize;
-                            let visible = self.visible_queue();
-                            if let Some(entry) = visible.get(idx) {
-                                self.tx.send(PlayerCommand::Play(entry.id)).ok();
-                                self.queue.cursor = idx;
-                                self.update_scroll();
-                            }
-                        }
-                    }
-                }
             }
             KeyCode::Up => picker.move_up(),
             KeyCode::Down => picker.move_down(),
@@ -530,7 +556,8 @@ impl App {
                                 if !ids.is_empty() {
                                     match kind {
                                         PickerKind::Track | PickerKind::Album => {
-                                            self.picker_result = Some((kind, ids));
+                                            self.picker_result =
+                                                Some((kind, ids, PickerAction::AppendAndPlay));
                                         }
                                         PickerKind::Artist => {
                                             self.artist_drill_down = Some(ids[0]);
@@ -606,7 +633,11 @@ impl App {
                                         self.last_click_time = None;
                                         let ids = lib.enqueue_all_under_cursor();
                                         if !ids.is_empty() {
-                                            self.picker_result = Some((PickerKind::Track, ids));
+                                            self.picker_result = Some((
+                                                PickerKind::Track,
+                                                ids,
+                                                PickerAction::AppendAndPlay,
+                                            ));
                                         }
                                     } else {
                                         self.last_click_idx = Some(item_idx);
@@ -1117,7 +1148,8 @@ impl App {
             KeyCode::Down => lib.move_down(),
             KeyCode::Enter | KeyCode::Right => {
                 if let Some(ids) = lib.expand_or_enter() {
-                    self.picker_result = Some((PickerKind::Track, ids));
+                    self.picker_result =
+                        Some((PickerKind::Track, ids, PickerAction::AppendAndPlay));
                 }
             }
             KeyCode::Left | KeyCode::Backspace => {
@@ -1126,7 +1158,8 @@ impl App {
             KeyCode::Char('a') => {
                 let ids = lib.enqueue_all_under_cursor();
                 if !ids.is_empty() {
-                    self.picker_result = Some((PickerKind::Track, ids));
+                    self.picker_result =
+                        Some((PickerKind::Track, ids, PickerAction::AppendAndPlay));
                 }
             }
             KeyCode::Char('f') | KeyCode::Char('/') => {
