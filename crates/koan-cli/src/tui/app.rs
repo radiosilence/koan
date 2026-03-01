@@ -34,7 +34,8 @@ pub enum ContextAction {
 }
 
 pub struct ContextMenuState {
-    pub actions: Vec<(ContextAction, &'static str)>,
+    /// (action, label, hotkey char)
+    pub actions: Vec<(ContextAction, &'static str, char)>,
     pub cursor: usize,
 }
 
@@ -478,7 +479,7 @@ impl App {
             }
             KeyCode::Enter => {
                 if let Some(menu) = self.context_menu.take()
-                    && let Some((action, _)) = menu.actions.get(menu.cursor)
+                    && let Some((action, _, _)) = menu.actions.get(menu.cursor)
                 {
                     match action {
                         ContextAction::Organize => {
@@ -489,9 +490,14 @@ impl App {
                     self.mode = Mode::QueueEdit;
                 }
             }
-            KeyCode::Char('q') => {
+            KeyCode::Char('q') | KeyCode::Char(' ') => {
                 self.context_menu = None;
                 self.mode = Mode::QueueEdit;
+            }
+            // Hotkeys for actions.
+            KeyCode::Char('o') => {
+                self.context_menu = None;
+                self.open_organize_modal();
             }
             _ => {}
         }
@@ -553,7 +559,7 @@ impl App {
     }
 
     fn open_context_menu(&mut self) {
-        let actions = vec![(ContextAction::Organize, "Organize (move/rename)")];
+        let actions = vec![(ContextAction::Organize, "Organize (move/rename)", 'o')];
         self.context_menu = Some(ContextMenuState {
             actions,
             cursor: 0,
@@ -969,14 +975,16 @@ impl App {
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                if let Some(ref mut drag) = self.queue.drag {
-                    drag.current_y = event.row;
+                let drag_info = self.queue.drag.as_ref().map(|d| (d.from_index, d.multi));
+                if let Some((from_index, _multi)) = drag_info {
+                    if let Some(ref mut drag) = self.queue.drag {
+                        drag.current_y = event.row;
+                    }
 
-                    // Drag in edit mode extends selection (workaround for terminals
-                    // that don't report SHIFT modifier on mouse events).
                     if self.mode == Mode::QueueEdit
                         && self.is_in_rect(event.column, event.row, self.layout.queue_area)
                     {
+                        // Edit mode: drag extends selection (shift-click workaround).
                         let visible = self.visible_queue();
                         if let Some(idx) = queue::QueueView::queue_index_at_y(
                             &visible,
@@ -987,38 +995,32 @@ impl App {
                             self.extend_selection_to(idx);
                             self.queue.cursor = idx;
                         }
+                    } else if self.mode != Mode::QueueEdit
+                        && self.is_in_rect(event.column, event.row, self.layout.queue_area)
+                    {
+                        // Normal mode: live reorder — move track as mouse crosses rows.
+                        let visible = self.visible_queue();
+                        if let Some(to_idx) = queue::QueueView::queue_index_at_y(
+                            &visible,
+                            self.layout.queue_area,
+                            self.queue.scroll_offset,
+                            event.row,
+                        )
+                            && to_idx != from_index
+                        {
+                            self.send_move(from_index, to_idx);
+                            self.queue.cursor = to_idx;
+                            self.select_single(to_idx);
+                            if let Some(ref mut drag) = self.queue.drag {
+                                drag.from_index = to_idx;
+                            }
+                        }
                     }
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                if let Some(drag) = self.queue.drag.take() {
-                    // In edit mode, drag extends selection — don't reorder.
-                    if self.mode == Mode::QueueEdit {
-                        return;
-                    }
-
-                    let visible = self.visible_queue();
-                    let Some(to_idx) = queue::QueueView::queue_index_at_y(
-                        &visible,
-                        self.layout.queue_area,
-                        self.queue.scroll_offset,
-                        drag.current_y,
-                    ) else {
-                        return;
-                    };
-
-                    if to_idx == drag.from_index {
-                        return; // click, not drag
-                    }
-
-                    if drag.multi && self.queue.selected_indices.len() > 1 {
-                        self.move_selected_to(to_idx);
-                    } else {
-                        self.send_move(drag.from_index, to_idx);
-                        self.queue.cursor = to_idx;
-                        self.select_single(to_idx);
-                    }
-                }
+                // Just clear drag state — reorder already happened live during drag.
+                self.queue.drag.take();
             }
             MouseEventKind::ScrollUp => {
                 if let Mode::Picker(_) = &self.mode {
@@ -1222,63 +1224,6 @@ impl App {
             .ok();
     }
 
-    /// Move all selected tracks so the group lands at `target_idx` (visible space).
-    fn move_selected_to(&mut self, target_idx: usize) {
-        if self.queue.selected_indices.is_empty() {
-            return;
-        }
-
-        let visible = self.visible_queue();
-        let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
-        indices.sort_unstable();
-
-        // Collect IDs of selected items (in order).
-        let ids: Vec<_> = indices
-            .iter()
-            .filter_map(|&i| visible.get(i).map(|e| e.id))
-            .collect();
-
-        if ids.is_empty() {
-            return;
-        }
-
-        let count = ids.len();
-        let group_start = *indices.first().unwrap();
-
-        // Find the target entry to place relative to.
-        let (target_id, after) = if target_idx < group_start {
-            // Moving up: place before the item at target_idx.
-            let Some(entry) = visible.get(target_idx) else {
-                return;
-            };
-            (entry.id, false)
-        } else {
-            // Moving down: place after the item at target_idx.
-            let Some(entry) = visible.get(target_idx) else {
-                return;
-            };
-            (entry.id, true)
-        };
-
-        self.tx
-            .send(PlayerCommand::MoveItemsInPlaylist {
-                ids,
-                target: target_id,
-                after,
-            })
-            .ok();
-
-        // Update local selection to where the group will land.
-        let new_start = if target_idx < group_start {
-            target_idx
-        } else {
-            target_idx + 1 - count
-        };
-        self.queue.selected_indices = (new_start..new_start + count).collect();
-        self.queue.cursor = target_idx;
-        self.queue.anchor_index = Some(new_start);
-    }
-
     fn handle_library_key(&mut self, key: KeyEvent) {
         // When filter input is focused, route keys there first.
         if self.library.as_ref().is_some_and(|lib| lib.filter_active) {
@@ -1446,18 +1391,6 @@ impl App {
 
     fn is_in_rect(&self, x: u16, y: u16, rect: ratatui::layout::Rect) -> bool {
         x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height
-    }
-
-    /// Get the drag target index (for visual feedback in queue).
-    pub fn drag_target_index(&self) -> Option<usize> {
-        let drag = self.queue.drag.as_ref()?;
-        let visible = self.visible_queue();
-        queue::QueueView::queue_index_at_y(
-            &visible,
-            self.layout.queue_area,
-            self.queue.scroll_offset,
-            drag.current_y,
-        )
     }
 
     /// Get the drop indicator index — where external drops would insert.

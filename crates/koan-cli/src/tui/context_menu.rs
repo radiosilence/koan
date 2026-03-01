@@ -40,11 +40,12 @@ impl Widget for ContextMenuOverlay<'_> {
         let inner = block.inner(popup);
         block.render(popup, buf);
 
-        for (i, (_action, label)) in self.state.actions.iter().enumerate() {
+        for (i, (_action, label, hotkey)) in self.state.actions.iter().enumerate() {
             if i >= inner.height as usize {
                 break;
             }
-            let style = if i == self.state.cursor {
+            let is_selected = i == self.state.cursor;
+            let base_style = if is_selected {
                 Style::default()
                     .fg(ratatui::style::Color::Black)
                     .bg(ratatui::style::Color::White)
@@ -52,7 +53,18 @@ impl Widget for ContextMenuOverlay<'_> {
             } else {
                 self.theme.hint_desc
             };
-            let line = Line::from(Span::styled(format!(" {} ", label), style));
+            let key_style = if is_selected {
+                base_style
+            } else {
+                self.theme.hint_key
+            };
+            let line = Line::from(vec![
+                Span::styled(" [", base_style),
+                Span::styled(hotkey.to_string(), key_style),
+                Span::styled("] ", base_style),
+                Span::styled(*label, base_style),
+                Span::styled(" ", base_style),
+            ]);
             let row = Rect::new(inner.x, inner.y + i as u16, inner.width, 1);
             Paragraph::new(line).render(row, buf);
         }

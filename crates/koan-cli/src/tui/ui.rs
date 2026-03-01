@@ -249,7 +249,6 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     }
 
     let visible = app.visible_queue();
-    let drag_target = app.drag_target_index();
     let drop_indicator = app.drop_indicator_index();
     let queue_view = QueueView::new(
         &visible,
@@ -260,7 +259,6 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         &app.queue.selected_indices,
         app.spinner_tick,
     )
-    .with_drag_target(drag_target)
     .with_drop_indicator(drop_indicator);
     frame.render_widget(queue_view, area);
 }
