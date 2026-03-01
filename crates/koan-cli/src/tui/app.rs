@@ -935,7 +935,9 @@ impl App {
                     return;
                 };
 
-                let shift = event.modifiers.contains(KeyModifiers::SHIFT);
+                // Range-select: Shift or Ctrl (most terminals don't report Shift on mouse).
+                let range_select = event.modifiers.contains(KeyModifiers::SHIFT)
+                    || event.modifiers.contains(KeyModifiers::CONTROL);
                 // Alt/Option for toggle-select (Cmd doesn't reach terminal).
                 let toggle = event.modifiers.contains(KeyModifiers::ALT);
 
@@ -957,7 +959,7 @@ impl App {
                     self.last_click_idx = Some(idx);
                     self.last_click_time = Some(now);
 
-                    if shift {
+                    if range_select {
                         self.extend_selection_to(idx);
                     } else if toggle {
                         self.toggle_selection(idx);
