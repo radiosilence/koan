@@ -24,6 +24,18 @@ pub enum Mode {
     LibraryBrowse,
     TrackInfo(usize),
     CoverArtZoom,
+    ContextMenu,
+    Organize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextAction {
+    Organize,
+}
+
+pub struct ContextMenuState {
+    pub actions: Vec<(ContextAction, &'static str)>,
+    pub cursor: usize,
 }
 
 /// What to do when the picker confirms a selection.
@@ -74,6 +86,8 @@ pub struct LayoutRects {
     pub transport_text_area: ratatui::layout::Rect,
     pub seek_bar_start: u16,
     pub seek_bar_width: u16,
+    pub context_menu_area: ratatui::layout::Rect,
+    pub organize_area: ratatui::layout::Rect,
 }
 
 /// Cover art caches and stable height tracking.
@@ -139,6 +153,15 @@ pub struct App {
 
     /// Cover art caches.
     pub art: ArtState,
+
+    /// Context menu state (when in ContextMenu mode).
+    pub context_menu: Option<ContextMenuState>,
+
+    /// Organize modal state (when in Organize mode).
+    pub organize: Option<super::organize::OrganizeModalState>,
+
+    /// Last known mouse row — for determining drop insertion point.
+    pub last_mouse_row: Option<u16>,
 }
 
 impl App {
@@ -171,6 +194,9 @@ impl App {
             library_focus: LibraryFocus::Library,
             db_path,
             art: ArtState::default(),
+            context_menu: None,
+            organize: None,
+            last_mouse_row: None,
         }
     }
 
@@ -200,6 +226,24 @@ impl App {
         // Tick picker if active.
         if let Some(ref mut picker) = self.picker {
             picker.tick();
+        }
+
+        // Tick organize modal — check for pending preview/execute results.
+        if let Some(ref mut org) = self.organize
+            && let Some(result) = org.check_pending()
+        {
+            match result {
+                super::organize::OrganizeCompletionKind::Preview => {}
+                super::organize::OrganizeCompletionKind::Execute => {
+                    // Send path updates to the player.
+                    let updates = org.take_path_updates();
+                    if !updates.is_empty() {
+                        self.tx
+                            .send(PlayerCommand::UpdatePaths(updates))
+                            .ok();
+                    }
+                }
+            }
         }
 
         // Update now-playing cover art cache when track changes.
@@ -254,6 +298,8 @@ impl App {
             Mode::LibraryBrowse => self.handle_library_key(key),
             Mode::TrackInfo(_) => self.handle_info_key(key),
             Mode::CoverArtZoom => self.handle_zoom_key(key),
+            Mode::ContextMenu => self.handle_context_menu_key(key),
+            Mode::Organize => self.handle_organize_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -291,10 +337,6 @@ impl App {
             }
             KeyCode::Char('e') => {
                 self.mode = Mode::QueueEdit;
-                let min = self.queue_cursor_min();
-                if self.queue.cursor < min {
-                    self.queue.cursor = min;
-                }
                 // Sync selection to cursor so j/k work immediately.
                 if self.queue.selected_indices.len() <= 1 {
                     self.select_single(self.queue.cursor);
@@ -348,7 +390,6 @@ impl App {
 
     fn handle_edit_key(&mut self, key: KeyEvent) {
         let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-        let min = self.queue_cursor_min();
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
@@ -360,7 +401,7 @@ impl App {
                 self.quit = true;
             }
             KeyCode::Up => {
-                self.queue.cursor = self.queue.cursor.saturating_sub(1).max(min);
+                self.queue.cursor = self.queue.cursor.saturating_sub(1);
                 if shift {
                     self.extend_selection_to(self.queue.cursor);
                 } else {
@@ -398,7 +439,7 @@ impl App {
                 }
             }
             KeyCode::Char('K') => {
-                if self.queue.cursor > min {
+                if self.queue.cursor > 0 {
                     self.queue.cursor -= 1;
                     self.extend_selection_to(self.queue.cursor);
                     self.update_scroll();
@@ -407,8 +448,152 @@ impl App {
             KeyCode::Char('i') => {
                 self.open_track_info(self.queue.cursor);
             }
+            KeyCode::Char(' ') => {
+                // Open context menu if there's a selection.
+                if !self.queue.selected_indices.is_empty() {
+                    self.open_context_menu();
+                }
+            }
             _ => {}
         }
+    }
+
+    fn handle_context_menu_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc => {
+                self.context_menu = None;
+                self.mode = Mode::QueueEdit;
+            }
+            KeyCode::Up => {
+                if let Some(ref mut menu) = self.context_menu {
+                    menu.cursor = menu.cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Down => {
+                if let Some(ref mut menu) = self.context_menu
+                    && menu.cursor + 1 < menu.actions.len()
+                {
+                    menu.cursor += 1;
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(menu) = self.context_menu.take()
+                    && let Some((action, _)) = menu.actions.get(menu.cursor)
+                {
+                    match action {
+                        ContextAction::Organize => {
+                            self.open_organize_modal();
+                        }
+                    }
+                } else {
+                    self.mode = Mode::QueueEdit;
+                }
+            }
+            KeyCode::Char('q') => {
+                self.context_menu = None;
+                self.mode = Mode::QueueEdit;
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_organize_key(&mut self, key: KeyEvent) {
+        let Some(ref mut org) = self.organize else {
+            return;
+        };
+        match key.code {
+            KeyCode::Esc => {
+                self.organize = None;
+                self.mode = Mode::QueueEdit;
+            }
+            KeyCode::Tab => {
+                org.focus = match org.focus {
+                    super::organize::OrganizeFocus::PatternList => {
+                        super::organize::OrganizeFocus::Preview
+                    }
+                    super::organize::OrganizeFocus::Preview => {
+                        super::organize::OrganizeFocus::RunButton
+                    }
+                    super::organize::OrganizeFocus::RunButton => {
+                        super::organize::OrganizeFocus::PatternList
+                    }
+                };
+            }
+            KeyCode::Up => match org.focus {
+                super::organize::OrganizeFocus::PatternList => {
+                    if org.pattern_cursor > 0 {
+                        org.pattern_cursor -= 1;
+                        org.request_preview();
+                    }
+                }
+                super::organize::OrganizeFocus::Preview => {
+                    org.scroll = org.scroll.saturating_sub(1);
+                }
+                _ => {}
+            },
+            KeyCode::Down => match org.focus {
+                super::organize::OrganizeFocus::PatternList => {
+                    if org.pattern_cursor + 1 < org.patterns.len() {
+                        org.pattern_cursor += 1;
+                        org.request_preview();
+                    }
+                }
+                super::organize::OrganizeFocus::Preview => {
+                    org.scroll += 1;
+                }
+                _ => {}
+            },
+            KeyCode::Enter => {
+                if !org.executing {
+                    org.request_execute();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn open_context_menu(&mut self) {
+        let actions = vec![(ContextAction::Organize, "Organize (move/rename)")];
+        self.context_menu = Some(ContextMenuState {
+            actions,
+            cursor: 0,
+        });
+        self.mode = Mode::ContextMenu;
+    }
+
+    fn open_organize_modal(&mut self) {
+        let config = koan_core::config::Config::load().unwrap_or_default();
+        let mut patterns: Vec<(String, String)> = config
+            .organize
+            .patterns
+            .into_iter()
+            .collect();
+        patterns.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Collect selected queue entries' paths.
+        let visible = self.visible_queue();
+        let selected_paths: Vec<PathBuf> = self
+            .queue
+            .selected_indices
+            .iter()
+            .filter_map(|&idx| visible.get(idx).map(|e| e.path.clone()))
+            .collect();
+
+        // Collect the QueueItemIds for the selection (needed for path updates later).
+        let selected_ids: Vec<(koan_core::player::state::QueueItemId, PathBuf)> = self
+            .queue
+            .selected_indices
+            .iter()
+            .filter_map(|&idx| visible.get(idx).map(|e| (e.id, e.path.clone())))
+            .collect();
+
+        let org = super::organize::OrganizeModalState::new(
+            patterns,
+            selected_paths,
+            selected_ids,
+        );
+        self.organize = Some(org);
+        self.mode = Mode::Organize;
     }
 
     fn handle_picker_key(&mut self, key: KeyEvent) {
@@ -501,6 +686,13 @@ impl App {
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent) {
+        // Track mouse row for drop insertion indicator.
+        if self.is_in_rect(event.column, event.row, self.layout.queue_area) {
+            self.last_mouse_row = Some(event.row);
+        } else {
+            self.last_mouse_row = None;
+        }
+
         // Cover art zoom intercepts all mouse events.
         if self.mode == Mode::CoverArtZoom {
             if let MouseEventKind::Down(MouseButton::Left) = event.kind {
@@ -516,6 +708,43 @@ impl App {
             {
                 self.mode = Mode::Normal;
                 self.art.cover_art.clear();
+            }
+            return;
+        }
+
+        // Organize modal intercepts all mouse events.
+        if self.mode == Mode::Organize {
+            if let MouseEventKind::Down(MouseButton::Left) = event.kind
+                && !self.is_in_rect(event.column, event.row, self.layout.organize_area)
+            {
+                self.organize = None;
+                self.mode = Mode::QueueEdit;
+            }
+            return;
+        }
+
+        // Context menu intercepts all mouse events.
+        if self.mode == Mode::ContextMenu {
+            if let MouseEventKind::Down(MouseButton::Left) = event.kind {
+                if self.is_in_rect(event.column, event.row, self.layout.context_menu_area) {
+                    // Click on an action row — compute which one.
+                    let row = (event.row.saturating_sub(self.layout.context_menu_area.y + 1)) as usize;
+                    if let Some(ref mut menu) = self.context_menu
+                        && row < menu.actions.len()
+                    {
+                        menu.cursor = row;
+                        let action = menu.actions[row].0;
+                        self.context_menu = None;
+                        match action {
+                            ContextAction::Organize => {
+                                self.open_organize_modal();
+                            }
+                        }
+                    }
+                } else {
+                    self.context_menu = None;
+                    self.mode = Mode::QueueEdit;
+                }
             }
             return;
         }
@@ -700,7 +929,6 @@ impl App {
                     return;
                 };
 
-                let offset = self.queue_edit_offset();
                 let shift = event.modifiers.contains(KeyModifiers::SHIFT);
                 // Alt/Option for toggle-select (Cmd doesn't reach terminal).
                 let toggle = event.modifiers.contains(KeyModifiers::ALT);
@@ -723,32 +951,30 @@ impl App {
                     self.last_click_idx = Some(idx);
                     self.last_click_time = Some(now);
 
-                    // Only select/drag upcoming (editable) tracks.
-                    if idx >= offset {
-                        if shift {
-                            self.extend_selection_to(idx);
-                        } else if toggle {
-                            self.toggle_selection(idx);
-                        } else {
-                            self.select_single(idx);
-                        }
-                        self.queue.cursor = idx;
-
-                        let multi = self.queue.selected_indices.len() > 1;
-                        self.queue.drag = Some(DragState {
-                            from_index: idx,
-                            current_y: event.row,
-                            multi,
-                        });
+                    if shift {
+                        self.extend_selection_to(idx);
+                    } else if toggle {
+                        self.toggle_selection(idx);
+                    } else {
+                        self.select_single(idx);
                     }
+                    self.queue.cursor = idx;
+
+                    let multi = self.queue.selected_indices.len() > 1;
+                    self.queue.drag = Some(DragState {
+                        from_index: idx,
+                        current_y: event.row,
+                        multi,
+                    });
                 }
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 if let Some(ref mut drag) = self.queue.drag {
                     drag.current_y = event.row;
 
-                    // Shift-drag: extend selection continuously.
-                    if event.modifiers.contains(KeyModifiers::SHIFT)
+                    // Drag in edit mode extends selection (workaround for terminals
+                    // that don't report SHIFT modifier on mouse events).
+                    if self.mode == Mode::QueueEdit
                         && self.is_in_rect(event.column, event.row, self.layout.queue_area)
                     {
                         let visible = self.visible_queue();
@@ -758,17 +984,19 @@ impl App {
                             self.queue.scroll_offset,
                             event.row,
                         ) {
-                            let offset = self.queue_edit_offset();
-                            if idx >= offset {
-                                self.extend_selection_to(idx);
-                                self.queue.cursor = idx;
-                            }
+                            self.extend_selection_to(idx);
+                            self.queue.cursor = idx;
                         }
                     }
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
                 if let Some(drag) = self.queue.drag.take() {
+                    // In edit mode, drag extends selection — don't reorder.
+                    if self.mode == Mode::QueueEdit {
+                        return;
+                    }
+
                     let visible = self.visible_queue();
                     let Some(to_idx) = queue::QueueView::queue_index_at_y(
                         &visible,
@@ -778,11 +1006,6 @@ impl App {
                     ) else {
                         return;
                     };
-
-                    let offset = self.queue_edit_offset();
-                    if drag.from_index < offset || to_idx < offset {
-                        return;
-                    }
 
                     if to_idx == drag.from_index {
                         return; // click, not drag
@@ -907,9 +1130,8 @@ impl App {
         }
 
         self.queue.selected_indices.clear();
-        let min = self.queue_cursor_min();
         let visible_len = self.visible_queue().len();
-        if visible_len > min && self.queue.cursor >= visible_len {
+        if visible_len > 0 && self.queue.cursor >= visible_len {
             self.queue.cursor = visible_len - 1;
         }
     }
@@ -917,11 +1139,10 @@ impl App {
     /// Move all selected tracks down by one position.
     fn move_selected_down(&mut self) {
         let visible_len = self.visible_queue().len();
-        let offset = self.queue_edit_offset();
 
         // Single item: move the track under cursor.
         if self.queue.selected_indices.len() <= 1 {
-            if self.queue.cursor + 1 < visible_len && self.queue.cursor >= offset {
+            if self.queue.cursor + 1 < visible_len {
                 self.send_move(self.queue.cursor, self.queue.cursor + 1);
                 self.queue.cursor += 1;
                 self.select_single(self.queue.cursor);
@@ -940,9 +1161,7 @@ impl App {
         let min_idx = indices.first().copied().unwrap_or(0);
 
         // Swap the item BELOW the group to ABOVE it — single atomic move.
-        if max_idx + 1 < visible_len && min_idx >= offset {
-            self.send_move(max_idx + 1, min_idx);
-        }
+        self.send_move(max_idx + 1, min_idx);
 
         let new_selected: HashSet<usize> = indices.iter().map(|&i| i + 1).collect();
         self.queue.selected_indices = new_selected;
@@ -953,11 +1172,9 @@ impl App {
 
     /// Move all selected tracks up by one position.
     fn move_selected_up(&mut self) {
-        let offset = self.queue_edit_offset();
-
         // Single item: move the track under cursor.
         if self.queue.selected_indices.len() <= 1 {
-            if self.queue.cursor > offset {
+            if self.queue.cursor > 0 {
                 self.send_move(self.queue.cursor, self.queue.cursor - 1);
                 self.queue.cursor -= 1;
                 self.select_single(self.queue.cursor);
@@ -969,8 +1186,8 @@ impl App {
         let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
         indices.sort_unstable();
 
-        let min_idx = indices.first().copied().unwrap_or(offset);
-        if min_idx <= offset {
+        let min_idx = indices.first().copied().unwrap_or(0);
+        if min_idx == 0 {
             return;
         }
         let max_idx = indices.last().copied().unwrap_or(0);
@@ -1011,7 +1228,6 @@ impl App {
             return;
         }
 
-        let edit_offset = self.queue_edit_offset();
         let visible = self.visible_queue();
         let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
         indices.sort_unstable();
@@ -1019,7 +1235,6 @@ impl App {
         // Collect IDs of selected items (in order).
         let ids: Vec<_> = indices
             .iter()
-            .filter(|&&i| i >= edit_offset)
             .filter_map(|&i| visible.get(i).map(|e| e.id))
             .collect();
 
@@ -1033,7 +1248,7 @@ impl App {
         // Find the target entry to place relative to.
         let (target_id, after) = if target_idx < group_start {
             // Moving up: place before the item at target_idx.
-            let Some(entry) = visible.get(target_idx.max(edit_offset)) else {
+            let Some(entry) = visible.get(target_idx) else {
                 return;
             };
             (entry.id, false)
@@ -1055,7 +1270,7 @@ impl App {
 
         // Update local selection to where the group will land.
         let new_start = if target_idx < group_start {
-            target_idx.max(edit_offset)
+            target_idx
         } else {
             target_idx + 1 - count
         };
@@ -1245,6 +1460,28 @@ impl App {
         )
     }
 
+    /// Get the drop indicator index — where external drops would insert.
+    /// Only active when mouse is over queue and no internal drag is happening.
+    pub fn drop_indicator_index(&self) -> Option<usize> {
+        if self.queue.drag.is_some() {
+            return None; // internal drag takes precedence
+        }
+        let row = self.last_mouse_row?;
+        let visible = self.visible_queue();
+        queue::QueueView::queue_index_at_y(
+            &visible,
+            self.layout.queue_area,
+            self.queue.scroll_offset,
+            row,
+        )
+    }
+
+    /// Get the QueueItemId at the drop indicator position (for InsertInPlaylist).
+    pub fn drop_target_queue_id(&self) -> Option<koan_core::player::state::QueueItemId> {
+        let idx = self.drop_indicator_index()?;
+        self.queue.vq_cache.entries.get(idx).map(|e| e.id)
+    }
+
     /// Refresh the cached visible queue snapshot from shared state.
     /// Call once per frame before any queue-related reads.
     pub fn refresh_visible_queue(&mut self) {
@@ -1255,14 +1492,4 @@ impl App {
         self.queue.vq_cache.entries.clone()
     }
 
-    /// Offset into visible_queue() where the player queue entries start
-    /// (after finished + playing).
-    pub fn queue_edit_offset(&self) -> usize {
-        self.queue.vq_cache.finished_count + usize::from(self.queue.vq_cache.has_playing)
-    }
-
-    /// Minimum cursor position in edit mode (can reach playing track).
-    pub fn queue_cursor_min(&self) -> usize {
-        self.queue.vq_cache.finished_count
-    }
 }

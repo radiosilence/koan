@@ -6,12 +6,11 @@ use koan_core::config;
 use koan_core::db::queries;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{LoadState, PlaylistItem, QueueItemId};
 use owo_colors::OwoColorize;
 
 use super::{
     enqueue_playlist, install_terminal_panic_hook, load_picker_items, make_album_picker_items,
-    open_db,
+    open_db, parse_dropped_paths, playlist_items_from_paths,
 };
 use crate::BufferedLogger;
 use crate::tui;
@@ -105,49 +104,7 @@ pub fn cmd_play(
             eprintln!("no audio files found");
             std::process::exit(1);
         }
-        let items: Vec<PlaylistItem> = audio_paths
-            .iter()
-            .map(|p| {
-                // Read tags so queue groups by album correctly.
-                if let Ok(meta) = koan_core::index::metadata::read_metadata(p) {
-                    PlaylistItem {
-                        id: QueueItemId::new(),
-                        path: p.clone(),
-                        title: meta.title,
-                        artist: meta.artist,
-                        album_artist: meta.album_artist.unwrap_or_default(),
-                        album: meta.album,
-                        year: meta.date,
-                        codec: meta.codec,
-                        track_number: meta.track_number.map(|n| n as i64),
-                        disc: meta.disc.map(|d| d as i64),
-                        duration_ms: meta.duration_ms.map(|d| d as u64),
-                        load_state: LoadState::Ready,
-                    }
-                } else {
-                    // Fallback: no tags readable, just use filename.
-                    let title = p
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
-                    PlaylistItem {
-                        id: QueueItemId::new(),
-                        path: p.clone(),
-                        title,
-                        artist: String::new(),
-                        album_artist: String::new(),
-                        album: String::new(),
-                        year: None,
-                        codec: None,
-                        track_number: None,
-                        disc: None,
-                        duration_ms: None,
-                        load_state: LoadState::Ready,
-                    }
-                }
-            })
-            .collect();
+        let items = playlist_items_from_paths(&audio_paths);
         let first_id = items[0].id;
         tx.send(PlayerCommand::AddToPlaylist(items))
             .expect("player thread died");
@@ -175,7 +132,9 @@ fn run_tui(
     expects_playback: bool,
 ) -> std::io::Result<()> {
     use crossterm::{
-        event::{DisableMouseCapture, EnableMouseCapture},
+        event::{
+            DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
+        },
         execute,
         terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
     };
@@ -188,7 +147,12 @@ fn run_tui(
     // Setup terminal.
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        EnableMouseCapture,
+        EnableBracketedPaste
+    )?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -215,6 +179,59 @@ fn run_tui(
         match event {
             tui::event::Event::Key(key) => app.handle_key(key),
             tui::event::Event::Mouse(mouse) => app.handle_mouse(mouse),
+            tui::event::Event::Paste(text) => {
+                // Parse dropped/pasted paths (handles shell escaping, file:// URIs, etc).
+                // Heavy work (walkdir + metadata read) runs on a background thread.
+                // Insert at mouse position if hovering over queue, otherwise append.
+                let tx_drop = tx.clone();
+                let log_drop = app.log_buffer.clone();
+                let insert_after = app.drop_target_queue_id();
+                std::thread::Builder::new()
+                    .name("koan-drop".into())
+                    .spawn(move || {
+                        let dropped = parse_dropped_paths(&text);
+                        let mut audio_paths: Vec<PathBuf> = Vec::new();
+                        for path in dropped {
+                            if path.is_dir() {
+                                let mut dir_files: Vec<PathBuf> =
+                                    walkdir::WalkDir::new(&path)
+                                        .follow_links(true)
+                                        .into_iter()
+                                        .filter_map(|e| e.ok())
+                                        .filter(|e| e.file_type().is_file())
+                                        .filter(|e| {
+                                            koan_core::index::metadata::is_audio_file(e.path())
+                                        })
+                                        .map(|e| e.into_path())
+                                        .collect();
+                                dir_files.sort();
+                                audio_paths.extend(dir_files);
+                            } else if path.is_file()
+                                && koan_core::index::metadata::is_audio_file(&path)
+                            {
+                                audio_paths.push(path);
+                            }
+                        }
+                        if !audio_paths.is_empty() {
+                            let count = audio_paths.len();
+                            let items = playlist_items_from_paths(&audio_paths);
+                            if let Some(after_id) = insert_after {
+                                tx_drop
+                                    .send(PlayerCommand::InsertInPlaylist {
+                                        items,
+                                        after: after_id,
+                                    })
+                                    .ok();
+                            } else {
+                                tx_drop.send(PlayerCommand::AddToPlaylist(items)).ok();
+                            }
+                            if let Ok(mut logs) = log_drop.lock() {
+                                logs.push(format!("added {} files", count));
+                            }
+                        }
+                    })
+                    .ok();
+            }
             tui::event::Event::Tick => {
                 app.handle_tick();
 
@@ -321,7 +338,8 @@ fn run_tui(
     execute!(
         terminal.backend_mut(),
         LeaveAlternateScreen,
-        DisableMouseCapture
+        DisableMouseCapture,
+        DisableBracketedPaste
     )?;
     terminal.show_cursor()?;
 

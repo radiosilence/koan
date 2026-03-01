@@ -388,6 +388,20 @@ pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow
     }
 }
 
+/// Look up a track ID by its local file path.
+pub fn track_id_by_path(conn: &Connection, path: &str) -> Result<Option<i64>, DbError> {
+    let result = conn.query_row(
+        "SELECT id FROM tracks WHERE path = ?1",
+        params![path],
+        |row| row.get(0),
+    );
+    match result {
+        Ok(id) => Ok(Some(id)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
 /// Update the cached_path for a track after downloading.
 pub fn set_cached_path(conn: &Connection, track_id: i64, path: &str) -> Result<(), DbError> {
     conn.execute(

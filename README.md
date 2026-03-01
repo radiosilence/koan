@@ -15,8 +15,8 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 - **File watching** — FSEvents via notify, debounced 500ms, auto-updates DB on changes
 - **Subsonic/Navidrome** — parallel remote library sync, unified local+remote browsing, lazy parallel downloads
 - **Format string engine** — fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for library views and file organization
-- **File organization** — `koan organize` renames/moves files using format strings, with dry-run preview and undo
-- **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag. Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward)
+- **File organization** — `koan organize` CLI or in-TUI organize modal (select tracks → context menu → pattern picker → preview → execute). Format strings, dry-run preview, undo
+- **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag. Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward). Drag/drop files from Finder into the terminal to add them to the queue
 - **Track deduplication** — local+remote tracks merged into single rows, local path always wins for playback
 - **Proper artist handling** — track artist stored separately from album artist; compilations/VA albums display correctly
 
@@ -142,6 +142,8 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `e`     | edit queue             |
 | `q`     | quit                   |
 
+**Drag/drop:** Drag files or folders from Finder into the terminal window to add them to the queue at the current cursor position.
+
 **Picker confirm actions** (track/album/artist picker):
 
 | Key          | Action                                 |
@@ -160,6 +162,7 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `Shift+↑` `↓` | extend selection         |
 | `d`           | remove selected track(s) |
 | `j` / `k`     | move selected down/up    |
+| `Space`        | context menu (organize)  |
 | `⌥-click`     | toggle select            |
 | `Shift-click`  | range select             |
 | `Esc`         | exit edit mode           |
@@ -178,7 +181,12 @@ Tracks are grouped by album with headers showing album artist, year, album title
 
 ### File organization
 
-Rename and reorganize your music library using fb2k-compatible format strings. Default is dry-run (preview), add `--execute` to apply. Undo with `--undo`. See [docs/format-strings.md](docs/format-strings.md) for the full syntax reference, all available fields/functions, and examples.
+Rename and reorganize your music library using fb2k-compatible format strings. Two workflows:
+
+- **TUI:** Select tracks in edit mode → `Space` → Organize → pick pattern from config → preview → run. Playlist paths update automatically, playback continues uninterrupted.
+- **CLI:** `koan organize` for batch operations. Default is dry-run (preview), add `--execute` to apply. Undo with `--undo`.
+
+See [docs/format-strings.md](docs/format-strings.md) for the full syntax reference, all available fields/functions, and examples.
 
 ```bash
 # preview

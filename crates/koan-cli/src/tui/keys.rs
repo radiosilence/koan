@@ -57,6 +57,17 @@ impl Widget for HintBar<'_> {
                 ("space", "pause"),
                 ("esc", "close"),
             ],
+            Mode::ContextMenu => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "select"),
+                ("esc", "cancel"),
+            ],
+            Mode::Organize => vec![
+                ("tab", "focus"),
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "run"),
+                ("esc", "cancel"),
+            ],
             Mode::Picker(_) => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "append"),

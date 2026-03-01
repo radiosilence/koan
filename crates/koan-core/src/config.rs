@@ -418,8 +418,10 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,%album%
 
     #[test]
     fn test_organize_default_pattern() {
-        let mut cfg = OrganizeConfig::default();
-        cfg.default = Some("standard".into());
+        let mut cfg = OrganizeConfig {
+            default: Some("standard".into()),
+            ..OrganizeConfig::default()
+        };
         cfg.patterns
             .insert("standard".into(), "%artist%/%title%".into());
 
@@ -428,8 +430,10 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,%album%
 
     #[test]
     fn test_organize_default_pattern_missing_name() {
-        let mut cfg = OrganizeConfig::default();
-        cfg.default = Some("nonexistent".into());
+        let cfg = OrganizeConfig {
+            default: Some("nonexistent".into()),
+            ..OrganizeConfig::default()
+        };
         // Name doesn't match any pattern → None
         assert_eq!(cfg.default_pattern(), None);
     }

@@ -23,6 +23,7 @@ pub struct QueueView<'a> {
     scroll_offset: usize,
     theme: &'a Theme,
     drag_target: Option<usize>,
+    drop_indicator: Option<usize>,
     selected: &'a HashSet<usize>,
     spinner_tick: usize,
 }
@@ -45,6 +46,7 @@ impl<'a> QueueView<'a> {
             scroll_offset,
             theme,
             drag_target: None,
+            drop_indicator: None,
             selected,
             spinner_tick,
         }
@@ -52,6 +54,11 @@ impl<'a> QueueView<'a> {
 
     pub fn with_drag_target(mut self, target: Option<usize>) -> Self {
         self.drag_target = target;
+        self
+    }
+
+    pub fn with_drop_indicator(mut self, indicator: Option<usize>) -> Self {
+        self.drop_indicator = indicator;
         self
     }
 
@@ -151,11 +158,13 @@ impl Widget for QueueView<'_> {
                 let is_cursor = is_edit && i == self.cursor;
                 let is_selected = self.selected.contains(&i);
                 let is_drag_target = self.drag_target == Some(i);
+                let is_drop_target = self.drop_indicator == Some(i);
                 let line = render_track_line(
                     &self.entries[i],
                     is_cursor,
                     is_selected,
                     is_drag_target,
+                    is_drop_target,
                     self.theme,
                     self.spinner_tick,
                 );
@@ -225,6 +234,7 @@ fn render_track_line<'a>(
     is_cursor: bool,
     is_selected: bool,
     is_drag_target: bool,
+    is_drop_target: bool,
     theme: &Theme,
     spinner_tick: usize,
 ) -> Line<'a> {
@@ -303,6 +313,8 @@ fn render_track_line<'a>(
         Span::styled(">", theme.track_cursor)
     } else if is_drag_target {
         Span::styled("\u{2500}", theme.track_playing)
+    } else if is_drop_target {
+        Span::styled("\u{25be}", theme.hint_key) // ▾ drop indicator
     } else if is_selected {
         Span::styled("\u{2502}", theme.track_selected)
     } else {

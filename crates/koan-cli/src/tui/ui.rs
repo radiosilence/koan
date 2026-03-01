@@ -4,9 +4,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{App, LibraryFocus, Mode};
+use super::context_menu::{ContextMenuOverlay, context_menu_rect};
 use super::cover_art::CoverArt;
 use super::keys::HintBar;
 use super::library::LibraryView;
+use super::organize::{OrganizeOverlay, organize_popup_rect};
 use super::picker::{PickerOverlay, picker_popup_rect};
 use super::queue::QueueView;
 use super::track_info::TrackInfoOverlay;
@@ -147,6 +149,24 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
+    // Context menu overlay.
+    if app.mode == Mode::ContextMenu
+        && let Some(ref menu) = app.context_menu
+    {
+        app.layout.context_menu_area = context_menu_rect(area, menu.actions.len());
+        let overlay = ContextMenuOverlay::new(menu, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    // Organize modal overlay.
+    if app.mode == Mode::Organize
+        && let Some(ref org) = app.organize
+    {
+        app.layout.organize_area = organize_popup_rect(area);
+        let overlay = OrganizeOverlay::new(org, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
     // Track info overlay.
     if let Mode::TrackInfo(idx) = app.mode
         && let Some(entry) = app.queue.vq_cache.entries.get(idx).cloned()
@@ -230,6 +250,7 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
 
     let visible = app.visible_queue();
     let drag_target = app.drag_target_index();
+    let drop_indicator = app.drop_indicator_index();
     let queue_view = QueueView::new(
         &visible,
         &app.mode,
@@ -239,6 +260,7 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
         &app.queue.selected_indices,
         app.spinner_tick,
     )
-    .with_drag_target(drag_target);
+    .with_drag_target(drag_target)
+    .with_drop_indicator(drop_indicator);
     frame.render_widget(queue_view, area);
 }

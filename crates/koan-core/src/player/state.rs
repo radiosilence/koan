@@ -224,6 +224,32 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
+    /// Insert items after a specific queue item.
+    pub fn insert_items_after(&self, items: Vec<PlaylistItem>, after: QueueItemId) {
+        let mut pl = self.playlist.write();
+        let insert_at = match pl.items.iter().position(|item| item.id == after) {
+            Some(pos) => pos + 1,
+            None => pl.items.len(), // fallback: append
+        };
+        for (i, item) in items.into_iter().enumerate() {
+            pl.items.insert(insert_at + i, item);
+        }
+        drop(pl);
+        self.bump_version();
+    }
+
+    /// Update file paths for playlist items (after organize moves files).
+    pub fn update_paths(&self, updates: &[(QueueItemId, PathBuf)]) {
+        let mut pl = self.playlist.write();
+        for (id, new_path) in updates {
+            if let Some(item) = pl.items.iter_mut().find(|item| item.id == *id) {
+                item.path = new_path.clone();
+            }
+        }
+        drop(pl);
+        self.bump_version();
+    }
+
     /// Remove an item by ID.
     pub fn remove_item(&self, id: QueueItemId) {
         let mut pl = self.playlist.write();

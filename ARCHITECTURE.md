@@ -158,8 +158,8 @@ struct Playlist {
 | File | Purpose |
 |---|---|
 | `mod.rs` | `Player` struct, command loop (`run()`), `start_playback()`, `update_playback_state()` |
-| `commands.rs` | `PlayerCommand` enum, `CommandChannel` (bounded crossbeam) |
-| `state.rs` | `SharedPlayerState`, `PlaylistItem`, `Playlist`, `QueueItemId`, `LoadState`, `PlaybackState`, `derive_visible_queue()` |
+| `commands.rs` | `PlayerCommand` enum (includes `UpdatePaths`, `InsertInPlaylist`), `CommandChannel` (bounded crossbeam) |
+| `state.rs` | `SharedPlayerState`, `PlaylistItem`, `Playlist`, `QueueItemId`, `LoadState`, `PlaybackState`, `derive_visible_queue()`, `insert_items_after()`, `update_paths()` |
 
 ### `db/`
 
@@ -170,7 +170,7 @@ struct Playlist {
 | `queries/mod.rs` | Row types (`ArtistRow`, `AlbumRow`, `TrackRow`, `PlaybackSource`, `LibraryStats`, `TrackMeta`), re-exports |
 | `queries/artists.rs` | Artist upsert/query |
 | `queries/albums.rs` | Album upsert/query |
-| `queries/tracks.rs` | Track upsert (3-strategy dedup: path → remote_id → content match), removal, playback source resolution |
+| `queries/tracks.rs` | Track upsert (3-strategy dedup: path → remote_id → content match), removal, playback source resolution, `track_id_by_path()` |
 | `queries/search.rs` | FTS5 full-text search |
 | `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files |
 | `queries/stats.rs` | Library statistics |
@@ -208,7 +208,7 @@ fb2k-compatible template engine.
 |---|---|
 | `config.rs` | Two-layer TOML config: `config.toml` (base) + `config.local.toml` (override). Playback, library, remote settings. |
 | `credentials.rs` | macOS Keychain integration via security-framework |
-| `organize.rs` | File renaming using format strings. Preview/execute/undo. Moves ancillary files (cover art, cue sheets). Logs moves for undo. |
+| `organize.rs` | File renaming using format strings. Preview/execute/undo. Scoped operations via `preview_for_tracks()`/`execute_for_tracks()` (used by TUI modal). Moves ancillary files (cover art, cue sheets). Logs moves for undo. |
 
 ## koan-cli modules
 
@@ -222,7 +222,7 @@ Subcommand handlers split into focused modules:
 
 | File | Functions |
 |---|---|
-| `mod.rs` | Shared helpers: `open_db`, `format_time`, `format_bytes`, `install_terminal_panic_hook`, `get_remote_password`, `sanitise_filename`, `cache_path_for_track`, `playlist_item_from_track` |
+| `mod.rs` | Shared helpers: `open_db`, `format_time`, `format_bytes`, `install_terminal_panic_hook`, `get_remote_password`, `sanitise_filename`, `cache_path_for_track`, `playlist_item_from_track`, `playlist_items_from_paths` |
 | `play.rs` | `cmd_play` (path resolution, player spawn), `run_tui` (event loop, picker loading, enqueue routing) |
 | `probe.rs` | `cmd_probe`, `cmd_devices` |
 | `scan.rs` | `cmd_scan` |
@@ -240,8 +240,8 @@ Subcommand handlers split into focused modules:
 
 | File | Purpose |
 |---|---|
-| `app.rs` | `App` struct (state machine), `Mode` enum, `PickerAction` enum, event handlers (key/mouse per mode). Sub-state structs: `QueueState`, `LayoutRects`, `ArtState`. |
-| `ui.rs` | Render pipeline: layout computation → transport bar → content area (queue ± library) → overlays (picker, track info, cover art zoom) → hint bar |
+| `app.rs` | `App` struct (state machine), `Mode` enum, `PickerAction` enum, `ContextAction` enum, event handlers (key/mouse per mode). Sub-state structs: `QueueState`, `LayoutRects`, `ArtState`. |
+| `ui.rs` | Render pipeline: layout computation → transport bar → content area (queue ± library) → overlays (picker, context menu, organize, track info, cover art zoom) → hint bar |
 | `transport.rs` | `TransportBar` widget: seek bar (━─), current track info, click-to-seek |
 | `queue.rs` | `QueueView` widget: album-grouped display with headers, status icons, selection markers, drag target line |
 | `library.rs` | `LibraryState` + `LibraryView`: flattened tree (artist→album→track), expand/collapse, substring filter with cached artist list |
@@ -249,7 +249,9 @@ Subcommand handlers split into focused modules:
 | `cover_art.rs` | Halfblock rendering: extract from tags → resize with Lanczos3 → 2 pixels per terminal cell (upper half block char with FG/BG colors). Forces even pixel height to prevent black bar artifacts. |
 | `track_info.rs` | `TrackInfoOverlay`: modal with full metadata fields + embedded album art |
 | `theme.rs` | Color palette. Cyan for active/cursor, green for albums, DarkGray for hints. |
-| `event.rs` | Event enum wrapper |
+| `context_menu.rs` | `ContextMenuOverlay` widget: action list popup (currently: Organize) |
+| `organize.rs` | `OrganizeModalState` + `OrganizeOverlay`: pattern picker, scoped preview table, background execute with path update propagation to player |
+| `event.rs` | Event enum wrapper (includes `Paste` for bracketed paste / drag-drop) |
 | `keys.rs` | `HintBar` widget: mode-specific key binding hints |
 
 ### `media_keys.rs`
@@ -272,12 +274,17 @@ Library browser and artist drill-down default to Append & Play. The `PickerActio
 
 ```
 Normal ──── 'e' ────► QueueEdit ──── Esc ────► Normal
-  │                                               ▲
+  │                       │                       ▲
+  │                       └── Space ──► ContextMenu ── Esc ──┤
+  │                                        │                 │
+  │                                        └── Enter ──► Organize ── Esc ──┤
   ├── 'p'/'a'/'r'/'/' ──► Picker ── Esc/Enter ───┤
   ├── 'l' ──────────────► LibraryBrowse ── Esc ───┤
   ├── 'i' ──────────────► TrackInfo ── Esc ────────┤
   └── 'z' ──────────────► CoverArtZoom ── Esc ─────┘
 ```
+
+**Organize modal flow:** QueueEdit → select tracks → Space (context menu) → Organize → pick named pattern from config → scrollable preview of file moves → Enter to execute → paths updated in playlist, playback uninterrupted (Unix rename preserves open FDs).
 
 Mouse works in every mode — modality is keyboard-only. Double-click a queue track to play it, click seek bar to jump, drag to reorder, scroll wheel navigates.
 

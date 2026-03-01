@@ -379,6 +379,21 @@ impl Player {
             PlayerCommand::AddToPlaylist(items) => {
                 self.shared_state.add_items(items);
             }
+            PlayerCommand::UpdatePaths(updates) => {
+                self.shared_state.update_paths(&updates);
+                // Also update track_info if the currently playing track was moved.
+                if let Some(info) = self.shared_state.track_info()
+                    && let Some((_, new_path)) = updates.iter().find(|(id, _)| *id == info.id)
+                {
+                    self.shared_state.set_track_info(Some(TrackInfo {
+                        path: new_path.clone(),
+                        ..info
+                    }));
+                }
+            }
+            PlayerCommand::InsertInPlaylist { items, after } => {
+                self.shared_state.insert_items_after(items, after);
+            }
             PlayerCommand::ClearPlaylist => {
                 self.stop();
                 self.shared_state.clear_playlist();
