@@ -420,6 +420,11 @@ impl App {
                     self.mode = Mode::CoverArtZoom;
                 }
             }
+            KeyCode::Char('Z')
+                if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
+            {
+                self.tx.send(PlayerCommand::Redo).ok();
+            }
             KeyCode::Char('/') => {
                 self.open_queue_jump();
             }
@@ -512,6 +517,11 @@ impl App {
                 self.tx.send(PlayerCommand::Undo).ok();
             }
             KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.tx.send(PlayerCommand::Redo).ok();
+            }
+            KeyCode::Char('Z')
+                if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
+            {
                 self.tx.send(PlayerCommand::Redo).ok();
             }
             _ => {}
