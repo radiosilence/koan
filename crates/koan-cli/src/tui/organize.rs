@@ -107,8 +107,7 @@ impl OrganizeModalState {
         std::thread::Builder::new()
             .name("koan-org-preview".into())
             .spawn(move || {
-                let preview =
-                    koan_core::organize::preview_for_paths(&paths, &pattern, None);
+                let preview = koan_core::organize::preview_for_paths(&paths, &pattern, None);
 
                 if let Ok(mut p) = pending.lock() {
                     match preview {
@@ -153,8 +152,7 @@ impl OrganizeModalState {
         std::thread::Builder::new()
             .name("koan-org-exec".into())
             .spawn(move || {
-                let result =
-                    koan_core::organize::execute_for_paths(&paths, &pattern, None);
+                let result = koan_core::organize::execute_for_paths(&paths, &pattern, None);
 
                 if let Ok(mut p) = pending.lock() {
                     match result {
@@ -276,7 +274,9 @@ impl<'a> OrganizeOverlay<'a> {
 /// Compute the popup rect for the organize modal.
 pub fn organize_popup_rect(area: Rect) -> Rect {
     let w = ((area.width as f32 * 0.75) as u16).max(50).min(area.width);
-    let h = ((area.height as f32 * 0.70) as u16).max(16).min(area.height);
+    let h = ((area.height as f32 * 0.70) as u16)
+        .max(16)
+        .min(area.height);
     let x = area.x + (area.width.saturating_sub(w)) / 2;
     let y = area.y + (area.height.saturating_sub(h)) / 2;
     Rect::new(x, y, w, h)
@@ -299,7 +299,9 @@ impl Widget for OrganizeOverlay<'_> {
         }
 
         // Layout: patterns (top, ~30%) | preview (middle, flex) | status + button (bottom, 2)
-        let pattern_height = (self.state.patterns.len() as u16 + 1).min(inner.height / 3).max(2);
+        let pattern_height = (self.state.patterns.len() as u16 + 1)
+            .min(inner.height / 3)
+            .max(2);
         let chunks = Layout::vertical([
             Constraint::Length(pattern_height),
             Constraint::Min(3),
@@ -332,9 +334,7 @@ impl Widget for OrganizeOverlay<'_> {
                     self.theme.hint_desc
                 };
 
-                let max_fmt_len = chunks[0]
-                    .width
-                    .saturating_sub(name.len() as u16 + 5) as usize;
+                let max_fmt_len = chunks[0].width.saturating_sub(name.len() as u16 + 5) as usize;
                 let abbrev_fmt = if fmt.len() > max_fmt_len {
                     format!("{}...", &fmt[..max_fmt_len.saturating_sub(3)])
                 } else {
@@ -453,20 +453,12 @@ impl Widget for OrganizeOverlay<'_> {
         // --- Status + button ---
         let status_area = Rect::new(chunks[2].x, chunks[2].y, chunks[2].width, 1);
         if let Some(ref status) = self.state.status {
-            let line = Line::from(Span::styled(
-                format!(" {status}"),
-                self.theme.hint_desc,
-            ));
+            let line = Line::from(Span::styled(format!(" {status}"), self.theme.hint_desc));
             Paragraph::new(line).render(status_area, buf);
         }
 
         // Count line + run button.
-        let button_area = Rect::new(
-            chunks[2].x,
-            chunks[2].y + 1,
-            chunks[2].width,
-            1,
-        );
+        let button_area = Rect::new(chunks[2].x, chunks[2].y + 1, chunks[2].width, 1);
         let (move_count, error_count, skipped_count) = self
             .state
             .preview

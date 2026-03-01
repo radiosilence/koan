@@ -40,6 +40,10 @@ pub enum PlayerCommand {
     ClearPlaylist,
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
+    /// Undo the last reversible playlist operation.
+    Undo,
+    /// Redo the last undone operation.
+    Redo,
 }
 
 /// Bounded SPSC command channel.

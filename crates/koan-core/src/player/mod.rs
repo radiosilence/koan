@@ -1,5 +1,6 @@
 pub mod commands;
 pub mod state;
+pub mod undo;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use crate::audio::{buffer, device, engine};
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
 use state::{LoadState, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
+use undo::{UndoEntry, UndoStack};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
 const RING_BUFFER_SIZE: usize = 192_000 * 2;
@@ -31,6 +33,7 @@ pub struct Player {
     commands: CommandChannel,
     active_playback: Option<ActivePlayback>,
     timeline: Arc<PlaybackTimeline>,
+    undo_stack: UndoStack,
 }
 
 /// Holds the resources for an active playback session.
@@ -52,6 +55,7 @@ impl Player {
             commands: CommandChannel::new(),
             active_playback: None,
             timeline: PlaybackTimeline::new(),
+            undo_stack: UndoStack::new(),
         }
     }
 
@@ -63,6 +67,11 @@ impl Player {
     /// Get the playback timeline for UI reads.
     pub fn timeline(&self) -> Arc<PlaybackTimeline> {
         self.timeline.clone()
+    }
+
+    /// Access undo stack (for tests and UI state queries).
+    pub fn undo_stack(&self) -> &UndoStack {
+        &self.undo_stack
     }
 
     /// Get a command sender for the UI/FFI layer.
@@ -377,11 +386,12 @@ impl Player {
             PlayerCommand::NextTrack => self.next_track(),
             PlayerCommand::PrevTrack => self.prev_track(),
             PlayerCommand::AddToPlaylist(items) => {
+                let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
                 self.shared_state.add_items(items);
+                self.undo_stack.push(UndoEntry::Added { ids });
             }
             PlayerCommand::UpdatePaths(updates) => {
                 self.shared_state.update_paths(&updates);
-                // Also update track_info if the currently playing track was moved.
                 if let Some(info) = self.shared_state.track_info()
                     && let Some((_, new_path)) = updates.iter().find(|(id, _)| *id == info.id)
                 {
@@ -392,20 +402,128 @@ impl Player {
                 }
             }
             PlayerCommand::InsertInPlaylist { items, after } => {
+                let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
                 self.shared_state.insert_items_after(items, after);
+                self.undo_stack.push(UndoEntry::Inserted { ids });
             }
             PlayerCommand::ClearPlaylist => {
+                let (items, cursor) = self.shared_state.snapshot_playlist();
                 self.stop();
                 self.shared_state.clear_playlist();
+                self.undo_stack.push(UndoEntry::Replaced { items, cursor });
             }
-            PlayerCommand::RemoveFromPlaylist(id) => self.remove_from_playlist(id),
+            PlayerCommand::RemoveFromPlaylist(id) => {
+                let item = self.shared_state.get_item(id);
+                let after = self.shared_state.item_before(id);
+                self.remove_from_playlist(id);
+                if let Some(item) = item {
+                    self.undo_stack.push(UndoEntry::Removed {
+                        items: vec![(Box::new(item), after)],
+                    });
+                }
+            }
             PlayerCommand::MoveInPlaylist { id, target, after } => {
+                let was_after = self.shared_state.item_before(id);
                 self.shared_state.move_item(id, target, after);
+                self.undo_stack.push(UndoEntry::Moved { id, was_after });
             }
             PlayerCommand::MoveItemsInPlaylist { ids, target, after } => {
+                let entries = self.shared_state.items_before(&ids);
                 self.shared_state.move_items(&ids, target, after);
+                self.undo_stack.push(UndoEntry::MovedBatch { entries });
             }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
+            PlayerCommand::Undo => self.execute_undo(),
+            PlayerCommand::Redo => self.execute_redo(),
+        }
+    }
+
+    /// Apply an undo/redo entry: mutate the playlist and return the inverse entry.
+    fn apply_entry(&mut self, entry: UndoEntry) -> Option<UndoEntry> {
+        match entry {
+            UndoEntry::Added { ids } => {
+                // Undo of "items were added": snapshot them with positions, then remove.
+                let items_with_pos: Vec<_> = ids
+                    .iter()
+                    .filter_map(|&id| {
+                        let item = self.shared_state.get_item(id)?;
+                        let after = self.shared_state.item_before(id);
+                        Some((Box::new(item), after))
+                    })
+                    .collect();
+                self.shared_state.remove_items(&ids);
+                Some(UndoEntry::Removed {
+                    items: items_with_pos,
+                })
+            }
+            UndoEntry::Removed { items } => {
+                // Undo of "items were removed": re-insert each at its position.
+                let mut ids = Vec::with_capacity(items.len());
+                for (item, after) in items {
+                    ids.push(item.id);
+                    self.shared_state.insert_item_at(*item, after);
+                }
+                Some(UndoEntry::Added { ids })
+            }
+            UndoEntry::Inserted { ids } => {
+                // Same as Added — snapshot positions, remove items.
+                let items_with_pos: Vec<_> = ids
+                    .iter()
+                    .filter_map(|&id| {
+                        let item = self.shared_state.get_item(id)?;
+                        let after = self.shared_state.item_before(id);
+                        Some((Box::new(item), after))
+                    })
+                    .collect();
+                self.shared_state.remove_items(&ids);
+                Some(UndoEntry::Removed {
+                    items: items_with_pos,
+                })
+            }
+            UndoEntry::Moved { id, was_after } => {
+                let current_after = self.shared_state.item_before(id);
+                self.shared_state.move_item_to(id, was_after);
+                Some(UndoEntry::Moved {
+                    id,
+                    was_after: current_after,
+                })
+            }
+            UndoEntry::MovedBatch { entries } => {
+                let ids: Vec<QueueItemId> = entries.iter().map(|(id, _)| *id).collect();
+                let current_positions = self.shared_state.items_before(&ids);
+                self.shared_state.move_items_to(&entries);
+                Some(UndoEntry::MovedBatch {
+                    entries: current_positions,
+                })
+            }
+            UndoEntry::Replaced { items, cursor } => {
+                let (current_items, current_cursor) = self.shared_state.snapshot_playlist();
+                self.shared_state.restore_playlist(items, cursor);
+                Some(UndoEntry::Replaced {
+                    items: current_items,
+                    cursor: current_cursor,
+                })
+            }
+        }
+    }
+
+    /// Execute an undo operation, pushing the inverse onto the redo stack.
+    fn execute_undo(&mut self) {
+        let Some(entry) = self.undo_stack.pop_undo() else {
+            return;
+        };
+        if let Some(inverse) = self.apply_entry(entry) {
+            self.undo_stack.push_redo(inverse);
+        }
+    }
+
+    /// Execute a redo operation, pushing the inverse onto the undo stack.
+    fn execute_redo(&mut self) {
+        let Some(entry) = self.undo_stack.pop_redo() else {
+            return;
+        };
+        if let Some(inverse) = self.apply_entry(entry) {
+            self.undo_stack.push_undo_keep_redo(inverse);
         }
     }
 
@@ -444,5 +562,380 @@ impl Player {
             .expect("failed to spawn player thread");
 
         (state, timeline, tx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use state::PlaylistItem;
+    use std::path::PathBuf;
+
+    fn make_item(title: &str) -> PlaylistItem {
+        PlaylistItem {
+            id: QueueItemId::new(),
+            path: PathBuf::from(format!("/music/{title}.flac")),
+            title: title.to_string(),
+            artist: String::new(),
+            album_artist: String::new(),
+            album: String::new(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            load_state: LoadState::Ready,
+        }
+    }
+
+    fn playlist_ids(player: &Player) -> Vec<QueueItemId> {
+        let (items, _) = player.shared_state.snapshot_playlist();
+        items.iter().map(|i| i.id).collect()
+    }
+
+    fn playlist_titles(player: &Player) -> Vec<String> {
+        let (items, _) = player.shared_state.snapshot_playlist();
+        items.iter().map(|i| i.title.clone()).collect()
+    }
+
+    // --- AddToPlaylist undo/redo ---
+
+    #[test]
+    fn undo_add_removes_items() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B")];
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        assert_eq!(playlist_ids(&player), ids);
+        assert!(player.undo_stack().can_undo());
+
+        player.process_command(PlayerCommand::Undo);
+        assert!(playlist_ids(&player).is_empty());
+        assert!(player.undo_stack().can_redo());
+    }
+
+    #[test]
+    fn redo_add_restores_items() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B")];
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::Undo);
+        assert!(playlist_ids(&player).is_empty());
+
+        player.process_command(PlayerCommand::Redo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B"]);
+    }
+
+    // --- RemoveFromPlaylist undo/redo ---
+
+    #[test]
+    fn undo_remove_restores_item_at_position() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+        let b_id = items[1].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::RemoveFromPlaylist(b_id));
+        assert_eq!(playlist_titles(&player), vec!["A", "C"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn undo_remove_first_item() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B")];
+        let a_id = items[0].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::RemoveFromPlaylist(a_id));
+        assert_eq!(playlist_titles(&player), vec!["B"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B"]);
+    }
+
+    #[test]
+    fn redo_remove() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+        let b_id = items[1].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::RemoveFromPlaylist(b_id));
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+
+        player.process_command(PlayerCommand::Redo);
+        assert_eq!(playlist_titles(&player), vec!["A", "C"]);
+    }
+
+    // --- InsertInPlaylist undo/redo ---
+
+    #[test]
+    fn undo_insert_removes_inserted_items() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("C")];
+        let a_id = items[0].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+
+        let inserted = vec![make_item("B")];
+        player.process_command(PlayerCommand::InsertInPlaylist {
+            items: inserted,
+            after: a_id,
+        });
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "C"]);
+    }
+
+    // --- MoveInPlaylist undo/redo ---
+
+    #[test]
+    fn undo_move_restores_position() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+        let a_id = items[0].id;
+        let c_id = items[2].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+
+        // Move A after C: [B, C, A]
+        player.process_command(PlayerCommand::MoveInPlaylist {
+            id: a_id,
+            target: c_id,
+            after: true,
+        });
+        assert_eq!(playlist_titles(&player), vec!["B", "C", "A"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn redo_move() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+        let a_id = items[0].id;
+        let c_id = items[2].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::MoveInPlaylist {
+            id: a_id,
+            target: c_id,
+            after: true,
+        });
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+
+        player.process_command(PlayerCommand::Redo);
+        assert_eq!(playlist_titles(&player), vec!["B", "C", "A"]);
+    }
+
+    // --- MoveItemsInPlaylist (batch) undo/redo ---
+
+    #[test]
+    fn undo_batch_move() {
+        let mut player = Player::new();
+        let items = vec![
+            make_item("A"),
+            make_item("B"),
+            make_item("C"),
+            make_item("D"),
+        ];
+        let a_id = items[0].id;
+        let b_id = items[1].id;
+        let d_id = items[3].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+
+        // Move A,B after D: [C, D, A, B]
+        player.process_command(PlayerCommand::MoveItemsInPlaylist {
+            ids: vec![a_id, b_id],
+            target: d_id,
+            after: true,
+        });
+        assert_eq!(playlist_titles(&player), vec!["C", "D", "A", "B"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C", "D"]);
+    }
+
+    // --- ClearPlaylist undo/redo ---
+
+    #[test]
+    fn undo_clear_restores_playlist() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::ClearPlaylist);
+        assert!(playlist_ids(&player).is_empty());
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn redo_clear() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B")];
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::ClearPlaylist);
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B"]);
+
+        player.process_command(PlayerCommand::Redo);
+        assert!(playlist_ids(&player).is_empty());
+    }
+
+    // --- Multi-step undo/redo ---
+
+    #[test]
+    fn multiple_undos_in_sequence() {
+        let mut player = Player::new();
+
+        player.process_command(PlayerCommand::AddToPlaylist(vec![make_item("A")]));
+        player.process_command(PlayerCommand::AddToPlaylist(vec![make_item("B")]));
+        player.process_command(PlayerCommand::AddToPlaylist(vec![make_item("C")]));
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert!(playlist_ids(&player).is_empty());
+    }
+
+    #[test]
+    fn undo_redo_undo_cycle() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B")];
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::Undo);
+        assert!(playlist_ids(&player).is_empty());
+
+        player.process_command(PlayerCommand::Redo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert!(playlist_ids(&player).is_empty());
+    }
+
+    #[test]
+    fn new_action_clears_redo_stack() {
+        let mut player = Player::new();
+        let items = vec![make_item("A")];
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::Undo);
+        assert!(player.undo_stack().can_redo());
+
+        // New action should clear redo
+        player.process_command(PlayerCommand::AddToPlaylist(vec![make_item("B")]));
+        assert!(!player.undo_stack().can_redo());
+    }
+
+    #[test]
+    fn undo_on_empty_stack_is_noop() {
+        let mut player = Player::new();
+        player.process_command(PlayerCommand::Undo);
+        assert!(playlist_ids(&player).is_empty());
+    }
+
+    #[test]
+    fn redo_on_empty_stack_is_noop() {
+        let mut player = Player::new();
+        player.process_command(PlayerCommand::Redo);
+        assert!(playlist_ids(&player).is_empty());
+    }
+
+    // --- Non-undoable commands don't push entries ---
+
+    #[test]
+    fn playback_commands_not_undoable() {
+        let mut player = Player::new();
+        player.process_command(PlayerCommand::Pause);
+        player.process_command(PlayerCommand::Resume);
+        player.process_command(PlayerCommand::NextTrack);
+        player.process_command(PlayerCommand::PrevTrack);
+        assert!(!player.undo_stack().can_undo());
+    }
+
+    #[test]
+    fn update_paths_not_undoable() {
+        let mut player = Player::new();
+        let items = vec![make_item("A")];
+        let id = items[0].id;
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+
+        let undo_count = player.undo_stack().undo_len();
+        player.process_command(PlayerCommand::UpdatePaths(vec![(
+            id,
+            PathBuf::from("/new/path.flac"),
+        )]));
+        assert_eq!(player.undo_stack().undo_len(), undo_count);
+    }
+
+    // --- Complex scenarios ---
+
+    #[test]
+    fn add_remove_undo_undo_produces_original() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+        let b_id = items[1].id;
+        let original_titles = vec!["A", "B", "C"];
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        player.process_command(PlayerCommand::RemoveFromPlaylist(b_id));
+        assert_eq!(playlist_titles(&player), vec!["A", "C"]);
+
+        // Undo remove → back to A, B, C
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), original_titles);
+
+        // Undo add → empty
+        player.process_command(PlayerCommand::Undo);
+        assert!(playlist_ids(&player).is_empty());
+    }
+
+    #[test]
+    fn interleaved_adds_and_moves_undo() {
+        let mut player = Player::new();
+        let items = vec![make_item("A"), make_item("B"), make_item("C")];
+        let a_id = items[0].id;
+        let c_id = items[2].id;
+
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+
+        // Move A after C: [B, C, A]
+        player.process_command(PlayerCommand::MoveInPlaylist {
+            id: a_id,
+            target: c_id,
+            after: true,
+        });
+        assert_eq!(playlist_titles(&player), vec!["B", "C", "A"]);
+
+        // Add D: [B, C, A, D]
+        player.process_command(PlayerCommand::AddToPlaylist(vec![make_item("D")]));
+        assert_eq!(playlist_titles(&player), vec!["B", "C", "A", "D"]);
+
+        // Undo add D: [B, C, A]
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["B", "C", "A"]);
+
+        // Undo move: [A, B, C]
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
     }
 }

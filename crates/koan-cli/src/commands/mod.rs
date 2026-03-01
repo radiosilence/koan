@@ -383,7 +383,10 @@ mod tests {
     fn test_shell_split_backslash_spaces() {
         let input = "/path/to/My\\ Album /path/to/Other\\ File.flac";
         let result = shell_split_paths(input);
-        assert_eq!(result, vec!["/path/to/My Album", "/path/to/Other File.flac"]);
+        assert_eq!(
+            result,
+            vec!["/path/to/My Album", "/path/to/Other File.flac"]
+        );
     }
 
     #[test]

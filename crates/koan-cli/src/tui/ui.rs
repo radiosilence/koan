@@ -220,12 +220,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Drop/paste import progress bar.
     if let Some(ref progress) = app.drop_progress {
-        let done = progress
-            .0
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let total = progress
-            .1
-            .load(std::sync::atomic::Ordering::Relaxed);
+        let done = progress.0.load(std::sync::atomic::Ordering::Relaxed);
+        let total = progress.1.load(std::sync::atomic::Ordering::Relaxed);
         if total > 0 {
             let pct = (done * 100 / total).min(100);
             let label = format!(" scanning {}/{} ({}%) ", done, total, pct);
@@ -238,9 +234,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             // Progress bar: filled portion.
             let bar_width = w.saturating_sub(2) as usize;
             let filled = bar_width * done / total;
-            let bar: String = "\u{2588}"
-                .repeat(filled)
-                + &"\u{2591}".repeat(bar_width.saturating_sub(filled));
+            let bar: String =
+                "\u{2588}".repeat(filled) + &"\u{2591}".repeat(bar_width.saturating_sub(filled));
             let line = Line::from(vec![
                 Span::styled(" ", app.theme.hint_desc),
                 Span::styled(bar, app.theme.spinner),

@@ -198,17 +198,14 @@ fn run_tui(
                         let mut audio_paths: Vec<PathBuf> = Vec::new();
                         for path in dropped {
                             if path.is_dir() {
-                                let mut dir_files: Vec<PathBuf> =
-                                    walkdir::WalkDir::new(&path)
-                                        .follow_links(true)
-                                        .into_iter()
-                                        .filter_map(|e| e.ok())
-                                        .filter(|e| e.file_type().is_file())
-                                        .filter(|e| {
-                                            koan_core::index::metadata::is_audio_file(e.path())
-                                        })
-                                        .map(|e| e.into_path())
-                                        .collect();
+                                let mut dir_files: Vec<PathBuf> = walkdir::WalkDir::new(&path)
+                                    .follow_links(true)
+                                    .into_iter()
+                                    .filter_map(|e| e.ok())
+                                    .filter(|e| e.file_type().is_file())
+                                    .filter(|e| koan_core::index::metadata::is_audio_file(e.path()))
+                                    .map(|e| e.into_path())
+                                    .collect();
                                 dir_files.sort();
                                 audio_paths.extend(dir_files);
                             } else if path.is_file()
@@ -219,7 +216,9 @@ fn run_tui(
                         }
                         if !audio_paths.is_empty() {
                             let count = audio_paths.len();
-                            progress.1.store(count, std::sync::atomic::Ordering::Relaxed);
+                            progress
+                                .1
+                                .store(count, std::sync::atomic::Ordering::Relaxed);
                             let items = playlist_items_from_paths(&audio_paths, Some(&progress.0));
                             if let Some(after_id) = insert_after {
                                 tx_drop
@@ -237,7 +236,9 @@ fn run_tui(
                         }
                         // Signal completion by setting processed == total.
                         let total = progress.1.load(std::sync::atomic::Ordering::Relaxed);
-                        progress.0.store(total, std::sync::atomic::Ordering::Relaxed);
+                        progress
+                            .0
+                            .store(total, std::sync::atomic::Ordering::Relaxed);
                     })
                     .ok();
             }
