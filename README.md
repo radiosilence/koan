@@ -12,6 +12,9 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 # pre-built binary via mise (recommended)
 mise use -g github:radiosilence/koan@latest
 
+# or via cargo
+cargo install koan-music
+
 # or build from source
 git clone https://github.com/radiosilence/koan.git && cd koan
 cargo install --path crates/koan-cli
@@ -111,7 +114,7 @@ Lock-free audio thread. See ARCHITECTURE.md for the full technical manual.
 Two crates:
 
 - `koan-core` — audio engine, player, database, indexer, format strings, file organization, remote client
-- `koan-cli` — `koan` binary (Ratatui TUI)
+- `koan-music` — `koan` binary (Ratatui TUI)
 
 ## Shell completions
 
@@ -332,7 +335,7 @@ Local values override base. `koan config` shows both sources and the resolved re
 ```bash
 just check    # test + clippy
 just fmt      # cargo fmt
-just cli      # cargo run -p koan-cli -- <args>
+just cli      # cargo run -p koan-music -- <args>
 ```
 
 ## License

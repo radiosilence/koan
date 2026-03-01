@@ -1,5 +1,5 @@
 [package]
-name = "koan-cli"
+name = "koan-music"
 version.workspace = true
 edition.workspace = true
 
