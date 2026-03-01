@@ -379,6 +379,10 @@ impl Player {
             PlayerCommand::AddToPlaylist(items) => {
                 self.shared_state.add_items(items);
             }
+            PlayerCommand::ClearPlaylist => {
+                self.stop();
+                self.shared_state.clear_playlist();
+            }
             PlayerCommand::RemoveFromPlaylist(id) => self.remove_from_playlist(id),
             PlayerCommand::MoveInPlaylist { id, target, after } => {
                 self.shared_state.move_item(id, target, after);

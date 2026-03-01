@@ -59,7 +59,9 @@ impl Widget for HintBar<'_> {
             ],
             Mode::Picker(_) => vec![
                 ("\u{2191}\u{2193}", "navigate"),
-                ("enter", "select"),
+                ("ret", "append"),
+                ("C-ret", "play"),
+                ("C-r", "replace"),
                 ("tab", "multi"),
                 ("esc", "cancel"),
             ],

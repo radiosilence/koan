@@ -129,10 +129,17 @@ fn pre_render(img: &DynamicImage, width: u16, height: u16, center: bool) -> Rend
     let target_h = (height as u32) * 2;
 
     let resized = img.resize(target_w, target_h, image::imageops::FilterType::Lanczos3);
-    let rgba = resized.to_rgba8();
+    // Force even pixel height — halfblocks need pixel pairs, odd heights cause
+    // a black bar on the last row.
+    let rgba = if !resized.height().is_multiple_of(2) {
+        let cropped = resized.crop_imm(0, 0, resized.width(), resized.height() - 1);
+        cropped.to_rgba8()
+    } else {
+        resized.to_rgba8()
+    };
     let (img_w, img_h) = rgba.dimensions();
 
-    let y_cell_count = img_h.div_ceil(2);
+    let y_cell_count = img_h / 2;
     let (x_offset, y_offset) = if center {
         (
             (width.saturating_sub(img_w as u16)) / 2,
@@ -159,11 +166,8 @@ fn pre_render(img: &DynamicImage, width: u16, height: u16, center: bool) -> Rend
             let bot_py = top_py + 1;
 
             let top = rgba.get_pixel(px.min(img_w - 1), top_py.min(img_h - 1));
-            let bot = if bot_py < img_h {
-                *rgba.get_pixel(px.min(img_w - 1), bot_py)
-            } else {
-                image::Rgba([0, 0, 0, 255])
-            };
+            // bot_py is always in bounds because we forced even pixel height.
+            let bot = *rgba.get_pixel(px.min(img_w - 1), bot_py.min(img_h - 1));
 
             cells.push(RenderedCell {
                 rx: cx,
