@@ -29,17 +29,9 @@ Requires macOS (CoreAudio). Single binary, no runtime dependencies.
 koan init
 ```
 
-kōan needs at least one music source — local files, a remote server, or both.
+This creates `~/.config/koan/` with two config files. kōan needs at least one music source — local files, a remote server, or both.
 
-**Local files:**
-
-```bash
-koan scan /path/to/music
-```
-
-kōan indexes your library in parallel — metadata extraction is fast even for large collections. The database lives at `~/.config/koan/` and auto-updates when files change (FSEvents file watcher, debounced).
-
-To make the scan path permanent, add it to your config:
+**Local files** — point kōan at your music directory:
 
 ```toml
 # ~/.config/koan/config.local.toml
@@ -47,7 +39,13 @@ To make the scan path permanent, add it to your config:
 folders = ["/Volumes/Music/library"]
 ```
 
-Then `koan scan` (no path argument) re-scans configured folders.
+Then scan:
+
+```bash
+koan scan
+```
+
+Indexing runs in parallel — fast even for large collections. The file watcher auto-updates the database when files change, so you only need to scan once.
 
 **Remote server (Navidrome/Subsonic):**
 
@@ -72,10 +70,10 @@ koan
 koan play ~/Music/Aphex\ Twin/
 koan play ~/Music/album/*.flac
 
-# Fuzzy search your library
-koan pick "boards of canada"
-koan pick --album "geogaddi"
-koan pick --artist "autechre"
+# Interactive fuzzy pickers
+koan pick              # search all tracks
+koan pick --album      # browse albums
+koan pick --artist     # browse artists
 ```
 
 The TUI launches immediately — no waiting. If tracks need downloading (remote library), they appear in the queue with animated spinners while loading in the background.
