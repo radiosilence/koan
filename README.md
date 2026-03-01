@@ -175,7 +175,7 @@ Tracks are grouped by album with headers showing album artist, year, album title
 
 ### File organization
 
-Rename and reorganize your music library using fb2k-compatible format strings. Default is dry-run (preview), add `--execute` to apply. Undo with `--undo`.
+Rename and reorganize your music library using fb2k-compatible format strings. Default is dry-run (preview), add `--execute` to apply. Undo with `--undo`. See [docs/format-strings.md](docs/format-strings.md) for the full syntax reference, all available fields/functions, and examples.
 
 ```bash
 # preview

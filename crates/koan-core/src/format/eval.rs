@@ -182,4 +182,153 @@ mod tests {
         let tokens = vec![Token::Literal("hello".into())];
         assert_eq!(evaluate(&tokens, &provider), "hello");
     }
+
+    #[test]
+    fn multiple_fields() {
+        let provider = make_provider(&[("artist", "Radiohead"), ("title", "Creep")]);
+        let tokens = vec![
+            Token::Field("artist".into()),
+            Token::Literal(" - ".into()),
+            Token::Field("title".into()),
+        ];
+        assert_eq!(evaluate(&tokens, &provider), "Radiohead - Creep");
+    }
+
+    #[test]
+    fn missing_field_produces_empty() {
+        let provider = make_provider(&[("title", "Creep")]);
+        let tokens = vec![
+            Token::Field("artist".into()),
+            Token::Literal(" - ".into()),
+            Token::Field("title".into()),
+        ];
+        // Missing field produces empty string inline (not inside conditional)
+        assert_eq!(evaluate(&tokens, &provider), " - Creep");
+    }
+
+    #[test]
+    fn conditional_does_not_poison_parent() {
+        let provider = make_provider(&[("title", "Creep")]);
+        let tokens = vec![
+            Token::Conditional(vec![
+                Token::Field("artist".into()),
+                Token::Literal(" - ".into()),
+            ]),
+            Token::Field("title".into()),
+        ];
+        // Failed conditional produces "", rest of output is fine
+        assert_eq!(evaluate(&tokens, &provider), "Creep");
+    }
+
+    #[test]
+    fn multiple_failed_conditionals() {
+        let provider = make_provider(&[("title", "Creep")]);
+        let tokens = vec![
+            Token::Conditional(vec![Token::Field("artist".into())]),
+            Token::Conditional(vec![Token::Field("album".into())]),
+            Token::Conditional(vec![Token::Field("date".into())]),
+            Token::Field("title".into()),
+        ];
+        assert_eq!(evaluate(&tokens, &provider), "Creep");
+    }
+
+    #[test]
+    fn deeply_nested_conditionals() {
+        let provider = make_provider(&[
+            ("a", "1"),
+            ("b", "2"),
+            ("c", "3"),
+        ]);
+        let tokens = vec![Token::Conditional(vec![
+            Token::Field("a".into()),
+            Token::Conditional(vec![
+                Token::Field("b".into()),
+                Token::Conditional(vec![Token::Field("c".into())]),
+            ]),
+        ])];
+        assert_eq!(evaluate(&tokens, &provider), "123");
+    }
+
+    #[test]
+    fn function_with_empty_arg() {
+        let provider = make_provider(&[]);
+        // Simulate $if(x,,y) where arg 1 is empty
+        let tokens = vec![Token::Function {
+            name: "if".into(),
+            args: vec![
+                vec![Token::Literal("truthy".into())],
+                vec![], // empty then branch
+                vec![Token::Literal("else".into())],
+            ],
+        }];
+        // "truthy" is non-empty → takes then branch → ""
+        assert_eq!(evaluate(&tokens, &provider), "");
+    }
+
+    #[test]
+    fn stricmp_with_if_empty_then() {
+        let provider = make_provider(&[("x", "hello")]);
+        // $if($stricmp(%x%,hello),,not hello)
+        let tokens = vec![Token::Function {
+            name: "if".into(),
+            args: vec![
+                vec![Token::Function {
+                    name: "stricmp".into(),
+                    args: vec![
+                        vec![Token::Field("x".into())],
+                        vec![Token::Literal("hello".into())],
+                    ],
+                }],
+                vec![], // empty then
+                vec![Token::Literal("not hello".into())],
+            ],
+        }];
+        // stricmp("hello", "hello") → "1" (truthy) → takes empty then → ""
+        assert_eq!(evaluate(&tokens, &provider), "");
+    }
+
+    #[test]
+    fn stricmp_with_if_else() {
+        let provider = make_provider(&[("x", "world")]);
+        let tokens = vec![Token::Function {
+            name: "if".into(),
+            args: vec![
+                vec![Token::Function {
+                    name: "stricmp".into(),
+                    args: vec![
+                        vec![Token::Field("x".into())],
+                        vec![Token::Literal("hello".into())],
+                    ],
+                }],
+                vec![],
+                vec![Token::Literal("not hello".into())],
+            ],
+        }];
+        // stricmp("world", "hello") → "" (falsy) → takes else → "not hello"
+        assert_eq!(evaluate(&tokens, &provider), "not hello");
+    }
+
+    #[test]
+    fn conditional_with_only_literals_always_renders() {
+        let provider = make_provider(&[]);
+        let tokens = vec![Token::Conditional(vec![
+            Token::Literal("always".into()),
+        ])];
+        // No fields to fail → all_resolved stays true → renders
+        assert_eq!(evaluate(&tokens, &provider), "always");
+    }
+
+    #[test]
+    fn conditional_with_function_returning_empty() {
+        let provider = make_provider(&[("x", "nope")]);
+        let tokens = vec![Token::Conditional(vec![Token::Function {
+            name: "stricmp".into(),
+            args: vec![
+                vec![Token::Field("x".into())],
+                vec![Token::Literal("hello".into())],
+            ],
+        }])];
+        // stricmp returns "" but all fields resolved → conditional renders ""
+        assert_eq!(evaluate(&tokens, &provider), "");
+    }
 }
