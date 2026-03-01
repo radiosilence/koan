@@ -80,7 +80,11 @@ impl log::Log for BufferedLogger {
         }
     }
 
-    fn flush(&self) {}
+    fn flush(&self) {
+        if let Some(file) = self.log_file.lock().unwrap().as_mut() {
+            let _ = file.flush();
+        }
+    }
 }
 
 mod commands;

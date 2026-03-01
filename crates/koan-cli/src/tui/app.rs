@@ -1,6 +1,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crossbeam_channel::Sender;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -163,6 +165,12 @@ pub struct App {
 
     /// Last known mouse row — for determining drop insertion point.
     pub last_mouse_row: Option<u16>,
+
+    /// True while the user is click-dragging the scrollbar thumb.
+    pub scrollbar_dragging: bool,
+
+    /// Drop/paste import progress: (processed, total). Cleared when done.
+    pub drop_progress: Option<Arc<(AtomicUsize, AtomicUsize)>>,
 }
 
 impl App {
@@ -198,6 +206,8 @@ impl App {
             context_menu: None,
             organize: None,
             last_mouse_row: None,
+            scrollbar_dragging: false,
+            drop_progress: None,
         }
     }
 
@@ -244,6 +254,15 @@ impl App {
                             .ok();
                     }
                 }
+            }
+        }
+
+        // Check drop progress — clear when done.
+        if let Some(ref progress) = self.drop_progress {
+            let done = progress.0.load(Ordering::Relaxed);
+            let total = progress.1.load(Ordering::Relaxed);
+            if total > 0 && done >= total {
+                self.drop_progress = None;
             }
         }
 
@@ -371,6 +390,25 @@ impl App {
                     self.update_scroll();
                 }
             }
+            // Vim: page up/down, home/end.
+            KeyCode::PageUp | KeyCode::Char('u')
+                if key.code == KeyCode::PageUp
+                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.page_up(false);
+            }
+            KeyCode::PageDown | KeyCode::Char('d')
+                if key.code == KeyCode::PageDown
+                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.page_down(false);
+            }
+            KeyCode::Home | KeyCode::Char('g') => {
+                self.jump_to_start(false);
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                self.jump_to_end(false);
+            }
             KeyCode::Enter => {
                 self.play_at_cursor();
             }
@@ -454,6 +492,22 @@ impl App {
                 if !self.queue.selected_indices.is_empty() {
                     self.open_context_menu();
                 }
+            }
+            // Vim: page up/down, home/end.
+            KeyCode::PageUp | KeyCode::Char('u')
+                if key.code == KeyCode::PageUp
+                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                self.page_up(shift);
+            }
+            KeyCode::PageDown => {
+                self.page_down(shift);
+            }
+            KeyCode::Home | KeyCode::Char('g') if !shift => {
+                self.jump_to_start(false);
+            }
+            KeyCode::End | KeyCode::Char('G') => {
+                self.jump_to_end(shift);
             }
             _ => {}
         }
@@ -915,6 +969,18 @@ impl App {
                     return;
                 }
 
+                // Scrollbar click — rightmost column of queue area (inside border).
+                let q = self.layout.queue_area;
+                let scrollbar_x = q.x + q.width - 1;
+                if event.column == scrollbar_x
+                    && event.row > q.y
+                    && event.row < q.y + q.height
+                {
+                    self.scrollbar_dragging = true;
+                    self.scroll_to_scrollbar_y(event.row);
+                    return;
+                }
+
                 // Queue area click.
                 if !self.is_in_rect(event.column, event.row, self.layout.queue_area) {
                     return;
@@ -963,7 +1029,10 @@ impl App {
                         self.extend_selection_to(idx);
                     } else if toggle {
                         self.toggle_selection(idx);
-                    } else {
+                    } else if !self.queue.selected_indices.contains(&idx) {
+                        // Only deselect others if clicking a NON-selected track.
+                        // Clicking an already-selected track preserves the
+                        // multi-selection so the user can drag the whole group.
                         self.select_single(idx);
                     }
                     self.queue.cursor = idx;
@@ -975,6 +1044,9 @@ impl App {
                         multi,
                     });
                 }
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.scrollbar_dragging => {
+                self.scroll_to_scrollbar_y(event.row);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
                 let drag_info = self.queue.drag.as_ref().map(|d| (d.from_index, d.multi));
@@ -1000,7 +1072,7 @@ impl App {
                     } else if self.mode != Mode::QueueEdit
                         && self.is_in_rect(event.column, event.row, self.layout.queue_area)
                     {
-                        // Normal mode: live reorder — move track as mouse crosses rows.
+                        // Normal mode: live reorder — move track(s) as mouse crosses rows.
                         let visible = self.visible_queue();
                         if let Some(to_idx) = queue::QueueView::queue_index_at_y(
                             &visible,
@@ -1010,9 +1082,14 @@ impl App {
                         )
                             && to_idx != from_index
                         {
-                            self.send_move(from_index, to_idx);
-                            self.queue.cursor = to_idx;
-                            self.select_single(to_idx);
+                            if self.queue.selected_indices.len() > 1 {
+                                // Multi-drag: move all selected tracks as a group.
+                                self.send_move_selected(to_idx);
+                            } else {
+                                self.send_move(from_index, to_idx);
+                                self.queue.cursor = to_idx;
+                                self.select_single(to_idx);
+                            }
                             if let Some(ref mut drag) = self.queue.drag {
                                 drag.from_index = to_idx;
                             }
@@ -1023,6 +1100,7 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) => {
                 // Just clear drag state — reorder already happened live during drag.
                 self.queue.drag.take();
+                self.scrollbar_dragging = false;
             }
             MouseEventKind::ScrollUp => {
                 if let Mode::Picker(_) = &self.mode {
@@ -1206,6 +1284,50 @@ impl App {
         self.update_scroll();
     }
 
+    /// Send a batch move for all selected tracks to a target position.
+    /// Used for multi-track drag.
+    fn send_move_selected(&mut self, target_idx: usize) {
+        let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
+        indices.sort_unstable();
+
+        let visible = self.visible_queue();
+        let ids: Vec<_> = indices
+            .iter()
+            .filter_map(|&i| visible.get(i).map(|e| e.id))
+            .collect();
+        let Some(target_entry) = visible.get(target_idx) else {
+            return;
+        };
+        let target_id = target_entry.id;
+
+        // Use MoveItemsInPlaylist to move the whole group atomically.
+        let moving_down = target_idx > indices.first().copied().unwrap_or(0);
+        self.tx
+            .send(PlayerCommand::MoveItemsInPlaylist {
+                ids,
+                target: target_id,
+                after: moving_down,
+            })
+            .ok();
+
+        // Recompute selection indices to wherever the group landed.
+        let count = indices.len();
+        let new_start = if moving_down {
+            target_idx + 1 - count
+        } else {
+            target_idx
+        };
+        self.queue.selected_indices.clear();
+        for i in 0..count {
+            self.queue.selected_indices.insert(new_start + i);
+        }
+        self.queue.cursor = if moving_down {
+            new_start + count - 1
+        } else {
+            new_start
+        };
+    }
+
     /// Send a move command for a visible queue index pair.
     fn send_move(&self, from_visible: usize, to_visible: usize) {
         let visible = self.visible_queue();
@@ -1380,6 +1502,58 @@ impl App {
         self.mode = Mode::Picker(PickerKind::QueueJump);
     }
 
+    /// Move cursor up by one page.
+    fn page_up(&mut self, extend: bool) {
+        let page_size = self.layout.queue_area.height.max(5) as usize;
+        self.queue.cursor = self.queue.cursor.saturating_sub(page_size);
+        if extend {
+            self.extend_selection_to(self.queue.cursor);
+        } else {
+            self.select_single(self.queue.cursor);
+        }
+        self.update_scroll();
+    }
+
+    /// Move cursor down by one page.
+    fn page_down(&mut self, extend: bool) {
+        let visible_len = self.visible_queue().len();
+        let page_size = self.layout.queue_area.height.max(5) as usize;
+        if visible_len > 0 {
+            self.queue.cursor = (self.queue.cursor + page_size).min(visible_len - 1);
+        }
+        if extend {
+            self.extend_selection_to(self.queue.cursor);
+        } else {
+            self.select_single(self.queue.cursor);
+        }
+        self.update_scroll();
+    }
+
+    /// Jump cursor to start of queue.
+    fn jump_to_start(&mut self, extend: bool) {
+        self.queue.cursor = 0;
+        if extend {
+            self.extend_selection_to(self.queue.cursor);
+        } else {
+            self.select_single(self.queue.cursor);
+        }
+        self.update_scroll();
+    }
+
+    /// Jump cursor to end of queue.
+    fn jump_to_end(&mut self, extend: bool) {
+        let visible_len = self.visible_queue().len();
+        if visible_len > 0 {
+            self.queue.cursor = visible_len - 1;
+        }
+        if extend {
+            self.extend_selection_to(self.queue.cursor);
+        } else {
+            self.select_single(self.queue.cursor);
+        }
+        self.update_scroll();
+    }
+
     fn update_scroll(&mut self) {
         let visible = self.visible_queue();
         let visible_height = self.layout.queue_area.height.max(10) as usize;
@@ -1389,6 +1563,22 @@ impl App {
             self.queue.scroll_offset,
             visible_height,
         );
+    }
+
+    /// Scroll the queue based on a click/drag position on the scrollbar.
+    fn scroll_to_scrollbar_y(&mut self, y: u16) {
+        let q = self.layout.queue_area;
+        // Inner area is 1 row below the top border.
+        let inner_y = q.y + 1;
+        let inner_h = q.height.saturating_sub(1) as usize;
+        if inner_h == 0 {
+            return;
+        }
+        let rel_y = y.saturating_sub(inner_y) as usize;
+        let ratio = rel_y as f64 / inner_h as f64;
+        let total_lines = self.visible_queue().len();
+        let max_scroll = total_lines.saturating_sub(inner_h);
+        self.queue.scroll_offset = ((ratio * max_scroll as f64) as usize).min(max_scroll);
     }
 
     fn is_in_rect(&self, x: u16, y: u16, rect: ratatui::layout::Rect) -> bool {

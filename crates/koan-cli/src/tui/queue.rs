@@ -191,6 +191,31 @@ impl Widget for QueueView<'_> {
         {
             buf.set_line(inner.x, inner.y + row as u16, line, inner.width);
         }
+
+        // Scrollbar — only when content overflows.
+        let total_lines = display_lines.len();
+        if total_lines > visible_height && visible_height > 0 && inner.width > 1 {
+            let bar_x = inner.x + inner.width - 1;
+            let thumb_size = (visible_height * visible_height / total_lines).max(1);
+            let max_scroll = total_lines.saturating_sub(visible_height);
+            let thumb_offset = if max_scroll > 0 {
+                start * (visible_height - thumb_size) / max_scroll
+            } else {
+                0
+            };
+
+            for row in 0..visible_height {
+                let y = inner.y + row as u16;
+                let is_thumb = row >= thumb_offset && row < thumb_offset + thumb_size;
+                let ch = if is_thumb { '\u{2588}' } else { '\u{2502}' };
+                let style = if is_thumb {
+                    self.theme.hint_key
+                } else {
+                    self.theme.hint_desc
+                };
+                buf[(bar_x, y)].set_char(ch).set_style(style);
+            }
+        }
     }
 }
 

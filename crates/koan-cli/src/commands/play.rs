@@ -104,7 +104,7 @@ pub fn cmd_play(
             eprintln!("no audio files found");
             std::process::exit(1);
         }
-        let items = playlist_items_from_paths(&audio_paths);
+        let items = playlist_items_from_paths(&audio_paths, None);
         let first_id = items[0].id;
         tx.send(PlayerCommand::AddToPlaylist(items))
             .expect("player thread died");
@@ -186,6 +186,11 @@ fn run_tui(
                 let tx_drop = tx.clone();
                 let log_drop = app.log_buffer.clone();
                 let insert_after = app.drop_target_queue_id();
+                let progress = std::sync::Arc::new((
+                    std::sync::atomic::AtomicUsize::new(0),
+                    std::sync::atomic::AtomicUsize::new(0),
+                ));
+                app.drop_progress = Some(progress.clone());
                 std::thread::Builder::new()
                     .name("koan-drop".into())
                     .spawn(move || {
@@ -214,7 +219,8 @@ fn run_tui(
                         }
                         if !audio_paths.is_empty() {
                             let count = audio_paths.len();
-                            let items = playlist_items_from_paths(&audio_paths);
+                            progress.1.store(count, std::sync::atomic::Ordering::Relaxed);
+                            let items = playlist_items_from_paths(&audio_paths, Some(&progress.0));
                             if let Some(after_id) = insert_after {
                                 tx_drop
                                     .send(PlayerCommand::InsertInPlaylist {
@@ -229,6 +235,9 @@ fn run_tui(
                                 logs.push(format!("added {} files", count));
                             }
                         }
+                        // Signal completion by setting processed == total.
+                        let total = progress.1.load(std::sync::atomic::Ordering::Relaxed);
+                        progress.0.store(total, std::sync::atomic::Ordering::Relaxed);
                     })
                     .ok();
             }

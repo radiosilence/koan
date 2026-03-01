@@ -173,6 +173,30 @@ impl AudioEngine {
 impl Drop for AudioEngine {
     fn drop(&mut self) {
         let _ = self.stop();
+
+        // Remove the render callback before tearing down. This ensures no
+        // in-flight callback can race with AudioUnitUninitialize, which
+        // otherwise crashes in CoreAudio's internal allocator (caulk) —
+        // especially during sample rate changes.
+        let silent_cb = AURenderCallbackStruct {
+            inputProc: None,
+            inputProcRefCon: ptr::null_mut(),
+        };
+        unsafe {
+            AudioUnitSetProperty(
+                self.audio_unit,
+                kAudioUnitProperty_SetRenderCallback,
+                kAudioUnitScope_Input,
+                0,
+                &silent_cb as *const _ as *const c_void,
+                mem::size_of::<AURenderCallbackStruct>() as u32,
+            );
+        }
+
+        // Brief yield to let any in-flight render callback on the RT thread
+        // finish before we tear down the unit and free callback memory.
+        std::thread::yield_now();
+
         unsafe {
             AudioUnitUninitialize(self.audio_unit);
             AudioComponentInstanceDispose(self.audio_unit);

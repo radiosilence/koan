@@ -73,7 +73,7 @@ pub(crate) fn confirm(prompt: &str) -> bool {
     matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
-/// Install a panic hook that restores the terminal before printing the panic message.
+/// Install a panic hook that logs the panic to the log file and restores the terminal.
 pub(crate) fn install_terminal_panic_hook() {
     use crossterm::{
         event::DisableMouseCapture,
@@ -83,6 +83,24 @@ pub(crate) fn install_terminal_panic_hook() {
     use std::io;
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
+        // Log the panic to the log file before restoring the terminal.
+        let location = panic
+            .location()
+            .map(|l| format!(" at {}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_default();
+        let payload = if let Some(s) = panic.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = panic.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "unknown".to_string()
+        };
+        log::error!("PANIC{}: {}", location, payload);
+        // Capture a backtrace.
+        let bt = std::backtrace::Backtrace::force_capture();
+        log::error!("backtrace:\n{}", bt);
+        log::logger().flush();
+
         let _ = disable_raw_mode();
         let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
         original_hook(panic);
@@ -275,11 +293,15 @@ fn percent_decode(input: &str) -> String {
 
 /// Build PlaylistItems from a list of file paths, reading metadata from each.
 /// Directories are expanded recursively. Non-audio files are silently skipped.
-pub(crate) fn playlist_items_from_paths(paths: &[PathBuf]) -> Vec<PlaylistItem> {
+/// If `progress` is provided, the first AtomicUsize is incremented after each file.
+pub(crate) fn playlist_items_from_paths(
+    paths: &[PathBuf],
+    progress: Option<&std::sync::atomic::AtomicUsize>,
+) -> Vec<PlaylistItem> {
     paths
         .iter()
         .map(|p| {
-            if let Ok(meta) = koan_core::index::metadata::read_metadata(p) {
+            let item = if let Ok(meta) = koan_core::index::metadata::read_metadata(p) {
                 PlaylistItem {
                     id: QueueItemId::new(),
                     path: p.clone(),
@@ -314,7 +336,11 @@ pub(crate) fn playlist_items_from_paths(paths: &[PathBuf]) -> Vec<PlaylistItem> 
                     duration_ms: None,
                     load_state: LoadState::Ready,
                 }
+            };
+            if let Some(counter) = progress {
+                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
+            item
         })
         .collect()
 }

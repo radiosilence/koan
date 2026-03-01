@@ -218,6 +218,44 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(Paragraph::new(hint), hint_area);
     }
 
+    // Drop/paste import progress bar.
+    if let Some(ref progress) = app.drop_progress {
+        let done = progress
+            .0
+            .load(std::sync::atomic::Ordering::Relaxed);
+        let total = progress
+            .1
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if total > 0 {
+            let pct = (done * 100 / total).min(100);
+            let label = format!(" scanning {}/{} ({}%) ", done, total, pct);
+            let w = (label.len() as u16 + 2).max(30).min(area.width);
+            let x = area.x + (area.width.saturating_sub(w)) / 2;
+            let y = area.y + area.height / 2;
+            let popup = Rect::new(x, y, w, 1);
+            Clear.render(popup, frame.buffer_mut());
+
+            // Progress bar: filled portion.
+            let bar_width = w.saturating_sub(2) as usize;
+            let filled = bar_width * done / total;
+            let bar: String = "\u{2588}"
+                .repeat(filled)
+                + &"\u{2591}".repeat(bar_width.saturating_sub(filled));
+            let line = Line::from(vec![
+                Span::styled(" ", app.theme.hint_desc),
+                Span::styled(bar, app.theme.spinner),
+                Span::styled(" ", app.theme.hint_desc),
+            ]);
+            frame.render_widget(Paragraph::new(line), popup);
+
+            // Label below.
+            let label_area = Rect::new(x, y.saturating_sub(1), w, 1);
+            Clear.render(label_area, frame.buffer_mut());
+            let label_line = Line::from(Span::styled(label, app.theme.spinner));
+            frame.render_widget(Paragraph::new(label_line), label_area);
+        }
+    }
+
     // Loading overlay with braille spinner.
     if let Some(ref msg) = app.loading_message {
         const SPINNER: &[char] = &[
