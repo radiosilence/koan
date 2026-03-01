@@ -72,7 +72,7 @@ jobs:
 
   create-release:
     name: Release (${{ matrix.target }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: macos-latest
     needs: [test, check-version]
     if: needs.check-version.outputs.should_release == 'true'
     permissions:
@@ -85,7 +85,6 @@ jobs:
             binary_name: koan-macos-arm64
           - target: x86_64-apple-darwin
             binary_name: koan-macos-x86_64
-    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
