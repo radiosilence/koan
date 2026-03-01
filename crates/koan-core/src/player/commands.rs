@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use super::state::{PlaylistItem, QueueItemId};
@@ -25,6 +27,14 @@ pub enum PlayerCommand {
         ids: Vec<QueueItemId>,
         target: QueueItemId,
         after: bool,
+    },
+    /// Update file paths for playlist items after an organize operation.
+    /// On Unix, rename() doesn't invalidate open FDs so playback continues.
+    UpdatePaths(Vec<(QueueItemId, PathBuf)>),
+    /// Insert items after a specific queue item (for drag/drop at cursor position).
+    InsertInPlaylist {
+        items: Vec<PlaylistItem>,
+        after: QueueItemId,
     },
     /// Clear the entire playlist (stop + remove all items).
     ClearPlaylist,

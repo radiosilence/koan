@@ -518,4 +518,171 @@ mod tests {
             "Aphex Twin/Windowlicker EP/01. Windowlicker"
         );
     }
+
+    // ======================================================================
+    // Real-world data: Bicep — CHROMA 000
+    //
+    // Actual Vorbis tags from the FLAC files:
+    //   ALBUM: CHROMA 000
+    //   ALBUM ARTIST: Bicep
+    //   ARTIST: Bicep
+    //   DATE: 2025-11-21
+    //   DISC: 1
+    //   LABEL: CHROMA
+    //   TITLE: CHROMA 001 HELIUM
+    //   TRACK: 1
+    //   codec: FLAC
+    //
+    // Expected foobar2000 output for the default organize pattern:
+    //   Bicep/(2025) CHROMA 000 [FLAC]/0101. Bicep - CHROMA 001 HELIUM
+    // ======================================================================
+
+    fn bicep_chroma_track1() -> HashMap<String, String> {
+        provider(&[
+            ("album artist", "Bicep"),
+            ("album", "CHROMA 000"),
+            ("artist", "Bicep"),
+            ("date", "2025-11-21"),
+            ("discnumber", "1"),
+            ("label", "CHROMA"),
+            ("title", "CHROMA 001 HELIUM"),
+            ("tracknumber", "01"),
+            ("codec", "FLAC"),
+        ])
+    }
+
+    fn bicep_chroma_track3_feat() -> HashMap<String, String> {
+        provider(&[
+            ("album artist", "Bicep"),
+            ("album", "CHROMA 000"),
+            ("artist", "Dove"),
+            ("date", "2025-11-21"),
+            ("discnumber", "1"),
+            ("label", "CHROMA"),
+            ("title", "CHROMA 003 Bi83 feat. Dove"),
+            ("tracknumber", "03"),
+            ("codec", "FLAC"),
+        ])
+    }
+
+    #[test]
+    fn chroma_pattern2_label_present() {
+        // Pattern 2 with label present: $if2(%label%,%album artist%) → "CHROMA" (label wins)
+        let p = bicep_chroma_track1();
+        assert_eq!(
+            format(PATTERN_2, &p).unwrap(),
+            "CHROMA/CHROMA 000 [FLAC]/0101. Bicep - CHROMA 001 HELIUM"
+        );
+    }
+
+    #[test]
+    fn chroma_pattern1_uses_album_artist_and_date() {
+        // Pattern 1 uses %album artist% directly + date prefix → matches fb2k output
+        let p = bicep_chroma_track1();
+        assert_eq!(
+            format(PATTERN_1, &p).unwrap(),
+            "Bicep/(2025) CHROMA 000 [FLAC]/0101. Bicep - CHROMA 001 HELIUM"
+        );
+    }
+
+    #[test]
+    fn chroma_pattern1_feat_artist() {
+        // Track with different artist than album artist
+        let p = bicep_chroma_track3_feat();
+        assert_eq!(
+            format(PATTERN_1, &p).unwrap(),
+            "Bicep/(2025) CHROMA 000 [FLAC]/0103. Dove - CHROMA 003 Bi83 feat. Dove"
+        );
+    }
+
+    #[test]
+    fn chroma_pattern2_no_label_falls_through() {
+        // Same track data but without label → falls through to album artist
+        let mut p = bicep_chroma_track1();
+        p.remove("label");
+        assert_eq!(
+            format(PATTERN_2, &p).unwrap(),
+            "Bicep/CHROMA 000 [FLAC]/0101. Bicep - CHROMA 001 HELIUM"
+        );
+    }
+
+    // Pattern with date prefix (what the user actually wants for the fb2k output):
+    // $if2(%label%,%album artist%)/['('$left(%date%,4)')' ]%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%
+    const PATTERN_2_WITH_DATE: &str = "$if2(%label%,%album artist%)/['('$left(%date%,4)')' ]%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%";
+
+    #[test]
+    fn chroma_pattern2_with_date_label_present() {
+        let p = bicep_chroma_track1();
+        assert_eq!(
+            format(PATTERN_2_WITH_DATE, &p).unwrap(),
+            "CHROMA/(2025) CHROMA 000 [FLAC]/0101. Bicep - CHROMA 001 HELIUM"
+        );
+    }
+
+    #[test]
+    fn chroma_pattern2_with_date_no_label() {
+        let mut p = bicep_chroma_track1();
+        p.remove("label");
+        assert_eq!(
+            format(PATTERN_2_WITH_DATE, &p).unwrap(),
+            "Bicep/(2025) CHROMA 000 [FLAC]/0101. Bicep - CHROMA 001 HELIUM"
+        );
+    }
+
+    #[test]
+    fn chroma_track11_tangz_ii() {
+        // Track 11: CHROMA 012 TANGZ II — artist same as album artist
+        let p = provider(&[
+            ("album artist", "Bicep"),
+            ("album", "CHROMA 000"),
+            ("artist", "Bicep"),
+            ("date", "2025-11-21"),
+            ("discnumber", "1"),
+            ("title", "CHROMA 012 TANGZ II"),
+            ("tracknumber", "11"),
+            ("codec", "FLAC"),
+        ]);
+        assert_eq!(
+            format(PATTERN_1, &p).unwrap(),
+            "Bicep/(2025) CHROMA 000 [FLAC]/0111. Bicep - CHROMA 012 TANGZ II"
+        );
+    }
+
+    #[test]
+    fn chroma_track10_aloe_ii_dots_in_title() {
+        // Track 10: title "A.L.O.E II" contains dots — must not be truncated
+        let p = provider(&[
+            ("album artist", "Bicep"),
+            ("album", "CHROMA 000"),
+            ("artist", "Bicep"),
+            ("date", "2025-11-21"),
+            ("discnumber", "1"),
+            ("title", "CHROMA 011 A.L.O.E II"),
+            ("tracknumber", "10"),
+            ("codec", "FLAC"),
+        ]);
+        assert_eq!(
+            format(PATTERN_1, &p).unwrap(),
+            "Bicep/(2025) CHROMA 000 [FLAC]/0110. Bicep - CHROMA 011 A.L.O.E II"
+        );
+    }
+
+    #[test]
+    fn chroma_track2_feat_in_title() {
+        // Track 2: different artist, "feat." in title — dots must survive
+        let p = provider(&[
+            ("album artist", "Bicep"),
+            ("album", "CHROMA 000"),
+            ("artist", "BDB, Bicep"),
+            ("date", "2025-11-21"),
+            ("discnumber", "1"),
+            ("title", "CHROMA 002 L.A.V.A feat. Benjamin Damage"),
+            ("tracknumber", "02"),
+            ("codec", "FLAC"),
+        ]);
+        assert_eq!(
+            format(PATTERN_1, &p).unwrap(),
+            "Bicep/(2025) CHROMA 000 [FLAC]/0102. BDB, Bicep - CHROMA 002 L.A.V.A feat. Benjamin Damage"
+        );
+    }
 }
