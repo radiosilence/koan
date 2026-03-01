@@ -299,7 +299,7 @@ mod tests {
                 name: "if".into(),
                 args: vec![
                     vec![Token::Literal("x".into())],
-                    vec![],  // empty arg between commas
+                    vec![], // empty arg between commas
                     vec![Token::Literal("y".into())],
                 ],
             }]

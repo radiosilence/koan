@@ -12,6 +12,7 @@ mod scan;
 mod search;
 
 pub use cache::{cmd_cache_clear, cmd_cache_status};
+
 pub use config::{cmd_config, cmd_init};
 pub use enqueue::enqueue_playlist;
 pub use library::{cmd_albums, cmd_artists, cmd_library};
@@ -58,6 +59,18 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
         b if b >= KB => format!("{:.1} KB", b as f64 / KB as f64),
         b => format!("{} B", b),
     }
+}
+
+/// Prompt for y/N confirmation on stdin.
+pub(crate) fn confirm(prompt: &str) -> bool {
+    use std::io::{Write, stdin, stdout};
+    print!("{} [y/N] ", prompt);
+    stdout().flush().ok();
+    let mut input = String::new();
+    if stdin().read_line(&mut input).is_err() {
+        return false;
+    }
+    matches!(input.trim().to_lowercase().as_str(), "y" | "yes")
 }
 
 /// Install a panic hook that restores the terminal before printing the panic message.

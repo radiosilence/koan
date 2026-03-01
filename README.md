@@ -100,8 +100,11 @@ koan library
 
 # organize files using format strings
 koan organize --pattern '%album artist%/(%date%) %album%/%tracknumber%. %title%'
+koan organize --pattern standard          # use named pattern from config
+koan organize                             # use default pattern from config
 koan organize --pattern '...' --execute   # actually move (default is dry-run)
 koan organize --undo                      # revert last organize
+koan organize --list                      # show configured patterns
 
 # remote server
 koan remote login https://music.example.com admin
@@ -214,6 +217,13 @@ watch = true
 exclusive_mode = false
 software_volume = false
 replaygain = "album"  # off | track | album
+
+[organize]
+default = "standard"
+
+[organize.patterns]
+standard = "%album artist%/(%date%) %album%/%tracknumber%. %title%"
+va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$left(%date%,4)')' ])%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%"
 ```
 
 `~/.config/koan/config.local.toml` (gitignored)

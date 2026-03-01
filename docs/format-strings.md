@@ -170,6 +170,30 @@ These return `"1"` for true, `""` for false — designed for use with `$if()`.
 | `$crlf()` | — | newline |
 | `$char(n)` | code point | unicode character |
 
+## Named patterns
+
+Store patterns in config and reference them by name instead of typing the full format string every time.
+
+`~/.config/koan/config.toml`:
+
+```toml
+[organize]
+default = "standard"
+
+[organize.patterns]
+standard = "%album artist%/(%date%) %album%/%tracknumber%. %title%"
+va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$left(%date%,4)')' ])%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%"
+label = "$if2(%label%,%album artist%)/%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%"
+```
+
+```bash
+koan organize                    # uses default pattern
+koan organize --pattern va-aware # use named pattern
+koan organize --list             # show all configured patterns
+```
+
+If `--pattern` doesn't match a named pattern, it's treated as a raw format string.
+
 ## Organize examples
 
 Slashes in the pattern create directory structure. `--execute` applies, default is preview.

@@ -328,18 +328,12 @@ mod tests {
     #[test]
     fn nested_function_in_function() {
         let p = provider(&[("artist", "aphex twin")]);
-        assert_eq!(
-            format("$upper($left(%artist%,5))", &p).unwrap(),
-            "APHEX"
-        );
+        assert_eq!(format("$upper($left(%artist%,5))", &p).unwrap(), "APHEX");
     }
 
     #[test]
     fn multiple_conditionals_adjacent() {
-        let p = provider(&[
-            ("artist", "Radiohead"),
-            ("album", "OK Computer"),
-        ]);
+        let p = provider(&[("artist", "Radiohead"), ("album", "OK Computer")]);
         assert_eq!(
             format("[%artist%][ - %album%]", &p).unwrap(),
             "Radiohead - OK Computer"
@@ -370,19 +364,13 @@ mod tests {
     #[test]
     fn quoted_brackets_outside_conditional() {
         let p = provider(&[("codec", "FLAC")]);
-        assert_eq!(
-            format("'['%codec%']'", &p).unwrap(),
-            "[FLAC]"
-        );
+        assert_eq!(format("'['%codec%']'", &p).unwrap(), "[FLAC]");
     }
 
     #[test]
     fn if_with_stricmp_nested_in_conditional() {
         // $if inside a conditional: the conditional tracks field resolution
-        let p = provider(&[
-            ("album artist", "Radiohead"),
-            ("date", "1997"),
-        ]);
+        let p = provider(&[("album artist", "Radiohead"), ("date", "1997")]);
         assert_eq!(
             format(
                 "[$if($stricmp(%album artist%,Various Artists),,'('$left(%date%,4)')' )]%album artist%",
@@ -416,10 +404,7 @@ mod tests {
     fn if2_both_empty() {
         let p = provider(&[]);
         // Both %label% and %album artist% missing → $if2 returns None → function returns None → empty
-        assert_eq!(
-            format("$if2(%label%,%album artist%)", &p).unwrap(),
-            ""
-        );
+        assert_eq!(format("$if2(%label%,%album artist%)", &p).unwrap(), "");
     }
 
     #[test]

@@ -234,11 +234,7 @@ mod tests {
 
     #[test]
     fn deeply_nested_conditionals() {
-        let provider = make_provider(&[
-            ("a", "1"),
-            ("b", "2"),
-            ("c", "3"),
-        ]);
+        let provider = make_provider(&[("a", "1"), ("b", "2"), ("c", "3")]);
         let tokens = vec![Token::Conditional(vec![
             Token::Field("a".into()),
             Token::Conditional(vec![
@@ -311,9 +307,7 @@ mod tests {
     #[test]
     fn conditional_with_only_literals_always_renders() {
         let provider = make_provider(&[]);
-        let tokens = vec![Token::Conditional(vec![
-            Token::Literal("always".into()),
-        ])];
+        let tokens = vec![Token::Conditional(vec![Token::Literal("always".into())])];
         // No fields to fail → all_resolved stays true → renders
         assert_eq!(evaluate(&tokens, &provider), "always");
     }
