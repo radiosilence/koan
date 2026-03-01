@@ -9,10 +9,14 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 ### Install
 
 ```bash
+# pre-built binary via mise (recommended)
+mise use -g github:radiosilence/koan@latest
+
+# or from source
 cargo install --path crates/koan-cli
 ```
 
-Requires macOS (CoreAudio). That's it — single binary, no runtime dependencies.
+Requires macOS (CoreAudio). Single binary, no runtime dependencies.
 
 ### First run
 
