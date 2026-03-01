@@ -249,9 +249,7 @@ impl App {
                     // Send path updates to the player.
                     let updates = org.take_path_updates();
                     if !updates.is_empty() {
-                        self.tx
-                            .send(PlayerCommand::UpdatePaths(updates))
-                            .ok();
+                        self.tx.send(PlayerCommand::UpdatePaths(updates)).ok();
                     }
                 }
             }
@@ -392,8 +390,7 @@ impl App {
             }
             // Vim: page up/down, home/end.
             KeyCode::PageUp | KeyCode::Char('u')
-                if key.code == KeyCode::PageUp
-                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if key.code == KeyCode::PageUp || key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 self.page_up(false);
             }
@@ -415,10 +412,18 @@ impl App {
             KeyCode::Char('i') => {
                 self.open_track_info(self.queue.cursor);
             }
+            KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.tx.send(PlayerCommand::Undo).ok();
+            }
             KeyCode::Char('z') => {
                 if self.art.now_playing_art.cached().is_some() {
                     self.mode = Mode::CoverArtZoom;
                 }
+            }
+            KeyCode::Char('Z')
+                if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
+            {
+                self.tx.send(PlayerCommand::Redo).ok();
             }
             KeyCode::Char('/') => {
                 self.open_queue_jump();
@@ -495,8 +500,7 @@ impl App {
             }
             // Vim: page up/down, home/end.
             KeyCode::PageUp | KeyCode::Char('u')
-                if key.code == KeyCode::PageUp
-                    || key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if key.code == KeyCode::PageUp || key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 self.page_up(shift);
             }
@@ -508,6 +512,17 @@ impl App {
             }
             KeyCode::End | KeyCode::Char('G') => {
                 self.jump_to_end(shift);
+            }
+            KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.tx.send(PlayerCommand::Undo).ok();
+            }
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.tx.send(PlayerCommand::Redo).ok();
+            }
+            KeyCode::Char('Z')
+                if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
+            {
+                self.tx.send(PlayerCommand::Redo).ok();
             }
             _ => {}
         }
@@ -614,20 +629,13 @@ impl App {
 
     fn open_context_menu(&mut self) {
         let actions = vec![(ContextAction::Organize, "Organize (move/rename)", 'o')];
-        self.context_menu = Some(ContextMenuState {
-            actions,
-            cursor: 0,
-        });
+        self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
         self.mode = Mode::ContextMenu;
     }
 
     fn open_organize_modal(&mut self) {
         let config = koan_core::config::Config::load().unwrap_or_default();
-        let mut patterns: Vec<(String, String)> = config
-            .organize
-            .patterns
-            .into_iter()
-            .collect();
+        let mut patterns: Vec<(String, String)> = config.organize.patterns.into_iter().collect();
         patterns.sort_by(|a, b| a.0.cmp(&b.0));
 
         // Collect selected queue entries' paths.
@@ -647,11 +655,7 @@ impl App {
             .filter_map(|&idx| visible.get(idx).map(|e| (e.id, e.path.clone())))
             .collect();
 
-        let org = super::organize::OrganizeModalState::new(
-            patterns,
-            selected_paths,
-            selected_ids,
-        );
+        let org = super::organize::OrganizeModalState::new(patterns, selected_paths, selected_ids);
         self.organize = Some(org);
         self.mode = Mode::Organize;
     }
@@ -788,7 +792,10 @@ impl App {
             if let MouseEventKind::Down(MouseButton::Left) = event.kind {
                 if self.is_in_rect(event.column, event.row, self.layout.context_menu_area) {
                     // Click on an action row — compute which one.
-                    let row = (event.row.saturating_sub(self.layout.context_menu_area.y + 1)) as usize;
+                    let row = (event
+                        .row
+                        .saturating_sub(self.layout.context_menu_area.y + 1))
+                        as usize;
                     if let Some(ref mut menu) = self.context_menu
                         && row < menu.actions.len()
                     {
@@ -972,10 +979,7 @@ impl App {
                 // Scrollbar click — rightmost column of queue area (inside border).
                 let q = self.layout.queue_area;
                 let scrollbar_x = q.x + q.width - 1;
-                if event.column == scrollbar_x
-                    && event.row > q.y
-                    && event.row < q.y + q.height
-                {
+                if event.column == scrollbar_x && event.row > q.y && event.row < q.y + q.height {
                     self.scrollbar_dragging = true;
                     self.scroll_to_scrollbar_y(event.row);
                     return;
@@ -1079,8 +1083,7 @@ impl App {
                             self.layout.queue_area,
                             self.queue.scroll_offset,
                             event.row,
-                        )
-                            && to_idx != from_index
+                        ) && to_idx != from_index
                         {
                             if self.queue.selected_indices.len() > 1 {
                                 // Multi-drag: move all selected tracks as a group.
@@ -1203,12 +1206,14 @@ impl App {
         };
 
         let visible = self.visible_queue();
-        for idx in &indices {
-            if let Some(entry) = visible.get(*idx) {
-                self.tx
-                    .send(PlayerCommand::RemoveFromPlaylist(entry.id))
-                    .ok();
-            }
+        let ids: Vec<_> = indices
+            .iter()
+            .filter_map(|&idx| visible.get(idx).map(|e| e.id))
+            .collect();
+        if !ids.is_empty() {
+            self.tx
+                .send(PlayerCommand::RemoveFromPlaylistBatch(ids))
+                .ok();
         }
 
         self.queue.selected_indices.clear();
@@ -1616,5 +1621,4 @@ impl App {
     pub fn visible_queue(&self) -> Vec<QueueEntry> {
         self.queue.vq_cache.entries.clone()
     }
-
 }

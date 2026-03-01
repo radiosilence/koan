@@ -17,6 +17,8 @@ pub enum PlayerCommand {
     PrevTrack,
     AddToPlaylist(Vec<PlaylistItem>),
     RemoveFromPlaylist(QueueItemId),
+    /// Batch remove: delete multiple items as a single undoable operation.
+    RemoveFromPlaylistBatch(Vec<QueueItemId>),
     MoveInPlaylist {
         id: QueueItemId,
         target: QueueItemId,
@@ -40,6 +42,10 @@ pub enum PlayerCommand {
     ClearPlaylist,
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
+    /// Undo the last reversible playlist operation.
+    Undo,
+    /// Redo the last undone operation.
+    Redo,
 }
 
 /// Bounded SPSC command channel.

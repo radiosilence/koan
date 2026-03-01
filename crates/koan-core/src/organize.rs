@@ -1034,8 +1034,7 @@ mod tests {
         // Regression: with_extension() replaces after the LAST dot,
         // destroying titles with dots ("0111. Bicep - TANGZ II" → "0111.flac").
         let db = test_db();
-        let tmp =
-            std::env::temp_dir().join(format!("koan-organize-dots-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("koan-organize-dots-{}", std::process::id()));
         let src_dir = tmp.join("src");
         std::fs::create_dir_all(&src_dir).unwrap();
 
@@ -1063,10 +1062,7 @@ mod tests {
             .to_string_lossy()
             .to_string();
         // Must preserve full title including dots — NOT truncated by set_extension.
-        assert_eq!(
-            dest_name,
-            "0110. Bicep - CHROMA 011 A.L.O.E II.flac"
-        );
+        assert_eq!(dest_name, "0110. Bicep - CHROMA 011 A.L.O.E II.flac");
 
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -1075,8 +1071,7 @@ mod tests {
     fn extension_preserved_for_tracknumber_dot() {
         // "0111. Bicep - TANGZ II" must not become "0111.flac"
         let db = test_db();
-        let tmp =
-            std::env::temp_dir().join(format!("koan-organize-trkdot-{}", std::process::id()));
+        let tmp = std::env::temp_dir().join(format!("koan-organize-trkdot-{}", std::process::id()));
         let src_dir = tmp.join("src");
         std::fs::create_dir_all(&src_dir).unwrap();
 
@@ -1102,10 +1097,7 @@ mod tests {
             .unwrap()
             .to_string_lossy()
             .to_string();
-        assert_eq!(
-            dest_name,
-            "0111. Bicep - CHROMA 012 TANGZ II.flac"
-        );
+        assert_eq!(dest_name, "0111. Bicep - CHROMA 012 TANGZ II.flac");
 
         std::fs::remove_dir_all(&tmp).ok();
     }

@@ -448,6 +448,116 @@ impl SharedPlayerState {
         self.playlist.read().cursor == Some(id)
     }
 
+    // --- Snapshot helpers for undo ---
+
+    /// Get the full playlist snapshot (items + cursor) for undo of ClearPlaylist.
+    pub fn snapshot_playlist(&self) -> (Vec<PlaylistItem>, Option<QueueItemId>) {
+        let pl = self.playlist.read();
+        (pl.items.clone(), pl.cursor)
+    }
+
+    /// Get an item by ID (for undo of RemoveFromPlaylist).
+    pub fn get_item(&self, id: QueueItemId) -> Option<PlaylistItem> {
+        let pl = self.playlist.read();
+        pl.items.iter().find(|item| item.id == id).cloned()
+    }
+
+    /// Get the ID of the item immediately before the given ID (None if first).
+    pub fn item_before(&self, id: QueueItemId) -> Option<QueueItemId> {
+        let pl = self.playlist.read();
+        let pos = pl.items.iter().position(|item| item.id == id)?;
+        if pos == 0 {
+            None
+        } else {
+            Some(pl.items[pos - 1].id)
+        }
+    }
+
+    /// For each ID, get the ID of the item before it (or None if first).
+    /// Used to snapshot positions before a batch move for undo.
+    pub fn items_before(&self, ids: &[QueueItemId]) -> Vec<(QueueItemId, Option<QueueItemId>)> {
+        let pl = self.playlist.read();
+        ids.iter()
+            .filter_map(|&id| {
+                let pos = pl.items.iter().position(|item| item.id == id)?;
+                let before = if pos == 0 {
+                    None
+                } else {
+                    Some(pl.items[pos - 1].id)
+                };
+                Some((id, before))
+            })
+            .collect()
+    }
+
+    /// Restore a full playlist from snapshot (for redo of ClearPlaylist undo).
+    pub fn restore_playlist(&self, items: Vec<PlaylistItem>, cursor: Option<QueueItemId>) {
+        let mut pl = self.playlist.write();
+        pl.items = items;
+        pl.cursor = cursor;
+        drop(pl);
+        self.bump_version();
+    }
+
+    /// Remove multiple items by IDs.
+    pub fn remove_items(&self, ids: &[QueueItemId]) {
+        use std::collections::HashSet;
+        let id_set: HashSet<QueueItemId> = ids.iter().copied().collect();
+        let mut pl = self.playlist.write();
+        pl.items.retain(|item| !id_set.contains(&item.id));
+        if let Some(cursor) = pl.cursor
+            && id_set.contains(&cursor)
+        {
+            pl.cursor = None;
+        }
+        drop(pl);
+        self.bump_version();
+    }
+
+    /// Insert a single item after a given ID (or at front if None).
+    pub fn insert_item_at(&self, item: PlaylistItem, after: Option<QueueItemId>) {
+        let mut pl = self.playlist.write();
+        let insert_at = match after {
+            Some(after_id) => {
+                match pl.items.iter().position(|i| i.id == after_id) {
+                    Some(pos) => pos + 1,
+                    None => pl.items.len(), // fallback
+                }
+            }
+            None => 0,
+        };
+        pl.items.insert(insert_at, item);
+        drop(pl);
+        self.bump_version();
+    }
+
+    /// Move a single item to after `after` (or to front if None).
+    pub fn move_item_to(&self, id: QueueItemId, after: Option<QueueItemId>) {
+        let mut pl = self.playlist.write();
+        let Some(from) = pl.items.iter().position(|item| item.id == id) else {
+            return;
+        };
+        let item = pl.items.remove(from);
+        let insert_at = match after {
+            Some(after_id) => match pl.items.iter().position(|i| i.id == after_id) {
+                Some(pos) => pos + 1,
+                None => pl.items.len(),
+            },
+            None => 0,
+        };
+        pl.items.insert(insert_at, item);
+        drop(pl);
+        self.bump_version();
+    }
+
+    /// Batch move: reposition each item to after its given predecessor.
+    /// Processes in order so earlier insertions don't corrupt later positions.
+    pub fn move_items_to(&self, entries: &[(QueueItemId, Option<QueueItemId>)]) {
+        for &(id, after) in entries {
+            self.move_item_to(id, after);
+        }
+    }
+
     // --- Called from UI thread (read lock) ---
 
     /// Derive the visible queue from the playlist + cursor. O(n).
