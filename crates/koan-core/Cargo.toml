@@ -10,7 +10,6 @@ crossbeam-channel = "0.5"
 # Config
 dirs = "6"
 ebur128 = "0.1"
-env_logger = "0.11"
 # Metadata
 lofty = "0.23"
 log = "0.4"

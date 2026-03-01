@@ -23,11 +23,11 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 ## Architecture
 
 ```
-Pure Rust, top to bottom.
+Pure Rust.
 
 File → Symphonia → f32 samples → rtrb ring buffer → CoreAudio render callback → DAC
 
-Lock-free audio thread. No FFI boundaries.
+Lock-free audio thread. See ARCHITECTURE.md for the full technical manual.
 ```
 
 Two crates:

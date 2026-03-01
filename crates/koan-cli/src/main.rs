@@ -93,7 +93,10 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
 use owo_colors::OwoColorize;
 
-use tui::picker::{PickerItem, PickerKind, PickerPartKind, PickerState};
+use tui::picker::{
+    PickerItem, PickerKind, PickerPartKind, PickerState, all_tracks_sentinel,
+    artist_id_from_sentinel, is_all_tracks_sentinel,
+};
 
 #[derive(Parser)]
 #[command(name = "koan", about = "bit-perfect music player", version)]
@@ -521,10 +524,9 @@ fn run_tui(
                     app.picker_result = Some((PickerKind::Track, track_ids));
                 }
             } else {
-                // Open album picker for this artist. Use negative artist ID
-                // as the "all tracks" sentinel — resolved in picker_result handler.
+                // Open album picker for this artist with an "all tracks" entry.
                 let mut items = vec![PickerItem {
-                    id: -artist_id,
+                    id: all_tracks_sentinel(artist_id),
                     display: "all tracks".to_string(),
                     match_text: "all tracks".into(),
                     parts: vec![("all tracks".into(), PickerPartKind::Plain)],
@@ -554,9 +556,9 @@ fn run_tui(
                             let db = open_db();
                             let mut expanded = Vec::new();
                             for album_id in &ids {
-                                if *album_id < 0 {
-                                    let artist_id = album_id.unsigned_abs() as i64;
-                                    let tracks = queries::tracks_for_artist(&db.conn, artist_id)
+                                if is_all_tracks_sentinel(*album_id) {
+                                    let aid = artist_id_from_sentinel(*album_id);
+                                    let tracks = queries::tracks_for_artist(&db.conn, aid)
                                         .unwrap_or_default();
                                     expanded.extend(tracks.iter().map(|t| t.id));
                                     continue;
@@ -1631,9 +1633,9 @@ fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
                     if albums.is_empty() {
                         cmd_play(&[], &[], None, Some(artist_id), false);
                     } else {
-                        // Show album picker for this artist.
+                        // Show album picker for this artist with an "all tracks" entry.
                         let mut items = vec![PickerItem {
-                            id: -artist_id,
+                            id: all_tracks_sentinel(artist_id),
                             display: "all tracks".to_string(),
                             match_text: "all tracks".into(),
                             parts: vec![("all tracks".into(), PickerPartKind::Plain)],
@@ -1688,7 +1690,7 @@ fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
                         terminal2.show_cursor().ok();
 
                         if let Some(album_ids) = album_result {
-                            if album_ids[0] < 0 {
+                            if is_all_tracks_sentinel(album_ids[0]) {
                                 cmd_play(&[], &[], None, Some(artist_id), false);
                             } else {
                                 cmd_play(&[], &[], Some(album_ids[0]), None, false);

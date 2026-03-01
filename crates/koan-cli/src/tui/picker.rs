@@ -37,6 +37,26 @@ pub struct PickerItem {
     pub parts: Vec<(String, PickerPartKind)>,
 }
 
+// --- "All tracks for artist" sentinel encoding ---
+// When an artist drill-down shows an album picker, the "all tracks" entry
+// encodes the artist_id as a negative value in the PickerItem.id field.
+// These helpers make the encoding/decoding explicit.
+
+/// Encode an artist_id into the sentinel value used for "all tracks" picker items.
+pub fn all_tracks_sentinel(artist_id: i64) -> i64 {
+    -artist_id
+}
+
+/// Check whether a picker result ID is the "all tracks for artist" sentinel.
+pub fn is_all_tracks_sentinel(id: i64) -> bool {
+    id < 0
+}
+
+/// Extract the original artist_id from an "all tracks" sentinel value.
+pub fn artist_id_from_sentinel(id: i64) -> i64 {
+    id.unsigned_abs() as i64
+}
+
 pub struct PickerState {
     pub kind: PickerKind,
     pub query: String,

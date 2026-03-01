@@ -80,7 +80,7 @@ impl Widget for TrackInfoOverlay<'_> {
             // Art takes a square-ish area on the left. Width ≈ height works
             // because halfblocks give 2 vertical pixels per cell, roughly
             // matching the ~2:1 cell aspect ratio.
-            let art_size = inner.height.saturating_sub(1).min(inner.width / 3);
+            let art_size = inner.height.min(inner.width / 3);
             let art_rect = Rect::new(inner.x + 1, inner.y, art_size, art_size);
             let text_rect = Rect::new(
                 inner.x + art_size + 2,

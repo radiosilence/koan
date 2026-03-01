@@ -38,7 +38,8 @@ struct CallbackData {
     samples_played: Arc<AtomicU64>,
 }
 
-// rtrb::Consumer isn't Send by default but it's safe for our single-consumer pattern.
+// SAFETY: Consumer is only ever accessed from the CoreAudio render callback thread
+// (single-consumer). The raw pointer prevents auto-Send but the access pattern is safe.
 unsafe impl Send for CallbackData {}
 
 /// CoreAudio AUHAL output engine.
@@ -51,7 +52,10 @@ pub struct AudioEngine {
     running: Arc<AtomicBool>,
 }
 
-// AudioUnit is a pointer but we manage its lifecycle correctly.
+// SAFETY: AudioEngine is created on one thread and may be moved to the player thread
+// before start() is called. After start(), the AudioUnit and callback_data pointer are
+// only accessed from the CoreAudio render thread via the installed callback. The engine
+// itself is only used for start/stop/drop which are safe across threads.
 unsafe impl Send for AudioEngine {}
 
 impl AudioEngine {

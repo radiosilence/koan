@@ -245,7 +245,9 @@ fn plan_moves(
                 if planned_ancillary.contains(&anc_path) {
                     continue;
                 }
-                let anc_name = anc_path.file_name().unwrap();
+                let Some(anc_name) = anc_path.file_name() else {
+                    continue;
+                };
                 let anc_dest = dest_dir.join(anc_name);
                 planned_ancillary.insert(anc_path.clone());
                 ancillary.push((anc_path, anc_dest));

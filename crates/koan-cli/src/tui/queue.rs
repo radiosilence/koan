@@ -70,14 +70,17 @@ impl<'a> QueueView<'a> {
         // +1 to account for the block border (TOP) consuming the first row.
         let target_line = scroll_offset + rel_y.saturating_sub(1);
         if target_line < display_lines.len() {
-            display_lines[target_line].0
+            let (idx, is_header) = display_lines[target_line];
+            if is_header { None } else { idx }
         } else {
             None
         }
     }
 }
 
-/// Each display line: (Option<queue_index>, is_header)
+/// Each display line: (Option<queue_index>, is_header).
+/// For headers, the index points to the first entry of that album group
+/// (so callers can look up album info for rendering).
 fn build_display_lines(entries: &[QueueEntry]) -> Vec<(Option<usize>, bool)> {
     let mut lines = Vec::new();
     let mut current_album_key: Option<(String, String)> = None;
@@ -92,7 +95,7 @@ fn build_display_lines(entries: &[QueueEntry]) -> Vec<(Option<usize>, bool)> {
 
         if show_header {
             current_album_key = Some(album_key);
-            lines.push((None, true));
+            lines.push((Some(i), true));
         }
 
         lines.push((Some(i), false));
@@ -135,36 +138,29 @@ impl Widget for QueueView<'_> {
             return;
         }
 
-        // Build all display lines.
-        let mut display_lines: Vec<(Option<usize>, Line)> = Vec::new();
-        let mut current_album_key: Option<(String, String)> = None;
-
-        for (i, entry) in self.entries.iter().enumerate() {
-            let album_key = (entry.album_artist.clone(), entry.album.clone());
-            let show_header = if entry.album.is_empty() {
-                false
-            } else {
-                current_album_key.as_ref() != Some(&album_key)
-            };
-
-            if show_header {
-                current_album_key = Some(album_key.clone());
-                let header = render_album_header(entry, self.theme);
-                display_lines.push((None, header));
+        // Build display lines using shared index map to avoid duplicating
+        // the album-grouping logic.
+        let index_map = build_display_lines(self.entries);
+        let mut display_lines: Vec<(Option<usize>, Line)> = Vec::with_capacity(index_map.len());
+        for &(entry_idx, is_header) in &index_map {
+            if is_header {
+                if let Some(i) = entry_idx {
+                    display_lines.push((None, render_album_header(&self.entries[i], self.theme)));
+                }
+            } else if let Some(i) = entry_idx {
+                let is_cursor = is_edit && i == self.cursor;
+                let is_selected = self.selected.contains(&i);
+                let is_drag_target = self.drag_target == Some(i);
+                let line = render_track_line(
+                    &self.entries[i],
+                    is_cursor,
+                    is_selected,
+                    is_drag_target,
+                    self.theme,
+                    self.spinner_tick,
+                );
+                display_lines.push((Some(i), line));
             }
-
-            let is_cursor = is_edit && i == self.cursor;
-            let is_selected = self.selected.contains(&i);
-            let is_drag_target = self.drag_target == Some(i);
-            let line = render_track_line(
-                entry,
-                is_cursor,
-                is_selected,
-                is_drag_target,
-                self.theme,
-                self.spinner_tick,
-            );
-            display_lines.push((Some(i), line));
         }
 
         // Find which display line the cursor is on for scroll.
@@ -359,7 +355,7 @@ pub fn scroll_for_cursor(
     let display_lines = build_display_lines(entries);
     let cursor_line = display_lines
         .iter()
-        .position(|(idx, _)| *idx == Some(cursor))
+        .position(|(idx, is_header)| *idx == Some(cursor) && !is_header)
         .unwrap_or(0);
 
     if cursor_line < current_scroll {
