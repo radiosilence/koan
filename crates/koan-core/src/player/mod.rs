@@ -680,7 +680,12 @@ mod tests {
     #[test]
     fn undo_batch_remove_restores_all() {
         let mut player = Player::new();
-        let items = vec![make_item("A"), make_item("B"), make_item("C"), make_item("D")];
+        let items = vec![
+            make_item("A"),
+            make_item("B"),
+            make_item("C"),
+            make_item("D"),
+        ];
         let b_id = items[1].id;
         let c_id = items[2].id;
 

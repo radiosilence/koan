@@ -421,7 +421,9 @@ impl App {
                 }
             }
             KeyCode::Char('Z')
-                if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
+                if key
+                    .modifiers
+                    .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
             {
                 self.tx.send(PlayerCommand::Redo).ok();
             }
@@ -520,7 +522,9 @@ impl App {
                 self.tx.send(PlayerCommand::Redo).ok();
             }
             KeyCode::Char('Z')
-                if key.modifiers.contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
+                if key
+                    .modifiers
+                    .contains(KeyModifiers::CONTROL | KeyModifiers::SHIFT) =>
             {
                 self.tx.send(PlayerCommand::Redo).ok();
             }
