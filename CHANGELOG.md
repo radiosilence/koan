@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Cover art in Now Playing** — macOS Control Center shows embedded album art (extracted to temp file, passed as file:// URL to souvlaki)
+- **Seek from Control Center** — absolute position, relative with duration, and direction-only (10s steps)
+- **Quit from Control Center** — clean shutdown via atomic flag on SharedPlayerState
+
+### Fixed
+
+- **mise binary name** — release tarballs now contain `koan` instead of `koan-macos-arm64`, fixing mise installs
+
+### Removed
+
+- **Dead file watcher** — notify/FSEvents module was implemented but never wired in. Removed watcher.rs, notify deps, `config.watch` field
+
 ## 0.2.0
 
 First public release. Full TUI rewrite, undo/redo, file organization, CI/CD pipeline.
@@ -61,7 +77,6 @@ Initial release.
 - Gapless transitions
 - Format support: FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (Symphonia)
 - Library indexing with rayon, SQLite FTS5 search
-- File watching (FSEvents, 500ms debounce)
 - Subsonic/Navidrome remote sync
 - Track deduplication (path → remote_id → content match)
 - CLI: play, scan, search, library, config, probe, devices, remote login/sync/status
