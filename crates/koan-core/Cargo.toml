@@ -20,9 +20,6 @@ lofty = "0.23"
 log = "0.4"
 # Subsonic/Navidrome
 md5 = "0.8"
-# File watching
-notify = "8"
-notify-debouncer-full = "0.5"
 # Async/threading
 parking_lot = "0.12"
 rayon = "1"

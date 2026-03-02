@@ -67,9 +67,6 @@ pub fn cmd_init() {
     } else {
         let base_content = r#"# koan — shareable defaults (safe to commit to dotfiles)
 
-[library]
-watch = true
-
 [playback]
 exclusive_mode = false
 software_volume = false

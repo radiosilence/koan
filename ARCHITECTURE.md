@@ -183,7 +183,6 @@ struct Playlist {
 |---|---|
 | `scanner.rs` | Parallel library scan: walkdir → rayon metadata extraction → sequential DB upsert in one transaction |
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
-| `watcher.rs` | FSEvents file watcher via notify, 500ms debounce, auto-indexes new/changed/deleted files |
 
 ### `format/`
 
@@ -330,6 +329,5 @@ All deps are current as of March 2026. Key choices:
 | `souvlaki` | Media key / MPRIS / Now Playing integration. |
 | `reqwest` | HTTP client for Subsonic API (blocking mode, rustls TLS). |
 | `rayon` | Data parallelism for library scanning and remote sync. |
-| `notify` | Cross-platform file watching (FSEvents on macOS). |
 | `ebur128` | EBU R128 loudness measurement for ReplayGain. |
 | `parking_lot` | Faster RwLock/Mutex than std (no poisoning). |
