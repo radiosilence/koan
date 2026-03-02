@@ -255,7 +255,7 @@ Subcommand handlers split into focused modules:
 
 ### `media_keys.rs`
 
-macOS Control Center integration via souvlaki. Pumps CFRunLoop manually (terminal apps don't have a Cocoa event loop). Maps hardware play/pause/next/prev to PlayerCommands.
+macOS Control Center integration via souvlaki. Pumps CFRunLoop manually (terminal apps don't have a Cocoa event loop). Maps media key events to PlayerCommands: play/pause/stop, next/prev, seek (absolute + relative), quit. Sends track metadata including album art (extracted to temp file, passed as file:// URL).
 
 ## Picker actions
 
