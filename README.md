@@ -56,7 +56,7 @@ koan remote login https://music.example.com admin
 koan remote sync
 ```
 
-Remote and local tracks merge into one library. Local files always take playback priority. Remote tracks download on first play and cache locally — subsequent plays are instant.
+Remote and local tracks merge seamlessly into one library — if the same track exists in both sources (matched by artist + album + title + track number), it becomes a single entry. Local files always take playback priority; remote is only used as a fallback if the local file is missing. Remote-only tracks download on first play and cache locally — subsequent plays are instant.
 
 You can use both sources together. Run `koan remote sync` periodically (or after adding music to your server) to pull new tracks.
 
@@ -104,7 +104,7 @@ kōan is built around a full-screen terminal interface. The transport bar shows 
 - **Format string engine** — fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for library views and file organization
 - **File organization** — in-TUI organize modal: select tracks → context menu → pick a named pattern → preview moves → execute. Playlist paths update live, playback continues uninterrupted
 - **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag, undo/redo (Ctrl+Z/Y, 100-deep stack covering all playlist operations). Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward). Drag/drop files from Finder into the terminal to add them to the queue
-- **Track deduplication** — local+remote tracks merged into single rows, local path always wins for playback
+- **Track deduplication** — 3-strategy match (path → remote ID → content) merges local and remote into one DB row. No duplicates in search or browse. Playback priority: local file → cached download → remote stream
 - **Proper artist handling** — track artist stored separately from album artist; compilations/VA albums display correctly
 
 ## Architecture
