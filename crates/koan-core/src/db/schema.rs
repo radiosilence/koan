@@ -66,8 +66,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         CREATE TABLE IF NOT EXISTS library_folders (
             id        INTEGER PRIMARY KEY,
             path      TEXT NOT NULL UNIQUE,
-            last_scan INTEGER,
-            watch     INTEGER NOT NULL DEFAULT 1
+            last_scan INTEGER
         );
 
         CREATE TABLE IF NOT EXISTS scan_cache (

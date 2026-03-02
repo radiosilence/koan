@@ -250,11 +250,17 @@ fn run_tui(
                     mk.update_playback(&app.state);
                     let current = app.state.track_info().map(|t| t.path.clone());
                     if current != last_track_path {
-                        last_track_path = current;
-                        mk.update_metadata(&app.state);
+                        last_track_path = current.clone();
+                        mk.update_metadata(&app.state, current.as_ref());
                     }
                 }
                 crate::media_keys::pump_run_loop();
+
+                // Check for external quit request (e.g. macOS Control Center).
+                if app.state.quit_requested() {
+                    app.tx.send(PlayerCommand::Stop).ok();
+                    app.quit = true;
+                }
             }
         }
 

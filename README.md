@@ -45,7 +45,7 @@ Then scan:
 koan scan
 ```
 
-Indexing runs in parallel — fast even for large collections. The file watcher auto-updates the database when files change, so you only need to scan once.
+Indexing runs in parallel — fast even for large collections.
 
 **Remote server (Navidrome/Subsonic):**
 
@@ -98,9 +98,8 @@ kōan is built around a full-screen terminal interface. The transport bar shows 
 - **Gapless** — decode thread keeps the ring buffer alive across track boundaries, AudioUnit never stops
 - **Format support** — FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
 - **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal with embedded album art (halfblock rendering), scrollbar, mouse support (click-to-seek, click-to-play, drag-to-reorder, scrollbar drag, scroll wheel)
-- **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, now playing info)
+- **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, seek, now playing info with album art)
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
-- **File watching** — FSEvents via notify, debounced 500ms, auto-updates DB on changes
 - **Subsonic/Navidrome** — parallel remote library sync, unified local+remote browsing, lazy parallel downloads
 - **Format string engine** — fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for library views and file organization
 - **File organization** — in-TUI organize modal: select tracks → context menu → pick a named pattern → preview moves → execute. Playlist paths update live, playback continues uninterrupted
@@ -277,7 +276,6 @@ replaygain = "album"      # off | track | album
 # config.local.toml
 [library]
 folders = ["/Volumes/Music/library"]
-watch = true              # auto-index when files change (FSEvents)
 ```
 
 ### Remote server

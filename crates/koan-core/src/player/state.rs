@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 
 use uuid::Uuid;
 
@@ -154,6 +154,9 @@ pub struct SharedPlayerState {
     /// Playback generation — incremented each start_playback so stale decode
     /// thread callbacks can detect they're outdated and skip state mutations.
     playback_generation: AtomicU64,
+
+    /// Set by external signals (e.g. souvlaki Quit event) to request clean shutdown.
+    quit_requested: AtomicBool,
 }
 
 impl SharedPlayerState {
@@ -165,6 +168,7 @@ impl SharedPlayerState {
             playlist: parking_lot::RwLock::new(Playlist::default()),
             playlist_version: AtomicU64::new(0),
             playback_generation: AtomicU64::new(0),
+            quit_requested: AtomicBool::new(false),
         })
     }
 
@@ -202,6 +206,16 @@ impl SharedPlayerState {
 
     pub fn generation(&self) -> u64 {
         self.playback_generation.load(Ordering::Relaxed)
+    }
+
+    // --- Quit ---
+
+    pub fn request_quit(&self) {
+        self.quit_requested.store(true, Ordering::Relaxed);
+    }
+
+    pub fn quit_requested(&self) -> bool {
+        self.quit_requested.load(Ordering::Relaxed)
     }
 
     // --- Playlist version ---

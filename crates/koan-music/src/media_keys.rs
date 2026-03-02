@@ -1,11 +1,14 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crossbeam_channel::Sender;
+use koan_core::index::metadata::extract_cover_art;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, SharedPlayerState};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
+    SeekDirection,
 };
 
 /// Pump the macOS run loop so MPRemoteCommandCenter handlers fire.
@@ -22,8 +25,13 @@ pub fn pump_run_loop() {
 #[cfg(not(target_os = "macos"))]
 pub fn pump_run_loop() {}
 
+/// Fixed seek amount for direction-only seek events (no duration provided).
+const SEEK_STEP_MS: u64 = 10_000;
+
 pub struct MediaKeyHandler {
     controls: MediaControls,
+    /// Temp file for cover art — reused across tracks, cleaned up on drop.
+    cover_art_path: Option<PathBuf>,
 }
 
 impl MediaKeyHandler {
@@ -60,14 +68,40 @@ impl MediaKeyHandler {
                 MediaControlEvent::Stop => {
                     tx.send(PlayerCommand::Stop).ok();
                 }
+                MediaControlEvent::SetPosition(MediaPosition(pos)) => {
+                    tx.send(PlayerCommand::Seek(pos.as_millis() as u64)).ok();
+                }
+                MediaControlEvent::SeekBy(direction, duration) => {
+                    let current = state.position_ms();
+                    let delta = duration.as_millis() as u64;
+                    let target = match direction {
+                        SeekDirection::Forward => current.saturating_add(delta),
+                        SeekDirection::Backward => current.saturating_sub(delta),
+                    };
+                    tx.send(PlayerCommand::Seek(target)).ok();
+                }
+                MediaControlEvent::Seek(direction) => {
+                    let current = state.position_ms();
+                    let target = match direction {
+                        SeekDirection::Forward => current.saturating_add(SEEK_STEP_MS),
+                        SeekDirection::Backward => current.saturating_sub(SEEK_STEP_MS),
+                    };
+                    tx.send(PlayerCommand::Seek(target)).ok();
+                }
+                MediaControlEvent::Quit => {
+                    state.request_quit();
+                }
                 _ => {}
             })
             .ok()?;
 
-        Some(Self { controls })
+        Some(Self {
+            controls,
+            cover_art_path: None,
+        })
     }
 
-    pub fn update_metadata(&mut self, state: &SharedPlayerState) {
+    pub fn update_metadata(&mut self, state: &SharedPlayerState, track_path: Option<&PathBuf>) {
         let Some(info) = state.track_info() else {
             return;
         };
@@ -81,12 +115,16 @@ impl MediaKeyHandler {
         let album = entry.map(|e| e.album.clone()).unwrap_or_default();
         let duration = entry.and_then(|e| e.duration_ms).or(Some(info.duration_ms));
 
+        // Extract cover art to a temp file for macOS Now Playing.
+        let cover_url = self.write_cover_art(track_path);
+        let cover_url_str = cover_url.as_deref();
+
         self.controls
             .set_metadata(MediaMetadata {
                 title: Some(&title),
                 artist: Some(&artist),
                 album: Some(&album),
-                cover_url: None,
+                cover_url: cover_url_str,
                 duration: duration.map(Duration::from_millis),
             })
             .ok();
@@ -103,5 +141,27 @@ impl MediaKeyHandler {
             PlaybackState::Stopped => MediaPlayback::Stopped,
         };
         self.controls.set_playback(playback).ok();
+    }
+
+    /// Write embedded cover art to a temp file, returning a file:// URL.
+    /// Reuses a single temp path — overwritten each track change.
+    fn write_cover_art(&mut self, track_path: Option<&PathBuf>) -> Option<String> {
+        let path = track_path?;
+        let bytes = extract_cover_art(path)?;
+
+        let tmp = self
+            .cover_art_path
+            .get_or_insert_with(|| std::env::temp_dir().join("koan-now-playing-cover"));
+
+        std::fs::write(&*tmp, &bytes).ok()?;
+        Some(format!("file://{}", tmp.display()))
+    }
+}
+
+impl Drop for MediaKeyHandler {
+    fn drop(&mut self) {
+        if let Some(ref path) = self.cover_art_path {
+            std::fs::remove_file(path).ok();
+        }
     }
 }

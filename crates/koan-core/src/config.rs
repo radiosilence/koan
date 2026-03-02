@@ -28,7 +28,6 @@ pub struct Config {
 #[serde(default)]
 pub struct LibraryConfig {
     pub folders: Vec<PathBuf>,
-    pub watch: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,7 +72,6 @@ impl Default for LibraryConfig {
         });
         Self {
             folders: vec![music_dir],
-            watch: true,
         }
     }
 }
@@ -189,7 +187,6 @@ impl Config {
         if !other.library.folders.is_empty() {
             self.library.folders = other.library.folders;
         }
-        self.library.watch = other.library.watch;
         self.playback = other.playback;
         if other.remote.enabled {
             self.remote.enabled = true;
@@ -264,7 +261,6 @@ mod tests {
     #[test]
     fn test_defaults() {
         let cfg = Config::default();
-        assert!(cfg.library.watch);
         assert!(!cfg.playback.exclusive_mode);
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Album);
         assert!(!cfg.remote.enabled);
@@ -276,7 +272,6 @@ mod tests {
         let cfg = Config::default();
         let serialized = toml::to_string_pretty(&cfg).unwrap();
         let deserialized: Config = toml::from_str(&serialized).unwrap();
-        assert_eq!(deserialized.library.watch, cfg.library.watch);
         assert_eq!(deserialized.playback.replaygain, cfg.playback.replaygain);
         assert_eq!(
             deserialized.remote.transcode_quality,
@@ -293,7 +288,6 @@ mod tests {
             r#"
 [library]
 folders = ["/tmp/music"]
-watch = false
 
 [playback]
 replaygain = "track"
@@ -303,7 +297,6 @@ replaygain = "track"
 
         let cfg = Config::load_from(&path).unwrap();
         assert_eq!(cfg.library.folders, vec![PathBuf::from("/tmp/music")]);
-        assert!(!cfg.library.watch);
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Track);
         // Remote should be default since not in file.
         assert!(!cfg.remote.enabled);
@@ -319,8 +312,6 @@ replaygain = "track"
 
         let cfg = Config::load_from(&path).unwrap();
         assert!(cfg.playback.exclusive_mode);
-        // Library should get defaults.
-        assert!(cfg.library.watch);
 
         fs::remove_dir_all(&dir).ok();
     }
