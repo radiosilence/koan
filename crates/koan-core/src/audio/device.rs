@@ -268,25 +268,3 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<()>
         )
     })
 }
-
-/// Acquire or release hog mode (exclusive access) on a device.
-pub fn set_hog_mode(device_id: AudioDeviceID, hog: bool) -> Result<()> {
-    let property = AudioObjectPropertyAddress {
-        mSelector: kAudioDevicePropertyHogMode,
-        mScope: kAudioObjectPropertyScopeOutput,
-        mElement: kAudioObjectPropertyElementMain,
-    };
-
-    let pid: i32 = if hog { std::process::id() as i32 } else { -1 };
-
-    check(unsafe {
-        AudioObjectSetPropertyData(
-            device_id,
-            &property,
-            0,
-            ptr::null(),
-            mem::size_of::<i32>() as u32,
-            &pid as *const _ as *const _,
-        )
-    })
-}

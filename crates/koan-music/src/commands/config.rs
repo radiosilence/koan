@@ -68,7 +68,6 @@ pub fn cmd_init() {
         let base_content = r#"# koan — shareable defaults (safe to commit to dotfiles)
 
 [playback]
-exclusive_mode = false
 software_volume = false
 replaygain = "album"  # off | track | album
 

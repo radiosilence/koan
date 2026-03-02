@@ -33,7 +33,6 @@ pub struct LibraryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlaybackConfig {
-    pub exclusive_mode: bool,
     pub software_volume: bool,
     pub replaygain: ReplayGainMode,
 }
@@ -79,7 +78,6 @@ impl Default for LibraryConfig {
 impl Default for PlaybackConfig {
     fn default() -> Self {
         Self {
-            exclusive_mode: false,
             software_volume: false,
             replaygain: ReplayGainMode::Album,
         }
@@ -261,7 +259,6 @@ mod tests {
     #[test]
     fn test_defaults() {
         let cfg = Config::default();
-        assert!(!cfg.playback.exclusive_mode);
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Album);
         assert!(!cfg.remote.enabled);
         assert_eq!(cfg.remote.transcode_quality, "original");
@@ -308,10 +305,10 @@ replaygain = "track"
     fn test_partial_toml_uses_defaults() {
         let dir = tmp_dir();
         let path = dir.join("partial.toml");
-        fs::write(&path, "[playback]\nexclusive_mode = true\n").unwrap();
+        fs::write(&path, "[playback]\nsoftware_volume = true\n").unwrap();
 
         let cfg = Config::load_from(&path).unwrap();
-        assert!(cfg.playback.exclusive_mode);
+        assert!(cfg.playback.software_volume);
 
         fs::remove_dir_all(&dir).ok();
     }

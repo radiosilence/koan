@@ -265,7 +265,6 @@ Local values override base. Run `koan config` to see both layers and the resolve
 ```toml
 # config.toml
 [playback]
-exclusive_mode = false    # hog the audio device (prevents other apps from using it)
 software_volume = false   # volume control in software (vs hardware/DAC)
 replaygain = "album"      # off | track | album
 ```

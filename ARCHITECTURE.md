@@ -150,7 +150,7 @@ struct Playlist {
 |---|---|
 | `engine.rs` | CoreAudio AUHAL setup, render callback (unsafe extern "C"), AudioEngine lifecycle |
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
-| `device.rs` | CoreAudio device enumeration, sample rate get/set, hog mode |
+| `device.rs` | CoreAudio device enumeration, sample rate get/set |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
 
 ### `player/`
