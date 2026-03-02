@@ -92,6 +92,59 @@ kōan is built around a full-screen terminal interface. The transport bar shows 
 
 ---
 
+## How it compares
+
+No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-style format strings, and file organization in one binary. Most either need a daemon, lack remote support, or skip the audiophile bits.
+
+### TUI / terminal players
+
+| | kōan | ncmpcpp | cmus | musikcube | termusic | rmpc | stmp |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Language** | Rust | C++ | C | C++ | Rust | Rust | Go |
+| **Standalone** | **Yes** | No (MPD) | Yes | Yes | Yes | No (MPD) | No (Subsonic) |
+| **Bit-perfect** | **Yes** | Via MPD | Via ALSA | No | No | Via MPD | No |
+| **Gapless** | **Yes** | Yes | Yes | Yes | Yes | Yes | No |
+| **Subsonic/Navidrome** | **Yes** | No | No | No | No | No | **Yes** |
+| **Local library** | **Yes** | Via MPD | Yes | Yes | Yes | Via MPD | No |
+| **Local + remote unified** | **Yes** | — | — | — | — | — | — |
+| **Album art** | **Halfblock** | Kitty¹ | No | No | Kitty/Sixel | Kitty/Sixel | No |
+| **ReplayGain** | **Scan + apply** | Via MPD | Yes | Yes | No | Via MPD | No |
+| **fb2k format strings** | **30+ functions** | Column fmt | Basic | No | No | Basic | No |
+| **File organization** | **Yes** | No | No | No | No | No | No |
+| **FTS search** | **SQLite FTS5** | MPD search | Filter | Text | Filter | MPD search | Basic |
+| **Queue undo/redo** | **100-deep** | No | No | No | No | No | No |
+| **Mouse support** | **Full** | Yes | Yes² | Basic | Yes | Yes | No |
+| **Media keys** | **macOS CC** | Via MPRIS | Via MPRIS | — | Via MPRIS | Via MPRIS | — |
+| **Drag & drop** | **Finder → TUI** | No | No | No | No | No | No |
+| **Platforms** | macOS | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
+| **Maintained** | Yes | Yes | Yes (2.12.0) | Slowing | Yes | Very active | Stale |
+
+¹ PR pending, not merged. ² Added in 2.12.0.
+
+### Desktop players (GUI)
+
+| | kōan | foobar2000 | Strawberry | DeaDBeeF |
+|---|:---:|:---:|:---:|:---:|
+| **Type** | TUI | GUI | GUI (Qt) | GUI (GTK) |
+| **Bit-perfect** | **Yes** | Yes (WASAPI/ASIO) | Yes (Linux) | Yes (ALSA) |
+| **Gapless** | **Yes** | Yes | Yes | Yes |
+| **Subsonic** | **Built-in** | Plugin | **Built-in** | No |
+| **ReplayGain** | **Scan + apply** | Scan + apply | Yes | Scan + apply |
+| **Format strings** | **fb2k-compat** | **The original** | Organizer only | fb2k-like |
+| **File organization** | **Yes** | Yes (component) | **Yes** | No |
+| **Queue undo/redo** | **100-deep** | Partial | No | Yes |
+| **Platforms** | macOS | Windows/macOS | All | All |
+
+### The gap kōan fills
+
+- **Only standalone TUI with Subsonic + bit-perfect.** stmp does Subsonic but has no gapless, no art, no local library. MPD clients need a separate daemon.
+- **Only TUI with fb2k-compatible format strings.** ncmpcpp has column formatting, but nothing close to `$if($stricmp(%album artist%,Various Artists),...)`.
+- **Only TUI with file organization.** No other terminal player can rename/reorganize your library from inside the player.
+- **Only TUI with queue undo/redo.** 100-deep stack. DeaDBeeF added this in v1.10.0 (2025) — no TUI has it.
+- **Only TUI with Finder drag & drop.** Drop files from macOS Finder directly into the terminal to enqueue.
+
+---
+
 ## What works
 
 - **Bit-perfect playback** — CoreAudio AUHAL, no resampling, automatic device sample rate switching
