@@ -108,8 +108,8 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Local library** | **Yes** | Via MPD | Yes | Yes | Yes | Via MPD | No |
 | **Local + remote unified** | **Yes** | — | — | — | — | — | — |
 | **Album art** | **Halfblock** | Kitty¹ | No | No | Kitty/Sixel | Kitty/Sixel | No |
-| **ReplayGain** | **Scan + apply** | Via MPD | Yes | Yes | No | Via MPD | No |
-| **fb2k format strings** | **30+ functions** | Column fmt | Basic | No | No | Basic | No |
+| **ReplayGain** | Planned³ | Via MPD | Yes | Yes | No | Via MPD | No |
+| **fb2k format strings** | **55+ functions** | Column fmt | Basic | No | No | Basic | No |
 | **File organization** | **Yes** | No | No | No | No | No | No |
 | **FTS search** | **SQLite FTS5** | MPD search | Filter | Text | Filter | MPD search | Basic |
 | **Queue undo/redo** | **100-deep** | No | No | No | No | No | No |
@@ -119,7 +119,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Platforms** | macOS | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
 | **Maintained** | Yes | Yes | Yes (2.12.0) | Slowing | Yes | Very active | Stale |
 
-¹ PR pending, not merged. ² Added in 2.12.0.
+¹ PR pending, not merged. ² Added in 2.12.0. ³ Library code exists (scan/read/write/apply), not yet wired into playback.
 
 ### Desktop players (GUI)
 
@@ -129,7 +129,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Bit-perfect** | **Yes** | Yes (WASAPI/ASIO) | Yes (Linux) | Yes (ALSA) |
 | **Gapless** | **Yes** | Yes | Yes | Yes |
 | **Subsonic** | **Built-in** | Plugin | **Built-in** | No |
-| **ReplayGain** | **Scan + apply** | Scan + apply | Yes | Scan + apply |
+| **ReplayGain** | Planned | Scan + apply | Yes | Scan + apply |
 | **Format strings** | **fb2k-compat** | **The original** | Organizer only | fb2k-like |
 | **File organization** | **Yes** | Yes (component) | **Yes** | No |
 | **Queue undo/redo** | **100-deep** | Partial | No | Yes |
@@ -318,8 +318,8 @@ Local values override base. Run `koan config` to see both layers and the resolve
 ```toml
 # config.toml
 [playback]
-software_volume = false   # volume control in software (vs hardware/DAC)
-replaygain = "album"      # off | track | album
+software_volume = false   # volume control in software (vs hardware/DAC) — not yet wired in
+replaygain = "album"      # off | track | album — not yet wired into playback
 ```
 
 ### Library
