@@ -223,6 +223,31 @@ impl SharedPlayerState {
         *self.track_info.write() = info;
     }
 
+    /// Download fraction (0.0..1.0) for the currently playing track, if streaming.
+    /// Returns `None` for fully-downloaded or non-playing tracks.
+    pub fn current_download_fraction(&self) -> Option<f64> {
+        let track_info = self.track_info.read();
+        let id = track_info.as_ref()?.id;
+        let pl = self.playlist.read();
+        pl.items.iter().find(|item| item.id == id).and_then(|item| {
+            match &item.load_state {
+                LoadState::Downloading {
+                    bytes_written,
+                    total,
+                    ..
+                } => {
+                    let written = bytes_written.load(Ordering::Relaxed);
+                    if *total > 0 {
+                        Some((written as f64 / *total as f64).min(1.0))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        })
+    }
+
     // --- Playback generation ---
 
     pub fn bump_generation(&self) -> u64 {

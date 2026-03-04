@@ -5,6 +5,8 @@
 ### Added
 
 - **ReplayGain playback support** — track and album ReplayGain tags are read via lofty at decode time and gain is applied with peak limiting. Configure via `[playback] replaygain` (`track`, `album`, or `off`) and `pre_amp_db` in config.toml. Zero overhead when disabled
+- **Streaming seek bar** — during streaming playback the seek bar shows a dashed pattern for the not-yet-downloaded portion. Downloaded section renders as a solid line that grows as the download progresses. Seeking past the downloaded point is prevented (click, keyboard, and core seek all clamped)
+- **Accurate duration for streaming tracks** — transport bar now prefers the database-sourced track duration over the probed partial-file duration, so elapsed/total always shows the real track length
 
 ## 0.5.0
 

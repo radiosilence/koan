@@ -480,11 +480,18 @@ impl Player {
         let duration = info.duration_ms;
 
         // Clamp to just before the end so we don't skip to the next track.
-        let clamped = if duration > 0 {
+        let mut clamped = if duration > 0 {
             position_ms.min(duration.saturating_sub(500))
         } else {
             position_ms
         };
+
+        // Clamp to downloaded portion if streaming to prevent seeking into
+        // data that hasn't arrived yet.
+        if let Some(dl_frac) = self.shared_state.current_download_fraction() {
+            let max_ms = (dl_frac * duration as f64) as u64;
+            clamped = clamped.min(max_ms.saturating_sub(5_000));
+        }
 
         let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
 

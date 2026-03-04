@@ -98,6 +98,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.seek_bar_start = bs;
     app.layout.seek_bar_width = bw;
 
+    let dl_fraction = app.state.current_download_fraction();
     let transport = TransportBar::new(
         track_info.as_ref(),
         playing_entry.as_ref(),
@@ -105,7 +106,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         pos_ms,
         &app.theme,
     )
-    .with_ticker_offset(app.ticker_offset);
+    .with_ticker_offset(app.ticker_offset)
+    .with_download_fraction(dl_fraction);
     frame.render_widget(transport, text_area);
 
     // Spectrum visualizer — renders in the space above the transport text.

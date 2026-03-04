@@ -15,6 +15,8 @@ pub struct TransportBar<'a> {
     position_ms: u64,
     theme: &'a Theme,
     ticker_offset: usize,
+    /// Download fraction (0.0..1.0) for streaming tracks. None = fully downloaded.
+    download_fraction: Option<f64>,
 }
 
 impl<'a> TransportBar<'a> {
@@ -32,11 +34,17 @@ impl<'a> TransportBar<'a> {
             position_ms,
             theme,
             ticker_offset: 0,
+            download_fraction: None,
         }
     }
 
     pub fn with_ticker_offset(mut self, offset: usize) -> Self {
         self.ticker_offset = offset;
+        self
+    }
+
+    pub fn with_download_fraction(mut self, fraction: Option<f64>) -> Self {
+        self.download_fraction = fraction;
         self
     }
 
@@ -53,18 +61,27 @@ impl<'a> TransportBar<'a> {
 
     /// Seek from a click using the bar metrics stored from the last render.
     /// This guarantees the click handler uses the exact same bar layout as what's on screen.
+    /// When `download_fraction` is provided, clamps the seek to the downloaded portion.
     pub fn seek_from_click(
         bar_start: u16,
         bar_width: u16,
         click_x: u16,
         duration_ms: u64,
+        download_fraction: Option<f64>,
     ) -> Option<u64> {
         let bar_end = bar_start + bar_width;
         if click_x < bar_start || click_x >= bar_end || bar_width == 0 {
             return None;
         }
         let frac = (click_x - bar_start) as f64 / bar_width as f64;
-        Some((frac * duration_ms as f64) as u64)
+        let pos = (frac * duration_ms as f64) as u64;
+        // Clamp to downloaded portion minus a safety margin.
+        if let Some(dl_frac) = download_fraction {
+            let max_ms = (dl_frac * duration_ms as f64) as u64;
+            Some(pos.min(max_ms.saturating_sub(5_000)))
+        } else {
+            Some(pos)
+        }
     }
 }
 
@@ -88,35 +105,62 @@ impl Widget for TransportBar<'_> {
             PlaybackState::Stopped => Span::styled("\u{25AA} ", self.theme.status_stopped),
         };
 
+        // Prefer the queue entry's database-sourced duration over the probed
+        // duration — probing a partial streaming file can give a wrong value.
+        let duration_ms = self
+            .playing_entry
+            .and_then(|e| e.duration_ms)
+            .unwrap_or(info.duration_ms);
+
         let time_str = format!(
             "{}/{}",
             format_time(self.position_ms),
-            format_time(info.duration_ms)
+            format_time(duration_ms)
         );
 
         // Bar width: total - " " - icon(2) - " " - " " - time
         let chrome_width = 1 + 2 + 1 + 1 + time_str.len() as u16;
         let bar_width = area.width.saturating_sub(chrome_width) as usize;
 
-        let progress = if info.duration_ms > 0 {
-            ((self.position_ms as f64 / info.duration_ms as f64) * bar_width as f64) as usize
+        let progress = if duration_ms > 0 {
+            ((self.position_ms as f64 / duration_ms as f64) * bar_width as f64) as usize
         } else {
             0
         }
         .min(bar_width);
 
-        let filled = "\u{2501}".repeat(progress);
-        let remaining = "\u{2500}".repeat(bar_width.saturating_sub(progress));
+        // How much of the bar represents downloaded data.
+        let downloaded = if let Some(dl_frac) = self.download_fraction {
+            ((dl_frac * bar_width as f64) as usize).min(bar_width)
+        } else {
+            bar_width // fully downloaded
+        };
 
-        let progress_line = Line::from(vec![
+        let filled = "\u{2501}".repeat(progress);
+        let dl_remaining = "\u{2500}".repeat(downloaded.saturating_sub(progress));
+        // Dashed bar for not-yet-downloaded portion: same char with gaps.
+        let not_downloaded_width = bar_width.saturating_sub(downloaded);
+        let dashed: String = (0..not_downloaded_width)
+            .map(|i| if i % 2 == 0 { '\u{2500}' } else { ' ' })
+            .collect();
+
+        let mut spans = vec![
             Span::raw(" "),
             status_icon,
             Span::raw(" "),
             Span::styled(filled, self.theme.progress_filled),
-            Span::styled(remaining, self.theme.progress_empty),
-            Span::raw(" "),
-            Span::styled(time_str, self.theme.hint_desc),
-        ]);
+            Span::styled(dl_remaining, self.theme.progress_empty),
+        ];
+        if !dashed.is_empty() {
+            spans.push(Span::styled(
+                dashed,
+                self.theme.progress_empty.add_modifier(Modifier::DIM),
+            ));
+        }
+        spans.push(Span::raw(" "));
+        spans.push(Span::styled(time_str, self.theme.hint_desc));
+
+        let progress_line = Line::from(spans);
         buf.set_line(area.x, area.y, &progress_line, area.width);
 
         // Line 2: Artist — Title (from QueueEntry metadata, or fallback to filename)
