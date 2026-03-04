@@ -3,9 +3,9 @@ use std::sync::{Arc, Mutex};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Row, Table, Widget};
+use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
 use koan_core::organize::OrganizeResult;
 use koan_core::player::state::QueueItemId;
@@ -402,46 +402,135 @@ impl Widget for OrganizeOverlay<'_> {
                     .collect();
                 Paragraph::new(lines).render(preview_inner, buf);
             } else {
-                // Build combined row list: moves + errors.
-                let total_rows = result.moves.len() + result.errors.len();
-                let visible_rows = preview_inner.height as usize;
-                let scroll = self.state.scroll.min(total_rows.saturating_sub(1));
-                let widths = [Constraint::Percentage(45), Constraint::Percentage(55)];
+                // Before/after diff view: each move = 2 lines (before + after).
+                let usable_width = preview_inner.width.saturating_sub(2) as usize;
 
-                let move_rows = result.moves.iter().map(|m| {
-                    let from_name = m
-                        .from
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
-                    let to_display = m.to.to_string_lossy().into_owned();
-                    Row::new(vec![from_name, to_display])
-                });
+                // Find longest common path prefix across all from/to paths to strip for display.
+                let common_prefix = {
+                    let all_paths: Vec<String> = result
+                        .moves
+                        .iter()
+                        .flat_map(|m| {
+                            [
+                                m.from.to_string_lossy().into_owned(),
+                                m.to.to_string_lossy().into_owned(),
+                            ]
+                        })
+                        .collect();
+                    if all_paths.len() < 2 {
+                        String::new()
+                    } else {
+                        let first = &all_paths[0];
+                        let mut prefix_len = first.len();
+                        for p in &all_paths[1..] {
+                            prefix_len = first
+                                .chars()
+                                .zip(p.chars())
+                                .take(prefix_len)
+                                .take_while(|(a, b)| a == b)
+                                .count();
+                        }
+                        // Walk back to last '/' boundary so we don't cut mid-component.
+                        let prefix = &first[..prefix_len];
+                        match prefix.rfind('/') {
+                            Some(i) => first[..=i].to_string(),
+                            None => String::new(),
+                        }
+                    }
+                };
 
-                let error_rows = result.errors.iter().map(|(path, err)| {
+                let strip = |p: &std::path::PathBuf| -> String {
+                    let s = p.to_string_lossy();
+                    s.strip_prefix(&common_prefix)
+                        .unwrap_or(&s)
+                        .to_string()
+                };
+
+                // Find the shared prefix length (at '/' boundaries) between two relative paths.
+                let shared_prefix_len = |a: &str, b: &str| -> usize {
+                    let shared = a
+                        .chars()
+                        .zip(b.chars())
+                        .take_while(|(x, y)| x == y)
+                        .count();
+                    match a[..shared].rfind('/') {
+                        Some(i) => i + 1,
+                        None => 0,
+                    }
+                };
+
+                let truncate = |s: &str, max: usize| -> String {
+                    if s.len() <= max {
+                        s.to_string()
+                    } else {
+                        format!("{}…", &s[..max.saturating_sub(1)])
+                    }
+                };
+
+                // Build all display lines.
+                let mut all_lines: Vec<Line> = Vec::new();
+
+                for m in &result.moves {
+                    let from_rel = strip(&m.from);
+                    let to_rel = strip(&m.to);
+                    let shared = shared_prefix_len(&from_rel, &to_rel);
+
+                    // Before line: dim (DarkGray), shows old relative path.
+                    let before_str = truncate(&from_rel, usable_width.saturating_sub(2));
+                    all_lines.push(Line::from(vec![
+                        Span::styled("  ", self.theme.hint_desc),
+                        Span::styled(before_str, self.theme.hint_desc),
+                    ]));
+
+                    // After line: shared path prefix in normal colour, changed part in green+bold.
+                    let common_part = to_rel[..shared].to_string();
+                    let changed_part = if shared < to_rel.len() {
+                        to_rel[shared..].to_string()
+                    } else {
+                        String::new()
+                    };
+                    let arrow_width = 2; // "→ "
+                    let remaining = usable_width.saturating_sub(arrow_width);
+                    let common_display = truncate(&common_part, remaining);
+                    let changed_display =
+                        truncate(&changed_part, remaining.saturating_sub(common_display.len()));
+
+                    all_lines.push(Line::from(vec![
+                        Span::styled("\u{2192} ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(common_display, Style::default()),
+                        Span::styled(
+                            changed_display,
+                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                        ),
+                    ]));
+                }
+
+                for (path, err) in &result.errors {
                     let name = path
                         .file_name()
                         .unwrap_or_default()
                         .to_string_lossy()
                         .into_owned();
-                    Row::new(vec![name, format!("ERROR: {err}")])
-                        .style(Style::default().fg(ratatui::style::Color::Red))
-                });
+                    all_lines.push(Line::from(vec![
+                        Span::styled(
+                            format!("  {name}: "),
+                            Style::default().fg(Color::Red),
+                        ),
+                        Span::styled(err.as_str(), self.theme.hint_desc),
+                    ]));
+                }
 
-                let rows: Vec<Row> = move_rows
-                    .chain(error_rows)
+                let total_lines = all_lines.len();
+                let visible_rows = preview_inner.height as usize;
+                let scroll = self.state.scroll.min(total_lines.saturating_sub(1));
+
+                let visible: Vec<Line> = all_lines
+                    .into_iter()
                     .skip(scroll)
                     .take(visible_rows)
                     .collect();
 
-                let table = Table::new(rows, widths)
-                    .header(
-                        Row::new(vec!["Source", "Destination"])
-                            .style(Style::default().add_modifier(Modifier::BOLD)),
-                    )
-                    .column_spacing(1);
-                Widget::render(table, preview_inner, buf);
+                Paragraph::new(visible).render(preview_inner, buf);
             }
         } else if self.state.status.is_some() {
             // Status shown below
