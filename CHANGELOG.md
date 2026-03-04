@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Spectrum analyser** — 80s hi-fi LED-segment style spectrum visualiser renders above the transport bar when album art is present. 48-band FFT with configurable frequency scale (Bark/Mel/Log/Linear), eighth-block sub-cell resolution, green/yellow/red gradient, peak hold markers, and time-based exponential decay
+- **Dedicated analysis thread** — FFT runs on a background thread (`VizAnalyzer`) decoupled from both the decode and UI threads. The UI reads a pre-computed `VizSnapshot` every frame with sub-microsecond lock hold times, ensuring buttery-smooth 60fps rendering
+- **VizBuffer audio tap** — circular sample buffer shared between decode thread and analysis thread via `parking_lot::Mutex`
+- **FFT pipeline** — 2048-point real FFT via `realfft` crate. Hann window, dB magnitude scaling, Bark/Mel/Log/Linear frequency scales
+- **A-weighted amplitude scaling** — bars reflect perceived loudness using IEC 61672 A-weighting, matching human hearing sensitivity (Fletcher-Munson curves). Configurable via `amplitude_scale`: `aweight` (default), `perceptual` (A-weight + gamma), `sqrt`, `linear`
+- **Signal-level coloring** — spectrum bars are colored by amplitude, not position. Green at safe headroom, yellow when hot, red only near clipping (0dBFS)
+- **Visualiser config** — `[visualizer]` section with `enabled`, `fps` (default: 60), `scale`, `amplitude_scale`, `bar_decay_ms` (default: 50), `peak_decay_ms` (default: 180). Also accepts `[visualiser]` spelling
+- **Spectrum theme colours** — `spectrum_low` (green), `spectrum_mid` (yellow), `spectrum_high` (red), `spectrum_peak` (white) in theme config
+- **FPS overlay** — `[playback] show_fps = true` displays an FPS counter in the top-right corner
+
 ## 0.4.0
 
 ### Added

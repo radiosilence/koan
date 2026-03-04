@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_channel::Sender;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+use koan_core::audio::viz::VizSnapshot;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState,
@@ -19,6 +20,7 @@ use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect
 use super::queue;
 use super::theme::Theme;
 use super::transport::TransportBar;
+use super::visualizer::VisualizerState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
@@ -213,6 +215,12 @@ pub struct App {
     /// Drop/paste import progress: (processed, total). Cleared when done.
     pub drop_progress: Option<Arc<(AtomicUsize, AtomicUsize)>>,
 
+    /// Shared visualization snapshot from the analysis thread.
+    pub viz_snapshot: Arc<VizSnapshot>,
+
+    /// Visualizer state (spectrum bars, peaks, VU levels).
+    pub visualizer: VisualizerState,
+
     /// Lyrics panel state.
     pub lyrics: LyricsState,
 
@@ -241,16 +249,37 @@ pub struct App {
 
     /// Set of favourite track paths, loaded from DB on startup.
     pub favourites: std::collections::HashSet<PathBuf>,
+
+    /// Visualizer config (enabled flag, fps).
+    pub viz_config: koan_core::config::VisualizerConfig,
+
+    /// Whether to show FPS overlay (from config).
+    pub show_fps: bool,
+    /// Timestamp of last FPS sample for computing display FPS.
+    fps_sample_time: std::time::Instant,
+    /// Frame counter since last FPS sample.
+    fps_sample_count: u32,
+    /// Last computed display FPS value.
+    pub display_fps: u16,
 }
 
 impl App {
     pub fn new(
         state: Arc<SharedPlayerState>,
+        viz_snapshot: Arc<VizSnapshot>,
         tx: Sender<PlayerCommand>,
         log_buffer: Arc<Mutex<Vec<String>>>,
         db_path: PathBuf,
         ticks_per_sec: u8,
     ) -> Self {
+        let cfg = koan_core::config::Config::load().unwrap_or_default();
+        let ticker_divisor = {
+            let fps = cfg.playback.ticker_fps.max(1);
+            (ticks_per_sec / fps).max(1)
+        };
+        let visualizer = VisualizerState::from_config(&cfg.visualizer);
+        let viz_config = cfg.visualizer;
+
         Self {
             mode: Mode::Normal,
             state,
@@ -280,21 +309,24 @@ impl App {
             scrollbar_grab_offset: None,
             drag_undo_active: false,
             drop_progress: None,
+            viz_snapshot,
+            visualizer,
             lyrics: LyricsState::default(),
             lyrics_panel: false,
             lyrics_rx: None,
             hover: HoverState::default(),
             ticker_offset: 0,
             ticker_tick: 0,
-            ticker_divisor: {
-                let cfg = koan_core::config::Config::load().unwrap_or_default();
-                let fps = cfg.playback.ticker_fps.max(1);
-                (ticks_per_sec / fps).max(1)
-            },
+            ticker_divisor,
             ticker_last_path: None,
             ticks_per_sec,
             frame_count: 0,
             favourites: std::collections::HashSet::new(),
+            show_fps: cfg.playback.show_fps,
+            viz_config,
+            fps_sample_time: std::time::Instant::now(),
+            fps_sample_count: 0,
+            display_fps: 0,
         }
     }
 
@@ -348,6 +380,17 @@ impl App {
         self.refresh_visible_queue();
 
         self.frame_count = self.frame_count.wrapping_add(1);
+
+        // FPS counter: sample every second.
+        self.fps_sample_count += 1;
+        let elapsed = self.fps_sample_time.elapsed();
+        if elapsed.as_secs() >= 1 {
+            self.display_fps =
+                (self.fps_sample_count as f64 / elapsed.as_secs_f64()).round() as u16;
+            self.fps_sample_count = 0;
+            self.fps_sample_time = std::time::Instant::now();
+        }
+
         // Rate-limit spinner to ~10 Hz regardless of frame rate.
         if self
             .frame_count
@@ -427,6 +470,18 @@ impl App {
         // Update now-playing cover art cache when track changes.
         if let Some(ref info) = self.state.track_info() {
             self.art.now_playing_art.get(&info.path);
+        }
+
+        // Update visualizer spectrum at configured FPS.
+        // Update visualizer every frame — analysis thread runs at its own rate,
+        // decay/smoothing runs unconditionally at TUI fps for buttery-smooth animation.
+        if self.viz_config.enabled {
+            if self.state.playback_state() == PlaybackState::Playing {
+                self.visualizer.update_from_snapshot(&self.viz_snapshot);
+            } else {
+                // When paused/stopped, decay bars to zero naturally.
+                self.visualizer.decay_to_zero();
+            }
         }
 
         // Check for background lyrics fetch results.

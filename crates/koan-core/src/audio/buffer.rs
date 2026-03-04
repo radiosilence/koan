@@ -17,6 +17,7 @@ use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 use thiserror::Error;
 
+use crate::audio::viz::VizBuffer;
 use crate::player::state::QueueItemId;
 
 #[derive(Debug, Error)]
@@ -295,6 +296,7 @@ pub fn start_decode<N>(
     seek_ms: u64,
     next_track: N,
     timeline: Arc<PlaybackTimeline>,
+    viz_buffer: Option<Arc<VizBuffer>>,
 ) -> Result<(StreamInfo, DecodeHandle), DecodeError>
 where
     N: Fn() -> Option<SourceEntry> + Send + 'static,
@@ -312,6 +314,7 @@ where
                 seek_ms,
                 &next_track,
                 &timeline,
+                viz_buffer.as_deref(),
             );
         })
         .map_err(DecodeError::Io)?;
@@ -351,6 +354,7 @@ pub fn start_decode_file<N>(
     seek_ms: u64,
     next_track: N,
     timeline: Arc<PlaybackTimeline>,
+    viz_buffer: Option<Arc<VizBuffer>>,
 ) -> Result<(StreamInfo, DecodeHandle), DecodeError>
 where
     N: Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static,
@@ -366,6 +370,7 @@ where
             Some(SourceEntry::from_file(id, p))
         },
         timeline,
+        viz_buffer,
     )?;
     Ok((info, handle))
 }
@@ -375,6 +380,7 @@ where
 // ---------------------------------------------------------------------------
 
 /// Gapless decode loop: decode first entry, then call next_track on EOF.
+#[allow(clippy::too_many_arguments)]
 fn decode_queue_loop<N>(
     first: SourceEntry,
     mut producer: rtrb::Producer<f32>,
@@ -382,6 +388,7 @@ fn decode_queue_loop<N>(
     initial_seek_ms: u64,
     next_track: &N,
     timeline: &PlaybackTimeline,
+    viz_buffer: Option<&VizBuffer>,
 ) where
     N: Fn() -> Option<SourceEntry>,
 {
@@ -398,6 +405,7 @@ fn decode_queue_loop<N>(
         stop,
         initial_seek_ms,
         timeline,
+        viz_buffer,
     ) {
         if !stop.load(Ordering::Relaxed) {
             log::error!("decode error on {}: {}", path.display(), e);
@@ -425,6 +433,7 @@ fn decode_queue_loop<N>(
             stop,
             0,
             timeline,
+            viz_buffer,
         ) {
             if !stop.load(Ordering::Relaxed) {
                 log::error!("decode error on {}: {}", next_path.display(), e);
@@ -449,6 +458,7 @@ fn decode_single(
     stop: &AtomicBool,
     seek_ms: u64,
     timeline: &PlaybackTimeline,
+    viz_buffer: Option<&VizBuffer>,
 ) -> Result<(), DecodeError> {
     let format_opts = FormatOptions {
         enable_gapless: true,
@@ -547,6 +557,11 @@ fn decode_single(
 
         sbuf.copy_interleaved_ref(decoded);
         let samples = sbuf.samples();
+
+        // Copy decoded samples to the visualization buffer (if attached).
+        if let Some(viz) = viz_buffer {
+            viz.push_samples(samples, channels, sample_rate);
+        }
 
         // Push samples into ring buffer, blocking if full.
         let mut offset = 0;

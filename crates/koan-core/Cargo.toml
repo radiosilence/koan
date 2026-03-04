@@ -29,6 +29,7 @@ reqwest = { version = "0.13", default-features = false, features = [
   "query",
   "rustls",
 ] }
+realfft = "3"
 rtrb = "0.3"
 # Database
 rusqlite = { version = "0.38", features = ["bundled-full"] }
