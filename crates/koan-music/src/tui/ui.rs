@@ -209,9 +209,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Cover art zoom overlay — fullscreen, 1:1 aspect ratio.
-    if app.mode == Mode::CoverArtZoom
-        && app.art.now_playing_art.cached().is_some()
-    {
+    if app.mode == Mode::CoverArtZoom && app.art.now_playing_art.cached().is_some() {
         Clear.render(area, frame.buffer_mut());
 
         // Use the full area minus 1 row for hint.

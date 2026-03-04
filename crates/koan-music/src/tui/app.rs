@@ -1291,8 +1291,7 @@ impl App {
 
                     let multi = self.queue.selected_ids.len() > 1;
                     let anchor_offset = if multi {
-                        let mut indices: Vec<usize> =
-                            self.selected_indices().into_iter().collect();
+                        let mut indices: Vec<usize> = self.selected_indices().into_iter().collect();
                         indices.sort_unstable();
                         let first = indices.first().copied().unwrap_or(idx);
                         idx.saturating_sub(first)
@@ -1358,11 +1357,8 @@ impl App {
                                 // Multi-drag: compute desired group start from anchor offset
                                 // so the clicked item stays under the mouse cursor.
                                 let desired_start = to_idx.saturating_sub(anchor_offset);
-                                let last_start = self
-                                    .queue
-                                    .drag
-                                    .as_ref()
-                                    .and_then(|d| d.last_group_start);
+                                let last_start =
+                                    self.queue.drag.as_ref().and_then(|d| d.last_group_start);
 
                                 if Some(desired_start) != last_start {
                                     if !self.drag_undo_active {
