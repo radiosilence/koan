@@ -342,6 +342,8 @@ Rename and reorganize your music library using fb2k-compatible format strings, d
 
 Select tracks in edit mode (`e`) → `Space` to open the context menu → Organize → pick a named pattern from your config → preview the file moves → execute. Playlist paths update automatically, playback continues uninterrupted (Unix rename preserves open file descriptors). Ancillary files (cover.jpg, .cue, .log) move with the music. Empty directories are cleaned up.
 
+Files are organized into the **first configured library folder** (from `[library] folders` in your config). If you have multiple library folders, the first one is always the destination. The format pattern generates the relative path within that folder — e.g. with the `standard` pattern, a track becomes `<library>/Artist/(Year) Album/01. Title.flac`.
+
 Define organize patterns in your config — see [Configuration](#configuration) below and [docs/format-strings.md](docs/format-strings.md) for the full syntax reference.
 
 ## Configuration
