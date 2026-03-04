@@ -2,7 +2,7 @@
 
 **Plan:** [10-codebase-audit-2026-03-04-v0.5.2.md](10-codebase-audit-2026-03-04-v0.5.2.md)
 **Started:** 2026-03-04
-**Last updated:** 2026-03-04T3
+**Last updated:** 2026-03-04
 
 ---
 
@@ -13,8 +13,8 @@
 | 1 — Security & Quick Wins | `fix/security-hardening` | ✅ DONE | [#13](https://github.com/radiosilence/koan/pull/13) |
 | 5 — Tests | `test/coverage-and-cleanup` | ✅ DONE | [#14](https://github.com/radiosilence/koan/pull/14) |
 | 2 — Performance | `perf/render-loop` | ✅ DONE | [#15](https://github.com/radiosilence/koan/pull/15) |
-| 3 — Architecture | `refactor/module-decomposition` | ⏳ TODO | — |
-| 4 — Dependencies | `chore/dependency-cleanup` | ⏳ TODO | — |
+| 3 — Architecture | `refactor/module-decomposition` | ✅ DONE | [#16](https://github.com/radiosilence/koan/pull/16) |
+| 4 — Dependencies | `chore/dependency-cleanup` | ✅ DONE | [#17](https://github.com/radiosilence/koan/pull/17) |
 
 ---
 
@@ -59,19 +59,23 @@
 | 12 | P2-P3: Cache build_display_lines, borrowed keys | ✅ |
 | 13 | P5: VizFrame spectrum Vec→array | ✅ |
 
-## Phase 3 — Architecture ⏳
+## Phase 3 — Architecture ✅
+
+**PR:** [#16](https://github.com/radiosilence/koan/pull/16)
 
 | # | Item | Status |
 |---|------|--------|
-| 14 | app.rs decomposition | ⏳ |
-| 15 | player/mod.rs: extract undo, dedup playback | ⏳ |
-| 16 | organize.rs: dedup plan_moves | ⏳ |
-| 17 | tracks.rs: extract row_to_track helper | ⏳ |
+| 14 | app.rs decomposition | ⏭ deferred (2,319 lines — dedicated PR recommended) |
+| 15 | player/mod.rs: extract undo, dedup playback | ⏭ deferred (already modularized, limited further payoff) |
+| 16 | organize.rs: dedup plan_moves | ✅ |
+| 17 | tracks.rs: extract row_to_track helper | ✅ |
 
-## Phase 4 — Dependencies ⏳
+## Phase 4 — Dependencies ✅
+
+**PR:** [#17](https://github.com/radiosilence/koan/pull/17)
 
 | # | Item | Status |
 |---|------|--------|
-| 18 | D2: Move rusqlite out of koan-music | ⏳ |
-| 19 | D3: Audit rusqlite feature flags | ⏳ |
-| 20 | D4-D6: Version alignment, workspace deps | ⏳ |
+| 18 | D2: Move rusqlite out of koan-music | ✅ |
+| 19 | D3: Audit rusqlite feature flags | ✅ |
+| 20 | D4-D6: Version alignment, workspace deps | ✅ |
