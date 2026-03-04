@@ -35,6 +35,9 @@ pub struct LibraryConfig {
 pub struct PlaybackConfig {
     pub software_volume: bool,
     pub replaygain: ReplayGainMode,
+    /// Ticker scroll speed in frames-per-second (default: 8).
+    /// The title scrolls one character per frame. Higher = faster scroll.
+    pub ticker_fps: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -80,6 +83,7 @@ impl Default for PlaybackConfig {
         Self {
             software_volume: false,
             replaygain: ReplayGainMode::Album,
+            ticker_fps: 8,
         }
     }
 }

@@ -194,6 +194,24 @@ impl SubsonicClient {
         self.get_with_params("scrobble", &[("id", track_id)])?;
         Ok(())
     }
+
+    /// Star (favourite) a track on the server.
+    pub fn star(&self, track_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("star", &[("id", track_id)])?;
+        Ok(())
+    }
+
+    /// Unstar (unfavourite) a track on the server.
+    pub fn unstar(&self, track_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("unstar", &[("id", track_id)])?;
+        Ok(())
+    }
+
+    /// Get all starred (favourite) songs from the server.
+    pub fn get_starred(&self) -> Result<Vec<SubsonicSong>, SubsonicError> {
+        let resp = self.get("getStarred2")?;
+        Ok(resp.starred2.map(|s| s.song).unwrap_or_default())
+    }
 }
 
 // --- Response types ---
@@ -213,6 +231,7 @@ struct SubsonicResponse {
     album: Option<SubsonicAlbumFull>,
     album_list2: Option<SubsonicAlbumList>,
     search_result3: Option<SubsonicSearchResult>,
+    starred2: Option<SubsonicStarred>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -296,6 +315,12 @@ pub struct SubsonicSearchResult {
     pub artist: Vec<SubsonicArtist>,
     #[serde(default)]
     pub album: Vec<SubsonicAlbum>,
+    #[serde(default)]
+    pub song: Vec<SubsonicSong>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct SubsonicStarred {
     #[serde(default)]
     pub song: Vec<SubsonicSong>,
 }
