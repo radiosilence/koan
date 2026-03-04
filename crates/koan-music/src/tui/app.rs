@@ -690,6 +690,10 @@ impl App {
             KeyCode::Char('p') => {
                 self.open_picker(PickerKind::Track);
             }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.mode = Mode::QueueEdit;
+                self.select_all();
+            }
             KeyCode::Char('a') => {
                 self.open_picker(PickerKind::Album);
             }
