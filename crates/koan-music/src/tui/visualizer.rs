@@ -29,7 +29,7 @@ const PEAK_DECAY: f32 = 0.95;
 const DB_FLOOR: f32 = -80.0;
 
 /// dB ceiling for normalization: magnitudes at or above this map to 1.0.
-const DB_CEIL: f32 = -10.0;
+const DB_CEIL: f32 = 0.0;
 
 /// Precomputed Hann window coefficients for the FFT window size.
 fn hann_window() -> Vec<f32> {
@@ -161,9 +161,10 @@ impl VisualizerState {
             let normalized = (log_freq - log_min) / (log_max - log_min);
             let bar_idx = ((normalized * NUM_BARS as f32) as usize).min(NUM_BARS - 1);
 
-            // Magnitude in dB.
+            // Magnitude in dB (normalized by FFT size for proper scaling).
             let c = self.fft_output[bin_idx];
-            let magnitude = (c.re * c.re + c.im * c.im).sqrt();
+            let magnitude =
+                (c.re * c.re + c.im * c.im).sqrt() / (FFT_SIZE as f32 / 2.0);
             let db = if magnitude > 0.0 {
                 20.0 * magnitude.log10()
             } else {
@@ -178,6 +179,19 @@ impl VisualizerState {
                 self.spectrum[bar_idx] = level;
             }
             bar_counts[bar_idx] += 1;
+        }
+
+        // Interpolate bars that got no FFT bins (gaps in log mapping).
+        for i in 0..NUM_BARS {
+            if bar_counts[i] == 0 {
+                let left = if i > 0 { self.spectrum[i - 1] } else { 0.0 };
+                let right = if i + 1 < NUM_BARS {
+                    self.spectrum[i + 1]
+                } else {
+                    0.0
+                };
+                self.spectrum[i] = (left + right) * 0.5;
+            }
         }
 
         // Apply smoothing: bar falls at DECAY_FACTOR per tick, jumps up instantly.
@@ -312,16 +326,22 @@ impl Widget for SpectrumWidget<'_> {
                 (bv, pv)
             };
 
-            // Bar height in full cells (no sub-cell fractional blocks — cleaner look).
-            let bar_cells = (bar_val * height).round() as usize;
+            // Bar height in half-cells for sub-cell resolution using ▄ half blocks.
+            let half_cells = (bar_val * height * 2.0).round() as usize;
 
-            // Peak position in cells from bottom.
-            let peak_cell = (peak_val * height).round() as u16;
+            // Peak position in half-cells from bottom.
+            let peak_half = (peak_val * height * 2.0).round() as usize;
 
             // Render from bottom to top.
             for row in 0..area.height {
-                let cell_from_bottom = area.height - 1 - row;
+                let cell_from_bottom = (area.height - 1 - row) as usize;
                 let y = area.y + row;
+
+                // Each cell covers 2 half-cells: bottom = cell*2, top = cell*2+1
+                let bottom_half = cell_from_bottom * 2;
+                let top_half = bottom_half + 1;
+                let has_bottom = bottom_half < half_cells;
+                let has_top = top_half < half_cells;
 
                 // Color based on position relative to total height.
                 let pos_ratio = cell_from_bottom as f32 / height;
@@ -333,15 +353,22 @@ impl Widget for SpectrumWidget<'_> {
                     self.theme.spectrum_high
                 };
 
-                if (cell_from_bottom as usize) < bar_cells {
+                if has_bottom && has_top {
                     buf[(x, y)].set_char('█').set_style(style);
-                } else if cell_from_bottom == peak_cell && peak_cell > bar_cells as u16 {
-                    // Peak marker.
-                    buf[(x, y)]
-                        .set_char('▔')
-                        .set_style(self.theme.spectrum_peak);
+                } else if has_bottom {
+                    // Only lower half filled — use ▄
+                    buf[(x, y)].set_char('▄').set_style(style);
+                } else {
+                    // Check for peak marker in this cell.
+                    let peak_cell = peak_half / 2;
+                    if peak_cell == cell_from_bottom
+                        && peak_half > half_cells
+                    {
+                        buf[(x, y)]
+                            .set_char('▔')
+                            .set_style(self.theme.spectrum_peak);
+                    }
                 }
-                // else: leave empty — gap columns are naturally empty
             }
         }
     }
