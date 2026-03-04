@@ -690,6 +690,10 @@ impl App {
             KeyCode::Char('p') => {
                 self.open_picker(PickerKind::Track);
             }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.mode = Mode::QueueEdit;
+                self.select_all();
+            }
             KeyCode::Char('a') => {
                 self.open_picker(PickerKind::Album);
             }
@@ -874,6 +878,9 @@ impl App {
             }
             KeyCode::End | KeyCode::Char('G') => {
                 self.jump_to_end(shift);
+            }
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.select_all();
             }
             KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.tx.send(PlayerCommand::Undo).ok();
@@ -1846,6 +1853,17 @@ impl App {
         {
             self.queue.anchor_id = Some(e.id);
         }
+    }
+
+    /// Select all visible queue entries, anchoring to the first.
+    fn select_all(&mut self) {
+        let visible = &self.queue.vq_cache.entries;
+        self.queue.selected_ids.clear();
+        let first_id = visible.first().map(|e| e.id);
+        for e in visible {
+            self.queue.selected_ids.insert(e.id);
+        }
+        self.queue.anchor_id = first_id;
     }
 
     /// Alt-click: toggle one track in/out of selection set.

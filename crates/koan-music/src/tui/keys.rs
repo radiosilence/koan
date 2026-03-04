@@ -41,6 +41,7 @@ impl Widget for HintBar<'_> {
             Mode::QueueEdit => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("S-\u{2191}\u{2193}", "select"),
+                ("C-a", "sel all"),
                 ("d", "delete"),
                 ("j/k", "move"),
                 ("C-z/y", "undo/redo"),
