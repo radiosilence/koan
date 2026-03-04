@@ -1289,6 +1289,13 @@ impl App {
                         dur,
                     ) {
                         self.tx.send(PlayerCommand::Seek(pos)).ok();
+                    } else if click_x < self.layout.seek_bar_start {
+                        // Clicked on the play/pause status icon — toggle.
+                        if self.state.playback_state() == PlaybackState::Playing {
+                            self.tx.send(PlayerCommand::Pause).ok();
+                        } else {
+                            self.tx.send(PlayerCommand::Resume).ok();
+                        }
                     }
                     return;
                 }

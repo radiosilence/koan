@@ -83,9 +83,9 @@ impl Widget for TransportBar<'_> {
 
         // Line 1: status icon + seek bar + time
         let status_icon = match self.playback_state {
-            PlaybackState::Playing => Span::styled(">>", self.theme.status_playing),
-            PlaybackState::Paused => Span::styled("||", self.theme.status_paused),
-            PlaybackState::Stopped => Span::styled("[]", self.theme.status_stopped),
+            PlaybackState::Playing => Span::styled("\u{25B8}\u{25B8}", self.theme.status_playing),
+            PlaybackState::Paused => Span::styled("\u{2016} ", self.theme.status_paused),
+            PlaybackState::Stopped => Span::styled("\u{25AA} ", self.theme.status_stopped),
         };
 
         let time_str = format!(

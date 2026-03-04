@@ -14,6 +14,7 @@
 
 - **Fixed-timestep render loop** — replaced tick-on-timeout event loop with a game-engine-style frame-deadline loop. Animations (ticker, spinner) no longer stall during mouse interaction or key holds
 - **Configurable frame rate** — `[playback] target_fps` (default: 60) controls TUI redraw rate. Accepts 30, 60, or 120
+- **Transport icons** — play/pause/stop status icons use Unicode symbols instead of ASCII
 
 ### Fixed
 
@@ -27,6 +28,7 @@
 - **Ticker double-speed after merge** — duplicate ticker animation block from merge caused scrolling text to advance twice per frame
 - **Anchored drag reorder** — dragging selected tracks now moves them anchored to the mousedown position instead of snapping to the top of the selection
 - **Album header drag** — clicking and dragging an album header reorders the entire album group as a unit
+- **Play/pause click** — clicking the status icon (play/pause indicator) next to the seek bar now toggles playback
 
 ### Removed
 
