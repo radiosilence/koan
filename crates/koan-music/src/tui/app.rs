@@ -68,9 +68,12 @@ pub struct DragState {
     pub current_y: u16,
     /// True if we're dragging a multi-selection group.
     pub multi: bool,
-    /// The last queue index the mouse was targeting during drag.
+    /// Offset of the clicked item within the sorted selection.
+    /// E.g. if selection is [3,4,5] and you click on 4, anchor_offset = 1.
+    pub anchor_offset: usize,
+    /// The last desired group-start index during drag.
     /// Used to avoid redundant moves when the mouse hasn't crossed a row boundary.
-    pub last_target_idx: Option<usize>,
+    pub last_group_start: Option<usize>,
 }
 
 /// Which UI element the mouse cursor is currently hovering over.
@@ -1265,11 +1268,28 @@ impl App {
                     self.queue.cursor = idx;
 
                     let multi = self.queue.selected_ids.len() > 1;
+                    let anchor_offset = if multi {
+                        let mut indices: Vec<usize> =
+                            self.selected_indices().into_iter().collect();
+                        indices.sort_unstable();
+                        let first = indices.first().copied().unwrap_or(idx);
+                        idx.saturating_sub(first)
+                    } else {
+                        0
+                    };
                     self.queue.drag = Some(DragState {
                         from_index: idx,
                         current_y: event.row,
                         multi,
-                        last_target_idx: Some(idx),
+                        anchor_offset,
+                        last_group_start: if multi {
+                            let mut indices: Vec<usize> =
+                                self.selected_indices().into_iter().collect();
+                            indices.sort_unstable();
+                            indices.first().copied()
+                        } else {
+                            Some(idx)
+                        },
                     });
                 }
             }
@@ -1277,8 +1297,12 @@ impl App {
                 self.scroll_to_scrollbar_y(event.row);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                let drag_info = self.queue.drag.as_ref().map(|d| (d.from_index, d.multi));
-                if let Some((from_index, _multi)) = drag_info {
+                let drag_info = self
+                    .queue
+                    .drag
+                    .as_ref()
+                    .map(|d| (d.from_index, d.multi, d.anchor_offset));
+                if let Some((from_index, _multi, anchor_offset)) = drag_info {
                     if let Some(ref mut drag) = self.queue.drag {
                         drag.current_y = event.row;
                     }
@@ -1308,29 +1332,50 @@ impl App {
                             self.queue.scroll_offset,
                             event.row,
                         ) {
-                            let last_target =
-                                self.queue.drag.as_ref().and_then(|d| d.last_target_idx);
-                            let should_move = if self.queue.selected_ids.len() > 1 {
-                                // Multi-drag: move whenever the mouse has crossed into a new row,
-                                // regardless of whether that row is inside or outside the selection.
-                                Some(to_idx) != last_target
-                            } else {
-                                to_idx != from_index
-                            };
+                            if self.queue.selected_ids.len() > 1 {
+                                // Multi-drag: compute desired group start from anchor offset
+                                // so the clicked item stays under the mouse cursor.
+                                let desired_start = to_idx.saturating_sub(anchor_offset);
+                                let last_start = self
+                                    .queue
+                                    .drag
+                                    .as_ref()
+                                    .and_then(|d| d.last_group_start);
 
-                            if should_move {
-                                // Open an undo batch on the first reorder move.
-                                if !self.drag_undo_active {
-                                    self.tx.send(PlayerCommand::BeginUndoBatch).ok();
-                                    self.drag_undo_active = true;
-                                }
-
-                                if self.queue.selected_ids.len() > 1 {
-                                    self.send_move_selected(to_idx);
-                                    if let Some(ref mut drag) = self.queue.drag {
-                                        drag.last_target_idx = Some(to_idx);
+                                if Some(desired_start) != last_start {
+                                    if !self.drag_undo_active {
+                                        self.tx.send(PlayerCommand::BeginUndoBatch).ok();
+                                        self.drag_undo_active = true;
                                     }
-                                } else {
+
+                                    // Compute target index for send_move_selected.
+                                    let mut indices: Vec<usize> =
+                                        self.selected_indices().into_iter().collect();
+                                    indices.sort_unstable();
+                                    let count = indices.len();
+                                    let first = indices.first().copied().unwrap_or(0);
+
+                                    let target = if desired_start > first {
+                                        // Moving down: place after this index.
+                                        (desired_start + count - 1)
+                                            .min(visible.len().saturating_sub(1))
+                                    } else {
+                                        // Moving up: place at this index.
+                                        desired_start
+                                    };
+
+                                    self.send_move_selected(target);
+                                    if let Some(ref mut drag) = self.queue.drag {
+                                        drag.last_group_start = Some(desired_start);
+                                    }
+                                }
+                            } else {
+                                // Single-track drag.
+                                if to_idx != from_index {
+                                    if !self.drag_undo_active {
+                                        self.tx.send(PlayerCommand::BeginUndoBatch).ok();
+                                        self.drag_undo_active = true;
+                                    }
                                     self.send_move(from_index, to_idx);
                                     self.queue.cursor = to_idx;
                                     self.select_single(to_idx);
