@@ -117,7 +117,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Local library** | **Yes** | Via MPD | Yes | Yes | Yes | Via MPD | No |
 | **Local + remote unified** | **Yes** | — | — | — | — | — | — |
 | **Album art** | **Halfblock** | Kitty¹ | No | No | Kitty/Sixel | Kitty/Sixel | No |
-| **ReplayGain** | Planned³ | Via MPD | Yes | Yes | No | Via MPD | No |
+| **ReplayGain** | **Yes** | Via MPD | Yes | Yes | No | Via MPD | No |
 | **fb2k format strings** | **55+ functions** | Column fmt | Basic | No | No | Basic | No |
 | **File organization** | **Yes** | No | No | No | No | No | No |
 | **FTS search** | **SQLite FTS5** | MPD search | Filter | Text | Filter | MPD search | Basic |
@@ -125,10 +125,16 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Mouse support** | **Full** | Yes | Yes² | Basic | Yes | Yes | No |
 | **Media keys** | **macOS CC** | Via MPRIS | Via MPRIS | — | Via MPRIS | Via MPRIS | — |
 | **Drag & drop** | **Finder → TUI** | No | No | No | No | No | No |
-| **Platforms** | macOS | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
+| **Lyrics** | **Synced + plain** | Via MPD | No | Plugin | No | Via MPD | No |
+| **Spectrum analyzer** | **48-band FFT** | No | No | No | No | No | No |
+| **Favourites** | **Yes (syncs)** | Via MPD | No | Yes | No | Via MPD | **Yes** |
+| **Streaming playback** | **Yes (256KB)** | Via MPD | No | No | No | Via MPD | **Yes** |
+| **Tag editing** | Soon³ | Via MPD | No | Yes | Yes | Via MPD | No |
+| **DSP / EQ** | Soon³ | Via MPD | Yes | Yes | No | Via MPD | No |
+| **Platforms** | macOS³ | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
 | **Maintained** | Yes | Yes | Yes (2.12.0) | Slowing | Yes | Very active | Stale |
 
-¹ PR pending, not merged. ² Added in 2.12.0. ³ Library code exists (scan/read/write/apply), not yet wired into playback.
+¹ PR pending, not merged. ² Added in 2.12.0. ³ Planned — see [roadmap](/.claude/plans/).
 
 ### Desktop players (GUI)
 
@@ -138,11 +144,17 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Bit-perfect** | **Yes** | Yes (WASAPI/ASIO) | Yes (Linux) | Yes (ALSA) |
 | **Gapless** | **Yes** | Yes | Yes | Yes |
 | **Subsonic** | **Built-in** | Plugin | **Built-in** | No |
-| **ReplayGain** | Planned | Scan + apply | Yes | Scan + apply |
+| **ReplayGain** | **Track + album** | Scan + apply | Yes | Scan + apply |
 | **Format strings** | **fb2k-compat** | **The original** | Organizer only | fb2k-like |
 | **File organization** | **Yes** | Yes (component) | **Yes** | No |
 | **Queue undo/redo** | **100-deep** | Partial | No | Yes |
-| **Platforms** | macOS | Windows/macOS | All | All |
+| **Lyrics** | **Synced + plain** | Plugin | No | Plugin |
+| **Spectrum analyzer** | **48-band FFT** | Plugin | No | Plugin |
+| **Tag editing** | Soon | **Yes** | Yes | **Yes** |
+| **DSP / EQ** | Soon | **Yes (VST)** | Yes | Yes |
+| **Platforms** | macOS¹ | Windows/macOS | All | All |
+
+¹ Linux planned — see [roadmap](/.claude/plans/).
 
 ### The gap kōan fills
 
@@ -151,6 +163,15 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Only TUI with file organization.** No other terminal player can rename/reorganize your library from inside the player.
 - **Only TUI with queue undo/redo.** 100-deep stack. DeaDBeeF added this in v1.10.0 (2025) — no TUI has it.
 - **Only TUI with Finder drag & drop.** Drop files from macOS Finder directly into the terminal to enqueue.
+- **Only standalone TUI with synced lyrics.** Auto-fetches synced (LRC) or plain lyrics from LRCLIB — no API key needed. Current line highlights and scrolls with playback.
+- **Only TUI with a real-time spectrum analyzer.** 48-band FFT on a dedicated thread, A-weighted amplitude, peak hold markers — runs at 60fps without blocking the UI.
+
+### Coming soon
+
+- **Linux support** — ALSA/PipeWire backends via trait-based audio abstraction ([plan](/.claude/plans/01-linux-and-audio-backends.md))
+- **DSP pipeline** — EQ, headphone correction profiles, crossfeed ([plan](/.claude/plans/02-dsp-and-profiles.md))
+- **Tag editing** — inline editing, bulk operations, vimv-style external editor, MusicBrainz lookups ([plan](/.claude/plans/04-tagging.md))
+- **Artist metadata** — artist bios, images, similar artists, discography from MusicBrainz/Last.fm ([plan](/.claude/plans/09-artist-metadata.md))
 
 <img width="768" height="612" alt="Screenshot 2026-03-04 at 18 31 01" src="https://github.com/user-attachments/assets/0ad4879e-815f-42f3-8ebe-f6d01616bc96" />
 
@@ -165,7 +186,10 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Spectrum visualizer** — 80s hi-fi LED-segment spectrum analyzer rendered in the transport area. 48-band FFT on a dedicated analysis thread (never blocks the UI), configurable frequency scale (Bark/Mel/Log/Linear), sub-cell resolution using Unicode block characters, amplitude-based coloring (green/yellow/red near clipping), peak hold markers, and smooth exponential decay. Configurable via `[visualizer]` in config
 - **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, seek, now playing info with album art)
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
-- **Subsonic/Navidrome** — incremental remote library sync (only fetches new albums after first full sync), unified local+remote browsing, lazy parallel downloads. Resilient deduplication — unplugging a local drive demotes tracks to remote-only streaming instead of deleting them; re-scanning re-merges automatically
+- **ReplayGain** — track and album modes with peak limiting. Reads ReplayGain tags via lofty at decode time, applies gain with a configurable pre-amp. Zero overhead when disabled
+- **Streaming playback** — remote tracks start playing after just 256KB is buffered instead of waiting for the full download. The seek bar dims the not-yet-downloaded portion and prevents seeking past it. Duration always shows the full track length. When the download finishes, full metadata and cover art are re-read
+- **Favourites** — press `f` to star/unstar tracks (persisted to SQLite). Favourites sync bidirectionally with Navidrome — starring in kōan stars on the server and vice versa
+- **Subsonic/Navidrome** — incremental remote library sync (only fetches new albums after first full sync), unified local+remote browsing, streaming playback with progressive download. Resilient deduplication — unplugging a local drive demotes tracks to remote-only streaming instead of deleting them; re-scanning re-merges automatically
 - **Format string engine** — fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for library views and file organization
 - **File organization** — in-TUI organize modal: select tracks → context menu → pick a named pattern → preview moves → execute. Playlist paths update live, playback continues uninterrupted
 - **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag, undo/redo (Ctrl+Z/Y, 100-deep stack covering all playlist operations). Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward). Drag/drop files from Finder into the terminal to add them to the queue
@@ -259,6 +283,7 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `r`     | pick artist            |
 | `i`     | track info             |
 | `z`     | zoom album art         |
+| `f`     | favourite / unfavourite |
 | `Ctrl+Z` | undo last queue change |
 | `l`     | library browser        |
 | `L`     | lyrics panel           |
@@ -334,8 +359,19 @@ Local values override base. Run `koan config` to see both layers and the resolve
 # config.toml
 [playback]
 software_volume = false   # volume control in software (vs hardware/DAC) — not yet wired in
-replaygain = "album"      # off | track | album — not yet wired into playback
+replaygain = "album"      # off | track | album — applies gain from ReplayGain tags with peak limiting
+pre_amp_db = 0.0          # pre-amp gain in dB applied on top of ReplayGain (default: 0.0)
 ```
+
+ReplayGain normalizes volume levels across tracks so you don't reach for the volume knob between a whisper-quiet jazz track and a wall-of-sound metal album. kōan reads standard ReplayGain tags (embedded by tools like `loudgain`, `r128gain`, foobar2000, etc.) at decode time and applies gain with peak limiting to prevent clipping.
+
+| Mode | Description |
+|------|-------------|
+| `off` | No gain adjustment. Original signal untouched. |
+| `track` | Per-track normalization. Every track plays at the same perceived loudness. Best for shuffled playlists. |
+| `album` | Per-album normalization. Preserves the dynamic range and intentional volume differences within an album (quiet intros, loud climaxes) while normalizing between albums. **(recommended)** |
+
+`pre_amp_db` adds a fixed gain on top of the ReplayGain adjustment. Positive values make everything louder (risk of clipping on hot tracks), negative values quieter. Useful if your ReplayGain-tagged library feels too quiet at the target level.
 
 ### Library
 
