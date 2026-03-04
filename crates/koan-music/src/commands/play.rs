@@ -60,7 +60,7 @@ pub fn cmd_play(
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
 
-    let (state, _timeline, tx) = Player::spawn();
+    let (state, _timeline, viz_snapshot, tx) = Player::spawn();
 
     let expects_playback = track_ids.is_some() || !paths.is_empty();
 
@@ -116,7 +116,14 @@ pub fn cmd_play(
 
     // Run the Ratatui TUI immediately — don't wait for playback to start.
     // The TUI shows a loading overlay until playback begins.
-    if let Err(e) = run_tui(state, tx, log_buffer, start_in_library, expects_playback) {
+    if let Err(e) = run_tui(
+        state,
+        viz_snapshot,
+        tx,
+        log_buffer,
+        start_in_library,
+        expects_playback,
+    ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
 
@@ -126,6 +133,7 @@ pub fn cmd_play(
 
 fn run_tui(
     state: Arc<koan_core::player::state::SharedPlayerState>,
+    viz_snapshot: Arc<koan_core::audio::viz::VizSnapshot>,
     tx: crossbeam_channel::Sender<PlayerCommand>,
     log_buffer: Arc<Mutex<Vec<String>>>,
     start_in_library: bool,
@@ -165,7 +173,14 @@ fn run_tui(
     let frame_duration = Duration::from_micros(1_000_000 / target_fps as u64);
     let mut next_frame = std::time::Instant::now();
 
-    let mut app = tui::app::App::new(state, tx.clone(), log_buffer, db_path, target_fps);
+    let mut app = tui::app::App::new(
+        state,
+        viz_snapshot,
+        tx.clone(),
+        log_buffer,
+        db_path,
+        target_fps,
+    );
 
     if expects_playback {
         app.loading_message = Some("loading...".into());
@@ -286,7 +301,12 @@ fn run_tui(
         if let Some(ref mut mk) = media {
             mk.update_playback(&app.state);
             let current = app.state.track_info().map(|t| t.path.clone());
-            if current != last_track_path {
+            // Update metadata when the track changes OR when a mid-stream metadata
+            // refresh is signaled (e.g. download completed while streaming — cover
+            // art becomes available and full lofty tags have been read).
+            let track_changed = current != last_track_path;
+            let metadata_refreshed = app.state.take_metadata_refresh();
+            if track_changed || metadata_refreshed {
                 last_track_path = current.clone();
                 mk.update_metadata(&app.state, current.as_ref());
             }

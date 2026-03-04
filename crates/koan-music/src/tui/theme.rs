@@ -30,6 +30,10 @@ pub struct Theme {
     #[allow(dead_code)]
     pub scrollbar_hover: Style,
     pub favourite: Style,
+    pub spectrum_low: Style,
+    pub spectrum_mid: Style,
+    pub spectrum_high: Style,
+    pub spectrum_peak: Style,
 }
 
 impl Theme {
@@ -81,6 +85,10 @@ impl Default for Theme {
             library_hover: Style::new().add_modifier(Modifier::UNDERLINED),
             scrollbar_hover: Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
             favourite: Style::new().fg(Color::Yellow),
+            spectrum_low: Style::new().fg(Color::Green),
+            spectrum_mid: Style::new().fg(Color::Yellow),
+            spectrum_high: Style::new().fg(Color::Red),
+            spectrum_peak: Style::new().fg(Color::White),
         }
     }
 }

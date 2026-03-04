@@ -12,3 +12,4 @@ pub mod theme;
 pub mod track_info;
 pub mod transport;
 pub mod ui;
+pub mod visualizer;

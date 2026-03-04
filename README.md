@@ -82,7 +82,7 @@ The TUI launches immediately — no waiting. If tracks need downloading (remote 
 
 ### The TUI
 
-kōan is built around a full-screen terminal interface. The transport bar shows what's playing with album art (halfblock rendering), the queue groups tracks by album, and a hint bar at the bottom shows available keys for the current mode.
+kōan is built around a full-screen terminal interface. The transport bar shows what's playing with album art (halfblock rendering) and a real-time spectrum analyzer, the queue groups tracks by album, and a hint bar at the bottom shows available keys for the current mode.
 
 **The basics:** `space` to pause, `<`/`>` to skip tracks, `,`/`.` or arrow keys to seek. `p` opens a fuzzy track picker, `a` for albums, `r` for artists. `l` opens the library browser for tree-style browsing. `L` opens a lyrics panel. `i` shows track info with cover art. `q` to quit.
 
@@ -152,7 +152,8 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Bit-perfect playback** — CoreAudio AUHAL, no resampling, automatic device sample rate switching
 - **Gapless** — decode thread keeps the ring buffer alive across track boundaries, AudioUnit never stops
 - **Format support** — FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
-- **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal with embedded album art (halfblock rendering), scrollbar, mouse support (click-to-seek, click-to-play, drag-to-reorder, scrollbar drag, scroll wheel)
+- **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal with embedded album art (halfblock rendering), real-time spectrum analyzer, scrollbar, mouse support (click-to-seek, click-to-play, drag-to-reorder, scrollbar drag, scroll wheel)
+- **Spectrum visualizer** — 80s hi-fi LED-segment spectrum analyzer rendered in the transport area. 48-band FFT on a dedicated analysis thread (never blocks the UI), configurable frequency scale (Bark/Mel/Log/Linear), sub-cell resolution using Unicode block characters, amplitude-based coloring (green/yellow/red near clipping), peak hold markers, and smooth exponential decay. Configurable via `[visualizer]` in config
 - **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, seek, now playing info with album art)
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
 - **Subsonic/Navidrome** — incremental remote library sync (only fetches new albums after first full sync), unified local+remote browsing, lazy parallel downloads. Resilient deduplication — unplugging a local drive demotes tracks to remote-only streaming instead of deleting them; re-scanning re-merges automatically
@@ -346,6 +347,41 @@ username = "admin"
 ```
 
 Password is prompted by `koan remote login` and saved to `config.local.toml` (gitignored).
+
+### Visualizer
+
+```toml
+# config.toml
+[visualizer]
+enabled = true                # show spectrum analyzer in transport area (default: true)
+fps = 60                      # analysis thread update rate in Hz (default: 60)
+scale = "bark"                # frequency scale (default: bark)
+amplitude_scale = "aweight"     # amplitude scale (default: aweight)
+bar_decay_ms = 50             # how fast bars drop — half-life in ms (default: 50)
+peak_decay_ms = 180           # how long peak markers linger — half-life in ms (default: 180)
+```
+
+The spectrum analyzer renders above the transport text when album art is present. 48-band FFT with sub-cell resolution using Unicode block characters (`▁▂▃▄▅▆▇█`), peak hold markers (`▔`), and smooth exponential decay. Bars are colored by signal level — green at safe headroom, yellow when getting hot, red only near clipping (0dBFS). FFT runs on a dedicated analysis thread so the 60fps UI is never blocked.
+
+**Frequency scales** (`scale`) — controls how FFT bins map to bars (the X axis):
+
+| Scale | Description |
+|-------|-------------|
+| `bark` | Bark psychoacoustic scale — 24 critical bands, matches how your ears group frequencies. Best for music. **(default)** |
+| `mel` | Mel perceptual pitch scale — similar to Bark, widely used in speech/music analysis |
+| `log` | Logarithmic — equal spacing per octave. Familiar if you read spectrograms |
+| `linear` | Linear — equal Hz per bar. Bass is cramped, treble dominates. Analytical use |
+
+**Amplitude scales** (`amplitude_scale`) — controls how magnitudes map to bar height (the Y axis):
+
+| Scale | Description |
+|-------|-------------|
+| `aweight` | A-weighted (IEC 61672). Bars reflect perceived loudness — bass and extreme treble are attenuated to match human hearing sensitivity (Fletcher-Munson). **(default)** |
+| `perceptual` | A-weighting + gentle gamma curve. Same frequency correction with a boost to quiet signals so more of the display stays active |
+| `sqrt` | Square root curve — gentle boost to quiet bands, no frequency correction |
+| `linear` | Raw dB-normalized magnitude. No correction. Quiet stuff barely visible, technically accurate |
+
+Set `enabled = false` to hide the visualizer entirely.
 
 ### Organize patterns
 

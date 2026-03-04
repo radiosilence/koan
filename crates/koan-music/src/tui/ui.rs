@@ -13,6 +13,7 @@ use super::picker::{PickerOverlay, picker_popup_rect};
 use super::queue::QueueView;
 use super::track_info::TrackInfoOverlay;
 use super::transport::TransportBar;
+use super::visualizer::SpectrumWidget;
 
 /// Height of the transport bar without album art.
 const TRANSPORT_HEIGHT_DEFAULT: u16 = 3;
@@ -106,6 +107,23 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     )
     .with_ticker_offset(app.ticker_offset);
     frame.render_widget(transport, text_area);
+
+    // Spectrum visualizer — renders in the space above the transport text.
+    if transport_height > TRANSPORT_HEIGHT_DEFAULT {
+        let spectrum_height = transport_height - TRANSPORT_HEIGHT_DEFAULT;
+        let spectrum_area = if reserve_art_space {
+            Rect::new(
+                chunks[0].x + ART_WIDTH + 1,
+                chunks[0].y,
+                chunks[0].width.saturating_sub(ART_WIDTH + 1),
+                spectrum_height,
+            )
+        } else {
+            Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, spectrum_height)
+        };
+        let spectrum = SpectrumWidget::new(&app.visualizer, &app.theme);
+        frame.render_widget(spectrum, spectrum_area);
+    }
 
     // Content area: library + queue side-by-side, or just queue, with optional lyrics panel.
     let content_area = chunks[1];
@@ -282,6 +300,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let label_line = Line::from(Span::styled(label, app.theme.spinner));
             frame.render_widget(Paragraph::new(label_line), label_area);
         }
+    }
+
+    // FPS counter overlay (top-right corner).
+    if app.show_fps && area.width >= 8 {
+        let fps_text = format!(" {}fps ", app.display_fps);
+        let w = fps_text.len() as u16;
+        let fps_area = Rect::new(area.x + area.width - w, area.y, w, 1);
+        let fps_line = Line::from(Span::styled(fps_text, app.theme.hint_desc));
+        frame.render_widget(Paragraph::new(fps_line), fps_area);
     }
 
     // Loading overlay with braille spinner.

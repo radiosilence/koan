@@ -4,14 +4,19 @@ pub mod undo;
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
 use thiserror::Error;
 
-use crate::audio::{buffer, device, engine};
+use crate::audio::{
+    analyzer::VizAnalyzer,
+    buffer, device, engine, streaming,
+    viz::{VizBuffer, VizSnapshot},
+};
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
-use state::{LoadState, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
+use state::{LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
 use undo::{UndoEntry, UndoStack};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
@@ -33,6 +38,10 @@ pub struct Player {
     commands: CommandChannel,
     active_playback: Option<ActivePlayback>,
     timeline: Arc<PlaybackTimeline>,
+    viz_buffer: Arc<VizBuffer>,
+    viz_snapshot: Arc<VizSnapshot>,
+    /// Background FFT analysis thread. Held for its lifetime; dropped on Player drop.
+    _viz_analyzer: VizAnalyzer,
     undo_stack: UndoStack,
     /// When Some, undo entries are collected into this buffer instead of pushed
     /// directly onto the undo stack. Flushed on EndUndoBatch.
@@ -53,11 +62,23 @@ impl Default for Player {
 
 impl Player {
     pub fn new() -> Self {
+        let viz_buffer = VizBuffer::new();
+        let viz_snapshot = VizSnapshot::new();
+        let cfg = crate::config::Config::load().unwrap_or_default();
+        let viz_analyzer = VizAnalyzer::spawn_with_snapshot(
+            Arc::clone(&viz_buffer),
+            &cfg.visualizer,
+            Arc::clone(&viz_snapshot),
+        );
+
         Self {
             shared_state: SharedPlayerState::new(),
             commands: CommandChannel::new(),
             active_playback: None,
             timeline: PlaybackTimeline::new(),
+            viz_buffer,
+            viz_snapshot,
+            _viz_analyzer: viz_analyzer,
             undo_stack: UndoStack::new(),
             batch_buffer: None,
         }
@@ -73,6 +94,17 @@ impl Player {
         self.timeline.clone()
     }
 
+    /// Get the visualization buffer for the TUI.
+    pub fn viz_buffer(&self) -> Arc<VizBuffer> {
+        self.viz_buffer.clone()
+    }
+
+    /// Get the shared analysis snapshot for the TUI.
+    /// The analysis thread writes here; the UI thread reads a clone each frame.
+    pub fn viz_snapshot(&self) -> Arc<VizSnapshot> {
+        self.viz_snapshot.clone()
+    }
+
     /// Access undo stack (for tests and UI state queries).
     pub fn undo_stack(&self) -> &UndoStack {
         &self.undo_stack
@@ -84,14 +116,26 @@ impl Player {
     }
 
     /// Play a specific item in the playlist by ID.
-    /// Sets cursor, starts playback if Ready, otherwise waits for TrackReady.
+    /// Sets cursor, starts playback if Ready or streaming-ready, otherwise waits for TrackReady.
     pub fn play(&mut self, id: QueueItemId) {
         self.shared_state.set_cursor(Some(id));
 
-        match self.shared_state.item_path_if_ready(id) {
-            Some(path) => {
+        match self.shared_state.item_playback_source(id) {
+            Some(PlaybackSource::Ready(path)) => {
                 if let Err(e) = self.start_playback(id, &path, 0) {
                     log::error!("play failed: {}", e);
+                }
+            }
+            Some(PlaybackSource::Streaming {
+                path,
+                bytes_written,
+                total,
+            }) => {
+                if let Err(e) = self.start_streaming_playback(id, &path, bytes_written, total) {
+                    log::error!("streaming play failed, waiting for full download: {}", e);
+                    // Fall back to waiting for TrackReady.
+                    self.stop_engine();
+                    self.shared_state.set_playback_state(PlaybackState::Stopped);
                 }
             }
             None => {
@@ -184,16 +228,212 @@ impl Player {
             next
         };
 
-        let (_stream_info, decode_handle) = buffer::start_decode(
+        let (_stream_info, decode_handle) = buffer::start_decode_file(
             id,
             path,
             producer,
             seek_ms,
             next_track,
             self.timeline.clone(),
+            Some(self.viz_buffer.clone()),
         )?;
 
         // Create and start audio engine with the timeline's sample counter.
+        let actual_rate = device::get_device_sample_rate(device_id).unwrap_or(source_rate);
+        let engine = engine::AudioEngine::new(
+            device_id,
+            actual_rate,
+            info.channels as u32,
+            consumer,
+            self.timeline.samples_played_counter(),
+        )?;
+        engine.start()?;
+
+        self.shared_state.set_playback_state(PlaybackState::Playing);
+
+        self.active_playback = Some(ActivePlayback {
+            engine,
+            decode_handle,
+        });
+
+        Ok(())
+    }
+
+    /// Internal: start streaming playback from a partially-downloaded file.
+    ///
+    /// Creates a StreamBuffer and a pump thread that reads from the on-disk partial
+    /// file as bytes become available (tracked via `bytes_written`). The decode thread
+    /// reads from a StreamingSource backed by that buffer, blocking briefly when it
+    /// catches up to the write head.
+    fn start_streaming_playback(
+        &mut self,
+        id: QueueItemId,
+        path: &Path,
+        bytes_written: Arc<AtomicU64>,
+        total: u64,
+    ) -> Result<(), PlayerError> {
+        self.stop_engine();
+
+        // Create a StreamBuffer with known total length.
+        let stream_buf = streaming::StreamBuffer::new(if total > 0 { Some(total) } else { None });
+
+        // Spawn a pump thread: reads bytes from the on-disk partial file as they
+        // become available (per bytes_written) and pushes them into StreamBuffer.
+        // This bridges the disk-based download with StreamingSource's in-memory design.
+        let pump_path = path.to_path_buf();
+        let pump_buf = stream_buf.clone();
+        let pump_written = bytes_written.clone();
+        thread::Builder::new()
+            .name("koan-stream-pump".into())
+            .spawn(move || {
+                use std::fs::File;
+                use std::io::Read;
+                let mut file = match File::open(&pump_path) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        log::error!("stream pump: failed to open {}: {}", pump_path.display(), e);
+                        pump_buf.finish();
+                        return;
+                    }
+                };
+                let mut buf = vec![0u8; 65536];
+                let mut offset: u64 = 0;
+                loop {
+                    let available = pump_written.load(Ordering::Relaxed);
+                    if offset >= available {
+                        if total > 0 && available >= total {
+                            break; // Download complete.
+                        }
+                        thread::sleep(std::time::Duration::from_millis(10));
+                        continue;
+                    }
+                    let to_read = ((available - offset) as usize).min(buf.len());
+                    match file.read(&mut buf[..to_read]) {
+                        Ok(0) => break,
+                        Ok(n) => {
+                            pump_buf.push(&buf[..n]);
+                            offset += n as u64;
+                        }
+                        Err(e) => {
+                            log::warn!("stream pump read error: {}", e);
+                            break;
+                        }
+                    }
+                }
+                pump_buf.finish();
+            })
+            .map_err(|e| PlayerError::Decode(buffer::DecodeError::Io(e)))?;
+
+        // Probe via a streaming reader — blocks (via condvar) until enough header data arrives.
+        let probe_reader = stream_buf.reader();
+        let probe_hint = {
+            let mut h = symphonia::core::probe::Hint::new();
+            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                h.with_extension(ext);
+            }
+            h
+        };
+        let probe_mss =
+            symphonia::core::io::MediaSourceStream::new(Box::new(probe_reader), Default::default());
+        let info = buffer::probe_source(probe_mss, &probe_hint)?;
+
+        self.shared_state.set_track_info(Some(TrackInfo {
+            id,
+            path: path.to_path_buf(),
+            codec: info.codec.clone(),
+            sample_rate: info.sample_rate,
+            bit_depth: info.bit_depth,
+            channels: info.channels,
+            duration_ms: info.duration_ms,
+        }));
+        self.shared_state.set_position_ms(0);
+        log::info!(
+            "streaming: {} ({:?}) — {} {}Hz/{}bit/{}ch, {}ms",
+            path.display(),
+            id,
+            info.codec,
+            info.sample_rate,
+            info.bit_depth,
+            info.channels,
+            info.duration_ms,
+        );
+
+        let device_id = device::default_output_device()?;
+        let device_rate = device::get_device_sample_rate(device_id)?;
+        let source_rate = info.sample_rate as f64;
+
+        if (device_rate - source_rate).abs() > 0.1 {
+            log::info!(
+                "switching device sample rate: {}Hz → {}Hz",
+                device_rate,
+                source_rate
+            );
+            if let Err(e) = device::set_device_sample_rate(device_id, source_rate) {
+                log::warn!(
+                    "failed to set sample rate (continuing at device rate): {}",
+                    e
+                );
+            }
+        }
+
+        let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
+
+        let _generation = self.shared_state.bump_generation();
+        self.timeline.reset();
+
+        // Gapless lookahead after streaming: next track uses normal file path.
+        let advance_state = self.shared_state.clone();
+        let decode_cursor = std::sync::Mutex::new(Some(id));
+        let next_track = move || {
+            let current = decode_cursor.lock().ok()?.take()?;
+            let next = advance_state.peek_next_ready_after(current);
+            if let Some((next_id, _)) = &next
+                && let Ok(mut guard) = decode_cursor.lock()
+            {
+                *guard = Some(*next_id);
+            }
+            next
+        };
+
+        // Decode using a fresh StreamingSource reader — reads from the StreamBuffer
+        // that the pump thread feeds. The decode thread blocks when it catches up to
+        // the write head, resuming as more data arrives.
+        // Build a SourceEntry using a fresh StreamingSource reader for the decode thread.
+        let decode_reader = stream_buf.reader();
+        let path_buf = path.to_path_buf();
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+        let mut decode_hint = symphonia::core::probe::Hint::new();
+        if !ext.is_empty() {
+            decode_hint.with_extension(&ext);
+        }
+        let first = buffer::SourceEntry {
+            id,
+            path: path_buf,
+            hint: decode_hint,
+            make_mss: Box::new(move || {
+                symphonia::core::io::MediaSourceStream::new(
+                    Box::new(decode_reader),
+                    Default::default(),
+                )
+            }),
+        };
+
+        let (_stream_info, decode_handle) = buffer::start_decode(
+            first,
+            producer,
+            0,
+            move || {
+                let (next_id, next_path) = next_track()?;
+                Some(buffer::SourceEntry::from_file(next_id, next_path))
+            },
+            self.timeline.clone(),
+            Some(self.viz_buffer.clone()),
+        )?;
+
         let actual_rate = device::get_device_sample_rate(device_id).unwrap_or(source_rate);
         let engine = engine::AudioEngine::new(
             device_id,
@@ -332,20 +572,106 @@ impl Player {
     }
 
     /// A download finished — if cursor is waiting on this item, start playback.
+    /// If already streaming this item, trigger progressive metadata enhancement.
     pub fn track_ready(&mut self, id: QueueItemId) {
-        // Mark as Ready (resolve thread already did this, but be safe).
+        // Mark as Ready (download thread already did this, but be safe).
         self.shared_state.update_load_state(id, LoadState::Ready);
 
         if !self.shared_state.is_cursor(id) {
             return;
         }
 
-        // Cursor is on this item. If nothing is playing, start playback.
         let is_playing = self.shared_state.playback_state() == PlaybackState::Playing;
+        let current_track_id = self.shared_state.track_info().map(|t| t.id);
+
+        if is_playing && current_track_id == Some(id) {
+            // Already streaming this track — download just finished.
+            // Trigger progressive enhancement: re-read full lofty metadata and update state.
+            log::info!(
+                "track_ready: download complete while streaming {:?}, refreshing metadata",
+                id
+            );
+            self.refresh_track_metadata(id);
+            return;
+        }
+
+        // Cursor is on this item but not yet playing — start playback now.
         if !is_playing && let Some(path) = self.shared_state.item_path_if_ready(id) {
             log::info!("track_ready: starting playback for {:?}", id);
             if let Err(e) = self.start_playback(id, &path, 0) {
                 log::error!("track_ready playback failed: {}", e);
+            }
+        }
+    }
+
+    /// Called when enough data has been buffered for streaming playback.
+    /// If the cursor is waiting on this track and nothing is playing, start streaming.
+    pub fn track_stream_ready(&mut self, id: QueueItemId) {
+        if !self.shared_state.is_cursor(id) {
+            return;
+        }
+
+        let is_playing = self.shared_state.playback_state() == PlaybackState::Playing;
+        if is_playing {
+            return; // Already playing something — don't interrupt.
+        }
+
+        match self.shared_state.item_playback_source(id) {
+            Some(PlaybackSource::Streaming {
+                path,
+                bytes_written,
+                total,
+            }) => {
+                log::info!(
+                    "track_stream_ready: starting streaming playback for {:?}",
+                    id
+                );
+                if let Err(e) = self.start_streaming_playback(id, &path, bytes_written, total) {
+                    log::error!("track_stream_ready streaming failed: {}", e);
+                }
+            }
+            Some(PlaybackSource::Ready(path)) => {
+                // Download finished between threshold and now — just play normally.
+                log::info!(
+                    "track_stream_ready: track already ready, starting normal playback for {:?}",
+                    id
+                );
+                if let Err(e) = self.start_playback(id, &path, 0) {
+                    log::error!("track_stream_ready playback failed: {}", e);
+                }
+            }
+            None => {} // Not enough data yet — wait.
+        }
+    }
+
+    /// Re-read full lofty metadata for a track after its download completes.
+    /// Updates the playlist item's tags and track_info with complete metadata.
+    /// Called from track_ready() when a streaming track finishes downloading.
+    fn refresh_track_metadata(&mut self, id: QueueItemId) {
+        use crate::index::metadata;
+
+        let path = match self.shared_state.item_path_if_ready(id) {
+            Some(p) => p,
+            None => return,
+        };
+
+        match metadata::read_metadata(&path) {
+            Ok(meta) => {
+                // Update playlist item with full lofty tags (title, artist, album, duration).
+                self.shared_state.update_item_metadata(
+                    id,
+                    meta.title,
+                    meta.artist,
+                    meta.album_artist.unwrap_or_default(),
+                    meta.album,
+                    meta.duration_ms.map(|d| d as u64),
+                );
+                // Signal UI to re-read cover art and update souvlaki media controls.
+                self.shared_state.signal_metadata_refresh();
+                log::info!("track_ready: metadata refreshed for {:?}", id);
+            }
+            Err(e) => {
+                log::warn!("track_ready: metadata refresh failed for {:?}: {}", id, e);
             }
         }
     }
@@ -465,6 +791,7 @@ impl Player {
                 self.push_undo(UndoEntry::MovedBatch { entries });
             }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
+            PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
             PlayerCommand::BeginUndoBatch => {
@@ -601,15 +928,17 @@ impl Player {
     }
 
     /// Spawn the player on a background thread, returning the shared state,
-    /// timeline, and command sender.
+    /// timeline, visualization snapshot, and command sender.
     pub fn spawn() -> (
         Arc<SharedPlayerState>,
         Arc<PlaybackTimeline>,
+        Arc<VizSnapshot>,
         crossbeam_channel::Sender<PlayerCommand>,
     ) {
         let mut player = Self::new();
         let state = player.shared_state();
         let timeline = player.timeline();
+        let viz_snapshot = player.viz_snapshot();
         let tx = player.command_sender();
 
         thread::Builder::new()
@@ -617,7 +946,7 @@ impl Player {
             .spawn(move || player.run())
             .expect("failed to spawn player thread");
 
-        (state, timeline, tx)
+        (state, timeline, viz_snapshot, tx)
     }
 }
 

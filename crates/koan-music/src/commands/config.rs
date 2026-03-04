@@ -56,37 +56,62 @@ pub fn cmd_init() {
 
     println!("{} {}", "dir".cyan(), dir.display());
 
-    // Write default config.toml if it doesn't exist.
-    if config_path.exists() {
-        println!(
-            "  {} {} {}",
-            "config:".cyan(),
-            config_path.display(),
-            "(exists)".dimmed()
-        );
-    } else {
-        let base_content = r#"# koan — shareable defaults (safe to commit to dotfiles)
+    // Write or augment config.toml — merge defaults under existing keys so new
+    // config options appear without overwriting user customizations.
+    {
+        let defaults = config::Config::default();
+        let default_val: toml::Value =
+            toml::Value::try_from(&defaults).expect("default config serializes");
 
-[playback]
-software_volume = false
-replaygain = "album"  # off | track | album
-
-[organize]
-default = "standard"
-
-[organize.patterns]
-standard = "%album artist%/(%date%) %album%/%tracknumber%. %title%"
-va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$left(%date%,4)')' ])%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%"
-"#;
-        if let Err(e) = std::fs::write(&config_path, base_content) {
-            eprintln!("{} {}", "error:".red().bold(), e);
+        let already_exists = config_path.exists();
+        let mut base_val: toml::Value = if already_exists {
+            let contents = std::fs::read_to_string(&config_path).unwrap_or_default();
+            toml::from_str(&contents).unwrap_or_else(|_| default_val.clone())
         } else {
-            println!(
-                "  {} {} {}",
-                "config:".cyan(),
-                config_path.display(),
-                "created".green()
-            );
+            toml::Value::Table(toml::map::Map::new())
+        };
+
+        // deep_merge(base, overlay) puts overlay keys INTO base.
+        // We want existing keys to win, so merge defaults first then overlay existing.
+        // Easier: swap — merge existing into defaults so defaults fill gaps.
+        fn deep_merge_defaults(defaults: &mut toml::Value, existing: toml::Value) {
+            match (defaults, existing) {
+                (toml::Value::Table(def_map), toml::Value::Table(exist_map)) => {
+                    for (key, exist_val) in exist_map {
+                        if let Some(def_entry) = def_map.get_mut(&key) {
+                            deep_merge_defaults(def_entry, exist_val);
+                        } else {
+                            def_map.insert(key, exist_val);
+                        }
+                    }
+                }
+                (slot, existing) => {
+                    // Existing value wins over default.
+                    *slot = existing;
+                }
+            }
+        }
+
+        let existing = base_val.clone();
+        base_val = default_val;
+        deep_merge_defaults(&mut base_val, existing);
+
+        match toml::to_string_pretty(&base_val) {
+            Ok(s) => {
+                let header = "# koan — shareable defaults (safe to commit to dotfiles)\n\n";
+                if let Err(e) = std::fs::write(&config_path, format!("{header}{s}")) {
+                    eprintln!("{} {}", "error:".red().bold(), e);
+                } else {
+                    let action = if already_exists { "updated" } else { "created" };
+                    println!(
+                        "  {} {} {}",
+                        "config:".cyan(),
+                        config_path.display(),
+                        action.green()
+                    );
+                }
+            }
+            Err(e) => eprintln!("{} {}", "error:".red().bold(), e),
         }
     }
 
