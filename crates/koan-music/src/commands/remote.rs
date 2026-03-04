@@ -75,6 +75,37 @@ pub fn cmd_remote_sync() {
             std::process::exit(1);
         }
     }
+
+    // Sync favourites: push local → remote, pull remote → local.
+    print!("{}", "syncing favourites...".dimmed());
+    use std::io::Write;
+    std::io::stdout().flush().ok();
+
+    // Push: star any local favourites that have a remote_id.
+    let local_favs =
+        koan_core::db::queries::favourites_with_remote_id(&db.conn).unwrap_or_default();
+    let mut starred = 0;
+    for (_path, remote_id) in &local_favs {
+        if client.star(remote_id).is_ok() {
+            starred += 1;
+        }
+    }
+
+    // Pull: import remote starred songs as local favourites.
+    let imported = match client.get_starred() {
+        Ok(songs) => {
+            let remote_ids: Vec<String> = songs.into_iter().map(|s| s.id).collect();
+            koan_core::db::queries::import_remote_favourites(&db.conn, &remote_ids).unwrap_or(0)
+        }
+        Err(_) => 0,
+    };
+
+    println!(
+        "\r{} {} pushed, {} imported",
+        "favourites synced:".green().bold(),
+        starred.to_string().bold(),
+        imported.to_string().bold(),
+    );
 }
 
 pub fn cmd_remote_status() {

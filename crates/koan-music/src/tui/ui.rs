@@ -4,7 +4,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{App, LibraryFocus, Mode};
-use super::context_menu::{ContextMenuOverlay, context_menu_rect};
+use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
 use super::cover_art::CoverArt;
 use super::keys::HintBar;
 use super::library::LibraryView;
@@ -104,7 +104,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.state.playback_state(),
         pos_ms,
         &app.theme,
-    );
+    )
+    .with_ticker_offset(app.ticker_offset);
     frame.render_widget(transport, text_area);
 
     // Content area: library + queue side-by-side, or just queue, with optional lyrics panel.
@@ -127,7 +128,11 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let visible_height = panes[0].height.saturating_sub(2) as usize;
             lib.update_scroll(visible_height);
             let focused = app.library_focus == LibraryFocus::Library;
-            let lib_view = LibraryView::new(lib, &app.theme, focused);
+            let hover_idx = match &app.hover.zone {
+                super::app::HoverZone::LibraryItem(idx) => Some(*idx),
+                _ => None,
+            };
+            let lib_view = LibraryView::new(lib, &app.theme, focused).with_hover(hover_idx);
             frame.render_widget(lib_view, panes[0]);
         }
 
@@ -165,12 +170,26 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(overlay, area);
     }
 
-    // Context menu overlay.
+    // Context menu overlay — positioned at click location if available.
     if app.mode == Mode::ContextMenu
         && let Some(ref menu) = app.context_menu
     {
-        app.layout.context_menu_area = context_menu_rect(area, menu.actions.len());
-        let overlay = ContextMenuOverlay::new(menu, &app.theme);
+        let click_col = if app.hover.column > 0 {
+            Some(app.hover.column)
+        } else {
+            None
+        };
+        let click_row = if app.hover.row > 0 {
+            Some(app.hover.row)
+        } else {
+            None
+        };
+        app.layout.context_menu_area =
+            context_menu_rect_at(area, menu.actions.len(), click_col, click_row);
+        let mut overlay = ContextMenuOverlay::new(menu, &app.theme);
+        if let (Some(c), Some(r)) = (click_col, click_row) {
+            overlay = overlay.at_position(c, r);
+        }
         frame.render_widget(overlay, area);
     }
 
@@ -299,15 +318,18 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
 
     let visible = app.visible_queue();
     let drop_indicator = app.drop_indicator_index();
+    let selected_indices = app.selected_indices();
     let queue_view = QueueView::new(
         &visible,
         &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
         &app.theme,
-        &app.queue.selected_indices,
+        &selected_indices,
         app.spinner_tick,
     )
-    .with_drop_indicator(drop_indicator);
+    .with_drop_indicator(drop_indicator)
+    .with_hover(&app.hover.zone)
+    .with_favourites(&app.favourites);
     frame.render_widget(queue_view, area);
 }

@@ -32,10 +32,10 @@ impl Widget for HintBar<'_> {
                 ("l", "library"),
                 ("e", "edit"),
                 ("i", "info"),
+                ("f", "\u{2605}fav"),
                 ("z", "art"),
                 ("L", "lyrics"),
                 ("C-z", "undo"),
-                ("g/G", "top/end"),
                 ("q", "quit"),
             ],
             Mode::QueueEdit => vec![

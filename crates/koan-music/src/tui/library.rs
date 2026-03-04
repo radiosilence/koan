@@ -348,6 +348,7 @@ pub struct LibraryView<'a> {
     theme: &'a Theme,
     focused: bool,
     filter_focused: bool,
+    hover_index: Option<usize>,
 }
 
 impl<'a> LibraryView<'a> {
@@ -357,7 +358,13 @@ impl<'a> LibraryView<'a> {
             theme,
             focused,
             filter_focused: state.filter_active,
+            hover_index: None,
         }
+    }
+
+    pub fn with_hover(mut self, hover_index: Option<usize>) -> Self {
+        self.hover_index = hover_index;
+        self
     }
 }
 
@@ -405,12 +412,18 @@ impl Widget for LibraryView<'_> {
             for (row, i) in (scroll..end).enumerate() {
                 let node = &self.state.nodes[i];
                 let is_cursor = self.focused && !self.filter_focused && i == self.state.cursor;
+                let is_hovered = self.hover_index == Some(i) && !is_cursor;
 
                 // Fill entire row with cursor style first for full-width highlight bar.
                 if is_cursor {
                     let row_y = inner.y + row as u16;
                     for col in inner.x..inner.x + inner.width {
                         buf[(col, row_y)].set_style(self.theme.library_cursor);
+                    }
+                } else if is_hovered {
+                    let row_y = inner.y + row as u16;
+                    for col in inner.x..inner.x + inner.width {
+                        buf[(col, row_y)].set_style(self.theme.library_hover);
                     }
                 }
 
