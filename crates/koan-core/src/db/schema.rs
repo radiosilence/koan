@@ -91,6 +91,16 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             to_path    TEXT NOT NULL,
             created_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS lyrics_cache (
+            id          INTEGER PRIMARY KEY,
+            track_id    INTEGER REFERENCES tracks(id),
+            source      TEXT NOT NULL,
+            synced      INTEGER DEFAULT 0,
+            content     TEXT NOT NULL,
+            fetched_at  INTEGER NOT NULL,
+            UNIQUE(track_id)
+        );
         ",
     )?;
     Ok(())

@@ -13,6 +13,7 @@ use koan_core::player::state::{
 };
 
 use super::library::LibraryState;
+use super::lyrics::LyricsState;
 use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect};
 use super::queue;
 use super::theme::Theme;
@@ -171,6 +172,15 @@ pub struct App {
 
     /// Drop/paste import progress: (processed, total). Cleared when done.
     pub drop_progress: Option<Arc<(AtomicUsize, AtomicUsize)>>,
+
+    /// Lyrics panel state.
+    pub lyrics: LyricsState,
+
+    /// Whether the lyrics side panel is visible (toggled with `L`).
+    pub lyrics_panel: bool,
+
+    /// Receiver for background lyrics fetch results.
+    pub lyrics_rx: Option<crossbeam_channel::Receiver<Option<koan_core::lyrics::Lyrics>>>,
 }
 
 impl App {
@@ -208,6 +218,9 @@ impl App {
             last_mouse_row: None,
             scrollbar_dragging: false,
             drop_progress: None,
+            lyrics: LyricsState::default(),
+            lyrics_panel: false,
+            lyrics_rx: None,
         }
     }
 
@@ -267,6 +280,76 @@ impl App {
         // Update now-playing cover art cache when track changes.
         if let Some(ref info) = self.state.track_info() {
             self.art.now_playing_art.get(&info.path);
+        }
+
+        // Check for background lyrics fetch results.
+        if let Some(ref rx) = self.lyrics_rx
+            && let Ok(result) = rx.try_recv()
+        {
+            self.lyrics.set_result(result);
+            self.lyrics_rx = None;
+        }
+
+        // Trigger lyrics fetch on track change.
+        if self.lyrics_panel {
+            let current_playing_path = self
+                .queue
+                .vq_cache
+                .entries
+                .iter()
+                .find(|e| e.status == QueueEntryStatus::Playing)
+                .map(|e| e.path.clone());
+
+            if current_playing_path.is_some() && current_playing_path != self.lyrics.track_path {
+                self.lyrics.track_path = current_playing_path;
+                self.lyrics.fetching = true;
+                self.lyrics.result = None;
+                self.lyrics.lrc_lines.clear();
+
+                // Spawn background fetch.
+                if let Some(entry) = self
+                    .queue
+                    .vq_cache
+                    .entries
+                    .iter()
+                    .find(|e| e.status == QueueEntryStatus::Playing)
+                {
+                    let artist = entry.artist.clone();
+                    let title = entry.title.clone();
+                    let album = entry.album.clone();
+                    let duration_secs = entry.duration_ms.unwrap_or(0) / 1000;
+                    let db_path = self.db_path.clone();
+                    let track_path = entry.path.clone();
+
+                    let (tx, rx) = crossbeam_channel::bounded(1);
+                    self.lyrics_rx = Some(rx);
+
+                    std::thread::Builder::new()
+                        .name("koan-lyrics".into())
+                        .spawn(move || {
+                            let result = (|| -> Option<koan_core::lyrics::Lyrics> {
+                                let db =
+                                    koan_core::db::connection::Database::open(&db_path).ok()?;
+                                let track_id = koan_core::db::queries::track_id_by_path(
+                                    &db.conn,
+                                    &track_path.to_string_lossy(),
+                                )
+                                .ok()??;
+                                koan_core::lyrics::fetch_lyrics(
+                                    &db.conn,
+                                    track_id,
+                                    &artist,
+                                    &title,
+                                    &album,
+                                    duration_secs,
+                                )
+                                .ok()
+                            })();
+                            let _ = tx.send(result);
+                        })
+                        .ok();
+                }
+            }
         }
 
         // In normal mode, auto-scroll to playing track on actual track change.
@@ -371,6 +454,9 @@ impl App {
             }
             KeyCode::Char('l') => {
                 self.open_library();
+            }
+            KeyCode::Char('L') => {
+                self.lyrics_panel = !self.lyrics_panel;
             }
             KeyCode::Up => {
                 let visible = self.visible_queue();

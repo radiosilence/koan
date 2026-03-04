@@ -1,15 +1,17 @@
 mod albums;
 mod artists;
+pub mod lyrics;
 mod scan_cache;
 mod search;
 mod stats;
-mod tracks;
+pub mod tracks;
 
 use std::path::PathBuf;
 
 // Re-export all public items so `use queries::*` still works.
 pub use albums::*;
 pub use artists::*;
+pub use lyrics::*;
 pub use scan_cache::*;
 pub use search::*;
 pub use stats::*;

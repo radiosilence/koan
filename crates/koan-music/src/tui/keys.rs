@@ -33,6 +33,7 @@ impl Widget for HintBar<'_> {
                 ("e", "edit"),
                 ("i", "info"),
                 ("z", "art"),
+                ("L", "lyrics"),
                 ("C-z", "undo"),
                 ("g/G", "top/end"),
                 ("q", "quit"),
