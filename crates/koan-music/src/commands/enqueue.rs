@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use koan_core::config;
@@ -242,11 +243,22 @@ fn download_single_track(
         &password,
     );
 
+    // Shared counter: download thread writes, StreamingSource reads.
+    let bytes_written: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+
     let progress_state = state.clone();
     let progress_qid = queue_id;
+    let bytes_written_progress = bytes_written.clone();
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
-        progress_state
-            .update_load_state(progress_qid, LoadState::Downloading { downloaded, total });
+        bytes_written_progress.store(downloaded, Ordering::Release);
+        progress_state.update_load_state(
+            progress_qid,
+            LoadState::Downloading {
+                downloaded,
+                total,
+                bytes_written: bytes_written_progress.clone(),
+            },
+        );
     });
 
     if let Err(e) = result {

@@ -183,19 +183,74 @@ impl PlaybackTimeline {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Source abstraction
+// ---------------------------------------------------------------------------
+
+/// A source entry for the generic decode queue.
+///
+/// Each entry provides an ID, a display path (for logging/timeline),
+/// a format hint, and a factory that constructs a fresh `MediaSourceStream`.
+pub struct SourceEntry {
+    pub id: QueueItemId,
+    /// Path used for logging and `TrackBoundary`. Need not be a real FS path.
+    pub path: PathBuf,
+    /// Format hint for Symphonia (e.g. file extension).
+    pub hint: Hint,
+    /// Factory that creates the `MediaSourceStream`. Called exactly once per track.
+    pub make_mss: Box<dyn FnOnce() -> MediaSourceStream + Send>,
+}
+
+impl SourceEntry {
+    /// Convenience: build a `SourceEntry` from a local file path.
+    pub fn from_file(id: QueueItemId, path: PathBuf) -> Self {
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_string();
+        let path_clone = path.clone();
+        let mut hint = Hint::new();
+        if !ext.is_empty() {
+            hint.with_extension(&ext);
+        }
+        Self {
+            id,
+            path,
+            hint,
+            make_mss: Box::new(move || {
+                let file = File::open(&path_clone).expect("failed to open audio file");
+                MediaSourceStream::new(Box::new(file), Default::default())
+            }),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Probe API
+// ---------------------------------------------------------------------------
+
+/// Probe a `MediaSourceStream` (with hint) and return stream info without decoding.
+pub fn probe_source(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, DecodeError> {
+    probe_mss(mss, hint)
+}
+
 /// Probe a file and return stream info without decoding.
 pub fn probe_file(path: &Path) -> Result<StreamInfo, DecodeError> {
     let file = File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
-
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
+    probe_mss(mss, &hint)
+}
 
+/// Internal: probe a `MediaSourceStream` with a hint.
+fn probe_mss(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, DecodeError> {
     let probed = symphonia::default::get_probe()
         .format(
-            &hint,
+            hint,
             mss,
             &FormatOptions::default(),
             &MetadataOptions::default(),
@@ -204,18 +259,15 @@ pub fn probe_file(path: &Path) -> Result<StreamInfo, DecodeError> {
 
     let reader = probed.format;
     let track = reader.default_track().ok_or(DecodeError::NoTrack)?;
-
     let codec_params = &track.codec_params;
     let sample_rate = codec_params.sample_rate.unwrap_or(44100);
     let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
     let bit_depth = codec_params.bits_per_sample.unwrap_or(16) as u16;
-
     let duration_ms = track
         .codec_params
         .n_frames
         .map(|frames| frames * 1000 / sample_rate as u64)
         .unwrap_or(0);
-
     let codec = codec_name(codec_params.codec);
 
     Ok(StreamInfo {
@@ -227,13 +279,59 @@ pub fn probe_file(path: &Path) -> Result<StreamInfo, DecodeError> {
     })
 }
 
-/// Start decoding a file into the ring buffer.
+// ---------------------------------------------------------------------------
+// Generic decode API (SourceEntry-based)
+// ---------------------------------------------------------------------------
+
+/// Start decoding from a `SourceEntry` into the ring buffer.
+///
+/// `first`      — the first track's source entry.
+/// `seek_ms`    — if > 0, seek to this position before decoding the first track.
+/// `next_track` — closure returning the next `SourceEntry` for gapless playback.
+///                Called on EOF. Returns None when the playlist is exhausted.
+pub fn start_decode<N>(
+    first: SourceEntry,
+    producer: rtrb::Producer<f32>,
+    seek_ms: u64,
+    next_track: N,
+    timeline: Arc<PlaybackTimeline>,
+) -> Result<(StreamInfo, DecodeHandle), DecodeError>
+where
+    N: Fn() -> Option<SourceEntry> + Send + 'static,
+{
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop_clone = stop.clone();
+
+    let thread = thread::Builder::new()
+        .name("koan-decode".into())
+        .spawn(move || {
+            decode_queue_loop(first, producer, &stop_clone, seek_ms, &next_track, &timeline);
+        })
+        .map_err(DecodeError::Io)?;
+
+    // Return a placeholder StreamInfo — the real info is pushed to the timeline
+    // by the decode thread immediately after probing the source.
+    let placeholder = StreamInfo {
+        codec: String::from("?"),
+        sample_rate: 44100,
+        channels: 2,
+        bit_depth: 16,
+        duration_ms: 0,
+    };
+
+    Ok((placeholder, DecodeHandle { stop, thread: Some(thread) }))
+}
+
+// ---------------------------------------------------------------------------
+// File-based convenience wrapper
+// ---------------------------------------------------------------------------
+
+/// Start decoding a file into the ring buffer (convenience wrapper).
 ///
 /// `initial_id` — the QueueItemId of the first track.
 /// `seek_ms` — if > 0, seek to this position before decoding the first track.
-/// `next_track` — closure that returns the next (id, path) for gapless playback.
-///                Called on EOF. Returns None when the playlist is exhausted.
-pub fn start_decode<N>(
+/// `next_track` — closure returning the next (id, path) for gapless playback.
+pub fn start_decode_file<N>(
     initial_id: QueueItemId,
     path: &Path,
     producer: rtrb::Producer<f32>,
@@ -245,74 +343,76 @@ where
     N: Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static,
 {
     let info = probe_file(path)?;
-    let path = path.to_path_buf();
-    let stop = Arc::new(AtomicBool::new(false));
-    let stop_clone = stop.clone();
-
-    let thread = thread::Builder::new()
-        .name("koan-decode".into())
-        .spawn(move || {
-            decode_queue_loop(
-                initial_id,
-                &path,
-                producer,
-                &stop_clone,
-                seek_ms,
-                &next_track,
-                &timeline,
-            );
-        })
-        .map_err(DecodeError::Io)?;
-
-    Ok((
-        info,
-        DecodeHandle {
-            stop,
-            thread: Some(thread),
+    let first = SourceEntry::from_file(initial_id, path.to_path_buf());
+    let (_, handle) = start_decode(
+        first,
+        producer,
+        seek_ms,
+        move || {
+            let (id, p) = next_track()?;
+            Some(SourceEntry::from_file(id, p))
         },
-    ))
+        timeline,
+    )?;
+    Ok((info, handle))
 }
 
-/// Gapless decode loop: decodes the first file, then calls next_track on EOF.
-///
-/// The key insight: the producer (ring buffer write end) stays alive across track
-/// boundaries. The AudioUnit keeps draining the consumer. Zero gap.
+// ---------------------------------------------------------------------------
+// Internal decode loop
+// ---------------------------------------------------------------------------
+
+/// Gapless decode loop: decode first entry, then call next_track on EOF.
 fn decode_queue_loop<N>(
-    initial_id: QueueItemId,
-    first_path: &Path,
+    first: SourceEntry,
     mut producer: rtrb::Producer<f32>,
     stop: &AtomicBool,
     initial_seek_ms: u64,
     next_track: &N,
     timeline: &PlaybackTimeline,
 ) where
-    N: Fn() -> Option<(QueueItemId, PathBuf)>,
+    N: Fn() -> Option<SourceEntry>,
 {
-    // Decode the first track.
+    let path = first.path.clone();
+    let hint = first.hint.clone();
+    let mss = (first.make_mss)();
+
     if let Err(e) = decode_single(
-        initial_id,
-        first_path,
+        first.id,
+        &path,
+        &hint,
+        mss,
         &mut producer,
         stop,
         initial_seek_ms,
         timeline,
     ) {
         if !stop.load(Ordering::Relaxed) {
-            log::error!("decode error on {}: {}", first_path.display(), e);
+            log::error!("decode error on {}: {}", path.display(), e);
         }
         return;
     }
 
-    // Gapless: keep going through the playlist.
     while !stop.load(Ordering::Relaxed) {
-        let Some((next_id, next_path)) = (next_track)() else {
+        let Some(entry) = (next_track)() else {
             log::info!("playlist exhausted, decode thread finishing");
             break;
         };
 
-        log::info!("gapless transition → {}", next_path.display());
+        log::info!("gapless transition → {}", entry.path.display());
+        let next_path = entry.path.clone();
+        let next_hint = entry.hint.clone();
+        let next_mss = (entry.make_mss)();
 
-        if let Err(e) = decode_single(next_id, &next_path, &mut producer, stop, 0, timeline) {
+        if let Err(e) = decode_single(
+            entry.id,
+            &next_path,
+            &next_hint,
+            next_mss,
+            &mut producer,
+            stop,
+            0,
+            timeline,
+        ) {
             if !stop.load(Ordering::Relaxed) {
                 log::error!("decode error on {}: {}", next_path.display(), e);
             }
@@ -321,30 +421,28 @@ fn decode_queue_loop<N>(
     }
 }
 
-/// Decode a single file into the producer. Returns Ok(()) on clean EOF.
+// ---------------------------------------------------------------------------
+// Core decode single track
+// ---------------------------------------------------------------------------
+
+/// Decode a single source into the producer. Returns Ok(()) on clean EOF.
 fn decode_single(
     queue_item_id: QueueItemId,
     path: &Path,
+    hint: &Hint,
+    mss: MediaSourceStream,
     producer: &mut rtrb::Producer<f32>,
     stop: &AtomicBool,
     seek_ms: u64,
     timeline: &PlaybackTimeline,
 ) -> Result<(), DecodeError> {
-    let file = File::open(path)?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
-    }
-
     let format_opts = FormatOptions {
         enable_gapless: true,
         ..Default::default()
     };
 
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &format_opts, &MetadataOptions::default())
+        .format(hint, mss, &format_opts, &MetadataOptions::default())
         .map_err(|e| DecodeError::Decode(e.to_string()))?;
 
     let mut reader = probed.format;
