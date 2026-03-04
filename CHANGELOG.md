@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.5.2
+
+### Fixed
+
+- **Drag reorder selects wrong track** — dragging a single track up/down no longer switches selection to the displaced track. The dragged track's ID is now captured before the move instead of reading from the stale visible queue cache
+
 ## 0.5.1
 
 ### Added

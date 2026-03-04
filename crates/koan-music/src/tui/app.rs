@@ -1621,9 +1621,22 @@ impl App {
                                         self.tx.send(PlayerCommand::BeginUndoBatch).ok();
                                         self.drag_undo_active = true;
                                     }
+                                    // Capture the dragged track's ID before the move —
+                                    // vq_cache won't refresh until next frame, so
+                                    // select_single(to_idx) would grab the displaced track.
+                                    let dragged_id = self
+                                        .queue
+                                        .vq_cache
+                                        .entries
+                                        .get(from_index)
+                                        .map(|e| e.id);
                                     self.send_move(from_index, to_idx);
                                     self.queue.cursor = to_idx;
-                                    self.select_single(to_idx);
+                                    self.queue.selected_ids.clear();
+                                    if let Some(id) = dragged_id {
+                                        self.queue.selected_ids.insert(id);
+                                        self.queue.anchor_id = Some(id);
+                                    }
                                     if let Some(ref mut drag) = self.queue.drag {
                                         drag.from_index = to_idx;
                                     }
