@@ -14,21 +14,31 @@ koan is a well-engineered Rust codebase. Clippy is fully clean, there are no TOD
 
 ## 1. Security
 
+### CRITICAL
+
+| # | Issue | Location | Fix |
+|---|-------|----------|-----|
+| S0 | **Auth credentials persisted in DB** — `stream_url()` embeds username+token+salt in URL, stored permanently in `remote_url` column via `sync.rs:252`. Every synced track leaks credentials. | `client.rs:133-141`, `sync.rs:252` | Store only track ID in `remote_url`; reconstruct authenticated URL at playback time |
+
 ### HIGH
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| S1 | **Plaintext password in config without restrictive permissions** — `config.local.toml` written with default 0644 permissions (world-readable) | `koan-core/src/config.rs:220-228` | Add `chmod 0o600` after write on unix; consider using existing Keychain integration in `credentials.rs` |
-| S2 | **Auth credentials in stream URLs** — username, token, salt visible in query strings; could leak to logs/proxies | `koan-core/src/remote/client.rs:133-141` | Ensure stream URLs are never logged; consider downloading via `reqwest` instead of raw URL construction |
+| S1 | **Plaintext password in config without restrictive permissions** — `config.local.toml` written with default 0644 permissions (world-readable) | `config.rs:220-228` | Add `chmod 0o600` after write on unix; consider using existing Keychain integration in `credentials.rs` |
+| S2 | **Auth credentials in stream URLs** — username, token, salt visible in query strings; could leak to logs/proxies | `client.rs:133-141` | Ensure stream URLs are never logged; consider downloading via `reqwest` instead of raw URL construction |
+| S3 | **FTS5 query injection** — user search input passed directly into FTS5 MATCH clause; FTS5 operators (`AND`, `OR`, `NOT`, `NEAR`, column filters) can crash app or bypass filters | `db/queries/search.rs:10` | Escape FTS5 special chars, wrap in double quotes: `format!("\"{}\"*", escaped)` |
+| S4 | **Weak random salt fallback** — `/dev/urandom` failure silently produces all-zero salt, making auth token deterministic and replayable | `client.rs:331-338` | Use `getrandom` crate (already in dep tree via `uuid`); fail loudly on error |
 
 ### MEDIUM
 
 | # | Issue | Location | Fix |
 |---|-------|----------|-----|
-| S3 | **MD5 auth token** — Subsonic protocol uses `MD5(password + salt)`, trivially brute-forceable | `client.rs:45` | Protocol limitation; document HTTPS requirement; prefer API key auth if server supports it |
-| S4 | **Predictable temp file for cover art** — fixed path `koan-now-playing-cover` in /tmp, symlink attack vector | `media_keys.rs:152-157` | Use `tempfile` crate or add PID + random suffix; check for symlinks before write |
-| S5 | **No HTTPS enforcement** — `koan remote login` accepts `http://` URLs without warning | `commands/remote.rs:6`, `client.rs:31-38` | Warn on non-HTTPS for non-localhost URLs |
-| S6 | **Weak random salt fallback** — `/dev/urandom` failure silently produces all-zero salt | `client.rs:331-338` | Use `getrandom` crate (already in dep tree via `uuid`); fail loudly on error |
+| S5 | **MD5 auth token** — Subsonic protocol uses `MD5(password + salt)`, trivially brute-forceable | `client.rs:45` | Protocol limitation; document HTTPS requirement; prefer API key auth if server supports it |
+| S6 | **Predictable temp file for cover art** — fixed path `koan-now-playing-cover` in /tmp, symlink attack vector | `media_keys.rs:152-157` | Use `tempfile` crate or add PID + random suffix; check for symlinks before write |
+| S7 | **No HTTPS enforcement** — `koan remote login` accepts `http://` URLs without warning | `commands/remote.rs:6`, `client.rs:31-38` | Warn on non-HTTPS for non-localhost URLs |
+| S8 | **DB file has no access restrictions** — `koan.db` created with default perms, contains auth tokens in `remote_url` | `db/connection.rs:29` | Set `0o600` after creation |
+| S9 | **LIKE pattern injection** — `find_artists` wraps input with `%` but doesn't escape LIKE wildcards in input | `db/queries/artists.rs:42`, `tracks.rs:237` | Escape `%`, `_` in user input; add `ESCAPE '\\'` to SQL |
+| S10 | **Symlink following in scanner** — `WalkDir::new(path).follow_links(true)` follows symlinks to arbitrary locations | `index/scanner.rs:42` | Consider `follow_links(false)` or validate resolved paths stay within library |
 
 ### LOW / PASS
 
@@ -39,6 +49,9 @@ koan is a well-engineered Rust codebase. Clippy is fully clean, there are no TOD
 - TLS enabled via rustls (PASS)
 - `unsafe impl Send` on AudioEngine/CallbackData — necessary for CoreAudio FFI, correctly documented (LOW)
 - No certificate pinning — acceptable for music player (LOW)
+- Stale user-agent `"koan-music/0.3.0"` in `lrclib.rs:4` — should track package version (LOW)
+- Public `conn` field on Database struct — leaky abstraction (LOW)
+- Dead `credentials.rs` Keychain module — still exists but login flow bypasses it (LOW/artifact)
 - Recommend running `cargo audit` for known CVEs (INFO)
 
 ---
@@ -238,44 +251,47 @@ The format engine has excellent coverage at 72 tests/KLOC. The player state mach
 
 ## Implementation Plan
 
-### Phase 1 — Quick Wins (1-2 days)
+### Phase 1 — Security & Quick Wins (1-2 days) → PR: `fix/security-hardening`
 
-1. **S1**: Add `chmod 0o600` to `save_local()` — 5-line fix
-2. **S6**: Replace `/dev/urandom` with `getrandom` crate — 3-line fix
-3. **S5**: Add HTTPS warning for non-localhost URLs — 10-line fix
-4. **S4**: Add PID + random suffix to cover art temp path — 5-line fix
-5. **DC1-DC6**: Remove all dead code items — delete unused functions/modules/variants
-6. **U1-U2**: Replace panicking `unwrap()`/`expect()` with error propagation
-7. **D1**: Replace `symphonia features = ["all"]` with specific codecs
+1. **S0**: Stop storing auth credentials in `remote_url` DB column — store only track ID, reconstruct auth at playback time
+2. **S1**: Add `chmod 0o600` to `save_local()` and DB file — 5-line fix each
+3. **S3**: Sanitize FTS5 search queries — escape special chars, wrap in quotes
+4. **S4**: Replace `/dev/urandom` with `getrandom` crate — 3-line fix
+5. **S7**: Add HTTPS warning for non-localhost URLs — 10-line fix
+6. **S6**: Add PID + random suffix to cover art temp path — 5-line fix
+7. **S9**: Escape LIKE wildcards in artist/track search
+8. **DC1-DC6**: Remove all dead code items — delete unused functions/modules/variants
+9. **U1-U2**: Replace panicking `unwrap()`/`expect()` with error propagation
+10. **D1**: Replace `symphonia features = ["all"]` with specific codecs
 
-### Phase 2 — Performance (2-3 days)
+### Phase 2 — Performance (2-3 days) → PR: `perf/render-loop`
 
-8. **P1**: Add `playlist_version` check to `refresh_visible_queue()` — biggest single perf win
-9. **P2-P3**: Cache `build_display_lines()` output, use borrowed keys
-10. **P5**: Convert `VizFrame.spectrum` from `Vec<f32>` to `[f32; NUM_BARS]`
+11. **P1**: Add `playlist_version` check to `refresh_visible_queue()` — biggest single perf win
+12. **P2-P3**: Cache `build_display_lines()` output, use borrowed keys
+13. **P5**: Convert `VizFrame.spectrum` from `Vec<f32>` to `[f32; NUM_BARS]`
 
-### Phase 3 — Architecture Cleanup (3-5 days)
+### Phase 3 — Architecture Cleanup (3-5 days) → PR: `refactor/module-decomposition`
 
-11. **app.rs decomposition**: Extract `input_keyboard.rs`, `input_mouse.rs`, `selection.rs`, `queue_ops.rs`
-12. **player/mod.rs**: Extract undo, deduplicate playback setup
-13. **organize.rs**: Deduplicate plan_moves logic
-14. **tracks.rs**: Extract `row_to_track` helper
+14. **app.rs decomposition**: Extract `input_keyboard.rs`, `input_mouse.rs`, `selection.rs`, `queue_ops.rs`
+15. **player/mod.rs**: Extract undo, deduplicate playback setup
+16. **organize.rs**: Deduplicate plan_moves logic
+17. **tracks.rs**: Extract `row_to_track` helper
 
-### Phase 4 — Dependency Cleanup (1 day)
+### Phase 4 — Dependency Cleanup (1 day) → PR: `chore/dependency-cleanup`
 
-15. **D2**: Move rusqlite usage from koan-music to koan-core
-16. **D3**: Audit rusqlite feature flags
-17. **D4-D6**: Clean up version alignment, workspace deps
+18. **D2**: Move rusqlite usage from koan-music to koan-core
+19. **D3**: Audit rusqlite feature flags
+20. **D4-D6**: Clean up version alignment, workspace deps
 
-### Phase 5 — Test Improvements (2-3 days)
+### Phase 5 — Test Improvements (2-3 days) → PR: `test/coverage-and-cleanup`
 
-18. **Delete 4 AI-generated duplicate tests** in `streaming.rs:330-411`
-19. **Add `PlaybackTimeline` tests** — binary search, seek offset math, edge cases (P0)
-20. **Add `SharedPlayerState` tests** — `advance_cursor`, `derive_visible_queue` status branches, `move_items` (P0)
-21. **Add `favourites.rs` tests** — toggle round-trip, remote import (P1)
-22. **Add Subsonic response deserialization tests** — JSON round-trip for song/album types (P1)
-23. **Add `metadata_from_probe_result` tests** — track "3/12" split, OriginalDate fallback (P1)
-24. **Improve weak tests** — strengthen `analyzer_spawns_and_shuts_down`, add concurrent streaming test (P2)
+21. **Delete 4 AI-generated duplicate tests** in `streaming.rs:330-411`
+22. **Add `PlaybackTimeline` tests** — binary search, seek offset math, edge cases (P0)
+23. **Add `SharedPlayerState` tests** — `advance_cursor`, `derive_visible_queue` status branches, `move_items` (P0)
+24. **Add `favourites.rs` tests** — toggle round-trip, remote import (P1)
+25. **Add Subsonic response deserialization tests** — JSON round-trip for song/album types (P1)
+26. **Add `metadata_from_probe_result` tests** — track "3/12" split, OriginalDate fallback (P1)
+27. **Improve weak tests** — strengthen `analyzer_spawns_and_shuts_down`, add concurrent streaming test (P2)
 
 ---
 
