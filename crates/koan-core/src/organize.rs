@@ -206,6 +206,68 @@ fn find_ancillary_files(track_dir: &Path) -> Vec<PathBuf> {
     files
 }
 
+/// Plan a single file move: format pattern, sanitize path, build dest, find ancillary files.
+///
+/// Returns `Ok(None)` when source == dest (skipped), `Ok(Some(FileMove))` for a planned move,
+/// or `Err(String)` for errors that should be collected by the caller.
+fn plan_single_move(
+    source: &Path,
+    track_id: i64,
+    metadata: &TrackMetadata,
+    pattern: &str,
+    base_dir: &Path,
+    planned_ancillary: &mut std::collections::HashSet<PathBuf>,
+) -> Result<Option<FileMove>, String> {
+    let relative = format::format(pattern, metadata).map_err(|e| format!("format error: {e}"))?;
+
+    if relative.is_empty() {
+        return Err("format string produced empty path".into());
+    }
+
+    let sanitized = sanitize_relative_path(&relative);
+
+    // Preserve the original file extension.
+    // Don't use with_extension() — it replaces after the LAST dot, which
+    // destroys titles containing dots (e.g. "0111. Bicep - TANGZ II" → "0111.flac").
+    let ext = source
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("flac");
+    let mut dest = base_dir.join(sanitized);
+    let stem = dest.as_os_str().to_os_string();
+    dest = PathBuf::from(format!("{}.{}", stem.to_string_lossy(), ext));
+
+    if paths_equal(source, &dest) {
+        return Ok(None);
+    }
+
+    // Plan ancillary moves — move files in source dir to dest dir.
+    let source_dir = source.parent().unwrap_or(Path::new("."));
+    let dest_dir = dest.parent().unwrap_or(Path::new("."));
+    let mut ancillary = Vec::new();
+
+    if source_dir != dest_dir {
+        for anc_path in find_ancillary_files(source_dir) {
+            if planned_ancillary.contains(&anc_path) {
+                continue;
+            }
+            let Some(anc_name) = anc_path.file_name() else {
+                continue;
+            };
+            let anc_dest = dest_dir.join(anc_name);
+            planned_ancillary.insert(anc_path.clone());
+            ancillary.push((anc_path, anc_dest));
+        }
+    }
+
+    Ok(Some(FileMove {
+        track_id,
+        from: source.to_path_buf(),
+        to: dest,
+        ancillary,
+    }))
+}
+
 /// Build the list of moves for all local tracks (or a filtered subset).
 fn plan_moves(
     db: &Database,
@@ -252,62 +314,19 @@ fn plan_moves(
         };
 
         let metadata = TrackMetadata::from_track_row(track, album_date.as_deref());
-        let relative = match format::format(pattern, &metadata) {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push((source, format!("format error: {e}")));
-                continue;
-            }
-        };
 
-        if relative.is_empty() {
-            errors.push((source, "format string produced empty path".into()));
-            continue;
+        match plan_single_move(
+            &source,
+            track.id,
+            &metadata,
+            pattern,
+            base_dir,
+            &mut planned_ancillary,
+        ) {
+            Ok(Some(file_move)) => moves.push(file_move),
+            Ok(None) => skipped += 1,
+            Err(msg) => errors.push((source, msg)),
         }
-
-        let sanitized = sanitize_relative_path(&relative);
-
-        // Preserve the original file extension.
-        // Don't use with_extension() — it replaces after the LAST dot, which
-        // destroys titles containing dots (e.g. "0111. Bicep - TANGZ II" → "0111.flac").
-        let ext = source
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("flac");
-        let mut dest = base_dir.join(sanitized);
-        let stem = dest.as_os_str().to_os_string();
-        dest = PathBuf::from(format!("{}.{}", stem.to_string_lossy(), ext));
-
-        if paths_equal(&source, &dest) {
-            skipped += 1;
-            continue;
-        }
-
-        // Plan ancillary moves — move files in source dir to dest dir.
-        let source_dir = source.parent().unwrap_or(Path::new("."));
-        let dest_dir = dest.parent().unwrap_or(Path::new("."));
-        let mut ancillary = Vec::new();
-
-        if source_dir != dest_dir {
-            for anc_path in find_ancillary_files(source_dir) {
-                if planned_ancillary.contains(&anc_path) {
-                    continue;
-                }
-                let Some(anc_name) = anc_path.file_name() else {
-                    continue;
-                };
-                let anc_dest = dest_dir.join(anc_name);
-                planned_ancillary.insert(anc_path.clone());
-                ancillary.push((anc_path, anc_dest));
-            }
-        }
-
-        moves.push(FileMove {
-            track_id: track.id,
-            from: source,
-            to: dest,
-            ancillary,
-        });
     }
 
     Ok(OrganizeResult {
@@ -346,57 +365,19 @@ fn plan_moves_from_paths(
         };
 
         let metadata = TrackMetadata::from_file_meta(&meta);
-        let relative = match format::format(pattern, &metadata) {
-            Ok(r) => r,
-            Err(e) => {
-                errors.push((source.clone(), format!("format error: {e}")));
-                continue;
-            }
-        };
 
-        if relative.is_empty() {
-            errors.push((source.clone(), "format string produced empty path".into()));
-            continue;
+        match plan_single_move(
+            source,
+            0,
+            &metadata,
+            pattern,
+            base_dir,
+            &mut planned_ancillary,
+        ) {
+            Ok(Some(file_move)) => moves.push(file_move),
+            Ok(None) => skipped += 1,
+            Err(msg) => errors.push((source.clone(), msg)),
         }
-
-        let sanitized = sanitize_relative_path(&relative);
-        let ext = source
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("flac");
-        let mut dest = base_dir.join(sanitized);
-        let stem = dest.as_os_str().to_os_string();
-        dest = PathBuf::from(format!("{}.{}", stem.to_string_lossy(), ext));
-
-        if paths_equal(source, &dest) {
-            skipped += 1;
-            continue;
-        }
-
-        let source_dir = source.parent().unwrap_or(Path::new("."));
-        let dest_dir = dest.parent().unwrap_or(Path::new("."));
-        let mut ancillary = Vec::new();
-
-        if source_dir != dest_dir {
-            for anc_path in find_ancillary_files(source_dir) {
-                if planned_ancillary.contains(&anc_path) {
-                    continue;
-                }
-                let Some(anc_name) = anc_path.file_name() else {
-                    continue;
-                };
-                let anc_dest = dest_dir.join(anc_name);
-                planned_ancillary.insert(anc_path.clone());
-                ancillary.push((anc_path, anc_dest));
-            }
-        }
-
-        moves.push(FileMove {
-            track_id: 0, // no DB identity
-            from: source.clone(),
-            to: dest,
-            ancillary,
-        });
     }
 
     Ok(OrganizeResult {

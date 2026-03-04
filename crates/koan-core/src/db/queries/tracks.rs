@@ -8,6 +8,37 @@ use super::albums::get_or_create_album;
 use super::artists::get_or_create_artist;
 use super::{PlaybackSource, TrackMeta, TrackRow};
 
+/// Map a rusqlite Row to a TrackRow. Expects the standard column order:
+/// id, album_id, artist_id, artist_name, album_artist_name, album_title,
+/// disc, track_number, title, duration_ms, path,
+/// codec, sample_rate, bit_depth, channels, bitrate,
+/// genre, source, remote_id, cached_path
+fn row_to_track_row(row: &rusqlite::Row) -> rusqlite::Result<TrackRow> {
+    let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
+    Ok(TrackRow {
+        id: row.get(0)?,
+        album_id: row.get(1)?,
+        artist_id: row.get(2)?,
+        artist_name: artist_name.clone(),
+        album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
+        album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
+        disc: row.get(6)?,
+        track_number: row.get(7)?,
+        title: row.get(8)?,
+        duration_ms: row.get(9)?,
+        path: row.get(10)?,
+        codec: row.get(11)?,
+        sample_rate: row.get(12)?,
+        bit_depth: row.get(13)?,
+        channels: row.get(14)?,
+        bitrate: row.get(15)?,
+        genre: row.get(16)?,
+        source: row.get(17)?,
+        remote_id: row.get(18)?,
+        cached_path: row.get(19)?,
+    })
+}
+
 /// Insert or update a track. Deduplicates local+remote: one row per logical track.
 ///
 /// Matching priority:
@@ -292,31 +323,7 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
          ORDER BY al.date, al.title, t.disc, t.track_number",
     )?;
     let rows = stmt
-        .query_map(params![artist_id], |row| {
-            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
-            Ok(TrackRow {
-                id: row.get(0)?,
-                album_id: row.get(1)?,
-                artist_id: row.get(2)?,
-                artist_name: artist_name.clone(),
-                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
-                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                disc: row.get(6)?,
-                track_number: row.get(7)?,
-                title: row.get(8)?,
-                duration_ms: row.get(9)?,
-                path: row.get(10)?,
-                codec: row.get(11)?,
-                sample_rate: row.get(12)?,
-                bit_depth: row.get(13)?,
-                channels: row.get(14)?,
-                bitrate: row.get(15)?,
-                genre: row.get(16)?,
-                source: row.get(17)?,
-                remote_id: row.get(18)?,
-                cached_path: row.get(19)?,
-            })
-        })?
+        .query_map(params![artist_id], row_to_track_row)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -336,31 +343,7 @@ pub fn all_tracks(conn: &Connection) -> Result<Vec<TrackRow>, DbError> {
     )?;
 
     let rows = stmt
-        .query_map(params![], |row| {
-            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
-            Ok(TrackRow {
-                id: row.get(0)?,
-                album_id: row.get(1)?,
-                artist_id: row.get(2)?,
-                artist_name: artist_name.clone(),
-                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
-                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                disc: row.get(6)?,
-                track_number: row.get(7)?,
-                title: row.get(8)?,
-                duration_ms: row.get(9)?,
-                path: row.get(10)?,
-                codec: row.get(11)?,
-                sample_rate: row.get(12)?,
-                bit_depth: row.get(13)?,
-                channels: row.get(14)?,
-                bitrate: row.get(15)?,
-                genre: row.get(16)?,
-                source: row.get(17)?,
-                remote_id: row.get(18)?,
-                cached_path: row.get(19)?,
-            })
-        })?
+        .query_map(params![], row_to_track_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
@@ -379,31 +362,7 @@ pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow
          LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE t.id = ?1",
         params![track_id],
-        |row| {
-            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
-            Ok(TrackRow {
-                id: row.get(0)?,
-                album_id: row.get(1)?,
-                artist_id: row.get(2)?,
-                artist_name: artist_name.clone(),
-                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
-                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                disc: row.get(6)?,
-                track_number: row.get(7)?,
-                title: row.get(8)?,
-                duration_ms: row.get(9)?,
-                path: row.get(10)?,
-                codec: row.get(11)?,
-                sample_rate: row.get(12)?,
-                bit_depth: row.get(13)?,
-                channels: row.get(14)?,
-                bitrate: row.get(15)?,
-                genre: row.get(16)?,
-                source: row.get(17)?,
-                remote_id: row.get(18)?,
-                cached_path: row.get(19)?,
-            })
-        },
+        row_to_track_row,
     );
 
     match result {
@@ -497,31 +456,7 @@ pub fn tracks_for_album(conn: &Connection, album_id: i64) -> Result<Vec<TrackRow
     )?;
 
     let rows = stmt
-        .query_map(params![album_id], |row| {
-            let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
-            Ok(TrackRow {
-                id: row.get(0)?,
-                album_id: row.get(1)?,
-                artist_id: row.get(2)?,
-                artist_name: artist_name.clone(),
-                album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
-                album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-                disc: row.get(6)?,
-                track_number: row.get(7)?,
-                title: row.get(8)?,
-                duration_ms: row.get(9)?,
-                path: row.get(10)?,
-                codec: row.get(11)?,
-                sample_rate: row.get(12)?,
-                bit_depth: row.get(13)?,
-                channels: row.get(14)?,
-                bitrate: row.get(15)?,
-                genre: row.get(16)?,
-                source: row.get(17)?,
-                remote_id: row.get(18)?,
-                cached_path: row.get(19)?,
-            })
-        })?
+        .query_map(params![album_id], row_to_track_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)
