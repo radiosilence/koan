@@ -589,6 +589,10 @@ impl App {
 
     fn handle_normal_key(&mut self, key: KeyEvent) {
         match key.code {
+            KeyCode::Esc => {
+                self.queue.selected_ids.clear();
+                self.queue.anchor_id = None;
+            }
             KeyCode::Char('q') => {
                 self.tx.send(PlayerCommand::Stop).ok();
                 self.quit = true;
