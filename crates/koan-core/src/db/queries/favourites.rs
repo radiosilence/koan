@@ -56,7 +56,7 @@ pub fn toggle_favourite(conn: &Connection, path: &Path) -> rusqlite::Result<bool
 pub fn remote_id_for_path(conn: &Connection, path: &Path) -> rusqlite::Result<Option<String>> {
     let path_str = path.to_string_lossy();
     conn.query_row(
-        "SELECT remote_id FROM tracks WHERE path = ?1 OR cached_path = ?1",
+        "SELECT remote_id FROM tracks WHERE path = ?1 OR cached_path = ?1 OR remote_url = ?1",
         [path_str.as_ref()],
         |row| row.get(0),
     )
@@ -70,7 +70,7 @@ pub fn remote_id_for_path(conn: &Connection, path: &Path) -> rusqlite::Result<Op
 pub fn favourites_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(PathBuf, String)>> {
     let mut stmt = conn.prepare(
         "SELECT f.track_path, t.remote_id FROM favourites f
-         JOIN tracks t ON (t.path = f.track_path OR t.cached_path = f.track_path)
+         JOIN tracks t ON (t.path = f.track_path OR t.cached_path = f.track_path OR t.remote_url = f.track_path)
          WHERE t.remote_id IS NOT NULL",
     )?;
     let rows = stmt.query_map([], |row| {
@@ -97,7 +97,7 @@ pub fn import_remote_favourites(
         // Find the local path for this remote_id.
         let path: Option<String> = conn
             .query_row(
-                "SELECT COALESCE(cached_path, path) FROM tracks WHERE remote_id = ?1",
+                "SELECT COALESCE(cached_path, path, remote_url) FROM tracks WHERE remote_id = ?1",
                 [rid],
                 |row| row.get(0),
             )

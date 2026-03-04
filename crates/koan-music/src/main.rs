@@ -187,7 +187,11 @@ enum RemoteCommands {
         username: String,
     },
     /// Sync remote library to local database
-    Sync,
+    Sync {
+        /// Force a full sync instead of incremental
+        #[arg(long)]
+        full: bool,
+    },
     /// Show remote server status
     Status,
 }
@@ -237,7 +241,7 @@ fn main() {
         Some(Commands::Config) => commands::cmd_config(),
         Some(Commands::Remote(sub)) => match sub {
             RemoteCommands::Login { url, username } => commands::cmd_remote_login(&url, &username),
-            RemoteCommands::Sync => commands::cmd_remote_sync(),
+            RemoteCommands::Sync { full } => commands::cmd_remote_sync(full),
             RemoteCommands::Status => commands::cmd_remote_status(),
         },
         Some(Commands::Pick {
