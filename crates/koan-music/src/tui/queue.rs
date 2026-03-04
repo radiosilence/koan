@@ -93,6 +93,37 @@ impl<'a> QueueView<'a> {
             None
         }
     }
+
+    /// If the y-coordinate lands on an album header, return the range of
+    /// contiguous queue indices that belong to that album group (inclusive).
+    pub fn album_group_at_y(
+        entries: &[QueueEntry],
+        area: Rect,
+        scroll_offset: usize,
+        y: u16,
+    ) -> Option<(usize, usize)> {
+        let rel_y = (y.saturating_sub(area.y)) as usize;
+        let display_lines = build_display_lines(entries);
+        let target_line = scroll_offset + rel_y.saturating_sub(1);
+
+        if target_line >= display_lines.len() {
+            return None;
+        }
+        let (first_idx, is_header) = display_lines[target_line];
+        if !is_header {
+            return None;
+        }
+        let first = first_idx?;
+        let key = (&entries[first].album_artist, &entries[first].album);
+
+        // Walk forward from first to find the end of the contiguous group.
+        let last = (first..entries.len())
+            .take_while(|&i| entries[i].album_artist == *key.0 && entries[i].album == *key.1)
+            .last()
+            .unwrap_or(first);
+
+        Some((first, last))
+    }
 }
 
 /// Each display line: (Option<queue_index>, is_header).

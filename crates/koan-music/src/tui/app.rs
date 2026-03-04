@@ -1198,6 +1198,25 @@ impl App {
                     self.queue.scroll_offset,
                     event.row,
                 ) else {
+                    // Check if the click landed on an album header.
+                    if let Some((first, last)) = queue::QueueView::album_group_at_y(
+                        &visible,
+                        self.layout.queue_area,
+                        self.queue.scroll_offset,
+                        event.row,
+                    ) {
+                        // Select all tracks in the album group.
+                        self.queue.selected_ids.clear();
+                        for i in first..=last {
+                            if let Some(entry) = visible.get(i) {
+                                self.queue.selected_ids.insert(entry.id);
+                            }
+                        }
+                        self.queue.cursor = first;
+                        if let Some(entry) = visible.get(first) {
+                            self.queue.anchor_id = Some(entry.id);
+                        }
+                    }
                     return;
                 };
 
