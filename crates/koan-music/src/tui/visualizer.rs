@@ -199,14 +199,18 @@ impl Widget for SpectrumWidget<'_> {
                 let cell_base = cell_from_bottom * 8;
                 let fill = eighths.saturating_sub(cell_base).min(8);
 
-                // Color based on position relative to total height.
+                // Color by position like a physical LED meter — green at the
+                // bottom, yellow in the upper-mid, red only at the very top
+                // (clipping zone). The signal determines how HIGH the bar
+                // reaches; the permanently-colored segments tell you whether
+                // that level is safe, hot, or clipping.
                 let pos_ratio = cell_from_bottom as f32 / height;
-                let style = if pos_ratio < 0.33 {
-                    self.theme.spectrum_low
-                } else if pos_ratio < 0.66 {
-                    self.theme.spectrum_mid
+                let style = if pos_ratio < 0.60 {
+                    self.theme.spectrum_low // green — safe headroom
+                } else if pos_ratio < 0.85 {
+                    self.theme.spectrum_mid // yellow — getting hot
                 } else {
-                    self.theme.spectrum_high
+                    self.theme.spectrum_high // red — clipping danger
                 };
 
                 if fill > 0 {

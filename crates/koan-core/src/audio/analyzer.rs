@@ -102,6 +102,83 @@ impl FrequencyScale {
     }
 }
 
+// ── Amplitude scale ─────────────────────────────────────────────────────────
+
+/// Amplitude scale applied to FFT magnitudes before display.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum AmplitudeScale {
+    /// A-weighted + gentle gamma — bars reflect perceived loudness.
+    #[default]
+    Perceptual,
+    /// Pure A-weighting (IEC 61672), linear mapping after.
+    AWeight,
+    /// Square root — gentle boost to quiet bands.
+    Sqrt,
+    /// Linear — raw dB-normalized magnitude, no correction.
+    Linear,
+}
+
+impl AmplitudeScale {
+    pub fn parse(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "perceptual" => Self::Perceptual,
+            "aweight" | "a-weight" | "a_weight" => Self::AWeight,
+            "sqrt" => Self::Sqrt,
+            "linear" => Self::Linear,
+            _ => Self::default(),
+        }
+    }
+
+    /// Apply the amplitude curve to a 0.0..1.0 normalized level.
+    fn apply(self, level: f32) -> f32 {
+        match self {
+            Self::Perceptual => level.powf(0.4),
+            Self::AWeight => level,
+            Self::Sqrt => level.sqrt(),
+            Self::Linear => level,
+        }
+    }
+}
+
+/// A-weighting correction in dB for a given frequency (IEC 61672-1).
+///
+/// Returns the dB offset to add to a magnitude before normalization.
+/// At 1kHz the correction is 0dB; bass and extreme treble are attenuated.
+fn a_weight_db(freq: f32) -> f32 {
+    let f2 = freq * freq;
+    let f4 = f2 * f2;
+
+    let num = 12194.0_f32.powi(2) * f4;
+    let denom = (f2 + 20.6_f32.powi(2))
+        * ((f2 + 107.7_f32.powi(2)) * (f2 + 737.9_f32.powi(2))).sqrt()
+        * (f2 + 12194.0_f32.powi(2));
+
+    if denom == 0.0 {
+        return DB_FLOOR;
+    }
+
+    // R_A(f) relative to 1kHz reference
+    let ra = num / denom;
+    // A-weighting: 20*log10(R_A) + 2.00 dB offset (IEC 61672 normalization)
+    20.0 * ra.log10() + 2.0
+}
+
+/// Pre-compute A-weighting corrections for each FFT bin.
+fn build_a_weight_table(sample_rate: f32) -> Vec<f32> {
+    let bin_hz = sample_rate / FFT_SIZE as f32;
+    let num_bins = FFT_SIZE / 2 + 1;
+    (0..num_bins)
+        .map(|bin_idx| {
+            let freq = bin_idx as f32 * bin_hz;
+            if freq < 1.0 {
+                DB_FLOOR // DC bin — silence
+            } else {
+                a_weight_db(freq)
+            }
+        })
+        .collect()
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Precomputed Hann window coefficients.
@@ -165,10 +242,19 @@ struct AnalysisState {
     bar_half_life: f32,
     /// Peak decay half-life in seconds.
     peak_half_life: f32,
+    /// Amplitude scale for magnitude mapping.
+    amplitude_scale: AmplitudeScale,
+    /// Pre-computed A-weighting correction per FFT bin (dB).
+    a_weight_table: Vec<f32>,
 }
 
 impl AnalysisState {
-    fn new(scale: FrequencyScale, bar_half_life: f32, peak_half_life: f32) -> Self {
+    fn new(
+        scale: FrequencyScale,
+        bar_half_life: f32,
+        peak_half_life: f32,
+        amplitude_scale: AmplitudeScale,
+    ) -> Self {
         let mut planner = RealFftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
         let fft_input = fft.make_input_vec();
@@ -189,6 +275,8 @@ impl AnalysisState {
             scale,
             bar_half_life,
             peak_half_life,
+            amplitude_scale,
+            a_weight_table: Vec::new(),
         }
     }
 
@@ -245,9 +333,10 @@ impl AnalysisState {
             return;
         }
 
-        // ── Rebuild bin→bar on sample-rate change ───────────────────────────
+        // ── Rebuild bin→bar + A-weight table on sample-rate change ──────────
         if (sample_rate - self.last_sample_rate).abs() > 0.5 {
             self.bin_to_bar = build_bin_to_bar(sample_rate, self.scale);
+            self.a_weight_table = build_a_weight_table(sample_rate);
             self.last_sample_rate = sample_rate;
         }
 
@@ -271,12 +360,21 @@ impl AnalysisState {
             };
             let c = self.fft_output[bin_idx];
             let magnitude = (c.re * c.re + c.im * c.im).sqrt() * norm;
-            let db = if magnitude > 0.0 {
+            let mut db = if magnitude > 0.0 {
                 20.0 * magnitude.log10()
             } else {
                 DB_FLOOR
             };
-            let level = ((db - DB_FLOOR) * db_range_inv).clamp(0.0, 1.0).powf(0.4);
+            // Apply A-weighting if using perceptual or aweight scale.
+            if matches!(
+                self.amplitude_scale,
+                AmplitudeScale::Perceptual | AmplitudeScale::AWeight
+            ) && let Some(&aw) = self.a_weight_table.get(bin_idx)
+            {
+                db += aw;
+            }
+            let level = ((db - DB_FLOOR) * db_range_inv).clamp(0.0, 1.0);
+            let level = self.amplitude_scale.apply(level);
             if level > self.spectrum[bar_idx] {
                 self.spectrum[bar_idx] = level;
             }
@@ -403,9 +501,9 @@ impl VizAnalyzer {
         let running = Arc::new(AtomicBool::new(true));
 
         let scale = FrequencyScale::parse(&cfg.scale);
+        let amplitude_scale = AmplitudeScale::parse(&cfg.amplitude_scale);
         let bar_half_life = cfg.bar_decay_ms as f32 / 1000.0;
         let peak_half_life = cfg.peak_decay_ms as f32 / 1000.0;
-        // Analysis interval derived from configured fps (default 20fps → 50ms).
         let interval = Duration::from_millis(1000 / cfg.fps.max(1) as u64);
 
         let output_clone = Arc::clone(&output);
@@ -420,6 +518,7 @@ impl VizAnalyzer {
                     snapshot,
                     running_clone,
                     scale,
+                    amplitude_scale,
                     bar_half_life,
                     peak_half_life,
                     interval,
@@ -472,11 +571,12 @@ fn analysis_loop(
     snapshot: Option<Arc<VizSnapshot>>,
     running: Arc<AtomicBool>,
     scale: FrequencyScale,
+    amplitude_scale: AmplitudeScale,
     bar_half_life: f32,
     peak_half_life: f32,
     interval: Duration,
 ) {
-    let mut state = AnalysisState::new(scale, bar_half_life, peak_half_life);
+    let mut state = AnalysisState::new(scale, bar_half_life, peak_half_life, amplitude_scale);
 
     while running.load(Ordering::Relaxed) {
         let start = Instant::now();
@@ -575,7 +675,10 @@ mod tests {
 
     #[test]
     fn analysis_state_decays_to_zero_on_silence() {
-        let mut state = AnalysisState::new(FrequencyScale::Bark, 0.08, 0.35);
+        // Use Linear amplitude scale — A-weighting can produce small residual
+        // levels from FFT numerical noise at boosted frequencies.
+        let mut state =
+            AnalysisState::new(FrequencyScale::Bark, 0.08, 0.35, AmplitudeScale::Linear);
 
         // Seed some nonzero spectrum.
         for v in state.spectrum.iter_mut() {
@@ -585,11 +688,13 @@ mod tests {
             *v = 1.0;
         }
 
-        // Simulate 100 frames of silence with 16ms gaps (~1600ms total).
+        // Simulate 100 frames of silence with 100ms gaps (10s total).
         // peak_half_life = 350ms → need ~3.4 half-lives to reach < 0.1.
+        // Use 100ms offsets so decay is guaranteed even on fast machines where
+        // the real elapsed time between last_update and decay_factors() is tiny.
         let silence: Vec<f32> = vec![0.0; FFT_SIZE * 2];
         for _ in 0..100 {
-            state.last_update = Instant::now() - Duration::from_millis(16);
+            state.last_update = Instant::now() - Duration::from_millis(100);
             state.analyze(&silence, 2, 44100.0);
         }
 

@@ -104,6 +104,8 @@ pub struct VisualizerConfig {
     pub fps: u8,
     /// Frequency scale: "bark" (default), "mel", "log", "linear".
     pub scale: String,
+    /// Amplitude scale: "perceptual" (default, A-weighted + gamma), "aweight", "sqrt", "linear".
+    pub amplitude_scale: String,
     /// Bar decay half-life in milliseconds (how fast bars drop).
     pub bar_decay_ms: u32,
     /// Peak decay half-life in milliseconds (how long peaks linger).
@@ -114,9 +116,10 @@ impl Default for VisualizerConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            fps: 20,
+            fps: 60,
             scale: "bark".into(),
-            bar_decay_ms: 45,
+            amplitude_scale: "perceptual".into(),
+            bar_decay_ms: 50,
             peak_decay_ms: 180,
         }
     }

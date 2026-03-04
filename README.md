@@ -153,7 +153,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Gapless** — decode thread keeps the ring buffer alive across track boundaries, AudioUnit never stops
 - **Format support** — FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
 - **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal with embedded album art (halfblock rendering), real-time spectrum analyzer, scrollbar, mouse support (click-to-seek, click-to-play, drag-to-reorder, scrollbar drag, scroll wheel)
-- **Spectrum visualizer** — 80s hi-fi LED-segment spectrum analyzer rendered in the transport area. 64-band FFT with logarithmic frequency mapping, sub-cell resolution using Unicode block characters, tricolor bars (green/yellow/red), peak hold markers, and smooth decay. Configurable FPS, disable with `[visualizer] enabled = false`
+- **Spectrum visualizer** — 80s hi-fi LED-segment spectrum analyzer rendered in the transport area. 48-band FFT on a dedicated analysis thread (never blocks the UI), configurable frequency scale (Bark/Mel/Log/Linear), sub-cell resolution using Unicode block characters, amplitude-based coloring (green/yellow/red near clipping), peak hold markers, and smooth exponential decay. Configurable via `[visualizer]` in config
 - **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, seek, now playing info with album art)
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
 - **Subsonic/Navidrome** — incremental remote library sync (only fetches new albums after first full sync), unified local+remote browsing, lazy parallel downloads. Resilient deduplication — unplugging a local drive demotes tracks to remote-only streaming instead of deleting them; re-scanning re-merges automatically
@@ -353,11 +353,35 @@ Password is prompted by `koan remote login` and saved to `config.local.toml` (gi
 ```toml
 # config.toml
 [visualizer]
-enabled = true   # show spectrum analyzer in transport area (default: true)
-fps = 20         # spectrum update rate (default: 20)
+enabled = true                # show spectrum analyzer in transport area (default: true)
+fps = 60                      # analysis thread update rate in Hz (default: 60)
+scale = "bark"                # frequency scale (default: bark)
+amplitude_scale = "perceptual"  # amplitude scale (default: perceptual)
+bar_decay_ms = 50             # how fast bars drop — half-life in ms (default: 50)
+peak_decay_ms = 180           # how long peak markers linger — half-life in ms (default: 180)
 ```
 
-The spectrum analyzer renders above the transport text when album art is present (giving the transport area enough height). It shows a 64-band FFT with tricolor LED-segment bars and peak hold markers. Set `enabled = false` to hide it.
+The spectrum analyzer renders above the transport text when album art is present. 48-band FFT with sub-cell resolution using Unicode block characters (`▁▂▃▄▅▆▇█`), peak hold markers (`▔`), and smooth exponential decay. Bars are colored by signal level — green at safe headroom, yellow when getting hot, red only near clipping (0dBFS). FFT runs on a dedicated analysis thread so the 60fps UI is never blocked.
+
+**Frequency scales** (`scale`) — controls how FFT bins map to bars (the X axis):
+
+| Scale | Description |
+|-------|-------------|
+| `bark` | Bark psychoacoustic scale — 24 critical bands, matches how your ears group frequencies. Best for music. **(default)** |
+| `mel` | Mel perceptual pitch scale — similar to Bark, widely used in speech/music analysis |
+| `log` | Logarithmic — equal spacing per octave. Familiar if you read spectrograms |
+| `linear` | Linear — equal Hz per bar. Bass is cramped, treble dominates. Analytical use |
+
+**Amplitude scales** (`amplitude_scale`) — controls how magnitudes map to bar height (the Y axis):
+
+| Scale | Description |
+|-------|-------------|
+| `perceptual` | A-weighted (IEC 61672) + gentle gamma curve. Bars reflect perceived loudness — bass and extreme treble are attenuated to match human hearing sensitivity (Fletcher-Munson). **(default)** |
+| `aweight` | Pure A-weighting, linear mapping after. Same frequency correction but no gamma boost to quiet signals |
+| `sqrt` | Square root curve — gentle boost to quiet bands, no frequency correction |
+| `linear` | Raw dB-normalized magnitude. No correction. Quiet stuff barely visible, technically accurate |
+
+Set `enabled = false` to hide the visualizer entirely.
 
 ### Organize patterns
 
