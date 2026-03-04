@@ -10,7 +10,6 @@ Feasibility research and implementation plans for koan's next major features.
 | [02](02-dsp-and-profiles.md) | DSP + Headphone Profiles | ~5-7 days | Insert between decode and ring buffer. `biquad` for parametric EQ. AutoEQ profiles trivially parseable. Fixes ReplayGain never being applied. | Research |
 | [03](03-ansi-visualizers.md) | ANSI Art Visualizers | ~4-6 days | Tap audio on decode thread via mutex buffer. `realfft` for FFT. Spectrogram waterfall reuses cover art halfblock technique. | Research |
 | [04](04-tagging.md) | Tag Editing | ~8-12 days | lofty 0.23 writes fine. vimv-style (TSV + $EDITOR) first, TUI inline editor second. Terminal suspend/resume is standard ratatui pattern. | Research |
-| [05](05-mouse-support.md) | GUI-Grade Mouse Support | ~5-8 days | Foundation already solid. Main gaps: hover (Moved events ignored), right-click menus, drag threshold, seek scrubbing. | Research |
 | [06](06-decoupled-backends.md) | Decoupled Backends | ~6-10 days | Trait-based subsystems. `keyring` for credentials (trivial). Don't abstract SQLite. Custom `AudioBackend` over cpal for bit-perfect. | Research |
 | [07](07-non-tag-metadata.md) | Non-Tag Metadata | ~7-10 days | Last.fm + LRCLIB + Cover Art Archive — all free/open. Radio mode = queue feature. Lyrics is highest ROI. | Research |
 | [08](08-replaygain-wiring.md) | ReplayGain Wiring | ~1 day | All code exists, just not called during decode. Apply gain in `decode_single()` before ring buffer push. ~40-60 line diff. | Ready |
@@ -34,8 +33,7 @@ Feasibility research and implementation plans for koan's next major features.
 
 1. **06 Decoupled Backends** — foundational, unblocks everything
 2. **01 Linux + Audio Backends** — biggest reach expansion
-3. **05 Mouse Support** — incremental, low risk, high polish
-4. **04 Tagging** — vimv phase is self-contained
-5. **02 DSP + Profiles** — builds on audio backend trait
-6. **07 Non-Tag Metadata** — lyrics first, radio mode later
-7. **03 Visualizers** — fun but lowest priority; shares DSP audio tap
+3. **04 Tagging** — vimv phase is self-contained
+4. **02 DSP + Profiles** — builds on audio backend trait
+5. **07 Non-Tag Metadata** — lyrics first, radio mode later
+6. **03 Visualizers** — fun but lowest priority; shares DSP audio tap
