@@ -309,37 +309,57 @@ replaygain = "track"
     }
 
     #[test]
-    fn test_merge_local_overrides_base() {
-        let mut base = Config::default();
-        base.library.folders = vec![PathBuf::from("/base/music")];
-        base.remote.url = "https://base.example.com".into();
+    fn test_deep_merge_local_overrides_base() {
+        // Test deep_merge directly on TOML values (no temp files needed).
+        let base_toml = r#"
+[library]
+folders = ["/base/music"]
 
-        let mut local = Config::default();
-        local.library.folders = vec![PathBuf::from("/local/music")];
-        local.remote.enabled = true;
-        local.remote.url = "https://local.example.com".into();
-        local.remote.username = "admin".into();
+[remote]
+url = "https://base.example.com"
+"#;
+        let local_toml = r#"
+[library]
+folders = ["/local/music"]
 
-        base.merge(local);
+[remote]
+enabled = true
+url = "https://local.example.com"
+username = "admin"
+"#;
 
-        assert_eq!(base.library.folders, vec![PathBuf::from("/local/music")]);
-        assert!(base.remote.enabled);
-        assert_eq!(base.remote.url, "https://local.example.com");
-        assert_eq!(base.remote.username, "admin");
+        let mut base_val: toml::Value = toml::from_str(base_toml).unwrap();
+        let local_val: toml::Value = toml::from_str(local_toml).unwrap();
+        deep_merge(&mut base_val, local_val);
+
+        let cfg: Config = base_val.try_into().unwrap();
+        assert_eq!(cfg.library.folders, vec![PathBuf::from("/local/music")]);
+        assert!(cfg.remote.enabled);
+        assert_eq!(cfg.remote.url, "https://local.example.com");
+        assert_eq!(cfg.remote.username, "admin");
     }
 
     #[test]
-    fn test_merge_empty_fields_dont_clobber() {
-        let mut base = Config::default();
-        base.remote.url = "https://keep.me".into();
-        base.remote.username = "keepuser".into();
+    fn test_deep_merge_missing_keys_preserved() {
+        let base_toml = r#"
+[remote]
+url = "https://keep.me"
+username = "keepuser"
+"#;
+        // Local only sets password — url and username should survive.
+        let local_toml = r#"
+[remote]
+password = "secret"
+"#;
 
-        let local = Config::default(); // empty remote fields
-        base.merge(local);
+        let mut base_val: toml::Value = toml::from_str(base_toml).unwrap();
+        let local_val: toml::Value = toml::from_str(local_toml).unwrap();
+        deep_merge(&mut base_val, local_val);
 
-        // Empty strings shouldn't overwrite.
-        assert_eq!(base.remote.url, "https://keep.me");
-        assert_eq!(base.remote.username, "keepuser");
+        let cfg: Config = base_val.try_into().unwrap();
+        assert_eq!(cfg.remote.url, "https://keep.me");
+        assert_eq!(cfg.remote.username, "keepuser");
+        assert_eq!(cfg.remote.password, "secret");
     }
 
     #[test]
@@ -422,28 +442,33 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,%album%
     }
 
     #[test]
-    fn test_merge_organize_patterns() {
-        let mut base = Config::default();
-        base.organize.default = Some("standard".into());
-        base.organize
-            .patterns
-            .insert("standard".into(), "base-pattern".into());
+    fn test_deep_merge_organize_patterns() {
+        let base_toml = r#"
+[organize]
+default = "standard"
 
-        let mut local = Config::default();
-        local
-            .organize
-            .patterns
-            .insert("custom".into(), "local-pattern".into());
-        local.organize.default = Some("custom".into());
+[organize.patterns]
+standard = "base-pattern"
+"#;
+        let local_toml = r#"
+[organize]
+default = "custom"
 
-        base.merge(local);
+[organize.patterns]
+custom = "local-pattern"
+"#;
 
+        let mut base_val: toml::Value = toml::from_str(base_toml).unwrap();
+        let local_val: toml::Value = toml::from_str(local_toml).unwrap();
+        deep_merge(&mut base_val, local_val);
+
+        let cfg: Config = base_val.try_into().unwrap();
         // Local default wins
-        assert_eq!(base.organize.default.as_deref(), Some("custom"));
-        // Both patterns present (base + local)
-        assert_eq!(base.organize.patterns.len(), 2);
-        assert_eq!(base.organize.patterns["standard"], "base-pattern");
-        assert_eq!(base.organize.patterns["custom"], "local-pattern");
+        assert_eq!(cfg.organize.default.as_deref(), Some("custom"));
+        // Both patterns present (deep merge into [organize.patterns] table)
+        assert_eq!(cfg.organize.patterns.len(), 2);
+        assert_eq!(cfg.organize.patterns["standard"], "base-pattern");
+        assert_eq!(cfg.organize.patterns["custom"], "local-pattern");
     }
 
     #[test]

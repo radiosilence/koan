@@ -160,9 +160,7 @@ fn run_tui(
 
     let target_fps = {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
-        let fps = cfg.playback.target_fps.max(1); // floor at 1 to avoid divide-by-zero
-        eprintln!("[render] target_fps = {fps}");
-        fps
+        cfg.playback.target_fps.max(1) // floor at 1 to avoid divide-by-zero
     };
     let frame_duration = Duration::from_micros(1_000_000 / target_fps as u64);
     let mut next_frame = std::time::Instant::now();
