@@ -266,17 +266,19 @@ fn common_path_prefix(paths: &[String]) -> String {
         return String::new();
     }
     let first = &paths[0];
-    let mut prefix_len = first.len();
+    let mut prefix_chars = first.chars().count();
     for p in &paths[1..] {
-        prefix_len = first
+        prefix_chars = first
             .chars()
             .zip(p.chars())
-            .take(prefix_len)
+            .take(prefix_chars)
             .take_while(|(a, b)| a == b)
             .count();
     }
+    // Convert char count back to byte offset.
+    let prefix_bytes: usize = first.chars().take(prefix_chars).map(|c| c.len_utf8()).sum();
+    let prefix = &first[..prefix_bytes];
     // Walk back to last '/' boundary so we don't cut mid-component.
-    let prefix = &first[..prefix_len];
     match prefix.rfind('/') {
         Some(i) => first[..=i].to_string(),
         None => String::new(),
@@ -284,24 +286,28 @@ fn common_path_prefix(paths: &[String]) -> String {
 }
 
 /// Find the shared prefix length (at `/` boundaries) between two strings.
+/// Returns a **byte offset** into `a` (and `b`) at the last `/` boundary.
 fn shared_prefix_len(a: &str, b: &str) -> usize {
-    let shared = a
+    let shared_chars = a
         .chars()
         .zip(b.chars())
         .take_while(|(x, y)| x == y)
         .count();
-    match a[..shared].rfind('/') {
+    // Convert char count to byte offset.
+    let shared_bytes: usize = a.chars().take(shared_chars).map(|c| c.len_utf8()).sum();
+    match a[..shared_bytes].rfind('/') {
         Some(i) => i + 1,
         None => 0,
     }
 }
 
-/// Truncate a string to `max` chars, adding `…` if truncated.
+/// Truncate a string to at most `max` display chars, adding `…` if truncated.
 fn truncate_path(s: &str, max: usize) -> String {
-    if s.len() <= max {
+    if s.chars().count() <= max {
         s.to_string()
     } else {
-        format!("{}…", &s[..max.saturating_sub(1)])
+        let truncated: String = s.chars().take(max.saturating_sub(1)).collect();
+        format!("{truncated}…")
     }
 }
 
