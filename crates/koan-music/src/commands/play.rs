@@ -186,15 +186,17 @@ fn run_tui(
         // 1. Render
         terminal.draw(|f| tui::ui::render(f, &mut app))?;
 
-        // 2. Drain all input events until frame deadline.
+        // 2. Drain all pending input events, then sleep until frame deadline.
+        //    Always drain with poll(0) first so input is never starved even
+        //    when rendering takes longer than the frame budget.
         let mut last_mouse: Option<crossterm::event::MouseEvent> = None;
         loop {
             let now = std::time::Instant::now();
-            let timeout = next_frame.saturating_duration_since(now);
-            if timeout.is_zero() {
-                break;
-            }
-            if !crossterm::event::poll(timeout)? {
+            let remaining = next_frame.saturating_duration_since(now);
+
+            // Poll: use remaining budget, but always do at least a zero-wait
+            // pass so we never starve input when frames are slow.
+            if !crossterm::event::poll(remaining)? {
                 break;
             }
             match crossterm::event::read()? {

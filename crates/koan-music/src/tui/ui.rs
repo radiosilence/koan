@@ -5,7 +5,6 @@ use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{App, LibraryFocus, Mode};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
-use super::cover_art::CoverArt;
 use super::keys::HintBar;
 use super::library::LibraryView;
 use super::organize::{OrganizeOverlay, organize_popup_rect};
@@ -211,15 +210,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Cover art zoom overlay — fullscreen, 1:1 aspect ratio.
     if app.mode == Mode::CoverArtZoom
-        && let Some(img) = app.art.now_playing_art.cached()
+        && app.art.now_playing_art.cached().is_some()
     {
         Clear.render(area, frame.buffer_mut());
 
         // Use the full area minus 1 row for hint.
         let art_area = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
-        CoverArt::new(img)
-            .centered()
-            .render(art_area, frame.buffer_mut());
+        // Use cached render to avoid Lanczos3 resize every frame.
+        app.art
+            .now_playing_art
+            .render_to_centered(art_area, frame.buffer_mut());
 
         // Hint at bottom.
         let hint_area = Rect::new(

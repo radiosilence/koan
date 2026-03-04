@@ -29,6 +29,8 @@ pub struct CoverArtCache {
     path: Option<PathBuf>,
     image: Option<DynamicImage>,
     rendered: Option<RenderedArt>,
+    /// Separate cache for centered renders (e.g. zoom overlay).
+    rendered_centered: Option<RenderedArt>,
 }
 
 impl Default for CoverArtCache {
@@ -43,6 +45,7 @@ impl CoverArtCache {
             path: None,
             image: None,
             rendered: None,
+            rendered_centered: None,
         }
     }
 
@@ -54,6 +57,7 @@ impl CoverArtCache {
             self.image = koan_core::index::metadata::extract_cover_art(path)
                 .and_then(|bytes| image::load_from_memory(&bytes).ok());
             self.rendered = None; // invalidate render cache on new image
+            self.rendered_centered = None;
         }
         self.image.as_ref()
     }
@@ -87,6 +91,7 @@ impl CoverArtCache {
         self.path = None;
         self.image = None;
         self.rendered = None;
+        self.rendered_centered = None;
     }
 
     /// Render cached art into a buffer. Uses a pre-rendered cell cache
@@ -109,6 +114,36 @@ impl CoverArtCache {
 
         // Blit cached cells.
         if let Some(ref rendered) = self.rendered {
+            for cell in &rendered.cells {
+                if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
+                    area.x + cell.rx,
+                    area.y + cell.ry,
+                )) {
+                    c.set_char('\u{2580}')
+                        .set_style(Style::new().fg(cell.fg).bg(cell.bg));
+                }
+            }
+        }
+    }
+
+    /// Render cached art centered in the given area. Uses a separate pre-rendered
+    /// cell cache from `render_to` so the two can coexist at different sizes.
+    pub fn render_to_centered(&mut self, area: Rect, buf: &mut Buffer) {
+        let Some(ref img) = self.image else { return };
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let needs_render = self
+            .rendered_centered
+            .as_ref()
+            .is_none_or(|r| r.width != area.width || r.height != area.height);
+
+        if needs_render {
+            self.rendered_centered = Some(pre_render(img, area.width, area.height, true));
+        }
+
+        if let Some(ref rendered) = self.rendered_centered {
             for cell in &rendered.cells {
                 if let Some(c) = buf.cell_mut(ratatui::layout::Position::new(
                     area.x + cell.rx,
@@ -201,6 +236,7 @@ impl<'a> CoverArt<'a> {
         }
     }
 
+    #[allow(dead_code)]
     pub fn centered(mut self) -> Self {
         self.center = true;
         self
