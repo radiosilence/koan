@@ -249,6 +249,9 @@ fn download_single_track(
     let progress_state = state.clone();
     let progress_qid = queue_id;
     let bytes_written_progress = bytes_written.clone();
+    let progress_tx = tx.clone();
+    let stream_ready_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stream_ready_flag = stream_ready_sent.clone();
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
         bytes_written_progress.store(downloaded, Ordering::Release);
         progress_state.update_load_state(
@@ -259,6 +262,13 @@ fn download_single_track(
                 bytes_written: bytes_written_progress.clone(),
             },
         );
+        // Signal the player once when enough data is buffered for streaming.
+        if !stream_ready_flag.load(Ordering::Relaxed)
+            && downloaded >= koan_core::player::state::STREAM_THRESHOLD
+        {
+            stream_ready_flag.store(true, Ordering::Relaxed);
+            progress_tx.send(PlayerCommand::TrackStreamReady(progress_qid)).ok();
+        }
     });
 
     if let Err(e) = result {

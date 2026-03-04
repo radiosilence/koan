@@ -565,6 +565,36 @@ impl Player {
         }
     }
 
+    /// Called when enough data has been buffered for streaming playback.
+    /// If the cursor is waiting on this track and nothing is playing, start streaming.
+    pub fn track_stream_ready(&mut self, id: QueueItemId) {
+        if !self.shared_state.is_cursor(id) {
+            return;
+        }
+
+        let is_playing = self.shared_state.playback_state() == PlaybackState::Playing;
+        if is_playing {
+            return; // Already playing something — don't interrupt.
+        }
+
+        match self.shared_state.item_playback_source(id) {
+            Some(PlaybackSource::Streaming { path, bytes_written, total }) => {
+                log::info!("track_stream_ready: starting streaming playback for {:?}", id);
+                if let Err(e) = self.start_streaming_playback(id, &path, bytes_written, total) {
+                    log::error!("track_stream_ready streaming failed: {}", e);
+                }
+            }
+            Some(PlaybackSource::Ready(path)) => {
+                // Download finished between threshold and now — just play normally.
+                log::info!("track_stream_ready: track already ready, starting normal playback for {:?}", id);
+                if let Err(e) = self.start_playback(id, &path, 0) {
+                    log::error!("track_stream_ready playback failed: {}", e);
+                }
+            }
+            None => {} // Not enough data yet — wait.
+        }
+    }
+
     /// Re-read full lofty metadata for a track after its download completes.
     /// Updates the playlist item's tags and track_info with complete metadata.
     /// Called from track_ready() when a streaming track finishes downloading.
@@ -712,6 +742,7 @@ impl Player {
                 self.push_undo(UndoEntry::MovedBatch { entries });
             }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
+            PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
             PlayerCommand::BeginUndoBatch => {
