@@ -4,6 +4,7 @@ pub mod cover_art;
 pub mod event;
 pub mod keys;
 pub mod library;
+pub mod lyrics;
 pub mod organize;
 pub mod picker;
 pub mod queue;

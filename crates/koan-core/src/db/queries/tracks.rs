@@ -224,29 +224,54 @@ pub fn remove_tracks_by_source(conn: &Connection, source: &str) -> Result<usize,
 }
 
 /// Remove scan cache entries and tracks for paths that no longer exist in the given folder.
+///
+/// Remote-backed tracks (those with a `remote_id`) are demoted to remote-only
+/// instead of deleted: their `path` is nulled, `source` set to "remote", and
+/// local-only fields (`mtime`, `size_bytes`) cleared. This preserves streaming
+/// fallback when a local drive is unplugged. When the drive comes back,
+/// `upsert_track` content-match (strategy 3) re-merges the path automatically.
+///
+/// Pure-local tracks (no `remote_id`) are deleted as before.
 pub fn remove_stale_tracks(conn: &Connection, folder: &Path) -> Result<usize, DbError> {
     let folder_str = folder.to_string_lossy();
     let prefix = format!("{}%", folder_str);
 
     // Find tracks in this folder that no longer exist on disk.
+    // Use `path IS NOT NULL` instead of `source = 'local'` to catch all tracks
+    // with local paths regardless of source flag (e.g. merged local+remote rows).
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.path FROM tracks t
-         WHERE t.path LIKE ?1 AND t.source = 'local'",
+        "SELECT t.id, t.path, t.remote_id FROM tracks t
+         WHERE t.path LIKE ?1 AND t.path IS NOT NULL",
     )?;
 
-    let stale: Vec<(i64, String)> = stmt
+    let stale: Vec<(i64, String, Option<String>)> = stmt
         .query_map(params![prefix], |row| {
-            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?,
+            ))
         })?
         .filter_map(|r| r.ok())
-        .filter(|(_, path)| !Path::new(path).exists())
+        .filter(|(_, path, _)| !Path::new(path).exists())
         .collect();
 
     let count = stale.len();
-    for (id, path) in &stale {
-        conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![id])?;
+    for (id, path, remote_id) in &stale {
         conn.execute("DELETE FROM scan_cache WHERE path = ?1", params![path])?;
-        conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
+
+        if remote_id.is_some() {
+            // Demote to remote-only: null out local fields, keep the row for streaming.
+            conn.execute(
+                "UPDATE tracks SET path = NULL, source = 'remote', mtime = NULL, size_bytes = NULL
+                 WHERE id = ?1",
+                params![id],
+            )?;
+        } else {
+            // Pure local — delete entirely.
+            conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![id])?;
+            conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
+        }
     }
 
     Ok(count)
@@ -391,7 +416,7 @@ pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow
 /// Look up a track ID by its local file path.
 pub fn track_id_by_path(conn: &Connection, path: &str) -> Result<Option<i64>, DbError> {
     let result = conn.query_row(
-        "SELECT id FROM tracks WHERE path = ?1",
+        "SELECT id FROM tracks WHERE path = ?1 OR cached_path = ?1 OR remote_url = ?1",
         params![path],
         |row| row.get(0),
     );
@@ -684,5 +709,152 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rid.as_deref(), Some("sub-99"));
+    }
+
+    #[test]
+    fn test_remove_stale_preserves_remote_backed() {
+        let db = test_db();
+
+        // Create a merged local+remote track (path exists in DB but not on disk).
+        let mut meta = sample_meta("Ageispolis", "Aphex Twin", "SAW 85-92");
+        meta.path = Some("/nonexistent/SAW 85-92/Ageispolis.flac".into());
+        meta.remote_id = Some("sub-10".into());
+        meta.remote_url = Some("https://example.com/stream/sub-10".into());
+        let id = upsert_track(&db.conn, &meta).unwrap();
+
+        // Verify it starts as local.
+        let source: String = db
+            .conn
+            .query_row(
+                "SELECT source FROM tracks WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source, "local");
+
+        // Remove stale tracks in the folder — file doesn't exist on disk.
+        let removed = remove_stale_tracks(&db.conn, Path::new("/nonexistent/SAW 85-92")).unwrap();
+        assert_eq!(removed, 1);
+
+        // Track should still exist (not deleted), demoted to remote-only.
+        let row: (
+            Option<String>,
+            String,
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+        ) = db
+            .conn
+            .query_row(
+                "SELECT path, source, mtime, size_bytes, remote_id FROM tracks WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert!(row.0.is_none(), "path should be NULL");
+        assert_eq!(row.1, "remote", "source should be 'remote'");
+        assert!(row.2.is_none(), "mtime should be NULL");
+        assert!(row.3.is_none(), "size_bytes should be NULL");
+        assert_eq!(row.4.as_deref(), Some("sub-10"), "remote_id preserved");
+
+        // Playback should fall through to remote stream.
+        let playback = resolve_playback_path(&db.conn, id).unwrap().unwrap();
+        match playback {
+            PlaybackSource::Remote(url) => assert!(url.contains("sub-10")),
+            _ => panic!("expected Remote playback source"),
+        }
+    }
+
+    #[test]
+    fn test_remove_stale_deletes_pure_local() {
+        let db = test_db();
+
+        // Pure local track — no remote_id.
+        let meta = sample_meta("PureLocal", "Artist", "Album");
+        // sample_meta generates path "/music/Album/PureLocal.flac" which won't exist.
+        let id = upsert_track(&db.conn, &meta).unwrap();
+
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
+
+        let removed = remove_stale_tracks(&db.conn, Path::new("/music/Album")).unwrap();
+        assert_eq!(removed, 1);
+
+        // Track should be fully deleted.
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 0);
+
+        // Verify the row is gone.
+        let exists: bool = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) > 0 FROM tracks WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(!exists, "pure local track should be deleted");
+    }
+
+    #[test]
+    fn test_reattach_on_rescan() {
+        let db = test_db();
+
+        // Create a merged local+remote track with a non-existent path.
+        let mut meta = sample_meta("Xtal", "Aphex Twin", "SAW 85-92");
+        meta.path = Some("/nonexistent/SAW 85-92/Xtal.flac".into());
+        meta.remote_id = Some("sub-20".into());
+        meta.remote_url = Some("https://example.com/stream/sub-20".into());
+        let original_id = upsert_track(&db.conn, &meta).unwrap();
+
+        // Simulate stale removal (drive unplugged).
+        remove_stale_tracks(&db.conn, Path::new("/nonexistent/SAW 85-92")).unwrap();
+
+        // Verify demoted to remote-only.
+        let source: String = db
+            .conn
+            .query_row(
+                "SELECT source FROM tracks WHERE id = ?1",
+                params![original_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(source, "remote");
+
+        // Simulate re-scan: same track shows up again with a path.
+        // upsert_track content match (strategy 3) should re-merge the path.
+        let mut rescan = sample_meta("Xtal", "Aphex Twin", "SAW 85-92");
+        rescan.path = Some("/nonexistent/SAW 85-92/Xtal.flac".into());
+        let rescan_id = upsert_track(&db.conn, &rescan).unwrap();
+
+        // Same row — content match merged it back.
+        assert_eq!(original_id, rescan_id);
+
+        // Source should flip back to "local" since it has a path again.
+        let row: (Option<String>, String, Option<String>) = db
+            .conn
+            .query_row(
+                "SELECT path, source, remote_id FROM tracks WHERE id = ?1",
+                params![rescan_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            row.0.as_deref(),
+            Some("/nonexistent/SAW 85-92/Xtal.flac"),
+            "path re-attached"
+        );
+        assert_eq!(row.1, "local", "source flipped back to local");
+        assert_eq!(row.2.as_deref(), Some("sub-20"), "remote_id preserved");
+
+        // Only 1 track — no duplication.
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
     }
 }

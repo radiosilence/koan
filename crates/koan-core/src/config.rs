@@ -40,6 +40,9 @@ pub struct PlaybackConfig {
     /// Ticker scroll speed in frames-per-second (default: 8).
     /// The title scrolls one character per frame. Higher = faster scroll.
     pub ticker_fps: u8,
+    /// UI render rate in frames-per-second (default: 60).
+    /// Controls how often the TUI redraws. 30, 60, or 120 are typical values.
+    pub target_fps: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -86,6 +89,7 @@ impl Default for PlaybackConfig {
             software_volume: false,
             replaygain: ReplayGainMode::Album,
             ticker_fps: 8,
+            target_fps: 60,
         }
     }
 }
@@ -151,25 +155,27 @@ impl OrganizeConfig {
 }
 
 impl Config {
-    /// Load config.toml then overlay config.local.toml on top.
-    /// Local overrides win — use it for machine-specific paths, credentials, etc.
+    /// Load config.toml then deep-merge config.local.toml on top.
+    /// Only keys actually present in config.local.toml override — missing keys
+    /// keep their values from config.toml (not serde defaults).
     pub fn load() -> Result<Self, ConfigError> {
         let base_path = config_file_path();
         let local_path = config_local_file_path();
 
-        let mut config = if base_path.exists() {
+        let mut base_val: toml::Value = if base_path.exists() {
             let contents = fs::read_to_string(&base_path)?;
             toml::from_str(&contents)?
         } else {
-            Self::default()
+            toml::Value::Table(toml::map::Map::new())
         };
 
         if local_path.exists() {
             let local_contents = fs::read_to_string(&local_path)?;
-            let local: Config = toml::from_str(&local_contents)?;
-            config.merge(local);
+            let local_val: toml::Value = toml::from_str(&local_contents)?;
+            deep_merge(&mut base_val, local_val);
         }
 
+        let config: Config = base_val.try_into()?;
         Ok(config)
     }
 
@@ -202,46 +208,30 @@ impl Config {
         Ok(())
     }
 
-    /// Merge another config on top — non-default/non-empty values from `other` win.
-    fn merge(&mut self, other: Config) {
-        if !other.library.folders.is_empty() {
-            self.library.folders = other.library.folders;
-        }
-        self.playback = other.playback;
-        if other.remote.enabled {
-            self.remote.enabled = true;
-        }
-        if !other.remote.url.is_empty() {
-            self.remote.url = other.remote.url;
-        }
-        if !other.remote.username.is_empty() {
-            self.remote.username = other.remote.username;
-        }
-        if !other.remote.password.is_empty() {
-            self.remote.password = other.remote.password;
-        }
-        if !other.remote.transcode_quality.is_empty() {
-            self.remote.transcode_quality = other.remote.transcode_quality;
-        }
-        if other.remote.cache_dir.is_some() {
-            self.remote.cache_dir = other.remote.cache_dir;
-        }
-        // Organize: merge patterns (local additions/overrides win), override default.
-        for (k, v) in other.organize.patterns {
-            self.organize.patterns.insert(k, v);
-        }
-        if other.organize.default.is_some() {
-            self.organize.default = other.organize.default;
-        }
-        self.visualizer = other.visualizer;
-    }
-
     /// Resolved cache directory — uses explicit setting or defaults to config_dir/cache.
     pub fn cache_dir(&self) -> PathBuf {
         self.remote
             .cache_dir
             .clone()
             .unwrap_or_else(|| config_dir().join("cache"))
+    }
+}
+
+/// Recursively merge `overlay` into `base`. Only keys present in `overlay`
+/// are touched — everything else in `base` is preserved.
+fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
+    match (base, overlay) {
+        (toml::Value::Table(base_map), toml::Value::Table(overlay_map)) => {
+            for (key, overlay_val) in overlay_map {
+                let entry = base_map
+                    .entry(key)
+                    .or_insert(toml::Value::Table(toml::map::Map::new()));
+                deep_merge(entry, overlay_val);
+            }
+        }
+        (base, overlay) => {
+            *base = overlay;
+        }
     }
 }
 
@@ -301,8 +291,8 @@ mod tests {
 
     #[test]
     fn test_load_from_file() {
-        let dir = tmp_dir();
-        let path = dir.join("config.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
         fs::write(
             &path,
             r#"
@@ -318,56 +308,71 @@ replaygain = "track"
         let cfg = Config::load_from(&path).unwrap();
         assert_eq!(cfg.library.folders, vec![PathBuf::from("/tmp/music")]);
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Track);
-        // Remote should be default since not in file.
         assert!(!cfg.remote.enabled);
-
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_partial_toml_uses_defaults() {
-        let dir = tmp_dir();
-        let path = dir.join("partial.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial.toml");
         fs::write(&path, "[playback]\nsoftware_volume = true\n").unwrap();
 
         let cfg = Config::load_from(&path).unwrap();
         assert!(cfg.playback.software_volume);
-
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn test_merge_local_overrides_base() {
-        let mut base = Config::default();
-        base.library.folders = vec![PathBuf::from("/base/music")];
-        base.remote.url = "https://base.example.com".into();
+    fn test_deep_merge_local_overrides_base() {
+        // Test deep_merge directly on TOML values (no temp files needed).
+        let base_toml = r#"
+[library]
+folders = ["/base/music"]
 
-        let mut local = Config::default();
-        local.library.folders = vec![PathBuf::from("/local/music")];
-        local.remote.enabled = true;
-        local.remote.url = "https://local.example.com".into();
-        local.remote.username = "admin".into();
+[remote]
+url = "https://base.example.com"
+"#;
+        let local_toml = r#"
+[library]
+folders = ["/local/music"]
 
-        base.merge(local);
+[remote]
+enabled = true
+url = "https://local.example.com"
+username = "admin"
+"#;
 
-        assert_eq!(base.library.folders, vec![PathBuf::from("/local/music")]);
-        assert!(base.remote.enabled);
-        assert_eq!(base.remote.url, "https://local.example.com");
-        assert_eq!(base.remote.username, "admin");
+        let mut base_val: toml::Value = toml::from_str(base_toml).unwrap();
+        let local_val: toml::Value = toml::from_str(local_toml).unwrap();
+        deep_merge(&mut base_val, local_val);
+
+        let cfg: Config = base_val.try_into().unwrap();
+        assert_eq!(cfg.library.folders, vec![PathBuf::from("/local/music")]);
+        assert!(cfg.remote.enabled);
+        assert_eq!(cfg.remote.url, "https://local.example.com");
+        assert_eq!(cfg.remote.username, "admin");
     }
 
     #[test]
-    fn test_merge_empty_fields_dont_clobber() {
-        let mut base = Config::default();
-        base.remote.url = "https://keep.me".into();
-        base.remote.username = "keepuser".into();
+    fn test_deep_merge_missing_keys_preserved() {
+        let base_toml = r#"
+[remote]
+url = "https://keep.me"
+username = "keepuser"
+"#;
+        // Local only sets password — url and username should survive.
+        let local_toml = r#"
+[remote]
+password = "secret"
+"#;
 
-        let local = Config::default(); // empty remote fields
-        base.merge(local);
+        let mut base_val: toml::Value = toml::from_str(base_toml).unwrap();
+        let local_val: toml::Value = toml::from_str(local_toml).unwrap();
+        deep_merge(&mut base_val, local_val);
 
-        // Empty strings shouldn't overwrite.
-        assert_eq!(base.remote.url, "https://keep.me");
-        assert_eq!(base.remote.username, "keepuser");
+        let cfg: Config = base_val.try_into().unwrap();
+        assert_eq!(cfg.remote.url, "https://keep.me");
+        assert_eq!(cfg.remote.username, "keepuser");
+        assert_eq!(cfg.remote.password, "secret");
     }
 
     #[test]
@@ -450,28 +455,33 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,%album%
     }
 
     #[test]
-    fn test_merge_organize_patterns() {
-        let mut base = Config::default();
-        base.organize.default = Some("standard".into());
-        base.organize
-            .patterns
-            .insert("standard".into(), "base-pattern".into());
+    fn test_deep_merge_organize_patterns() {
+        let base_toml = r#"
+[organize]
+default = "standard"
 
-        let mut local = Config::default();
-        local
-            .organize
-            .patterns
-            .insert("custom".into(), "local-pattern".into());
-        local.organize.default = Some("custom".into());
+[organize.patterns]
+standard = "base-pattern"
+"#;
+        let local_toml = r#"
+[organize]
+default = "custom"
 
-        base.merge(local);
+[organize.patterns]
+custom = "local-pattern"
+"#;
 
+        let mut base_val: toml::Value = toml::from_str(base_toml).unwrap();
+        let local_val: toml::Value = toml::from_str(local_toml).unwrap();
+        deep_merge(&mut base_val, local_val);
+
+        let cfg: Config = base_val.try_into().unwrap();
         // Local default wins
-        assert_eq!(base.organize.default.as_deref(), Some("custom"));
-        // Both patterns present (base + local)
-        assert_eq!(base.organize.patterns.len(), 2);
-        assert_eq!(base.organize.patterns["standard"], "base-pattern");
-        assert_eq!(base.organize.patterns["custom"], "local-pattern");
+        assert_eq!(cfg.organize.default.as_deref(), Some("custom"));
+        // Both patterns present (deep merge into [organize.patterns] table)
+        assert_eq!(cfg.organize.patterns.len(), 2);
+        assert_eq!(cfg.organize.patterns["standard"], "base-pattern");
+        assert_eq!(cfg.organize.patterns["custom"], "local-pattern");
     }
 
     #[test]

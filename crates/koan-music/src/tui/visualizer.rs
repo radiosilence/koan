@@ -163,8 +163,7 @@ impl VisualizerState {
 
             // Magnitude in dB (normalized by FFT size for proper scaling).
             let c = self.fft_output[bin_idx];
-            let magnitude =
-                (c.re * c.re + c.im * c.im).sqrt() / (FFT_SIZE as f32 / 2.0);
+            let magnitude = (c.re * c.re + c.im * c.im).sqrt() / (FFT_SIZE as f32 / 2.0);
             let db = if magnitude > 0.0 {
                 20.0 * magnitude.log10()
             } else {
@@ -361,9 +360,7 @@ impl Widget for SpectrumWidget<'_> {
                 } else {
                     // Check for peak marker in this cell.
                     let peak_cell = peak_half / 2;
-                    if peak_cell == cell_from_bottom
-                        && peak_half > half_cells
-                    {
+                    if peak_cell == cell_from_bottom && peak_half > half_cells {
                         buf[(x, y)]
                             .set_char('▔')
                             .set_style(self.theme.spectrum_peak);

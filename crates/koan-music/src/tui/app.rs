@@ -15,6 +15,7 @@ use koan_core::player::state::{
 };
 
 use super::library::LibraryState;
+use super::lyrics::LyricsState;
 use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect};
 use super::queue;
 use super::theme::Theme;
@@ -70,6 +71,12 @@ pub struct DragState {
     pub current_y: u16,
     /// True if we're dragging a multi-selection group.
     pub multi: bool,
+    /// Offset of the clicked item within the sorted selection.
+    /// E.g. if selection is [3,4,5] and you click on 4, anchor_offset = 1.
+    pub anchor_offset: usize,
+    /// The last desired group-start index during drag.
+    /// Used to avoid redundant moves when the mouse hasn't crossed a row boundary.
+    pub last_group_start: Option<usize>,
 }
 
 /// Which UI element the mouse cursor is currently hovering over.
@@ -214,6 +221,15 @@ pub struct App {
     /// Visualizer state (spectrum bars, peaks, VU levels).
     pub visualizer: VisualizerState,
 
+    /// Lyrics panel state.
+    pub lyrics: LyricsState,
+
+    /// Whether the lyrics side panel is visible (toggled with `L`).
+    pub lyrics_panel: bool,
+
+    /// Receiver for background lyrics fetch results.
+    pub lyrics_rx: Option<crossbeam_channel::Receiver<Option<koan_core::lyrics::Lyrics>>>,
+
     /// Mouse hover state — updated on MouseEventKind::Moved.
     pub hover: HoverState,
 
@@ -225,6 +241,11 @@ pub struct App {
     ticker_divisor: u8,
     /// Track path used to detect track changes for ticker reset.
     ticker_last_path: Option<PathBuf>,
+
+    /// Ticks per second (frame rate), used for animation divisors.
+    ticks_per_sec: u8,
+    /// Raw frame counter (always increments).
+    frame_count: u32,
 
     /// Set of favourite track paths, loaded from DB on startup.
     pub favourites: std::collections::HashSet<PathBuf>,
@@ -242,6 +263,7 @@ impl App {
         tx: Sender<PlayerCommand>,
         log_buffer: Arc<Mutex<Vec<String>>>,
         db_path: PathBuf,
+        ticks_per_sec: u8,
     ) -> Self {
         Self {
             mode: Mode::Normal,
@@ -274,16 +296,20 @@ impl App {
             drop_progress: None,
             viz_buffer,
             visualizer: VisualizerState::new(),
+            lyrics: LyricsState::default(),
+            lyrics_panel: false,
+            lyrics_rx: None,
             hover: HoverState::default(),
             ticker_offset: 0,
             ticker_tick: 0,
             ticker_divisor: {
                 let cfg = koan_core::config::Config::load().unwrap_or_default();
                 let fps = cfg.playback.ticker_fps.max(1);
-                // Tick interval is 50ms (20 ticks/sec). Divisor = 20 / fps.
-                (20u8 / fps).max(1)
+                (ticks_per_sec / fps).max(1)
             },
             ticker_last_path: None,
+            ticks_per_sec,
+            frame_count: 0,
             favourites: std::collections::HashSet::new(),
             viz_config: koan_core::config::Config::load()
                 .unwrap_or_default()
@@ -341,7 +367,14 @@ impl App {
         // Refresh visible queue cache so all tick logic sees current state.
         self.refresh_visible_queue();
 
-        self.spinner_tick = self.spinner_tick.wrapping_add(1);
+        self.frame_count = self.frame_count.wrapping_add(1);
+        // Rate-limit spinner to ~10 Hz regardless of frame rate.
+        if self
+            .frame_count
+            .is_multiple_of((self.ticks_per_sec as u32 / 10).max(1))
+        {
+            self.spinner_tick = self.spinner_tick.wrapping_add(1);
+        }
 
         // Ticker animation: advance one character every 3 ticks (~150ms).
         // Reset when the playing track changes so new titles start from the beginning.
@@ -428,6 +461,111 @@ impl App {
                     self.visualizer.decay_to_zero();
                 }
                 self.last_viz_update = std::time::Instant::now();
+            }
+        }
+
+        // Check for background lyrics fetch results.
+        if let Some(ref rx) = self.lyrics_rx
+            && let Ok(result) = rx.try_recv()
+        {
+            self.lyrics.set_result(result);
+            self.lyrics_rx = None;
+        }
+
+        // Trigger lyrics fetch on track change.
+        if self.lyrics_panel {
+            let current_playing_path = self
+                .queue
+                .vq_cache
+                .entries
+                .iter()
+                .find(|e| e.status == QueueEntryStatus::Playing)
+                .map(|e| e.path.clone());
+
+            if current_playing_path.is_some() && current_playing_path != self.lyrics.track_path {
+                self.lyrics.track_path = current_playing_path;
+                self.lyrics.fetching = true;
+                self.lyrics.result = None;
+                self.lyrics.lrc_lines.clear();
+
+                // Spawn background fetch.
+                if let Some(entry) = self
+                    .queue
+                    .vq_cache
+                    .entries
+                    .iter()
+                    .find(|e| e.status == QueueEntryStatus::Playing)
+                {
+                    let artist = entry.artist.clone();
+                    let title = entry.title.clone();
+                    let album = entry.album.clone();
+                    let duration_secs = entry.duration_ms.unwrap_or(0) / 1000;
+                    let db_path = self.db_path.clone();
+                    let track_path = entry.path.clone();
+
+                    let (tx, rx) = crossbeam_channel::bounded(1);
+                    self.lyrics_rx = Some(rx);
+
+                    let log_clone = self.log_buffer.clone();
+                    std::thread::Builder::new()
+                        .name("koan-lyrics".into())
+                        .spawn(move || {
+                            let result = (|| -> Option<koan_core::lyrics::Lyrics> {
+                                let db = match koan_core::db::connection::Database::open(&db_path) {
+                                    Ok(db) => db,
+                                    Err(e) => {
+                                        if let Ok(mut logs) = log_clone.lock() {
+                                            logs.push(format!("[lyrics] db open error: {e}"));
+                                        }
+                                        return None;
+                                    }
+                                };
+                                let track_id = match koan_core::db::queries::track_id_by_path(
+                                    &db.conn,
+                                    &track_path.to_string_lossy(),
+                                ) {
+                                    Ok(Some(id)) => id,
+                                    Ok(None) => {
+                                        if let Ok(mut logs) = log_clone.lock() {
+                                            logs.push(format!(
+                                                "[lyrics] track not in db: {}",
+                                                track_path.display()
+                                            ));
+                                        }
+                                        return None;
+                                    }
+                                    Err(e) => {
+                                        if let Ok(mut logs) = log_clone.lock() {
+                                            logs.push(format!(
+                                                "[lyrics] track lookup error: {e}"
+                                            ));
+                                        }
+                                        return None;
+                                    }
+                                };
+                                match koan_core::lyrics::fetch_lyrics(
+                                    &db.conn,
+                                    track_id,
+                                    &artist,
+                                    &title,
+                                    &album,
+                                    duration_secs,
+                                ) {
+                                    Ok(lyrics) => Some(lyrics),
+                                    Err(e) => {
+                                        if let Ok(mut logs) = log_clone.lock() {
+                                            logs.push(format!(
+                                                "[lyrics] fetch failed for '{artist} - {title}': {e}"
+                                            ));
+                                        }
+                                        None
+                                    }
+                                }
+                            })();
+                            let _ = tx.send(result);
+                        })
+                        .ok();
+                }
             }
         }
 
@@ -533,6 +671,12 @@ impl App {
             }
             KeyCode::Char('l') => {
                 self.open_library();
+            }
+            KeyCode::Char('L') => {
+                self.lyrics_panel = !self.lyrics_panel;
+                if self.lyrics_panel {
+                    self.lyrics.track_path = None; // Force fetch on next tick
+                }
             }
             KeyCode::Up => {
                 let visible = self.visible_queue();
@@ -1251,6 +1395,14 @@ impl App {
                         if let Some(entry) = visible.get(first) {
                             self.queue.anchor_id = Some(entry.id);
                         }
+                        // Start drag so the album group can be reordered.
+                        self.queue.drag = Some(DragState {
+                            from_index: first,
+                            current_y: event.row,
+                            multi: true,
+                            anchor_offset: 0,
+                            last_group_start: Some(first),
+                        });
                     }
                     return;
                 };
@@ -1297,10 +1449,27 @@ impl App {
                     self.queue.cursor = idx;
 
                     let multi = self.queue.selected_ids.len() > 1;
+                    let anchor_offset = if multi {
+                        let mut indices: Vec<usize> = self.selected_indices().into_iter().collect();
+                        indices.sort_unstable();
+                        let first = indices.first().copied().unwrap_or(idx);
+                        idx.saturating_sub(first)
+                    } else {
+                        0
+                    };
                     self.queue.drag = Some(DragState {
                         from_index: idx,
                         current_y: event.row,
                         multi,
+                        anchor_offset,
+                        last_group_start: if multi {
+                            let mut indices: Vec<usize> =
+                                self.selected_indices().into_iter().collect();
+                            indices.sort_unstable();
+                            indices.first().copied()
+                        } else {
+                            Some(idx)
+                        },
                     });
                 }
             }
@@ -1308,8 +1477,12 @@ impl App {
                 self.scroll_to_scrollbar_y(event.row);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                let drag_info = self.queue.drag.as_ref().map(|d| (d.from_index, d.multi));
-                if let Some((from_index, _multi)) = drag_info {
+                let drag_info = self
+                    .queue
+                    .drag
+                    .as_ref()
+                    .map(|d| (d.from_index, d.multi, d.anchor_offset));
+                if let Some((from_index, _multi, anchor_offset)) = drag_info {
                     if let Some(ref mut drag) = self.queue.drag {
                         drag.current_y = event.row;
                     }
@@ -1339,24 +1512,47 @@ impl App {
                             self.queue.scroll_offset,
                             event.row,
                         ) {
-                            let to_id = visible.get(to_idx).map(|e| e.id);
-                            let should_move = if self.queue.selected_ids.len() > 1 {
-                                // Multi-drag: only move when target is outside the selection.
-                                to_id.is_none_or(|id| !self.queue.selected_ids.contains(&id))
-                            } else {
-                                to_idx != from_index
-                            };
+                            if self.queue.selected_ids.len() > 1 {
+                                // Multi-drag: compute desired group start from anchor offset
+                                // so the clicked item stays under the mouse cursor.
+                                let desired_start = to_idx.saturating_sub(anchor_offset);
+                                let last_start =
+                                    self.queue.drag.as_ref().and_then(|d| d.last_group_start);
 
-                            if should_move {
-                                // Open an undo batch on the first reorder move.
-                                if !self.drag_undo_active {
-                                    self.tx.send(PlayerCommand::BeginUndoBatch).ok();
-                                    self.drag_undo_active = true;
+                                if Some(desired_start) != last_start {
+                                    if !self.drag_undo_active {
+                                        self.tx.send(PlayerCommand::BeginUndoBatch).ok();
+                                        self.drag_undo_active = true;
+                                    }
+
+                                    // Compute target index for send_move_selected.
+                                    let mut indices: Vec<usize> =
+                                        self.selected_indices().into_iter().collect();
+                                    indices.sort_unstable();
+                                    let count = indices.len();
+                                    let first = indices.first().copied().unwrap_or(0);
+
+                                    let target = if desired_start > first {
+                                        // Moving down: place after this index.
+                                        (desired_start + count - 1)
+                                            .min(visible.len().saturating_sub(1))
+                                    } else {
+                                        // Moving up: place at this index.
+                                        desired_start
+                                    };
+
+                                    self.send_move_selected(target);
+                                    if let Some(ref mut drag) = self.queue.drag {
+                                        drag.last_group_start = Some(desired_start);
+                                    }
                                 }
-
-                                if self.queue.selected_ids.len() > 1 {
-                                    self.send_move_selected(to_idx);
-                                } else {
+                            } else {
+                                // Single-track drag.
+                                if to_idx != from_index {
+                                    if !self.drag_undo_active {
+                                        self.tx.send(PlayerCommand::BeginUndoBatch).ok();
+                                        self.drag_undo_active = true;
+                                    }
                                     self.send_move(from_index, to_idx);
                                     self.queue.cursor = to_idx;
                                     self.select_single(to_idx);

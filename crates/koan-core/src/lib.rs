@@ -4,6 +4,7 @@ pub mod credentials;
 pub mod db;
 pub mod format;
 pub mod index;
+pub mod lyrics;
 pub mod organize;
 pub mod player;
 pub mod remote;

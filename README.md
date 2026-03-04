@@ -58,6 +58,8 @@ koan remote sync
 
 Remote and local tracks merge seamlessly into one library — if the same track exists in both sources (matched by artist + album + title + track number), it becomes a single entry. Local files always take playback priority; remote is only used as a fallback if the local file is missing. Remote-only tracks download on first play and cache locally — subsequent plays are instant.
 
+Syncs are **incremental by default** — after the first full sync, subsequent runs only fetch albums added since the last sync. Use `--full` to force a complete re-sync. If a local drive is unplugged, tracks with remote backing are demoted to remote-only (streaming fallback) instead of deleted; when the drive comes back, the next scan re-merges them automatically.
+
 You can use both sources together. Run `koan remote sync` periodically (or after adding music to your server) to pull new tracks.
 
 ### Play something
@@ -82,7 +84,7 @@ The TUI launches immediately — no waiting. If tracks need downloading (remote 
 
 kōan is built around a full-screen terminal interface. The transport bar shows what's playing with album art (halfblock rendering) and a real-time spectrum analyzer, the queue groups tracks by album, and a hint bar at the bottom shows available keys for the current mode.
 
-**The basics:** `space` to pause, `<`/`>` to skip tracks, `,`/`.` or arrow keys to seek. `p` opens a fuzzy track picker, `a` for albums, `r` for artists. `l` opens the library browser for tree-style browsing. `i` shows track info with cover art. `q` to quit.
+**The basics:** `space` to pause, `<`/`>` to skip tracks, `,`/`.` or arrow keys to seek. `p` opens a fuzzy track picker, `a` for albums, `r` for artists. `l` opens the library browser for tree-style browsing. `L` opens a lyrics panel. `i` shows track info with cover art. `q` to quit.
 
 **Building a queue:** Use the pickers (`p`/`a`/`r`) or library browser (`l`) to find music. `Enter` appends to the queue, `Ctrl+Enter` appends and starts playing, `Ctrl+R` replaces the entire queue. You can also drag files from Finder straight into the terminal.
 
@@ -154,11 +156,12 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Spectrum visualizer** — 80s hi-fi LED-segment spectrum analyzer rendered in the transport area. 64-band FFT with logarithmic frequency mapping, sub-cell resolution using Unicode block characters, tricolor bars (green/yellow/red), peak hold markers, and smooth decay. Configurable FPS, disable with `[visualizer] enabled = false`
 - **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, seek, now playing info with album art)
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
-- **Subsonic/Navidrome** — parallel remote library sync, unified local+remote browsing, lazy parallel downloads
+- **Subsonic/Navidrome** — incremental remote library sync (only fetches new albums after first full sync), unified local+remote browsing, lazy parallel downloads. Resilient deduplication — unplugging a local drive demotes tracks to remote-only streaming instead of deleting them; re-scanning re-merges automatically
 - **Format string engine** — fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for library views and file organization
 - **File organization** — in-TUI organize modal: select tracks → context menu → pick a named pattern → preview moves → execute. Playlist paths update live, playback continues uninterrupted
 - **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag, undo/redo (Ctrl+Z/Y, 100-deep stack covering all playlist operations). Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward). Drag/drop files from Finder into the terminal to add them to the queue
 - **Track deduplication** — 3-strategy match (path → remote ID → content) merges local and remote into one DB row. No duplicates in search or browse. Playback priority: local file → cached download → remote stream
+- **Lyrics** — toggle a lyrics side panel with `L`. Fetches synced (LRC) or plain lyrics automatically; synced lyrics highlight the current line and scroll with playback. Lyrics are cached in the database per track
 - **Proper artist handling** — track artist stored separately from album artist; compilations/VA albums display correctly
 
 ## Architecture
@@ -219,7 +222,8 @@ koan library                  # library statistics
 
 # remote
 koan remote login URL user    # authenticate with Subsonic/Navidrome server
-koan remote sync              # sync remote library to local database
+koan remote sync              # incremental sync (only new albums since last sync)
+koan remote sync --full       # full re-sync of entire remote library
 koan remote status            # show remote server info
 
 # utilities
@@ -248,6 +252,7 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `z`     | zoom album art         |
 | `Ctrl+Z` | undo last queue change |
 | `l`     | library browser        |
+| `L`     | lyrics panel           |
 | `f`     | filter library (in library mode) |
 | `e`     | edit queue             |
 | `g`     | jump to start          |

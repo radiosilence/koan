@@ -5,9 +5,9 @@ use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{App, LibraryFocus, Mode};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
-use super::cover_art::CoverArt;
 use super::keys::HintBar;
 use super::library::LibraryView;
+use super::lyrics::LyricsPanel;
 use super::organize::{OrganizeOverlay, organize_popup_rect};
 use super::picker::{PickerOverlay, picker_popup_rect};
 use super::queue::QueueView;
@@ -125,9 +125,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         frame.render_widget(spectrum, spectrum_area);
     }
 
-    // Content area: library + queue side-by-side, or just queue.
+    // Content area: library + queue side-by-side, or just queue, with optional lyrics panel.
     let content_area = chunks[1];
     let show_library = app.mode == Mode::LibraryBrowse && app.library.is_some();
+    let show_lyrics = app.lyrics_panel;
 
     if show_library {
         let panes = Layout::horizontal([
@@ -154,6 +155,20 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
         // Queue pane.
         render_queue(frame, app, panes[1]);
+    } else if show_lyrics {
+        let panes = Layout::horizontal([
+            Constraint::Percentage(60), // queue
+            Constraint::Percentage(40), // lyrics
+        ])
+        .split(content_area);
+
+        app.layout.queue_area = panes[0];
+        render_queue(frame, app, panes[0]);
+
+        // Lyrics panel.
+        let pos_ms = app.state.position_ms();
+        let lyrics_panel = LyricsPanel::new(&app.lyrics, pos_ms, &app.theme, app.spinner_tick);
+        frame.render_widget(lyrics_panel, panes[1]);
     } else {
         app.layout.queue_area = content_area;
         render_queue(frame, app, content_area);
@@ -228,16 +243,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Cover art zoom overlay — fullscreen, 1:1 aspect ratio.
-    if app.mode == Mode::CoverArtZoom
-        && let Some(img) = app.art.now_playing_art.cached()
-    {
+    if app.mode == Mode::CoverArtZoom && app.art.now_playing_art.cached().is_some() {
         Clear.render(area, frame.buffer_mut());
 
         // Use the full area minus 1 row for hint.
         let art_area = Rect::new(area.x, area.y, area.width, area.height.saturating_sub(1));
-        CoverArt::new(img)
-            .centered()
-            .render(art_area, frame.buffer_mut());
+        // Use cached render to avoid Lanczos3 resize every frame.
+        app.art
+            .now_playing_art
+            .render_to_centered(art_area, frame.buffer_mut());
 
         // Hint at bottom.
         let hint_area = Rect::new(
