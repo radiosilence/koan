@@ -171,7 +171,7 @@ impl VisualizerState {
             };
             let level = ((db - DB_FLOOR) / (DB_CEIL - DB_FLOOR))
                 .clamp(0.0, 1.0)
-                .powf(0.6);
+                .powf(0.4);
 
             // Take the max of all bins mapping to this bar.
             if level > self.spectrum[bar_idx] {
@@ -262,57 +262,61 @@ impl<'a> SpectrumWidget<'a> {
     }
 }
 
-/// Vertical fractional block characters for sub-cell resolution (index 0 = empty).
-const VBLOCKS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-
 impl Widget for SpectrumWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {
             return;
         }
 
-        let num_bars = self.state.spectrum.len();
-        let width = area.width as usize;
-        if width == 0 || num_bars == 0 {
+        let num_bands = self.state.spectrum.len();
+        if num_bands == 0 {
             return;
         }
 
         let height = area.height as f32;
 
-        // Each bar occupies one column. We map every column in [0..width] to a
-        // spectrum bar value — either averaging (downsample) or interpolating
-        // (upsample) so there are never any empty gap columns.
-        for col in 0..width {
-            let (bar_val, peak_val) = if width <= num_bars {
-                // Downsample: each display column maps to one or more bands.
-                // Average all bands that fall into this column's bucket.
-                let start = col * num_bars / width;
-                let end = ((col + 1) * num_bars / width).min(num_bars);
-                let end = end.max(start + 1); // always at least one band
+        // Each bar is 1 column wide with a 1-column gap: bar, gap, bar, gap...
+        // This gives the retro LED-segment look.
+        let num_display_bars = (area.width as usize).div_ceil(2);
+        if num_display_bars == 0 {
+            return;
+        }
+
+        for bar_idx in 0..num_display_bars {
+            let x = area.x + (bar_idx as u16) * 2;
+            if x >= area.x + area.width {
+                break;
+            }
+
+            // Map this display bar to spectrum band(s).
+            let (bar_val, peak_val) = if num_display_bars <= num_bands {
+                // Downsample: average bands in this bucket.
+                let start = bar_idx * num_bands / num_display_bars;
+                let end = ((bar_idx + 1) * num_bands / num_display_bars).max(start + 1);
                 let count = end - start;
                 let bv = self.state.spectrum[start..end].iter().sum::<f32>() / count as f32;
                 let pv = self.state.peaks[start..end].iter().sum::<f32>() / count as f32;
                 (bv, pv)
             } else {
                 // Upsample: interpolate between adjacent bands.
-                let t = col as f32 * (num_bars - 1) as f32 / (width - 1) as f32;
+                let t = if num_display_bars > 1 {
+                    bar_idx as f32 * (num_bands - 1) as f32 / (num_display_bars - 1) as f32
+                } else {
+                    0.0
+                };
                 let lo = t.floor() as usize;
-                let hi = (lo + 1).min(num_bars - 1);
+                let hi = (lo + 1).min(num_bands - 1);
                 let frac = t - lo as f32;
                 let bv = self.state.spectrum[lo] * (1.0 - frac) + self.state.spectrum[hi] * frac;
                 let pv = self.state.peaks[lo] * (1.0 - frac) + self.state.peaks[hi] * frac;
                 (bv, pv)
             };
 
-            // Bar height in sub-cell units (8 sub-cells per cell).
-            let bar_subcells = (bar_val * height * 8.0).round() as usize;
-            let full_cells = bar_subcells / 8;
-            let frac = bar_subcells % 8;
+            // Bar height in full cells (no sub-cell fractional blocks — cleaner look).
+            let bar_cells = (bar_val * height).round() as usize;
 
             // Peak position in cells from bottom.
             let peak_cell = (peak_val * height).round() as u16;
-
-            let x = area.x + col as u16;
 
             // Render from bottom to top.
             for row in 0..area.height {
@@ -329,20 +333,15 @@ impl Widget for SpectrumWidget<'_> {
                     self.theme.spectrum_high
                 };
 
-                if (cell_from_bottom as usize) < full_cells {
-                    // Half-block for retro LED-segment look: bar in left half,
-                    // visual gap on right half of each cell column.
-                    buf[(x, y)].set_char('▌').set_style(style);
-                } else if cell_from_bottom as usize == full_cells && frac > 0 {
-                    // Fractional block at the top of the bar.
-                    buf[(x, y)].set_char(VBLOCKS[frac]).set_style(style);
-                } else if cell_from_bottom == peak_cell && peak_cell > full_cells as u16 {
+                if (cell_from_bottom as usize) < bar_cells {
+                    buf[(x, y)].set_char('█').set_style(style);
+                } else if cell_from_bottom == peak_cell && peak_cell > bar_cells as u16 {
                     // Peak marker.
                     buf[(x, y)]
                         .set_char('▔')
                         .set_style(self.theme.spectrum_peak);
                 }
-                // else: leave empty (transparent)
+                // else: leave empty — gap columns are naturally empty
             }
         }
     }
