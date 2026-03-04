@@ -1222,6 +1222,14 @@ impl App {
                         if let Some(entry) = visible.get(first) {
                             self.queue.anchor_id = Some(entry.id);
                         }
+                        // Start drag so the album group can be reordered.
+                        self.queue.drag = Some(DragState {
+                            from_index: first,
+                            current_y: event.row,
+                            multi: true,
+                            anchor_offset: 0,
+                            last_group_start: Some(first),
+                        });
                     }
                     return;
                 };
