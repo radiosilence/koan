@@ -2,7 +2,12 @@
 
 A music player for people who give a shit about audio quality.
 
+<img width="874" height="942" alt="Screenshot 2026-03-04 at 18 30 07" src="https://github.com/user-attachments/assets/99782de3-5683-4dd9-97b6-10782e8e4099" />
+
+
 Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library indexing, Subsonic/Navidrome integration, fb2k-style format strings. No Electron. No subscriptions. No bullshit.
+
+<img width="406" height="182" alt="Screenshot 2026-03-04 at 18 30 32" src="https://github.com/user-attachments/assets/d4fff1f7-7c1f-4aaa-87aa-41bd2b9c22f7" />
 
 ## Getting started
 
@@ -96,6 +101,8 @@ kōan is built around a full-screen terminal interface. The transport bar shows 
 
 ## How it compares
 
+<img width="815" height="598" alt="Screenshot 2026-03-04 at 18 30 43" src="https://github.com/user-attachments/assets/9dab1d13-5d48-4e60-8625-7d72dd2e7957" />
+
 No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-style format strings, and file organization in one binary. Most either need a daemon, lack remote support, or skip the audiophile bits.
 
 ### TUI / terminal players
@@ -144,6 +151,8 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Only TUI with file organization.** No other terminal player can rename/reorganize your library from inside the player.
 - **Only TUI with queue undo/redo.** 100-deep stack. DeaDBeeF added this in v1.10.0 (2025) — no TUI has it.
 - **Only TUI with Finder drag & drop.** Drop files from macOS Finder directly into the terminal to enqueue.
+
+<img width="768" height="612" alt="Screenshot 2026-03-04 at 18 31 01" src="https://github.com/user-attachments/assets/0ad4879e-815f-42f3-8ebe-f6d01616bc96" />
 
 ---
 
