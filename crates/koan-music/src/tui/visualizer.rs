@@ -213,16 +213,18 @@ impl Widget for SpectrumWidget<'_> {
                     self.theme.spectrum_high // red — clipping danger
                 };
 
-                if fill > 0 {
+                // Peak marker takes priority over bar fill — it renders on
+                // top like a real LED meter's hold indicator.
+                let peak_cell = peak_eighths / 8;
+                let is_peak_cell =
+                    peak_cell == cell_from_bottom && peak_eighths >= eighths && peak_eighths > 0;
+
+                if is_peak_cell {
+                    buf[(x, y)]
+                        .set_char('▔')
+                        .set_style(self.theme.spectrum_peak);
+                } else if fill > 0 {
                     buf[(x, y)].set_char(EIGHTH_BLOCKS[fill]).set_style(style);
-                } else {
-                    // Check for peak marker in this cell.
-                    let peak_cell = peak_eighths / 8;
-                    if peak_cell == cell_from_bottom && peak_eighths > eighths {
-                        buf[(x, y)]
-                            .set_char('▔')
-                            .set_style(self.theme.spectrum_peak);
-                    }
                 }
             }
         }
