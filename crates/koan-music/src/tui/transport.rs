@@ -188,10 +188,10 @@ impl Widget for TransportBar<'_> {
                         run_style = Some(style);
                     }
                 }
-                if let Some(s) = run_style {
-                    if !run_text.is_empty() {
-                        ratatui_spans.push(Span::styled(run_text, s));
-                    }
+                if let Some(s) = run_style
+                    && !run_text.is_empty()
+                {
+                    ratatui_spans.push(Span::styled(run_text, s));
                 }
 
                 let title_line = Line::from(ratatui_spans);

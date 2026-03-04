@@ -171,7 +171,7 @@ impl Widget for QueueView<'_> {
                 let is_hovered = self.hover_index == Some(i) && !is_cursor && !is_selected;
                 let is_favourite = self
                     .favourites
-                    .map_or(false, |f| f.contains(&self.entries[i].path));
+                    .is_some_and(|f| f.contains(&self.entries[i].path));
                 let line = render_track_line(
                     &self.entries[i],
                     is_cursor,
@@ -432,11 +432,7 @@ pub fn scroll_for_cursor(
 
 /// Scroll so the cursor is near the top of the visible area.
 /// If the cursor's album header is just above, include it.
-pub fn scroll_cursor_to_top(
-    entries: &[QueueEntry],
-    cursor: usize,
-    visible_height: usize,
-) -> usize {
+pub fn scroll_cursor_to_top(entries: &[QueueEntry], cursor: usize, visible_height: usize) -> usize {
     let display_lines = build_display_lines(entries);
     let cursor_line = display_lines
         .iter()

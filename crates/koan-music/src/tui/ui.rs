@@ -130,8 +130,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
                 super::app::HoverZone::LibraryItem(idx) => Some(*idx),
                 _ => None,
             };
-            let lib_view = LibraryView::new(lib, &app.theme, focused)
-                .with_hover(hover_idx);
+            let lib_view = LibraryView::new(lib, &app.theme, focused).with_hover(hover_idx);
             frame.render_widget(lib_view, panes[0]);
         }
 
@@ -159,9 +158,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if app.mode == Mode::ContextMenu
         && let Some(ref menu) = app.context_menu
     {
-        let click_col = if app.hover.column > 0 { Some(app.hover.column) } else { None };
-        let click_row = if app.hover.row > 0 { Some(app.hover.row) } else { None };
-        app.layout.context_menu_area = context_menu_rect_at(area, menu.actions.len(), click_col, click_row);
+        let click_col = if app.hover.column > 0 {
+            Some(app.hover.column)
+        } else {
+            None
+        };
+        let click_row = if app.hover.row > 0 {
+            Some(app.hover.row)
+        } else {
+            None
+        };
+        app.layout.context_menu_area =
+            context_menu_rect_at(area, menu.actions.len(), click_col, click_row);
         let mut overlay = ContextMenuOverlay::new(menu, &app.theme);
         if let (Some(c), Some(r)) = (click_col, click_row) {
             overlay = overlay.at_position(c, r);

@@ -11,10 +11,8 @@ pub fn load_favourites(conn: &Connection) -> rusqlite::Result<HashSet<PathBuf>> 
         Ok(PathBuf::from(p))
     })?;
     let mut set = HashSet::new();
-    for row in rows {
-        if let Ok(path) = row {
-            set.insert(path);
-        }
+    for path in rows.flatten() {
+        set.insert(path);
     }
     Ok(set)
 }
@@ -69,9 +67,7 @@ pub fn remote_id_for_path(conn: &Connection, path: &Path) -> rusqlite::Result<Op
 }
 
 /// Load all favourite track paths that have a remote_id, returning (path, remote_id) pairs.
-pub fn favourites_with_remote_id(
-    conn: &Connection,
-) -> rusqlite::Result<Vec<(PathBuf, String)>> {
+pub fn favourites_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(PathBuf, String)>> {
     let mut stmt = conn.prepare(
         "SELECT f.track_path, t.remote_id FROM favourites f
          JOIN tracks t ON (t.path = f.track_path OR t.cached_path = f.track_path)
@@ -83,10 +79,8 @@ pub fn favourites_with_remote_id(
         Ok((PathBuf::from(path), rid))
     })?;
     let mut result = Vec::new();
-    for row in rows {
-        if let Ok(pair) = row {
-            result.push(pair);
-        }
+    for pair in rows.flatten() {
+        result.push(pair);
     }
     Ok(result)
 }

@@ -195,8 +195,12 @@ pub struct App {
     /// Last known mouse row — for determining drop insertion point.
     pub last_mouse_row: Option<u16>,
 
-    /// True while the user is click-dragging the scrollbar thumb.
-    pub scrollbar_dragging: bool,
+    /// When Some(offset), the user is click-dragging the scrollbar thumb.
+    /// The offset is the grab position within the thumb (0 = top of thumb).
+    pub scrollbar_grab_offset: Option<u16>,
+
+    /// True while a drag operation has an open undo batch.
+    pub drag_undo_active: bool,
 
     /// Drop/paste import progress: (processed, total). Cleared when done.
     pub drop_progress: Option<Arc<(AtomicUsize, AtomicUsize)>>,
@@ -250,7 +254,8 @@ impl App {
             context_menu: None,
             organize: None,
             last_mouse_row: None,
-            scrollbar_dragging: false,
+            scrollbar_grab_offset: None,
+            drag_undo_active: false,
             drop_progress: None,
             hover: HoverState::default(),
             ticker_offset: 0,
@@ -268,46 +273,45 @@ impl App {
 
     /// Load favourites from the database.
     pub fn load_favourites(&mut self) {
-        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path) {
-            if let Ok(favs) = koan_core::db::queries::load_favourites(&db.conn) {
-                self.favourites = favs;
-            }
+        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
+            && let Ok(favs) = koan_core::db::queries::load_favourites(&db.conn)
+        {
+            self.favourites = favs;
         }
     }
 
     /// Toggle favourite status for a track path. Returns true if now favourite.
     pub fn toggle_favourite(&mut self, path: &std::path::Path) -> bool {
-        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path) {
-            if let Ok(is_fav) = koan_core::db::queries::toggle_favourite(&db.conn, path) {
-                if is_fav {
-                    self.favourites.insert(path.to_path_buf());
-                } else {
-                    self.favourites.remove(path);
-                }
-                // Sync star/unstar to remote if this track has a remote_id.
-                if let Ok(Some(remote_id)) =
-                    koan_core::db::queries::remote_id_for_path(&db.conn, path)
-                {
-                    let cfg = koan_core::config::Config::load().unwrap_or_default();
-                    if cfg.remote.enabled && !cfg.remote.password.is_empty() {
-                        let client = koan_core::remote::client::SubsonicClient::new(
-                            &cfg.remote.url,
-                            &cfg.remote.username,
-                            &cfg.remote.password,
-                        );
-                        let rid = remote_id.clone();
-                        let star = is_fav;
-                        std::thread::spawn(move || {
-                            let _ = if star {
-                                client.star(&rid)
-                            } else {
-                                client.unstar(&rid)
-                            };
-                        });
-                    }
-                }
-                return is_fav;
+        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
+            && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(&db.conn, path)
+        {
+            if is_fav {
+                self.favourites.insert(path.to_path_buf());
+            } else {
+                self.favourites.remove(path);
             }
+            // Sync star/unstar to remote if this track has a remote_id.
+            if let Ok(Some(remote_id)) = koan_core::db::queries::remote_id_for_path(&db.conn, path)
+            {
+                let cfg = koan_core::config::Config::load().unwrap_or_default();
+                if cfg.remote.enabled && !cfg.remote.password.is_empty() {
+                    let client = koan_core::remote::client::SubsonicClient::new(
+                        &cfg.remote.url,
+                        &cfg.remote.username,
+                        &cfg.remote.password,
+                    );
+                    let rid = remote_id.clone();
+                    let star = is_fav;
+                    std::thread::spawn(move || {
+                        let _ = if star {
+                            client.star(&rid)
+                        } else {
+                            client.unstar(&rid)
+                        };
+                    });
+                }
+            }
+            return is_fav;
         }
         false
     }
@@ -335,7 +339,7 @@ impl App {
             }
         }
         self.ticker_tick = self.ticker_tick.wrapping_add(1);
-        if self.ticker_tick % self.ticker_divisor == 0 {
+        if self.ticker_tick.is_multiple_of(self.ticker_divisor) {
             self.ticker_offset = self.ticker_offset.wrapping_add(1);
         }
 
@@ -766,7 +770,7 @@ impl App {
         let visible = self.visible_queue();
         let is_fav = visible
             .get(self.queue.cursor)
-            .map_or(false, |e| self.favourites.contains(&e.path));
+            .is_some_and(|e| self.favourites.contains(&e.path));
         let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
         let actions = vec![
             (ContextAction::Play, "Play", 'p'),
@@ -869,13 +873,9 @@ impl App {
                             self.tx.send(PlayerCommand::Play(entry.id)).ok();
                             self.queue.cursor = idx;
                             // Scroll so the jumped-to track is near the top.
-                            let visible_height =
-                                self.layout.queue_area.height.max(10) as usize;
-                            self.queue.scroll_offset = queue::scroll_cursor_to_top(
-                                &visible,
-                                idx,
-                                visible_height,
-                            );
+                            let visible_height = self.layout.queue_area.height.max(10) as usize;
+                            self.queue.scroll_offset =
+                                queue::scroll_cursor_to_top(&visible, idx, visible_height);
                         }
                     }
                 }
@@ -1153,9 +1153,32 @@ impl App {
                 // Scrollbar click — rightmost column of queue area (inside border).
                 let q = self.layout.queue_area;
                 let scrollbar_x = q.x + q.width - 1;
-                if event.column == scrollbar_x && event.row > q.y && event.row < q.y + q.height {
-                    self.scrollbar_dragging = true;
-                    self.scroll_to_scrollbar_y(event.row);
+                if event.column == scrollbar_x && event.row > q.y && event.row + 1 < q.y + q.height
+                {
+                    let inner_y = q.y + 1;
+                    let visible_height = q.height.saturating_sub(2) as usize;
+                    let visible = self.visible_queue();
+                    let total_lines = visible.len();
+
+                    if total_lines > visible_height && visible_height > 0 {
+                        let thumb_size = (visible_height * visible_height / total_lines).max(1);
+                        let max_scroll = total_lines.saturating_sub(visible_height);
+                        let thumb_offset = if max_scroll > 0 {
+                            self.queue.scroll_offset * (visible_height - thumb_size) / max_scroll
+                        } else {
+                            0
+                        };
+                        let click_row = (event.row - inner_y) as usize;
+
+                        if click_row >= thumb_offset && click_row < thumb_offset + thumb_size {
+                            // Clicked on thumb — record grab offset, don't jump.
+                            self.scrollbar_grab_offset = Some((click_row - thumb_offset) as u16);
+                        } else {
+                            // Clicked on track — jump, grab at thumb center.
+                            self.scrollbar_grab_offset = Some((thumb_size / 2) as u16);
+                            self.scroll_to_scrollbar_y(event.row);
+                        }
+                    }
                     return;
                 }
 
@@ -1223,7 +1246,7 @@ impl App {
                     });
                 }
             }
-            MouseEventKind::Drag(MouseButton::Left) if self.scrollbar_dragging => {
+            MouseEventKind::Drag(MouseButton::Left) if self.scrollbar_grab_offset.is_some() => {
                 self.scroll_to_scrollbar_y(event.row);
             }
             MouseEventKind::Drag(MouseButton::Left) => {
@@ -1257,27 +1280,45 @@ impl App {
                             self.layout.queue_area,
                             self.queue.scroll_offset,
                             event.row,
-                        ) && to_idx != from_index
-                        {
-                            if self.queue.selected_indices.len() > 1 {
-                                // Multi-drag: move all selected tracks as a group.
-                                self.send_move_selected(to_idx);
+                        ) {
+                            let should_move = if self.queue.selected_indices.len() > 1 {
+                                // Multi-drag: only move when target is outside the selection.
+                                !self.queue.selected_indices.contains(&to_idx)
                             } else {
-                                self.send_move(from_index, to_idx);
-                                self.queue.cursor = to_idx;
-                                self.select_single(to_idx);
-                            }
-                            if let Some(ref mut drag) = self.queue.drag {
-                                drag.from_index = to_idx;
+                                to_idx != from_index
+                            };
+
+                            if should_move {
+                                // Open an undo batch on the first reorder move.
+                                if !self.drag_undo_active {
+                                    self.tx.send(PlayerCommand::BeginUndoBatch).ok();
+                                    self.drag_undo_active = true;
+                                }
+
+                                if self.queue.selected_indices.len() > 1 {
+                                    self.send_move_selected(to_idx);
+                                } else {
+                                    self.send_move(from_index, to_idx);
+                                    self.queue.cursor = to_idx;
+                                    self.select_single(to_idx);
+                                    if let Some(ref mut drag) = self.queue.drag {
+                                        drag.from_index = to_idx;
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                // Just clear drag state — reorder already happened live during drag.
+                // Close undo batch if a drag reorder was active.
+                if self.drag_undo_active {
+                    self.tx.send(PlayerCommand::EndUndoBatch).ok();
+                    self.drag_undo_active = false;
+                }
+                // Clear drag state — reorder already happened live during drag.
                 self.queue.drag.take();
-                self.scrollbar_dragging = false;
+                self.scrollbar_grab_offset = None;
             }
             MouseEventKind::Down(MouseButton::Right) => {
                 // Right-click on queue item -> context menu at click position.
@@ -1298,12 +1339,8 @@ impl App {
                         // Build context menu with relevant actions.
                         let is_fav = visible
                             .get(idx)
-                            .map_or(false, |e| self.favourites.contains(&e.path));
-                        let fav_label = if is_fav {
-                            "Unfavourite"
-                        } else {
-                            "Favourite"
-                        };
+                            .is_some_and(|e| self.favourites.contains(&e.path));
+                        let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
                         self.context_menu = Some(ContextMenuState {
                             actions: vec![
                                 (ContextAction::Play, "Play", 'p'),
@@ -1412,18 +1449,17 @@ impl App {
         }
 
         // Library item.
-        if self.mode == Mode::LibraryBrowse
-            && self.is_in_rect(col, row, self.layout.library_area)
-        {
+        if self.mode == Mode::LibraryBrowse && self.is_in_rect(col, row, self.layout.library_area) {
             let inner_y = self.layout.library_area.y + 1;
             let inner_h = self.layout.library_area.height.saturating_sub(2) as usize;
-            if row >= inner_y && (row - inner_y) < inner_h as u16 {
-                if let Some(ref lib) = self.library {
-                    let item_idx = lib.scroll_offset + (row - inner_y) as usize;
-                    if item_idx < lib.nodes.len() {
-                        self.hover.zone = HoverZone::LibraryItem(item_idx);
-                        return;
-                    }
+            if row >= inner_y
+                && (row - inner_y) < inner_h as u16
+                && let Some(ref lib) = self.library
+            {
+                let item_idx = lib.scroll_offset + (row - inner_y) as usize;
+                if item_idx < lib.nodes.len() {
+                    self.hover.zone = HoverZone::LibraryItem(item_idx);
+                    return;
                 }
             }
         }
@@ -1852,19 +1888,31 @@ impl App {
     }
 
     /// Scroll the queue based on a click/drag position on the scrollbar.
+    /// Uses the same thumb math as queue.rs rendering so dragging is consistent.
     fn scroll_to_scrollbar_y(&mut self, y: u16) {
         let q = self.layout.queue_area;
-        // Inner area is 1 row below the top border.
         let inner_y = q.y + 1;
-        let inner_h = q.height.saturating_sub(1) as usize;
-        if inner_h == 0 {
+        let visible_height = q.height.saturating_sub(2) as usize;
+        if visible_height == 0 {
             return;
         }
-        let rel_y = y.saturating_sub(inner_y) as usize;
-        let ratio = rel_y as f64 / inner_h as f64;
+
         let total_lines = self.visible_queue().len();
-        let max_scroll = total_lines.saturating_sub(inner_h);
-        self.queue.scroll_offset = ((ratio * max_scroll as f64) as usize).min(max_scroll);
+        if total_lines <= visible_height {
+            return;
+        }
+
+        let thumb_size = (visible_height * visible_height / total_lines).max(1);
+        let max_scroll = total_lines.saturating_sub(visible_height);
+        let track_range = visible_height.saturating_sub(thumb_size);
+        if track_range == 0 {
+            return;
+        }
+
+        let grab_offset = self.scrollbar_grab_offset.unwrap_or(0) as usize;
+        let desired_thumb_top = (y.saturating_sub(inner_y) as usize).saturating_sub(grab_offset);
+        let clamped = desired_thumb_top.min(track_range);
+        self.queue.scroll_offset = (clamped * max_scroll / track_range).min(max_scroll);
     }
 
     fn is_in_rect(&self, x: u16, y: u16, rect: ratatui::layout::Rect) -> bool {

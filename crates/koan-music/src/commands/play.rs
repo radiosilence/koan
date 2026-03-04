@@ -184,7 +184,9 @@ fn run_tui(
         let mut last_mouse: Option<crossterm::event::MouseEvent> = None;
         match event {
             tui::event::Event::Key(key) => app.handle_key(key),
-            tui::event::Event::Mouse(mouse) => { last_mouse = Some(mouse); }
+            tui::event::Event::Mouse(mouse) => {
+                last_mouse = Some(mouse);
+            }
             tui::event::Event::Paste(text) => {
                 // Parse dropped/pasted paths (handles shell escaping, file:// URIs, etc).
                 // Heavy work (walkdir + metadata read) runs on a background thread.
@@ -274,7 +276,9 @@ fn run_tui(
         // render with the latest mouse position.
         while crossterm::event::poll(Duration::ZERO)? {
             match crossterm::event::read()? {
-                crossterm::event::Event::Mouse(m) => { last_mouse = Some(m); }
+                crossterm::event::Event::Mouse(m) => {
+                    last_mouse = Some(m);
+                }
                 crossterm::event::Event::Key(k) => {
                     app.handle_key(k);
                 }
