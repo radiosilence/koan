@@ -86,13 +86,13 @@ pub fn cmd_play(
                 std::process::exit(1);
             }
             if path.is_dir() {
-                let mut dir_files: Vec<PathBuf> = walkdir::WalkDir::new(path)
+                let mut dir_files: Vec<PathBuf> = jwalk::WalkDir::new(path)
                     .follow_links(true)
                     .into_iter()
                     .filter_map(|e| e.ok())
                     .filter(|e| e.file_type().is_file())
-                    .filter(|e| koan_core::index::metadata::is_audio_file(e.path()))
-                    .map(|e| e.into_path())
+                    .filter(|e| koan_core::index::metadata::is_audio_file(&e.path()))
+                    .map(|e| e.path())
                     .collect();
                 dir_files.sort();
                 audio_paths.extend(dir_files);
@@ -238,15 +238,15 @@ fn run_tui(
                             let mut audio_paths: Vec<PathBuf> = Vec::new();
                             for path in dropped {
                                 if path.is_dir() {
-                                    let mut dir_files: Vec<PathBuf> = walkdir::WalkDir::new(&path)
+                                    let mut dir_files: Vec<PathBuf> = jwalk::WalkDir::new(&path)
                                         .follow_links(true)
                                         .into_iter()
                                         .filter_map(|e| e.ok())
                                         .filter(|e| e.file_type().is_file())
                                         .filter(|e| {
-                                            koan_core::index::metadata::is_audio_file(e.path())
+                                            koan_core::index::metadata::is_audio_file(&e.path())
                                         })
-                                        .map(|e| e.into_path())
+                                        .map(|e| e.path())
                                         .collect();
                                     dir_files.sort();
                                     audio_paths.extend(dir_files);

@@ -292,57 +292,70 @@ fn percent_decode(input: &str) -> String {
 }
 
 /// Build PlaylistItems from a list of file paths, reading metadata from each.
-/// Directories are expanded recursively. Non-audio files are silently skipped.
-/// If `progress` is provided, the first AtomicUsize is incremented after each file.
+/// Uses a massive thread pool (1024 threads) to saturate NVMe IO.
+/// If `progress` is provided, the AtomicUsize is incremented after each file.
 pub(crate) fn playlist_items_from_paths(
     paths: &[PathBuf],
     progress: Option<&std::sync::atomic::AtomicUsize>,
 ) -> Vec<PlaylistItem> {
-    paths
-        .par_iter()
-        .map(|p| {
-            let item = if let Ok(meta) = koan_core::index::metadata::read_metadata(p) {
-                PlaylistItem {
-                    id: QueueItemId::new(),
-                    path: p.clone(),
-                    title: meta.title,
-                    artist: meta.artist,
-                    album_artist: meta.album_artist.unwrap_or_default(),
-                    album: meta.album,
-                    year: meta.date,
-                    codec: meta.codec,
-                    track_number: meta.track_number.map(|n| n as i64),
-                    disc: meta.disc.map(|d| d as i64),
-                    duration_ms: meta.duration_ms.map(|d| d as u64),
-                    load_state: LoadState::Ready,
+    let n_cpus = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(n_cpus * 4)
+        .build()
+        .unwrap();
+
+    pool.install(|| {
+        paths
+            .par_iter()
+            .map(|p| {
+                let item = match koan_core::index::metadata::read_metadata(p) {
+                    Ok(meta) => PlaylistItem {
+                        id: QueueItemId::new(),
+                        path: p.clone(),
+                        title: meta.title,
+                        artist: meta.artist,
+                        album_artist: meta.album_artist.unwrap_or_default(),
+                        album: meta.album,
+                        year: meta.date.and_then(|d| {
+                            if d.len() >= 4 { Some(d[..4].to_string()) } else { None }
+                        }),
+                        codec: meta.codec,
+                        track_number: meta.track_number.map(|n| n as i64),
+                        disc: meta.disc.map(|n| n as i64),
+                        duration_ms: meta.duration_ms.map(|d| d as u64),
+                        load_state: LoadState::Ready,
+                    },
+                    Err(_) => {
+                        let title = p
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned();
+                        PlaylistItem {
+                            id: QueueItemId::new(),
+                            path: p.clone(),
+                            title,
+                            artist: String::new(),
+                            album_artist: String::new(),
+                            album: String::new(),
+                            year: None,
+                            codec: None,
+                            track_number: None,
+                            disc: None,
+                            duration_ms: None,
+                            load_state: LoadState::Ready,
+                        }
+                    }
+                };
+                if let Some(counter) = progress {
+                    counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 }
-            } else {
-                let title = p
-                    .file_stem()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .into_owned();
-                PlaylistItem {
-                    id: QueueItemId::new(),
-                    path: p.clone(),
-                    title,
-                    artist: String::new(),
-                    album_artist: String::new(),
-                    album: String::new(),
-                    year: None,
-                    codec: None,
-                    track_number: None,
-                    disc: None,
-                    duration_ms: None,
-                    load_state: LoadState::Ready,
-                }
-            };
-            if let Some(counter) = progress {
-                counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            item
-        })
-        .collect()
+                item
+            })
+            .collect()
+    })
 }
 
 /// Build a PlaylistItem from a TrackRow + album date + cache path.

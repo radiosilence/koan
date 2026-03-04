@@ -86,7 +86,7 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
     let codec = if tagged_file.file_type() == lofty::file::FileType::Mp4 {
         mp4_codec(path)
     } else {
-        codec_from_file_type(tagged_file.file_type())
+        codec_string(tagged_file.file_type()).to_string()
     };
 
     Ok(TrackMeta {
@@ -134,7 +134,7 @@ fn mp4_codec(path: &Path) -> String {
 }
 
 /// Map lofty file type to a human-readable codec string.
-fn codec_from_file_type(ft: lofty::file::FileType) -> String {
+pub fn codec_string(ft: lofty::file::FileType) -> &'static str {
     match ft {
         lofty::file::FileType::Flac => "FLAC",
         lofty::file::FileType::Mpeg => "MP3",
@@ -147,7 +147,6 @@ fn codec_from_file_type(ft: lofty::file::FileType) -> String {
         lofty::file::FileType::Ape => "APE",
         _ => "Unknown",
     }
-    .to_string()
 }
 
 /// Extract embedded front cover art bytes from an audio file.
@@ -287,11 +286,11 @@ mod tests {
     }
 
     #[test]
-    fn test_codec_from_file_type() {
-        assert_eq!(codec_from_file_type(lofty::file::FileType::Flac), "FLAC");
-        assert_eq!(codec_from_file_type(lofty::file::FileType::Mpeg), "MP3");
-        assert_eq!(codec_from_file_type(lofty::file::FileType::Opus), "Opus");
-        assert_eq!(codec_from_file_type(lofty::file::FileType::Wav), "WAV");
+    fn test_codec_string() {
+        assert_eq!(codec_string(lofty::file::FileType::Flac), "FLAC");
+        assert_eq!(codec_string(lofty::file::FileType::Mpeg), "MP3");
+        assert_eq!(codec_string(lofty::file::FileType::Opus), "Opus");
+        assert_eq!(codec_string(lofty::file::FileType::Wav), "WAV");
     }
 
     // --- metadata_from_probe_result tests ---
