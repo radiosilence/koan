@@ -107,10 +107,10 @@ impl FrequencyScale {
 /// Amplitude scale applied to FFT magnitudes before display.
 #[derive(Debug, Clone, Copy, Default)]
 pub enum AmplitudeScale {
-    /// A-weighted + gentle gamma — bars reflect perceived loudness.
-    #[default]
+    /// A-weighted + gentle gamma — bars reflect perceived loudness with quiet boost.
     Perceptual,
     /// Pure A-weighting (IEC 61672), linear mapping after.
+    #[default]
     AWeight,
     /// Square root — gentle boost to quiet bands.
     Sqrt,

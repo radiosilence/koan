@@ -356,7 +356,7 @@ Password is prompted by `koan remote login` and saved to `config.local.toml` (gi
 enabled = true                # show spectrum analyzer in transport area (default: true)
 fps = 60                      # analysis thread update rate in Hz (default: 60)
 scale = "bark"                # frequency scale (default: bark)
-amplitude_scale = "perceptual"  # amplitude scale (default: perceptual)
+amplitude_scale = "aweight"     # amplitude scale (default: aweight)
 bar_decay_ms = 50             # how fast bars drop — half-life in ms (default: 50)
 peak_decay_ms = 180           # how long peak markers linger — half-life in ms (default: 180)
 ```
@@ -376,8 +376,8 @@ The spectrum analyzer renders above the transport text when album art is present
 
 | Scale | Description |
 |-------|-------------|
-| `perceptual` | A-weighted (IEC 61672) + gentle gamma curve. Bars reflect perceived loudness — bass and extreme treble are attenuated to match human hearing sensitivity (Fletcher-Munson). **(default)** |
-| `aweight` | Pure A-weighting, linear mapping after. Same frequency correction but no gamma boost to quiet signals |
+| `aweight` | A-weighted (IEC 61672). Bars reflect perceived loudness — bass and extreme treble are attenuated to match human hearing sensitivity (Fletcher-Munson). **(default)** |
+| `perceptual` | A-weighting + gentle gamma curve. Same frequency correction with a boost to quiet signals so more of the display stays active |
 | `sqrt` | Square root curve — gentle boost to quiet bands, no frequency correction |
 | `linear` | Raw dB-normalized magnitude. No correction. Quiet stuff barely visible, technically accurate |
 

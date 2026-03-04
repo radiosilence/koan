@@ -118,7 +118,7 @@ impl Default for VisualizerConfig {
             enabled: true,
             fps: 60,
             scale: "bark".into(),
-            amplitude_scale: "perceptual".into(),
+            amplitude_scale: "aweight".into(),
             bar_decay_ms: 50,
             peak_decay_ms: 180,
         }
