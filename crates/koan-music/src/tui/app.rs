@@ -455,22 +455,41 @@ impl App {
                         .name("koan-lyrics".into())
                         .spawn(move || {
                             let result = (|| -> Option<koan_core::lyrics::Lyrics> {
-                                let db =
-                                    koan_core::db::connection::Database::open(&db_path).ok()?;
-                                let track_id = koan_core::db::queries::track_id_by_path(
+                                let db = match koan_core::db::connection::Database::open(&db_path) {
+                                    Ok(db) => db,
+                                    Err(e) => {
+                                        eprintln!("[lyrics] db open error: {e}");
+                                        return None;
+                                    }
+                                };
+                                let track_id = match koan_core::db::queries::track_id_by_path(
                                     &db.conn,
                                     &track_path.to_string_lossy(),
-                                )
-                                .ok()??;
-                                koan_core::lyrics::fetch_lyrics(
+                                ) {
+                                    Ok(Some(id)) => id,
+                                    Ok(None) => {
+                                        eprintln!("[lyrics] track not in db: {}", track_path.display());
+                                        return None;
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[lyrics] track lookup error: {e}");
+                                        return None;
+                                    }
+                                };
+                                match koan_core::lyrics::fetch_lyrics(
                                     &db.conn,
                                     track_id,
                                     &artist,
                                     &title,
                                     &album,
                                     duration_secs,
-                                )
-                                .ok()
+                                ) {
+                                    Ok(lyrics) => Some(lyrics),
+                                    Err(e) => {
+                                        eprintln!("[lyrics] fetch failed for '{artist} - {title}': {e}");
+                                        None
+                                    }
+                                }
                             })();
                             let _ = tx.send(result);
                         })

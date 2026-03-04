@@ -19,6 +19,10 @@ pub struct LrclibResponse {
 }
 
 /// Fetch lyrics from LRCLIB for a given track.
+///
+/// Tries the exact `/api/get` endpoint first (requires artist, title, album, duration).
+/// If that returns 404, falls back to `/api/search` which does fuzzy matching
+/// on artist + title only.
 pub fn get_lyrics(
     artist: &str,
     title: &str,
@@ -29,6 +33,7 @@ pub fn get_lyrics(
         .user_agent(USER_AGENT)
         .build()?;
 
+    // Try exact match first.
     let resp = client
         .get("https://lrclib.net/api/get")
         .query(&[
@@ -39,12 +44,20 @@ pub fn get_lyrics(
         .query(&[("duration", &duration_secs.to_string())])
         .send()?;
 
-    if resp.status() == reqwest::StatusCode::NOT_FOUND {
-        return Err(LrclibError::NotFound);
+    if resp.status() != reqwest::StatusCode::NOT_FOUND {
+        let body: LrclibResponse = resp.error_for_status()?.json()?;
+        return Ok(body);
     }
 
-    let body: LrclibResponse = resp.error_for_status()?.json()?;
-    Ok(body)
+    // Fallback: fuzzy search by artist + title.
+    let query = format!("{} {}", artist, title);
+    let resp = client
+        .get("https://lrclib.net/api/search")
+        .query(&[("q", query.as_str())])
+        .send()?;
+
+    let results: Vec<LrclibResponse> = resp.error_for_status()?.json()?;
+    results.into_iter().next().ok_or(LrclibError::NotFound)
 }
 
 #[cfg(test)]
