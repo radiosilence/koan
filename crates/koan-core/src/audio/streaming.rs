@@ -327,65 +327,6 @@ mod tests {
         assert_eq!(&out2, b"012");
     }
 
-    // --- Tests using the requested names ---
-
-    #[test]
-    fn test_new_and_is_complete() {
-        // "is_complete" == bytes_downloaded() == total_len and done==true (finish() called).
-        let data = vec![0u8; 1000];
-        let buf = StreamBuffer::new(Some(1000));
-        buf.push(&data);
-        buf.finish();
-        assert_eq!(buf.bytes_downloaded(), 1000);
-        assert_eq!(buf.total_len(), Some(1000));
-        // A reader should see EOF immediately (no blocking).
-        let mut src = buf.reader();
-        let mut out = Vec::new();
-        src.read_to_end(&mut out).unwrap();
-        assert_eq!(out.len(), 1000);
-    }
-
-    #[test]
-    fn test_read_all_available() {
-        let data: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
-        let buf = StreamBuffer::new(Some(1000));
-        buf.push(&data);
-        buf.finish();
-        let mut src = buf.reader();
-        let mut out = Vec::new();
-        src.read_to_end(&mut out).unwrap();
-        assert_eq!(out, data);
-    }
-
-    #[test]
-    fn test_seek_start() {
-        let data: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
-        let buf = filled_buffer(&data);
-        let mut src = buf.reader();
-
-        src.seek(SeekFrom::Start(500)).unwrap();
-        let mut out = Vec::new();
-        src.read_to_end(&mut out).unwrap();
-        assert_eq!(out, &data[500..]);
-    }
-
-    #[test]
-    fn test_seek_current() {
-        let data: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
-        let buf = filled_buffer(&data);
-        let mut src = buf.reader();
-
-        // Read 100 bytes then seek forward 400 from current → position 500.
-        let mut tmp = vec![0u8; 100];
-        src.read_exact(&mut tmp).unwrap();
-        let pos = src.seek(SeekFrom::Current(400)).unwrap();
-        assert_eq!(pos, 500);
-
-        let mut out = Vec::new();
-        src.read_to_end(&mut out).unwrap();
-        assert_eq!(out, &data[500..]);
-    }
-
     #[test]
     fn test_partial_availability() {
         // Push only 500 bytes without finish() — simulates in-progress download.

@@ -110,6 +110,7 @@ pub struct QueueState {
     pub drag: Option<DragState>,
     /// Cached visible queue snapshot — refreshed once per frame.
     pub(super) vq_cache: VisibleQueueSnapshot,
+    pub(super) vq_version: u64,
 }
 
 /// Cached layout rects from last render, used for mouse hit-testing.
@@ -2306,7 +2307,11 @@ impl App {
     /// Refresh the cached visible queue snapshot from shared state.
     /// Call once per frame before any queue-related reads.
     pub fn refresh_visible_queue(&mut self) {
-        self.queue.vq_cache = self.state.derive_visible_queue();
+        let v = self.state.playlist_version();
+        if v != self.queue.vq_version {
+            self.queue.vq_cache = self.state.derive_visible_queue();
+            self.queue.vq_version = v;
+        }
     }
 
     pub fn visible_queue(&self) -> Vec<QueueEntry> {

@@ -268,4 +268,114 @@ mod tests {
         assert_eq!(codec_from_file_type(lofty::file::FileType::Opus), "Opus");
         assert_eq!(codec_from_file_type(lofty::file::FileType::Wav), "WAV");
     }
+
+    // --- metadata_from_probe_result tests ---
+    //
+    // MetadataRevision has private fields and can only be constructed via
+    // MetadataBuilder (symphonia::core::meta::MetadataBuilder). Tag::new()
+    // is public, so we can build arbitrary revisions in tests.
+
+    use symphonia::core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
+
+    fn make_revision(tags: &[(StandardTagKey, &str)]) -> symphonia::core::meta::MetadataRevision {
+        let mut builder = MetadataBuilder::new();
+        for (key, value) in tags {
+            builder.add_tag(Tag::new(Some(*key), "", Value::String(value.to_string())));
+        }
+        builder.metadata()
+    }
+
+    #[test]
+    fn test_probe_track_number_slash_format() {
+        // "3/12" in TrackNumber tag should parse to track_number = Some(3),
+        // ignoring the total-tracks part after the slash.
+        let rev = make_revision(&[
+            (StandardTagKey::TrackTitle, "My Song"),
+            (StandardTagKey::Artist, "Artist"),
+            (StandardTagKey::Album, "Album"),
+            (StandardTagKey::TrackNumber, "3/12"),
+        ]);
+        let meta = metadata_from_probe_result(&rev, "fallback");
+        assert_eq!(
+            meta.track_number,
+            Some(3),
+            "slash-format track number should parse to the first component"
+        );
+    }
+
+    #[test]
+    fn test_probe_original_date_fallback() {
+        // When Date is absent, OriginalDate should be used as the date.
+        let rev = make_revision(&[
+            (StandardTagKey::TrackTitle, "My Song"),
+            (StandardTagKey::OriginalDate, "1991"),
+        ]);
+        let meta = metadata_from_probe_result(&rev, "fallback");
+        assert_eq!(
+            meta.date,
+            Some("1991".to_string()),
+            "OriginalDate should be used when Date is missing"
+        );
+    }
+
+    #[test]
+    fn test_probe_original_date_not_used_when_date_present() {
+        // When both Date and OriginalDate are present, Date wins.
+        let rev = make_revision(&[
+            (StandardTagKey::Date, "2005"),
+            (StandardTagKey::OriginalDate, "1991"),
+        ]);
+        let meta = metadata_from_probe_result(&rev, "fallback");
+        assert_eq!(
+            meta.date,
+            Some("2005".to_string()),
+            "Date should take precedence over OriginalDate"
+        );
+    }
+
+    #[test]
+    fn test_probe_empty_values_skipped() {
+        // Tags with empty string values should be silently skipped,
+        // leaving the corresponding fields as None (or falling back to defaults).
+        let rev = make_revision(&[
+            (StandardTagKey::Artist, ""),
+            (StandardTagKey::Album, ""),
+            (StandardTagKey::Genre, ""),
+        ]);
+        let meta = metadata_from_probe_result(&rev, "Title");
+        // Empty artist/album fall back to defaults, not empty string.
+        assert_eq!(
+            meta.artist, "Unknown Artist",
+            "empty artist tag should fall back to 'Unknown Artist'"
+        );
+        assert_eq!(
+            meta.album, "Unknown Album",
+            "empty album tag should fall back to 'Unknown Album'"
+        );
+        assert_eq!(meta.genre, None, "empty genre tag should produce None");
+    }
+
+    #[test]
+    fn test_probe_defaults() {
+        // When no tags are present, artist and album should use the hardcoded defaults.
+        // Title should fall back to the fallback_title argument.
+        let rev = make_revision(&[]);
+        let meta = metadata_from_probe_result(&rev, "Fallback Title");
+        assert_eq!(
+            meta.title, "Fallback Title",
+            "missing title should use fallback_title argument"
+        );
+        assert_eq!(
+            meta.artist, "Unknown Artist",
+            "missing artist should default to 'Unknown Artist'"
+        );
+        assert_eq!(
+            meta.album, "Unknown Album",
+            "missing album should default to 'Unknown Album'"
+        );
+        assert_eq!(meta.track_number, None);
+        assert_eq!(meta.date, None);
+        assert_eq!(meta.genre, None);
+        assert_eq!(meta.source, "streaming");
+    }
 }

@@ -8,3 +8,7 @@ edition = "2024"
 homepage = "https://github.com/radiosilence/koan"
 repository = "https://github.com/radiosilence/koan"
 license = "MIT"
+
+[workspace.dependencies]
+rusqlite = { version = "0.38", features = ["bundled"] }
+walkdir = "2.5"

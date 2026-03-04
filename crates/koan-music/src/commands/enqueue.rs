@@ -34,16 +34,9 @@ pub fn enqueue_playlist(
         let Some(track) = queries::get_track_row(&db.conn, id).ok().flatten() else {
             continue;
         };
-        let album_date: Option<String> = track.album_id.and_then(|aid| {
-            db.conn
-                .query_row(
-                    "SELECT date FROM albums WHERE id = ?1",
-                    rusqlite::params![aid],
-                    |row| row.get(0),
-                )
-                .ok()
-                .flatten()
-        });
+        let album_date: Option<String> = track
+            .album_id
+            .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten());
 
         // Resolve the path — local, cached, or needs download.
         let (dest, load_state) = resolve_item_path(&db, &cfg, id, &track, album_date.as_deref());
@@ -214,16 +207,9 @@ fn download_single_track(
         }
     };
 
-    let album_date: Option<String> = track.album_id.and_then(|aid| {
-        db.conn
-            .query_row(
-                "SELECT date FROM albums WHERE id = ?1",
-                rusqlite::params![aid],
-                |row| row.get(0),
-            )
-            .ok()
-            .flatten()
-    });
+    let album_date: Option<String> = track
+        .album_id
+        .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten());
 
     let dest = cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
 

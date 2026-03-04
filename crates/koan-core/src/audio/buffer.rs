@@ -671,3 +671,199 @@ pub fn codec_name(codec: CodecType) -> String {
     }
     .to_string()
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+    use crate::player::state::QueueItemId;
+
+    fn make_info(sample_rate: u32, channels: u16) -> StreamInfo {
+        StreamInfo {
+            codec: "FLAC".to_string(),
+            sample_rate,
+            channels,
+            bit_depth: 16,
+            duration_ms: 10_000,
+        }
+    }
+
+    fn make_boundary(
+        id: QueueItemId,
+        sample_offset: u64,
+        seek_samples: u64,
+        channels: u16,
+        sample_rate: u32,
+    ) -> TrackBoundary {
+        TrackBoundary {
+            id,
+            path: PathBuf::from("/music/track.flac"),
+            info: make_info(sample_rate, channels),
+            sample_offset,
+            samples_written: 0,
+            seek_samples,
+        }
+    }
+
+    // --- PlaybackTimeline tests ---
+
+    #[test]
+    fn test_timeline_single_track() {
+        // Push one boundary at offset 0 with stereo 44100 Hz audio.
+        // After simulating 44100 frames (88200 interleaved samples) played,
+        // current_playback() should report track index 0 at position 1000 ms.
+        let timeline = PlaybackTimeline::new();
+        let id = QueueItemId::new();
+        // sample_offset=0, seek_samples=0, channels=2, sample_rate=44100
+        timeline.push_boundary(make_boundary(id, 0, 0, 2, 44100));
+        timeline.add_written(88200); // 1 second of audio
+
+        // Simulate 1 second played: 44100 frames * 2 channels = 88200 interleaved samples
+        timeline.samples_played.store(88200, Ordering::Relaxed);
+
+        let result = timeline.current_playback();
+        assert!(
+            result.is_some(),
+            "expected Some for single track with samples played"
+        );
+        let (result_id, _path, _info, position_ms) = result.unwrap();
+        assert_eq!(result_id, id);
+        assert_eq!(
+            position_ms, 1000,
+            "1 second of 44100 Hz stereo should be 1000 ms"
+        );
+    }
+
+    #[test]
+    fn test_timeline_gapless_transition() {
+        // Two tracks in gapless sequence. Track 1 ends at sample 88200 (1 sec stereo 44100 Hz).
+        // Track 2 begins at sample_offset 88200. When playback head is at 100000 (past the boundary),
+        // current_playback() should report track 2.
+        let timeline = PlaybackTimeline::new();
+        let id1 = QueueItemId::new();
+        let id2 = QueueItemId::new();
+
+        // Track 1: starts at offset 0
+        timeline.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
+        timeline.add_written(88200);
+
+        // Track 2: starts at offset 88200 (immediately after track 1's samples)
+        timeline.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
+        timeline.add_written(44100); // half a second of track 2
+
+        // Set playback head past the track 1/2 boundary
+        timeline.samples_played.store(90000, Ordering::Relaxed);
+
+        let result = timeline.current_playback();
+        assert!(result.is_some());
+        let (result_id, _path, _info, position_ms) = result.unwrap();
+        assert_eq!(
+            result_id, id2,
+            "playback head past boundary should report second track"
+        );
+        // (90000 - 88200) / 2 channels * 1000 / 44100 = 900 / 44100 ≈ 20 ms
+        assert_eq!(position_ms, 20, "position within track 2 should be ~20 ms");
+    }
+
+    #[test]
+    fn test_timeline_zero_samples() {
+        // With 0 samples played and a boundary at offset 0, current_playback() should
+        // still return the first track at position 0 ms.
+        let timeline = PlaybackTimeline::new();
+        let id = QueueItemId::new();
+        timeline.push_boundary(make_boundary(id, 0, 0, 2, 44100));
+        timeline.add_written(1000);
+        timeline.samples_played.store(0, Ordering::Relaxed);
+
+        let result = timeline.current_playback();
+        assert!(
+            result.is_some(),
+            "expected Some at 0 samples played with a boundary at offset 0"
+        );
+        let (result_id, _path, _info, position_ms) = result.unwrap();
+        assert_eq!(result_id, id);
+        assert_eq!(position_ms, 0);
+    }
+
+    #[test]
+    fn test_timeline_past_all_boundaries() {
+        // When samples_played exceeds all boundaries, the last track should be reported.
+        // The binary search finds the last boundary whose sample_offset <= played.
+        let timeline = PlaybackTimeline::new();
+        let id1 = QueueItemId::new();
+        let id2 = QueueItemId::new();
+
+        timeline.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
+        timeline.add_written(88200);
+        timeline.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
+        timeline.add_written(88200);
+
+        // Simulate playback far past both tracks
+        timeline
+            .samples_played
+            .store(999_999_999, Ordering::Relaxed);
+
+        let result = timeline.current_playback();
+        assert!(result.is_some());
+        let (result_id, _path, _info, _position_ms) = result.unwrap();
+        assert_eq!(
+            result_id, id2,
+            "samples past all boundaries should report the last track"
+        );
+    }
+
+    #[test]
+    fn test_timeline_seek_offset() {
+        // When a seek offset is set, position_ms should include the seek position.
+        // seek_samples = 88200 means playback started 1 second into the track.
+        // With 0 additional samples played past the boundary, position should be 1000 ms.
+        let timeline = PlaybackTimeline::new();
+        let id = QueueItemId::new();
+        let seek_samples = 88200u64; // 1 second at 44100 Hz stereo
+        timeline.push_boundary(make_boundary(id, 0, seek_samples, 2, 44100));
+        timeline.add_written(44100); // half a second written so far
+        // samples_played at the track boundary (0 frames past the track start)
+        timeline.samples_played.store(0, Ordering::Relaxed);
+
+        let result = timeline.current_playback();
+        assert!(result.is_some());
+        let (_result_id, _path, _info, position_ms) = result.unwrap();
+        // track_samples = 0 - 0 = 0; seek contribution = (88200/2)*1000/44100 = 1000 ms
+        assert_eq!(
+            position_ms, 1000,
+            "position should include seek offset of 1000 ms"
+        );
+    }
+
+    #[test]
+    fn test_timeline_reset() {
+        // After reset(), current_playback() returns None and all counters are cleared.
+        let timeline = PlaybackTimeline::new();
+        let id = QueueItemId::new();
+        timeline.push_boundary(make_boundary(id, 0, 0, 2, 44100));
+        timeline.add_written(88200);
+        timeline.samples_played.store(44100, Ordering::Relaxed);
+
+        // Sanity check: playback is live before reset
+        assert!(timeline.current_playback().is_some());
+
+        timeline.reset();
+
+        assert!(
+            timeline.current_playback().is_none(),
+            "after reset, current_playback should return None"
+        );
+        assert_eq!(
+            timeline.samples_played.load(Ordering::Relaxed),
+            0,
+            "samples_played should be 0 after reset"
+        );
+        assert_eq!(
+            timeline.samples_written.load(Ordering::Relaxed),
+            0,
+            "samples_written should be 0 after reset"
+        );
+    }
+}

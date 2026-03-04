@@ -784,3 +784,292 @@ impl SharedPlayerState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- helpers ---
+
+    fn make_item(title: &str, load_state: LoadState) -> PlaylistItem {
+        PlaylistItem {
+            id: QueueItemId::new(),
+            path: PathBuf::from(format!("/music/{title}.flac")),
+            title: title.to_string(),
+            artist: "Artist".to_string(),
+            album_artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            year: None,
+            codec: Some("FLAC".to_string()),
+            track_number: None,
+            disc: None,
+            duration_ms: Some(200_000),
+            load_state,
+        }
+    }
+
+    fn ready_item(title: &str) -> PlaylistItem {
+        make_item(title, LoadState::Ready)
+    }
+
+    fn pending_item(title: &str) -> PlaylistItem {
+        make_item(title, LoadState::Pending)
+    }
+
+    // --- advance_cursor ---
+
+    #[test]
+    fn test_advance_cursor_skips_non_ready() {
+        // playlist: Ready, Pending, Ready
+        // advance from None should land on index 0 (first Ready).
+        // advance again should skip Pending at index 1 and land on index 2.
+        let state = SharedPlayerState::new();
+        let item0 = ready_item("track-0");
+        let item1 = pending_item("track-1");
+        let item2 = ready_item("track-2");
+        let id0 = item0.id;
+        let id2 = item2.id;
+
+        state.add_items(vec![item0, item1, item2]);
+
+        // First advance — no cursor set yet, starts from beginning.
+        let result = state.advance_cursor();
+        assert!(result.is_some(), "expected to find first Ready item");
+        assert_eq!(result.unwrap().0, id0, "should land on first Ready item");
+
+        // Second advance — cursor is at index 0; Pending at index 1 must be skipped.
+        let result = state.advance_cursor();
+        assert!(
+            result.is_some(),
+            "expected to find next Ready item after skipping Pending"
+        );
+        assert_eq!(
+            result.unwrap().0,
+            id2,
+            "should skip Pending and land on third item"
+        );
+    }
+
+    #[test]
+    fn test_advance_cursor_stops_at_end_of_playlist() {
+        // With cursor already on the last Ready item, advance should return None.
+        let state = SharedPlayerState::new();
+        let item0 = ready_item("track-0");
+        let item1 = ready_item("track-1");
+        let id1 = item1.id;
+
+        state.add_items(vec![item0, item1]);
+
+        // Move cursor to last item.
+        state.set_cursor(Some(id1));
+
+        let result = state.advance_cursor();
+        assert!(
+            result.is_none(),
+            "advance past last item should return None"
+        );
+
+        // Cursor should remain unchanged after a failed advance.
+        assert_eq!(state.cursor(), Some(id1));
+    }
+
+    #[test]
+    fn test_advance_cursor_with_no_ready_items_returns_none() {
+        let state = SharedPlayerState::new();
+        state.add_items(vec![pending_item("pending-0"), pending_item("pending-1")]);
+
+        let result = state.advance_cursor();
+        assert!(
+            result.is_none(),
+            "should return None when no Ready items exist"
+        );
+    }
+
+    // --- retreat_cursor ---
+
+    #[test]
+    fn test_retreat_cursor_goes_to_previous_item() {
+        let state = SharedPlayerState::new();
+        let item0 = ready_item("track-0");
+        let item1 = ready_item("track-1");
+        let id0 = item0.id;
+        let id1 = item1.id;
+
+        state.add_items(vec![item0, item1]);
+        state.set_cursor(Some(id1));
+
+        let result = state.retreat_cursor();
+        assert!(result.is_some(), "expected to retreat to previous item");
+        assert_eq!(result.unwrap().0, id0, "should retreat to first item");
+        assert_eq!(state.cursor(), Some(id0));
+    }
+
+    #[test]
+    fn test_retreat_cursor_returns_none_when_at_first_item() {
+        let state = SharedPlayerState::new();
+        let item0 = ready_item("only-track");
+        let id0 = item0.id;
+
+        state.add_items(vec![item0]);
+        state.set_cursor(Some(id0));
+
+        let result = state.retreat_cursor();
+        assert!(result.is_none(), "cannot retreat before the first item");
+        // Cursor stays on the first item.
+        assert_eq!(state.cursor(), Some(id0));
+    }
+
+    #[test]
+    fn test_retreat_cursor_returns_none_when_cursor_is_unset() {
+        let state = SharedPlayerState::new();
+        state.add_items(vec![ready_item("track-0")]);
+
+        let result = state.retreat_cursor();
+        assert!(
+            result.is_none(),
+            "retreat with no cursor should return None"
+        );
+    }
+
+    // --- derive_visible_queue ---
+
+    #[test]
+    fn test_derive_visible_queue_statuses() {
+        // playlist: [played, playing, queued]
+        let state = SharedPlayerState::new();
+        let item0 = ready_item("played-track");
+        let item1 = ready_item("playing-track");
+        let item2 = ready_item("queued-track");
+        let id1 = item1.id;
+
+        state.add_items(vec![item0, item1, item2]);
+        state.set_cursor(Some(id1));
+
+        let snap = state.derive_visible_queue();
+
+        assert_eq!(snap.entries.len(), 3);
+        assert_eq!(snap.entries[0].status, QueueEntryStatus::Played);
+        assert_eq!(snap.entries[1].status, QueueEntryStatus::Playing);
+        assert_eq!(snap.entries[2].status, QueueEntryStatus::Queued);
+        assert!(snap.has_playing);
+        assert_eq!(snap.finished_count, 1);
+        assert_eq!(snap.queue_count, 1);
+    }
+
+    #[test]
+    fn test_derive_visible_queue_downloading_statuses() {
+        // A Downloading item at cursor → PriorityPending; after cursor → Downloading.
+        let state = SharedPlayerState::new();
+        let bytes_cursor = Arc::new(AtomicU64::new(0));
+        let bytes_queued = Arc::new(AtomicU64::new(0));
+        let dl_cursor = make_item(
+            "downloading-at-cursor",
+            LoadState::Downloading {
+                downloaded: 0,
+                total: 1_000_000,
+                bytes_written: bytes_cursor.clone(),
+            },
+        );
+        let dl_queued = make_item(
+            "downloading-queued",
+            LoadState::Downloading {
+                downloaded: 0,
+                total: 500_000,
+                bytes_written: bytes_queued.clone(),
+            },
+        );
+        let id_cursor = dl_cursor.id;
+
+        state.add_items(vec![dl_cursor, dl_queued]);
+        state.set_cursor(Some(id_cursor));
+
+        let snap = state.derive_visible_queue();
+
+        assert_eq!(snap.entries[0].status, QueueEntryStatus::PriorityPending);
+        assert_eq!(snap.entries[1].status, QueueEntryStatus::Downloading);
+    }
+
+    #[test]
+    fn test_derive_visible_queue_no_cursor_all_queued() {
+        let state = SharedPlayerState::new();
+        state.add_items(vec![ready_item("a"), ready_item("b"), ready_item("c")]);
+
+        let snap = state.derive_visible_queue();
+
+        assert_eq!(snap.entries.len(), 3);
+        for entry in &snap.entries {
+            assert_eq!(entry.status, QueueEntryStatus::Queued);
+        }
+        assert!(!snap.has_playing);
+        assert_eq!(snap.finished_count, 0);
+        assert_eq!(snap.queue_count, 3);
+    }
+
+    // --- move_item_to ---
+
+    #[test]
+    fn test_move_item_to_reorders_playlist() {
+        // Start: [A, B, C]. Move C to after A → [A, C, B].
+        let state = SharedPlayerState::new();
+        let item_a = ready_item("A");
+        let item_b = ready_item("B");
+        let item_c = ready_item("C");
+        let id_a = item_a.id;
+        let id_b = item_b.id;
+        let id_c = item_c.id;
+
+        state.add_items(vec![item_a, item_b, item_c]);
+        state.move_item_to(id_c, Some(id_a));
+
+        let (items, _) = state.snapshot_playlist();
+        let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(titles, vec!["A", "C", "B"]);
+        assert_eq!(items[0].id, id_a);
+        assert_eq!(items[1].id, id_c);
+        assert_eq!(items[2].id, id_b);
+    }
+
+    #[test]
+    fn test_move_item_to_front_when_after_is_none() {
+        // Start: [A, B, C]. Move C to front (after=None) → [C, A, B].
+        let state = SharedPlayerState::new();
+        let item_a = ready_item("A");
+        let item_b = ready_item("B");
+        let item_c = ready_item("C");
+        let id_c = item_c.id;
+
+        state.add_items(vec![item_a, item_b, item_c]);
+        state.move_item_to(id_c, None);
+
+        let (items, _) = state.snapshot_playlist();
+        let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(titles, vec!["C", "A", "B"]);
+    }
+
+    // --- move_items (batch) ---
+
+    #[test]
+    fn test_move_items_batch_preserves_relative_order() {
+        // Start: [A, B, C, D]. Move [A, C] after D → [B, D, A, C].
+        let state = SharedPlayerState::new();
+        let item_a = ready_item("A");
+        let item_b = ready_item("B");
+        let item_c = ready_item("C");
+        let item_d = ready_item("D");
+        let id_a = item_a.id;
+        let id_b = item_b.id;
+        let id_c = item_c.id;
+        let id_d = item_d.id;
+
+        state.add_items(vec![item_a, item_b, item_c, item_d]);
+        state.move_items(&[id_a, id_c], id_d, true);
+
+        let (items, _) = state.snapshot_playlist();
+        let titles: Vec<&str> = items.iter().map(|i| i.title.as_str()).collect();
+        assert_eq!(titles, vec!["B", "D", "A", "C"]);
+        assert_eq!(items[0].id, id_b);
+        assert_eq!(items[1].id, id_d);
+        assert_eq!(items[2].id, id_a);
+        assert_eq!(items[3].id, id_c);
+    }
+}
