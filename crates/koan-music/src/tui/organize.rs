@@ -388,11 +388,7 @@ impl Widget for OrganizeOverlay<'_> {
                 };
 
                 let max_fmt_len = chunks[0].width.saturating_sub(name.len() as u16 + 5) as usize;
-                let abbrev_fmt = if fmt.len() > max_fmt_len {
-                    format!("{}...", &fmt[..max_fmt_len.saturating_sub(3)])
-                } else {
-                    fmt.clone()
-                };
+                let abbrev_fmt = truncate_path(fmt, max_fmt_len);
 
                 let indicator = if is_selected { "\u{25b6} " } else { "  " };
                 let line = Line::from(vec![
