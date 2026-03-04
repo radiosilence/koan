@@ -674,4 +674,188 @@ mod tests {
         assert_eq!(result, "very-long…");
         assert!(result.len() <= 13); // 9 ascii + multibyte ellipsis
     }
+
+    // --- Unicode torture tests ---
+    // Filenames in the wild contain fullwidth Japanese, CJK, emoji, Arabic
+    // ligatures, combining diacritics (Zalgo), and zero-width joiners.
+    // Every helper must handle these without panicking.
+
+    #[test]
+    fn test_truncate_path_fullwidth_japanese() {
+        // Fullwidth chars are 3 bytes each — the original bug.
+        let s = "Ｊ Ｕ Ｒ Ａ Ｓ Ｓ Ｉ Ｃ";
+        let result = truncate_path(s, 5);
+        assert_eq!(result.chars().count(), 5); // 4 chars + ellipsis
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_truncate_path_cjk() {
+        let s = "島のクラッシュ.m4a";
+        let result = truncate_path(s, 4);
+        assert_eq!(result.chars().count(), 4);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_truncate_path_emoji() {
+        let s = "🎵🎶🎸🎹🎷🎺🎻.flac";
+        let result = truncate_path(s, 4);
+        assert_eq!(result.chars().count(), 4);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_truncate_path_arabic_bismillah() {
+        // ﷽ (U+FDFD) — one of the widest Unicode glyphs.
+        let s = "﷽/track.flac";
+        let result = truncate_path(s, 3);
+        assert_eq!(result.chars().count(), 3);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_truncate_path_combining_diacritics_zalgo() {
+        // Zalgo text: base char + many combining marks.
+        let s = "Z\u{0337}\u{0327}\u{0310}\u{0324}a\u{033A}\u{0303}lgo/track.flac";
+        // Should not panic — combining marks are separate chars.
+        let result = truncate_path(s, 6);
+        assert!(result.chars().count() <= 6);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_truncate_path_emoji_zwj_sequence() {
+        // Family emoji with zero-width joiners: 👨‍👩‍👧‍👦 (7 codepoints, 1 glyph)
+        let s = "👨\u{200D}👩\u{200D}👧\u{200D}👦/track.flac";
+        let result = truncate_path(s, 5);
+        assert!(result.chars().count() <= 5);
+        // Must not panic on ZWJ boundaries.
+    }
+
+    #[test]
+    fn test_truncate_path_flag_emoji() {
+        // Flag emoji: regional indicators 🇯🇵 (2 codepoints)
+        let s = "🇯🇵🇺🇸🇬🇧/music.flac";
+        let result = truncate_path(s, 4);
+        assert!(result.chars().count() <= 4);
+    }
+
+    #[test]
+    fn test_common_path_prefix_cjk_paths() {
+        let paths = vec![
+            "/音楽/アーティスト/アルバム/01.flac".into(),
+            "/音楽/アーティスト/アルバム/02.flac".into(),
+        ];
+        assert_eq!(common_path_prefix(&paths), "/音楽/アーティスト/アルバム/");
+    }
+
+    #[test]
+    fn test_common_path_prefix_fullwidth_diverge() {
+        // Paths diverge inside fullwidth text — must not split mid-char.
+        let paths = vec![
+            "/music/Ｊ Ｕ Ｒ Ａ/01.m4a".into(),
+            "/music/Ｊ Ｕ Ｒ Ｂ/01.m4a".into(),
+        ];
+        let prefix = common_path_prefix(&paths);
+        assert_eq!(prefix, "/music/");
+        // Verify the prefix is valid UTF-8 (no mid-char slice).
+        assert!(prefix.is_char_boundary(prefix.len()));
+    }
+
+    #[test]
+    fn test_common_path_prefix_emoji_folders() {
+        let paths = vec![
+            "/🎵/🎸/track.flac".into(),
+            "/🎵/🎹/track.flac".into(),
+        ];
+        assert_eq!(common_path_prefix(&paths), "/🎵/");
+    }
+
+    #[test]
+    fn test_shared_prefix_len_cjk() {
+        let a = "アーティスト/古いアルバム/01.flac";
+        let b = "アーティスト/新しいアルバム/01.flac";
+        let shared = shared_prefix_len(a, b);
+        // Should return byte offset after "アーティスト/"
+        assert_eq!(&a[..shared], "アーティスト/");
+    }
+
+    #[test]
+    fn test_shared_prefix_len_emoji() {
+        let a = "🎵/old/track.flac";
+        let b = "🎵/new/track.flac";
+        let shared = shared_prefix_len(a, b);
+        assert_eq!(&a[..shared], "🎵/");
+    }
+
+    #[test]
+    fn test_shared_prefix_len_mixed_width() {
+        // Mix of ASCII and multi-byte before the divergence point.
+        let a = "artist-名前/album-A/01.flac";
+        let b = "artist-名前/album-B/01.flac";
+        let shared = shared_prefix_len(a, b);
+        assert_eq!(&a[..shared], "artist-名前/");
+    }
+
+    #[test]
+    fn test_truncate_path_extreme_zalgo() {
+        // Cthulhu-tier combining modifiers: each base char has dozens of
+        // combining diacritical marks stacked on it.
+        let zalgo = "Ǫ\u{0337}\u{0327}\u{0310}\u{0324}\u{0332}\u{0347}\u{0353}\u{035A}\u{0317}H\u{0336}\u{0321}\u{0308}\u{0303}\u{0342}\u{0326}\u{032E}\u{0330} \u{0335}\u{0322}\u{0307}\u{030C}\u{0328}\u{0316}\u{0331}M\u{0334}\u{0323}\u{030A}\u{0325}\u{0339}\u{032D}\u{0348}Y\u{0335}\u{0309}\u{030B}\u{0304}\u{0327}\u{0316}\u{0331}/track.flac";
+        // Must not panic.
+        let result = truncate_path(zalgo, 8);
+        assert!(result.chars().count() <= 8);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn test_common_path_prefix_zalgo_folder() {
+        let zalgo_dir = "/music/Z\u{0337}\u{0327}a\u{033A}\u{0303}l\u{0335}g\u{0321}o\u{0336}";
+        let paths = vec![
+            format!("{}/album-A/01.flac", zalgo_dir),
+            format!("{}/album-B/01.flac", zalgo_dir),
+        ];
+        let prefix = common_path_prefix(&paths);
+        assert_eq!(prefix, format!("{}/", zalgo_dir));
+    }
+
+    #[test]
+    fn test_shared_prefix_len_zalgo() {
+        let base = "Z\u{0337}\u{0327}\u{0310}a\u{033A}\u{0303}lgo";
+        let a = format!("{}/old/track.flac", base);
+        let b = format!("{}/new/track.flac", base);
+        let shared = shared_prefix_len(&a, &b);
+        assert_eq!(&a[..shared], format!("{}/", base));
+    }
+
+    #[test]
+    fn test_truncate_path_skin_tone_emoji() {
+        // Emoji with skin tone modifier: 👩🏽 = 👩 + 🏽 (2 codepoints)
+        let s = "👩\u{1F3FD}👨\u{1F3FB}👧\u{1F3FE}/music/track.flac";
+        let result = truncate_path(s, 5);
+        assert!(result.chars().count() <= 5);
+    }
+
+    #[test]
+    fn test_all_helpers_with_realworld_vaporwave() {
+        // Real filename from the crash: fullwidth + CJK + standard ASCII.
+        let from = "/music/Valet Girls/(2015) Ｊ Ｕ Ｒ Ａ Ｓ Ｓ Ｉ Ｃ Ｐ Ａ Ｒ Ｌ Ｏ Ｒ [AAC]/01. Valet Girls - ｆｒｉｅｎｄｌｙ ｓｋｉｅｓ 島のクラッシュ.m4a";
+        let to = "/music/Valet Girls/(2015) Ｊ Ｕ Ｒ Ａ Ｓ Ｓ Ｉ Ｃ Ｐ Ａ Ｒ Ｌ Ｏ Ｒ [ALAC]/01. Valet Girls - ｆｒｉｅｎｄｌｙ ｓｋｉｅｓ 島のクラッシュ.m4a";
+        let paths = vec![from.to_string(), to.to_string()];
+
+        // None of these should panic.
+        let prefix = common_path_prefix(&paths);
+        assert!(prefix.ends_with('/'));
+
+        let from_rel = from.strip_prefix(&prefix).unwrap_or(from);
+        let to_rel = to.strip_prefix(&prefix).unwrap_or(to);
+        let shared = shared_prefix_len(from_rel, to_rel);
+        // shared must be a valid byte offset into both strings.
+        assert!(from_rel.is_char_boundary(shared));
+        assert!(to_rel.is_char_boundary(shared));
+
+        let truncated = truncate_path(from_rel, 40);
+        assert!(truncated.chars().count() <= 40);
+    }
 }
