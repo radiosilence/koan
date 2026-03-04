@@ -2,7 +2,7 @@
 
 **Plan:** [10-codebase-audit-2026-03-04-v0.5.2.md](10-codebase-audit-2026-03-04-v0.5.2.md)
 **Started:** 2026-03-04
-**Last updated:** 2026-03-04
+**Last updated:** 2026-03-04T2
 
 ---
 
@@ -11,7 +11,7 @@
 | Phase | PR Branch | Status | PR |
 |-------|-----------|--------|-----|
 | 1 — Security & Quick Wins | `fix/security-hardening` | ✅ DONE | [#13](https://github.com/radiosilence/koan/pull/13) |
-| 5 — Tests | `test/coverage-and-cleanup` | 🔄 IN PROGRESS | — |
+| 5 — Tests | `test/coverage-and-cleanup` | ✅ DONE | [#14](https://github.com/radiosilence/koan/pull/14) |
 | 2 — Performance | `perf/render-loop` | ⏳ TODO | — |
 | 3 — Architecture | `refactor/module-decomposition` | ⏳ TODO | — |
 | 4 — Dependencies | `chore/dependency-cleanup` | ⏳ TODO | — |
@@ -36,18 +36,18 @@
 | 10 | U1-U2: Fix panicking unwraps | ✅ |
 | 11 | D1: Scope symphonia features | ✅ |
 
-## Phase 5 — Tests 🔄
+## Phase 5 — Tests ✅
 
-**Branch:** `test/coverage-and-cleanup` — 3 parallel agents running
+**PR:** [#14](https://github.com/radiosilence/koan/pull/14) — 6 files, +1057 -59 lines, 332 → 371 tests
 
 | # | Item | Status |
 |---|------|--------|
-| 21 | Delete 4 AI-generated duplicate tests | 🔄 |
-| 22 | Add PlaybackTimeline tests | 🔄 |
-| 23 | Add SharedPlayerState tests | 🔄 |
-| 24 | Add favourites.rs tests | 🔄 |
-| 25 | Add Subsonic deserialization tests | 🔄 |
-| 26 | Add metadata_from_probe_result tests | 🔄 |
+| 21 | Delete 4 AI-generated duplicate tests | ✅ |
+| 22 | Add PlaybackTimeline tests (6) | ✅ |
+| 23 | Add SharedPlayerState tests (12) | ✅ |
+| 24 | Add favourites.rs tests (8) | ✅ |
+| 25 | Add Subsonic deserialization tests (5) | ✅ |
+| 26 | Add metadata_from_probe_result tests (5) | ✅ |
 
 ## Phase 2 — Performance ⏳
 
