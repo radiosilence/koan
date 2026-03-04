@@ -423,7 +423,7 @@ mod tests {
         // identified as "ALAC" rather than "AAC". Skipped silently when the
         // Turtlehead volume is not mounted.
         let alac_path = Path::new(
-            "/Volumes/Turtlehead/music/Valet Girls/(2017) PERENNIAL VICE [ALAC]/0101. Valet Girls - Tis the Season.m4a"
+            "/Volumes/Turtlehead/music/Valet Girls/(2017) PERENNIAL VICE [ALAC]/0101. Valet Girls - Tis the Season.m4a",
         );
         if !alac_path.exists() {
             eprintln!("SKIP: ALAC test file not found (volume not mounted)");

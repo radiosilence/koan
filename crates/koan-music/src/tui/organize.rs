@@ -288,11 +288,7 @@ fn common_path_prefix(paths: &[String]) -> String {
 /// Find the shared prefix length (at `/` boundaries) between two strings.
 /// Returns a **byte offset** into `a` (and `b`) at the last `/` boundary.
 fn shared_prefix_len(a: &str, b: &str) -> usize {
-    let shared_chars = a
-        .chars()
-        .zip(b.chars())
-        .take_while(|(x, y)| x == y)
-        .count();
+    let shared_chars = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
     // Convert char count to byte offset.
     let shared_bytes: usize = a.chars().take(shared_chars).map(|c| c.len_utf8()).sum();
     match a[..shared_bytes].rfind('/') {
@@ -469,9 +465,7 @@ impl Widget for OrganizeOverlay<'_> {
 
                 let strip = |p: &std::path::PathBuf| -> String {
                     let s = p.to_string_lossy();
-                    s.strip_prefix(&common_prefix)
-                        .unwrap_or(&s)
-                        .to_string()
+                    s.strip_prefix(&common_prefix).unwrap_or(&s).to_string()
                 };
 
                 // Build all display lines.
@@ -499,15 +493,19 @@ impl Widget for OrganizeOverlay<'_> {
                     let arrow_width = 2; // "→ "
                     let remaining = usable_width.saturating_sub(arrow_width);
                     let common_display = truncate_path(&common_part, remaining);
-                    let changed_display =
-                        truncate_path(&changed_part, remaining.saturating_sub(common_display.len()));
+                    let changed_display = truncate_path(
+                        &changed_part,
+                        remaining.saturating_sub(common_display.len()),
+                    );
 
                     all_lines.push(Line::from(vec![
                         Span::styled("\u{2192} ", Style::default().fg(Color::DarkGray)),
                         Span::styled(common_display, Style::default()),
                         Span::styled(
                             changed_display,
-                            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
                         ),
                     ]));
                 }
@@ -519,10 +517,7 @@ impl Widget for OrganizeOverlay<'_> {
                         .to_string_lossy()
                         .into_owned();
                     all_lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("  {name}: "),
-                            Style::default().fg(Color::Red),
-                        ),
+                        Span::styled(format!("  {name}: "), Style::default().fg(Color::Red)),
                         Span::styled(err.as_str(), self.theme.hint_desc),
                     ]));
                 }
@@ -765,10 +760,7 @@ mod tests {
 
     #[test]
     fn test_common_path_prefix_emoji_folders() {
-        let paths = vec![
-            "/🎵/🎸/track.flac".into(),
-            "/🎵/🎹/track.flac".into(),
-        ];
+        let paths = vec!["/🎵/🎸/track.flac".into(), "/🎵/🎹/track.flac".into()];
         assert_eq!(common_path_prefix(&paths), "/🎵/");
     }
 

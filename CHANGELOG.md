@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.6.2
+
+### Added
+
+- **WebP cover art support** — cover art in WebP format (embedded or external) is now decoded and displayed
+
 ## 0.6.1
 
 ### Added
