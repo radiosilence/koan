@@ -273,8 +273,8 @@ mod tests {
 
     #[test]
     fn test_load_from_file() {
-        let dir = tmp_dir();
-        let path = dir.join("config.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
         fs::write(
             &path,
             r#"
@@ -290,22 +290,17 @@ replaygain = "track"
         let cfg = Config::load_from(&path).unwrap();
         assert_eq!(cfg.library.folders, vec![PathBuf::from("/tmp/music")]);
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Track);
-        // Remote should be default since not in file.
         assert!(!cfg.remote.enabled);
-
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
     fn test_partial_toml_uses_defaults() {
-        let dir = tmp_dir();
-        let path = dir.join("partial.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("partial.toml");
         fs::write(&path, "[playback]\nsoftware_volume = true\n").unwrap();
 
         let cfg = Config::load_from(&path).unwrap();
         assert!(cfg.playback.software_volume);
-
-        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
