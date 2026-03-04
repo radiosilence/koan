@@ -13,6 +13,7 @@ Feasibility research and implementation plans for koan's next major features.
 | [06](06-decoupled-backends.md) | Decoupled Backends | ~6-10 days | Trait-based subsystems. `keyring` for credentials (trivial). Don't abstract SQLite. Custom `AudioBackend` over cpal for bit-perfect. | Research |
 | [07](07-non-tag-metadata.md) | Non-Tag Metadata | ~7-10 days | Last.fm + LRCLIB + Cover Art Archive — all free/open. Radio mode = queue feature. Lyrics is highest ROI. | Research |
 | [08](08-replaygain-wiring.md) | ReplayGain Wiring | ~1 day | All code exists, just not called during decode. Apply gain in `decode_single()` before ring buffer push. ~40-60 line diff. | Ready |
+| [10](10-codebase-audit-2026-03-04-v0.5.2.md) | Codebase Audit v0.5.2 | ~10-15 days | Security (credential perms, HTTPS), performance (vq_cache rebuild, string clones), architecture (app.rs split), dead code, test gaps, AI-generated test cleanup | Research |
 
 ## Dependencies Between Plans
 
