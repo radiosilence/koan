@@ -11,11 +11,11 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  test:
-    name: Test & Lint
+  fmt:
+    name: Format
     runs-on: macos-latest
     concurrency:
-      group: test-${{ github.ref }}
+      group: fmt-${{ github.ref }}
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4
@@ -29,11 +29,56 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+  clippy:
+    name: Clippy
+    runs-on: macos-latest
+    concurrency:
+      group: clippy-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
       - name: Lint with Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  test:
+    name: Test
+    runs-on: macos-latest
+    concurrency:
+      group: test-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
       - name: Run tests
         run: cargo test --all-targets
+
+  build:
+    name: Build
+    runs-on: macos-latest
+    concurrency:
+      group: build-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
 
       - name: Build release
         run: cargo build --release
@@ -115,7 +160,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
-    needs: [test, create-release, check-version]
+    needs: [fmt, clippy, test, build, create-release, check-version]
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       contents: write

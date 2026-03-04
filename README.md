@@ -58,6 +58,8 @@ koan remote sync
 
 Remote and local tracks merge seamlessly into one library — if the same track exists in both sources (matched by artist + album + title + track number), it becomes a single entry. Local files always take playback priority; remote is only used as a fallback if the local file is missing. Remote-only tracks download on first play and cache locally — subsequent plays are instant.
 
+Syncs are **incremental by default** — after the first full sync, subsequent runs only fetch albums added since the last sync. Use `--full` to force a complete re-sync. If a local drive is unplugged, tracks with remote backing are demoted to remote-only (streaming fallback) instead of deleted; when the drive comes back, the next scan re-merges them automatically.
+
 You can use both sources together. Run `koan remote sync` periodically (or after adding music to your server) to pull new tracks.
 
 ### Play something
@@ -153,7 +155,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal with embedded album art (halfblock rendering), scrollbar, mouse support (click-to-seek, click-to-play, drag-to-reorder, scrollbar drag, scroll wheel)
 - **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, seek, now playing info with album art)
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
-- **Subsonic/Navidrome** — parallel remote library sync, unified local+remote browsing, lazy parallel downloads
+- **Subsonic/Navidrome** — incremental remote library sync (only fetches new albums after first full sync), unified local+remote browsing, lazy parallel downloads. Resilient deduplication — unplugging a local drive demotes tracks to remote-only streaming instead of deleting them; re-scanning re-merges automatically
 - **Format string engine** — fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for library views and file organization
 - **File organization** — in-TUI organize modal: select tracks → context menu → pick a named pattern → preview moves → execute. Playlist paths update live, playback continues uninterrupted
 - **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag, undo/redo (Ctrl+Z/Y, 100-deep stack covering all playlist operations). Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward). Drag/drop files from Finder into the terminal to add them to the queue
@@ -219,7 +221,8 @@ koan library                  # library statistics
 
 # remote
 koan remote login URL user    # authenticate with Subsonic/Navidrome server
-koan remote sync              # sync remote library to local database
+koan remote sync              # incremental sync (only new albums since last sync)
+koan remote sync --full       # full re-sync of entire remote library
 koan remote status            # show remote server info
 
 # utilities
