@@ -2,7 +2,9 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
+use lofty::config::ParseOptions;
 use lofty::file::AudioFile;
+use lofty::mp4::{Mp4Codec, Mp4File};
 use lofty::prelude::*;
 use symphonia::core::meta::{MetadataRevision, StandardTagKey};
 use thiserror::Error;
@@ -81,7 +83,11 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64);
 
-    let codec = codec_from_file_type(tagged_file.file_type());
+    let codec = if tagged_file.file_type() == lofty::file::FileType::Mp4 {
+        mp4_codec(path)
+    } else {
+        codec_from_file_type(tagged_file.file_type())
+    };
 
     Ok(TrackMeta {
         title,
@@ -106,6 +112,25 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
         remote_id: None,
         remote_url: None,
     })
+}
+
+/// Determine codec for an MP4 container file (AAC, ALAC, etc.).
+/// Falls back to "AAC" if the file cannot be parsed as Mp4File.
+fn mp4_codec(path: &Path) -> String {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return "AAC".to_string(),
+    };
+    let mut reader = std::io::BufReader::new(file);
+    match Mp4File::read_from(&mut reader, ParseOptions::new()) {
+        Ok(mp4) => match mp4.properties().codec() {
+            Mp4Codec::ALAC => "ALAC".to_string(),
+            Mp4Codec::MP3 => "MP3".to_string(),
+            Mp4Codec::FLAC => "FLAC".to_string(),
+            _ => "AAC".to_string(),
+        },
+        Err(_) => "AAC".to_string(),
+    }
 }
 
 /// Map lofty file type to a human-readable codec string.
@@ -377,5 +402,37 @@ mod tests {
         assert_eq!(meta.date, None);
         assert_eq!(meta.genre, None);
         assert_eq!(meta.source, "streaming");
+    }
+
+    #[test]
+    fn test_mp4_codec_nonexistent_file_falls_back_to_aac() {
+        assert_eq!(mp4_codec(Path::new("/nonexistent/track.m4a")), "AAC");
+    }
+
+    #[test]
+    fn test_mp4_codec_non_mp4_file_falls_back_to_aac() {
+        // A non-MP4 file should fail to parse and fall back to "AAC".
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        assert_eq!(mp4_codec(&manifest), "AAC");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_mp4_codec_real_alac_file() {
+        // Integration test: verify that a real ALAC .m4a file is correctly
+        // identified as "ALAC" rather than "AAC". Skipped silently when the
+        // Turtlehead volume is not mounted.
+        let alac_path = Path::new(
+            "/Volumes/Turtlehead/music/Valet Girls/(2017) PERENNIAL VICE [ALAC]/0101. Valet Girls - Tis the Season.m4a"
+        );
+        if !alac_path.exists() {
+            eprintln!("SKIP: ALAC test file not found (volume not mounted)");
+            return;
+        }
+        assert_eq!(
+            mp4_codec(alac_path),
+            "ALAC",
+            "real ALAC .m4a should be identified as ALAC, not AAC"
+        );
     }
 }
