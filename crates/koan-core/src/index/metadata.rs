@@ -126,7 +126,9 @@ fn codec_from_file_type(ft: lofty::file::FileType) -> String {
 }
 
 /// Extract embedded front cover art bytes from an audio file.
-/// Returns raw image bytes (JPEG/PNG/etc.) or None.
+/// Returns raw image bytes (JPEG/PNG) or None. TIFF images are
+/// skipped — the `image` crate only has jpeg+png features and macOS
+/// CGImageDestination rejects TIFF for Now Playing artwork.
 pub fn extract_cover_art(path: &Path) -> Option<Vec<u8>> {
     let tagged_file = lofty::read_from_path(path).ok()?;
     let tag = tagged_file
@@ -137,10 +139,19 @@ pub fn extract_cover_art(path: &Path) -> Option<Vec<u8>> {
     let pictures = tag.pictures();
     let pic = pictures
         .iter()
-        .find(|p| p.pic_type() == lofty::picture::PictureType::CoverFront)
-        .or_else(|| pictures.first())?;
+        .find(|p| {
+            p.pic_type() == lofty::picture::PictureType::CoverFront && !is_tiff(p.data())
+        })
+        .or_else(|| pictures.iter().find(|p| !is_tiff(p.data())))?;
 
     Some(pic.data().to_vec())
+}
+
+/// TIFF magic bytes: `II*\0` (little-endian) or `MM\0*` (big-endian).
+fn is_tiff(data: &[u8]) -> bool {
+    data.len() >= 4
+        && ((data[0] == 0x49 && data[1] == 0x49 && data[2] == 0x2A && data[3] == 0x00)
+            || (data[0] == 0x4D && data[1] == 0x4D && data[2] == 0x00 && data[3] == 0x2A))
 }
 
 /// Extract partial track metadata from a Symphonia probe `MetadataRevision`.

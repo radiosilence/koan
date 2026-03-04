@@ -2,11 +2,18 @@
 
 ## Unreleased
 
+## 0.5.1
+
 ### Added
 
 - **ReplayGain playback support** — track and album ReplayGain tags are read via lofty at decode time and gain is applied with peak limiting. Configure via `[playback] replaygain` (`track`, `album`, or `off`) and `pre_amp_db` in config.toml. Zero overhead when disabled
-- **Streaming seek bar** — during streaming playback the seek bar shows a dashed pattern for the not-yet-downloaded portion. Downloaded section renders as a solid line that grows as the download progresses. Seeking past the downloaded point is prevented (click, keyboard, and core seek all clamped)
+- **Streaming seek bar** — during streaming playback the seek bar dims the not-yet-downloaded portion. Downloaded section renders as a solid line that grows as the download progresses. Seeking past the downloaded point is prevented (click, keyboard, and core seek all clamped)
 - **Accurate duration for streaming tracks** — transport bar now prefers the database-sourced track duration over the probed partial-file duration, so elapsed/total always shows the real track length
+
+### Fixed
+
+- **TIFF cover art rejected** — embedded TIFF artwork is now skipped during extraction, falling back to the next JPEG/PNG picture. Fixes `CGImageDestinationFinalize failed` errors on macOS Now Playing
+- **Spectrum peak markers hidden by bars** — peak hold markers now render on top of bar fill instead of being overwritten
 
 ## 0.5.0
 

@@ -138,11 +138,8 @@ impl Widget for TransportBar<'_> {
 
         let filled = "\u{2501}".repeat(progress);
         let dl_remaining = "\u{2500}".repeat(downloaded.saturating_sub(progress));
-        // Dashed bar for not-yet-downloaded portion: same char with gaps.
-        let not_downloaded_width = bar_width.saturating_sub(downloaded);
-        let dashed: String = (0..not_downloaded_width)
-            .map(|i| if i % 2 == 0 { '\u{2500}' } else { ' ' })
-            .collect();
+        // Not-yet-downloaded portion: same char but DIM so it fades out.
+        let not_downloaded = "\u{2500}".repeat(bar_width.saturating_sub(downloaded));
 
         let mut spans = vec![
             Span::raw(" "),
@@ -151,9 +148,9 @@ impl Widget for TransportBar<'_> {
             Span::styled(filled, self.theme.progress_filled),
             Span::styled(dl_remaining, self.theme.progress_empty),
         ];
-        if !dashed.is_empty() {
+        if !not_downloaded.is_empty() {
             spans.push(Span::styled(
-                dashed,
+                not_downloaded,
                 self.theme.progress_empty.add_modifier(Modifier::DIM),
             ));
         }
