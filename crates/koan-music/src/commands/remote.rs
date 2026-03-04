@@ -101,9 +101,18 @@ pub fn cmd_remote_sync(full: bool) {
     let imported = match client.get_starred() {
         Ok(songs) => {
             let remote_ids: Vec<String> = songs.into_iter().map(|s| s.id).collect();
-            koan_core::db::queries::import_remote_favourites(&db.conn, &remote_ids).unwrap_or(0)
+            match koan_core::db::queries::import_remote_favourites(&db.conn, &remote_ids) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("\n{} importing favourites: {}", "error".red(), e);
+                    0
+                }
+            }
         }
-        Err(_) => 0,
+        Err(e) => {
+            eprintln!("\n{} fetching starred: {}", "error".red(), e);
+            0
+        }
     };
 
     println!(
