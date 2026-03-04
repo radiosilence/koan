@@ -1,10 +1,11 @@
 mod albums;
 mod artists;
 mod favourites;
+pub mod lyrics;
 mod scan_cache;
 mod search;
 mod stats;
-mod tracks;
+pub mod tracks;
 
 use std::path::PathBuf;
 
@@ -12,6 +13,7 @@ use std::path::PathBuf;
 pub use albums::*;
 pub use artists::*;
 pub use favourites::*;
+pub use lyrics::*;
 pub use scan_cache::*;
 pub use search::*;
 pub use stats::*;

@@ -7,6 +7,7 @@ use super::app::{App, LibraryFocus, Mode};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
 use super::keys::HintBar;
 use super::library::LibraryView;
+use super::lyrics::LyricsPanel;
 use super::organize::{OrganizeOverlay, organize_popup_rect};
 use super::picker::{PickerOverlay, picker_popup_rect};
 use super::queue::QueueView;
@@ -106,9 +107,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     .with_ticker_offset(app.ticker_offset);
     frame.render_widget(transport, text_area);
 
-    // Content area: library + queue side-by-side, or just queue.
+    // Content area: library + queue side-by-side, or just queue, with optional lyrics panel.
     let content_area = chunks[1];
     let show_library = app.mode == Mode::LibraryBrowse && app.library.is_some();
+    let show_lyrics = app.lyrics_panel;
 
     if show_library {
         let panes = Layout::horizontal([
@@ -135,6 +137,20 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
         // Queue pane.
         render_queue(frame, app, panes[1]);
+    } else if show_lyrics {
+        let panes = Layout::horizontal([
+            Constraint::Percentage(60), // queue
+            Constraint::Percentage(40), // lyrics
+        ])
+        .split(content_area);
+
+        app.layout.queue_area = panes[0];
+        render_queue(frame, app, panes[0]);
+
+        // Lyrics panel.
+        let pos_ms = app.state.position_ms();
+        let lyrics_panel = LyricsPanel::new(&app.lyrics, pos_ms, &app.theme, app.spinner_tick);
+        frame.render_widget(lyrics_panel, panes[1]);
     } else {
         app.layout.queue_area = content_area;
         render_queue(frame, app, content_area);

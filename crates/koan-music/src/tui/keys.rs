@@ -34,6 +34,7 @@ impl Widget for HintBar<'_> {
                 ("i", "info"),
                 ("f", "\u{2605}fav"),
                 ("z", "art"),
+                ("L", "lyrics"),
                 ("C-z", "undo"),
                 ("q", "quit"),
             ],
