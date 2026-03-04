@@ -92,8 +92,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.transport_text_area = text_area;
 
     // Seek bar metrics + transport widget — rendered once.
+    // Prefer the queue entry's DB-sourced duration over the probed duration so
+    // bar_metrics and the rendered time string agree (probing a partial streaming
+    // file returns a truncated duration).
     let pos_ms = app.state.position_ms();
-    let dur_ms = track_info.as_ref().map_or(0, |t| t.duration_ms);
+    let dur_ms = playing_entry
+        .as_ref()
+        .and_then(|e| e.duration_ms)
+        .or_else(|| track_info.as_ref().map(|t| t.duration_ms))
+        .unwrap_or(0);
     let (bs, bw) = TransportBar::bar_metrics(text_area, pos_ms, dur_ms);
     app.layout.seek_bar_start = bs;
     app.layout.seek_bar_width = bw;
