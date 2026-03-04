@@ -228,6 +228,11 @@ pub struct App {
 
     /// Set of favourite track paths, loaded from DB on startup.
     pub favourites: std::collections::HashSet<PathBuf>,
+
+    /// Visualizer config (enabled flag, fps).
+    pub viz_config: koan_core::config::VisualizerConfig,
+    /// Last time the visualizer spectrum was updated (for FPS rate limiting).
+    pub last_viz_update: std::time::Instant,
 }
 
 impl App {
@@ -280,6 +285,8 @@ impl App {
             },
             ticker_last_path: None,
             favourites: std::collections::HashSet::new(),
+            viz_config: koan_core::config::Config::load().unwrap_or_default().visualizer,
+            last_viz_update: std::time::Instant::now(),
         }
     }
 
@@ -407,9 +414,15 @@ impl App {
             self.art.now_playing_art.get(&info.path);
         }
 
-        // Update visualizer spectrum from the decode thread's sample buffer.
-        if self.state.playback_state() == PlaybackState::Playing {
-            self.visualizer.update_spectrum(&self.viz_buffer);
+        // Update visualizer spectrum at configured FPS.
+        if self.viz_config.enabled
+            && self.state.playback_state() == PlaybackState::Playing
+        {
+            let interval = std::time::Duration::from_millis(1000 / self.viz_config.fps.max(1) as u64);
+            if self.last_viz_update.elapsed() >= interval {
+                self.visualizer.update_spectrum(&self.viz_buffer);
+                self.last_viz_update = std::time::Instant::now();
+            }
         }
 
         // In normal mode, auto-scroll to playing track on actual track change.

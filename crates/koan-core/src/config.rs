@@ -22,6 +22,8 @@ pub struct Config {
     pub playback: PlaybackConfig,
     pub remote: RemoteConfig,
     pub organize: OrganizeConfig,
+    #[serde(alias = "visualiser")]
+    pub visualizer: VisualizerConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +87,19 @@ impl Default for PlaybackConfig {
             replaygain: ReplayGainMode::Album,
             ticker_fps: 8,
         }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VisualizerConfig {
+    pub enabled: bool,
+    pub fps: u8,
+}
+
+impl Default for VisualizerConfig {
+    fn default() -> Self {
+        Self { enabled: true, fps: 20 }
     }
 }
 
@@ -215,6 +230,7 @@ impl Config {
         if other.organize.default.is_some() {
             self.organize.default = other.organize.default;
         }
+        self.visualizer = other.visualizer;
     }
 
     /// Resolved cache directory — uses explicit setting or defaults to config_dir/cache.

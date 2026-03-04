@@ -1,5 +1,10 @@
 use koan_core::audio::viz::VizBuffer;
+use ratatui::buffer::Buffer;
+use ratatui::layout::Rect;
+use ratatui::widgets::Widget;
 use realfft::RealFftPlanner;
+
+use super::theme::Theme;
 
 /// FFT window size: 2048 samples (~46ms at 44.1kHz).
 const FFT_SIZE: usize = 2048;
@@ -223,6 +228,97 @@ impl VisualizerState {
         // Mono: duplicate left to right.
         if vu_channels == 1 {
             self.vu_levels[1] = self.vu_levels[0];
+        }
+    }
+}
+
+/// 80s hi-fi LED-segment spectrum analyzer widget.
+pub struct SpectrumWidget<'a> {
+    state: &'a VisualizerState,
+    theme: &'a Theme,
+}
+
+impl<'a> SpectrumWidget<'a> {
+    pub fn new(state: &'a VisualizerState, theme: &'a Theme) -> Self {
+        Self { state, theme }
+    }
+}
+
+/// Vertical fractional block characters for sub-cell resolution (index 0 = empty).
+const VBLOCKS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+impl Widget for SpectrumWidget<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
+        let num_bars = self.state.spectrum.len();
+        let cols = (area.width as usize).min(num_bars);
+        if cols == 0 {
+            return;
+        }
+
+        let height = area.height as f32;
+
+        for col in 0..cols {
+            // Map column to spectrum bar (downsample if width < num_bars).
+            let bar_val = if cols < num_bars {
+                // Average adjacent bars when downsampling.
+                let start = col * num_bars / cols;
+                let end = ((col + 1) * num_bars / cols).min(num_bars);
+                let count = (end - start).max(1);
+                self.state.spectrum[start..end].iter().sum::<f32>() / count as f32
+            } else {
+                self.state.spectrum[col.min(num_bars - 1)]
+            };
+
+            let peak_val = if cols < num_bars {
+                let start = col * num_bars / cols;
+                let end = ((col + 1) * num_bars / cols).min(num_bars);
+                let count = (end - start).max(1);
+                self.state.peaks[start..end].iter().sum::<f32>() / count as f32
+            } else {
+                self.state.peaks[col.min(num_bars - 1)]
+            };
+
+            // Bar height in sub-cell units (8 sub-cells per cell).
+            let bar_subcells = (bar_val * height * 8.0).round() as usize;
+            let full_cells = bar_subcells / 8;
+            let frac = bar_subcells % 8;
+
+            // Peak position in cells from bottom.
+            let peak_cell = (peak_val * height).round() as u16;
+
+            let x = area.x + col as u16;
+
+            // Render from bottom to top.
+            for row in 0..area.height {
+                let cell_from_bottom = area.height - 1 - row;
+                let y = area.y + row;
+
+                // Color based on position relative to total height.
+                let pos_ratio = cell_from_bottom as f32 / height;
+                let style = if pos_ratio < 0.33 {
+                    self.theme.spectrum_low
+                } else if pos_ratio < 0.66 {
+                    self.theme.spectrum_mid
+                } else {
+                    self.theme.spectrum_high
+                };
+
+                if (cell_from_bottom as usize) < full_cells {
+                    // Full block.
+                    buf[(x, y)].set_char('█').set_style(style);
+                } else if cell_from_bottom as usize == full_cells && frac > 0 {
+                    // Fractional block.
+                    buf[(x, y)].set_char(VBLOCKS[frac]).set_style(style);
+                } else if cell_from_bottom == peak_cell && peak_cell > full_cells as u16 {
+                    // Peak marker.
+                    buf[(x, y)].set_char('▔').set_style(self.theme.spectrum_peak);
+                }
+                // else: leave empty (transparent)
+            }
         }
     }
 }

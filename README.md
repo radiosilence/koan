@@ -80,7 +80,7 @@ The TUI launches immediately — no waiting. If tracks need downloading (remote 
 
 ### The TUI
 
-kōan is built around a full-screen terminal interface. The transport bar shows what's playing with album art (halfblock rendering), the queue groups tracks by album, and a hint bar at the bottom shows available keys for the current mode.
+kōan is built around a full-screen terminal interface. The transport bar shows what's playing with album art (halfblock rendering) and a real-time spectrum analyzer, the queue groups tracks by album, and a hint bar at the bottom shows available keys for the current mode.
 
 **The basics:** `space` to pause, `<`/`>` to skip tracks, `,`/`.` or arrow keys to seek. `p` opens a fuzzy track picker, `a` for albums, `r` for artists. `l` opens the library browser for tree-style browsing. `i` shows track info with cover art. `q` to quit.
 
@@ -150,7 +150,8 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Bit-perfect playback** — CoreAudio AUHAL, no resampling, automatic device sample rate switching
 - **Gapless** — decode thread keeps the ring buffer alive across track boundaries, AudioUnit never stops
 - **Format support** — FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
-- **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal with embedded album art (halfblock rendering), scrollbar, mouse support (click-to-seek, click-to-play, drag-to-reorder, scrollbar drag, scroll wheel)
+- **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal with embedded album art (halfblock rendering), real-time spectrum analyzer, scrollbar, mouse support (click-to-seek, click-to-play, drag-to-reorder, scrollbar drag, scroll wheel)
+- **Spectrum visualizer** — 80s hi-fi LED-segment spectrum analyzer rendered in the transport area. 64-band FFT with logarithmic frequency mapping, sub-cell resolution using Unicode block characters, tricolor bars (green/yellow/red), peak hold markers, and smooth decay. Configurable FPS, disable with `[visualizer] enabled = false`
 - **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, seek, now playing info with album art)
 - **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
 - **Subsonic/Navidrome** — parallel remote library sync, unified local+remote browsing, lazy parallel downloads
@@ -341,6 +342,17 @@ username = "admin"
 ```
 
 Password is prompted by `koan remote login` and saved to `config.local.toml` (gitignored).
+
+### Visualizer
+
+```toml
+# config.toml
+[visualizer]
+enabled = true   # show spectrum analyzer in transport area (default: true)
+fps = 20         # spectrum update rate (default: 20)
+```
+
+The spectrum analyzer renders above the transport text when album art is present (giving the transport area enough height). It shows a 64-band FFT with tricolor LED-segment bars and peak hold markers. Set `enabled = false` to hide it.
 
 ### Organize patterns
 
