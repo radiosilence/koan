@@ -199,6 +199,9 @@ pub struct App {
     /// Organize modal state (when in Organize mode).
     pub organize: Option<super::organize::OrganizeModalState>,
 
+    /// Stack of previous modes — push before entering a modal, pop when leaving.
+    pub mode_stack: Vec<Mode>,
+
     /// Last known mouse row — for determining drop insertion point.
     pub last_mouse_row: Option<u16>,
 
@@ -302,6 +305,7 @@ impl App {
             art: ArtState::default(),
             context_menu: None,
             organize: None,
+            mode_stack: Vec::new(),
             last_mouse_row: None,
             scrollbar_grab_offset: None,
             drag_undo_active: false,
@@ -325,6 +329,17 @@ impl App {
             fps_sample_count: 0,
             display_fps: 0,
         }
+    }
+
+    /// Push current mode onto the stack and switch to a new mode.
+    fn push_mode(&mut self, mode: Mode) {
+        self.mode_stack.push(self.mode.clone());
+        self.mode = mode;
+    }
+
+    /// Pop the previous mode from the stack (falls back to Normal).
+    fn pop_mode(&mut self) {
+        self.mode = self.mode_stack.pop().unwrap_or(Mode::Normal);
     }
 
     /// Load favourites from the database.
@@ -903,7 +918,7 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.context_menu = None;
-                self.mode = Mode::QueueEdit;
+                self.pop_mode();
             }
             KeyCode::Up => {
                 if let Some(ref mut menu) = self.context_menu {
@@ -923,13 +938,13 @@ impl App {
                 {
                     self.execute_context_action(*action);
                 } else {
-                    self.mode = Mode::QueueEdit;
+                    self.pop_mode();
                 }
             }
             KeyCode::Char(c) => {
                 if c == 'q' || c == ' ' {
                     self.context_menu = None;
-                    self.mode = Mode::QueueEdit;
+                    self.pop_mode();
                 } else if let Some(menu) = self.context_menu.take() {
                     // Match hotkey char against menu actions.
                     if let Some((action, _, _)) = menu.actions.iter().find(|(_, _, h)| *h == c) {
@@ -951,7 +966,7 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.organize = None;
-                self.mode = Mode::QueueEdit;
+                self.pop_mode();
             }
             KeyCode::Tab => {
                 org.focus = match org.focus {
@@ -1013,11 +1028,11 @@ impl App {
             (ContextAction::Organize, "Organize files", 'o'),
         ];
         self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
-        self.mode = Mode::ContextMenu;
+        self.push_mode(Mode::ContextMenu);
     }
 
     fn execute_context_action(&mut self, action: ContextAction) {
-        self.mode = Mode::QueueEdit;
+        self.pop_mode();
         match action {
             ContextAction::Play => {
                 self.play_at_cursor();
@@ -1063,7 +1078,7 @@ impl App {
 
         let org = super::organize::OrganizeModalState::new(patterns, selected_paths, selected_ids);
         self.organize = Some(org);
-        self.mode = Mode::Organize;
+        self.push_mode(Mode::Organize);
     }
 
     fn handle_picker_key(&mut self, key: KeyEvent) {
@@ -1201,7 +1216,7 @@ impl App {
                 && !self.is_in_rect(event.column, event.row, self.layout.organize_area)
             {
                 self.organize = None;
-                self.mode = Mode::QueueEdit;
+                self.pop_mode();
             }
             return;
         }
@@ -1225,7 +1240,7 @@ impl App {
                     }
                 } else {
                     self.context_menu = None;
-                    self.mode = Mode::QueueEdit;
+                    self.pop_mode();
                 }
             }
             return;
@@ -1688,7 +1703,7 @@ impl App {
                             ],
                             cursor: 0,
                         });
-                        self.mode = Mode::ContextMenu;
+                        self.push_mode(Mode::ContextMenu);
                         // Store click position for positioned rendering.
                         self.hover.column = event.column;
                         self.hover.row = event.row;
@@ -1727,7 +1742,7 @@ impl App {
                             ],
                             cursor: 0,
                         });
-                        self.mode = Mode::ContextMenu;
+                        self.push_mode(Mode::ContextMenu);
                         self.hover.column = event.column;
                         self.hover.row = event.row;
                     }
