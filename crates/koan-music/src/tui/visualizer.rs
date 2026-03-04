@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use koan_core::audio::viz::VizBuffer;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -18,13 +20,12 @@ const MIN_FREQ: f32 = 20.0;
 /// Maximum frequency for the logarithmic mapping (Hz).
 const MAX_FREQ: f32 = 20_000.0;
 
-/// Smoothing decay factor: bars fall at this rate per frame.
-/// At 60fps, 0.55 drops to ~5% in 10 frames (167ms) — snappy.
-const DECAY_FACTOR: f32 = 0.55;
+/// Half-life for bar decay in seconds. Bars drop to 50% in this time.
+/// 0.08s = snappy, responsive feel regardless of frame rate.
+const BAR_HALF_LIFE: f32 = 0.08;
 
-/// Peak hold decay factor (slower than bars for the "sticky peak" effect).
-/// At 60fps, 0.90 holds for ~0.5s before fading.
-const PEAK_DECAY: f32 = 0.90;
+/// Half-life for peak decay in seconds. Peaks linger then fade.
+const PEAK_HALF_LIFE: f32 = 0.35;
 
 /// dB floor for normalization: magnitudes below this map to 0.0.
 const DB_FLOOR: f32 = -80.0;
@@ -87,6 +88,8 @@ pub struct VisualizerState {
     last_sample_rate: f32,
     /// Reusable scratch: how many bins contributed to each bar.
     bar_counts: Vec<u32>,
+    /// Last update timestamp for time-based decay.
+    last_update: Instant,
 }
 
 impl VisualizerState {
@@ -108,7 +111,19 @@ impl VisualizerState {
             bin_to_bar: Vec::new(),
             last_sample_rate: 0.0,
             bar_counts: vec![0u32; NUM_BARS],
+            last_update: Instant::now(),
         }
+    }
+
+    /// Compute decay factors from elapsed time since last update.
+    fn decay_factors(&mut self) -> (f32, f32) {
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_update).as_secs_f32();
+        self.last_update = now;
+        // decay = 0.5^(dt / half_life)
+        let bar_decay = 0.5f32.powf(dt / BAR_HALF_LIFE);
+        let peak_decay = 0.5f32.powf(dt / PEAK_HALF_LIFE);
+        (bar_decay, peak_decay)
     }
 
     /// Number of bars in the spectrum.
@@ -222,16 +237,17 @@ impl VisualizerState {
             }
         }
 
-        // Apply smoothing: bar falls at DECAY_FACTOR per tick, jumps up instantly.
+        // Apply time-based smoothing: decay rate is independent of frame rate.
+        let (bar_decay, peak_decay) = self.decay_factors();
         for i in 0..NUM_BARS {
-            let decayed = self.prev_spectrum[i] * DECAY_FACTOR;
+            let decayed = self.prev_spectrum[i] * bar_decay;
             self.spectrum[i] = self.spectrum[i].max(decayed);
 
             // Update peak hold (slower decay).
             if self.spectrum[i] > self.peaks[i] {
                 self.peaks[i] = self.spectrum[i];
             } else {
-                self.peaks[i] *= PEAK_DECAY;
+                self.peaks[i] *= peak_decay;
             }
         }
     }
@@ -240,12 +256,13 @@ impl VisualizerState {
     ///
     /// Feeds silence into the smoothing pass so bars gracefully fall to zero.
     pub fn decay_to_zero(&mut self) {
+        let (bar_decay, peak_decay) = self.decay_factors();
         for i in 0..NUM_BARS {
-            self.spectrum[i] *= DECAY_FACTOR;
-            self.peaks[i] *= PEAK_DECAY;
+            self.spectrum[i] *= bar_decay;
+            self.peaks[i] *= peak_decay;
         }
         for v in self.vu_levels.iter_mut() {
-            *v *= DECAY_FACTOR;
+            *v *= bar_decay;
         }
     }
 
@@ -475,9 +492,12 @@ mod tests {
         state.update_spectrum(&viz);
         let initial_max = state.spectrum.iter().cloned().fold(0.0f32, f32::max);
 
-        // Now push silence and update several times.
+        // Push silence and simulate 20 frames at ~60fps (16ms apart).
+        // We fake elapsed time by rewinding last_update before each call.
         viz.push_samples(&vec![0.0; num_frames * 2], 2, sample_rate);
+        let frame_dt = std::time::Duration::from_millis(16);
         for _ in 0..20 {
+            state.last_update = Instant::now() - frame_dt;
             state.update_spectrum(&viz);
         }
 
