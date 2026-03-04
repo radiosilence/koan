@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Security hardening** — credentials removed from stored remote URLs (template-based at playback time), config and DB files restricted to 0o600 on Unix, FTS5 and LIKE query inputs sanitized, HTTPS warning for non-localhost remotes, secure random salt via `getrandom`, PID-namespaced cover art temp files
+
+### Changed
+
+- **Symphonia codec features scoped** — replaced blanket `features = ["all"]` with only the codecs koan actually uses (FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV, AIFF), reducing compile time
+
+### Removed
+
+- **Dead code cleanup** — removed 6 unused functions/fields: `LyricsState::clear`, `CoverArt::centered`, `scrollbar_hover` theme field, `event.rs` module, `VisualizerState::num_bars`, 3 unused `HoverZone` variants
+
+### Tests
+
+- **Test coverage expanded** — 332 → 371 tests. Added coverage for PlaybackTimeline (6), SharedPlayerState (12), favourites (8), Subsonic client (5), metadata probe (5). Removed 4 AI-generated duplicate streaming tests
+
 ## 0.5.2
 
 ### Fixed
