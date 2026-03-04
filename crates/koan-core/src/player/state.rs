@@ -61,13 +61,33 @@ pub struct TrackInfo {
 
 // --- Playlist data model (single source of truth) ---
 
+/// Minimum bytes written before streaming playback can begin.
+pub const STREAM_THRESHOLD: u64 = 256 * 1024; // 256 KB
+
 /// Load state of a playlist item — tracks download lifecycle.
 #[derive(Debug, Clone)]
 pub enum LoadState {
     Pending,
-    Downloading { downloaded: u64, total: u64 },
+    Downloading {
+        downloaded: u64,
+        total: u64,
+        /// Shared counter updated atomically by the download thread after each chunk.
+        bytes_written: Arc<AtomicU64>,
+    },
     Ready,
     Failed(String),
+}
+
+/// Resolved playback source for a playlist item.
+pub enum PlaybackSource {
+    /// File fully downloaded — play from path.
+    Ready(PathBuf),
+    /// File being downloaded — enough data buffered to start streaming.
+    Streaming {
+        path: PathBuf,
+        bytes_written: Arc<AtomicU64>,
+        total: u64,
+    },
 }
 
 /// A single item in the playlist. Replaces QueueEntry + QueueEntryMeta + pending entries
@@ -157,6 +177,10 @@ pub struct SharedPlayerState {
 
     /// Set by external signals (e.g. souvlaki Quit event) to request clean shutdown.
     quit_requested: AtomicBool,
+
+    /// Set when metadata has been refreshed (e.g. download completed while streaming).
+    /// The UI loop checks this to force a souvlaki/cover-art update without a track change.
+    metadata_refresh_pending: AtomicBool,
 }
 
 impl SharedPlayerState {
@@ -169,6 +193,7 @@ impl SharedPlayerState {
             playlist_version: AtomicU64::new(0),
             playback_generation: AtomicU64::new(0),
             quit_requested: AtomicBool::new(false),
+            metadata_refresh_pending: AtomicBool::new(false),
         })
     }
 
@@ -216,6 +241,22 @@ impl SharedPlayerState {
 
     pub fn quit_requested(&self) -> bool {
         self.quit_requested.load(Ordering::Relaxed)
+    }
+
+    // --- Metadata refresh (progressive enhancement) ---
+
+    /// Signal that metadata has been refreshed mid-stream (e.g. download completed).
+    /// The UI loop calls `take_metadata_refresh()` to consume this flag and
+    /// force a souvlaki/cover-art update without waiting for a track change.
+    pub fn signal_metadata_refresh(&self) {
+        self.metadata_refresh_pending.store(true, Ordering::Relaxed);
+    }
+
+    /// Returns true and clears the flag if a metadata refresh is pending.
+    pub fn take_metadata_refresh(&self) -> bool {
+        self.metadata_refresh_pending
+            .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
     }
 
     // --- Playlist version ---
@@ -445,7 +486,62 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
-    /// Get the path of an item if it's Ready.
+    /// Update playlist item metadata after a full download completes.
+    /// Used for progressive enhancement: streaming started with partial Symphonia tags,
+    /// now the full file is available so we can refresh with complete lofty metadata.
+    pub fn update_item_metadata(
+        &self,
+        id: QueueItemId,
+        title: String,
+        artist: String,
+        album_artist: String,
+        album: String,
+        duration_ms: Option<u64>,
+    ) {
+        let mut pl = self.playlist.write();
+        if let Some(item) = pl.items.iter_mut().find(|item| item.id == id) {
+            item.title = title;
+            item.artist = artist;
+            item.album_artist = album_artist;
+            item.album = album;
+            if let Some(dur) = duration_ms {
+                item.duration_ms = Some(dur);
+            }
+        }
+        drop(pl);
+        self.bump_version();
+    }
+
+    /// Get the playback source for an item if it's ready to play.
+    /// Returns `None` if not enough data is available yet.
+    pub fn item_playback_source(&self, id: QueueItemId) -> Option<PlaybackSource> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .find(|item| item.id == id)
+            .and_then(|item| match &item.load_state {
+                LoadState::Ready => Some(PlaybackSource::Ready(item.path.clone())),
+                LoadState::Downloading {
+                    total,
+                    bytes_written,
+                    ..
+                } => {
+                    let written = bytes_written.load(Ordering::Relaxed);
+                    if written >= STREAM_THRESHOLD {
+                        Some(PlaybackSource::Streaming {
+                            path: item.path.clone(),
+                            bytes_written: bytes_written.clone(),
+                            total: *total,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+    }
+
+    /// Get the path of an item if it's Ready (legacy convenience — use item_playback_source for streaming).
     pub fn item_path_if_ready(&self, id: QueueItemId) -> Option<PathBuf> {
         let pl = self.playlist.read();
         pl.items.iter().find(|item| item.id == id).and_then(|item| {
@@ -591,38 +687,40 @@ impl SharedPlayerState {
         let mut queue_count = 0;
 
         for (i, item) in pl.items.iter().enumerate() {
-            let (status, dl_progress) = match cursor_pos {
-                Some(cp) if i < cp => {
-                    finished_count += 1;
-                    (QueueEntryStatus::Played, None)
+            let is_cursor = cursor_pos == Some(i);
+            let is_before_cursor = cursor_pos.is_some_and(|cp| i < cp);
+
+            // Derive download progress from load_state uniformly for all tracks.
+            let dl_progress = match &item.load_state {
+                LoadState::Downloading {
+                    downloaded, total, ..
+                } => Some((*downloaded, *total)),
+                _ => None,
+            };
+
+            let status = if is_cursor {
+                has_playing = true;
+                match &item.load_state {
+                    LoadState::Ready => QueueEntryStatus::Playing,
+                    LoadState::Downloading { .. } => QueueEntryStatus::PriorityPending,
+                    LoadState::Pending => QueueEntryStatus::PriorityPending,
+                    LoadState::Failed(_) => QueueEntryStatus::Failed,
                 }
-                Some(cp) if i == cp => {
-                    has_playing = true;
-                    // Cursor item: playing if loaded, priority pending if not.
-                    let status = match &item.load_state {
-                        LoadState::Ready => QueueEntryStatus::Playing,
-                        LoadState::Downloading { .. } => QueueEntryStatus::PriorityPending,
-                        LoadState::Pending => QueueEntryStatus::PriorityPending,
-                        LoadState::Failed(_) => QueueEntryStatus::Failed,
-                    };
-                    let dl = match &item.load_state {
-                        LoadState::Downloading { downloaded, total } => Some((*downloaded, *total)),
-                        _ => None,
-                    };
-                    (status, dl)
+            } else if is_before_cursor {
+                finished_count += 1;
+                match &item.load_state {
+                    LoadState::Ready => QueueEntryStatus::Played,
+                    LoadState::Downloading { .. } => QueueEntryStatus::Downloading,
+                    LoadState::Pending => QueueEntryStatus::Downloading,
+                    LoadState::Failed(_) => QueueEntryStatus::Failed,
                 }
-                _ => {
-                    // After cursor (or no cursor) — upcoming.
-                    queue_count += 1;
-                    let (status, dl) = match &item.load_state {
-                        LoadState::Ready => (QueueEntryStatus::Queued, None),
-                        LoadState::Downloading { downloaded, total } => {
-                            (QueueEntryStatus::Downloading, Some((*downloaded, *total)))
-                        }
-                        LoadState::Pending => (QueueEntryStatus::Downloading, None),
-                        LoadState::Failed(_) => (QueueEntryStatus::Failed, None),
-                    };
-                    (status, dl)
+            } else {
+                queue_count += 1;
+                match &item.load_state {
+                    LoadState::Ready => QueueEntryStatus::Queued,
+                    LoadState::Downloading { .. } => QueueEntryStatus::Downloading,
+                    LoadState::Pending => QueueEntryStatus::Downloading,
+                    LoadState::Failed(_) => QueueEntryStatus::Failed,
                 }
             };
 

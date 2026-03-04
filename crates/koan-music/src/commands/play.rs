@@ -301,7 +301,12 @@ fn run_tui(
         if let Some(ref mut mk) = media {
             mk.update_playback(&app.state);
             let current = app.state.track_info().map(|t| t.path.clone());
-            if current != last_track_path {
+            // Update metadata when the track changes OR when a mid-stream metadata
+            // refresh is signaled (e.g. download completed while streaming — cover
+            // art becomes available and full lofty tags have been read).
+            let track_changed = current != last_track_path;
+            let metadata_refreshed = app.state.take_metadata_refresh();
+            if track_changed || metadata_refreshed {
                 last_track_path = current.clone();
                 mk.update_metadata(&app.state, current.as_ref());
             }

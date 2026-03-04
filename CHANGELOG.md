@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 ### Added
 
@@ -10,6 +10,7 @@
 - **Visualiser config** — `[visualizer]` section with `enabled`, `fps`, `scale`, `bar_decay_ms`, `peak_decay_ms`. Also accepts `[visualiser]` spelling
 - **Spectrum theme colours** — `spectrum_low` (green), `spectrum_mid` (yellow), `spectrum_high` (red), `spectrum_peak` (white) in theme config
 - **FPS overlay** — `[playback] show_fps = true` displays an FPS counter in the top-right corner
+- **Streaming playback for remote tracks** — playback starts after 256 KB is buffered instead of waiting for the full download. A `StreamingSource` backed by a shared in-memory buffer feeds Symphonia while the download continues in the background. When the download finishes, full lofty metadata and cover art are re-read and media key info (souvlaki) is updated progressively
 - **Vim-style navigation everywhere** — pickers, library browser, and queue all support Ctrl+U/Ctrl+D (half-page), PageUp/PageDown, Home/End. Library also accepts j/k/h/l, g/G
 - **Wrap-around cursor** — pressing Up on the first item wraps to the last, and Down on the last wraps to the first (queue, library, picker)
 - **Lyrics panel** — press `L` to toggle a lyrics panel (60/40 split with queue). Fetches synced and plain lyrics from LRCLIB (zero-config, no API key). Synced lyrics highlight the current line and auto-scroll with playback
@@ -37,6 +38,7 @@
 - **Anchored drag reorder** — dragging selected tracks now moves them anchored to the mousedown position instead of snapping to the top of the selection
 - **Album header drag** — clicking and dragging an album header reorders the entire album group as a unit
 - **Play/pause click** — clicking the status icon (play/pause indicator) next to the seek bar now toggles playback
+- **Download progress on all tracks** — tracks before the playing position now correctly show download progress and status instead of being unconditionally marked as played
 
 ### Removed
 
