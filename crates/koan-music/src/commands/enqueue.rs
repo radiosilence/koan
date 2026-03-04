@@ -267,7 +267,9 @@ fn download_single_track(
             && downloaded >= koan_core::player::state::STREAM_THRESHOLD
         {
             stream_ready_flag.store(true, Ordering::Relaxed);
-            progress_tx.send(PlayerCommand::TrackStreamReady(progress_qid)).ok();
+            progress_tx
+                .send(PlayerCommand::TrackStreamReady(progress_qid))
+                .ok();
         }
     });
 

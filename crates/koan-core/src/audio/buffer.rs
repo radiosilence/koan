@@ -305,7 +305,14 @@ where
     let thread = thread::Builder::new()
         .name("koan-decode".into())
         .spawn(move || {
-            decode_queue_loop(first, producer, &stop_clone, seek_ms, &next_track, &timeline);
+            decode_queue_loop(
+                first,
+                producer,
+                &stop_clone,
+                seek_ms,
+                &next_track,
+                &timeline,
+            );
         })
         .map_err(DecodeError::Io)?;
 
@@ -319,7 +326,13 @@ where
         duration_ms: 0,
     };
 
-    Ok((placeholder, DecodeHandle { stop, thread: Some(thread) }))
+    Ok((
+        placeholder,
+        DecodeHandle {
+            stop,
+            thread: Some(thread),
+        },
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -426,6 +439,7 @@ fn decode_queue_loop<N>(
 // ---------------------------------------------------------------------------
 
 /// Decode a single source into the producer. Returns Ok(()) on clean EOF.
+#[allow(clippy::too_many_arguments)]
 fn decode_single(
     queue_item_id: QueueItemId,
     path: &Path,

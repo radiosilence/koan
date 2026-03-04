@@ -180,16 +180,10 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
                 }
             }
             StandardTagKey::TrackNumber => {
-                track_number = value
-                    .split('/')
-                    .next()
-                    .and_then(|s| s.trim().parse().ok());
+                track_number = value.split('/').next().and_then(|s| s.trim().parse().ok());
             }
             StandardTagKey::DiscNumber => {
-                disc = value
-                    .split('/')
-                    .next()
-                    .and_then(|s| s.trim().parse().ok());
+                disc = value.split('/').next().and_then(|s| s.trim().parse().ok());
             }
             StandardTagKey::Genre => genre = Some(value),
             StandardTagKey::Label => label = Some(value),

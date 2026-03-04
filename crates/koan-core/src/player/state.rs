@@ -516,10 +516,16 @@ impl SharedPlayerState {
     /// Returns `None` if not enough data is available yet.
     pub fn item_playback_source(&self, id: QueueItemId) -> Option<PlaybackSource> {
         let pl = self.playlist.read();
-        pl.items.iter().find(|item| item.id == id).and_then(|item| {
-            match &item.load_state {
+        pl.items
+            .iter()
+            .find(|item| item.id == id)
+            .and_then(|item| match &item.load_state {
                 LoadState::Ready => Some(PlaybackSource::Ready(item.path.clone())),
-                LoadState::Downloading { total, bytes_written, .. } => {
+                LoadState::Downloading {
+                    total,
+                    bytes_written,
+                    ..
+                } => {
                     let written = bytes_written.load(Ordering::Relaxed);
                     if written >= STREAM_THRESHOLD {
                         Some(PlaybackSource::Streaming {
@@ -532,8 +538,7 @@ impl SharedPlayerState {
                     }
                 }
                 _ => None,
-            }
-        })
+            })
     }
 
     /// Get the path of an item if it's Ready (legacy convenience — use item_playback_source for streaming).
@@ -687,7 +692,9 @@ impl SharedPlayerState {
 
             // Derive download progress from load_state uniformly for all tracks.
             let dl_progress = match &item.load_state {
-                LoadState::Downloading { downloaded, total, .. } => Some((*downloaded, *total)),
+                LoadState::Downloading {
+                    downloaded, total, ..
+                } => Some((*downloaded, *total)),
                 _ => None,
             };
 

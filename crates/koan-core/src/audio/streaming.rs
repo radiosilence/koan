@@ -126,9 +126,7 @@ impl Seek for StreamingSource {
             SeekFrom::Current(n) => self.pos as i64 + n,
             SeekFrom::End(n) => {
                 // For End seeks we need total_len. If not known yet, use current data len.
-                let len = inner
-                    .total_len
-                    .unwrap_or(inner.data.len() as u64) as i64;
+                let len = inner.total_len.unwrap_or(inner.data.len() as u64) as i64;
                 len + n
             }
         };
@@ -142,6 +140,21 @@ impl Seek for StreamingSource {
 
         self.pos = new_pos as u64;
         Ok(self.pos)
+    }
+}
+
+// Symphonia requires MediaSource: Read + Seek + Send + Any
+impl symphonia::core::io::MediaSource for StreamingSource {
+    fn is_seekable(&self) -> bool {
+        // Seekable only if the total length is known (needed for seek-to-end math).
+        // Forward seeks always work; backward seeks require buffered data already present.
+        // We advertise seekable=true and handle backward seeks via the buffered Vec.
+        true
+    }
+
+    fn byte_len(&self) -> Option<u64> {
+        let (lock, _) = &*self.inner;
+        lock.lock().unwrap().total_len
     }
 }
 
@@ -395,20 +408,5 @@ mod tests {
         src.read_to_end(&mut out).unwrap();
         assert_eq!(out.len(), 500);
         assert_eq!(out, &data[..500]);
-    }
-}
-
-// Symphonia requires MediaSource: Read + Seek + Send + Any
-impl symphonia::core::io::MediaSource for StreamingSource {
-    fn is_seekable(&self) -> bool {
-        // Seekable only if the total length is known (needed for seek-to-end math).
-        // Forward seeks always work; backward seeks require buffered data already present.
-        // We advertise seekable=true and handle backward seeks via the buffered Vec.
-        true
-    }
-
-    fn byte_len(&self) -> Option<u64> {
-        let (lock, _) = &*self.inner;
-        lock.lock().unwrap().total_len
     }
 }

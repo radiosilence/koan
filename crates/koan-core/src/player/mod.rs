@@ -95,7 +95,11 @@ impl Player {
                     log::error!("play failed: {}", e);
                 }
             }
-            Some(PlaybackSource::Streaming { path, bytes_written, total }) => {
+            Some(PlaybackSource::Streaming {
+                path,
+                bytes_written,
+                total,
+            }) => {
                 if let Err(e) = self.start_streaming_playback(id, &path, bytes_written, total) {
                     log::error!("streaming play failed, waiting for full download: {}", e);
                     // Fall back to waiting for TrackReady.
@@ -297,10 +301,8 @@ impl Player {
             }
             h
         };
-        let probe_mss = symphonia::core::io::MediaSourceStream::new(
-            Box::new(probe_reader),
-            Default::default(),
-        );
+        let probe_mss =
+            symphonia::core::io::MediaSourceStream::new(Box::new(probe_reader), Default::default());
         let info = buffer::probe_source(probe_mss, &probe_hint)?;
 
         self.shared_state.set_track_info(Some(TrackInfo {
@@ -335,7 +337,10 @@ impl Player {
                 source_rate
             );
             if let Err(e) = device::set_device_sample_rate(device_id, source_rate) {
-                log::warn!("failed to set sample rate (continuing at device rate): {}", e);
+                log::warn!(
+                    "failed to set sample rate (continuing at device rate): {}",
+                    e
+                );
             }
         }
 
@@ -549,18 +554,19 @@ impl Player {
         if is_playing && current_track_id == Some(id) {
             // Already streaming this track — download just finished.
             // Trigger progressive enhancement: re-read full lofty metadata and update state.
-            log::info!("track_ready: download complete while streaming {:?}, refreshing metadata", id);
+            log::info!(
+                "track_ready: download complete while streaming {:?}, refreshing metadata",
+                id
+            );
             self.refresh_track_metadata(id);
             return;
         }
 
         // Cursor is on this item but not yet playing — start playback now.
-        if !is_playing {
-            if let Some(path) = self.shared_state.item_path_if_ready(id) {
-                log::info!("track_ready: starting playback for {:?}", id);
-                if let Err(e) = self.start_playback(id, &path, 0) {
-                    log::error!("track_ready playback failed: {}", e);
-                }
+        if !is_playing && let Some(path) = self.shared_state.item_path_if_ready(id) {
+            log::info!("track_ready: starting playback for {:?}", id);
+            if let Err(e) = self.start_playback(id, &path, 0) {
+                log::error!("track_ready playback failed: {}", e);
             }
         }
     }
@@ -578,15 +584,25 @@ impl Player {
         }
 
         match self.shared_state.item_playback_source(id) {
-            Some(PlaybackSource::Streaming { path, bytes_written, total }) => {
-                log::info!("track_stream_ready: starting streaming playback for {:?}", id);
+            Some(PlaybackSource::Streaming {
+                path,
+                bytes_written,
+                total,
+            }) => {
+                log::info!(
+                    "track_stream_ready: starting streaming playback for {:?}",
+                    id
+                );
                 if let Err(e) = self.start_streaming_playback(id, &path, bytes_written, total) {
                     log::error!("track_stream_ready streaming failed: {}", e);
                 }
             }
             Some(PlaybackSource::Ready(path)) => {
                 // Download finished between threshold and now — just play normally.
-                log::info!("track_stream_ready: track already ready, starting normal playback for {:?}", id);
+                log::info!(
+                    "track_stream_ready: track already ready, starting normal playback for {:?}",
+                    id
+                );
                 if let Err(e) = self.start_playback(id, &path, 0) {
                     log::error!("track_stream_ready playback failed: {}", e);
                 }
