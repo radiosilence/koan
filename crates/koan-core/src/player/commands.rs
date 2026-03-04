@@ -46,6 +46,10 @@ pub enum PlayerCommand {
     Undo,
     /// Redo the last undone operation.
     Redo,
+    /// Begin collecting undo entries into a single batch (e.g. drag operations).
+    BeginUndoBatch,
+    /// End the batch — collapse collected entries into one undo step.
+    EndUndoBatch,
 }
 
 /// Bounded SPSC command channel.

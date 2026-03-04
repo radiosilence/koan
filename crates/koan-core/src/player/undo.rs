@@ -37,6 +37,9 @@ pub enum UndoEntry {
         items: Vec<PlaylistItem>,
         cursor: Option<QueueItemId>,
     },
+
+    /// Multiple operations batched as a single undo step (e.g. drag reorder).
+    Batch(Vec<UndoEntry>),
 }
 
 /// Standard undo/redo stack with bounded depth.
