@@ -584,6 +584,9 @@ impl App {
             }
             KeyCode::Char('L') => {
                 self.lyrics_panel = !self.lyrics_panel;
+                if self.lyrics_panel {
+                    self.lyrics.track_path = None; // Force fetch on next tick
+                }
             }
             KeyCode::Up => {
                 let visible = self.visible_queue();

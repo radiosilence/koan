@@ -82,7 +82,7 @@ The TUI launches immediately — no waiting. If tracks need downloading (remote 
 
 kōan is built around a full-screen terminal interface. The transport bar shows what's playing with album art (halfblock rendering), the queue groups tracks by album, and a hint bar at the bottom shows available keys for the current mode.
 
-**The basics:** `space` to pause, `<`/`>` to skip tracks, `,`/`.` or arrow keys to seek. `p` opens a fuzzy track picker, `a` for albums, `r` for artists. `l` opens the library browser for tree-style browsing. `i` shows track info with cover art. `q` to quit.
+**The basics:** `space` to pause, `<`/`>` to skip tracks, `,`/`.` or arrow keys to seek. `p` opens a fuzzy track picker, `a` for albums, `r` for artists. `l` opens the library browser for tree-style browsing. `L` opens a lyrics panel. `i` shows track info with cover art. `q` to quit.
 
 **Building a queue:** Use the pickers (`p`/`a`/`r`) or library browser (`l`) to find music. `Enter` appends to the queue, `Ctrl+Enter` appends and starts playing, `Ctrl+R` replaces the entire queue. You can also drag files from Finder straight into the terminal.
 
@@ -158,6 +158,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **File organization** — in-TUI organize modal: select tracks → context menu → pick a named pattern → preview moves → execute. Playlist paths update live, playback continues uninterrupted
 - **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag, undo/redo (Ctrl+Z/Y, 100-deep stack covering all playlist operations). Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward). Drag/drop files from Finder into the terminal to add them to the queue
 - **Track deduplication** — 3-strategy match (path → remote ID → content) merges local and remote into one DB row. No duplicates in search or browse. Playback priority: local file → cached download → remote stream
+- **Lyrics** — toggle a lyrics side panel with `L`. Fetches synced (LRC) or plain lyrics automatically; synced lyrics highlight the current line and scroll with playback. Lyrics are cached in the database per track
 - **Proper artist handling** — track artist stored separately from album artist; compilations/VA albums display correctly
 
 ## Architecture
@@ -247,6 +248,7 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `z`     | zoom album art         |
 | `Ctrl+Z` | undo last queue change |
 | `l`     | library browser        |
+| `L`     | lyrics panel           |
 | `f`     | filter library (in library mode) |
 | `e`     | edit queue             |
 | `g`     | jump to start          |
