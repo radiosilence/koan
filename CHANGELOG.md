@@ -17,6 +17,7 @@
 
 ### Fixed
 
+- **Standalone picker mouse support** — `koan pick --artist`/`--album` now enables mouse capture. Click to select, double-click to confirm, scroll wheel to navigate
 - **Lyrics fetch on toggle** — pressing `L` mid-track now fetches lyrics immediately. Previously, lyrics only loaded on track change
 - **Lyrics error logging** — fetch errors are now logged to stderr instead of being silently swallowed
 - **Favourites import for remote tracks** — starred tracks from Navidrome now correctly import as local favourites. Previously, remote-only tracks (with no local path) were silently skipped during import
