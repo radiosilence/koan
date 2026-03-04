@@ -4,7 +4,11 @@
 
 Terminal-based audio visualization integrated into koan's TUI. The core challenge is tapping into the real-time audio stream without disrupting the lock-free CoreAudio path, then processing PCM data through FFT to produce frequency/time-domain visuals rendered via Ratatui widgets using Unicode block and braille characters.
 
-This is fully feasible. The audio architecture already has a clean separation between decode, ring buffer, and render callback. The existing `cover_art.rs` halfblock rendering proves the terminal can handle pixel-level graphics at 20fps. The main architectural decision is *where* to tap the audio data.
+This is fully feasible. The audio architecture already has a clean separation between decode, ring buffer, and render callback. The existing `cover_art.rs` halfblock rendering proves the terminal can handle pixel-level graphics at 20fps. The main architectural decision is _where_ to tap the audio data.
+
+## What
+
+There should be a old-school-stereo "vertical bar" style visualizer above the now playing display and to the right of the album art, this should be designed as if it's a multi-modal display (could display stuff like lyrics instead etc)
 
 ## Audio Data Tap Architecture
 
@@ -18,7 +22,7 @@ rtrb is SPSC (Single-Producer, Single-Consumer). There is exactly one consumer, 
 
 Add a secondary ring buffer write inside `render_callback()`. The callback already does `ptr::copy_nonoverlapping` from the rtrb consumer into CoreAudio's output buffer. We could simultaneously write those samples into a visualization buffer.
 
-**Why not:** The render callback runs on CoreAudio's real-time thread. Adding *any* extra work there is a red flag. Even a lock-free ring buffer write adds cache pressure and potential for the viz buffer to fill up (what happens when viz isn't consuming fast enough?). This path leads to audio glitches eventually. The current callback is tight and correct — don't touch it.
+**Why not:** The render callback runs on CoreAudio's real-time thread. Adding _any_ extra work there is a red flag. Even a lock-free ring buffer write adds cache pressure and potential for the viz buffer to fill up (what happens when viz isn't consuming fast enough?). This path leads to audio glitches eventually. The current callback is tight and correct — don't touch it.
 
 ### Option B: Copy on the Decode Side (RECOMMENDED)
 
@@ -28,7 +32,7 @@ The decode thread (`decode_single()` in `buffer.rs`) already has access to every
 let samples = sbuf.samples(); // interleaved f32 slice
 ```
 
-Right here, we have the full decoded audio data. We can copy a rolling window of samples into a shared visualization buffer *before* pushing to the ring buffer. The decode thread is NOT real-time — it's a normal thread that already does `thread::sleep` when the ring buffer is full. A memcpy of ~2048-4096 samples per FFT window is negligible here.
+Right here, we have the full decoded audio data. We can copy a rolling window of samples into a shared visualization buffer _before_ pushing to the ring buffer. The decode thread is NOT real-time — it's a normal thread that already does `thread::sleep` when the ring buffer is full. A memcpy of ~2048-4096 samples per FFT window is negligible here.
 
 **Architecture:**
 
@@ -56,7 +60,7 @@ Decode Thread ──┬── rtrb Producer ──→ CoreAudio Consumer ──�
 
 ### Option C: Read from PlaybackTimeline counters + separate buffer (ALTERNATIVE)
 
-Use the `samples_played` atomic counter (already shared) to know *where* in the stream we are, combined with Option B's buffer, to display the *currently playing* samples rather than the *currently decoded* samples.
+Use the `samples_played` atomic counter (already shared) to know _where_ in the stream we are, combined with Option B's buffer, to display the _currently playing_ samples rather than the _currently decoded_ samples.
 
 This would give better sync but adds complexity. For a first implementation, Option B's slight lookahead is fine.
 
@@ -97,14 +101,14 @@ The TUI reads a snapshot (memcpy out of the mutex) once per tick, then does all 
 
 ### FFT Parameters
 
-| Parameter | Value | Rationale |
-|-----------|-------|-----------|
-| Window size | 2048 samples | Good balance: ~46ms at 44.1kHz. 1024 is too coarse for bass, 4096 adds latency |
-| Window function | Hann | Standard for music visualization. Smooth, low sidelobe leakage |
-| Overlap | 0% (for now) | At 20fps with 2048 samples, we get a new window every ~46ms anyway. Overlap only helps at higher framerates |
-| Frequency bins | 1024 (N/2) | Half the window size for real FFT |
-| Frequency range | 20Hz — 20kHz | Full audible range, mapped logarithmically to bars |
-| Smoothing | Exponential decay | `bar[i] = max(new_value, bar[i] * 0.85)`. Gives that satisfying "gravity" fall-off |
+| Parameter       | Value             | Rationale                                                                                                   |
+| --------------- | ----------------- | ----------------------------------------------------------------------------------------------------------- |
+| Window size     | 2048 samples      | Good balance: ~46ms at 44.1kHz. 1024 is too coarse for bass, 4096 adds latency                              |
+| Window function | Hann              | Standard for music visualization. Smooth, low sidelobe leakage                                              |
+| Overlap         | 0% (for now)      | At 20fps with 2048 samples, we get a new window every ~46ms anyway. Overlap only helps at higher framerates |
+| Frequency bins  | 1024 (N/2)        | Half the window size for real FFT                                                                           |
+| Frequency range | 20Hz — 20kHz      | Full audible range, mapped logarithmically to bars                                                          |
+| Smoothing       | Exponential decay | `bar[i] = max(new_value, bar[i] * 0.85)`. Gives that satisfying "gravity" fall-off                          |
 
 ### Frequency-to-Bar Mapping
 
@@ -172,6 +176,7 @@ Ratatui's `Canvas` widget with `Marker::Braille` handles coordinate mapping, but
 All approaches benefit from ANSI 24-bit color (truecolor). Terminal support is universal on modern macOS (Terminal.app, iTerm2, Alacritty, Kitty, WezTerm).
 
 Gradient ideas:
+
 - **Spectrum bars:** Green (low) → Yellow (mid) → Red (hot) — classic VU meter look
 - **Frequency gradient:** Blue (bass) → Cyan (mids) → Magenta (highs) — maps color to frequency
 - **Intensity heat:** Dark blue → Cyan → White — for spectrograms
@@ -182,12 +187,14 @@ Gradient ideas:
 ### Tier 1: Must Have
 
 **Spectrum Analyzer (Frequency Bars)**
+
 - The classic. Bars bounce to the music. Logarithmic frequency mapping so bass hits hard.
 - Render: block characters + color gradient
 - CPU cost: One FFT per frame (~0.1ms for 2048-point on M1)
 - Cool factor: 9/10 — this is what everyone pictures
 
 **VU Meters (Stereo)**
+
 - L/R level meters with peak hold indicators
 - No FFT needed — just RMS of the sample window per channel
 - Render: horizontal block bars, tiny footprint (2 rows)
@@ -196,12 +203,14 @@ Gradient ideas:
 ### Tier 2: Looks Sick
 
 **Waveform (Oscilloscope)**
+
 - Time-domain display of the raw waveform
 - No FFT needed — directly plot the sample buffer
 - Render: braille characters for smooth curves, or halfblock for chunkier look
 - Cool factor: 8/10 — mesmerizing on clean signals, chaotic on compressed music
 
 **Spectrogram (Waterfall)**
+
 - 2D frequency×time display scrolling vertically. Each row is one FFT frame, color = magnitude.
 - Render: halfblock characters with RGB color per pixel (same technique as cover art)
 - Cool factor: 10/10 — genuinely looks amazing in a terminal. The "whoa" feature.
@@ -210,12 +219,14 @@ Gradient ideas:
 ### Tier 3: Extra Credit
 
 **Lissajous / Vectorscope**
+
 - Plot L channel vs R channel as X/Y coordinates
 - Mono = diagonal line, stereo = spread ellipse/circle
 - Render: braille characters on Canvas
 - Cool factor: 8/10 among audio nerds, 5/10 for everyone else
 
 **Particle Effects**
+
 - Particles emitted from bar peaks, subject to gravity
 - Render: braille dots or sparse Unicode characters
 - Cool factor: 7/10 — fun but gimmicky. Save for later.
@@ -235,6 +246,7 @@ Gradient ideas:
 **Option A: Dedicated Visualizer Pane (Recommended)**
 
 Replace the content area split. Currently:
+
 ```
 ┌─ Transport ──────────────────────┐
 │ [Art] Now Playing / Seek Bar     │
@@ -246,6 +258,7 @@ Replace the content area split. Currently:
 ```
 
 With visualizer:
+
 ```
 ┌─ Transport ──────────────────────┐
 │ [Art] Now Playing / Seek Bar     │
@@ -351,24 +364,24 @@ The FFT runs on the main/TUI thread during the tick. At 2048 points, `realfft` c
 
 ### CPU Budget Per Frame (50ms tick @ 20fps)
 
-| Operation | Time (M1) | Notes |
-|-----------|-----------|-------|
-| VizBuffer lock + copy | ~0.02ms | 4096 f32s = 16KB memcpy |
-| Hann window application | ~0.005ms | Multiply 2048 floats |
-| FFT (2048-point real) | ~0.05ms | realfft on M1 |
-| Magnitude + log scale | ~0.01ms | 1024 bins |
-| Frequency bin → bar mapping | ~0.01ms | Logarithmic mapping |
-| Smoothing / peak decay | ~0.005ms | Per-bar exponential decay |
-| Widget render | ~0.1ms | Direct buffer cell writes |
-| **Total** | **~0.2ms** | **<0.5% of 50ms budget** |
+| Operation                   | Time (M1)  | Notes                     |
+| --------------------------- | ---------- | ------------------------- |
+| VizBuffer lock + copy       | ~0.02ms    | 4096 f32s = 16KB memcpy   |
+| Hann window application     | ~0.005ms   | Multiply 2048 floats      |
+| FFT (2048-point real)       | ~0.05ms    | realfft on M1             |
+| Magnitude + log scale       | ~0.01ms    | 1024 bins                 |
+| Frequency bin → bar mapping | ~0.01ms    | Logarithmic mapping       |
+| Smoothing / peak decay      | ~0.005ms   | Per-bar exponential decay |
+| Widget render               | ~0.1ms     | Direct buffer cell writes |
+| **Total**                   | **~0.2ms** | **<0.5% of 50ms budget**  |
 
 This is nothing. The terminal render itself (~2-5ms) dominates. Even a spectrogram with history buffer stays well under budget.
 
 ### Memory
 
-- VizBuffer: 4096 * 4 bytes = 16KB (shared)
-- Spectrum bars: ~200 * 4 = 800 bytes
-- Spectrogram history (128 frames): 128 * 200 * 4 = ~100KB
+- VizBuffer: 4096 \* 4 bytes = 16KB (shared)
+- Spectrum bars: ~200 \* 4 = 800 bytes
+- Spectrogram history (128 frames): 128 _ 200 _ 4 = ~100KB
 - FFT scratch: ~16KB
 
 Total: <200KB. Negligible.
@@ -387,11 +400,13 @@ Total: <200KB. Negligible.
 ## Dependencies to Add
 
 ### koan-core/Cargo.toml
+
 ```toml
 # None — VizBuffer only needs parking_lot (already a dependency)
 ```
 
 ### koan-music/Cargo.toml
+
 ```toml
 realfft = "3"  # Real-valued FFT wrapper around rustfft
 ```
@@ -413,18 +428,21 @@ colors = "classic"
 ```
 
 Hotkeys:
+
 - `v` — toggle visualizer on/off
 - `V` (shift+v) — cycle through visualizer types
 
 ## Implementation Phases
 
 ### Phase 1: Audio Tap (koan-core)
+
 1. Add `VizBuffer` struct to `koan-core::audio`
 2. Thread it through `start_decode()` / `decode_single()` as `Option<Arc<VizBuffer>>`
 3. Write samples in `decode_single()` after `sbuf.copy_interleaved_ref(decoded)`
 4. Expose from `Player::spawn()` alongside state and timeline
 
 ### Phase 2: FFT Pipeline (koan-music)
+
 1. Add `realfft` dependency
 2. Create `tui/visualizer.rs` module with:
    - `VisualizerState` struct
@@ -434,12 +452,14 @@ Hotkeys:
 3. Wire into `App` struct and `handle_tick()`
 
 ### Phase 3: Spectrum Widget (the main event)
+
 1. `SpectrumWidget` — block character bars with gradient colors
 2. Layout integration in `ui.rs` — add viz pane between transport and queue
 3. Toggle hotkey and config
 4. Smoothing / peak decay for satisfying visual response
 
 ### Phase 4: Additional Visualizers
+
 1. Spectrogram (waterfall) — halfblock rendering, history ring buffer
 2. VU meters — compact horizontal bars, embed in transport
 3. Waveform — braille character oscilloscope
