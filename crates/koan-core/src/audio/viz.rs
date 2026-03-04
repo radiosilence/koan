@@ -16,9 +16,9 @@ pub const NUM_BARS: usize = 48;
 #[derive(Clone)]
 pub struct AnalysisOutput {
     /// Spectrum bar heights (0.0..1.0), one per bar.
-    pub spectrum: Vec<f32>,
+    pub spectrum: [f32; NUM_BARS],
     /// Peak hold values (slowly decaying maxima), one per bar.
-    pub peaks: Vec<f32>,
+    pub peaks: [f32; NUM_BARS],
     /// RMS VU levels: [left, right], each 0.0..1.0.
     pub vu_levels: [f32; 2],
 }
@@ -26,8 +26,8 @@ pub struct AnalysisOutput {
 impl Default for AnalysisOutput {
     fn default() -> Self {
         Self {
-            spectrum: vec![0.0; NUM_BARS],
-            peaks: vec![0.0; NUM_BARS],
+            spectrum: [0.0; NUM_BARS],
+            peaks: [0.0; NUM_BARS],
             vu_levels: [0.0; 2],
         }
     }
@@ -46,7 +46,7 @@ pub type SharedAnalysisOutput = Arc<Mutex<AnalysisOutput>>;
 #[derive(Clone)]
 pub struct VizFrame {
     /// Spectrum bar heights (0.0..1.0), one per bar.
-    pub spectrum: Vec<f32>,
+    pub spectrum: [f32; NUM_BARS],
     /// RMS VU levels: [left, right], each 0.0..1.0.
     pub vu_levels: [f32; 2],
     /// When this frame was computed.
@@ -56,7 +56,7 @@ pub struct VizFrame {
 impl Default for VizFrame {
     fn default() -> Self {
         Self {
-            spectrum: vec![0.0; NUM_BARS],
+            spectrum: [0.0; NUM_BARS],
             vu_levels: [0.0; 2],
             timestamp: std::time::Instant::now(),
         }
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(frame.spectrum.len(), NUM_BARS);
         assert_eq!(frame.vu_levels, [0.0, 0.0]);
 
-        let mut new_spectrum = vec![0.0f32; NUM_BARS];
+        let mut new_spectrum = [0.0f32; NUM_BARS];
         new_spectrum[5] = 0.9;
         snap.write(VizFrame {
             spectrum: new_spectrum,

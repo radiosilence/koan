@@ -22,11 +22,11 @@ const EIGHTH_BLOCKS: &[char] = &[' ', '▁', '▂', '▃', '▄', '▅', '▆', 
 /// (clone of ~200 bytes), then does all decay/smoothing on local copies with no locks held.
 pub struct VisualizerState {
     /// Current spectrum bar values (0.0..1.0), one per bar.
-    pub spectrum: Vec<f32>,
+    pub spectrum: [f32; NUM_BARS],
     /// Previous frame's spectrum for decay smoothing.
-    prev_spectrum: Vec<f32>,
+    prev_spectrum: [f32; NUM_BARS],
     /// Peak hold values (slowly decaying maxima).
-    pub peaks: Vec<f32>,
+    pub peaks: [f32; NUM_BARS],
     /// RMS levels for VU meters: [left, right].
     pub vu_levels: [f32; 2],
     /// Last update timestamp for time-based decay.
@@ -46,9 +46,9 @@ impl VisualizerState {
 
     pub fn with_config(bar_half_life: f32, peak_half_life: f32) -> Self {
         Self {
-            spectrum: vec![0.0; NUM_BARS],
-            prev_spectrum: vec![0.0; NUM_BARS],
-            peaks: vec![0.0; NUM_BARS],
+            spectrum: [0.0; NUM_BARS],
+            prev_spectrum: [0.0; NUM_BARS],
+            peaks: [0.0; NUM_BARS],
             vu_levels: [0.0; 2],
             last_update: Instant::now(),
             bar_half_life,
@@ -257,7 +257,7 @@ mod tests {
         let snapshot = VizSnapshot::new();
 
         // Write a frame with some energy.
-        let mut spectrum = vec![0.0f32; NUM_BARS];
+        let mut spectrum = [0.0f32; NUM_BARS];
         spectrum[10] = 0.8;
         spectrum[20] = 0.5;
         snapshot.write(VizFrame {
@@ -278,7 +278,7 @@ mod tests {
         let snapshot = VizSnapshot::new();
 
         // Seed some energy.
-        let spectrum = vec![1.0f32; NUM_BARS];
+        let spectrum = [1.0f32; NUM_BARS];
         snapshot.write(VizFrame {
             spectrum,
             vu_levels: [1.0, 1.0],
@@ -309,7 +309,7 @@ mod tests {
         let snapshot = VizSnapshot::new();
 
         // Push a loud frame.
-        let mut spectrum = vec![0.0f32; NUM_BARS];
+        let mut spectrum = [0.0f32; NUM_BARS];
         spectrum[5] = 0.9;
         snapshot.write(VizFrame {
             spectrum,
@@ -322,7 +322,7 @@ mod tests {
 
         // Push silence — peak should hold or slowly decay, not jump to zero.
         snapshot.write(VizFrame {
-            spectrum: vec![0.0; NUM_BARS],
+            spectrum: [0.0; NUM_BARS],
             vu_levels: [0.0; 2],
             timestamp: Instant::now(),
         });

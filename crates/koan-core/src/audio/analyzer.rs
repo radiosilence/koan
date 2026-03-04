@@ -225,13 +225,13 @@ struct AnalysisState {
     /// Last seen sample rate — detects changes.
     last_sample_rate: f32,
     /// Reusable counts per bar (how many bins mapped to each bar).
-    bar_counts: Vec<u32>,
+    bar_counts: [u32; NUM_BARS],
     /// Smoothed spectrum from previous frame (for decay).
-    prev_spectrum: Vec<f32>,
+    prev_spectrum: [f32; NUM_BARS],
     /// Current spectrum (written each pass, then moved to output).
-    spectrum: Vec<f32>,
+    spectrum: [f32; NUM_BARS],
     /// Peak hold values.
-    peaks: Vec<f32>,
+    peaks: [f32; NUM_BARS],
     /// VU levels [left, right].
     vu_levels: [f32; 2],
     /// Timestamp of the previous analysis pass (for decay timing).
@@ -266,10 +266,10 @@ impl AnalysisState {
             fft,
             bin_to_bar: Vec::new(),
             last_sample_rate: 0.0,
-            bar_counts: vec![0u32; NUM_BARS],
-            prev_spectrum: vec![0.0; NUM_BARS],
-            spectrum: vec![0.0; NUM_BARS],
-            peaks: vec![0.0; NUM_BARS],
+            bar_counts: [0u32; NUM_BARS],
+            prev_spectrum: [0.0; NUM_BARS],
+            spectrum: [0.0; NUM_BARS],
+            peaks: [0.0; NUM_BARS],
             vu_levels: [0.0; 2],
             last_update: Instant::now(),
             scale,
@@ -602,7 +602,7 @@ fn analysis_loop(
         // ── Phase 3b: publish to VizSnapshot (RwLock write, <1us) ────────────
         if let Some(ref snap_out) = snapshot {
             snap_out.write(VizFrame {
-                spectrum: state.spectrum.clone(),
+                spectrum: state.spectrum,
                 vu_levels: state.vu_levels,
                 timestamp: Instant::now(),
             });

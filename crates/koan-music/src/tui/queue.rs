@@ -131,14 +131,14 @@ impl<'a> QueueView<'a> {
 /// (so callers can look up album info for rendering).
 fn build_display_lines(entries: &[QueueEntry]) -> Vec<(Option<usize>, bool)> {
     let mut lines = Vec::new();
-    let mut current_album_key: Option<(String, String)> = None;
+    let mut current_album_key: Option<(&str, &str)> = None;
 
     for (i, entry) in entries.iter().enumerate() {
-        let album_key = (entry.album_artist.clone(), entry.album.clone());
+        let album_key = (entry.album_artist.as_str(), entry.album.as_str());
         let show_header = if entry.album.is_empty() {
             false
         } else {
-            current_album_key.as_ref() != Some(&album_key)
+            current_album_key != Some(album_key)
         };
 
         if show_header {
