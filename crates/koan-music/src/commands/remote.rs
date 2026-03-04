@@ -4,6 +4,10 @@ use owo_colors::OwoColorize;
 use super::{get_remote_password, open_db};
 
 pub fn cmd_remote_login(url: &str, username: &str) {
+    if !url.starts_with("https://") && !url.contains("localhost") && !url.contains("127.0.0.1") {
+        eprintln!("warning: server URL does not use HTTPS — credentials will be sent in plaintext");
+    }
+
     let password = rpassword::prompt_password("password: ").unwrap_or_else(|e| {
         eprintln!("{} {}", "error:".red().bold(), e);
         std::process::exit(1);

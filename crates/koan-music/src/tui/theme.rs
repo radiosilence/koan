@@ -27,8 +27,6 @@ pub struct Theme {
     pub library_cursor: Style,
     pub track_hover: Style,
     pub library_hover: Style,
-    #[allow(dead_code)]
-    pub scrollbar_hover: Style,
     pub favourite: Style,
     pub spectrum_low: Style,
     pub spectrum_mid: Style,
@@ -83,7 +81,6 @@ impl Default for Theme {
                 .add_modifier(Modifier::BOLD | Modifier::REVERSED),
             track_hover: Style::new().add_modifier(Modifier::UNDERLINED),
             library_hover: Style::new().add_modifier(Modifier::UNDERLINED),
-            scrollbar_hover: Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
             favourite: Style::new().fg(Color::Yellow),
             spectrum_low: Style::new().fg(Color::Green),
             spectrum_mid: Style::new().fg(Color::Yellow),

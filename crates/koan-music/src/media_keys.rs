@@ -149,9 +149,9 @@ impl MediaKeyHandler {
         let path = track_path?;
         let bytes = extract_cover_art(path)?;
 
-        let tmp = self
-            .cover_art_path
-            .get_or_insert_with(|| std::env::temp_dir().join("koan-now-playing-cover"));
+        let tmp = self.cover_art_path.get_or_insert_with(|| {
+            std::env::temp_dir().join(format!("koan-cover-{}", std::process::id()))
+        });
 
         std::fs::write(&*tmp, &bytes).ok()?;
         Some(format!("file://{}", tmp.display()))

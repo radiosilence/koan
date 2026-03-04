@@ -235,12 +235,6 @@ impl<'a> CoverArt<'a> {
             center: false,
         }
     }
-
-    #[allow(dead_code)]
-    pub fn centered(mut self) -> Self {
-        self.center = true;
-        self
-    }
 }
 
 impl Widget for CoverArt<'_> {

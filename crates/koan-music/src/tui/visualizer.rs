@@ -67,12 +67,6 @@ impl VisualizerState {
         (bar_decay, peak_decay)
     }
 
-    /// Number of bars in the spectrum.
-    #[allow(dead_code)]
-    pub fn num_bars(&self) -> usize {
-        NUM_BARS
-    }
-
     /// Read the latest analysis frame from VizSnapshot and apply decay/smoothing.
     ///
     /// The snapshot read is <1us (RwLock clone of ~200 bytes).

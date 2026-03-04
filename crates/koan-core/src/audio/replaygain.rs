@@ -234,10 +234,13 @@ pub fn scan_album(paths: &[PathBuf]) -> Result<Vec<ReplayGainInfo>, ReplayGainEr
         });
 
         // Album-level: feed same samples into a shared EbuR128 instance.
-        let ebu = album_ebu.get_or_insert_with(|| {
-            // Unwrap safe: if track decoding succeeded, this will too.
-            ebur128::EbuR128::new(channels as u32, sample_rate, ebur128::Mode::all()).unwrap()
-        });
+        if album_ebu.is_none() {
+            album_ebu = Some(
+                ebur128::EbuR128::new(channels as u32, sample_rate, ebur128::Mode::all())
+                    .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?,
+            );
+        }
+        let ebu = album_ebu.as_mut().expect("just initialized above");
         ebu.add_frames_f32(&all_samples)
             .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
     }

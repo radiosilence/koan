@@ -81,7 +81,6 @@ pub struct DragState {
 
 /// Which UI element the mouse cursor is currently hovering over.
 #[derive(Default, Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum HoverZone {
     #[default]
     None,
@@ -91,9 +90,6 @@ pub enum HoverZone {
     ScrollbarQueue,
     TransportArt,
     TransportText,
-    PanelDivider,
-    PickerItem(usize),
-    ContextMenuItem(usize),
 }
 
 /// Tracks the current mouse hover position and zone.
