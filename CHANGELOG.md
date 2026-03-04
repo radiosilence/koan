@@ -18,6 +18,12 @@
 - **Scroll step reduced** — mouse scroll wheel moves 1 line instead of 3
 - **Queue jump scroll** — `/` search now scrolls the matched track to near the top of the visible area (with album header) instead of keeping current scroll position
 
+### Fixed
+
+- **Scrollbar drag jump** — clicking the scrollbar thumb no longer jumps to a wrong position. The grab offset within the thumb is tracked so dragging feels natural. Clicking the track area still jumps as expected
+- **Multi-select drag reorder** — dragging multiple selected tracks no longer causes chaotic oscillation. Moves only trigger when the target is outside the current selection range
+- **Drag undo batching** — one drag operation (single or multi-track) is now a single undo step instead of one per row crossed
+
 ## 0.2.3
 
 ### Added
