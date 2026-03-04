@@ -415,4 +415,24 @@ mod tests {
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
         assert_eq!(mp4_codec(&manifest), "AAC");
     }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn test_mp4_codec_real_alac_file() {
+        // Integration test: verify that a real ALAC .m4a file is correctly
+        // identified as "ALAC" rather than "AAC". Skipped silently when the
+        // Turtlehead volume is not mounted.
+        let alac_path = Path::new(
+            "/Volumes/Turtlehead/music/Valet Girls/(2017) PERENNIAL VICE [ALAC]/0101. Valet Girls - Tis the Season.m4a"
+        );
+        if !alac_path.exists() {
+            eprintln!("SKIP: ALAC test file not found (volume not mounted)");
+            return;
+        }
+        assert_eq!(
+            mp4_codec(alac_path),
+            "ALAC",
+            "real ALAC .m4a should be identified as ALAC, not AAC"
+        );
+    }
 }
