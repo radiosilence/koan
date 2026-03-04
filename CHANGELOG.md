@@ -1,15 +1,21 @@
 # Changelog
 
-## 0.4.0
+## Unreleased
 
 ### Added
 
 - **Spectrum analyser** — 80s hi-fi LED-segment style spectrum visualiser renders above the transport bar when album art is present. 48-band FFT with configurable frequency scale (Bark/Mel/Log/Linear), eighth-block sub-cell resolution, green/yellow/red gradient, peak hold markers, and time-based exponential decay
-- **VizBuffer audio tap** — circular sample buffer shared between decode thread and TUI via `parking_lot::Mutex`
-- **FFT pipeline** — 2048-point real FFT via `realfft` crate. Hann window, dB magnitude scaling, configurable FPS
-- **Visualiser config** — `[visualizer]` section with `enabled`, `fps`, `scale`, `bar_decay_ms`, `peak_decay_ms`. Also accepts `[visualiser]` spelling
+- **Dedicated analysis thread** — FFT runs on a background thread (`VizAnalyzer`) decoupled from both the decode and UI threads. The UI reads a pre-computed `VizSnapshot` every frame with sub-microsecond lock hold times, ensuring buttery-smooth 60fps rendering
+- **VizBuffer audio tap** — circular sample buffer shared between decode thread and analysis thread via `parking_lot::Mutex`
+- **FFT pipeline** — 2048-point real FFT via `realfft` crate. Hann window, dB magnitude scaling, Bark/Mel/Log/Linear frequency scales
+- **Visualiser config** — `[visualizer]` section with `enabled`, `scale`, `bar_decay_ms` (default: 45), `peak_decay_ms` (default: 180). Also accepts `[visualiser]` spelling
 - **Spectrum theme colours** — `spectrum_low` (green), `spectrum_mid` (yellow), `spectrum_high` (red), `spectrum_peak` (white) in theme config
 - **FPS overlay** — `[playback] show_fps = true` displays an FPS counter in the top-right corner
+
+## 0.4.0
+
+### Added
+
 - **Streaming playback for remote tracks** — playback starts after 256 KB is buffered instead of waiting for the full download. A `StreamingSource` backed by a shared in-memory buffer feeds Symphonia while the download continues in the background. When the download finishes, full lofty metadata and cover art are re-read and media key info (souvlaki) is updated progressively
 - **Vim-style navigation everywhere** — pickers, library browser, and queue all support Ctrl+U/Ctrl+D (half-page), PageUp/PageDown, Home/End. Library also accepts j/k/h/l, g/G
 - **Wrap-around cursor** — pressing Up on the first item wraps to the last, and Down on the last wraps to the first (queue, library, picker)
