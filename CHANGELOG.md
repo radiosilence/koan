@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Incremental remote sync** — `koan remote sync` now only fetches albums newer than the last sync timestamp, dramatically reducing sync time. Use `--full` to force a complete re-sync
+- **Resilient stale track removal** — when local files are removed, remote-backed tracks are demoted to remote-only (preserving streaming fallback) instead of being deleted entirely
+
+### Fixed
+
+- **Favourites import for remote tracks** — starred tracks from Navidrome now correctly import as local favourites. Previously, remote-only tracks (with no local path) were silently skipped during import
+- **Favourites sync error logging** — errors from `getStarred2` and `import_remote_favourites` are now surfaced instead of silently returning 0
+
 ## 0.3.0
 
 ### Added
