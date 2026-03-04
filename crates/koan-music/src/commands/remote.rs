@@ -36,7 +36,7 @@ pub fn cmd_remote_login(url: &str, username: &str) {
     println!("{}", "credentials saved to config.local.toml".green());
 }
 
-pub fn cmd_remote_sync() {
+pub fn cmd_remote_sync(full: bool) {
     let cfg = config::Config::load().unwrap_or_default();
     if !cfg.remote.enabled || cfg.remote.url.is_empty() {
         eprintln!(
@@ -58,7 +58,13 @@ pub fn cmd_remote_sync() {
     let db = open_db();
     let start = std::time::Instant::now();
 
-    match koan_core::remote::sync::sync_library(&db, &client) {
+    match koan_core::remote::sync::sync_library(
+        &db,
+        &client,
+        full,
+        &cfg.remote.url,
+        &cfg.remote.username,
+    ) {
         Ok(result) => {
             let elapsed = start.elapsed();
             println!(

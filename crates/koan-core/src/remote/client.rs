@@ -249,6 +249,7 @@ pub struct SubsonicAlbum {
     pub song_count: Option<i32>,
     pub year: Option<i32>,
     pub genre: Option<String>,
+    pub created: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -261,6 +262,7 @@ pub struct SubsonicAlbumFull {
     pub year: Option<i32>,
     pub genre: Option<String>,
     pub song_count: Option<i32>,
+    pub created: Option<String>,
     #[serde(default)]
     pub song: Vec<SubsonicSong>,
 }
