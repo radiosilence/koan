@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.1
+
+### Added
+
+- **Organize file path diff** — organize modal now shows a before/after visual diff of file paths, highlighting changed path segments in green
+- **Ctrl-A select all** — select entire playlist from normal mode (enters edit mode) or edit mode
+- **Album header context menu** — right-click on album headers to apply actions (organize, remove, favourite, etc.) to the whole album group
+
+### Fixed
+
+- **ALAC codec detection** — MP4 files containing ALAC audio are now correctly identified as ALAC instead of AAC, using lofty's `Mp4File` codec probe
+- **Unicode string slicing panics** — fixed two panics in organize path diff caused by byte-slicing fullwidth/CJK characters; all path helpers now use char-based operations
+- **Modal mode restoration** — context menu and organize modal now use a mode stack (push/pop) instead of hardcoding return to edit mode; closing a modal returns to whatever mode was active before opening it
+
+### Tests
+
+- **Unicode torture tests** — comprehensive coverage for fullwidth Japanese, CJK, emoji (ZWJ, flags, skin tones), Arabic bismillah, Zalgo/combining diacritics, and extreme combining mark sequences
+- **ALAC codec tests** — fallback tests for `mp4_codec()` plus integration test against real ALAC files
+- **Organize path diff tests** — coverage for `common_path_prefix`, `shared_prefix_len`, `truncate_path` helpers
+
 ## 0.6.0
 
 Full codebase audit of v0.5.2 covering security, performance, architecture, dependencies, and test coverage. Every change was reviewed individually and as a combined integration.
