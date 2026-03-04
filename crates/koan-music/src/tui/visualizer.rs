@@ -18,12 +18,13 @@ const MIN_FREQ: f32 = 20.0;
 /// Maximum frequency for the logarithmic mapping (Hz).
 const MAX_FREQ: f32 = 20_000.0;
 
-/// Smoothing decay factor: bars fall at this rate per tick.
-/// Higher = slower fall. At 20fps, 0.85 gives ~150ms to half-value.
-const DECAY_FACTOR: f32 = 0.85;
+/// Smoothing decay factor: bars fall at this rate per frame.
+/// At 60fps, 0.55 drops to ~5% in 10 frames (167ms) — snappy.
+const DECAY_FACTOR: f32 = 0.55;
 
 /// Peak hold decay factor (slower than bars for the "sticky peak" effect).
-const PEAK_DECAY: f32 = 0.95;
+/// At 60fps, 0.90 holds for ~0.5s before fading.
+const PEAK_DECAY: f32 = 0.90;
 
 /// dB floor for normalization: magnitudes below this map to 0.0.
 const DB_FLOOR: f32 = -80.0;
@@ -37,6 +38,27 @@ fn hann_window() -> Vec<f32> {
         .map(|i| {
             let t = std::f32::consts::PI * 2.0 * i as f32 / FFT_SIZE as f32;
             0.5 * (1.0 - t.cos())
+        })
+        .collect()
+}
+
+/// Pre-compute which bar index each FFT bin maps to for a given sample rate.
+/// Returns None for bins outside [MIN_FREQ, MAX_FREQ].
+fn build_bin_to_bar(sample_rate: f32) -> Vec<Option<usize>> {
+    let bin_hz = sample_rate / FFT_SIZE as f32;
+    let log_min = MIN_FREQ.ln();
+    let log_max = MAX_FREQ.ln();
+    let num_bins = FFT_SIZE / 2 + 1;
+
+    (0..num_bins)
+        .map(|bin_idx| {
+            let freq = bin_idx as f32 * bin_hz;
+            if !(MIN_FREQ..=MAX_FREQ).contains(&freq) {
+                return None;
+            }
+            let log_freq = freq.ln();
+            let normalized = (log_freq - log_min) / (log_max - log_min);
+            Some(((normalized * NUM_BARS as f32) as usize).min(NUM_BARS - 1))
         })
         .collect()
 }
@@ -59,6 +81,12 @@ pub struct VisualizerState {
     fft_output: Vec<realfft::num_complex::Complex<f32>>,
     /// RealFft planner (cached for reuse).
     fft: std::sync::Arc<dyn realfft::RealToComplex<f32>>,
+    /// Pre-computed bin→bar mapping (rebuilt when sample rate changes).
+    bin_to_bar: Vec<Option<usize>>,
+    /// Last seen sample rate (to detect changes and rebuild mapping).
+    last_sample_rate: f32,
+    /// Reusable scratch: how many bins contributed to each bar.
+    bar_counts: Vec<u32>,
 }
 
 impl VisualizerState {
@@ -77,6 +105,9 @@ impl VisualizerState {
             fft_input,
             fft_output,
             fft,
+            bin_to_bar: Vec::new(),
+            last_sample_rate: 0.0,
+            bar_counts: vec![0u32; NUM_BARS],
         }
     }
 
@@ -134,55 +165,53 @@ impl VisualizerState {
             return;
         }
 
-        // Map FFT bins to logarithmic frequency bars.
-        let bin_hz = sample_rate / FFT_SIZE as f32;
-        let log_min = MIN_FREQ.ln();
-        let log_max = MAX_FREQ.ln();
+        // Rebuild bin→bar lookup when sample rate changes.
+        if (sample_rate - self.last_sample_rate).abs() > 0.5 {
+            self.bin_to_bar = build_bin_to_bar(sample_rate);
+            self.last_sample_rate = sample_rate;
+        }
 
         // Save current spectrum as previous for smoothing.
         std::mem::swap(&mut self.spectrum, &mut self.prev_spectrum);
 
-        // Reset spectrum bars to zero before accumulating.
+        // Reset spectrum and counts.
         for bar in self.spectrum.iter_mut() {
             *bar = 0.0;
         }
+        for c in self.bar_counts.iter_mut() {
+            *c = 0;
+        }
 
-        // Count how many bins contribute to each bar (for averaging).
-        let mut bar_counts = vec![0u32; NUM_BARS];
-
-        let num_bins = self.fft_output.len();
+        // Map FFT bins to bars using pre-computed lookup (no log/division per bin).
+        let norm = 2.0 / FFT_SIZE as f32;
+        let db_range_inv = 1.0 / (DB_CEIL - DB_FLOOR);
+        let num_bins = self.fft_output.len().min(self.bin_to_bar.len());
         for bin_idx in 0..num_bins {
-            let freq = bin_idx as f32 * bin_hz;
-            if !(MIN_FREQ..=MAX_FREQ).contains(&freq) {
-                continue;
-            }
+            let bar_idx = match self.bin_to_bar[bin_idx] {
+                Some(b) => b,
+                None => continue,
+            };
 
-            let log_freq = freq.ln();
-            let normalized = (log_freq - log_min) / (log_max - log_min);
-            let bar_idx = ((normalized * NUM_BARS as f32) as usize).min(NUM_BARS - 1);
-
-            // Magnitude in dB (normalized by FFT size for proper scaling).
             let c = self.fft_output[bin_idx];
-            let magnitude = (c.re * c.re + c.im * c.im).sqrt() / (FFT_SIZE as f32 / 2.0);
+            let mag_sq = c.re * c.re + c.im * c.im;
+            // Use 10*log10(mag_sq) instead of 20*log10(sqrt(mag_sq)) — avoids sqrt.
+            let magnitude = mag_sq.sqrt() * norm;
             let db = if magnitude > 0.0 {
                 20.0 * magnitude.log10()
             } else {
                 DB_FLOOR
             };
-            let level = ((db - DB_FLOOR) / (DB_CEIL - DB_FLOOR))
-                .clamp(0.0, 1.0)
-                .powf(0.4);
+            let level = ((db - DB_FLOOR) * db_range_inv).clamp(0.0, 1.0).powf(0.4);
 
-            // Take the max of all bins mapping to this bar.
             if level > self.spectrum[bar_idx] {
                 self.spectrum[bar_idx] = level;
             }
-            bar_counts[bar_idx] += 1;
+            self.bar_counts[bar_idx] += 1;
         }
 
         // Interpolate bars that got no FFT bins (gaps in log mapping).
         for i in 0..NUM_BARS {
-            if bar_counts[i] == 0 {
+            if self.bar_counts[i] == 0 {
                 let left = if i > 0 { self.spectrum[i - 1] } else { 0.0 };
                 let right = if i + 1 < NUM_BARS {
                     self.spectrum[i + 1]
