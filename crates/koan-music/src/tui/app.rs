@@ -285,7 +285,9 @@ impl App {
             },
             ticker_last_path: None,
             favourites: std::collections::HashSet::new(),
-            viz_config: koan_core::config::Config::load().unwrap_or_default().visualizer,
+            viz_config: koan_core::config::Config::load()
+                .unwrap_or_default()
+                .visualizer,
             last_viz_update: std::time::Instant::now(),
         }
     }
@@ -415,10 +417,9 @@ impl App {
         }
 
         // Update visualizer spectrum at configured FPS.
-        if self.viz_config.enabled
-            && self.state.playback_state() == PlaybackState::Playing
-        {
-            let interval = std::time::Duration::from_millis(1000 / self.viz_config.fps.max(1) as u64);
+        if self.viz_config.enabled && self.state.playback_state() == PlaybackState::Playing {
+            let interval =
+                std::time::Duration::from_millis(1000 / self.viz_config.fps.max(1) as u64);
             if self.last_viz_update.elapsed() >= interval {
                 self.visualizer.update_spectrum(&self.viz_buffer);
                 self.last_viz_update = std::time::Instant::now();

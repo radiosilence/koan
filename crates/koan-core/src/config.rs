@@ -99,7 +99,10 @@ pub struct VisualizerConfig {
 
 impl Default for VisualizerConfig {
     fn default() -> Self {
-        Self { enabled: true, fps: 20 }
+        Self {
+            enabled: true,
+            fps: 20,
+        }
     }
 }
 

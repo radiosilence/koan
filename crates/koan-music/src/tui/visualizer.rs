@@ -315,7 +315,9 @@ impl Widget for SpectrumWidget<'_> {
                     buf[(x, y)].set_char(VBLOCKS[frac]).set_style(style);
                 } else if cell_from_bottom == peak_cell && peak_cell > full_cells as u16 {
                     // Peak marker.
-                    buf[(x, y)].set_char('▔').set_style(self.theme.spectrum_peak);
+                    buf[(x, y)]
+                        .set_char('▔')
+                        .set_style(self.theme.spectrum_peak);
                 }
                 // else: leave empty (transparent)
             }
