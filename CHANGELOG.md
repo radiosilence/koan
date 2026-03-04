@@ -31,6 +31,7 @@
 - **Anchored drag reorder** — dragging selected tracks now moves them anchored to the mousedown position instead of snapping to the top of the selection
 - **Album header drag** — clicking and dragging an album header reorders the entire album group as a unit
 - **Play/pause click** — clicking the status icon (play/pause indicator) next to the seek bar now toggles playback
+- **Download progress on all tracks** — tracks before the playing position now correctly show download progress and status instead of being unconditionally marked as played
 
 ### Removed
 

@@ -591,38 +591,38 @@ impl SharedPlayerState {
         let mut queue_count = 0;
 
         for (i, item) in pl.items.iter().enumerate() {
-            let (status, dl_progress) = match cursor_pos {
-                Some(cp) if i < cp => {
-                    finished_count += 1;
-                    (QueueEntryStatus::Played, None)
+            let is_cursor = cursor_pos == Some(i);
+            let is_before_cursor = cursor_pos.is_some_and(|cp| i < cp);
+
+            // Derive download progress from load_state uniformly for all tracks.
+            let dl_progress = match &item.load_state {
+                LoadState::Downloading { downloaded, total } => Some((*downloaded, *total)),
+                _ => None,
+            };
+
+            let status = if is_cursor {
+                has_playing = true;
+                match &item.load_state {
+                    LoadState::Ready => QueueEntryStatus::Playing,
+                    LoadState::Downloading { .. } => QueueEntryStatus::PriorityPending,
+                    LoadState::Pending => QueueEntryStatus::PriorityPending,
+                    LoadState::Failed(_) => QueueEntryStatus::Failed,
                 }
-                Some(cp) if i == cp => {
-                    has_playing = true;
-                    // Cursor item: playing if loaded, priority pending if not.
-                    let status = match &item.load_state {
-                        LoadState::Ready => QueueEntryStatus::Playing,
-                        LoadState::Downloading { .. } => QueueEntryStatus::PriorityPending,
-                        LoadState::Pending => QueueEntryStatus::PriorityPending,
-                        LoadState::Failed(_) => QueueEntryStatus::Failed,
-                    };
-                    let dl = match &item.load_state {
-                        LoadState::Downloading { downloaded, total } => Some((*downloaded, *total)),
-                        _ => None,
-                    };
-                    (status, dl)
+            } else if is_before_cursor {
+                finished_count += 1;
+                match &item.load_state {
+                    LoadState::Ready => QueueEntryStatus::Played,
+                    LoadState::Downloading { .. } => QueueEntryStatus::Downloading,
+                    LoadState::Pending => QueueEntryStatus::Downloading,
+                    LoadState::Failed(_) => QueueEntryStatus::Failed,
                 }
-                _ => {
-                    // After cursor (or no cursor) — upcoming.
-                    queue_count += 1;
-                    let (status, dl) = match &item.load_state {
-                        LoadState::Ready => (QueueEntryStatus::Queued, None),
-                        LoadState::Downloading { downloaded, total } => {
-                            (QueueEntryStatus::Downloading, Some((*downloaded, *total)))
-                        }
-                        LoadState::Pending => (QueueEntryStatus::Downloading, None),
-                        LoadState::Failed(_) => (QueueEntryStatus::Failed, None),
-                    };
-                    (status, dl)
+            } else {
+                queue_count += 1;
+                match &item.load_state {
+                    LoadState::Ready => QueueEntryStatus::Queued,
+                    LoadState::Downloading { .. } => QueueEntryStatus::Downloading,
+                    LoadState::Pending => QueueEntryStatus::Downloading,
+                    LoadState::Failed(_) => QueueEntryStatus::Failed,
                 }
             };
 
