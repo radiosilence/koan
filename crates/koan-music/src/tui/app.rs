@@ -1688,6 +1688,44 @@ impl App {
                         // Store click position for positioned rendering.
                         self.hover.column = event.column;
                         self.hover.row = event.row;
+                    } else if let Some((first, last)) = queue::QueueView::album_group_at_y(
+                        &visible,
+                        self.layout.queue_area,
+                        self.queue.scroll_offset,
+                        event.row,
+                    ) {
+                        // Right-click on album header -> select the whole group and open context menu.
+                        self.queue.selected_ids.clear();
+                        for i in first..=last {
+                            if let Some(entry) = visible.get(i) {
+                                self.queue.selected_ids.insert(entry.id);
+                            }
+                        }
+                        self.queue.cursor = first;
+                        if let Some(entry) = visible.get(first) {
+                            self.queue.anchor_id = Some(entry.id);
+                        }
+
+                        // Favourite label: true only if ALL tracks in the group are favourited.
+                        let all_fav = (first..=last).all(|i| {
+                            visible
+                                .get(i)
+                                .is_some_and(|e| self.favourites.contains(&e.path))
+                        });
+                        let fav_label = if all_fav { "Unfavourite" } else { "Favourite" };
+                        self.context_menu = Some(ContextMenuState {
+                            actions: vec![
+                                (ContextAction::Play, "Play", 'p'),
+                                (ContextAction::ToggleFavourite, fav_label, 'f'),
+                                (ContextAction::TrackInfo, "Track info", 'i'),
+                                (ContextAction::Remove, "Remove", 'd'),
+                                (ContextAction::Organize, "Organize files", 'o'),
+                            ],
+                            cursor: 0,
+                        });
+                        self.mode = Mode::ContextMenu;
+                        self.hover.column = event.column;
+                        self.hover.row = event.row;
                     }
                 }
             }

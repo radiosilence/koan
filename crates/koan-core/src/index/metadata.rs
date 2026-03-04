@@ -2,7 +2,9 @@ use std::fs;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
+use lofty::config::ParseOptions;
 use lofty::file::AudioFile;
+use lofty::mp4::{Mp4Codec, Mp4File};
 use lofty::prelude::*;
 use symphonia::core::meta::{MetadataRevision, StandardTagKey};
 use thiserror::Error;
@@ -81,7 +83,11 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
         .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
         .map(|d| d.as_secs() as i64);
 
-    let codec = codec_from_file_type(tagged_file.file_type());
+    let codec = if tagged_file.file_type() == lofty::file::FileType::Mp4 {
+        mp4_codec(path)
+    } else {
+        codec_from_file_type(tagged_file.file_type())
+    };
 
     Ok(TrackMeta {
         title,
@@ -106,6 +112,25 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
         remote_id: None,
         remote_url: None,
     })
+}
+
+/// Determine codec for an MP4 container file (AAC, ALAC, etc.).
+/// Falls back to "AAC" if the file cannot be parsed as Mp4File.
+fn mp4_codec(path: &Path) -> String {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return "AAC".to_string(),
+    };
+    let mut reader = std::io::BufReader::new(file);
+    match Mp4File::read_from(&mut reader, ParseOptions::new()) {
+        Ok(mp4) => match mp4.properties().codec() {
+            Mp4Codec::ALAC => "ALAC".to_string(),
+            Mp4Codec::MP3 => "MP3".to_string(),
+            Mp4Codec::FLAC => "FLAC".to_string(),
+            _ => "AAC".to_string(),
+        },
+        Err(_) => "AAC".to_string(),
+    }
 }
 
 /// Map lofty file type to a human-readable codec string.
