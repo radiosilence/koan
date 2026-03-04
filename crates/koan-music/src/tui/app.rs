@@ -68,6 +68,9 @@ pub struct DragState {
     pub current_y: u16,
     /// True if we're dragging a multi-selection group.
     pub multi: bool,
+    /// The last queue index the mouse was targeting during drag.
+    /// Used to avoid redundant moves when the mouse hasn't crossed a row boundary.
+    pub last_target_idx: Option<usize>,
 }
 
 /// Which UI element the mouse cursor is currently hovering over.
@@ -1266,6 +1269,7 @@ impl App {
                         from_index: idx,
                         current_y: event.row,
                         multi,
+                        last_target_idx: Some(idx),
                     });
                 }
             }
@@ -1304,10 +1308,12 @@ impl App {
                             self.queue.scroll_offset,
                             event.row,
                         ) {
-                            let to_id = visible.get(to_idx).map(|e| e.id);
+                            let last_target =
+                                self.queue.drag.as_ref().and_then(|d| d.last_target_idx);
                             let should_move = if self.queue.selected_ids.len() > 1 {
-                                // Multi-drag: only move when target is outside the selection.
-                                to_id.is_none_or(|id| !self.queue.selected_ids.contains(&id))
+                                // Multi-drag: move whenever the mouse has crossed into a new row,
+                                // regardless of whether that row is inside or outside the selection.
+                                Some(to_idx) != last_target
                             } else {
                                 to_idx != from_index
                             };
@@ -1321,6 +1327,9 @@ impl App {
 
                                 if self.queue.selected_ids.len() > 1 {
                                     self.send_move_selected(to_idx);
+                                    if let Some(ref mut drag) = self.queue.drag {
+                                        drag.last_target_idx = Some(to_idx);
+                                    }
                                 } else {
                                     self.send_move(from_index, to_idx);
                                     self.queue.cursor = to_idx;
