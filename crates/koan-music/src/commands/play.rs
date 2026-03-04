@@ -302,7 +302,11 @@ fn run_tui(
             app.quit = true;
         }
 
-        // 6. Advance frame deadline.
+        // 6. Sleep until the next frame deadline, then advance it.
+        let now = std::time::Instant::now();
+        if next_frame > now {
+            std::thread::sleep(next_frame - now);
+        }
         next_frame += frame_duration;
         let now = std::time::Instant::now();
         if next_frame < now {

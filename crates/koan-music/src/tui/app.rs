@@ -330,7 +330,10 @@ impl App {
 
         self.frame_count = self.frame_count.wrapping_add(1);
         // Rate-limit spinner to ~10 Hz regardless of frame rate.
-        if self.frame_count % (self.ticks_per_sec as u32 / 10).max(1) == 0 {
+        if self
+            .frame_count
+            .is_multiple_of((self.ticks_per_sec as u32 / 10).max(1))
+        {
             self.spinner_tick = self.spinner_tick.wrapping_add(1);
         }
 
