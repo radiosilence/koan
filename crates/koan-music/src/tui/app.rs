@@ -358,27 +358,6 @@ impl App {
             self.ticker_offset = self.ticker_offset.wrapping_add(1);
         }
 
-        // Ticker animation: advance one character every 3 ticks (~150ms).
-        // Reset when the playing track changes so new titles start from the beginning.
-        {
-            let current_playing = self
-                .queue
-                .vq_cache
-                .entries
-                .iter()
-                .find(|e| e.status == QueueEntryStatus::Playing)
-                .map(|e| e.path.clone());
-            if current_playing != self.ticker_last_path {
-                self.ticker_last_path = current_playing;
-                self.ticker_offset = 0;
-                self.ticker_tick = 0;
-            }
-        }
-        self.ticker_tick = self.ticker_tick.wrapping_add(1);
-        if self.ticker_tick.is_multiple_of(self.ticker_divisor) {
-            self.ticker_offset = self.ticker_offset.wrapping_add(1);
-        }
-
         // Drain log buffer.
         if let Ok(mut logs) = self.log_buffer.lock() {
             self.log_messages.extend(logs.drain(..));
