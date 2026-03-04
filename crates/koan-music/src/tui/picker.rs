@@ -115,13 +115,48 @@ impl PickerState {
     }
 
     pub fn move_up(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
+        let count = self.matched_count();
+        if count == 0 {
+            return;
+        }
+        if self.cursor == 0 {
+            self.cursor = count - 1; // wrap to bottom
+        } else {
+            self.cursor -= 1;
+        }
     }
 
     pub fn move_down(&mut self) {
         let count = self.matched_count();
-        if self.cursor + 1 < count {
+        if count == 0 {
+            return;
+        }
+        if self.cursor + 1 >= count {
+            self.cursor = 0; // wrap to top
+        } else {
             self.cursor += 1;
+        }
+    }
+
+    pub fn page_up(&mut self, page_size: usize) {
+        self.cursor = self.cursor.saturating_sub(page_size);
+    }
+
+    pub fn page_down(&mut self, page_size: usize) {
+        let count = self.matched_count();
+        if count > 0 {
+            self.cursor = (self.cursor + page_size).min(count - 1);
+        }
+    }
+
+    pub fn jump_to_start(&mut self) {
+        self.cursor = 0;
+    }
+
+    pub fn jump_to_end(&mut self) {
+        let count = self.matched_count();
+        if count > 0 {
+            self.cursor = count - 1;
         }
     }
 

@@ -4,11 +4,14 @@
 
 ### Added
 
-- **Spectrum analyser** — 80s hi-fi LED-segment style spectrum visualiser renders above the transport bar when album art is present. 64-band FFT with logarithmic frequency mapping, green/yellow/red gradient, peak hold markers, and exponential decay smoothing
+- **Spectrum analyser** — 80s hi-fi LED-segment style spectrum visualiser renders above the transport bar when album art is present. 48-band FFT with configurable frequency scale (Bark/Mel/Log/Linear), eighth-block sub-cell resolution, green/yellow/red gradient, peak hold markers, and time-based exponential decay
 - **VizBuffer audio tap** — circular sample buffer shared between decode thread and TUI via `parking_lot::Mutex`
 - **FFT pipeline** — 2048-point real FFT via `realfft` crate. Hann window, dB magnitude scaling, configurable FPS
-- **Visualiser config** — `[visualizer]` section with `enabled` (default: true) and `fps` (default: 20). Also accepts `[visualiser]` spelling
+- **Visualiser config** — `[visualizer]` section with `enabled`, `fps`, `scale`, `bar_decay_ms`, `peak_decay_ms`. Also accepts `[visualiser]` spelling
 - **Spectrum theme colours** — `spectrum_low` (green), `spectrum_mid` (yellow), `spectrum_high` (red), `spectrum_peak` (white) in theme config
+- **FPS overlay** — `[playback] show_fps = true` displays an FPS counter in the top-right corner
+- **Vim-style navigation everywhere** — pickers, library browser, and queue all support Ctrl+U/Ctrl+D (half-page), PageUp/PageDown, Home/End. Library also accepts j/k/h/l, g/G
+- **Wrap-around cursor** — pressing Up on the first item wraps to the last, and Down on the last wraps to the first (queue, library, picker)
 - **Lyrics panel** — press `L` to toggle a lyrics panel (60/40 split with queue). Fetches synced and plain lyrics from LRCLIB (zero-config, no API key). Synced lyrics highlight the current line and auto-scroll with playback
 - **Lyrics DB caching** — fetched lyrics are cached in SQLite so subsequent views are instant
 - **LRCLIB search fallback** — when exact match (`/api/get`) returns 404, falls back to fuzzy search (`/api/search`) by artist + title
@@ -19,9 +22,11 @@
 
 - **Fixed-timestep render loop** — replaced tick-on-timeout event loop with a game-engine-style frame-deadline loop. Animations (ticker, spinner) no longer stall during mouse interaction or key holds
 - **Configurable frame rate** — `[playback] target_fps` (default: 60) controls TUI redraw rate. Accepts 30, 60, or 120
+- **Transport icons** — play/pause/stop status icons use Unicode symbols instead of ASCII
 
 ### Fixed
 
+- **Standalone picker mouse support** — `koan pick --artist`/`--album` now enables mouse capture. Click to select, double-click to confirm, scroll wheel to navigate
 - **Lyrics fetch on toggle** — pressing `L` mid-track now fetches lyrics immediately. Previously, lyrics only loaded on track change
 - **Lyrics error logging** — fetch errors are now logged to stderr instead of being silently swallowed
 - **Favourites import for remote tracks** — starred tracks from Navidrome now correctly import as local favourites. Previously, remote-only tracks (with no local path) were silently skipped during import
@@ -31,6 +36,7 @@
 - **Ticker double-speed after merge** — duplicate ticker animation block from merge caused scrolling text to advance twice per frame
 - **Anchored drag reorder** — dragging selected tracks now moves them anchored to the mousedown position instead of snapping to the top of the selection
 - **Album header drag** — clicking and dragging an album header reorders the entire album group as a unit
+- **Play/pause click** — clicking the status icon (play/pause indicator) next to the seek bar now toggles playback
 
 ### Removed
 
