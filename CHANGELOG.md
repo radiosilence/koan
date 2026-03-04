@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Lyrics panel** — press `L` to toggle a lyrics panel (60/40 split with queue). Fetches synced and plain lyrics from LRCLIB (zero-config, no API key). Synced lyrics highlight the current line and auto-scroll with playback
+- **Lyrics DB caching** — fetched lyrics are cached in SQLite so subsequent views are instant
+- **LRCLIB search fallback** — when exact match (`/api/get`) returns 404, falls back to fuzzy search (`/api/search`) by artist + title
+
+### Fixed
+
+- **Lyrics fetch on toggle** — pressing `L` mid-track now fetches lyrics immediately. Previously, lyrics only loaded on track change
+- **Lyrics error logging** — fetch errors are now logged to stderr instead of being silently swallowed
+
 ## 0.3.0
 
 ### Added

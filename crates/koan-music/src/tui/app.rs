@@ -451,6 +451,7 @@ impl App {
                     let (tx, rx) = crossbeam_channel::bounded(1);
                     self.lyrics_rx = Some(rx);
 
+                    let log_clone = self.log_buffer.clone();
                     std::thread::Builder::new()
                         .name("koan-lyrics".into())
                         .spawn(move || {
@@ -458,7 +459,9 @@ impl App {
                                 let db = match koan_core::db::connection::Database::open(&db_path) {
                                     Ok(db) => db,
                                     Err(e) => {
-                                        eprintln!("[lyrics] db open error: {e}");
+                                        if let Ok(mut logs) = log_clone.lock() {
+                                            logs.push(format!("[lyrics] db open error: {e}"));
+                                        }
                                         return None;
                                     }
                                 };
@@ -468,14 +471,20 @@ impl App {
                                 ) {
                                     Ok(Some(id)) => id,
                                     Ok(None) => {
-                                        eprintln!(
-                                            "[lyrics] track not in db: {}",
-                                            track_path.display()
-                                        );
+                                        if let Ok(mut logs) = log_clone.lock() {
+                                            logs.push(format!(
+                                                "[lyrics] track not in db: {}",
+                                                track_path.display()
+                                            ));
+                                        }
                                         return None;
                                     }
                                     Err(e) => {
-                                        eprintln!("[lyrics] track lookup error: {e}");
+                                        if let Ok(mut logs) = log_clone.lock() {
+                                            logs.push(format!(
+                                                "[lyrics] track lookup error: {e}"
+                                            ));
+                                        }
                                         return None;
                                     }
                                 };
@@ -489,9 +498,11 @@ impl App {
                                 ) {
                                     Ok(lyrics) => Some(lyrics),
                                     Err(e) => {
-                                        eprintln!(
-                                            "[lyrics] fetch failed for '{artist} - {title}': {e}"
-                                        );
+                                        if let Ok(mut logs) = log_clone.lock() {
+                                            logs.push(format!(
+                                                "[lyrics] fetch failed for '{artist} - {title}': {e}"
+                                            ));
+                                        }
                                         None
                                     }
                                 }
