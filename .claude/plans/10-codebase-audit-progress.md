@@ -2,7 +2,7 @@
 
 **Plan:** [10-codebase-audit-2026-03-04-v0.5.2.md](10-codebase-audit-2026-03-04-v0.5.2.md)
 **Started:** 2026-03-04
-**Last updated:** 2026-03-04T2
+**Last updated:** 2026-03-04T3
 
 ---
 
@@ -12,7 +12,7 @@
 |-------|-----------|--------|-----|
 | 1 — Security & Quick Wins | `fix/security-hardening` | ✅ DONE | [#13](https://github.com/radiosilence/koan/pull/13) |
 | 5 — Tests | `test/coverage-and-cleanup` | ✅ DONE | [#14](https://github.com/radiosilence/koan/pull/14) |
-| 2 — Performance | `perf/render-loop` | ⏳ TODO | — |
+| 2 — Performance | `perf/render-loop` | ✅ DONE | [#15](https://github.com/radiosilence/koan/pull/15) |
 | 3 — Architecture | `refactor/module-decomposition` | ⏳ TODO | — |
 | 4 — Dependencies | `chore/dependency-cleanup` | ⏳ TODO | — |
 
@@ -49,13 +49,15 @@
 | 25 | Add Subsonic deserialization tests (5) | ✅ |
 | 26 | Add metadata_from_probe_result tests (5) | ✅ |
 
-## Phase 2 — Performance ⏳
+## Phase 2 — Performance ✅
+
+**PR:** [#15](https://github.com/radiosilence/koan/pull/15)
 
 | # | Item | Status |
 |---|------|--------|
-| 11 | P1: playlist_version check in refresh_visible_queue | ⏳ |
-| 12 | P2-P3: Cache build_display_lines, borrowed keys | ⏳ |
-| 13 | P5: VizFrame spectrum Vec→array | ⏳ |
+| 11 | P1: playlist_version check in refresh_visible_queue | ✅ |
+| 12 | P2-P3: Cache build_display_lines, borrowed keys | ✅ |
+| 13 | P5: VizFrame spectrum Vec→array | ✅ |
 
 ## Phase 3 — Architecture ⏳
 
