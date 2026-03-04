@@ -12,20 +12,84 @@ use super::theme::Theme;
 const FFT_SIZE: usize = 2048;
 
 /// Number of spectrum bars to produce.
-const NUM_BARS: usize = 64;
+const NUM_BARS: usize = 48;
 
-/// Minimum frequency for the logarithmic mapping (Hz).
+/// Minimum frequency (Hz).
 const MIN_FREQ: f32 = 20.0;
 
-/// Maximum frequency for the logarithmic mapping (Hz).
-const MAX_FREQ: f32 = 20_000.0;
+/// Maximum frequency (Hz).
+const MAX_FREQ: f32 = 18_000.0;
 
-/// Half-life for bar decay in seconds. Bars drop to 50% in this time.
-/// 0.08s = snappy, responsive feel regardless of frame rate.
-const BAR_HALF_LIFE: f32 = 0.08;
+/// Eighth-block characters for sub-cell vertical resolution (8 levels per cell).
+const EIGHTH_BLOCKS: &[char] = &[' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
 
-/// Half-life for peak decay in seconds. Peaks linger then fade.
-const PEAK_HALF_LIFE: f32 = 0.35;
+/// Bark scale critical band edges (Hz). 24 bands covering 20Hz–15.5kHz.
+#[allow(dead_code)]
+const BARK_EDGES: &[f32] = &[
+    20.0, 100.0, 200.0, 300.0, 400.0, 510.0, 630.0, 770.0, 920.0, 1080.0, 1270.0, 1480.0,
+    1720.0, 2000.0, 2320.0, 2700.0, 3150.0, 3700.0, 4400.0, 5300.0, 6400.0, 7700.0, 9500.0,
+    12000.0, 15500.0,
+];
+
+/// Frequency scale for spectrum analysis.
+#[derive(Debug, Clone, Copy, Default)]
+pub enum FrequencyScale {
+    /// Bark psychoacoustic scale — 24 critical bands, best for perceiving music.
+    #[default]
+    Bark,
+    /// Mel scale — perceptual pitch scale, popular in audio/ML.
+    Mel,
+    /// Logarithmic — equal spacing per octave.
+    Log,
+    /// Linear — equal Hz per bar, mostly for curiosity.
+    Linear,
+}
+
+impl FrequencyScale {
+    pub fn from_str(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "bark" => Self::Bark,
+            "mel" => Self::Mel,
+            "log" | "logarithmic" => Self::Log,
+            "linear" => Self::Linear,
+            _ => Self::default(),
+        }
+    }
+
+    /// Map a frequency (Hz) to a normalized 0.0..1.0 position on this scale.
+    fn normalize(&self, freq: f32) -> f32 {
+        match self {
+            Self::Bark => {
+                // Bark formula: z = 26.81 / (1 + 1960/f) - 0.53
+                let bark = |f: f32| 26.81 / (1.0 + 1960.0 / f) - 0.53;
+                let b = bark(freq);
+                let b_min = bark(MIN_FREQ);
+                let b_max = bark(MAX_FREQ);
+                (b - b_min) / (b_max - b_min)
+            }
+            Self::Mel => {
+                // Mel formula: m = 2595 * log10(1 + f/700)
+                let mel = |f: f32| 2595.0 * (1.0 + f / 700.0).log10();
+                let m = mel(freq);
+                let m_min = mel(MIN_FREQ);
+                let m_max = mel(MAX_FREQ);
+                (m - m_min) / (m_max - m_min)
+            }
+            Self::Log => {
+                let log_min = MIN_FREQ.ln();
+                let log_max = MAX_FREQ.ln();
+                (freq.ln() - log_min) / (log_max - log_min)
+            }
+            Self::Linear => (freq - MIN_FREQ) / (MAX_FREQ - MIN_FREQ),
+        }
+    }
+}
+
+/// Default half-life for bar decay in seconds.
+const DEFAULT_BAR_HALF_LIFE: f32 = 0.08;
+
+/// Default half-life for peak decay in seconds.
+const DEFAULT_PEAK_HALF_LIFE: f32 = 0.35;
 
 /// dB floor for normalization: magnitudes below this map to 0.0.
 const DB_FLOOR: f32 = -80.0;
@@ -43,12 +107,10 @@ fn hann_window() -> Vec<f32> {
         .collect()
 }
 
-/// Pre-compute which bar index each FFT bin maps to for a given sample rate.
+/// Pre-compute which bar index each FFT bin maps to for a given sample rate and scale.
 /// Returns None for bins outside [MIN_FREQ, MAX_FREQ].
-fn build_bin_to_bar(sample_rate: f32) -> Vec<Option<usize>> {
+fn build_bin_to_bar(sample_rate: f32, scale: FrequencyScale) -> Vec<Option<usize>> {
     let bin_hz = sample_rate / FFT_SIZE as f32;
-    let log_min = MIN_FREQ.ln();
-    let log_max = MAX_FREQ.ln();
     let num_bins = FFT_SIZE / 2 + 1;
 
     (0..num_bins)
@@ -57,8 +119,7 @@ fn build_bin_to_bar(sample_rate: f32) -> Vec<Option<usize>> {
             if !(MIN_FREQ..=MAX_FREQ).contains(&freq) {
                 return None;
             }
-            let log_freq = freq.ln();
-            let normalized = (log_freq - log_min) / (log_max - log_min);
+            let normalized = scale.normalize(freq);
             Some(((normalized * NUM_BARS as f32) as usize).min(NUM_BARS - 1))
         })
         .collect()
@@ -90,10 +151,27 @@ pub struct VisualizerState {
     bar_counts: Vec<u32>,
     /// Last update timestamp for time-based decay.
     last_update: Instant,
+    /// Frequency scale for bin→bar mapping.
+    scale: FrequencyScale,
+    /// Bar decay half-life in seconds (configurable).
+    bar_half_life: f32,
+    /// Peak decay half-life in seconds (configurable).
+    peak_half_life: f32,
 }
 
 impl VisualizerState {
     pub fn new() -> Self {
+        Self::with_config(FrequencyScale::default(), DEFAULT_BAR_HALF_LIFE, DEFAULT_PEAK_HALF_LIFE)
+    }
+
+    pub fn from_config(cfg: &koan_core::config::VisualizerConfig) -> Self {
+        let scale = FrequencyScale::from_str(&cfg.scale);
+        let bar_half_life = cfg.bar_decay_ms as f32 / 1000.0;
+        let peak_half_life = cfg.peak_decay_ms as f32 / 1000.0;
+        Self::with_config(scale, bar_half_life, peak_half_life)
+    }
+
+    pub fn with_config(scale: FrequencyScale, bar_half_life: f32, peak_half_life: f32) -> Self {
         let mut planner = RealFftPlanner::<f32>::new();
         let fft = planner.plan_fft_forward(FFT_SIZE);
         let fft_input = fft.make_input_vec();
@@ -112,6 +190,9 @@ impl VisualizerState {
             last_sample_rate: 0.0,
             bar_counts: vec![0u32; NUM_BARS],
             last_update: Instant::now(),
+            scale,
+            bar_half_life,
+            peak_half_life,
         }
     }
 
@@ -121,8 +202,8 @@ impl VisualizerState {
         let dt = now.duration_since(self.last_update).as_secs_f32();
         self.last_update = now;
         // decay = 0.5^(dt / half_life)
-        let bar_decay = 0.5f32.powf(dt / BAR_HALF_LIFE);
-        let peak_decay = 0.5f32.powf(dt / PEAK_HALF_LIFE);
+        let bar_decay = 0.5f32.powf(dt / self.bar_half_life);
+        let peak_decay = 0.5f32.powf(dt / self.peak_half_life);
         (bar_decay, peak_decay)
     }
 
@@ -182,7 +263,7 @@ impl VisualizerState {
 
         // Rebuild bin→bar lookup when sample rate changes.
         if (sample_rate - self.last_sample_rate).abs() > 0.5 {
-            self.bin_to_bar = build_bin_to_bar(sample_rate);
+            self.bin_to_bar = build_bin_to_bar(sample_rate, self.scale);
             self.last_sample_rate = sample_rate;
         }
 
@@ -371,22 +452,20 @@ impl Widget for SpectrumWidget<'_> {
                 (bv, pv)
             };
 
-            // Bar height in half-cells for sub-cell resolution using ▄ half blocks.
-            let half_cells = (bar_val * height * 2.0).round() as usize;
+            // Bar height in eighth-cells for sub-cell resolution (8 levels per cell).
+            let eighths = (bar_val * height * 8.0).round() as usize;
 
-            // Peak position in half-cells from bottom.
-            let peak_half = (peak_val * height * 2.0).round() as usize;
+            // Peak position in eighths from bottom.
+            let peak_eighths = (peak_val * height * 8.0).round() as usize;
 
             // Render from bottom to top.
             for row in 0..area.height {
                 let cell_from_bottom = (area.height - 1 - row) as usize;
                 let y = area.y + row;
 
-                // Each cell covers 2 half-cells: bottom = cell*2, top = cell*2+1
-                let bottom_half = cell_from_bottom * 2;
-                let top_half = bottom_half + 1;
-                let has_bottom = bottom_half < half_cells;
-                let has_top = top_half < half_cells;
+                // How many eighths fall within this cell?
+                let cell_base = cell_from_bottom * 8;
+                let fill = eighths.saturating_sub(cell_base).min(8);
 
                 // Color based on position relative to total height.
                 let pos_ratio = cell_from_bottom as f32 / height;
@@ -398,15 +477,14 @@ impl Widget for SpectrumWidget<'_> {
                     self.theme.spectrum_high
                 };
 
-                if has_bottom && has_top {
-                    buf[(x, y)].set_char('█').set_style(style);
-                } else if has_bottom {
-                    // Only lower half filled — use ▄
-                    buf[(x, y)].set_char('▄').set_style(style);
+                if fill > 0 {
+                    buf[(x, y)]
+                        .set_char(EIGHTH_BLOCKS[fill])
+                        .set_style(style);
                 } else {
                     // Check for peak marker in this cell.
-                    let peak_cell = peak_half / 2;
-                    if peak_cell == cell_from_bottom && peak_half > half_cells {
+                    let peak_cell = peak_eighths / 8;
+                    if peak_cell == cell_from_bottom && peak_eighths > eighths {
                         buf[(x, y)]
                             .set_char('▔')
                             .set_style(self.theme.spectrum_peak);

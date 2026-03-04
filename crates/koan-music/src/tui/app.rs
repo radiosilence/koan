@@ -254,6 +254,15 @@ pub struct App {
     pub viz_config: koan_core::config::VisualizerConfig,
     /// Last time the visualizer spectrum was updated (for FPS rate limiting).
     pub last_viz_update: std::time::Instant,
+
+    /// Whether to show FPS overlay (from config).
+    pub show_fps: bool,
+    /// Timestamp of last FPS sample for computing display FPS.
+    fps_sample_time: std::time::Instant,
+    /// Frame counter since last FPS sample.
+    fps_sample_count: u32,
+    /// Last computed display FPS value.
+    pub display_fps: u16,
 }
 
 impl App {
@@ -265,6 +274,14 @@ impl App {
         db_path: PathBuf,
         ticks_per_sec: u8,
     ) -> Self {
+        let cfg = koan_core::config::Config::load().unwrap_or_default();
+        let ticker_divisor = {
+            let fps = cfg.playback.ticker_fps.max(1);
+            (ticks_per_sec / fps).max(1)
+        };
+        let visualizer = VisualizerState::from_config(&cfg.visualizer);
+        let viz_config = cfg.visualizer;
+
         Self {
             mode: Mode::Normal,
             state,
@@ -295,26 +312,24 @@ impl App {
             drag_undo_active: false,
             drop_progress: None,
             viz_buffer,
-            visualizer: VisualizerState::new(),
+            visualizer,
             lyrics: LyricsState::default(),
             lyrics_panel: false,
             lyrics_rx: None,
             hover: HoverState::default(),
             ticker_offset: 0,
             ticker_tick: 0,
-            ticker_divisor: {
-                let cfg = koan_core::config::Config::load().unwrap_or_default();
-                let fps = cfg.playback.ticker_fps.max(1);
-                (ticks_per_sec / fps).max(1)
-            },
+            ticker_divisor,
             ticker_last_path: None,
             ticks_per_sec,
             frame_count: 0,
             favourites: std::collections::HashSet::new(),
-            viz_config: koan_core::config::Config::load()
-                .unwrap_or_default()
-                .visualizer,
+            show_fps: cfg.playback.show_fps,
+            viz_config,
             last_viz_update: std::time::Instant::now(),
+            fps_sample_time: std::time::Instant::now(),
+            fps_sample_count: 0,
+            display_fps: 0,
         }
     }
 
@@ -368,6 +383,17 @@ impl App {
         self.refresh_visible_queue();
 
         self.frame_count = self.frame_count.wrapping_add(1);
+
+        // FPS counter: sample every second.
+        self.fps_sample_count += 1;
+        let elapsed = self.fps_sample_time.elapsed();
+        if elapsed.as_secs() >= 1 {
+            self.display_fps =
+                (self.fps_sample_count as f64 / elapsed.as_secs_f64()).round() as u16;
+            self.fps_sample_count = 0;
+            self.fps_sample_time = std::time::Instant::now();
+        }
+
         // Rate-limit spinner to ~10 Hz regardless of frame rate.
         if self
             .frame_count
@@ -1324,6 +1350,13 @@ impl App {
                         dur,
                     ) {
                         self.tx.send(PlayerCommand::Seek(pos)).ok();
+                    } else if click_x < self.layout.seek_bar_start {
+                        // Clicked on the play/pause status icon — toggle.
+                        if self.state.playback_state() == PlaybackState::Playing {
+                            self.tx.send(PlayerCommand::Pause).ok();
+                        } else {
+                            self.tx.send(PlayerCommand::Resume).ok();
+                        }
                     }
                     return;
                 }

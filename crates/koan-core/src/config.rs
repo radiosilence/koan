@@ -43,6 +43,8 @@ pub struct PlaybackConfig {
     /// UI render rate in frames-per-second (default: 60).
     /// Controls how often the TUI redraws. 30, 60, or 120 are typical values.
     pub target_fps: u8,
+    /// Show an FPS counter overlay in the top-right corner.
+    pub show_fps: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +92,7 @@ impl Default for PlaybackConfig {
             replaygain: ReplayGainMode::Album,
             ticker_fps: 8,
             target_fps: 60,
+            show_fps: false,
         }
     }
 }
@@ -99,6 +102,12 @@ impl Default for PlaybackConfig {
 pub struct VisualizerConfig {
     pub enabled: bool,
     pub fps: u8,
+    /// Frequency scale: "bark" (default), "mel", "log", "linear".
+    pub scale: String,
+    /// Bar decay half-life in milliseconds (how fast bars drop).
+    pub bar_decay_ms: u32,
+    /// Peak decay half-life in milliseconds (how long peaks linger).
+    pub peak_decay_ms: u32,
 }
 
 impl Default for VisualizerConfig {
@@ -106,6 +115,9 @@ impl Default for VisualizerConfig {
         Self {
             enabled: true,
             fps: 20,
+            scale: "bark".into(),
+            bar_decay_ms: 80,
+            peak_decay_ms: 350,
         }
     }
 }

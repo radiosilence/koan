@@ -302,6 +302,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         }
     }
 
+    // FPS counter overlay (top-right corner).
+    if app.show_fps && area.width >= 8 {
+        let fps_text = format!(" {}fps ", app.display_fps);
+        let w = fps_text.len() as u16;
+        let fps_area = Rect::new(area.x + area.width - w, area.y, w, 1);
+        let fps_line = Line::from(Span::styled(fps_text, app.theme.hint_desc));
+        frame.render_widget(Paragraph::new(fps_line), fps_area);
+    }
+
     // Loading overlay with braille spinner.
     if let Some(ref msg) = app.loading_message {
         const SPINNER: &[char] = &[
