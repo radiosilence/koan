@@ -654,6 +654,24 @@ fn decode_single(
     }
 }
 
+pub fn codec_name(codec: CodecType) -> String {
+    match codec {
+        CODEC_TYPE_FLAC => "FLAC",
+        CODEC_TYPE_MP3 => "MP3",
+        CODEC_TYPE_AAC => "AAC",
+        CODEC_TYPE_VORBIS => "Vorbis",
+        CODEC_TYPE_OPUS => "Opus",
+        CODEC_TYPE_ALAC => "ALAC",
+        CODEC_TYPE_WAVPACK => "WavPack",
+        CODEC_TYPE_PCM_S16LE => "PCM/16",
+        CODEC_TYPE_PCM_S24LE => "PCM/24",
+        CODEC_TYPE_PCM_S32LE => "PCM/32",
+        CODEC_TYPE_PCM_F32LE => "PCM/f32",
+        other => return format!("Unknown({:?})", other),
+    }
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -848,22 +866,4 @@ mod tests {
             "samples_written should be 0 after reset"
         );
     }
-}
-
-pub fn codec_name(codec: CodecType) -> String {
-    match codec {
-        CODEC_TYPE_FLAC => "FLAC",
-        CODEC_TYPE_MP3 => "MP3",
-        CODEC_TYPE_AAC => "AAC",
-        CODEC_TYPE_VORBIS => "Vorbis",
-        CODEC_TYPE_OPUS => "Opus",
-        CODEC_TYPE_ALAC => "ALAC",
-        CODEC_TYPE_WAVPACK => "WavPack",
-        CODEC_TYPE_PCM_S16LE => "PCM/16",
-        CODEC_TYPE_PCM_S24LE => "PCM/24",
-        CODEC_TYPE_PCM_S32LE => "PCM/32",
-        CODEC_TYPE_PCM_F32LE => "PCM/f32",
-        other => return format!("Unknown({:?})", other),
-    }
-    .to_string()
 }

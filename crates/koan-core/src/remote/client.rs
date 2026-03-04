@@ -332,6 +332,13 @@ pub struct SubsonicStarred {
     pub song: Vec<SubsonicSong>,
 }
 
+/// Generate a random hex salt string for Subsonic auth.
+fn random_salt() -> String {
+    let mut buf = [0u8; 12];
+    getrandom::getrandom(&mut buf).expect("failed to generate random salt");
+    buf.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,11 +616,4 @@ mod tests {
         assert!(result.album.is_empty());
         assert!(result.song.is_empty());
     }
-}
-
-/// Generate a random hex salt string for Subsonic auth.
-fn random_salt() -> String {
-    let mut buf = [0u8; 12];
-    getrandom::getrandom(&mut buf).expect("failed to generate random salt");
-    buf.iter().map(|b| format!("{:02x}", b)).collect()
 }
