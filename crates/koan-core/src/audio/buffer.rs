@@ -221,7 +221,9 @@ impl SourceEntry {
             path,
             hint,
             make_mss: Box::new(move || {
-                let file = File::open(&path_clone).expect("failed to open audio file");
+                let file = File::open(&path_clone).unwrap_or_else(|e| {
+                    panic!("failed to open audio file {}: {}", path_clone.display(), e)
+                });
                 MediaSourceStream::new(Box::new(file), Default::default())
             }),
         }

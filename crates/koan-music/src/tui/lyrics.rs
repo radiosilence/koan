@@ -36,15 +36,6 @@ impl LyricsState {
         self.result = result;
         self.fetching = false;
     }
-
-    /// Clear lyrics state (e.g. on track change before new fetch).
-    #[allow(dead_code)]
-    pub fn clear(&mut self) {
-        self.result = None;
-        self.lrc_lines.clear();
-        self.track_path = None;
-        self.fetching = false;
-    }
 }
 
 /// Widget for rendering lyrics in a side panel.

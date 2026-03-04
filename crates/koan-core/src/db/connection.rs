@@ -28,6 +28,12 @@ impl Database {
 
         let conn = Connection::open(path)?;
 
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        }
+
         // WAL mode for concurrent reads + single writer.
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.pragma_update(None, "foreign_keys", "on")?;

@@ -249,7 +249,7 @@ pub fn sync_library(
                     path: None,
                     source: "remote".to_string(),
                     remote_id: Some(song.id.clone()),
-                    remote_url: Some(client.stream_url(&song.id)),
+                    remote_url: Some(client.stream_url_template(&song.id)),
                 };
 
                 match queries::upsert_track(&db.conn, &meta) {

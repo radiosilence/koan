@@ -4,6 +4,13 @@ use crate::db::connection::DbError;
 
 use super::ArtistRow;
 
+/// Escape SQL LIKE wildcard characters in user input.
+fn escape_like(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
+
 /// Get or create an artist by name. Returns the artist ID.
 pub fn get_or_create_artist(
     conn: &Connection,
@@ -39,12 +46,12 @@ pub fn get_or_create_artist(
 
 /// Find artists by name (case-insensitive substring match).
 pub fn find_artists(conn: &Connection, query: &str) -> Result<Vec<ArtistRow>, DbError> {
-    let pattern = format!("%{}%", query);
+    let pattern = format!("%{}%", escape_like(query));
     let mut stmt = conn.prepare(
         "SELECT DISTINCT a.id, a.name, a.sort_name, a.remote_id
          FROM artists a
          INNER JOIN albums al ON al.artist_id = a.id
-         WHERE a.name LIKE ?1 COLLATE NOCASE
+         WHERE a.name LIKE ?1 COLLATE NOCASE ESCAPE '\\'
          ORDER BY COALESCE(a.sort_name, a.name)",
     )?;
     let rows = stmt

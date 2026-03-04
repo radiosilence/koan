@@ -140,6 +140,11 @@ impl SubsonicClient {
         format!("{}/rest/stream?id={}&{}", self.base_url, track_id, query)
     }
 
+    /// Stream URL without auth params — safe for database storage.
+    pub fn stream_url_template(&self, track_id: &str) -> String {
+        format!("{}/rest/stream?id={}", self.base_url, track_id)
+    }
+
     /// Download a track to a local path.
     pub fn download(&self, track_id: &str, dest: &Path) -> Result<(), SubsonicError> {
         self.download_with_progress(track_id, dest, |_, _| {})
@@ -330,9 +335,6 @@ pub struct SubsonicStarred {
 /// Generate a random hex salt string for Subsonic auth.
 fn random_salt() -> String {
     let mut buf = [0u8; 12];
-    if let Ok(mut f) = std::fs::File::open("/dev/urandom") {
-        use std::io::Read;
-        let _ = f.read_exact(&mut buf);
-    }
+    getrandom::getrandom(&mut buf).expect("failed to generate random salt");
     buf.iter().map(|b| format!("{:02x}", b)).collect()
 }

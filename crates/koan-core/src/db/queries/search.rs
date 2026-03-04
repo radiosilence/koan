@@ -4,10 +4,22 @@ use crate::db::connection::DbError;
 
 use super::TrackRow;
 
+/// Sanitize a user query for FTS5 MATCH: escapes double-quotes and wraps in
+/// a quoted phrase so FTS5 special characters are treated as literals.
+fn sanitize_fts_query(query: &str) -> String {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    // Escape double quotes for FTS5 literal matching
+    let escaped = trimmed.replace('"', "\"\"");
+    format!("\"{}\"*", escaped)
+}
+
 /// Full-text search across track title, artist, album, genre.
 pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, DbError> {
-    // FTS5 query — append * for prefix matching.
-    let fts_query = format!("{}*", query.trim());
+    // FTS5 query — sanitize input and append * for prefix matching.
+    let fts_query = sanitize_fts_query(query);
 
     let mut stmt = conn.prepare(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,

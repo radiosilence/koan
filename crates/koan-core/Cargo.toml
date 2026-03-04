@@ -19,6 +19,7 @@ ebur128 = "0.1"
 lofty = "0.23"
 log = "0.4"
 # Subsonic/Navidrome
+getrandom = "0.2"
 md5 = "0.8"
 # Async/threading
 parking_lot = "0.12"
@@ -38,7 +39,9 @@ security-framework = "3.5"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 # Audio
-symphonia = { version = "0.5", features = ["all"] }
+symphonia = { version = "0.5", default-features = false, features = [
+    "flac", "mp3", "aac", "vorbis", "alac", "pcm", "isomp4", "ogg", "wav", "aiff", "opt-simd",
+] }
 # Utilities
 thiserror = "2"
 uuid = { version = "1", features = ["v7"] }
