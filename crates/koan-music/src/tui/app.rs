@@ -9,7 +9,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
-    PlaybackState, QueueEntry, QueueEntryStatus, SharedPlayerState, VisibleQueueSnapshot,
+    PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState,
+    VisibleQueueSnapshot,
 };
 
 use super::library::LibraryState;
@@ -99,8 +100,8 @@ pub struct HoverState {
 pub struct QueueState {
     pub cursor: usize,
     pub scroll_offset: usize,
-    pub selected_indices: HashSet<usize>,
-    pub anchor_index: Option<usize>,
+    pub selected_ids: HashSet<QueueItemId>,
+    pub anchor_id: Option<QueueItemId>,
     pub drag: Option<DragState>,
     /// Cached visible queue snapshot — refreshed once per frame.
     pub(super) vq_cache: VisibleQueueSnapshot,
@@ -482,7 +483,7 @@ impl App {
             KeyCode::Char('e') => {
                 self.mode = Mode::QueueEdit;
                 // Sync selection to cursor so j/k work immediately.
-                if self.queue.selected_indices.len() <= 1 {
+                if self.queue.selected_ids.len() <= 1 {
                     self.select_single(self.queue.cursor);
                 }
             }
@@ -573,8 +574,8 @@ impl App {
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
-                self.queue.selected_indices.clear();
-                self.queue.anchor_index = None;
+                self.queue.selected_ids.clear();
+                self.queue.anchor_id = None;
             }
             KeyCode::Char('q') => {
                 self.tx.send(PlayerCommand::Stop).ok();
@@ -630,7 +631,7 @@ impl App {
             }
             KeyCode::Char(' ') => {
                 // Open context menu if there's a selection.
-                if !self.queue.selected_indices.is_empty() {
+                if !self.queue.selected_ids.is_empty() {
                     self.open_context_menu();
                 }
             }
@@ -815,19 +816,17 @@ impl App {
 
         // Collect selected queue entries' paths.
         let visible = self.visible_queue();
-        let selected_paths: Vec<PathBuf> = self
-            .queue
-            .selected_indices
+        let selected_paths: Vec<PathBuf> = visible
             .iter()
-            .filter_map(|&idx| visible.get(idx).map(|e| e.path.clone()))
+            .filter(|e| self.queue.selected_ids.contains(&e.id))
+            .map(|e| e.path.clone())
             .collect();
 
         // Collect the QueueItemIds for the selection (needed for path updates later).
-        let selected_ids: Vec<(koan_core::player::state::QueueItemId, PathBuf)> = self
-            .queue
-            .selected_indices
+        let selected_ids: Vec<(koan_core::player::state::QueueItemId, PathBuf)> = visible
             .iter()
-            .filter_map(|&idx| visible.get(idx).map(|e| (e.id, e.path.clone())))
+            .filter(|e| self.queue.selected_ids.contains(&e.id))
+            .map(|e| (e.id, e.path.clone()))
             .collect();
 
         let org = super::organize::OrganizeModalState::new(patterns, selected_paths, selected_ids);
@@ -1230,15 +1229,20 @@ impl App {
                         self.extend_selection_to(idx);
                     } else if toggle {
                         self.toggle_selection(idx);
-                    } else if !self.queue.selected_indices.contains(&idx) {
-                        // Only deselect others if clicking a NON-selected track.
-                        // Clicking an already-selected track preserves the
-                        // multi-selection so the user can drag the whole group.
-                        self.select_single(idx);
+                    } else {
+                        let id_at_idx = self.queue.vq_cache.entries.get(idx).map(|e| e.id);
+                        let already_selected =
+                            id_at_idx.is_some_and(|id| self.queue.selected_ids.contains(&id));
+                        if !already_selected {
+                            // Only deselect others if clicking a NON-selected track.
+                            // Clicking an already-selected track preserves the
+                            // multi-selection so the user can drag the whole group.
+                            self.select_single(idx);
+                        }
                     }
                     self.queue.cursor = idx;
 
-                    let multi = self.queue.selected_indices.len() > 1;
+                    let multi = self.queue.selected_ids.len() > 1;
                     self.queue.drag = Some(DragState {
                         from_index: idx,
                         current_y: event.row,
@@ -1281,9 +1285,10 @@ impl App {
                             self.queue.scroll_offset,
                             event.row,
                         ) {
-                            let should_move = if self.queue.selected_indices.len() > 1 {
+                            let to_id = visible.get(to_idx).map(|e| e.id);
+                            let should_move = if self.queue.selected_ids.len() > 1 {
                                 // Multi-drag: only move when target is outside the selection.
-                                !self.queue.selected_indices.contains(&to_idx)
+                                to_id.is_none_or(|id| !self.queue.selected_ids.contains(&id))
                             } else {
                                 to_idx != from_index
                             };
@@ -1295,7 +1300,7 @@ impl App {
                                     self.drag_undo_active = true;
                                 }
 
-                                if self.queue.selected_indices.len() > 1 {
+                                if self.queue.selected_ids.len() > 1 {
                                     self.send_move_selected(to_idx);
                                 } else {
                                     self.send_move(from_index, to_idx);
@@ -1331,7 +1336,8 @@ impl App {
                         event.row,
                     ) {
                         // Select the clicked item if not already selected.
-                        if !self.queue.selected_indices.contains(&idx) {
+                        let id_at_idx = self.queue.vq_cache.entries.get(idx).map(|e| e.id);
+                        if !id_at_idx.is_some_and(|id| self.queue.selected_ids.contains(&id)) {
                             self.select_single(idx);
                         }
                         self.queue.cursor = idx;
@@ -1469,38 +1475,67 @@ impl App {
 
     // --- Selection helpers ---
 
+    /// Derive selected indices from selected IDs for the current visible queue.
+    pub fn selected_indices(&self) -> HashSet<usize> {
+        let visible = &self.queue.vq_cache.entries;
+        visible
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| self.queue.selected_ids.contains(&e.id))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// Get the index of the anchor in the current visible queue.
+    fn anchor_index(&self) -> Option<usize> {
+        let anchor = self.queue.anchor_id?;
+        let visible = &self.queue.vq_cache.entries;
+        visible.iter().position(|e| e.id == anchor)
+    }
+
     /// Plain click / arrow: clear selection, select one track, set anchor.
     fn select_single(&mut self, idx: usize) {
-        self.queue.selected_indices.clear();
-        self.queue.selected_indices.insert(idx);
-        self.queue.anchor_index = Some(idx);
+        let id = self.queue.vq_cache.entries.get(idx).map(|e| e.id);
+        self.queue.selected_ids.clear();
+        if let Some(id) = id {
+            self.queue.selected_ids.insert(id);
+            self.queue.anchor_id = Some(id);
+        }
     }
 
     /// Shift-click/arrow: select range from anchor to idx (inclusive).
     fn extend_selection_to(&mut self, idx: usize) {
-        let anchor = self.queue.anchor_index.unwrap_or(self.queue.cursor);
+        let anchor = self.anchor_index().unwrap_or(self.queue.cursor);
         let lo = anchor.min(idx);
         let hi = anchor.max(idx);
         // Don't clear — shift extends. But we replace the range from anchor.
-        self.queue.selected_indices.clear();
+        self.queue.selected_ids.clear();
+        let visible = &self.queue.vq_cache.entries;
         for i in lo..=hi {
-            self.queue.selected_indices.insert(i);
+            if let Some(e) = visible.get(i) {
+                self.queue.selected_ids.insert(e.id);
+            }
         }
-        // Keep anchor where it was.
-        if self.queue.anchor_index.is_none() {
-            self.queue.anchor_index = Some(anchor);
+        // Keep anchor where it was (only set if not already set).
+        if self.queue.anchor_id.is_none()
+            && let Some(e) = visible.get(anchor)
+        {
+            self.queue.anchor_id = Some(e.id);
         }
     }
 
     /// Alt-click: toggle one track in/out of selection set.
     fn toggle_selection(&mut self, idx: usize) {
-        if self.queue.selected_indices.contains(&idx) {
-            self.queue.selected_indices.remove(&idx);
-        } else {
-            self.queue.selected_indices.insert(idx);
+        if let Some(e) = self.queue.vq_cache.entries.get(idx) {
+            let id = e.id;
+            if self.queue.selected_ids.contains(&id) {
+                self.queue.selected_ids.remove(&id);
+            } else {
+                self.queue.selected_ids.insert(id);
+            }
+            // Move anchor to last toggled.
+            self.queue.anchor_id = Some(id);
         }
-        // Move anchor to last toggled.
-        self.queue.anchor_index = Some(idx);
     }
 
     /// Play the track at the current cursor position (Enter / double-click).
@@ -1516,24 +1551,25 @@ impl App {
 
     /// Delete all selected tracks.
     fn delete_selected(&mut self) {
-        let indices: Vec<usize> = if self.queue.selected_indices.is_empty() {
-            vec![self.queue.cursor]
+        let ids: Vec<_> = if self.queue.selected_ids.is_empty() {
+            // Nothing selected — delete the track under cursor.
+            let visible = self.visible_queue();
+            visible
+                .get(self.queue.cursor)
+                .map(|e| e.id)
+                .into_iter()
+                .collect()
         } else {
-            self.queue.selected_indices.iter().copied().collect()
+            self.queue.selected_ids.iter().copied().collect()
         };
 
-        let visible = self.visible_queue();
-        let ids: Vec<_> = indices
-            .iter()
-            .filter_map(|&idx| visible.get(idx).map(|e| e.id))
-            .collect();
         if !ids.is_empty() {
             self.tx
                 .send(PlayerCommand::RemoveFromPlaylistBatch(ids))
                 .ok();
         }
 
-        self.queue.selected_indices.clear();
+        self.queue.selected_ids.clear();
         let visible_len = self.visible_queue().len();
         if visible_len > 0 && self.queue.cursor >= visible_len {
             self.queue.cursor = visible_len - 1;
@@ -1545,7 +1581,7 @@ impl App {
         let visible_len = self.visible_queue().len();
 
         // Single item: move the track under cursor.
-        if self.queue.selected_indices.len() <= 1 {
+        if self.queue.selected_ids.len() <= 1 {
             if self.queue.cursor + 1 < visible_len {
                 self.send_move(self.queue.cursor, self.queue.cursor + 1);
                 self.queue.cursor += 1;
@@ -1555,7 +1591,7 @@ impl App {
             return;
         }
 
-        let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
+        let mut indices: Vec<usize> = self.selected_indices().into_iter().collect();
         indices.sort_unstable();
 
         let max_idx = indices.last().copied().unwrap_or(0);
@@ -1567,17 +1603,15 @@ impl App {
         // Swap the item BELOW the group to ABOVE it — single atomic move.
         self.send_move(max_idx + 1, min_idx);
 
-        let new_selected: HashSet<usize> = indices.iter().map(|&i| i + 1).collect();
-        self.queue.selected_indices = new_selected;
+        // IDs are stable — selection follows automatically. Just update cursor.
         self.queue.cursor += 1;
-        self.queue.anchor_index = self.queue.anchor_index.map(|a| a + 1);
         self.update_scroll();
     }
 
     /// Move all selected tracks up by one position.
     fn move_selected_up(&mut self) {
         // Single item: move the track under cursor.
-        if self.queue.selected_indices.len() <= 1 {
+        if self.queue.selected_ids.len() <= 1 {
             if self.queue.cursor > 0 {
                 self.send_move(self.queue.cursor, self.queue.cursor - 1);
                 self.queue.cursor -= 1;
@@ -1587,7 +1621,7 @@ impl App {
             return;
         }
 
-        let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
+        let mut indices: Vec<usize> = self.selected_indices().into_iter().collect();
         indices.sort_unstable();
 
         let min_idx = indices.first().copied().unwrap_or(0);
@@ -1599,17 +1633,15 @@ impl App {
         // Swap the item ABOVE the group to BELOW it — single atomic move.
         self.send_move(min_idx - 1, max_idx);
 
-        let new_selected: HashSet<usize> = indices.iter().map(|&i| i - 1).collect();
-        self.queue.selected_indices = new_selected;
+        // IDs are stable — selection follows automatically. Just update cursor.
         self.queue.cursor -= 1;
-        self.queue.anchor_index = self.queue.anchor_index.map(|a| a.saturating_sub(1));
         self.update_scroll();
     }
 
     /// Send a batch move for all selected tracks to a target position.
     /// Used for multi-track drag.
     fn send_move_selected(&mut self, target_idx: usize) {
-        let mut indices: Vec<usize> = self.queue.selected_indices.iter().copied().collect();
+        let mut indices: Vec<usize> = self.selected_indices().into_iter().collect();
         indices.sort_unstable();
 
         let visible = self.visible_queue();
@@ -1632,17 +1664,14 @@ impl App {
             })
             .ok();
 
-        // Recompute selection indices to wherever the group landed.
+        // IDs are stable — selected_ids already contains the right IDs.
+        // Just update the cursor to the new visual position.
         let count = indices.len();
         let new_start = if moving_down {
             target_idx + 1 - count
         } else {
             target_idx
         };
-        self.queue.selected_indices.clear();
-        for i in 0..count {
-            self.queue.selected_indices.insert(new_start + i);
-        }
         self.queue.cursor = if moving_down {
             new_start + count - 1
         } else {

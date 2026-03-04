@@ -302,13 +302,14 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
 
     let visible = app.visible_queue();
     let drop_indicator = app.drop_indicator_index();
+    let selected_indices = app.selected_indices();
     let queue_view = QueueView::new(
         &visible,
         &app.mode,
         app.queue.cursor,
         app.queue.scroll_offset,
         &app.theme,
-        &app.queue.selected_indices,
+        &selected_indices,
         app.spinner_tick,
     )
     .with_drop_indicator(drop_indicator)
