@@ -1,3 +1,4 @@
+pub mod analyzer;
 pub mod buffer;
 pub mod device;
 pub mod engine;

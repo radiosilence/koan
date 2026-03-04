@@ -116,8 +116,8 @@ impl Default for VisualizerConfig {
             enabled: true,
             fps: 20,
             scale: "bark".into(),
-            bar_decay_ms: 80,
-            peak_decay_ms: 350,
+            bar_decay_ms: 45,
+            peak_decay_ms: 180,
         }
     }
 }

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_channel::Sender;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-use koan_core::audio::viz::VizBuffer;
+use koan_core::audio::viz::VizSnapshot;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState,
@@ -215,8 +215,8 @@ pub struct App {
     /// Drop/paste import progress: (processed, total). Cleared when done.
     pub drop_progress: Option<Arc<(AtomicUsize, AtomicUsize)>>,
 
-    /// Shared visualization sample buffer from the decode thread.
-    pub viz_buffer: Arc<VizBuffer>,
+    /// Shared visualization snapshot from the analysis thread.
+    pub viz_snapshot: Arc<VizSnapshot>,
 
     /// Visualizer state (spectrum bars, peaks, VU levels).
     pub visualizer: VisualizerState,
@@ -252,8 +252,6 @@ pub struct App {
 
     /// Visualizer config (enabled flag, fps).
     pub viz_config: koan_core::config::VisualizerConfig,
-    /// Last time the visualizer spectrum was updated (for FPS rate limiting).
-    pub last_viz_update: std::time::Instant,
 
     /// Whether to show FPS overlay (from config).
     pub show_fps: bool,
@@ -268,7 +266,7 @@ pub struct App {
 impl App {
     pub fn new(
         state: Arc<SharedPlayerState>,
-        viz_buffer: Arc<VizBuffer>,
+        viz_snapshot: Arc<VizSnapshot>,
         tx: Sender<PlayerCommand>,
         log_buffer: Arc<Mutex<Vec<String>>>,
         db_path: PathBuf,
@@ -311,7 +309,7 @@ impl App {
             scrollbar_grab_offset: None,
             drag_undo_active: false,
             drop_progress: None,
-            viz_buffer,
+            viz_snapshot,
             visualizer,
             lyrics: LyricsState::default(),
             lyrics_panel: false,
@@ -326,7 +324,6 @@ impl App {
             favourites: std::collections::HashSet::new(),
             show_fps: cfg.playback.show_fps,
             viz_config,
-            last_viz_update: std::time::Instant::now(),
             fps_sample_time: std::time::Instant::now(),
             fps_sample_count: 0,
             display_fps: 0,
@@ -476,17 +473,14 @@ impl App {
         }
 
         // Update visualizer spectrum at configured FPS.
+        // Update visualizer every frame — analysis thread runs at its own rate,
+        // decay/smoothing runs unconditionally at TUI fps for buttery-smooth animation.
         if self.viz_config.enabled {
-            let interval =
-                std::time::Duration::from_millis(1000 / self.viz_config.fps.max(1) as u64);
-            if self.last_viz_update.elapsed() >= interval {
-                if self.state.playback_state() == PlaybackState::Playing {
-                    self.visualizer.update_spectrum(&self.viz_buffer);
-                } else {
-                    // When paused/stopped, decay bars to zero naturally.
-                    self.visualizer.decay_to_zero();
-                }
-                self.last_viz_update = std::time::Instant::now();
+            if self.state.playback_state() == PlaybackState::Playing {
+                self.visualizer.update_from_snapshot(&self.viz_snapshot);
+            } else {
+                // When paused/stopped, decay bars to zero naturally.
+                self.visualizer.decay_to_zero();
             }
         }
 

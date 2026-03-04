@@ -60,7 +60,7 @@ pub fn cmd_play(
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
 
-    let (state, _timeline, viz_buffer, tx) = Player::spawn();
+    let (state, _timeline, viz_snapshot, tx) = Player::spawn();
 
     let expects_playback = track_ids.is_some() || !paths.is_empty();
 
@@ -118,7 +118,7 @@ pub fn cmd_play(
     // The TUI shows a loading overlay until playback begins.
     if let Err(e) = run_tui(
         state,
-        viz_buffer,
+        viz_snapshot,
         tx,
         log_buffer,
         start_in_library,
@@ -133,7 +133,7 @@ pub fn cmd_play(
 
 fn run_tui(
     state: Arc<koan_core::player::state::SharedPlayerState>,
-    viz_buffer: Arc<koan_core::audio::viz::VizBuffer>,
+    viz_snapshot: Arc<koan_core::audio::viz::VizSnapshot>,
     tx: crossbeam_channel::Sender<PlayerCommand>,
     log_buffer: Arc<Mutex<Vec<String>>>,
     start_in_library: bool,
@@ -175,7 +175,7 @@ fn run_tui(
 
     let mut app = tui::app::App::new(
         state,
-        viz_buffer,
+        viz_snapshot,
         tx.clone(),
         log_buffer,
         db_path,
