@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Performance
+
+- **Render loop allocations eliminated** — playlist version gate skips redundant O(n) visible queue rebuild when queue is idle; borrowed string keys in display line builder remove 2 allocations per entry per call; spectrum data changed from heap Vec to stack arrays ([f32; 48]) eliminating allocation on every frame clone at 60fps
+
 ### Fixed
 
 - **Security hardening** — credentials removed from stored remote URLs (template-based at playback time), config and DB files restricted to 0o600 on Unix, FTS5 and LIKE query inputs sanitized, HTTPS warning for non-localhost remotes, secure random salt via `getrandom`, PID-namespaced cover art temp files
