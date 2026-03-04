@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Widget};
 
@@ -124,6 +124,21 @@ impl<'a> QueueView<'a> {
 
         Some((first, last))
     }
+}
+
+/// Count total display lines (tracks + album headers) without allocating.
+/// Must use identical grouping logic as `build_display_lines`.
+pub(super) fn display_line_count(entries: &[QueueEntry]) -> usize {
+    let mut count = entries.len();
+    let mut current_album_key: Option<(&str, &str)> = None;
+    for entry in entries {
+        let album_key = (entry.album_artist.as_str(), entry.album.as_str());
+        if !entry.album.is_empty() && current_album_key != Some(album_key) {
+            current_album_key = Some(album_key);
+            count += 1;
+        }
+    }
+    count
 }
 
 /// Each display line: (Option<queue_index>, is_header).
@@ -247,27 +262,72 @@ impl Widget for QueueView<'_> {
         }
 
         // Scrollbar — only when content overflows.
+        // Uses sub-pixel rendering with 1/8th-cell resolution via Unicode block elements.
         let total_lines = display_lines.len();
         if total_lines > visible_height && visible_height > 0 && inner.width > 1 {
             let bar_x = inner.x + inner.width - 1;
-            let thumb_size = (visible_height * visible_height / total_lines).max(1);
+
+            // All math in eighths of a cell for sub-pixel precision.
+            let vis8 = visible_height * 8;
             let max_scroll = total_lines.saturating_sub(visible_height);
-            let thumb_offset = if max_scroll > 0 {
-                start * (visible_height - thumb_size) / max_scroll
+
+            // Constant thumb size in eighths — depends only on content ratio.
+            let thumb_8 = (vis8 * visible_height / total_lines).max(8);
+
+            // Thumb top position in eighths, proportional to scroll progress.
+            let track_8 = vis8.saturating_sub(thumb_8);
+            let thumb_top_8 = if max_scroll > 0 && track_8 > 0 {
+                start * track_8 / max_scroll
             } else {
                 0
             };
+            let thumb_bot_8 = thumb_top_8 + thumb_8;
+
+            // Lower block elements indexed by eighths filled from bottom (0..=8).
+            const BLOCKS: [char; 9] = [
+                ' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}',
+                '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}',
+            ];
+
+            let thumb_color = self.theme.scrollbar_thumb;
+            let bg_color = self.theme.scrollbar_bg;
+            let thumb_style = Style::new().fg(thumb_color);
+            // Bottom edge: invert the block to fill from top.
+            // BLOCKS[8-N] in bg color covers the empty bottom, thumb bg fills the top.
+            let bot_style = Style::new().fg(bg_color).bg(thumb_color);
 
             for row in 0..visible_height {
+                let cell_top = row * 8;
+                let cell_bot = cell_top + 8;
+
+                let overlap_start = thumb_top_8.max(cell_top);
+                let overlap_end = thumb_bot_8.min(cell_bot);
+                let eighths = overlap_end.saturating_sub(overlap_start);
+
                 let y = inner.y + row as u16;
-                let is_thumb = row >= thumb_offset && row < thumb_offset + thumb_size;
-                let ch = if is_thumb { '\u{2588}' } else { '\u{2502}' };
-                let style = if is_thumb {
-                    self.theme.hint_key
+                if eighths == 0 {
+                    // Empty track cell.
+                    buf[(bar_x, y)]
+                        .set_char(' ')
+                        .set_style(Style::new().bg(bg_color));
+                    continue;
+                }
+                if overlap_start > cell_top && eighths < 8 {
+                    // Top edge — lower block fills from bottom. Correct.
+                    buf[(bar_x, y)]
+                        .set_char(BLOCKS[eighths])
+                        .set_style(Style::new().fg(thumb_color).bg(bg_color));
+                } else if overlap_end < cell_bot && eighths < 8 {
+                    // Bottom edge — flip: draw empty portion in bg, thumb as bg color.
+                    buf[(bar_x, y)]
+                        .set_char(BLOCKS[8 - eighths])
+                        .set_style(bot_style);
                 } else {
-                    self.theme.hint_desc
-                };
-                buf[(bar_x, y)].set_char(ch).set_style(style);
+                    // Full cell.
+                    buf[(bar_x, y)]
+                        .set_char('\u{2588}')
+                        .set_style(thumb_style);
+                }
             }
         }
     }

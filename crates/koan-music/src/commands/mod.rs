@@ -1,3 +1,5 @@
+use rayon::prelude::*;
+
 mod cache;
 mod config;
 mod enqueue;
@@ -297,7 +299,7 @@ pub(crate) fn playlist_items_from_paths(
     progress: Option<&std::sync::atomic::AtomicUsize>,
 ) -> Vec<PlaylistItem> {
     paths
-        .iter()
+        .par_iter()
         .map(|p| {
             let item = if let Ok(meta) = koan_core::index::metadata::read_metadata(p) {
                 PlaylistItem {

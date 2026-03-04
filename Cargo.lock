@@ -1270,7 +1270,7 @@ dependencies = [
 
 [[package]]
 name = "koan-core"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "coreaudio-sys",
  "crossbeam-channel",
@@ -1299,7 +1299,7 @@ dependencies = [
 
 [[package]]
 name = "koan-music"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "chrono",
  "clap",
@@ -1314,6 +1314,7 @@ dependencies = [
  "nucleo",
  "owo-colors",
  "ratatui",
+ "rayon",
  "rpassword",
  "souvlaki",
  "toml",

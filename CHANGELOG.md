@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.6.3
+
+### Added
+
+- **Sub-pixel scrollbar** — scrollbar thumb renders at 1/8th-cell resolution using Unicode block elements for smooth visual movement
+- **Parallel disk scanning** — adding files from disk now uses rayon for parallel metadata reads, significantly faster for large collections
+
+### Fixed
+
+- **Scrollbar tracking with album headers** — scrollbar now accounts for album header lines in its position/size calculations, fixing drift when dragging and inability to scroll to the end
+- **Mouse wheel scroll bounds** — wheel scrolling now correctly bounds against the display line count (including album headers) instead of just the entry count
+
 ## 0.6.2
 
 ### Added

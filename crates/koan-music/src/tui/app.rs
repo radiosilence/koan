@@ -1416,6 +1416,7 @@ impl App {
                 }
 
                 // Scrollbar click — rightmost column of queue area (inside border).
+                // All thumb math uses 1/8th-cell units for sub-pixel precision.
                 let q = self.layout.queue_area;
                 let scrollbar_x = q.x + q.width - 1;
                 if event.column == scrollbar_x && event.row > q.y && event.row + 1 < q.y + q.height
@@ -1423,24 +1424,30 @@ impl App {
                     let inner_y = q.y + 1;
                     let visible_height = q.height.saturating_sub(2) as usize;
                     let visible = self.visible_queue();
-                    let total_lines = visible.len();
+                    let total_lines = super::queue::display_line_count(&visible);
 
                     if total_lines > visible_height && visible_height > 0 {
-                        let thumb_size = (visible_height * visible_height / total_lines).max(1);
+                        let vis8 = visible_height * 8;
+                        let thumb_8 =
+                            (vis8 * visible_height / total_lines).max(8);
                         let max_scroll = total_lines.saturating_sub(visible_height);
-                        let thumb_offset = if max_scroll > 0 {
-                            self.queue.scroll_offset * (visible_height - thumb_size) / max_scroll
+                        let track_8 = vis8.saturating_sub(thumb_8);
+                        let thumb_top_8 = if max_scroll > 0 && track_8 > 0 {
+                            self.queue.scroll_offset * track_8 / max_scroll
                         } else {
                             0
                         };
+                        let thumb_bot_8 = thumb_top_8 + thumb_8;
                         let click_row = (event.row - inner_y) as usize;
+                        let click_8 = click_row * 8 + 4; // center of clicked cell
 
-                        if click_row >= thumb_offset && click_row < thumb_offset + thumb_size {
-                            // Clicked on thumb — record grab offset, don't jump.
-                            self.scrollbar_grab_offset = Some((click_row - thumb_offset) as u16);
+                        if click_8 >= thumb_top_8 && click_8 < thumb_bot_8 {
+                            // Clicked on thumb — record grab offset in eighths.
+                            self.scrollbar_grab_offset =
+                                Some((click_8 - thumb_top_8) as u16);
                         } else {
                             // Clicked on track — jump, grab at thumb center.
-                            self.scrollbar_grab_offset = Some((thumb_size / 2) as u16);
+                            self.scrollbar_grab_offset = Some((thumb_8 / 2) as u16);
                             self.scroll_to_scrollbar_y(event.row);
                         }
                     }
@@ -1775,8 +1782,10 @@ impl App {
                         lib.move_down();
                     }
                 } else {
-                    let visible_len = self.visible_queue().len();
-                    let max_scroll = visible_len.saturating_sub(1);
+                    let visible = self.visible_queue();
+                    let total_display = super::queue::display_line_count(&visible);
+                    let visible_height = self.layout.queue_area.height.saturating_sub(2) as usize;
+                    let max_scroll = total_display.saturating_sub(visible_height);
                     self.queue.scroll_offset = (self.queue.scroll_offset + 1).min(max_scroll);
                 }
             }
@@ -2322,7 +2331,7 @@ impl App {
     }
 
     /// Scroll the queue based on a click/drag position on the scrollbar.
-    /// Uses the same thumb math as queue.rs rendering so dragging is consistent.
+    /// Uses the same sub-pixel (1/8th-cell) thumb math as queue.rs rendering.
     fn scroll_to_scrollbar_y(&mut self, y: u16) {
         let q = self.layout.queue_area;
         let inner_y = q.y + 1;
@@ -2331,22 +2340,26 @@ impl App {
             return;
         }
 
-        let total_lines = self.visible_queue().len();
+        let visible = self.visible_queue();
+        let total_lines = super::queue::display_line_count(&visible);
         if total_lines <= visible_height {
             return;
         }
 
-        let thumb_size = (visible_height * visible_height / total_lines).max(1);
+        let vis8 = visible_height * 8;
+        let thumb_8 = (vis8 * visible_height / total_lines).max(8);
         let max_scroll = total_lines.saturating_sub(visible_height);
-        let track_range = visible_height.saturating_sub(thumb_size);
-        if track_range == 0 {
+        let track_8 = vis8.saturating_sub(thumb_8);
+        if track_8 == 0 {
             return;
         }
 
-        let grab_offset = self.scrollbar_grab_offset.unwrap_or(0) as usize;
-        let desired_thumb_top = (y.saturating_sub(inner_y) as usize).saturating_sub(grab_offset);
-        let clamped = desired_thumb_top.min(track_range);
-        self.queue.scroll_offset = (clamped * max_scroll / track_range).min(max_scroll);
+        let grab_offset_8 = self.scrollbar_grab_offset.unwrap_or(0) as usize;
+        // Mouse Y is in whole cells — convert to eighths (center of cell).
+        let mouse_8 = (y.saturating_sub(inner_y) as usize) * 8 + 4;
+        let desired_thumb_top_8 = mouse_8.saturating_sub(grab_offset_8);
+        let clamped = desired_thumb_top_8.min(track_8);
+        self.queue.scroll_offset = (clamped * max_scroll / track_8).min(max_scroll);
     }
 
     fn is_in_rect(&self, x: u16, y: u16, rect: ratatui::layout::Rect) -> bool {

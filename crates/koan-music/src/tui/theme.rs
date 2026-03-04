@@ -32,6 +32,8 @@ pub struct Theme {
     pub spectrum_mid: Style,
     pub spectrum_high: Style,
     pub spectrum_peak: Style,
+    pub scrollbar_thumb: Color,
+    pub scrollbar_bg: Color,
 }
 
 impl Theme {
@@ -86,6 +88,8 @@ impl Default for Theme {
             spectrum_mid: Style::new().fg(Color::Yellow),
             spectrum_high: Style::new().fg(Color::Red),
             spectrum_peak: Style::new().fg(Color::White),
+            scrollbar_thumb: Color::White,
+            scrollbar_bg: Color::Rgb(0x1c, 0x1c, 0x1e),
         }
     }
 }
