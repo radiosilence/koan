@@ -36,7 +36,7 @@ pub fn cmd_remote_login(url: &str, username: &str) {
     println!("{}", "credentials saved to config.local.toml".green());
 }
 
-pub fn cmd_remote_sync() {
+pub fn cmd_remote_sync(full: bool) {
     let cfg = config::Config::load().unwrap_or_default();
     if !cfg.remote.enabled || cfg.remote.url.is_empty() {
         eprintln!(
@@ -58,7 +58,13 @@ pub fn cmd_remote_sync() {
     let db = open_db();
     let start = std::time::Instant::now();
 
-    match koan_core::remote::sync::sync_library(&db, &client) {
+    match koan_core::remote::sync::sync_library(
+        &db,
+        &client,
+        full,
+        &cfg.remote.url,
+        &cfg.remote.username,
+    ) {
         Ok(result) => {
             let elapsed = start.elapsed();
             println!(
@@ -95,9 +101,18 @@ pub fn cmd_remote_sync() {
     let imported = match client.get_starred() {
         Ok(songs) => {
             let remote_ids: Vec<String> = songs.into_iter().map(|s| s.id).collect();
-            koan_core::db::queries::import_remote_favourites(&db.conn, &remote_ids).unwrap_or(0)
+            match koan_core::db::queries::import_remote_favourites(&db.conn, &remote_ids) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("\n{} importing favourites: {}", "error".red(), e);
+                    0
+                }
+            }
         }
-        Err(_) => 0,
+        Err(e) => {
+            eprintln!("\n{} fetching starred: {}", "error".red(), e);
+            0
+        }
     };
 
     println!(
