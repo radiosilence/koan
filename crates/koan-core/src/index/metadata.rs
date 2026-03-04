@@ -139,9 +139,7 @@ pub fn extract_cover_art(path: &Path) -> Option<Vec<u8>> {
     let pictures = tag.pictures();
     let pic = pictures
         .iter()
-        .find(|p| {
-            p.pic_type() == lofty::picture::PictureType::CoverFront && !is_tiff(p.data())
-        })
+        .find(|p| p.pic_type() == lofty::picture::PictureType::CoverFront && !is_tiff(p.data()))
         .or_else(|| pictures.iter().find(|p| !is_tiff(p.data())))?;
 
     Some(pic.data().to_vec())

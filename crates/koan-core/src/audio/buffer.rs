@@ -291,6 +291,7 @@ fn probe_mss(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, DecodeEr
 /// `seek_ms`    — if > 0, seek to this position before decoding the first track.
 /// `next_track` — closure returning the next `SourceEntry` for gapless playback.
 ///                Called on EOF. Returns None when the playlist is exhausted.
+#[allow(clippy::too_many_arguments)]
 pub fn start_decode<N>(
     first: SourceEntry,
     producer: rtrb::Producer<f32>,
@@ -352,6 +353,7 @@ where
 /// `initial_id` — the QueueItemId of the first track.
 /// `seek_ms` — if > 0, seek to this position before decoding the first track.
 /// `next_track` — closure returning the next (id, path) for gapless playback.
+#[allow(clippy::too_many_arguments)]
 pub fn start_decode_file<N>(
     initial_id: QueueItemId,
     path: &Path,

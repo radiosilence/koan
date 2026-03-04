@@ -229,8 +229,10 @@ impl SharedPlayerState {
         let track_info = self.track_info.read();
         let id = track_info.as_ref()?.id;
         let pl = self.playlist.read();
-        pl.items.iter().find(|item| item.id == id).and_then(|item| {
-            match &item.load_state {
+        pl.items
+            .iter()
+            .find(|item| item.id == id)
+            .and_then(|item| match &item.load_state {
                 LoadState::Downloading {
                     bytes_written,
                     total,
@@ -244,8 +246,7 @@ impl SharedPlayerState {
                     }
                 }
                 _ => None,
-            }
-        })
+            })
     }
 
     // --- Playback generation ---

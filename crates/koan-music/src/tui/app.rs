@@ -669,11 +669,11 @@ impl App {
                 let pos = self.state.position_ms();
                 let mut target = pos.saturating_add(10_000);
                 // Clamp to downloaded portion if streaming.
-                if let Some(dl_frac) = self.state.current_download_fraction() {
-                    if let Some(info) = self.state.track_info() {
-                        let max_ms = (dl_frac * info.duration_ms as f64) as u64;
-                        target = target.min(max_ms.saturating_sub(5_000));
-                    }
+                if let Some(dl_frac) = self.state.current_download_fraction()
+                    && let Some(info) = self.state.track_info()
+                {
+                    let max_ms = (dl_frac * info.duration_ms as f64) as u64;
+                    target = target.min(max_ms.saturating_sub(5_000));
                 }
                 self.tx.send(PlayerCommand::Seek(target)).ok();
             }
@@ -1624,12 +1624,8 @@ impl App {
                                     // Capture the dragged track's ID before the move —
                                     // vq_cache won't refresh until next frame, so
                                     // select_single(to_idx) would grab the displaced track.
-                                    let dragged_id = self
-                                        .queue
-                                        .vq_cache
-                                        .entries
-                                        .get(from_index)
-                                        .map(|e| e.id);
+                                    let dragged_id =
+                                        self.queue.vq_cache.entries.get(from_index).map(|e| e.id);
                                     self.send_move(from_index, to_idx);
                                     self.queue.cursor = to_idx;
                                     self.queue.selected_ids.clear();
