@@ -4,6 +4,7 @@ use std::time::UNIX_EPOCH;
 
 use lofty::file::AudioFile;
 use lofty::prelude::*;
+use symphonia::core::meta::{MetadataRevision, StandardTagKey};
 use thiserror::Error;
 
 use crate::db::queries::TrackMeta;
@@ -140,6 +141,79 @@ pub fn extract_cover_art(path: &Path) -> Option<Vec<u8>> {
         .or_else(|| pictures.first())?;
 
     Some(pic.data().to_vec())
+}
+
+/// Extract partial track metadata from a Symphonia probe `MetadataRevision`.
+///
+/// Used during streaming playback to populate track info before the full file
+/// is downloaded (and before lofty can read complete tags).
+///
+/// Fields not present in the probe metadata are left as `None` or defaults.
+/// Callers should merge this with a full `read_metadata()` result once the
+/// download completes.
+pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str) -> TrackMeta {
+    let mut title: Option<String> = None;
+    let mut artist: Option<String> = None;
+    let mut album_artist: Option<String> = None;
+    let mut album: Option<String> = None;
+    let mut date: Option<String> = None;
+    let mut disc: Option<i32> = None;
+    let mut track_number: Option<i32> = None;
+    let mut genre: Option<String> = None;
+    let mut label: Option<String> = None;
+
+    for tag in meta.tags() {
+        let Some(std_key) = tag.std_key else { continue };
+        let value = tag.value.to_string();
+        if value.is_empty() {
+            continue;
+        }
+        match std_key {
+            StandardTagKey::TrackTitle => title = Some(value),
+            StandardTagKey::Artist => artist = Some(value),
+            StandardTagKey::AlbumArtist => album_artist = Some(value),
+            StandardTagKey::Album => album = Some(value),
+            StandardTagKey::Date => date = Some(value),
+            StandardTagKey::OriginalDate => {
+                if date.is_none() {
+                    date = Some(value);
+                }
+            }
+            StandardTagKey::TrackNumber => {
+                track_number = value.split('/').next().and_then(|s| s.trim().parse().ok());
+            }
+            StandardTagKey::DiscNumber => {
+                disc = value.split('/').next().and_then(|s| s.trim().parse().ok());
+            }
+            StandardTagKey::Genre => genre = Some(value),
+            StandardTagKey::Label => label = Some(value),
+            _ => {}
+        }
+    }
+
+    TrackMeta {
+        title: title.unwrap_or_else(|| fallback_title.to_string()),
+        artist: artist.unwrap_or_else(|| "Unknown Artist".to_string()),
+        album_artist,
+        album: album.unwrap_or_else(|| "Unknown Album".to_string()),
+        date,
+        disc,
+        track_number,
+        genre,
+        label,
+        duration_ms: None,
+        codec: None,
+        sample_rate: None,
+        bit_depth: None,
+        channels: None,
+        bitrate: None,
+        size_bytes: None,
+        mtime: None,
+        path: None,
+        source: "streaming".to_string(),
+        remote_id: None,
+        remote_url: None,
+    }
 }
 
 #[cfg(test)]

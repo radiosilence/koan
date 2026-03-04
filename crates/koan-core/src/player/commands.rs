@@ -42,6 +42,8 @@ pub enum PlayerCommand {
     ClearPlaylist,
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
+    /// Enough data buffered for streaming playback — check if cursor is waiting.
+    TrackStreamReady(QueueItemId),
     /// Undo the last reversible playlist operation.
     Undo,
     /// Redo the last undone operation.
