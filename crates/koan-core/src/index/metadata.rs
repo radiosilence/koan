@@ -403,4 +403,16 @@ mod tests {
         assert_eq!(meta.genre, None);
         assert_eq!(meta.source, "streaming");
     }
+
+    #[test]
+    fn test_mp4_codec_nonexistent_file_falls_back_to_aac() {
+        assert_eq!(mp4_codec(Path::new("/nonexistent/track.m4a")), "AAC");
+    }
+
+    #[test]
+    fn test_mp4_codec_non_mp4_file_falls_back_to_aac() {
+        // A non-MP4 file should fail to parse and fall back to "AAC".
+        let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        assert_eq!(mp4_codec(&manifest), "AAC");
+    }
 }
