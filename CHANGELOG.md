@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Spectrum analyser** — 80s hi-fi LED-segment style spectrum visualiser renders above the transport bar when album art is present. 64-band FFT with logarithmic frequency mapping, green/yellow/red gradient, peak hold markers, and exponential decay smoothing
+- **VizBuffer audio tap** — circular sample buffer shared between decode thread and TUI via `parking_lot::Mutex`
+- **FFT pipeline** — 2048-point real FFT via `realfft` crate. Hann window, dB magnitude scaling, configurable FPS
+- **Visualiser config** — `[visualizer]` section with `enabled` (default: true) and `fps` (default: 20). Also accepts `[visualiser]` spelling
+- **Spectrum theme colours** — `spectrum_low` (green), `spectrum_mid` (yellow), `spectrum_high` (red), `spectrum_peak` (white) in theme config
+
 ## 0.3.0
 
 ### Added

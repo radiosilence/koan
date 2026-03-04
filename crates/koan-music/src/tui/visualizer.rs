@@ -25,8 +25,11 @@ const DECAY_FACTOR: f32 = 0.85;
 /// Peak hold decay factor (slower than bars for the "sticky peak" effect).
 const PEAK_DECAY: f32 = 0.95;
 
-/// dB range for normalization: magnitudes below -60dB map to 0.0.
-const DB_FLOOR: f32 = -60.0;
+/// dB floor for normalization: magnitudes below this map to 0.0.
+const DB_FLOOR: f32 = -80.0;
+
+/// dB ceiling for normalization: magnitudes at or above this map to 1.0.
+const DB_CEIL: f32 = -10.0;
 
 /// Precomputed Hann window coefficients for the FFT window size.
 fn hann_window() -> Vec<f32> {
@@ -166,7 +169,9 @@ impl VisualizerState {
             } else {
                 DB_FLOOR
             };
-            let level = ((db - DB_FLOOR) / -DB_FLOOR).clamp(0.0, 1.0);
+            let level = ((db - DB_FLOOR) / (DB_CEIL - DB_FLOOR))
+                .clamp(0.0, 1.0)
+                .powf(0.6);
 
             // Take the max of all bins mapping to this bar.
             if level > self.spectrum[bar_idx] {
@@ -186,6 +191,19 @@ impl VisualizerState {
             } else {
                 self.peaks[i] *= PEAK_DECAY;
             }
+        }
+    }
+
+    /// Apply decay smoothing without new FFT input (called when paused).
+    ///
+    /// Feeds silence into the smoothing pass so bars gracefully fall to zero.
+    pub fn decay_to_zero(&mut self) {
+        for i in 0..NUM_BARS {
+            self.spectrum[i] *= DECAY_FACTOR;
+            self.peaks[i] *= PEAK_DECAY;
+        }
+        for v in self.vu_levels.iter_mut() {
+            *v *= DECAY_FACTOR;
         }
     }
 
@@ -222,7 +240,7 @@ impl VisualizerState {
             } else {
                 DB_FLOOR
             };
-            self.vu_levels[ch] = ((db - DB_FLOOR) / -DB_FLOOR).clamp(0.0, 1.0);
+            self.vu_levels[ch] = ((db - DB_FLOOR) / (DB_CEIL - DB_FLOOR)).clamp(0.0, 1.0);
         }
 
         // Mono: duplicate left to right.
@@ -254,32 +272,36 @@ impl Widget for SpectrumWidget<'_> {
         }
 
         let num_bars = self.state.spectrum.len();
-        let cols = (area.width as usize).min(num_bars);
-        if cols == 0 {
+        let width = area.width as usize;
+        if width == 0 || num_bars == 0 {
             return;
         }
 
         let height = area.height as f32;
 
-        for col in 0..cols {
-            // Map column to spectrum bar (downsample if width < num_bars).
-            let bar_val = if cols < num_bars {
-                // Average adjacent bars when downsampling.
-                let start = col * num_bars / cols;
-                let end = ((col + 1) * num_bars / cols).min(num_bars);
-                let count = (end - start).max(1);
-                self.state.spectrum[start..end].iter().sum::<f32>() / count as f32
+        // Each bar occupies one column. We map every column in [0..width] to a
+        // spectrum bar value — either averaging (downsample) or interpolating
+        // (upsample) so there are never any empty gap columns.
+        for col in 0..width {
+            let (bar_val, peak_val) = if width <= num_bars {
+                // Downsample: each display column maps to one or more bands.
+                // Average all bands that fall into this column's bucket.
+                let start = col * num_bars / width;
+                let end = ((col + 1) * num_bars / width).min(num_bars);
+                let end = end.max(start + 1); // always at least one band
+                let count = end - start;
+                let bv = self.state.spectrum[start..end].iter().sum::<f32>() / count as f32;
+                let pv = self.state.peaks[start..end].iter().sum::<f32>() / count as f32;
+                (bv, pv)
             } else {
-                self.state.spectrum[col.min(num_bars - 1)]
-            };
-
-            let peak_val = if cols < num_bars {
-                let start = col * num_bars / cols;
-                let end = ((col + 1) * num_bars / cols).min(num_bars);
-                let count = (end - start).max(1);
-                self.state.peaks[start..end].iter().sum::<f32>() / count as f32
-            } else {
-                self.state.peaks[col.min(num_bars - 1)]
+                // Upsample: interpolate between adjacent bands.
+                let t = col as f32 * (num_bars - 1) as f32 / (width - 1) as f32;
+                let lo = t.floor() as usize;
+                let hi = (lo + 1).min(num_bars - 1);
+                let frac = t - lo as f32;
+                let bv = self.state.spectrum[lo] * (1.0 - frac) + self.state.spectrum[hi] * frac;
+                let pv = self.state.peaks[lo] * (1.0 - frac) + self.state.peaks[hi] * frac;
+                (bv, pv)
             };
 
             // Bar height in sub-cell units (8 sub-cells per cell).
@@ -308,10 +330,11 @@ impl Widget for SpectrumWidget<'_> {
                 };
 
                 if (cell_from_bottom as usize) < full_cells {
-                    // Full block.
-                    buf[(x, y)].set_char('█').set_style(style);
+                    // Half-block for retro LED-segment look: bar in left half,
+                    // visual gap on right half of each cell column.
+                    buf[(x, y)].set_char('▌').set_style(style);
                 } else if cell_from_bottom as usize == full_cells && frac > 0 {
-                    // Fractional block.
+                    // Fractional block at the top of the bar.
                     buf[(x, y)].set_char(VBLOCKS[frac]).set_style(style);
                 } else if cell_from_bottom == peak_cell && peak_cell > full_cells as u16 {
                     // Peak marker.

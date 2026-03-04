@@ -417,11 +417,16 @@ impl App {
         }
 
         // Update visualizer spectrum at configured FPS.
-        if self.viz_config.enabled && self.state.playback_state() == PlaybackState::Playing {
+        if self.viz_config.enabled {
             let interval =
                 std::time::Duration::from_millis(1000 / self.viz_config.fps.max(1) as u64);
             if self.last_viz_update.elapsed() >= interval {
-                self.visualizer.update_spectrum(&self.viz_buffer);
+                if self.state.playback_state() == PlaybackState::Playing {
+                    self.visualizer.update_spectrum(&self.viz_buffer);
+                } else {
+                    // When paused/stopped, decay bars to zero naturally.
+                    self.visualizer.decay_to_zero();
+                }
                 self.last_viz_update = std::time::Instant::now();
             }
         }
