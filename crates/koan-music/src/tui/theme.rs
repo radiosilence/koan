@@ -25,6 +25,11 @@ pub struct Theme {
     pub library_album: Style,
     pub library_track: Style,
     pub library_cursor: Style,
+    pub track_hover: Style,
+    pub library_hover: Style,
+    #[allow(dead_code)]
+    pub scrollbar_hover: Style,
+    pub favourite: Style,
 }
 
 impl Theme {
@@ -72,6 +77,10 @@ impl Default for Theme {
             library_cursor: Style::new()
                 .fg(Color::Cyan)
                 .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+            track_hover: Style::new().add_modifier(Modifier::UNDERLINED),
+            library_hover: Style::new().add_modifier(Modifier::UNDERLINED),
+            scrollbar_hover: Style::new().fg(Color::White).add_modifier(Modifier::BOLD),
+            favourite: Style::new().fg(Color::Yellow),
         }
     }
 }

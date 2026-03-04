@@ -34,6 +34,9 @@ pub struct Player {
     active_playback: Option<ActivePlayback>,
     timeline: Arc<PlaybackTimeline>,
     undo_stack: UndoStack,
+    /// When Some, undo entries are collected into this buffer instead of pushed
+    /// directly onto the undo stack. Flushed on EndUndoBatch.
+    batch_buffer: Option<Vec<UndoEntry>>,
 }
 
 /// Holds the resources for an active playback session.
@@ -56,6 +59,7 @@ impl Player {
             active_playback: None,
             timeline: PlaybackTimeline::new(),
             undo_stack: UndoStack::new(),
+            batch_buffer: None,
         }
     }
 
@@ -375,6 +379,15 @@ impl Player {
         }
     }
 
+    /// Route an undo entry to the batch buffer (if batching) or the undo stack.
+    fn push_undo(&mut self, entry: UndoEntry) {
+        if let Some(ref mut batch) = self.batch_buffer {
+            batch.push(entry);
+        } else {
+            self.undo_stack.push(entry);
+        }
+    }
+
     /// Process a single command.
     pub fn process_command(&mut self, cmd: PlayerCommand) {
         match cmd {
@@ -388,7 +401,7 @@ impl Player {
             PlayerCommand::AddToPlaylist(items) => {
                 let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
                 self.shared_state.add_items(items);
-                self.undo_stack.push(UndoEntry::Added { ids });
+                self.push_undo(UndoEntry::Added { ids });
             }
             PlayerCommand::UpdatePaths(updates) => {
                 self.shared_state.update_paths(&updates);
@@ -404,20 +417,20 @@ impl Player {
             PlayerCommand::InsertInPlaylist { items, after } => {
                 let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
                 self.shared_state.insert_items_after(items, after);
-                self.undo_stack.push(UndoEntry::Inserted { ids });
+                self.push_undo(UndoEntry::Inserted { ids });
             }
             PlayerCommand::ClearPlaylist => {
                 let (items, cursor) = self.shared_state.snapshot_playlist();
                 self.stop();
                 self.shared_state.clear_playlist();
-                self.undo_stack.push(UndoEntry::Replaced { items, cursor });
+                self.push_undo(UndoEntry::Replaced { items, cursor });
             }
             PlayerCommand::RemoveFromPlaylist(id) => {
                 let item = self.shared_state.get_item(id);
                 let after = self.shared_state.item_before(id);
                 self.remove_from_playlist(id);
                 if let Some(item) = item {
-                    self.undo_stack.push(UndoEntry::Removed {
+                    self.push_undo(UndoEntry::Removed {
                         items: vec![(Box::new(item), after)],
                     });
                 }
@@ -436,7 +449,7 @@ impl Player {
                     self.remove_from_playlist(id);
                 }
                 if !items_with_pos.is_empty() {
-                    self.undo_stack.push(UndoEntry::Removed {
+                    self.push_undo(UndoEntry::Removed {
                         items: items_with_pos,
                     });
                 }
@@ -444,16 +457,29 @@ impl Player {
             PlayerCommand::MoveInPlaylist { id, target, after } => {
                 let was_after = self.shared_state.item_before(id);
                 self.shared_state.move_item(id, target, after);
-                self.undo_stack.push(UndoEntry::Moved { id, was_after });
+                self.push_undo(UndoEntry::Moved { id, was_after });
             }
             PlayerCommand::MoveItemsInPlaylist { ids, target, after } => {
                 let entries = self.shared_state.items_before(&ids);
                 self.shared_state.move_items(&ids, target, after);
-                self.undo_stack.push(UndoEntry::MovedBatch { entries });
+                self.push_undo(UndoEntry::MovedBatch { entries });
             }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
+            PlayerCommand::BeginUndoBatch => {
+                self.batch_buffer = Some(Vec::new());
+            }
+            PlayerCommand::EndUndoBatch => {
+                if let Some(entries) = self.batch_buffer.take() {
+                    if entries.len() == 1 {
+                        // Single entry — push directly, no wrapping.
+                        self.undo_stack.push(entries.into_iter().next().unwrap());
+                    } else if !entries.is_empty() {
+                        self.undo_stack.push(UndoEntry::Batch(entries));
+                    }
+                }
+            }
         }
     }
 
@@ -522,6 +548,17 @@ impl Player {
                     items: current_items,
                     cursor: current_cursor,
                 })
+            }
+            UndoEntry::Batch(entries) => {
+                // Apply entries in reverse order, collect inverses.
+                let mut inverses = Vec::with_capacity(entries.len());
+                for entry in entries.into_iter().rev() {
+                    if let Some(inverse) = self.apply_entry(entry) {
+                        inverses.push(inverse);
+                    }
+                }
+                inverses.reverse();
+                Some(UndoEntry::Batch(inverses))
             }
         }
     }

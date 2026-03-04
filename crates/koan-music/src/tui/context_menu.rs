@@ -10,27 +10,74 @@ use super::theme::Theme;
 pub struct ContextMenuOverlay<'a> {
     state: &'a ContextMenuState,
     theme: &'a Theme,
+    click_col: Option<u16>,
+    click_row: Option<u16>,
 }
 
 impl<'a> ContextMenuOverlay<'a> {
     pub fn new(state: &'a ContextMenuState, theme: &'a Theme) -> Self {
-        Self { state, theme }
+        Self {
+            state,
+            theme,
+            click_col: None,
+            click_row: None,
+        }
+    }
+
+    /// Position the context menu at the mouse click location.
+    pub fn at_position(mut self, col: u16, row: u16) -> Self {
+        self.click_col = Some(col);
+        self.click_row = Some(row);
+        self
     }
 }
 
-/// Compute the popup rect for the context menu — small, roughly centered.
-pub fn context_menu_rect(area: Rect, action_count: usize) -> Rect {
+/// Compute the popup rect at a specific position, clamped to terminal bounds.
+/// Pass None for both click_col/click_row to center the menu.
+pub fn context_menu_rect_at(
+    area: Rect,
+    action_count: usize,
+    click_col: Option<u16>,
+    click_row: Option<u16>,
+) -> Rect {
     let w = 32u16.min(area.width.saturating_sub(4));
     // 2 for border top/bottom + 1 row per action
     let h = (2 + action_count as u16).min(area.height);
-    let x = area.x + (area.width.saturating_sub(w)) / 2;
-    let y = area.y + (area.height.saturating_sub(h)) / 2;
+
+    let (x, y) = match (click_col, click_row) {
+        (Some(cx), Some(cy)) => {
+            // Position at click, clamped to terminal bounds.
+            let x = if cx + w > area.x + area.width {
+                (area.x + area.width).saturating_sub(w)
+            } else {
+                cx
+            };
+            let y = if cy + h > area.y + area.height {
+                cy.saturating_sub(h)
+            } else {
+                cy
+            };
+            (x, y)
+        }
+        _ => {
+            // Centered fallback.
+            let x = area.x + (area.width.saturating_sub(w)) / 2;
+            let y = area.y + (area.height.saturating_sub(h)) / 2;
+            (x, y)
+        }
+    };
+
     Rect::new(x, y, w, h)
 }
 
 impl Widget for ContextMenuOverlay<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let popup = context_menu_rect(area, self.state.actions.len());
+        let popup = context_menu_rect_at(
+            area,
+            self.state.actions.len(),
+            self.click_col,
+            self.click_row,
+        );
         Clear.render(popup, buf);
 
         let block = Block::default()

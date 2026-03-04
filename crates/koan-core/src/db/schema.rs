@@ -91,6 +91,11 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             to_path    TEXT NOT NULL,
             created_at TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS favourites (
+            track_path  TEXT PRIMARY KEY,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
         ",
     )?;
     Ok(())
