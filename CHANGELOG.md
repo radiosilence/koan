@@ -11,6 +11,12 @@
 - **`row_to_track_row` helper** — deduplicated 4 identical 22-line row-mapping closures in tracks.rs into a single shared function
 - **`plan_single_move` helper** — extracted shared move-planning logic (path formatting, sanitization, extension preservation, ancillary file handling) from two `plan_moves` variants in organize.rs
 
+### Dependencies
+
+- **rusqlite removed from koan-music** — 3 raw SQL calls replaced with koan-core query functions (`album_date`, `clear_cached_paths`). Binary crate no longer links rusqlite directly
+- **rusqlite features scoped** — `bundled-full` → `bundled`, removing unused extensions (load_extension, backup, blob, hooks, session)
+- **Workspace dependencies** — added `[workspace.dependencies]` for rusqlite and walkdir, centralizing version management
+
 ### Fixed
 
 - **Security hardening** — credentials removed from stored remote URLs (template-based at playback time), config and DB files restricted to 0o600 on Unix, FTS5 and LIKE query inputs sanitized, HTTPS warning for non-localhost remotes, secure random salt via `getrandom`, PID-namespaced cover art temp files

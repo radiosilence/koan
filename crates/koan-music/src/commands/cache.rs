@@ -1,4 +1,5 @@
 use koan_core::config;
+use koan_core::db::queries;
 use owo_colors::OwoColorize;
 
 use super::{confirm, format_bytes, open_db};
@@ -89,9 +90,7 @@ pub fn cmd_cache_clear(skip_confirm: bool) {
 
     // Clear cached_path in DB so tracks get re-downloaded next time.
     let db = open_db();
-    let _ = db
-        .conn
-        .execute("UPDATE tracks SET cached_path = NULL", rusqlite::params![]);
+    let _ = queries::clear_cached_paths(&db.conn);
 
     println!(
         "{} {} {}",

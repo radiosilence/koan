@@ -72,6 +72,18 @@ pub fn albums_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<AlbumR
     Ok(rows)
 }
 
+/// Get the date string for an album by ID.
+pub fn album_date(conn: &Connection, album_id: i64) -> Result<Option<String>, DbError> {
+    Ok(conn
+        .query_row(
+            "SELECT date FROM albums WHERE id = ?1",
+            params![album_id],
+            |row| row.get(0),
+        )
+        .ok()
+        .flatten())
+}
+
 /// Get all albums with their artist name, sorted.
 pub fn all_albums(conn: &Connection) -> Result<Vec<AlbumRow>, DbError> {
     let mut stmt = conn.prepare(

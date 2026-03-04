@@ -386,6 +386,12 @@ pub fn track_id_by_path(conn: &Connection, path: &str) -> Result<Option<i64>, Db
     }
 }
 
+/// Clear all cached_path values (used when purging the download cache).
+pub fn clear_cached_paths(conn: &Connection) -> Result<(), DbError> {
+    conn.execute("UPDATE tracks SET cached_path = NULL", params![])?;
+    Ok(())
+}
+
 /// Update the cached_path for a track after downloading.
 pub fn set_cached_path(conn: &Connection, track_id: i64, path: &str) -> Result<(), DbError> {
     conn.execute(
