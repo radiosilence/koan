@@ -228,6 +228,11 @@ impl Player {
             next
         };
 
+        // Load ReplayGain config for this playback session.
+        let cfg = crate::config::Config::load().unwrap_or_default();
+        let rg_mode = cfg.playback.replaygain;
+        let pre_amp_db = cfg.playback.pre_amp_db;
+
         let (_stream_info, decode_handle) = buffer::start_decode_file(
             id,
             path,
@@ -236,6 +241,8 @@ impl Player {
             next_track,
             self.timeline.clone(),
             Some(self.viz_buffer.clone()),
+            rg_mode,
+            pre_amp_db,
         )?;
 
         // Create and start audio engine with the timeline's sample counter.
@@ -422,6 +429,11 @@ impl Player {
             }),
         };
 
+        // Load ReplayGain config for this streaming session.
+        let cfg = crate::config::Config::load().unwrap_or_default();
+        let rg_mode = cfg.playback.replaygain;
+        let pre_amp_db = cfg.playback.pre_amp_db;
+
         let (_stream_info, decode_handle) = buffer::start_decode(
             first,
             producer,
@@ -432,6 +444,8 @@ impl Player {
             },
             self.timeline.clone(),
             Some(self.viz_buffer.clone()),
+            rg_mode,
+            pre_amp_db,
         )?;
 
         let actual_rate = device::get_device_sample_rate(device_id).unwrap_or(source_rate);

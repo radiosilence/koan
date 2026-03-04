@@ -18,6 +18,7 @@ use symphonia::core::units::Time;
 use thiserror::Error;
 
 use crate::audio::viz::VizBuffer;
+use crate::config::ReplayGainMode;
 use crate::player::state::QueueItemId;
 
 #[derive(Debug, Error)]
@@ -297,6 +298,8 @@ pub fn start_decode<N>(
     next_track: N,
     timeline: Arc<PlaybackTimeline>,
     viz_buffer: Option<Arc<VizBuffer>>,
+    rg_mode: ReplayGainMode,
+    pre_amp_db: f64,
 ) -> Result<(StreamInfo, DecodeHandle), DecodeError>
 where
     N: Fn() -> Option<SourceEntry> + Send + 'static,
@@ -315,6 +318,8 @@ where
                 &next_track,
                 &timeline,
                 viz_buffer.as_deref(),
+                rg_mode,
+                pre_amp_db,
             );
         })
         .map_err(DecodeError::Io)?;
@@ -355,6 +360,8 @@ pub fn start_decode_file<N>(
     next_track: N,
     timeline: Arc<PlaybackTimeline>,
     viz_buffer: Option<Arc<VizBuffer>>,
+    rg_mode: ReplayGainMode,
+    pre_amp_db: f64,
 ) -> Result<(StreamInfo, DecodeHandle), DecodeError>
 where
     N: Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static,
@@ -371,6 +378,8 @@ where
         },
         timeline,
         viz_buffer,
+        rg_mode,
+        pre_amp_db,
     )?;
     Ok((info, handle))
 }
@@ -389,6 +398,8 @@ fn decode_queue_loop<N>(
     next_track: &N,
     timeline: &PlaybackTimeline,
     viz_buffer: Option<&VizBuffer>,
+    rg_mode: ReplayGainMode,
+    pre_amp_db: f64,
 ) where
     N: Fn() -> Option<SourceEntry>,
 {
@@ -406,6 +417,8 @@ fn decode_queue_loop<N>(
         initial_seek_ms,
         timeline,
         viz_buffer,
+        rg_mode,
+        pre_amp_db,
     ) {
         if !stop.load(Ordering::Relaxed) {
             log::error!("decode error on {}: {}", path.display(), e);
@@ -434,6 +447,8 @@ fn decode_queue_loop<N>(
             0,
             timeline,
             viz_buffer,
+            rg_mode,
+            pre_amp_db,
         ) {
             if !stop.load(Ordering::Relaxed) {
                 log::error!("decode error on {}: {}", next_path.display(), e);
@@ -459,6 +474,8 @@ fn decode_single(
     seek_ms: u64,
     timeline: &PlaybackTimeline,
     viz_buffer: Option<&VizBuffer>,
+    rg_mode: ReplayGainMode,
+    pre_amp_db: f64,
 ) -> Result<(), DecodeError> {
     let format_opts = FormatOptions {
         enable_gapless: true,
@@ -520,6 +537,31 @@ fn decode_single(
         decoder.reset();
     }
 
+    // Read ReplayGain tags and select the active gain for this track.
+    let rg_gain = if rg_mode != ReplayGainMode::Off {
+        match crate::audio::replaygain::read_tags(path) {
+            Ok(rg_info) => {
+                let selected = crate::audio::replaygain::select_gain(&rg_info, rg_mode);
+                if let Some((gain_db, _)) = selected {
+                    log::info!(
+                        "replaygain: applying {:.2} dB ({:?}) to {}",
+                        gain_db,
+                        rg_mode,
+                        path.display()
+                    );
+                }
+                selected
+            }
+            Err(e) => {
+                log::debug!("replaygain: no tags for {}: {}", path.display(), e);
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let mut rg_scratch: Vec<f32> = Vec::new();
+
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
 
     loop {
@@ -556,7 +598,17 @@ fn decode_single(
         let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(duration as u64, spec));
 
         sbuf.copy_interleaved_ref(decoded);
-        let samples = sbuf.samples();
+
+        // Apply ReplayGain if active. Uses a reusable scratch buffer to avoid
+        // allocating per packet. Zero overhead when RG is off.
+        let samples = if let Some((gain_db, peak)) = rg_gain {
+            rg_scratch.clear();
+            rg_scratch.extend_from_slice(sbuf.samples());
+            crate::audio::replaygain::apply_gain(&mut rg_scratch, gain_db, peak, pre_amp_db);
+            &rg_scratch[..]
+        } else {
+            sbuf.samples()
+        };
 
         // Copy decoded samples to the visualization buffer (if attached).
         if let Some(viz) = viz_buffer {

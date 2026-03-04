@@ -45,6 +45,9 @@ pub struct PlaybackConfig {
     pub target_fps: u8,
     /// Show an FPS counter overlay in the top-right corner.
     pub show_fps: bool,
+    /// ReplayGain pre-amplification in dB. Applied on top of track/album gain.
+    /// Positive values boost, negative values attenuate. Default: 0.0.
+    pub pre_amp_db: f64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +96,7 @@ impl Default for PlaybackConfig {
             ticker_fps: 8,
             target_fps: 60,
             show_fps: false,
+            pre_amp_db: 0.0,
         }
     }
 }
