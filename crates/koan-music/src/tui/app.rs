@@ -218,6 +218,11 @@ pub struct App {
     /// Track path used to detect track changes for ticker reset.
     ticker_last_path: Option<PathBuf>,
 
+    /// Ticks per second (frame rate), used for animation divisors.
+    ticks_per_sec: u8,
+    /// Raw frame counter (always increments).
+    frame_count: u32,
+
     /// Set of favourite track paths, loaded from DB on startup.
     pub favourites: std::collections::HashSet<PathBuf>,
 }
@@ -228,6 +233,7 @@ impl App {
         tx: Sender<PlayerCommand>,
         log_buffer: Arc<Mutex<Vec<String>>>,
         db_path: PathBuf,
+        ticks_per_sec: u8,
     ) -> Self {
         Self {
             mode: Mode::Normal,
@@ -264,10 +270,11 @@ impl App {
             ticker_divisor: {
                 let cfg = koan_core::config::Config::load().unwrap_or_default();
                 let fps = cfg.playback.ticker_fps.max(1);
-                // Tick interval is 50ms (20 ticks/sec). Divisor = 20 / fps.
-                (20u8 / fps).max(1)
+                (ticks_per_sec / fps).max(1)
             },
             ticker_last_path: None,
+            ticks_per_sec,
+            frame_count: 0,
             favourites: std::collections::HashSet::new(),
         }
     }
@@ -321,7 +328,11 @@ impl App {
         // Refresh visible queue cache so all tick logic sees current state.
         self.refresh_visible_queue();
 
-        self.spinner_tick = self.spinner_tick.wrapping_add(1);
+        self.frame_count = self.frame_count.wrapping_add(1);
+        // Rate-limit spinner to ~10 Hz regardless of frame rate.
+        if self.frame_count % (self.ticks_per_sec as u32 / 10).max(1) == 0 {
+            self.spinner_tick = self.spinner_tick.wrapping_add(1);
+        }
 
         // Ticker animation: advance one character every 3 ticks (~150ms).
         // Reset when the playing track changes so new titles start from the beginning.

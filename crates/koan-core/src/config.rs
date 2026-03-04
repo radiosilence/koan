@@ -38,6 +38,9 @@ pub struct PlaybackConfig {
     /// Ticker scroll speed in frames-per-second (default: 8).
     /// The title scrolls one character per frame. Higher = faster scroll.
     pub ticker_fps: u8,
+    /// UI render rate in frames-per-second (default: 60).
+    /// Controls how often the TUI redraws. 30, 60, or 120 are typical values.
+    pub target_fps: u8,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -84,6 +87,7 @@ impl Default for PlaybackConfig {
             software_volume: false,
             replaygain: ReplayGainMode::Album,
             ticker_fps: 8,
+            target_fps: 60,
         }
     }
 }

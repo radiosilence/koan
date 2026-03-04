@@ -157,7 +157,20 @@ fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     let db_path = config::db_path();
-    let mut app = tui::app::App::new(state, tx.clone(), log_buffer, db_path);
+
+    let target_fps = {
+        let cfg = koan_core::config::Config::load().unwrap_or_default();
+        match cfg.playback.target_fps {
+            0..=15 => 30u8,
+            16..=45 => 30,
+            46..=90 => 60,
+            _ => 120,
+        }
+    };
+    let frame_duration = Duration::from_micros(1_000_000 / target_fps as u64);
+    let mut next_frame = std::time::Instant::now();
+
+    let mut app = tui::app::App::new(state, tx.clone(), log_buffer, db_path, target_fps);
 
     if expects_playback {
         app.loading_message = Some("loading...".into());
@@ -175,124 +188,128 @@ fn run_tui(
     let mut last_track_path: Option<PathBuf> = None;
 
     loop {
+        // 1. Render
         terminal.draw(|f| tui::ui::render(f, &mut app))?;
 
-        let event = tui::event::poll(Duration::from_millis(50))?;
-
-        // Process the first event, then drain any buffered events.
-        // For mouse events, only keep the latest (coalesce move events).
+        // 2. Drain all input events until frame deadline.
         let mut last_mouse: Option<crossterm::event::MouseEvent> = None;
-        match event {
-            tui::event::Event::Key(key) => app.handle_key(key),
-            tui::event::Event::Mouse(mouse) => {
-                last_mouse = Some(mouse);
+        loop {
+            let now = std::time::Instant::now();
+            let timeout = next_frame.saturating_duration_since(now);
+            if timeout.is_zero() {
+                break;
             }
-            tui::event::Event::Paste(text) => {
-                // Parse dropped/pasted paths (handles shell escaping, file:// URIs, etc).
-                // Heavy work (walkdir + metadata read) runs on a background thread.
-                // Insert at mouse position if hovering over queue, otherwise append.
-                let tx_drop = tx.clone();
-                let log_drop = app.log_buffer.clone();
-                let insert_after = app.drop_target_queue_id();
-                let progress = std::sync::Arc::new((
-                    std::sync::atomic::AtomicUsize::new(0),
-                    std::sync::atomic::AtomicUsize::new(0),
-                ));
-                app.drop_progress = Some(progress.clone());
-                std::thread::Builder::new()
-                    .name("koan-drop".into())
-                    .spawn(move || {
-                        let dropped = parse_dropped_paths(&text);
-                        let mut audio_paths: Vec<PathBuf> = Vec::new();
-                        for path in dropped {
-                            if path.is_dir() {
-                                let mut dir_files: Vec<PathBuf> = walkdir::WalkDir::new(&path)
-                                    .follow_links(true)
-                                    .into_iter()
-                                    .filter_map(|e| e.ok())
-                                    .filter(|e| e.file_type().is_file())
-                                    .filter(|e| koan_core::index::metadata::is_audio_file(e.path()))
-                                    .map(|e| e.into_path())
-                                    .collect();
-                                dir_files.sort();
-                                audio_paths.extend(dir_files);
-                            } else if path.is_file()
-                                && koan_core::index::metadata::is_audio_file(&path)
-                            {
-                                audio_paths.push(path);
-                            }
-                        }
-                        if !audio_paths.is_empty() {
-                            let count = audio_paths.len();
-                            progress
-                                .1
-                                .store(count, std::sync::atomic::Ordering::Relaxed);
-                            let items = playlist_items_from_paths(&audio_paths, Some(&progress.0));
-                            if let Some(after_id) = insert_after {
-                                tx_drop
-                                    .send(PlayerCommand::InsertInPlaylist {
-                                        items,
-                                        after: after_id,
-                                    })
-                                    .ok();
-                            } else {
-                                tx_drop.send(PlayerCommand::AddToPlaylist(items)).ok();
-                            }
-                            if let Ok(mut logs) = log_drop.lock() {
-                                logs.push(format!("added {} files", count));
-                            }
-                        }
-                        // Signal completion by setting processed == total.
-                        let total = progress.1.load(std::sync::atomic::Ordering::Relaxed);
-                        progress
-                            .0
-                            .store(total, std::sync::atomic::Ordering::Relaxed);
-                    })
-                    .ok();
+            if !crossterm::event::poll(timeout)? {
+                break;
             }
-            tui::event::Event::Tick => {
-                app.handle_tick();
-
-                // Update media keys + pump macOS run loop for event dispatch.
-                if let Some(ref mut mk) = media {
-                    mk.update_playback(&app.state);
-                    let current = app.state.track_info().map(|t| t.path.clone());
-                    if current != last_track_path {
-                        last_track_path = current.clone();
-                        mk.update_metadata(&app.state, current.as_ref());
-                    }
-                }
-                crate::media_keys::pump_run_loop();
-
-                // Check for external quit request (e.g. macOS Control Center).
-                if app.state.quit_requested() {
-                    app.tx.send(PlayerCommand::Stop).ok();
-                    app.quit = true;
-                }
-            }
-        }
-
-        // Drain any buffered events — coalesce mouse moves so we always
-        // render with the latest mouse position.
-        while crossterm::event::poll(Duration::ZERO)? {
             match crossterm::event::read()? {
-                crossterm::event::Event::Mouse(m) => {
-                    last_mouse = Some(m);
-                }
-                crossterm::event::Event::Key(k) => {
-                    app.handle_key(k);
+                crossterm::event::Event::Key(key) => app.handle_key(key),
+                crossterm::event::Event::Mouse(mouse) => {
+                    last_mouse = Some(mouse);
                 }
                 crossterm::event::Event::Paste(text) => {
-                    // Treat extra pastes same as primary — but typically rare.
-                    let _ = text;
+                    // Parse dropped/pasted paths (handles shell escaping, file:// URIs, etc).
+                    // Heavy work (walkdir + metadata read) runs on a background thread.
+                    // Insert at mouse position if hovering over queue, otherwise append.
+                    let tx_drop = tx.clone();
+                    let log_drop = app.log_buffer.clone();
+                    let insert_after = app.drop_target_queue_id();
+                    let progress = std::sync::Arc::new((
+                        std::sync::atomic::AtomicUsize::new(0),
+                        std::sync::atomic::AtomicUsize::new(0),
+                    ));
+                    app.drop_progress = Some(progress.clone());
+                    std::thread::Builder::new()
+                        .name("koan-drop".into())
+                        .spawn(move || {
+                            let dropped = parse_dropped_paths(&text);
+                            let mut audio_paths: Vec<PathBuf> = Vec::new();
+                            for path in dropped {
+                                if path.is_dir() {
+                                    let mut dir_files: Vec<PathBuf> =
+                                        walkdir::WalkDir::new(&path)
+                                            .follow_links(true)
+                                            .into_iter()
+                                            .filter_map(|e| e.ok())
+                                            .filter(|e| e.file_type().is_file())
+                                            .filter(|e| {
+                                                koan_core::index::metadata::is_audio_file(
+                                                    e.path(),
+                                                )
+                                            })
+                                            .map(|e| e.into_path())
+                                            .collect();
+                                    dir_files.sort();
+                                    audio_paths.extend(dir_files);
+                                } else if path.is_file()
+                                    && koan_core::index::metadata::is_audio_file(&path)
+                                {
+                                    audio_paths.push(path);
+                                }
+                            }
+                            if !audio_paths.is_empty() {
+                                let count = audio_paths.len();
+                                progress
+                                    .1
+                                    .store(count, std::sync::atomic::Ordering::Relaxed);
+                                let items =
+                                    playlist_items_from_paths(&audio_paths, Some(&progress.0));
+                                if let Some(after_id) = insert_after {
+                                    tx_drop
+                                        .send(PlayerCommand::InsertInPlaylist {
+                                            items,
+                                            after: after_id,
+                                        })
+                                        .ok();
+                                } else {
+                                    tx_drop.send(PlayerCommand::AddToPlaylist(items)).ok();
+                                }
+                                if let Ok(mut logs) = log_drop.lock() {
+                                    logs.push(format!("added {} files", count));
+                                }
+                            }
+                            // Signal completion by setting processed == total.
+                            let total = progress.1.load(std::sync::atomic::Ordering::Relaxed);
+                            progress
+                                .0
+                                .store(total, std::sync::atomic::Ordering::Relaxed);
+                        })
+                        .ok();
                 }
                 _ => {}
             }
         }
 
-        // Process the coalesced mouse event (latest position wins).
+        // 3. Process coalesced mouse event.
         if let Some(mouse) = last_mouse {
             app.handle_mouse(mouse);
+        }
+
+        // 4. Always tick.
+        app.handle_tick();
+
+        // 5. Media keys + macOS run loop pump.
+        if let Some(ref mut mk) = media {
+            mk.update_playback(&app.state);
+            let current = app.state.track_info().map(|t| t.path.clone());
+            if current != last_track_path {
+                last_track_path = current.clone();
+                mk.update_metadata(&app.state, current.as_ref());
+            }
+        }
+        crate::media_keys::pump_run_loop();
+
+        // Check for external quit request.
+        if app.state.quit_requested() {
+            app.tx.send(PlayerCommand::Stop).ok();
+            app.quit = true;
+        }
+
+        // 6. Advance frame deadline.
+        next_frame += frame_duration;
+        let now = std::time::Instant::now();
+        if next_frame < now {
+            next_frame = now;
         }
 
         // Handle picker opening — load items from DB.
