@@ -17,6 +17,7 @@ use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 use thiserror::Error;
 
+use crate::audio::viz::VizBuffer;
 use crate::player::state::QueueItemId;
 
 #[derive(Debug, Error)]
@@ -240,6 +241,7 @@ pub fn start_decode<N>(
     seek_ms: u64,
     next_track: N,
     timeline: Arc<PlaybackTimeline>,
+    viz_buffer: Option<Arc<VizBuffer>>,
 ) -> Result<(StreamInfo, DecodeHandle), DecodeError>
 where
     N: Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static,
@@ -260,6 +262,7 @@ where
                 seek_ms,
                 &next_track,
                 &timeline,
+                viz_buffer.as_deref(),
             );
         })
         .map_err(DecodeError::Io)?;
@@ -277,6 +280,7 @@ where
 ///
 /// The key insight: the producer (ring buffer write end) stays alive across track
 /// boundaries. The AudioUnit keeps draining the consumer. Zero gap.
+#[allow(clippy::too_many_arguments)]
 fn decode_queue_loop<N>(
     initial_id: QueueItemId,
     first_path: &Path,
@@ -285,6 +289,7 @@ fn decode_queue_loop<N>(
     initial_seek_ms: u64,
     next_track: &N,
     timeline: &PlaybackTimeline,
+    viz_buffer: Option<&VizBuffer>,
 ) where
     N: Fn() -> Option<(QueueItemId, PathBuf)>,
 {
@@ -296,6 +301,7 @@ fn decode_queue_loop<N>(
         stop,
         initial_seek_ms,
         timeline,
+        viz_buffer,
     ) {
         if !stop.load(Ordering::Relaxed) {
             log::error!("decode error on {}: {}", first_path.display(), e);
@@ -312,7 +318,15 @@ fn decode_queue_loop<N>(
 
         log::info!("gapless transition → {}", next_path.display());
 
-        if let Err(e) = decode_single(next_id, &next_path, &mut producer, stop, 0, timeline) {
+        if let Err(e) = decode_single(
+            next_id,
+            &next_path,
+            &mut producer,
+            stop,
+            0,
+            timeline,
+            viz_buffer,
+        ) {
             if !stop.load(Ordering::Relaxed) {
                 log::error!("decode error on {}: {}", next_path.display(), e);
             }
@@ -329,6 +343,7 @@ fn decode_single(
     stop: &AtomicBool,
     seek_ms: u64,
     timeline: &PlaybackTimeline,
+    viz_buffer: Option<&VizBuffer>,
 ) -> Result<(), DecodeError> {
     let file = File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -435,6 +450,11 @@ fn decode_single(
 
         sbuf.copy_interleaved_ref(decoded);
         let samples = sbuf.samples();
+
+        // Copy decoded samples to the visualization buffer (if attached).
+        if let Some(viz) = viz_buffer {
+            viz.push_samples(samples, channels, sample_rate);
+        }
 
         // Push samples into ring buffer, blocking if full.
         let mut offset = 0;

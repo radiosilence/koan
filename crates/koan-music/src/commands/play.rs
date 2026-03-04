@@ -60,7 +60,7 @@ pub fn cmd_play(
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
 
-    let (state, _timeline, tx) = Player::spawn();
+    let (state, _timeline, viz_buffer, tx) = Player::spawn();
 
     let expects_playback = track_ids.is_some() || !paths.is_empty();
 
@@ -116,7 +116,14 @@ pub fn cmd_play(
 
     // Run the Ratatui TUI immediately — don't wait for playback to start.
     // The TUI shows a loading overlay until playback begins.
-    if let Err(e) = run_tui(state, tx, log_buffer, start_in_library, expects_playback) {
+    if let Err(e) = run_tui(
+        state,
+        viz_buffer,
+        tx,
+        log_buffer,
+        start_in_library,
+        expects_playback,
+    ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
 
@@ -126,6 +133,7 @@ pub fn cmd_play(
 
 fn run_tui(
     state: Arc<koan_core::player::state::SharedPlayerState>,
+    viz_buffer: Arc<koan_core::audio::viz::VizBuffer>,
     tx: crossbeam_channel::Sender<PlayerCommand>,
     log_buffer: Arc<Mutex<Vec<String>>>,
     start_in_library: bool,
@@ -157,7 +165,7 @@ fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     let db_path = config::db_path();
-    let mut app = tui::app::App::new(state, tx.clone(), log_buffer, db_path);
+    let mut app = tui::app::App::new(state, viz_buffer, tx.clone(), log_buffer, db_path);
 
     if expects_playback {
         app.loading_message = Some("loading...".into());

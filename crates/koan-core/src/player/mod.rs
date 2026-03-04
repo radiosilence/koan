@@ -8,7 +8,7 @@ use std::thread;
 
 use thiserror::Error;
 
-use crate::audio::{buffer, device, engine};
+use crate::audio::{buffer, device, engine, viz::VizBuffer};
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
 use state::{LoadState, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
@@ -33,6 +33,7 @@ pub struct Player {
     commands: CommandChannel,
     active_playback: Option<ActivePlayback>,
     timeline: Arc<PlaybackTimeline>,
+    viz_buffer: Arc<VizBuffer>,
     undo_stack: UndoStack,
 }
 
@@ -55,6 +56,7 @@ impl Player {
             commands: CommandChannel::new(),
             active_playback: None,
             timeline: PlaybackTimeline::new(),
+            viz_buffer: VizBuffer::new(),
             undo_stack: UndoStack::new(),
         }
     }
@@ -67,6 +69,11 @@ impl Player {
     /// Get the playback timeline for UI reads.
     pub fn timeline(&self) -> Arc<PlaybackTimeline> {
         self.timeline.clone()
+    }
+
+    /// Get the visualization buffer for the TUI.
+    pub fn viz_buffer(&self) -> Arc<VizBuffer> {
+        self.viz_buffer.clone()
     }
 
     /// Access undo stack (for tests and UI state queries).
@@ -187,6 +194,7 @@ impl Player {
             seek_ms,
             next_track,
             self.timeline.clone(),
+            Some(self.viz_buffer.clone()),
         )?;
 
         // Create and start audio engine with the timeline's sample counter.
@@ -564,15 +572,17 @@ impl Player {
     }
 
     /// Spawn the player on a background thread, returning the shared state,
-    /// timeline, and command sender.
+    /// timeline, visualization buffer, and command sender.
     pub fn spawn() -> (
         Arc<SharedPlayerState>,
         Arc<PlaybackTimeline>,
+        Arc<VizBuffer>,
         crossbeam_channel::Sender<PlayerCommand>,
     ) {
         let mut player = Self::new();
         let state = player.shared_state();
         let timeline = player.timeline();
+        let viz_buffer = player.viz_buffer();
         let tx = player.command_sender();
 
         thread::Builder::new()
@@ -580,7 +590,7 @@ impl Player {
             .spawn(move || player.run())
             .expect("failed to spawn player thread");
 
-        (state, timeline, tx)
+        (state, timeline, viz_buffer, tx)
     }
 }
 

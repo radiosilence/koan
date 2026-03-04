@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crossbeam_channel::Sender;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
+use koan_core::audio::viz::VizBuffer;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     PlaybackState, QueueEntry, QueueEntryStatus, SharedPlayerState, VisibleQueueSnapshot,
@@ -17,6 +18,7 @@ use super::picker::{PickerKind, PickerPartKind, PickerState, picker_results_rect
 use super::queue;
 use super::theme::Theme;
 use super::transport::TransportBar;
+use super::visualizer::VisualizerState;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
@@ -171,11 +173,18 @@ pub struct App {
 
     /// Drop/paste import progress: (processed, total). Cleared when done.
     pub drop_progress: Option<Arc<(AtomicUsize, AtomicUsize)>>,
+
+    /// Shared visualization sample buffer from the decode thread.
+    pub viz_buffer: Arc<VizBuffer>,
+
+    /// Visualizer state (spectrum bars, peaks, VU levels).
+    pub visualizer: VisualizerState,
 }
 
 impl App {
     pub fn new(
         state: Arc<SharedPlayerState>,
+        viz_buffer: Arc<VizBuffer>,
         tx: Sender<PlayerCommand>,
         log_buffer: Arc<Mutex<Vec<String>>>,
         db_path: PathBuf,
@@ -208,6 +217,8 @@ impl App {
             last_mouse_row: None,
             scrollbar_dragging: false,
             drop_progress: None,
+            viz_buffer,
+            visualizer: VisualizerState::new(),
         }
     }
 
@@ -267,6 +278,11 @@ impl App {
         // Update now-playing cover art cache when track changes.
         if let Some(ref info) = self.state.track_info() {
             self.art.now_playing_art.get(&info.path);
+        }
+
+        // Update visualizer spectrum from the decode thread's sample buffer.
+        if self.state.playback_state() == PlaybackState::Playing {
+            self.visualizer.update_spectrum(&self.viz_buffer);
         }
 
         // In normal mode, auto-scroll to playing track on actual track change.
