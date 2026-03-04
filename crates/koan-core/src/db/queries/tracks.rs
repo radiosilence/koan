@@ -391,7 +391,7 @@ pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow
 /// Look up a track ID by its local file path.
 pub fn track_id_by_path(conn: &Connection, path: &str) -> Result<Option<i64>, DbError> {
     let result = conn.query_row(
-        "SELECT id FROM tracks WHERE path = ?1",
+        "SELECT id FROM tracks WHERE path = ?1 OR cached_path = ?1 OR remote_url = ?1",
         params![path],
         |row| row.get(0),
     );
