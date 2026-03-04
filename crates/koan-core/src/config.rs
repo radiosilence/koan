@@ -193,7 +193,22 @@ impl Config {
         if !other.library.folders.is_empty() {
             self.library.folders = other.library.folders;
         }
-        self.playback = other.playback;
+        // Merge playback field-by-field so config.local.toml (which typically
+        // only has [remote] credentials) doesn't overwrite base config values
+        // with serde defaults.
+        let default_pb = PlaybackConfig::default();
+        if other.playback.software_volume != default_pb.software_volume {
+            self.playback.software_volume = other.playback.software_volume;
+        }
+        if other.playback.replaygain != default_pb.replaygain {
+            self.playback.replaygain = other.playback.replaygain;
+        }
+        if other.playback.ticker_fps != default_pb.ticker_fps {
+            self.playback.ticker_fps = other.playback.ticker_fps;
+        }
+        if other.playback.target_fps != default_pb.target_fps {
+            self.playback.target_fps = other.playback.target_fps;
+        }
         if other.remote.enabled {
             self.remote.enabled = true;
         }
