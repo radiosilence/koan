@@ -646,15 +646,23 @@ impl App {
             KeyCode::Up => {
                 let visible = self.visible_queue();
                 if !visible.is_empty() {
-                    self.queue.cursor = self.queue.cursor.saturating_sub(1);
+                    if self.queue.cursor == 0 {
+                        self.queue.cursor = visible.len() - 1;
+                    } else {
+                        self.queue.cursor -= 1;
+                    }
                     self.select_single(self.queue.cursor);
                     self.update_scroll();
                 }
             }
             KeyCode::Down => {
                 let visible = self.visible_queue();
-                if !visible.is_empty() && self.queue.cursor + 1 < visible.len() {
-                    self.queue.cursor += 1;
+                if !visible.is_empty() {
+                    if self.queue.cursor + 1 >= visible.len() {
+                        self.queue.cursor = 0;
+                    } else {
+                        self.queue.cursor += 1;
+                    }
                     self.select_single(self.queue.cursor);
                     self.update_scroll();
                 }
@@ -726,7 +734,14 @@ impl App {
                 self.quit = true;
             }
             KeyCode::Up => {
-                self.queue.cursor = self.queue.cursor.saturating_sub(1);
+                let visible = self.visible_queue();
+                if !visible.is_empty() {
+                    if self.queue.cursor == 0 {
+                        self.queue.cursor = visible.len() - 1;
+                    } else {
+                        self.queue.cursor -= 1;
+                    }
+                }
                 if shift {
                     self.extend_selection_to(self.queue.cursor);
                 } else {
@@ -736,8 +751,12 @@ impl App {
             }
             KeyCode::Down => {
                 let visible = self.visible_queue();
-                if self.queue.cursor + 1 < visible.len() {
-                    self.queue.cursor += 1;
+                if !visible.is_empty() {
+                    if self.queue.cursor + 1 >= visible.len() {
+                        self.queue.cursor = 0;
+                    } else {
+                        self.queue.cursor += 1;
+                    }
                 }
                 if shift {
                     self.extend_selection_to(self.queue.cursor);
@@ -1033,8 +1052,18 @@ impl App {
             }
             KeyCode::Up => picker.move_up(),
             KeyCode::Down => picker.move_down(),
+            KeyCode::PageUp => picker.page_up(10),
+            KeyCode::PageDown => picker.page_down(10),
+            KeyCode::Home => picker.jump_to_start(),
+            KeyCode::End => picker.jump_to_end(),
             KeyCode::Tab => picker.toggle_select(),
             KeyCode::Backspace => picker.backspace(),
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                picker.page_up(10);
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                picker.page_down(10);
+            }
             KeyCode::Char(c) => picker.type_char(c),
             _ => {}
         }
@@ -2001,15 +2030,25 @@ impl App {
             return;
         };
         match key.code {
-            KeyCode::Up => lib.move_up(),
-            KeyCode::Down => lib.move_down(),
-            KeyCode::Enter | KeyCode::Right => {
+            KeyCode::Up | KeyCode::Char('k') => lib.move_up(),
+            KeyCode::Down | KeyCode::Char('j') => lib.move_down(),
+            KeyCode::PageUp => lib.page_up(10),
+            KeyCode::PageDown => lib.page_down(10),
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                lib.page_up(10);
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                lib.page_down(10);
+            }
+            KeyCode::Home | KeyCode::Char('g') => lib.jump_to_start(),
+            KeyCode::End | KeyCode::Char('G') => lib.jump_to_end(),
+            KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
                 if let Some(ids) = lib.expand_or_enter() {
                     self.picker_result =
                         Some((PickerKind::Track, ids, PickerAction::AppendAndPlay));
                 }
             }
-            KeyCode::Left | KeyCode::Backspace => {
+            KeyCode::Left | KeyCode::Backspace | KeyCode::Char('h') => {
                 lib.collapse_or_parent();
             }
             KeyCode::Char('a') => {

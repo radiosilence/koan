@@ -92,8 +92,18 @@ pub fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
                         }
                         KeyCode::Up => picker.move_up(),
                         KeyCode::Down => picker.move_down(),
+                        KeyCode::PageUp => picker.page_up(10),
+                        KeyCode::PageDown => picker.page_down(10),
+                        KeyCode::Home => picker.jump_to_start(),
+                        KeyCode::End => picker.jump_to_end(),
                         KeyCode::Tab => picker.toggle_select(),
                         KeyCode::Backspace => picker.backspace(),
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            picker.page_up(10);
+                        }
+                        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            picker.page_down(10);
+                        }
                         KeyCode::Char(c) => picker.type_char(c),
                         _ => {}
                     }
@@ -224,7 +234,25 @@ pub fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
                                             }
                                             KeyCode::Up => picker2.move_up(),
                                             KeyCode::Down => picker2.move_down(),
+                                            KeyCode::PageUp => picker2.page_up(10),
+                                            KeyCode::PageDown => picker2.page_down(10),
+                                            KeyCode::Home => picker2.jump_to_start(),
+                                            KeyCode::End => picker2.jump_to_end(),
                                             KeyCode::Backspace => picker2.backspace(),
+                                            KeyCode::Char('u')
+                                                if key
+                                                    .modifiers
+                                                    .contains(KeyModifiers::CONTROL) =>
+                                            {
+                                                picker2.page_up(10);
+                                            }
+                                            KeyCode::Char('d')
+                                                if key
+                                                    .modifiers
+                                                    .contains(KeyModifiers::CONTROL) =>
+                                            {
+                                                picker2.page_down(10);
+                                            }
                                             KeyCode::Char(c) => picker2.type_char(c),
                                             _ => {}
                                         }

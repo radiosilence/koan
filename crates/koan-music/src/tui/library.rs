@@ -285,13 +285,49 @@ impl LibraryState {
     }
 
     pub fn move_up(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
+        if self.nodes.is_empty() {
+            return;
+        }
+        if self.cursor == 0 {
+            self.cursor = self.nodes.len() - 1; // wrap to bottom
+        } else {
+            self.cursor -= 1;
+        }
         self.ensure_visible();
     }
 
     pub fn move_down(&mut self) {
-        if self.cursor + 1 < self.nodes.len() {
+        if self.nodes.is_empty() {
+            return;
+        }
+        if self.cursor + 1 >= self.nodes.len() {
+            self.cursor = 0; // wrap to top
+        } else {
             self.cursor += 1;
+        }
+        self.ensure_visible();
+    }
+
+    pub fn page_up(&mut self, page_size: usize) {
+        self.cursor = self.cursor.saturating_sub(page_size);
+        self.ensure_visible();
+    }
+
+    pub fn page_down(&mut self, page_size: usize) {
+        if !self.nodes.is_empty() {
+            self.cursor = (self.cursor + page_size).min(self.nodes.len() - 1);
+        }
+        self.ensure_visible();
+    }
+
+    pub fn jump_to_start(&mut self) {
+        self.cursor = 0;
+        self.ensure_visible();
+    }
+
+    pub fn jump_to_end(&mut self) {
+        if !self.nodes.is_empty() {
+            self.cursor = self.nodes.len() - 1;
         }
         self.ensure_visible();
     }
