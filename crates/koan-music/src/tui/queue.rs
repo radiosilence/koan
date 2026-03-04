@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -8,7 +9,7 @@ use ratatui::widgets::{Block, Borders, Widget};
 
 use koan_core::player::state::{QueueEntry, QueueEntryStatus};
 
-use super::app::Mode;
+use super::app::{HoverZone, Mode};
 use super::theme::Theme;
 use super::transport::format_time;
 
@@ -25,6 +26,8 @@ pub struct QueueView<'a> {
     drop_indicator: Option<usize>,
     selected: &'a HashSet<usize>,
     spinner_tick: usize,
+    hover_index: Option<usize>,
+    favourites: Option<&'a HashSet<PathBuf>>,
 }
 
 impl<'a> QueueView<'a> {
@@ -47,11 +50,25 @@ impl<'a> QueueView<'a> {
             drop_indicator: None,
             selected,
             spinner_tick,
+            hover_index: None,
+            favourites: None,
         }
     }
 
     pub fn with_drop_indicator(mut self, indicator: Option<usize>) -> Self {
         self.drop_indicator = indicator;
+        self
+    }
+
+    pub fn with_hover(mut self, hover: &HoverZone) -> Self {
+        if let HoverZone::QueueItem(idx) = hover {
+            self.hover_index = Some(*idx);
+        }
+        self
+    }
+
+    pub fn with_favourites(mut self, favourites: &'a HashSet<PathBuf>) -> Self {
+        self.favourites = Some(favourites);
         self
     }
 
@@ -151,11 +168,17 @@ impl Widget for QueueView<'_> {
                 let is_cursor = is_edit && i == self.cursor;
                 let is_selected = self.selected.contains(&i);
                 let is_drop_target = self.drop_indicator == Some(i);
+                let is_hovered = self.hover_index == Some(i) && !is_cursor && !is_selected;
+                let is_favourite = self
+                    .favourites
+                    .map_or(false, |f| f.contains(&self.entries[i].path));
                 let line = render_track_line(
                     &self.entries[i],
                     is_cursor,
                     is_selected,
                     is_drop_target,
+                    is_hovered,
+                    is_favourite,
                     self.theme,
                     self.spinner_tick,
                 );
@@ -245,11 +268,14 @@ fn render_album_header<'a>(entry: &QueueEntry, theme: &Theme) -> Line<'a> {
     ])
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_track_line<'a>(
     entry: &QueueEntry,
     is_cursor: bool,
     is_selected: bool,
     is_drop_target: bool,
+    is_hovered: bool,
+    is_favourite: bool,
     theme: &Theme,
     spinner_tick: usize,
 ) -> Line<'a> {
@@ -307,6 +333,8 @@ fn render_track_line<'a>(
     let artist_part = if !entry.artist.is_empty() && entry.artist != entry.album_artist {
         let artist_style = if is_selected {
             theme.track_selected
+        } else if is_hovered {
+            theme.track_hover
         } else {
             theme.track_playing
         };
@@ -334,10 +362,19 @@ fn render_track_line<'a>(
         Span::raw(" ")
     };
 
+    // Favourite star in gutter (between padding and cursor marker).
+    let fav_marker = if is_favourite {
+        Span::styled("\u{2605}", theme.favourite) // ★
+    } else {
+        Span::raw(" ")
+    };
+
     let title_style = if is_cursor {
         theme.track_cursor
     } else if is_selected {
         theme.track_selected
+    } else if is_hovered {
+        theme.track_hover
     } else {
         theme.track_normal
     };
@@ -355,7 +392,8 @@ fn render_track_line<'a>(
     };
 
     let mut spans = vec![
-        Span::raw("  "),
+        Span::raw(" "),
+        fav_marker,
         cursor_marker,
         status_icon,
         Span::raw(" "),
@@ -390,4 +428,34 @@ pub fn scroll_for_cursor(
     } else {
         current_scroll
     }
+}
+
+/// Scroll so the cursor is near the top of the visible area.
+/// If the cursor's album header is just above, include it.
+pub fn scroll_cursor_to_top(
+    entries: &[QueueEntry],
+    cursor: usize,
+    visible_height: usize,
+) -> usize {
+    let display_lines = build_display_lines(entries);
+    let cursor_line = display_lines
+        .iter()
+        .position(|(idx, is_header)| *idx == Some(cursor) && !is_header)
+        .unwrap_or(0);
+
+    // Include the album header if it's directly above the cursor line.
+    let top = if cursor_line > 0 {
+        let (_, is_header) = display_lines[cursor_line - 1];
+        if is_header {
+            cursor_line - 1
+        } else {
+            cursor_line
+        }
+    } else {
+        cursor_line
+    };
+
+    // Don't overscroll past the end.
+    let max_scroll = display_lines.len().saturating_sub(visible_height);
+    top.min(max_scroll)
 }

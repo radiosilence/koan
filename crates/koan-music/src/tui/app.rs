@@ -32,6 +32,10 @@ pub enum Mode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextAction {
+    Play,
+    Remove,
+    ToggleFavourite,
+    TrackInfo,
     Organize,
 }
 
@@ -63,6 +67,31 @@ pub struct DragState {
     pub current_y: u16,
     /// True if we're dragging a multi-selection group.
     pub multi: bool,
+}
+
+/// Which UI element the mouse cursor is currently hovering over.
+#[derive(Default, Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum HoverZone {
+    #[default]
+    None,
+    QueueItem(usize),
+    LibraryItem(usize),
+    SeekBar,
+    ScrollbarQueue,
+    TransportArt,
+    TransportText,
+    PanelDivider,
+    PickerItem(usize),
+    ContextMenuItem(usize),
+}
+
+/// Tracks the current mouse hover position and zone.
+#[derive(Default)]
+pub struct HoverState {
+    pub column: u16,
+    pub row: u16,
+    pub zone: HoverZone,
 }
 
 /// Queue cursor, selection, scroll, drag, and cached snapshot.
@@ -171,6 +200,21 @@ pub struct App {
 
     /// Drop/paste import progress: (processed, total). Cleared when done.
     pub drop_progress: Option<Arc<(AtomicUsize, AtomicUsize)>>,
+
+    /// Mouse hover state — updated on MouseEventKind::Moved.
+    pub hover: HoverState,
+
+    /// Ticker offset for scrolling long transport text.
+    pub ticker_offset: usize,
+    /// Counter for ticker animation speed (increments each tick).
+    pub ticker_tick: u8,
+    /// Tick interval divisor for ticker speed (derived from config ticker_fps).
+    ticker_divisor: u8,
+    /// Track path used to detect track changes for ticker reset.
+    ticker_last_path: Option<PathBuf>,
+
+    /// Set of favourite track paths, loaded from DB on startup.
+    pub favourites: std::collections::HashSet<PathBuf>,
 }
 
 impl App {
@@ -208,7 +252,64 @@ impl App {
             last_mouse_row: None,
             scrollbar_dragging: false,
             drop_progress: None,
+            hover: HoverState::default(),
+            ticker_offset: 0,
+            ticker_tick: 0,
+            ticker_divisor: {
+                let cfg = koan_core::config::Config::load().unwrap_or_default();
+                let fps = cfg.playback.ticker_fps.max(1);
+                // Tick interval is 50ms (20 ticks/sec). Divisor = 20 / fps.
+                (20u8 / fps).max(1)
+            },
+            ticker_last_path: None,
+            favourites: std::collections::HashSet::new(),
         }
+    }
+
+    /// Load favourites from the database.
+    pub fn load_favourites(&mut self) {
+        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path) {
+            if let Ok(favs) = koan_core::db::queries::load_favourites(&db.conn) {
+                self.favourites = favs;
+            }
+        }
+    }
+
+    /// Toggle favourite status for a track path. Returns true if now favourite.
+    pub fn toggle_favourite(&mut self, path: &std::path::Path) -> bool {
+        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path) {
+            if let Ok(is_fav) = koan_core::db::queries::toggle_favourite(&db.conn, path) {
+                if is_fav {
+                    self.favourites.insert(path.to_path_buf());
+                } else {
+                    self.favourites.remove(path);
+                }
+                // Sync star/unstar to remote if this track has a remote_id.
+                if let Ok(Some(remote_id)) =
+                    koan_core::db::queries::remote_id_for_path(&db.conn, path)
+                {
+                    let cfg = koan_core::config::Config::load().unwrap_or_default();
+                    if cfg.remote.enabled && !cfg.remote.password.is_empty() {
+                        let client = koan_core::remote::client::SubsonicClient::new(
+                            &cfg.remote.url,
+                            &cfg.remote.username,
+                            &cfg.remote.password,
+                        );
+                        let rid = remote_id.clone();
+                        let star = is_fav;
+                        std::thread::spawn(move || {
+                            let _ = if star {
+                                client.star(&rid)
+                            } else {
+                                client.unstar(&rid)
+                            };
+                        });
+                    }
+                }
+                return is_fav;
+            }
+        }
+        false
     }
 
     pub fn handle_tick(&mut self) {
@@ -216,6 +317,27 @@ impl App {
         self.refresh_visible_queue();
 
         self.spinner_tick = self.spinner_tick.wrapping_add(1);
+
+        // Ticker animation: advance one character every 3 ticks (~150ms).
+        // Reset when the playing track changes so new titles start from the beginning.
+        {
+            let current_playing = self
+                .queue
+                .vq_cache
+                .entries
+                .iter()
+                .find(|e| e.status == QueueEntryStatus::Playing)
+                .map(|e| e.path.clone());
+            if current_playing != self.ticker_last_path {
+                self.ticker_last_path = current_playing;
+                self.ticker_offset = 0;
+                self.ticker_tick = 0;
+            }
+        }
+        self.ticker_tick = self.ticker_tick.wrapping_add(1);
+        if self.ticker_tick % self.ticker_divisor == 0 {
+            self.ticker_offset = self.ticker_offset.wrapping_add(1);
+        }
 
         // Drain log buffer.
         if let Ok(mut logs) = self.log_buffer.lock() {
@@ -412,6 +534,14 @@ impl App {
             KeyCode::Char('i') => {
                 self.open_track_info(self.queue.cursor);
             }
+            KeyCode::Char('f') => {
+                // Toggle favourite for the track at cursor.
+                let visible = self.visible_queue();
+                if let Some(entry) = visible.get(self.queue.cursor) {
+                    let path = entry.path.clone();
+                    self.toggle_favourite(&path);
+                }
+            }
             KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.tx.send(PlayerCommand::Undo).ok();
             }
@@ -554,23 +684,24 @@ impl App {
                 if let Some(menu) = self.context_menu.take()
                     && let Some((action, _, _)) = menu.actions.get(menu.cursor)
                 {
-                    match action {
-                        ContextAction::Organize => {
-                            self.open_organize_modal();
-                        }
-                    }
+                    self.execute_context_action(*action);
                 } else {
                     self.mode = Mode::QueueEdit;
                 }
             }
-            KeyCode::Char('q') | KeyCode::Char(' ') => {
-                self.context_menu = None;
-                self.mode = Mode::QueueEdit;
-            }
-            // Hotkeys for actions.
-            KeyCode::Char('o') => {
-                self.context_menu = None;
-                self.open_organize_modal();
+            KeyCode::Char(c) => {
+                if c == 'q' || c == ' ' {
+                    self.context_menu = None;
+                    self.mode = Mode::QueueEdit;
+                } else if let Some(menu) = self.context_menu.take() {
+                    // Match hotkey char against menu actions.
+                    if let Some((action, _, _)) = menu.actions.iter().find(|(_, _, h)| *h == c) {
+                        self.execute_context_action(*action);
+                    } else {
+                        // No match — restore menu.
+                        self.context_menu = Some(menu);
+                    }
+                }
             }
             _ => {}
         }
@@ -632,9 +763,45 @@ impl App {
     }
 
     fn open_context_menu(&mut self) {
-        let actions = vec![(ContextAction::Organize, "Organize (move/rename)", 'o')];
+        let visible = self.visible_queue();
+        let is_fav = visible
+            .get(self.queue.cursor)
+            .map_or(false, |e| self.favourites.contains(&e.path));
+        let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
+        let actions = vec![
+            (ContextAction::Play, "Play", 'p'),
+            (ContextAction::ToggleFavourite, fav_label, 'f'),
+            (ContextAction::TrackInfo, "Track info", 'i'),
+            (ContextAction::Remove, "Remove", 'd'),
+            (ContextAction::Organize, "Organize files", 'o'),
+        ];
         self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
         self.mode = Mode::ContextMenu;
+    }
+
+    fn execute_context_action(&mut self, action: ContextAction) {
+        self.mode = Mode::QueueEdit;
+        match action {
+            ContextAction::Play => {
+                self.play_at_cursor();
+            }
+            ContextAction::Remove => {
+                self.delete_selected();
+            }
+            ContextAction::ToggleFavourite => {
+                let visible = self.visible_queue();
+                if let Some(entry) = visible.get(self.queue.cursor) {
+                    let path = entry.path.clone();
+                    self.toggle_favourite(&path);
+                }
+            }
+            ContextAction::TrackInfo => {
+                self.open_track_info(self.queue.cursor);
+            }
+            ContextAction::Organize => {
+                self.open_organize_modal();
+            }
+        }
     }
 
     fn open_organize_modal(&mut self) {
@@ -701,7 +868,14 @@ impl App {
                         if let Some(entry) = visible.get(idx) {
                             self.tx.send(PlayerCommand::Play(entry.id)).ok();
                             self.queue.cursor = idx;
-                            self.update_scroll();
+                            // Scroll so the jumped-to track is near the top.
+                            let visible_height =
+                                self.layout.queue_area.height.max(10) as usize;
+                            self.queue.scroll_offset = queue::scroll_cursor_to_top(
+                                &visible,
+                                idx,
+                                visible_height,
+                            );
                         }
                     }
                 }
@@ -806,11 +980,7 @@ impl App {
                         menu.cursor = row;
                         let action = menu.actions[row].0;
                         self.context_menu = None;
-                        match action {
-                            ContextAction::Organize => {
-                                self.open_organize_modal();
-                            }
-                        }
+                        self.execute_context_action(action);
                     }
                 } else {
                     self.context_menu = None;
@@ -1109,11 +1279,51 @@ impl App {
                 self.queue.drag.take();
                 self.scrollbar_dragging = false;
             }
+            MouseEventKind::Down(MouseButton::Right) => {
+                // Right-click on queue item -> context menu at click position.
+                if self.is_in_rect(event.column, event.row, self.layout.queue_area) {
+                    let visible = self.visible_queue();
+                    if let Some(idx) = queue::QueueView::queue_index_at_y(
+                        &visible,
+                        self.layout.queue_area,
+                        self.queue.scroll_offset,
+                        event.row,
+                    ) {
+                        // Select the clicked item if not already selected.
+                        if !self.queue.selected_indices.contains(&idx) {
+                            self.select_single(idx);
+                        }
+                        self.queue.cursor = idx;
+
+                        // Build context menu with relevant actions.
+                        let is_fav = visible
+                            .get(idx)
+                            .map_or(false, |e| self.favourites.contains(&e.path));
+                        let fav_label = if is_fav {
+                            "Unfavourite"
+                        } else {
+                            "Favourite"
+                        };
+                        self.context_menu = Some(ContextMenuState {
+                            actions: vec![
+                                (ContextAction::Play, "Play", 'p'),
+                                (ContextAction::ToggleFavourite, fav_label, 'f'),
+                                (ContextAction::TrackInfo, "Track info", 'i'),
+                                (ContextAction::Remove, "Remove", 'd'),
+                                (ContextAction::Organize, "Organize files", 'o'),
+                            ],
+                            cursor: 0,
+                        });
+                        self.mode = Mode::ContextMenu;
+                        // Store click position for positioned rendering.
+                        self.hover.column = event.column;
+                        self.hover.row = event.row;
+                    }
+                }
+            }
             MouseEventKind::ScrollUp => {
                 if let Mode::Picker(_) = &self.mode {
                     if let Some(ref mut picker) = self.picker {
-                        picker.move_up();
-                        picker.move_up();
                         picker.move_up();
                     }
                 } else if self.mode == Mode::LibraryBrowse
@@ -1121,37 +1331,104 @@ impl App {
                 {
                     if let Some(ref mut lib) = self.library {
                         lib.move_up();
-                        lib.move_up();
-                        lib.move_up();
                     }
                 } else {
-                    self.queue.scroll_offset = self.queue.scroll_offset.saturating_sub(3);
+                    self.queue.scroll_offset = self.queue.scroll_offset.saturating_sub(1);
                 }
             }
             MouseEventKind::ScrollDown => {
                 if let Mode::Picker(_) = &self.mode {
                     if let Some(ref mut picker) = self.picker {
                         picker.move_down();
-                        picker.move_down();
-                        picker.move_down();
                     }
                 } else if self.mode == Mode::LibraryBrowse
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
                     if let Some(ref mut lib) = self.library {
                         lib.move_down();
-                        lib.move_down();
-                        lib.move_down();
                     }
                 } else {
-                    // Clamp scroll to prevent scrolling past end.
                     let visible_len = self.visible_queue().len();
                     let max_scroll = visible_len.saturating_sub(1);
-                    self.queue.scroll_offset = (self.queue.scroll_offset + 3).min(max_scroll);
+                    self.queue.scroll_offset = (self.queue.scroll_offset + 1).min(max_scroll);
                 }
+            }
+            MouseEventKind::Moved => {
+                self.hover.column = event.column;
+                self.hover.row = event.row;
+                self.update_hover_zone();
             }
             _ => {}
         }
+    }
+
+    /// Compute the hover zone from current mouse position and layout rects.
+    fn update_hover_zone(&mut self) {
+        let col = self.hover.column;
+        let row = self.hover.row;
+
+        // Seek bar (first row of transport text area).
+        if row == self.layout.transport_text_area.y
+            && col >= self.layout.seek_bar_start
+            && col < self.layout.seek_bar_start + self.layout.seek_bar_width
+        {
+            self.hover.zone = HoverZone::SeekBar;
+            return;
+        }
+
+        // Transport art area.
+        if self.layout.now_playing_art_area.width > 0
+            && self.is_in_rect(col, row, self.layout.now_playing_art_area)
+        {
+            self.hover.zone = HoverZone::TransportArt;
+            return;
+        }
+
+        // Transport text area.
+        if self.is_in_rect(col, row, self.layout.transport_text_area) {
+            self.hover.zone = HoverZone::TransportText;
+            return;
+        }
+
+        // Queue scrollbar (rightmost column).
+        let q = self.layout.queue_area;
+        if q.width > 0 && col == q.x + q.width - 1 && row > q.y && row < q.y + q.height {
+            self.hover.zone = HoverZone::ScrollbarQueue;
+            return;
+        }
+
+        // Queue item.
+        if self.is_in_rect(col, row, self.layout.queue_area) {
+            let visible = self.visible_queue();
+            if let Some(idx) = queue::QueueView::queue_index_at_y(
+                &visible,
+                self.layout.queue_area,
+                self.queue.scroll_offset,
+                row,
+            ) {
+                self.hover.zone = HoverZone::QueueItem(idx);
+                return;
+            }
+        }
+
+        // Library item.
+        if self.mode == Mode::LibraryBrowse
+            && self.is_in_rect(col, row, self.layout.library_area)
+        {
+            let inner_y = self.layout.library_area.y + 1;
+            let inner_h = self.layout.library_area.height.saturating_sub(2) as usize;
+            if row >= inner_y && (row - inner_y) < inner_h as u16 {
+                if let Some(ref lib) = self.library {
+                    let item_idx = lib.scroll_offset + (row - inner_y) as usize;
+                    if item_idx < lib.nodes.len() {
+                        self.hover.zone = HoverZone::LibraryItem(item_idx);
+                        return;
+                    }
+                }
+            }
+        }
+
+        self.hover.zone = HoverZone::None;
     }
 
     // --- Selection helpers ---

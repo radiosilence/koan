@@ -167,6 +167,9 @@ fn run_tui(
         app.open_library();
     }
 
+    // Load favourites from database.
+    app.load_favourites();
+
     // Media keys (macOS Control Center integration).
     let mut media = crate::media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
     let mut last_track_path: Option<PathBuf> = None;
@@ -176,9 +179,12 @@ fn run_tui(
 
         let event = tui::event::poll(Duration::from_millis(50))?;
 
+        // Process the first event, then drain any buffered events.
+        // For mouse events, only keep the latest (coalesce move events).
+        let mut last_mouse: Option<crossterm::event::MouseEvent> = None;
         match event {
             tui::event::Event::Key(key) => app.handle_key(key),
-            tui::event::Event::Mouse(mouse) => app.handle_mouse(mouse),
+            tui::event::Event::Mouse(mouse) => { last_mouse = Some(mouse); }
             tui::event::Event::Paste(text) => {
                 // Parse dropped/pasted paths (handles shell escaping, file:// URIs, etc).
                 // Heavy work (walkdir + metadata read) runs on a background thread.
@@ -262,6 +268,27 @@ fn run_tui(
                     app.quit = true;
                 }
             }
+        }
+
+        // Drain any buffered events — coalesce mouse moves so we always
+        // render with the latest mouse position.
+        while crossterm::event::poll(Duration::ZERO)? {
+            match crossterm::event::read()? {
+                crossterm::event::Event::Mouse(m) => { last_mouse = Some(m); }
+                crossterm::event::Event::Key(k) => {
+                    app.handle_key(k);
+                }
+                crossterm::event::Event::Paste(text) => {
+                    // Treat extra pastes same as primary — but typically rare.
+                    let _ = text;
+                }
+                _ => {}
+            }
+        }
+
+        // Process the coalesced mouse event (latest position wins).
+        if let Some(mouse) = last_mouse {
+            app.handle_mouse(mouse);
         }
 
         // Handle picker opening — load items from DB.

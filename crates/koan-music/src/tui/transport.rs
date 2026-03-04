@@ -1,6 +1,6 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
 
@@ -14,6 +14,7 @@ pub struct TransportBar<'a> {
     playback_state: PlaybackState,
     position_ms: u64,
     theme: &'a Theme,
+    ticker_offset: usize,
 }
 
 impl<'a> TransportBar<'a> {
@@ -30,7 +31,13 @@ impl<'a> TransportBar<'a> {
             playback_state,
             position_ms,
             theme,
+            ticker_offset: 0,
         }
+    }
+
+    pub fn with_ticker_offset(mut self, offset: usize) -> Self {
+        self.ticker_offset = offset;
+        self
     }
 
     /// Compute the seek bar start (absolute x) and width for the given area.
@@ -114,20 +121,82 @@ impl Widget for TransportBar<'_> {
 
         // Line 2: Artist — Title (from QueueEntry metadata, or fallback to filename)
         if let Some(entry) = self.playing_entry {
-            let mut spans = vec![Span::raw(" ")];
+            let mut spans = Vec::new();
 
             if !entry.artist.is_empty() {
-                spans.push(Span::styled(entry.artist.clone(), self.theme.track_playing));
-                spans.push(Span::styled(" \u{2014} ", self.theme.hint_desc));
+                spans.push(StyledSegment {
+                    text: entry.artist.clone(),
+                    style: self.theme.track_playing,
+                });
+                spans.push(StyledSegment {
+                    text: " \u{2014} ".into(),
+                    style: self.theme.hint_desc,
+                });
             }
 
-            spans.push(Span::styled(
-                entry.title.clone(),
-                self.theme.track_normal.add_modifier(Modifier::BOLD),
-            ));
+            spans.push(StyledSegment {
+                text: entry.title.clone(),
+                style: self.theme.track_normal.add_modifier(Modifier::BOLD),
+            });
 
-            let title_line = Line::from(spans);
-            buf.set_line(area.x, area.y + 1, &title_line, area.width);
+            let total_width: usize = spans.iter().map(|s| s.text.chars().count()).sum();
+            let avail = area.width.saturating_sub(1) as usize; // -1 for leading space
+
+            if total_width <= avail {
+                // Fits — render normally.
+                let mut ratatui_spans = vec![Span::raw(" ")];
+                for seg in &spans {
+                    ratatui_spans.push(Span::styled(seg.text.clone(), seg.style));
+                }
+                let title_line = Line::from(ratatui_spans);
+                buf.set_line(area.x, area.y + 1, &title_line, area.width);
+            } else {
+                // Ticker mode — scroll the title text.
+                let separator = "   \u{00B7}   "; // " · "
+                let sep_len = separator.chars().count();
+                let cycle_len = total_width + sep_len;
+                let offset = self.ticker_offset % cycle_len;
+
+                // Build full ticker character buffer with styles.
+                let mut chars: Vec<(char, Style)> = Vec::with_capacity(cycle_len);
+                for seg in &spans {
+                    for c in seg.text.chars() {
+                        chars.push((c, seg.style));
+                    }
+                }
+                for c in separator.chars() {
+                    chars.push((c, self.theme.hint_desc));
+                }
+
+                // Extract a window of `avail` characters starting at `offset`.
+                let mut ratatui_spans = vec![Span::raw(" ")];
+                let mut run_text = String::new();
+                let mut run_style: Option<Style> = None;
+
+                for i in 0..avail {
+                    let idx = (offset + i) % cycle_len;
+                    let (ch, style) = chars[idx];
+
+                    if run_style == Some(style) {
+                        run_text.push(ch);
+                    } else {
+                        if let Some(s) = run_style {
+                            ratatui_spans.push(Span::styled(run_text.clone(), s));
+                        }
+                        run_text.clear();
+                        run_text.push(ch);
+                        run_style = Some(style);
+                    }
+                }
+                if let Some(s) = run_style {
+                    if !run_text.is_empty() {
+                        ratatui_spans.push(Span::styled(run_text, s));
+                    }
+                }
+
+                let title_line = Line::from(ratatui_spans);
+                buf.set_line(area.x, area.y + 1, &title_line, area.width);
+            }
 
             // Line 3: Album (Year) · codec info (if we have enough height)
             if area.height >= 3 {
@@ -179,6 +248,12 @@ impl Widget for TransportBar<'_> {
             buf.set_line(area.x, area.y + 1, &info_line, area.width);
         }
     }
+}
+
+/// Internal helper for ticker: a piece of text with a style.
+struct StyledSegment {
+    text: String,
+    style: Style,
 }
 
 pub fn format_time(ms: u64) -> String {
