@@ -468,7 +468,10 @@ impl App {
                                 ) {
                                     Ok(Some(id)) => id,
                                     Ok(None) => {
-                                        eprintln!("[lyrics] track not in db: {}", track_path.display());
+                                        eprintln!(
+                                            "[lyrics] track not in db: {}",
+                                            track_path.display()
+                                        );
                                         return None;
                                     }
                                     Err(e) => {
@@ -486,7 +489,9 @@ impl App {
                                 ) {
                                     Ok(lyrics) => Some(lyrics),
                                     Err(e) => {
-                                        eprintln!("[lyrics] fetch failed for '{artist} - {title}': {e}");
+                                        eprintln!(
+                                            "[lyrics] fetch failed for '{artist} - {title}': {e}"
+                                        );
                                         None
                                     }
                                 }
