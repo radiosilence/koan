@@ -137,25 +137,27 @@ impl OrganizeConfig {
 }
 
 impl Config {
-    /// Load config.toml then overlay config.local.toml on top.
-    /// Local overrides win — use it for machine-specific paths, credentials, etc.
+    /// Load config.toml then deep-merge config.local.toml on top.
+    /// Only keys actually present in config.local.toml override — missing keys
+    /// keep their values from config.toml (not serde defaults).
     pub fn load() -> Result<Self, ConfigError> {
         let base_path = config_file_path();
         let local_path = config_local_file_path();
 
-        let mut config = if base_path.exists() {
+        let mut base_val: toml::Value = if base_path.exists() {
             let contents = fs::read_to_string(&base_path)?;
             toml::from_str(&contents)?
         } else {
-            Self::default()
+            toml::Value::Table(toml::map::Map::new())
         };
 
         if local_path.exists() {
             let local_contents = fs::read_to_string(&local_path)?;
-            let local: Config = toml::from_str(&local_contents)?;
-            config.merge(local);
+            let local_val: toml::Value = toml::from_str(&local_contents)?;
+            deep_merge(&mut base_val, local_val);
         }
 
+        let config: Config = base_val.try_into()?;
         Ok(config)
     }
 
@@ -188,60 +190,30 @@ impl Config {
         Ok(())
     }
 
-    /// Merge another config on top — non-default/non-empty values from `other` win.
-    fn merge(&mut self, other: Config) {
-        if !other.library.folders.is_empty() {
-            self.library.folders = other.library.folders;
-        }
-        // Merge playback field-by-field so config.local.toml (which typically
-        // only has [remote] credentials) doesn't overwrite base config values
-        // with serde defaults.
-        let default_pb = PlaybackConfig::default();
-        if other.playback.software_volume != default_pb.software_volume {
-            self.playback.software_volume = other.playback.software_volume;
-        }
-        if other.playback.replaygain != default_pb.replaygain {
-            self.playback.replaygain = other.playback.replaygain;
-        }
-        if other.playback.ticker_fps != default_pb.ticker_fps {
-            self.playback.ticker_fps = other.playback.ticker_fps;
-        }
-        if other.playback.target_fps != default_pb.target_fps {
-            self.playback.target_fps = other.playback.target_fps;
-        }
-        if other.remote.enabled {
-            self.remote.enabled = true;
-        }
-        if !other.remote.url.is_empty() {
-            self.remote.url = other.remote.url;
-        }
-        if !other.remote.username.is_empty() {
-            self.remote.username = other.remote.username;
-        }
-        if !other.remote.password.is_empty() {
-            self.remote.password = other.remote.password;
-        }
-        if !other.remote.transcode_quality.is_empty() {
-            self.remote.transcode_quality = other.remote.transcode_quality;
-        }
-        if other.remote.cache_dir.is_some() {
-            self.remote.cache_dir = other.remote.cache_dir;
-        }
-        // Organize: merge patterns (local additions/overrides win), override default.
-        for (k, v) in other.organize.patterns {
-            self.organize.patterns.insert(k, v);
-        }
-        if other.organize.default.is_some() {
-            self.organize.default = other.organize.default;
-        }
-    }
-
     /// Resolved cache directory — uses explicit setting or defaults to config_dir/cache.
     pub fn cache_dir(&self) -> PathBuf {
         self.remote
             .cache_dir
             .clone()
             .unwrap_or_else(|| config_dir().join("cache"))
+    }
+}
+
+/// Recursively merge `overlay` into `base`. Only keys present in `overlay`
+/// are touched — everything else in `base` is preserved.
+fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
+    match (base, overlay) {
+        (toml::Value::Table(base_map), toml::Value::Table(overlay_map)) => {
+            for (key, overlay_val) in overlay_map {
+                let entry = base_map
+                    .entry(key)
+                    .or_insert(toml::Value::Table(toml::map::Map::new()));
+                deep_merge(entry, overlay_val);
+            }
+        }
+        (base, overlay) => {
+            *base = overlay;
+        }
     }
 }
 
