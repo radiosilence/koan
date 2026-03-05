@@ -1,6 +1,0 @@
-Audio files with corrupted ID3 tags for testing fallback metadata parsing.
-These are real-world MP3s with malformed UTF-16 text frames that cause lofty to error.
-The .mp3 files themselves are gitignored — copy them manually from the test library.
-
-Files:
-  utf16-odd-length-*.mp3  — UTF-16 BOM string with odd byte length (invalid)
