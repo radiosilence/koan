@@ -552,14 +552,11 @@ fn render_node<'a>(node: &LibraryNode, is_cursor: bool, theme: &Theme) -> Line<'
             };
             let source_span = if !is_cursor {
                 let (label, color) = match source.as_str() {
-                    "local" => (" \u{F0A0} ", ratatui::style::Color::Green),   // nf-fa-hdd
-                    "remote" => (" \u{F0C2} ", ratatui::style::Color::Cyan),   // nf-fa-cloud
+                    "local" => (" \u{F0A0} ", ratatui::style::Color::Green), // nf-fa-hdd
+                    "remote" => (" \u{F0C2} ", ratatui::style::Color::Cyan), // nf-fa-cloud
                     _ => (" ? ", ratatui::style::Color::Yellow),
                 };
-                Span::styled(
-                    label,
-                    ratatui::style::Style::default().fg(color),
-                )
+                Span::styled(label, ratatui::style::Style::default().fg(color))
             } else {
                 Span::styled("", theme.library_cursor)
             };

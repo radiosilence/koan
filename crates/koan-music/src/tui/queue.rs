@@ -285,8 +285,8 @@ impl Widget for QueueView<'_> {
 
             // Lower block elements indexed by eighths filled from bottom (0..=8).
             const BLOCKS: [char; 9] = [
-                ' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}',
-                '\u{2585}', '\u{2586}', '\u{2587}', '\u{2588}',
+                ' ', '\u{2581}', '\u{2582}', '\u{2583}', '\u{2584}', '\u{2585}', '\u{2586}',
+                '\u{2587}', '\u{2588}',
             ];
 
             let thumb_color = self.theme.scrollbar_thumb;
@@ -324,9 +324,7 @@ impl Widget for QueueView<'_> {
                         .set_style(bot_style);
                 } else {
                     // Full cell.
-                    buf[(bar_x, y)]
-                        .set_char('\u{2588}')
-                        .set_style(thumb_style);
+                    buf[(bar_x, y)].set_char('\u{2588}').set_style(thumb_style);
                 }
             }
         }

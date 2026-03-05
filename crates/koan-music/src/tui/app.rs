@@ -1428,8 +1428,7 @@ impl App {
 
                     if total_lines > visible_height && visible_height > 0 {
                         let vis8 = visible_height * 8;
-                        let thumb_8 =
-                            (vis8 * visible_height / total_lines).max(8);
+                        let thumb_8 = (vis8 * visible_height / total_lines).max(8);
                         let max_scroll = total_lines.saturating_sub(visible_height);
                         let track_8 = vis8.saturating_sub(thumb_8);
                         let thumb_top_8 = if max_scroll > 0 && track_8 > 0 {
@@ -1443,8 +1442,7 @@ impl App {
 
                         if click_8 >= thumb_top_8 && click_8 < thumb_bot_8 {
                             // Clicked on thumb — record grab offset in eighths.
-                            self.scrollbar_grab_offset =
-                                Some((click_8 - thumb_top_8) as u16);
+                            self.scrollbar_grab_offset = Some((click_8 - thumb_top_8) as u16);
                         } else {
                             // Clicked on track — jump, grab at thumb center.
                             self.scrollbar_grab_offset = Some((thumb_8 / 2) as u16);

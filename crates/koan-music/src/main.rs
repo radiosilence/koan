@@ -77,8 +77,7 @@ impl log::Log for BufferedLogger {
         // Our own fallback warnings (from koan_core) still come through.
         let module = record.module_path().unwrap_or("");
         if record.level() == log::Level::Warn
-            && (module.starts_with("lofty")
-                || module.starts_with("symphonia"))
+            && (module.starts_with("lofty") || module.starts_with("symphonia"))
         {
             return;
         }

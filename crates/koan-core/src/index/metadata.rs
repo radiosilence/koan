@@ -39,7 +39,11 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
     match lofty::read_from_path(path) {
         Ok(tagged_file) => read_metadata_lofty(path, &tagged_file),
         Err(e) => {
-            log::warn!("lofty failed for {}: {}; falling back to probe", path.display(), e);
+            log::warn!(
+                "lofty failed for {}: {}; falling back to probe",
+                path.display(),
+                e
+            );
             read_metadata_fallback(path)
         }
     }
@@ -200,8 +204,12 @@ fn probe_symphonia(path: &Path) -> SymphoniaProps {
     use symphonia::core::probe::Hint;
 
     let empty = SymphoniaProps {
-        duration_ms: None, sample_rate: None, bit_depth: None,
-        channels: None, bitrate: None, codec: None,
+        duration_ms: None,
+        sample_rate: None,
+        bit_depth: None,
+        channels: None,
+        bitrate: None,
+        codec: None,
     };
 
     let file = match std::fs::File::open(path) {
@@ -235,12 +243,16 @@ fn probe_symphonia(path: &Path) -> SymphoniaProps {
     let channels = params.channels.map(|c| c.count() as i32);
 
     let duration_ms = params.n_frames.and_then(|frames| {
-        params.sample_rate.map(|sr| (frames as f64 / sr as f64 * 1000.0) as i64)
+        params
+            .sample_rate
+            .map(|sr| (frames as f64 / sr as f64 * 1000.0) as i64)
     });
 
     let bitrate = params.sample_rate.and_then(|sr| {
         params.bits_per_sample.and_then(|bps| {
-            params.channels.map(|ch| (sr as i32 * bps as i32 * ch.count() as i32) / 1000)
+            params
+                .channels
+                .map(|ch| (sr as i32 * bps as i32 * ch.count() as i32) / 1000)
         })
     });
 
@@ -250,7 +262,14 @@ fn probe_symphonia(path: &Path) -> SymphoniaProps {
         None
     };
 
-    SymphoniaProps { duration_ms, sample_rate, bit_depth, channels, bitrate, codec }
+    SymphoniaProps {
+        duration_ms,
+        sample_rate,
+        bit_depth,
+        channels,
+        bitrate,
+        codec,
+    }
 }
 
 /// Map Symphonia codec type to a human-readable string.
@@ -264,10 +283,16 @@ fn symphonia_codec_name(codec: symphonia::core::codecs::CodecType) -> String {
         codecs::CODEC_TYPE_VORBIS => "Vorbis".to_string(),
         codecs::CODEC_TYPE_OPUS => "Opus".to_string(),
         codecs::CODEC_TYPE_WAVPACK => "WavPack".to_string(),
-        codecs::CODEC_TYPE_PCM_S16LE | codecs::CODEC_TYPE_PCM_S24LE | codecs::CODEC_TYPE_PCM_S32LE
-        | codecs::CODEC_TYPE_PCM_F32LE | codecs::CODEC_TYPE_PCM_F64LE
-        | codecs::CODEC_TYPE_PCM_S16BE | codecs::CODEC_TYPE_PCM_S24BE | codecs::CODEC_TYPE_PCM_S32BE
-        | codecs::CODEC_TYPE_PCM_F32BE | codecs::CODEC_TYPE_PCM_F64BE
+        codecs::CODEC_TYPE_PCM_S16LE
+        | codecs::CODEC_TYPE_PCM_S24LE
+        | codecs::CODEC_TYPE_PCM_S32LE
+        | codecs::CODEC_TYPE_PCM_F32LE
+        | codecs::CODEC_TYPE_PCM_F64LE
+        | codecs::CODEC_TYPE_PCM_S16BE
+        | codecs::CODEC_TYPE_PCM_S24BE
+        | codecs::CODEC_TYPE_PCM_S32BE
+        | codecs::CODEC_TYPE_PCM_F32BE
+        | codecs::CODEC_TYPE_PCM_F64BE
         | codecs::CODEC_TYPE_PCM_U8 => "PCM".to_string(),
         _ => "Unknown".to_string(),
     }
