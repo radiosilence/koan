@@ -32,9 +32,24 @@ pub fn is_audio_file(path: &Path) -> bool {
 }
 
 /// Read metadata from an audio file, returning a TrackMeta ready for DB insertion.
+///
+/// If lofty fails to parse tags (e.g. corrupted UTF-16 ID3 frames), falls back
+/// to Symphonia for duration/properties and infers what we can from the path.
 pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
-    let tagged_file = lofty::read_from_path(path)?;
+    match lofty::read_from_path(path) {
+        Ok(tagged_file) => read_metadata_lofty(path, &tagged_file),
+        Err(e) => {
+            log::warn!("lofty failed for {}: {}; falling back to probe", path.display(), e);
+            read_metadata_fallback(path)
+        }
+    }
+}
 
+/// Full metadata read via lofty (happy path).
+fn read_metadata_lofty(
+    path: &Path,
+    tagged_file: &lofty::file::TaggedFile,
+) -> Result<TrackMeta, MetadataError> {
     let properties = tagged_file.properties();
     let duration_ms = properties.duration().as_millis() as i64;
     let sample_rate = properties.sample_rate().map(|r| r as i32);
@@ -112,6 +127,217 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
         remote_id: None,
         remote_url: None,
     })
+}
+
+/// Fallback metadata read when lofty fails. Uses Symphonia to probe
+/// duration/codec/properties, and infers artist/album/title from the path.
+fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
+    let file_meta = fs::metadata(path)?;
+    let size_bytes = file_meta.len() as i64;
+    let mtime = file_meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_secs() as i64);
+
+    // Probe via Symphonia for duration, codec, and audio properties.
+    let props = probe_symphonia(path);
+
+    // Try to extract tags from Symphonia's metadata (it's more lenient than lofty
+    // for corrupted frames — it skips bad frames instead of erroring).
+    let (title, artist, album) = probe_symphonia_tags(path);
+
+    let title = title.unwrap_or_else(|| {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Unknown")
+            .to_string()
+    });
+    let artist = artist.unwrap_or_else(|| "Unknown Artist".to_string());
+    let album = album.unwrap_or_else(|| "Unknown Album".to_string());
+
+    Ok(TrackMeta {
+        title,
+        artist,
+        album_artist: None,
+        album,
+        date: None,
+        disc: None,
+        track_number: None,
+        genre: None,
+        label: None,
+        duration_ms: props.duration_ms,
+        codec: props.codec,
+        sample_rate: props.sample_rate,
+        bit_depth: props.bit_depth,
+        channels: props.channels,
+        bitrate: props.bitrate,
+        size_bytes: Some(size_bytes),
+        mtime,
+        path: Some(path.to_string_lossy().to_string()),
+        source: "local".to_string(),
+        remote_id: None,
+        remote_url: None,
+    })
+}
+
+/// Probed audio properties from Symphonia.
+struct SymphoniaProps {
+    duration_ms: Option<i64>,
+    sample_rate: Option<i32>,
+    bit_depth: Option<i32>,
+    channels: Option<i32>,
+    bitrate: Option<i32>,
+    codec: Option<String>,
+}
+
+/// Probe audio properties via Symphonia (duration, sample rate, codec, etc.).
+fn probe_symphonia(path: &Path) -> SymphoniaProps {
+    use symphonia::core::codecs::CODEC_TYPE_NULL;
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::probe::Hint;
+
+    let empty = SymphoniaProps {
+        duration_ms: None, sample_rate: None, bit_depth: None,
+        channels: None, bitrate: None, codec: None,
+    };
+
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return empty,
+    };
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let probed = match symphonia::default::get_probe().format(
+        &hint,
+        mss,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    ) {
+        Ok(p) => p,
+        Err(_) => return empty,
+    };
+
+    let track = match probed.format.default_track() {
+        Some(t) => t,
+        None => return empty,
+    };
+
+    let params = &track.codec_params;
+    let sample_rate = params.sample_rate.map(|r| r as i32);
+    let bit_depth = params.bits_per_sample.map(|b| b as i32);
+    let channels = params.channels.map(|c| c.count() as i32);
+
+    let duration_ms = params.n_frames.and_then(|frames| {
+        params.sample_rate.map(|sr| (frames as f64 / sr as f64 * 1000.0) as i64)
+    });
+
+    let bitrate = params.sample_rate.and_then(|sr| {
+        params.bits_per_sample.and_then(|bps| {
+            params.channels.map(|ch| (sr as i32 * bps as i32 * ch.count() as i32) / 1000)
+        })
+    });
+
+    let codec = if params.codec != CODEC_TYPE_NULL {
+        Some(symphonia_codec_name(params.codec))
+    } else {
+        None
+    };
+
+    SymphoniaProps { duration_ms, sample_rate, bit_depth, channels, bitrate, codec }
+}
+
+/// Map Symphonia codec type to a human-readable string.
+fn symphonia_codec_name(codec: symphonia::core::codecs::CodecType) -> String {
+    use symphonia::core::codecs;
+    match codec {
+        codecs::CODEC_TYPE_FLAC => "FLAC".to_string(),
+        codecs::CODEC_TYPE_MP3 => "MP3".to_string(),
+        codecs::CODEC_TYPE_AAC => "AAC".to_string(),
+        codecs::CODEC_TYPE_ALAC => "ALAC".to_string(),
+        codecs::CODEC_TYPE_VORBIS => "Vorbis".to_string(),
+        codecs::CODEC_TYPE_OPUS => "Opus".to_string(),
+        codecs::CODEC_TYPE_WAVPACK => "WavPack".to_string(),
+        codecs::CODEC_TYPE_PCM_S16LE | codecs::CODEC_TYPE_PCM_S24LE | codecs::CODEC_TYPE_PCM_S32LE
+        | codecs::CODEC_TYPE_PCM_F32LE | codecs::CODEC_TYPE_PCM_F64LE
+        | codecs::CODEC_TYPE_PCM_S16BE | codecs::CODEC_TYPE_PCM_S24BE | codecs::CODEC_TYPE_PCM_S32BE
+        | codecs::CODEC_TYPE_PCM_F32BE | codecs::CODEC_TYPE_PCM_F64BE
+        | codecs::CODEC_TYPE_PCM_U8 => "PCM".to_string(),
+        _ => "Unknown".to_string(),
+    }
+}
+
+/// Try to extract basic tags (title, artist, album) via Symphonia's metadata reader.
+/// Symphonia is more lenient with corrupted ID3 frames than lofty.
+fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<String>) {
+    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::{MetadataOptions, StandardTagKey};
+    use symphonia::core::probe::Hint;
+
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(_) => return (None, None, None),
+    };
+    let mss = MediaSourceStream::new(Box::new(file), Default::default());
+    let mut hint = Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+
+    let mut probed = match symphonia::default::get_probe().format(
+        &hint,
+        mss,
+        &FormatOptions::default(),
+        &MetadataOptions::default(),
+    ) {
+        Ok(p) => p,
+        Err(_) => return (None, None, None),
+    };
+
+    let mut title = None;
+    let mut artist = None;
+    let mut album = None;
+
+    // Check metadata on the probe result itself.
+    if let Some(md) = probed.metadata.get()
+        && let Some(rev) = md.current()
+    {
+        for tag in rev.tags() {
+            match tag.std_key {
+                Some(StandardTagKey::TrackTitle) => title = Some(tag.value.to_string()),
+                Some(StandardTagKey::Artist) => artist = Some(tag.value.to_string()),
+                Some(StandardTagKey::Album) => album = Some(tag.value.to_string()),
+                _ => {}
+            }
+        }
+    }
+
+    // Also check format-level metadata.
+    if let Some(md) = probed.format.metadata().current() {
+        for tag in md.tags() {
+            match tag.std_key {
+                Some(StandardTagKey::TrackTitle) if title.is_none() => {
+                    title = Some(tag.value.to_string())
+                }
+                Some(StandardTagKey::Artist) if artist.is_none() => {
+                    artist = Some(tag.value.to_string())
+                }
+                Some(StandardTagKey::Album) if album.is_none() => {
+                    album = Some(tag.value.to_string())
+                }
+                _ => {}
+            }
+        }
+    }
+
+    (title, artist, album)
 }
 
 /// Determine codec for an MP4 container file (AAC, ALAC, etc.).

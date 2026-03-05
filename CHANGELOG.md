@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.1
+
+### Fixed
+
+- **Resilient tag parsing** — files with corrupted tags (e.g. malformed UTF-16 ID3 frames) no longer fail the entire scan. When lofty errors, falls back to Symphonia for duration/codec/properties and indexes the file with whatever metadata is available
+- **Suppressed library log spam** — noisy warn-level messages from lofty/symphonia internals are filtered from stderr (still written to log file). Fallback warnings from koan include the file path for diagnostics
+
 ## 0.7.0
 
 ### Added

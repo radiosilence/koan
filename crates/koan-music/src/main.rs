@@ -67,10 +67,20 @@ impl log::Log for BufferedLogger {
             record.args()
         );
 
-        // Always write to log file.
+        // Always write to log file (including noisy library warnings).
         if let Some(file) = self.log_file.lock().unwrap().as_mut() {
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             let _ = writeln!(file, "[{}] {}", now, msg);
+        }
+
+        // Suppress warn-level noise from lofty/symphonia internals on stderr/buffer.
+        // Our own fallback warnings (from koan_core) still come through.
+        let module = record.module_path().unwrap_or("");
+        if record.level() == log::Level::Warn
+            && (module.starts_with("lofty")
+                || module.starts_with("symphonia"))
+        {
+            return;
         }
 
         if let Some(buf) = self.buffer.lock().unwrap().as_ref() {
