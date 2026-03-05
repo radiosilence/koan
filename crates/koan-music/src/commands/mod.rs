@@ -291,61 +291,118 @@ fn percent_decode(input: &str) -> String {
     out
 }
 
-/// Build PlaylistItems from a list of file paths, reading metadata from each.
-/// Uses a massive thread pool (1024 threads) to saturate NVMe IO.
+/// Build PlaylistItems from file paths. Checks the DB first for already-scanned
+/// tracks (instant), only falls back to lofty disk reads for unknown files.
 /// If `progress` is provided, the AtomicUsize is incremented after each file.
 pub(crate) fn playlist_items_from_paths(
     paths: &[PathBuf],
     progress: Option<&std::sync::atomic::AtomicUsize>,
 ) -> Vec<PlaylistItem> {
-    paths
+    // Load all known tracks from DB into a path→metadata map.
+    let db_cache = open_db_optional()
+        .and_then(|db| queries::all_tracks_by_path(&db.conn).ok())
+        .unwrap_or_default();
+
+    let db_hits = std::sync::atomic::AtomicUsize::new(0);
+
+    let items: Vec<PlaylistItem> = paths
         .par_iter()
         .map(|p| {
-            let item = match koan_core::index::metadata::read_metadata(p) {
-                Ok(meta) => PlaylistItem {
-                    id: QueueItemId::new(),
-                    path: p.clone(),
-                    title: meta.title,
-                    artist: meta.artist,
-                    album_artist: meta.album_artist.unwrap_or_default(),
-                    album: meta.album,
-                    year: meta.date.and_then(|d| {
-                        if d.len() >= 4 { Some(d[..4].to_string()) } else { None }
-                    }),
-                    codec: meta.codec,
-                    track_number: meta.track_number.map(|n| n as i64),
-                    disc: meta.disc.map(|n| n as i64),
-                    duration_ms: meta.duration_ms.map(|d| d as u64),
-                    load_state: LoadState::Ready,
-                },
-                Err(_) => {
-                    let title = p
-                        .file_stem()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
-                    PlaylistItem {
-                        id: QueueItemId::new(),
-                        path: p.clone(),
-                        title,
-                        artist: String::new(),
-                        album_artist: String::new(),
-                        album: String::new(),
-                        year: None,
-                        codec: None,
-                        track_number: None,
-                        disc: None,
-                        duration_ms: None,
-                        load_state: LoadState::Ready,
-                    }
-                }
+            let path_str = p.to_string_lossy();
+            let item = if let Some(track) = db_cache.get(path_str.as_ref()) {
+                db_hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                playlist_item_from_track_row(track, p)
+            } else {
+                read_metadata_to_item(p)
             };
             if let Some(counter) = progress {
                 counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
             item
         })
-        .collect()
+        .collect();
+
+    let hits = db_hits.load(std::sync::atomic::Ordering::Relaxed);
+    if hits > 0 {
+        log::info!(
+            "playlist: {}/{} tracks from DB cache, {} from disk",
+            hits,
+            paths.len(),
+            paths.len() - hits
+        );
+    }
+
+    items
+}
+
+/// Try to open the DB without exiting on failure (used for optional cache).
+fn open_db_optional() -> Option<koan_core::db::connection::Database> {
+    koan_core::db::connection::Database::open_default().ok()
+}
+
+/// Build a PlaylistItem from a DB TrackRow (no disk IO).
+fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> PlaylistItem {
+    PlaylistItem {
+        id: QueueItemId::new(),
+        path: path.to_path_buf(),
+        title: track.title.clone(),
+        artist: track.artist_name.clone(),
+        album_artist: track.album_artist_name.clone(),
+        album: track.album_title.clone(),
+        year: None, // TrackRow doesn't carry album date; cosmetic only
+        codec: track.codec.clone(),
+        track_number: track.track_number.map(|n| n as i64),
+        disc: track.disc.map(|n| n as i64),
+        duration_ms: track.duration_ms.map(|d| d as u64),
+        load_state: LoadState::Ready,
+    }
+}
+
+/// Read metadata from disk and build a PlaylistItem.
+fn read_metadata_to_item(p: &Path) -> PlaylistItem {
+    match koan_core::index::metadata::read_metadata(p) {
+        Ok(meta) => PlaylistItem {
+            id: QueueItemId::new(),
+            path: p.to_path_buf(),
+            title: meta.title,
+            artist: meta.artist,
+            album_artist: meta.album_artist.unwrap_or_default(),
+            album: meta.album,
+            year: meta.date.and_then(|d| {
+                if d.len() >= 4 {
+                    Some(d[..4].to_string())
+                } else {
+                    None
+                }
+            }),
+            codec: meta.codec,
+            track_number: meta.track_number.map(|n| n as i64),
+            disc: meta.disc.map(|n| n as i64),
+            duration_ms: meta.duration_ms.map(|d| d as u64),
+            load_state: LoadState::Ready,
+        },
+        Err(_) => {
+            let title = p
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            PlaylistItem {
+                id: QueueItemId::new(),
+                path: p.to_path_buf(),
+                title,
+                artist: String::new(),
+                album_artist: String::new(),
+                album: String::new(),
+                year: None,
+                codec: None,
+                track_number: None,
+                disc: None,
+                duration_ms: None,
+                load_state: LoadState::Ready,
+            }
+        }
+    }
 }
 
 /// Build a PlaylistItem from a TrackRow + album date + cache path.

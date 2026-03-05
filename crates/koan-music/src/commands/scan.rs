@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::Path;
 
 use koan_core::config;
@@ -24,17 +25,37 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
     }
 
     let start = std::time::Instant::now();
-    let on_track = |ev: koan_core::index::scanner::ScanEvent| {
-        println!(
-            "  {} {} {} {}",
-            "+".green(),
-            ev.artist.cyan(),
-            "\u{2014}".dimmed(),
-            ev.title,
-        );
+    let count = std::cell::Cell::new(0usize);
+    let last_draw = std::cell::Cell::new(std::time::Instant::now());
+
+    let on_track = |_ev: koan_core::index::scanner::ScanEvent| {
+        let c = count.get() + 1;
+        count.set(c);
+        // Throttle redraws to every 100ms.
+        let now = std::time::Instant::now();
+        if now.duration_since(last_draw.get()).as_millis() >= 100 {
+            last_draw.set(now);
+            let elapsed = start.elapsed().as_secs_f64();
+            let rate = if elapsed > 0.1 {
+                c as f64 / elapsed
+            } else {
+                0.0
+            };
+            eprint!(
+                "\r{} {} scanned ({:.0}/s)   ",
+                "\u{2022}".green(),
+                c.to_string().cyan(),
+                rate
+            );
+            std::io::stderr().flush().ok();
+        }
     };
+
     let result = koan_core::index::scanner::full_scan(&db, &folders, force, Some(&on_track));
     let elapsed = start.elapsed();
+
+    // Clear the progress line.
+    eprint!("\r{}\r", " ".repeat(60));
 
     println!(
         "{} {} {} added, {} updated, {} removed, {} skipped",

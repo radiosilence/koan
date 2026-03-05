@@ -29,6 +29,7 @@ pub enum LibraryNode {
         title: String,
         number: Option<i32>,
         duration_ms: Option<i64>,
+        source: String,
     },
 }
 
@@ -222,6 +223,7 @@ impl LibraryState {
                 title: t.title,
                 number: t.track_number,
                 duration_ms: t.duration_ms,
+                source: t.source,
             })
             .collect();
 
@@ -524,6 +526,7 @@ fn render_node<'a>(node: &LibraryNode, is_cursor: bool, theme: &Theme) -> Line<'
             title,
             number,
             duration_ms,
+            source,
             ..
         } => {
             let num = number
@@ -547,6 +550,19 @@ fn render_node<'a>(node: &LibraryNode, is_cursor: bool, theme: &Theme) -> Line<'
             } else {
                 theme.hint_desc
             };
+            let source_span = if !is_cursor {
+                let (label, color) = match source.as_str() {
+                    "local" => (" \u{F0A0} ", ratatui::style::Color::Green),   // nf-fa-hdd
+                    "remote" => (" \u{F0C2} ", ratatui::style::Color::Cyan),   // nf-fa-cloud
+                    _ => (" ? ", ratatui::style::Color::Yellow),
+                };
+                Span::styled(
+                    label,
+                    ratatui::style::Style::default().fg(color),
+                )
+            } else {
+                Span::styled("", theme.library_cursor)
+            };
             Line::from(vec![
                 Span::styled(if is_cursor { ">" } else { " " }, theme.library_cursor),
                 Span::raw("    "),
@@ -554,6 +570,7 @@ fn render_node<'a>(node: &LibraryNode, is_cursor: bool, theme: &Theme) -> Line<'
                 Span::styled(title.clone(), style),
                 Span::raw("  "),
                 Span::styled(dur, dur_style),
+                source_span,
             ])
         }
     }

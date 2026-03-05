@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.0
+
+### Added
+
+- **DB cache for playlist loading** — when adding files that are already in the library database, metadata is pulled from SQLite instead of re-reading from disk, making re-adds near-instant
+- **Scan progress bar** — `koan scan` now shows a clean inline progress indicator with track count and rate (e.g. `• 1234 scanned (567/s)`) instead of per-track log spam
+- **Library source indicator** — tracks in the TUI library browser show a colored icon indicating whether they are local (green HDD) or remote (cyan cloud)
+
 ## 0.6.3
 
 ### Added

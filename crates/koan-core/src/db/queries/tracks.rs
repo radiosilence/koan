@@ -328,6 +328,36 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
     Ok(rows)
 }
 
+/// Load all tracks that have a local path into a HashMap keyed by path.
+/// Used by the playlist builder to skip expensive lofty reads for known files.
+pub fn all_tracks_by_path(
+    conn: &Connection,
+) -> Result<std::collections::HashMap<String, TrackRow>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         WHERE t.path IS NOT NULL",
+    )?;
+
+    let rows = stmt
+        .query_map(params![], row_to_track_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let mut map = std::collections::HashMap::with_capacity(rows.len());
+    for row in rows {
+        if let Some(ref path) = row.path {
+            map.insert(path.clone(), row);
+        }
+    }
+    Ok(map)
+}
+
 /// Get all tracks in the library, ordered by artist/album/disc/track.
 pub fn all_tracks(conn: &Connection) -> Result<Vec<TrackRow>, DbError> {
     let mut stmt = conn.prepare(
