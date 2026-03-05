@@ -96,6 +96,15 @@ pub fn cmd_init() {
         base_val = default_val;
         deep_merge_defaults(&mut base_val, existing);
 
+        // library.folders is machine-specific — belongs in config.local.toml.
+        if let Some(lib) = base_val
+            .as_table_mut()
+            .and_then(|root| root.get_mut("library"))
+            .and_then(|v| v.as_table_mut())
+        {
+            lib.remove("folders");
+        }
+
         match toml::to_string_pretty(&base_val) {
             Ok(s) => {
                 let header = "# koan — shareable defaults (safe to commit to dotfiles)\n\n";
@@ -124,11 +133,18 @@ pub fn cmd_init() {
             "(exists)".dimmed()
         );
     } else {
-        let local_content = r#"# koan — machine-specific overrides (gitignored)
+        let default_folders = config::Config::default().library.folders;
+        let folders_str = default_folders
+            .iter()
+            .map(|p| format!("\"{}\"", p.display()))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let local_content = format!(
+            r#"# koan — machine-specific overrides (gitignored)
 # Edit the paths below, then run: koan scan
 
 [library]
-folders = ["/path/to/music"]
+folders = [{folders_str}]
 
 # Uncomment to connect a Navidrome/Subsonic server:
 # (run `koan remote login URL username` instead for interactive setup)
@@ -138,7 +154,8 @@ folders = ["/path/to/music"]
 # url = "https://music.example.com"
 # username = "admin"
 # password = ""
-"#;
+"#
+        );
         if let Err(e) = std::fs::write(&local_path, local_content) {
             eprintln!("{} {}", "error:".red().bold(), e);
         } else {
