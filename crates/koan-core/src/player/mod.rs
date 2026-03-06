@@ -316,7 +316,20 @@ impl Player {
                     }
                     let to_read = ((available - offset) as usize).min(buf.len());
                     match file.read(&mut buf[..to_read]) {
-                        Ok(0) => break,
+                        Ok(0) => {
+                            // File data may lag behind bytes_written (OS buffer flush timing).
+                            // Only treat as true EOF if we've pumped all expected data.
+                            if total > 0 && offset >= total {
+                                break;
+                            }
+                            let latest = pump_written.load(Ordering::Relaxed);
+                            if total > 0 && latest >= total && offset >= latest {
+                                break;
+                            }
+                            // Data not yet visible on disk — back off and retry.
+                            thread::sleep(std::time::Duration::from_millis(1));
+                            continue;
+                        }
                         Ok(n) => {
                             pump_buf.push(&buf[..n]);
                             offset += n as u64;
@@ -687,6 +700,27 @@ impl Player {
                     meta.album,
                     meta.duration_ms.map(|d| d as u64),
                 );
+
+                // Re-probe the complete file for accurate duration + stream info.
+                // The initial probe was done on partial streaming data and may have
+                // underestimated duration, causing premature seek clamping or wrong
+                // progress bar display.
+                if let Ok(stream_info) = buffer::probe_file(&path)
+                    && let Some(current) = self.shared_state.track_info()
+                    && current.id == id
+                    && stream_info.duration_ms > current.duration_ms
+                {
+                    log::info!(
+                        "track_ready: duration corrected {}ms → {}ms",
+                        current.duration_ms,
+                        stream_info.duration_ms
+                    );
+                    self.shared_state.set_track_info(Some(TrackInfo {
+                        duration_ms: stream_info.duration_ms,
+                        ..current
+                    }));
+                }
+
                 // Signal UI to re-read cover art and update souvlaki media controls.
                 self.shared_state.signal_metadata_refresh();
                 log::info!("track_ready: metadata refreshed for {:?}", id);

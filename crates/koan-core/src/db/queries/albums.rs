@@ -26,12 +26,17 @@ pub fn get_or_create_album(
         .ok();
 
     if let Some(id) = existing {
-        if let Some(rid) = remote_id {
-            conn.execute(
-                "UPDATE albums SET remote_id = ?1 WHERE id = ?2 AND remote_id IS NULL",
-                params![rid, id],
-            )?;
-        }
+        // Update mutable fields so rescans pick up format upgrades (e.g. MP3→FLAC),
+        // corrected dates, or newly-added remote IDs.
+        conn.execute(
+            "UPDATE albums SET
+                codec      = COALESCE(?1, codec),
+                date       = COALESCE(?2, date),
+                label      = COALESCE(?3, label),
+                remote_id  = COALESCE(?4, remote_id)
+             WHERE id = ?5",
+            params![codec, date, label, remote_id, id],
+        )?;
         return Ok(id);
     }
 
@@ -156,6 +161,119 @@ mod tests {
         )
         .unwrap();
         assert_eq!(a1, a2);
+    }
+
+    #[test]
+    fn test_album_codec_updated_on_format_upgrade() {
+        let db = test_db();
+        let artist = get_or_create_artist(&db.conn, "WAGDUG FUTURISTIC UNITY", None).unwrap();
+
+        // First scan: album indexed as MP3.
+        let id1 = get_or_create_album(
+            &db.conn,
+            "HAKAI",
+            artist,
+            Some("2008"),
+            None,
+            None,
+            Some("MP3"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        let codec: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT codec FROM albums WHERE id = ?1",
+                params![id1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(codec.as_deref(), Some("MP3"));
+
+        // Re-scan after upgrading MP3→FLAC: same album, new codec.
+        let id2 = get_or_create_album(
+            &db.conn,
+            "HAKAI",
+            artist,
+            Some("2008"),
+            None,
+            None,
+            Some("FLAC"),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(id1, id2, "should return the same album ID");
+
+        let codec: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT codec FROM albums WHERE id = ?1",
+                params![id1],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            codec.as_deref(),
+            Some("FLAC"),
+            "album codec should be updated after format upgrade"
+        );
+    }
+
+    #[test]
+    fn test_album_codec_not_nulled_by_missing_codec() {
+        let db = test_db();
+        let artist = get_or_create_artist(&db.conn, "Boards of Canada", None).unwrap();
+
+        // First scan with codec.
+        let id = get_or_create_album(
+            &db.conn,
+            "MHTRTC",
+            artist,
+            Some("1998"),
+            None,
+            None,
+            Some("FLAC"),
+            Some("Warp"),
+            None,
+        )
+        .unwrap();
+
+        // Re-encounter with no codec (e.g. remote sync without codec info).
+        get_or_create_album(
+            &db.conn,
+            "MHTRTC",
+            artist,
+            Some("1998"),
+            None,
+            None,
+            None, // no codec
+            None, // no label
+            None,
+        )
+        .unwrap();
+
+        let (codec, label): (Option<String>, Option<String>) = db
+            .conn
+            .query_row(
+                "SELECT codec, label FROM albums WHERE id = ?1",
+                params![id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            codec.as_deref(),
+            Some("FLAC"),
+            "codec should not be nulled by a None value"
+        );
+        assert_eq!(
+            label.as_deref(),
+            Some("Warp"),
+            "label should not be nulled by a None value"
+        );
     }
 
     #[test]
