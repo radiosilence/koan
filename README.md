@@ -14,7 +14,10 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 ### Install
 
 ```bash
-# pre-built binary via mise (recommended)
+# homebrew (recommended)
+brew install radiosilence/koan/koan
+
+# pre-built binary via mise
 mise use -g github:radiosilence/koan@latest
 
 # or via cargo

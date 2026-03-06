@@ -210,3 +210,70 @@ jobs:
         run: cargo publish -p koan-music --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  update-homebrew:
+    name: Update Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: [publish-release, check-version]
+    if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Update tap formula
+        env:
+          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$GITHUB_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set, skipping tap update"
+            exit 0
+          fi
+
+          VERSION="${{ needs.check-version.outputs.version }}"
+
+          ARM_TAR=$(find artifacts/ -name 'koan-macos-arm64.tar.gz' -type f)
+          INTEL_TAR=$(find artifacts/ -name 'koan-macos-x86_64.tar.gz' -type f)
+          ARM_SHA=$(sha256sum "$ARM_TAR" | awk '{print $1}')
+          INTEL_SHA=$(sha256sum "$INTEL_TAR" | awk '{print $1}')
+
+          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/radiosilence/homebrew-koan.git" /tmp/homebrew-tap
+          cd /tmp/homebrew-tap
+
+          cat > Formula/koan.rb <<FORMULA
+          class Koan < Formula
+            desc "Bit-perfect macOS music player with TUI, gapless playback, and Navidrome/Subsonic support"
+            homepage "https://github.com/radiosilence/koan"
+            version "${VERSION}"
+            license "MIT"
+
+            on_arm do
+              url "https://github.com/radiosilence/koan/releases/download/v#{version}/koan-macos-arm64.tar.gz"
+              sha256 "${ARM_SHA}"
+            end
+
+            on_intel do
+              url "https://github.com/radiosilence/koan/releases/download/v#{version}/koan-macos-x86_64.tar.gz"
+              sha256 "${INTEL_SHA}"
+            end
+
+            def install
+              bin.install "koan"
+            end
+
+            test do
+              assert_match "koan", shell_output("#{bin}/koan --version")
+            end
+          end
+          FORMULA
+
+          # Remove leading whitespace from heredoc indentation
+          sed -i 's/^          //' Formula/koan.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "Update koan to v${VERSION}"
+          git push
