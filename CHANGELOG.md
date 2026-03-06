@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.2
+
+### Added
+
+- **Homebrew tap** — `brew install radiosilence/koan/koan`. Formula auto-updates on each release via CI
+
 ## 0.8.1
 
 ### Added
