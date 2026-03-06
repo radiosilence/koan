@@ -224,10 +224,10 @@ jobs:
 
       - name: Update tap formula
         env:
-          GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           if [ -z "$GITHUB_TOKEN" ]; then
-            echo "HOMEBREW_TAP_TOKEN not set, skipping tap update"
+            echo "RELEASE_TOKEN not set, skipping tap update"
             exit 0
           fi
 
