@@ -52,6 +52,8 @@ pub enum PlayerCommand {
     BeginUndoBatch,
     /// End the batch — collapse collected entries into one undo step.
     EndUndoBatch,
+    /// Switch output audio device by name. Restarts engine on current track.
+    SetOutputDevice(String),
 }
 
 /// Bounded SPSC command channel.

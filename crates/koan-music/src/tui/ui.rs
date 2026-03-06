@@ -5,6 +5,7 @@ use ratatui::widgets::{Clear, Paragraph, Widget};
 
 use super::app::{App, LibraryFocus, Mode};
 use super::context_menu::{ContextMenuOverlay, context_menu_rect_at};
+use super::device_selector::DeviceSelectorOverlay;
 use super::keys::HintBar;
 use super::library::LibraryView;
 use super::lyrics::LyricsPanel;
@@ -225,6 +226,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     {
         app.layout.organize_area = organize_popup_rect(area);
         let overlay = OrganizeOverlay::new(org, &app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    // Device selector overlay.
+    if app.mode == Mode::DeviceSelector
+        && let Some(ref selector) = app.device_selector
+    {
+        let overlay = DeviceSelectorOverlay::new(selector, &app.theme);
         frame.render_widget(overlay, area);
     }
 

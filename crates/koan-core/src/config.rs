@@ -48,6 +48,10 @@ pub struct PlaybackConfig {
     /// ReplayGain pre-amplification in dB. Applied on top of track/album gain.
     /// Positive values boost, negative values attenuate. Default: 0.0.
     pub pre_amp_db: f64,
+    /// Output audio device name. None = system default.
+    /// Persisted by name (not ID) since IDs can change across reboots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_device: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -97,6 +101,7 @@ impl Default for PlaybackConfig {
             target_fps: 60,
             show_fps: false,
             pre_amp_db: 0.0,
+            output_device: None,
         }
     }
 }
@@ -506,6 +511,51 @@ custom = "local-pattern"
         assert_eq!(cfg.organize.patterns.len(), 2);
         assert_eq!(cfg.organize.patterns["standard"], "base-pattern");
         assert_eq!(cfg.organize.patterns["custom"], "local-pattern");
+    }
+
+    #[test]
+    fn test_output_device_config_roundtrip() {
+        let mut cfg = Config::default();
+        cfg.playback.output_device = Some("My DAC".into());
+
+        let serialized = toml::to_string_pretty(&cfg).unwrap();
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(
+            deserialized.playback.output_device.as_deref(),
+            Some("My DAC")
+        );
+    }
+
+    #[test]
+    fn test_output_device_config_default_is_none() {
+        let cfg = Config::default();
+        assert!(cfg.playback.output_device.is_none());
+
+        // Roundtrip: None should not appear in serialized output.
+        let serialized = toml::to_string_pretty(&cfg).unwrap();
+        assert!(!serialized.contains("output_device"));
+        let deserialized: Config = toml::from_str(&serialized).unwrap();
+        assert!(deserialized.playback.output_device.is_none());
+    }
+
+    #[test]
+    fn test_output_device_config_from_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[playback]
+output_device = "External Speakers"
+"#,
+        )
+        .unwrap();
+
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(
+            cfg.playback.output_device.as_deref(),
+            Some("External Speakers")
+        );
     }
 
     #[test]

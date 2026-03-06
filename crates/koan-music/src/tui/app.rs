@@ -32,6 +32,15 @@ pub enum Mode {
     CoverArtZoom,
     ContextMenu,
     Organize,
+    DeviceSelector,
+}
+
+/// State for the output device selector modal.
+pub struct DeviceSelectorState {
+    pub devices: Vec<String>,
+    pub cursor: usize,
+    /// Name of the currently active device (for marking).
+    pub current_device: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -199,6 +208,9 @@ pub struct App {
     /// Organize modal state (when in Organize mode).
     pub organize: Option<super::organize::OrganizeModalState>,
 
+    /// Device selector modal state (when in DeviceSelector mode).
+    pub device_selector: Option<DeviceSelectorState>,
+
     /// Stack of previous modes — push before entering a modal, pop when leaving.
     pub mode_stack: Vec<Mode>,
 
@@ -305,6 +317,7 @@ impl App {
             art: ArtState::default(),
             context_menu: None,
             organize: None,
+            device_selector: None,
             mode_stack: Vec::new(),
             last_mouse_row: None,
             scrollbar_grab_offset: None,
@@ -650,6 +663,7 @@ impl App {
             Mode::CoverArtZoom => self.handle_zoom_key(key),
             Mode::ContextMenu => self.handle_context_menu_key(key),
             Mode::Organize => self.handle_organize_key(key),
+            Mode::DeviceSelector => self.handle_device_selector_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -795,8 +809,82 @@ impl App {
             {
                 self.tx.send(PlayerCommand::Redo).ok();
             }
+            KeyCode::Char('D') => {
+                self.open_device_selector();
+            }
             KeyCode::Char('/') => {
                 self.open_queue_jump();
+            }
+            _ => {}
+        }
+    }
+
+    fn open_device_selector(&mut self) {
+        match koan_core::audio::device::list_output_devices() {
+            Ok(devices) => {
+                let device_names: Vec<String> = devices.iter().map(|d| d.name.clone()).collect();
+                if device_names.is_empty() {
+                    return;
+                }
+                let cfg = koan_core::config::Config::load().unwrap_or_default();
+                let current = cfg.playback.output_device;
+
+                // Position cursor on the current device if possible.
+                let cursor = current
+                    .as_ref()
+                    .and_then(|name| device_names.iter().position(|d| d == name))
+                    .unwrap_or(0);
+
+                self.device_selector = Some(DeviceSelectorState {
+                    devices: device_names,
+                    cursor,
+                    current_device: current,
+                });
+                self.push_mode(Mode::DeviceSelector);
+            }
+            Err(e) => {
+                log::error!("failed to list output devices: {}", e);
+            }
+        }
+    }
+
+    fn handle_device_selector_key(&mut self, key: KeyEvent) {
+        let Some(ref mut selector) = self.device_selector else {
+            return;
+        };
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => {
+                self.device_selector = None;
+                self.pop_mode();
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                if !selector.devices.is_empty() {
+                    if selector.cursor == 0 {
+                        selector.cursor = selector.devices.len() - 1;
+                    } else {
+                        selector.cursor -= 1;
+                    }
+                }
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                if !selector.devices.is_empty() {
+                    if selector.cursor + 1 >= selector.devices.len() {
+                        selector.cursor = 0;
+                    } else {
+                        selector.cursor += 1;
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                let name = selector.devices[selector.cursor].clone();
+                self.tx
+                    .send(PlayerCommand::SetOutputDevice(name.clone()))
+                    .ok();
+                // Update local state so the marker shows immediately.
+                if let Some(ref mut sel) = self.device_selector {
+                    sel.current_device = Some(name);
+                }
             }
             _ => {}
         }

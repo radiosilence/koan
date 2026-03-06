@@ -46,6 +46,8 @@ pub struct Player {
     /// When Some, undo entries are collected into this buffer instead of pushed
     /// directly onto the undo stack. Flushed on EndUndoBatch.
     batch_buffer: Option<Vec<UndoEntry>>,
+    /// Configured output device name. None = system default.
+    output_device_name: Option<String>,
 }
 
 /// Holds the resources for an active playback session.
@@ -81,6 +83,7 @@ impl Player {
             _viz_analyzer: viz_analyzer,
             undo_stack: UndoStack::new(),
             batch_buffer: None,
+            output_device_name: cfg.playback.output_device.clone(),
         }
     }
 
@@ -108,6 +111,57 @@ impl Player {
     /// Access undo stack (for tests and UI state queries).
     pub fn undo_stack(&self) -> &UndoStack {
         &self.undo_stack
+    }
+
+    /// Resolve the output device ID: use configured device name if set,
+    /// falling back to system default if not set or if the named device is unavailable.
+    fn resolve_device_id(&self) -> Result<coreaudio_sys::AudioDeviceID, PlayerError> {
+        if let Some(ref name) = self.output_device_name {
+            match device::find_output_device_by_name(name) {
+                Ok(id) => return Ok(id),
+                Err(e) => {
+                    log::warn!(
+                        "configured output device '{}' not found, falling back to default: {}",
+                        name,
+                        e
+                    );
+                }
+            }
+        }
+        Ok(device::default_output_device()?)
+    }
+
+    /// Switch the output device. Persists to config and restarts the engine
+    /// on the current track if playing.
+    pub fn set_output_device(&mut self, name: String) {
+        log::info!("switching output device to: {}", name);
+        self.output_device_name = Some(name.clone());
+
+        // Persist to config.
+        if let Ok(mut cfg) = crate::config::Config::load() {
+            cfg.playback.output_device = Some(name);
+            if let Err(e) = cfg.save() {
+                log::error!("failed to save output device config: {}", e);
+            }
+        }
+
+        // Restart playback on the new device if currently playing/paused.
+        if let Some(info) = self.shared_state.track_info() {
+            let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
+            let position_ms = self.shared_state.position_ms();
+            if let Err(e) = self.start_playback(info.id, &info.path, position_ms) {
+                log::error!("failed to restart playback on new device: {}", e);
+                return;
+            }
+            if was_paused {
+                self.pause();
+            }
+        }
+    }
+
+    /// Get the current output device name (if configured).
+    pub fn output_device_name(&self) -> Option<&str> {
+        self.output_device_name.as_deref()
     }
 
     /// Get a command sender for the UI layer.
@@ -187,7 +241,7 @@ impl Player {
             }
         );
 
-        let device_id = device::default_output_device()?;
+        let device_id = self.resolve_device_id()?;
         let device_rate = device::get_device_sample_rate(device_id)?;
         let source_rate = info.sample_rate as f64;
 
@@ -378,7 +432,7 @@ impl Player {
             info.duration_ms,
         );
 
-        let device_id = device::default_output_device()?;
+        let device_id = self.resolve_device_id()?;
         let device_rate = device::get_device_sample_rate(device_id)?;
         let source_rate = info.sample_rate as f64;
 
@@ -862,6 +916,7 @@ impl Player {
                     }
                 }
             }
+            PlayerCommand::SetOutputDevice(name) => self.set_output_device(name),
         }
     }
 

@@ -35,6 +35,7 @@ impl Widget for HintBar<'_> {
                 ("f", "\u{2605}fav"),
                 ("z", "art"),
                 ("L", "lyrics"),
+                ("D", "device"),
                 ("C-z", "undo"),
                 ("q", "quit"),
             ],
@@ -72,6 +73,11 @@ impl Widget for HintBar<'_> {
                 ("tab", "focus"),
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "run"),
+                ("esc", "cancel"),
+            ],
+            Mode::DeviceSelector => vec![
+                ("\u{2191}\u{2193}", "navigate"),
+                ("ret", "select"),
                 ("esc", "cancel"),
             ],
             Mode::Picker(_) => vec![

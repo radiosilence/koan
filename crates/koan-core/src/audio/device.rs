@@ -12,6 +12,8 @@ pub enum DeviceError {
     NoDevices,
     #[error("device not found: {0}")]
     NotFound(AudioDeviceID),
+    #[error("device not found by name: {0}")]
+    NotFoundByName(String),
 }
 
 type Result<T> = std::result::Result<T, DeviceError>;
@@ -247,6 +249,16 @@ pub fn get_device_sample_rate(device_id: AudioDeviceID) -> Result<f64> {
     })?;
 
     Ok(rate)
+}
+
+/// Find an output device by name. Returns the device ID if found.
+pub fn find_output_device_by_name(name: &str) -> Result<AudioDeviceID> {
+    let devices = list_output_devices()?;
+    devices
+        .iter()
+        .find(|d| d.name == name)
+        .map(|d| d.id)
+        .ok_or_else(|| DeviceError::NotFoundByName(name.to_string()))
 }
 
 /// Set the nominal sample rate of a device (for bit-perfect matching).
