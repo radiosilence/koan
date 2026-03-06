@@ -125,6 +125,9 @@ enum Commands {
         /// Open the TUI in library browse mode
         #[arg(long, short = 'l')]
         library: bool,
+        /// Clear saved session state and start fresh
+        #[arg(long)]
+        clear: bool,
     },
     /// Probe a file and show format info
     Probe {
@@ -232,14 +235,15 @@ fn main() {
 
     match cli.command {
         // No subcommand — open TUI (use `l` to browse library).
-        None => commands::cmd_play(&[], &[], None, None, false),
+        None => commands::cmd_play(&[], &[], None, None, false, false),
         Some(Commands::Play {
             paths,
             ids,
             album,
             artist,
             library,
-        }) => commands::cmd_play(&paths, &ids, album, artist, library),
+            clear,
+        }) => commands::cmd_play(&paths, &ids, album, artist, library, clear),
         Some(Commands::Probe { path }) => commands::cmd_probe(&path),
         Some(Commands::Devices) => commands::cmd_devices(),
         Some(Commands::Scan { path, force }) => commands::cmd_scan(path.as_deref(), force),

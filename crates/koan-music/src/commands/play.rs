@@ -6,6 +6,7 @@ use koan_core::config;
 use koan_core::db::queries;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
+use koan_core::session::SessionState;
 use owo_colors::OwoColorize;
 
 use super::{
@@ -26,7 +27,11 @@ pub fn cmd_play(
     album: Option<i64>,
     artist: Option<i64>,
     start_in_library: bool,
+    clear_session: bool,
 ) {
+    if clear_session {
+        koan_core::session::clear();
+    }
     // Gather track IDs to resolve, or raw file paths.
     let track_ids: Option<Vec<i64>> = if let Some(album_id) = album {
         let db = open_db();
@@ -62,7 +67,7 @@ pub fn cmd_play(
 
     let (state, _timeline, viz_snapshot, tx) = Player::spawn();
 
-    let expects_playback = track_ids.is_some() || !paths.is_empty();
+    let mut expects_playback = track_ids.is_some() || !paths.is_empty();
 
     if let Some(ids) = track_ids {
         // Resolve ALL tracks in the background — the TUI starts immediately
@@ -110,8 +115,31 @@ pub fn cmd_play(
             .expect("player thread died");
         tx.send(PlayerCommand::Play(first_id))
             .expect("player thread died");
+    } else if !clear_session {
+        // No explicit playback requested — try restoring previous session.
+        if let Some(session) = SessionState::load() {
+            let (items, cursor, position_ms, was_playing) = session.into_playlist();
+            if !items.is_empty() {
+                let resume_id = cursor.or_else(|| items.first().map(|i| i.id));
+                tx.send(PlayerCommand::AddToPlaylist(items))
+                    .expect("player thread died");
+                if let Some(id) = resume_id {
+                    tx.send(PlayerCommand::Play(id))
+                        .expect("player thread died");
+                    if position_ms > 0 {
+                        tx.send(PlayerCommand::Seek(position_ms))
+                            .expect("player thread died");
+                    }
+                    if !was_playing {
+                        tx.send(PlayerCommand::Pause)
+                            .expect("player thread died");
+                    }
+                }
+                expects_playback = true;
+            }
+        }
     }
-    // No paths/ids and no library — just open the TUI empty.
+    // No paths/ids/session and no library — just open the TUI empty.
     // User can add tracks via pickers (p/a/r) or library browser (l).
 
     // Run the Ratatui TUI immediately — don't wait for playback to start.
@@ -413,6 +441,12 @@ fn run_tui(
         if app.quit {
             break;
         }
+    }
+
+    // Persist session state for next launch.
+    let session = SessionState::capture(&app.state);
+    if let Err(e) = session.save() {
+        log::warn!("failed to save session: {e}");
     }
 
     // Restore terminal.

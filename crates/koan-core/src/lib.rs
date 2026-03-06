@@ -8,3 +8,4 @@ pub mod lyrics;
 pub mod organize;
 pub mod player;
 pub mod remote;
+pub mod session;

@@ -168,11 +168,11 @@ pub fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
     if let Some(ids) = result {
         match kind {
             PickerKind::Track => {
-                cmd_play(&[], &ids, None, None, false);
+                cmd_play(&[], &ids, None, None, false, false);
             }
             PickerKind::Album => {
                 if let Some(&album_id) = ids.first() {
-                    cmd_play(&[], &[], Some(album_id), None, false);
+                    cmd_play(&[], &[], Some(album_id), None, false, false);
                 }
             }
             PickerKind::Artist => {
@@ -181,7 +181,7 @@ pub fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
                     let albums =
                         queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
                     if albums.is_empty() {
-                        cmd_play(&[], &[], None, Some(artist_id), false);
+                        cmd_play(&[], &[], None, Some(artist_id), false, false);
                     } else {
                         // Show album picker for this artist with an "all tracks" entry.
                         let mut items = vec![PickerItem {
@@ -321,9 +321,9 @@ pub fn cmd_pick(_query: Option<&str>, album_mode: bool, artist_mode: bool) {
 
                         if let Some(album_ids) = album_result {
                             if is_all_tracks_sentinel(album_ids[0]) {
-                                cmd_play(&[], &[], None, Some(artist_id), false);
+                                cmd_play(&[], &[], None, Some(artist_id), false, false);
                             } else {
-                                cmd_play(&[], &[], Some(album_ids[0]), None, false);
+                                cmd_play(&[], &[], Some(album_ids[0]), None, false, false);
                             }
                         }
                     }
