@@ -54,6 +54,8 @@ pub enum PlayerCommand {
     EndUndoBatch,
     /// Switch output audio device by name. Restarts engine on current track.
     SetOutputDevice(String),
+    /// Clear the configured output device, reverting to system default.
+    ClearOutputDevice,
 }
 
 /// Bounded SPSC command channel.

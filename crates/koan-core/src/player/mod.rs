@@ -159,6 +159,32 @@ impl Player {
         }
     }
 
+    /// Clear the configured output device, reverting to system default.
+    pub fn clear_output_device(&mut self) {
+        log::info!("reverting to system default output device");
+        self.output_device_name = None;
+
+        if let Ok(mut cfg) = crate::config::Config::load() {
+            cfg.playback.output_device = None;
+            if let Err(e) = cfg.save() {
+                log::error!("failed to save output device config: {}", e);
+            }
+        }
+
+        // Restart playback on the default device if currently playing/paused.
+        if let Some(info) = self.shared_state.track_info() {
+            let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
+            let position_ms = self.shared_state.position_ms();
+            if let Err(e) = self.start_playback(info.id, &info.path, position_ms) {
+                log::error!("failed to restart playback on default device: {}", e);
+                return;
+            }
+            if was_paused {
+                self.pause();
+            }
+        }
+    }
+
     /// Get the current output device name (if configured).
     pub fn output_device_name(&self) -> Option<&str> {
         self.output_device_name.as_deref()
@@ -917,6 +943,7 @@ impl Player {
                 }
             }
             PlayerCommand::SetOutputDevice(name) => self.set_output_device(name),
+            PlayerCommand::ClearOutputDevice => self.clear_output_device(),
         }
     }
 

@@ -45,11 +45,15 @@ impl Widget for DeviceSelectorOverlay<'_> {
                 break;
             }
             let is_selected = i == self.state.cursor;
-            let is_current = self
-                .state
-                .current_device
-                .as_ref()
-                .is_some_and(|c| c == name);
+            // Index 0 is "System Default" — current when no device is configured.
+            let is_current = if i == 0 {
+                self.state.current_device.is_none()
+            } else {
+                self.state
+                    .current_device
+                    .as_ref()
+                    .is_some_and(|c| c == name)
+            };
 
             let base_style = if is_selected {
                 Style::default()

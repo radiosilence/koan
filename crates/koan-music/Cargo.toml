@@ -19,7 +19,7 @@ clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
 crossbeam-channel = "0.5"
 crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-koan-core = { path = "../koan-core", version = "0.7.2" }
+koan-core = { path = "../koan-core", version = "0.8" }
 libc = "0.2"
 log = "0.4"
 nucleo = "0.5"

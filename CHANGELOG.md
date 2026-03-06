@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- **Output device selector** — press `Shift+D` to open a modal listing all available CoreAudio output devices. Current device is marked with a green bullet. Selecting a device switches playback immediately (preserving position and pause state). Choice is persisted to `[playback] output_device` in config.toml and restored on startup, with automatic fallback to system default if the device is unavailable
+
+### Fixed
+
+- **Stale album codec after format upgrade** — upgrading files from MP3→FLAC (or any format change) now correctly updates the album's codec in the picker. Previously `get_or_create_album()` only set codec on first insert, so the album row kept the old format even after all tracks were re-scanned
+- **Streaming tracks skip mid-playback** — two issues causing premature track advancement during streaming: (1) the pump thread treated `read() → Ok(0)` as EOF even when the download reported more bytes available (OS buffer flush lag), now retries instead of breaking; (2) `refresh_track_metadata` (called when download completes mid-stream) didn't update `TrackInfo.duration_ms`, leaving the UI with an underestimated duration from the initial 256KB partial probe — now re-probes the complete file
+
 ## 0.7.2
 
 ### Fixed

@@ -822,14 +822,15 @@ impl App {
     fn open_device_selector(&mut self) {
         match koan_core::audio::device::list_output_devices() {
             Ok(devices) => {
-                let device_names: Vec<String> = devices.iter().map(|d| d.name.clone()).collect();
-                if device_names.is_empty() {
-                    return;
-                }
+                // "System Default" as first entry, then real devices.
+                let mut device_names: Vec<String> = Vec::with_capacity(devices.len() + 1);
+                device_names.push("System Default".to_string());
+                device_names.extend(devices.iter().map(|d| d.name.clone()));
+
                 let cfg = koan_core::config::Config::load().unwrap_or_default();
                 let current = cfg.playback.output_device;
 
-                // Position cursor on the current device if possible.
+                // Position cursor: None (system default) → index 0, else find the device.
                 let cursor = current
                     .as_ref()
                     .and_then(|name| device_names.iter().position(|d| d == name))
@@ -877,13 +878,21 @@ impl App {
                 }
             }
             KeyCode::Enter => {
-                let name = selector.devices[selector.cursor].clone();
-                self.tx
-                    .send(PlayerCommand::SetOutputDevice(name.clone()))
-                    .ok();
-                // Update local state so the marker shows immediately.
-                if let Some(ref mut sel) = self.device_selector {
-                    sel.current_device = Some(name);
+                let idx = selector.cursor;
+                if idx == 0 {
+                    // "System Default" — clear the configured device.
+                    self.tx.send(PlayerCommand::ClearOutputDevice).ok();
+                    if let Some(ref mut sel) = self.device_selector {
+                        sel.current_device = None;
+                    }
+                } else {
+                    let name = selector.devices[idx].clone();
+                    self.tx
+                        .send(PlayerCommand::SetOutputDevice(name.clone()))
+                        .ok();
+                    if let Some(ref mut sel) = self.device_selector {
+                        sel.current_device = Some(name);
+                    }
                 }
             }
             _ => {}
