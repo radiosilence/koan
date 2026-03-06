@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.1
+
+### Added
+
+- **Help modal** — press `?` to open a two-column keybindings reference showing all modes (playback, navigation, queue edit, picker, library). Status bar now shows only high-priority hints; full reference lives in the modal
+
 ## 0.8.0
 
 ### Added

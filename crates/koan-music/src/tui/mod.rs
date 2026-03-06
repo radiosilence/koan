@@ -2,6 +2,7 @@ pub mod app;
 pub mod context_menu;
 pub mod cover_art;
 pub mod device_selector;
+pub mod help_modal;
 pub mod keys;
 pub mod library;
 pub mod lyrics;

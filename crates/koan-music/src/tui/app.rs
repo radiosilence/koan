@@ -33,6 +33,7 @@ pub enum Mode {
     ContextMenu,
     Organize,
     DeviceSelector,
+    HelpModal,
 }
 
 /// State for the output device selector modal.
@@ -664,6 +665,7 @@ impl App {
             Mode::ContextMenu => self.handle_context_menu_key(key),
             Mode::Organize => self.handle_organize_key(key),
             Mode::DeviceSelector => self.handle_device_selector_key(key),
+            Mode::HelpModal => self.handle_help_modal_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -815,6 +817,9 @@ impl App {
             KeyCode::Char('/') => {
                 self.open_queue_jump();
             }
+            KeyCode::Char('?') => {
+                self.push_mode(Mode::HelpModal);
+            }
             _ => {}
         }
     }
@@ -894,6 +899,15 @@ impl App {
                         sel.current_device = Some(name);
                     }
                 }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_help_modal_key(&mut self, key: KeyEvent) {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('?') | KeyCode::Char('q') => {
+                self.pop_mode();
             }
             _ => {}
         }

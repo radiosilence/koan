@@ -31,13 +31,8 @@ impl Widget for HintBar<'_> {
                 ("r", "artist"),
                 ("l", "library"),
                 ("e", "edit"),
-                ("i", "info"),
-                ("f", "\u{2605}fav"),
-                ("z", "art"),
-                ("L", "lyrics"),
-                ("D", "device"),
-                ("C-z", "undo"),
                 ("q", "quit"),
+                ("?", "help"),
             ],
             Mode::QueueEdit => vec![
                 ("\u{2191}\u{2193}", "navigate"),
@@ -75,6 +70,7 @@ impl Widget for HintBar<'_> {
                 ("ret", "run"),
                 ("esc", "cancel"),
             ],
+            Mode::HelpModal => vec![("esc", "close"), ("?", "close")],
             Mode::DeviceSelector => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "select"),
