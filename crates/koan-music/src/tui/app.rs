@@ -1587,25 +1587,42 @@ impl App {
                         self.queue.scroll_offset,
                         event.row,
                     ) {
-                        // Select all tracks in the album group.
-                        self.queue.selected_ids.clear();
-                        for i in first..=last {
-                            if let Some(entry) = visible.get(i) {
-                                self.queue.selected_ids.insert(entry.id);
+                        // Double-click on album header -> play from first track.
+                        let now = std::time::Instant::now();
+                        let is_double = self.last_click_idx == Some(first)
+                            && self
+                                .last_click_time
+                                .is_some_and(|t| now.duration_since(t).as_millis() < 400);
+
+                        if is_double {
+                            self.last_click_idx = None;
+                            self.last_click_time = None;
+                            self.queue.cursor = first;
+                            self.play_at_cursor();
+                        } else {
+                            self.last_click_idx = Some(first);
+                            self.last_click_time = Some(now);
+
+                            // Select all tracks in the album group.
+                            self.queue.selected_ids.clear();
+                            for i in first..=last {
+                                if let Some(entry) = visible.get(i) {
+                                    self.queue.selected_ids.insert(entry.id);
+                                }
                             }
+                            self.queue.cursor = first;
+                            if let Some(entry) = visible.get(first) {
+                                self.queue.anchor_id = Some(entry.id);
+                            }
+                            // Start drag so the album group can be reordered.
+                            self.queue.drag = Some(DragState {
+                                from_index: first,
+                                current_y: event.row,
+                                multi: true,
+                                anchor_offset: 0,
+                                last_group_start: Some(first),
+                            });
                         }
-                        self.queue.cursor = first;
-                        if let Some(entry) = visible.get(first) {
-                            self.queue.anchor_id = Some(entry.id);
-                        }
-                        // Start drag so the album group can be reordered.
-                        self.queue.drag = Some(DragState {
-                            from_index: first,
-                            current_y: event.row,
-                            multi: true,
-                            anchor_offset: 0,
-                            last_group_start: Some(first),
-                        });
                     }
                     return;
                 };
