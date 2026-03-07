@@ -217,6 +217,49 @@ impl SubsonicClient {
         let resp = self.get("getStarred2")?;
         Ok(resp.starred2.map(|s| s.song).unwrap_or_default())
     }
+
+    /// Create a sharing link for one or more resources (songs, albums, etc).
+    /// Returns the created share including its ID which forms the public URL.
+    pub fn create_share(
+        &self,
+        ids: &[&str],
+        description: Option<&str>,
+    ) -> Result<SubsonicShare, SubsonicError> {
+        let url = format!("{}/rest/createShare", self.base_url);
+        let mut params = self.auth_params();
+        if let Some(desc) = description {
+            params.insert("description".into(), desc.to_string());
+        }
+
+        // Subsonic API takes `id` as a repeated param for multiple resources.
+        let mut query: Vec<(String, String)> = params.into_iter().collect();
+        for id in ids {
+            query.push(("id".into(), (*id).to_string()));
+        }
+
+        let resp: SubsonicResponseWrapper = self.http.get(&url).query(&query).send()?.json()?;
+
+        let inner = resp.subsonic_response;
+        if inner.status != "ok" {
+            if let Some(err) = inner.error {
+                return Err(SubsonicError::Api {
+                    code: err.code,
+                    message: err.message,
+                });
+            }
+            return Err(SubsonicError::BadResponse);
+        }
+
+        inner
+            .shares
+            .and_then(|s| s.share.into_iter().next())
+            .ok_or(SubsonicError::BadResponse)
+    }
+
+    /// The configured server base URL (for constructing share links etc).
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
 }
 
 // --- Response types ---
@@ -237,6 +280,7 @@ struct SubsonicResponse {
     album_list2: Option<SubsonicAlbumList>,
     search_result3: Option<SubsonicSearchResult>,
     starred2: Option<SubsonicStarred>,
+    shares: Option<SubsonicShares>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -330,6 +374,24 @@ pub struct SubsonicSearchResult {
 pub struct SubsonicStarred {
     #[serde(default)]
     pub song: Vec<SubsonicSong>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubsonicShares {
+    #[serde(default)]
+    share: Vec<SubsonicShare>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubsonicShare {
+    pub id: String,
+    pub url: Option<String>,
+    pub description: Option<String>,
+    pub username: Option<String>,
+    pub created: Option<String>,
+    pub expires: Option<String>,
+    pub visit_count: Option<i64>,
 }
 
 /// Generate a random hex salt string for Subsonic auth.
