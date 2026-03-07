@@ -20,12 +20,40 @@ use crate::tui::picker::{
     artist_id_from_sentinel, is_all_tracks_sentinel,
 };
 
+/// Save the current queue and playback position to DB.
+fn save_playback_state_from_app(app: &tui::app::App) {
+    let (items, cursor) = app.state.snapshot_playlist();
+    if items.is_empty() {
+        return;
+    }
+    let persisted: Vec<koan_core::db::queries::PersistedQueueItem> = items
+        .iter()
+        .map(koan_core::db::queries::PersistedQueueItem::from_playlist_item)
+        .collect();
+
+    // Use the cursor's path as the identifier (stable across restarts, unlike QueueItemId).
+    let cursor_path = cursor
+        .and_then(|cid| items.iter().find(|i| i.id == cid))
+        .map(|i| i.path.to_string_lossy().into_owned());
+    let position_ms = app.state.position_ms();
+
+    if let Ok(db) = koan_core::db::connection::Database::open(&app.db_path) {
+        let _ = koan_core::db::queries::save_playback_state(
+            &db.conn,
+            &persisted,
+            cursor_path.as_deref(),
+            position_ms,
+        );
+    }
+}
+
 pub fn cmd_play(
     paths: &[PathBuf],
     ids: &[i64],
     album: Option<i64>,
     artist: Option<i64>,
     start_in_library: bool,
+    clear_queue: bool,
 ) {
     // Gather track IDs to resolve, or raw file paths.
     let track_ids: Option<Vec<i64>> = if let Some(album_id) = album {
@@ -62,7 +90,13 @@ pub fn cmd_play(
 
     let (state, _timeline, viz_snapshot, tx) = Player::spawn();
 
-    let expects_playback = track_ids.is_some() || !paths.is_empty();
+    // Clear persisted state if requested.
+    if clear_queue && let Ok(db) = koan_core::db::connection::Database::open(&config::db_path()) {
+        let _ = queries::clear_playback_state(&db.conn);
+    }
+
+    let mut expects_playback = track_ids.is_some() || !paths.is_empty();
+    let mut restored_position_ms: Option<u64> = None;
 
     if let Some(ids) = track_ids {
         // Resolve ALL tracks in the background — the TUI starts immediately
@@ -110,6 +144,35 @@ pub fn cmd_play(
             .expect("player thread died");
         tx.send(PlayerCommand::Play(first_id))
             .expect("player thread died");
+    } else if !clear_queue
+        && let Ok(db) = koan_core::db::connection::Database::open(&config::db_path())
+        && let Ok(Some(persisted)) = queries::load_playback_state(&db.conn)
+    {
+        // No explicit playback request — try to restore previous queue from DB.
+        let items: Vec<_> = persisted
+            .items
+            .iter()
+            .map(|i| i.to_playlist_item())
+            .collect();
+        if !items.is_empty() {
+            // Find the cursor item by path match.
+            let cursor_id = persisted.cursor_path.as_ref().and_then(|cp| {
+                items
+                    .iter()
+                    .find(|i| i.path.to_string_lossy() == *cp)
+                    .map(|i| i.id)
+            });
+            tx.send(PlayerCommand::AddToPlaylist(items))
+                .expect("player thread died");
+            // Set cursor without starting playback (paused restore).
+            if let Some(cid) = cursor_id {
+                tx.send(PlayerCommand::Play(cid))
+                    .expect("player thread died");
+                tx.send(PlayerCommand::Pause).expect("player thread died");
+                restored_position_ms = Some(persisted.position_ms);
+            }
+            expects_playback = true;
+        }
     }
     // No paths/ids and no library — just open the TUI empty.
     // User can add tracks via pickers (p/a/r) or library browser (l).
@@ -123,6 +186,7 @@ pub fn cmd_play(
         log_buffer,
         start_in_library,
         expects_playback,
+        restored_position_ms,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
@@ -138,6 +202,7 @@ fn run_tui(
     log_buffer: Arc<Mutex<Vec<String>>>,
     start_in_library: bool,
     expects_playback: bool,
+    restored_position_ms: Option<u64>,
 ) -> std::io::Result<()> {
     use crossterm::{
         event::{
@@ -192,6 +257,9 @@ fn run_tui(
 
     // Load favourites from database.
     app.load_favourites();
+
+    // Deferred seek for restored playback position — sent once the player is ready.
+    let mut pending_seek: Option<u64> = restored_position_ms;
 
     // Media keys (macOS Control Center integration).
     let mut media = crate::media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
@@ -296,6 +364,15 @@ fn run_tui(
 
         // 4. Always tick.
         app.handle_tick();
+
+        // Deferred seek: once the player has track_info (i.e. audio is loaded), seek to
+        // the persisted position. This must wait for the decode thread to start.
+        if let Some(pos) = pending_seek
+            && app.state.track_info().is_some()
+        {
+            tx.send(PlayerCommand::Seek(pos)).ok();
+            pending_seek = None;
+        }
 
         // 5. Media keys + macOS run loop pump.
         if let Some(ref mut mk) = media {
@@ -411,6 +488,8 @@ fn run_tui(
         }
 
         if app.quit {
+            // Persist queue and playback position before exiting.
+            save_playback_state_from_app(&app);
             break;
         }
     }
