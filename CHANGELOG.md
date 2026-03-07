@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- **Navidrome share links** — right-click a song or album header in the queue and select "Share link" to create a public sharing URL via the Subsonic API. The link is copied to clipboard and shown in the hint bar. Prefers album-level shares when all selected tracks are from the same album. Requires `[remote]` to be configured with sharing enabled on the server
+- **Double-click album headers** — double-clicking an album header in the queue now starts playback from the first track of that album
+
 ## 0.8.2
 
 ### Added
