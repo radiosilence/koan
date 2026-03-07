@@ -66,6 +66,27 @@ pub fn remote_id_for_path(conn: &Connection, path: &Path) -> rusqlite::Result<Op
     })
 }
 
+/// Look up the album's remote_id for a track identified by its path.
+/// Returns None if the track or album has no remote_id.
+pub fn album_remote_id_for_path(
+    conn: &Connection,
+    path: &Path,
+) -> rusqlite::Result<Option<String>> {
+    let path_str = path.to_string_lossy();
+    conn.query_row(
+        "SELECT al.remote_id FROM tracks t
+         JOIN albums al ON t.album_id = al.id
+         WHERE (t.path = ?1 OR t.cached_path = ?1 OR t.remote_url = ?1)
+         AND al.remote_id IS NOT NULL",
+        [path_str.as_ref()],
+        |row| row.get(0),
+    )
+    .or_else(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => Ok(None),
+        other => Err(other),
+    })
+}
+
 /// Load all favourite track paths that have a remote_id, returning (path, remote_id) pairs.
 pub fn favourites_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(PathBuf, String)>> {
     let mut stmt = conn.prepare(
