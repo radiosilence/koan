@@ -185,9 +185,18 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         render_queue(frame, app, content_area);
     }
 
-    // Key hints.
-    let hint_bar = HintBar::new(&app.mode, &app.theme);
-    frame.render_widget(hint_bar, chunks[2]);
+    // Key hints / status message.
+    if let Some((ref msg, _)) = app.status_message {
+        let style = app.theme.hint_key;
+        let line = ratatui::text::Line::from(vec![
+            ratatui::text::Span::styled(msg.as_str(), style),
+            ratatui::text::Span::styled("  [Esc] dismiss", app.theme.hint_desc),
+        ]);
+        frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[2]);
+    } else {
+        let hint_bar = HintBar::new(&app.mode, &app.theme);
+        frame.render_widget(hint_bar, chunks[2]);
+    }
 
     // Picker overlay (on top of everything).
     if let Mode::Picker(_) = &app.mode

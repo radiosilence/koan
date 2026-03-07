@@ -51,7 +51,11 @@ pub enum ContextAction {
     ToggleFavourite,
     TrackInfo,
     Organize,
+    CopyShareLink,
 }
+
+/// A status bar message with the instant it was created (for auto-clear timeout).
+type StatusMessage = (String, std::time::Instant);
 
 pub struct ContextMenuState {
     /// (action, label, hotkey char)
@@ -266,6 +270,12 @@ pub struct App {
     /// Visualizer config (enabled flag, fps).
     pub viz_config: koan_core::config::VisualizerConfig,
 
+    /// Transient status message shown in the hint bar. Cleared after a timeout.
+    pub status_message: Option<StatusMessage>,
+
+    /// Pending share result from background thread.
+    pending_share_status: Option<Arc<Mutex<Option<StatusMessage>>>>,
+
     /// Whether to show FPS overlay (from config).
     pub show_fps: bool,
     /// Timestamp of last FPS sample for computing display FPS.
@@ -337,6 +347,8 @@ impl App {
             ticks_per_sec,
             frame_count: 0,
             favourites: std::collections::HashSet::new(),
+            status_message: None,
+            pending_share_status: None,
             show_fps: cfg.playback.show_fps,
             viz_config,
             fps_sample_time: std::time::Instant::now(),
@@ -449,6 +461,25 @@ impl App {
         // Drain log buffer.
         if let Ok(mut logs) = self.log_buffer.lock() {
             self.log_messages.extend(logs.drain(..));
+        }
+
+        // Poll pending share result.
+        let share_done = self
+            .pending_share_status
+            .as_ref()
+            .and_then(|p| p.try_lock().ok().and_then(|mut g| g.take()));
+        if let Some(msg) = share_done {
+            self.status_message = Some(msg);
+            self.pending_share_status = None;
+        }
+
+        // Clear transient status messages after 3 seconds (but not "Copied:" links —
+        // those persist until the user presses Esc).
+        if let Some((msg, ts)) = &self.status_message
+            && !msg.starts_with("Copied:")
+            && ts.elapsed().as_secs() >= 3
+        {
+            self.status_message = None;
         }
 
         // Track playing state.
@@ -673,8 +704,12 @@ impl App {
     fn handle_normal_key(&mut self, key: KeyEvent) {
         match key.code {
             KeyCode::Esc => {
-                self.queue.selected_ids.clear();
-                self.queue.anchor_id = None;
+                if self.status_message.is_some() {
+                    self.status_message = None;
+                } else {
+                    self.queue.selected_ids.clear();
+                    self.queue.anchor_id = None;
+                }
             }
             KeyCode::Char('q') => {
                 self.tx.send(PlayerCommand::Stop).ok();
@@ -1125,19 +1160,32 @@ impl App {
         }
     }
 
-    fn open_context_menu(&mut self) {
-        let visible = self.visible_queue();
-        let is_fav = visible
-            .get(self.queue.cursor)
-            .is_some_and(|e| self.favourites.contains(&e.path));
-        let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
-        let actions = vec![
+    /// Build common context menu actions, conditionally including share if remote is configured.
+    fn build_context_actions(
+        &self,
+        fav_label: &'static str,
+    ) -> Vec<(ContextAction, &'static str, char)> {
+        let mut actions = vec![
             (ContextAction::Play, "Play", 'p'),
             (ContextAction::ToggleFavourite, fav_label, 'f'),
             (ContextAction::TrackInfo, "Track info", 'i'),
             (ContextAction::Remove, "Remove", 'd'),
             (ContextAction::Organize, "Organize files", 'o'),
         ];
+        let cfg = koan_core::config::Config::load().unwrap_or_default();
+        if cfg.remote.enabled && !cfg.remote.password.is_empty() {
+            actions.push((ContextAction::CopyShareLink, "Share link", 's'));
+        }
+        actions
+    }
+
+    fn open_context_menu(&mut self) {
+        let visible = self.visible_queue();
+        let is_fav = visible
+            .get(self.queue.cursor)
+            .is_some_and(|e| self.favourites.contains(&e.path));
+        let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
+        let actions = self.build_context_actions(fav_label);
         self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
         self.push_mode(Mode::ContextMenu);
     }
@@ -1164,7 +1212,117 @@ impl App {
             ContextAction::Organize => {
                 self.open_organize_modal();
             }
+            ContextAction::CopyShareLink => {
+                self.create_and_copy_share_link();
+            }
         }
+    }
+
+    fn create_and_copy_share_link(&mut self) {
+        let cfg = koan_core::config::Config::load().unwrap_or_default();
+        if !cfg.remote.enabled || cfg.remote.password.is_empty() {
+            self.status_message = Some(("Remote not configured".into(), std::time::Instant::now()));
+            return;
+        }
+
+        let visible = self.visible_queue();
+        let selected: Vec<_> = self.queue.selected_ids.iter().copied().collect();
+
+        // Collect remote_ids for selected tracks. If multiple tracks share an album,
+        // try to share the album instead of individual tracks.
+        let db = match koan_core::db::connection::Database::open(&self.db_path) {
+            Ok(db) => db,
+            Err(_) => {
+                self.status_message = Some(("DB error".into(), std::time::Instant::now()));
+                return;
+            }
+        };
+
+        // Check if all selected tracks belong to the same album (for album-level share).
+        let selected_entries: Vec<_> = visible
+            .iter()
+            .filter(|e| selected.contains(&e.id))
+            .collect();
+
+        let album_rid = if !selected_entries.is_empty() {
+            let first_album = &selected_entries[0].album;
+            let all_same_album = selected_entries.iter().all(|e| e.album == *first_album);
+            if all_same_album {
+                koan_core::db::queries::album_remote_id_for_path(
+                    &db.conn,
+                    &selected_entries[0].path,
+                )
+                .ok()
+                .flatten()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        // Prefer album share, fall back to individual track shares.
+        let share_ids: Vec<String> = if let Some(ref arid) = album_rid {
+            vec![arid.clone()]
+        } else {
+            selected_entries
+                .iter()
+                .filter_map(|e| {
+                    koan_core::db::queries::remote_id_for_path(&db.conn, &e.path)
+                        .ok()
+                        .flatten()
+                })
+                .collect()
+        };
+
+        if share_ids.is_empty() {
+            self.status_message = Some((
+                "No remote tracks to share".into(),
+                std::time::Instant::now(),
+            ));
+            return;
+        }
+
+        let url = cfg.remote.url.clone();
+        let username = cfg.remote.username.clone();
+        let password = cfg.remote.password.clone();
+        let log_buffer = Arc::clone(&self.log_buffer);
+
+        // Fire off share creation in a background thread to avoid blocking the UI.
+        let status_msg: Arc<Mutex<Option<StatusMessage>>> = Arc::new(Mutex::new(None));
+        let status_clone = Arc::clone(&status_msg);
+
+        std::thread::spawn(move || {
+            let client = koan_core::remote::client::SubsonicClient::new(&url, &username, &password);
+            let id_refs: Vec<&str> = share_ids.iter().map(|s| s.as_str()).collect();
+            match client.create_share(&id_refs, None) {
+                Ok(share) => {
+                    // The Subsonic API returns the full URL in share.url, but fall back
+                    // to constructing it from base_url if absent.
+                    let share_url = share
+                        .url
+                        .unwrap_or_else(|| format!("{}/s/{}", client.base_url(), share.id));
+                    // Copy to clipboard: pbcopy on macOS, xclip/xsel on Linux.
+                    copy_to_clipboard(&share_url);
+                    if let Ok(mut msg) = status_clone.lock() {
+                        *msg = Some((format!("Copied: {share_url}"), std::time::Instant::now()));
+                    }
+                }
+                Err(e) => {
+                    if let Ok(mut logs) = log_buffer.lock() {
+                        logs.push(format!("Share error: {e}"));
+                    }
+                    if let Ok(mut msg) = status_clone.lock() {
+                        *msg = Some((format!("Share failed: {e}"), std::time::Instant::now()));
+                    }
+                }
+            }
+        });
+
+        // We can't directly set status_message from the thread, so set a pending message.
+        // The status will be set once the thread completes — store the Arc for polling.
+        self.pending_share_status = Some(status_msg);
+        self.status_message = Some(("Creating share...".into(), std::time::Instant::now()));
     }
 
     fn open_organize_modal(&mut self) {
@@ -1826,16 +1984,8 @@ impl App {
                             .get(idx)
                             .is_some_and(|e| self.favourites.contains(&e.path));
                         let fav_label = if is_fav { "Unfavourite" } else { "Favourite" };
-                        self.context_menu = Some(ContextMenuState {
-                            actions: vec![
-                                (ContextAction::Play, "Play", 'p'),
-                                (ContextAction::ToggleFavourite, fav_label, 'f'),
-                                (ContextAction::TrackInfo, "Track info", 'i'),
-                                (ContextAction::Remove, "Remove", 'd'),
-                                (ContextAction::Organize, "Organize files", 'o'),
-                            ],
-                            cursor: 0,
-                        });
+                        let actions = self.build_context_actions(fav_label);
+                        self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
                         self.push_mode(Mode::ContextMenu);
                         // Store click position for positioned rendering.
                         self.hover.column = event.column;
@@ -1865,16 +2015,8 @@ impl App {
                                 .is_some_and(|e| self.favourites.contains(&e.path))
                         });
                         let fav_label = if all_fav { "Unfavourite" } else { "Favourite" };
-                        self.context_menu = Some(ContextMenuState {
-                            actions: vec![
-                                (ContextAction::Play, "Play", 'p'),
-                                (ContextAction::ToggleFavourite, fav_label, 'f'),
-                                (ContextAction::TrackInfo, "Track info", 'i'),
-                                (ContextAction::Remove, "Remove", 'd'),
-                                (ContextAction::Organize, "Organize files", 'o'),
-                            ],
-                            cursor: 0,
-                        });
+                        let actions = self.build_context_actions(fav_label);
+                        self.context_menu = Some(ContextMenuState { actions, cursor: 0 });
                         self.push_mode(Mode::ContextMenu);
                         self.hover.column = event.column;
                         self.hover.row = event.row;
@@ -2526,5 +2668,43 @@ impl App {
 
     pub fn visible_queue(&self) -> Vec<QueueEntry> {
         self.queue.vq_cache.entries.clone()
+    }
+}
+
+/// Copy text to the system clipboard. Tries platform-native tools first.
+fn copy_to_clipboard(text: &str) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    // macOS
+    if let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
+        if let Some(ref mut stdin) = child.stdin {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let _ = child.wait();
+        return;
+    }
+    // Linux: xclip
+    if let Ok(mut child) = Command::new("xclip")
+        .args(["-selection", "clipboard"])
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        if let Some(ref mut stdin) = child.stdin {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let _ = child.wait();
+        return;
+    }
+    // Linux: xsel
+    if let Ok(mut child) = Command::new("xsel")
+        .args(["--clipboard", "--input"])
+        .stdin(Stdio::piped())
+        .spawn()
+    {
+        if let Some(ref mut stdin) = child.stdin {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        let _ = child.wait();
     }
 }
