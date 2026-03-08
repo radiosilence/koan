@@ -24,6 +24,7 @@ pub struct Config {
     pub organize: OrganizeConfig,
     #[serde(alias = "visualiser")]
     pub visualizer: VisualizerConfig,
+    pub radio: RadioConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +176,28 @@ impl OrganizeConfig {
             .as_ref()
             .and_then(|name| self.patterns.get(name))
             .map(|s| s.as_str())
+    }
+}
+
+/// Radio / infinite play mode configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RadioConfig {
+    /// Number of tracks to keep queued ahead of the cursor.
+    pub lookahead: usize,
+    /// Number of tracks to add each time the queue runs low.
+    pub batch_size: usize,
+    /// Use Subsonic getSimilarSongs2 when a remote server is configured.
+    pub use_subsonic: bool,
+}
+
+impl Default for RadioConfig {
+    fn default() -> Self {
+        Self {
+            lookahead: 5,
+            batch_size: 5,
+            use_subsonic: true,
+        }
     }
 }
 
