@@ -2,9 +2,10 @@
 //!
 //! Uses a combination of signals to pick tracks that fit the current vibe:
 //! - Subsonic getSimilarSongs2 (when remote is configured)
-//! - Same/similar artist
-//! - Same genre
 //! - Cached similar-artist relationships (from Subsonic or Last.fm)
+//! - Same/similar artist from local library
+//!
+//! Genre tags are intentionally NOT used — they're too unreliable.
 
 use std::collections::{HashMap, HashSet};
 
@@ -18,8 +19,6 @@ use crate::remote::client::SubsonicClient;
 pub struct RadioContext {
     /// Artist IDs in the queue, with play count (more = stronger signal).
     pub artist_counts: HashMap<i64, usize>,
-    /// Genres in the queue, with count.
-    pub genre_counts: HashMap<String, usize>,
     /// Paths already in the queue (to avoid duplicates).
     pub queued_paths: HashSet<String>,
     /// The currently playing track's remote_id (for Subsonic similar songs).
@@ -30,19 +29,11 @@ pub struct RadioContext {
 
 impl RadioContext {
     /// Build context from a list of queue items.
-    pub fn from_queue(items: &[(Option<i64>, Option<String>, Option<String>)]) -> Self {
+    pub fn from_queue(items: &[(Option<i64>, Option<String>)]) -> Self {
         let mut ctx = Self::default();
-        for (artist_id, genre, path) in items {
+        for (artist_id, path) in items {
             if let Some(aid) = artist_id {
                 *ctx.artist_counts.entry(*aid).or_default() += 1;
-            }
-            if let Some(g) = genre {
-                for part in g.split(&[';', ',', '/'][..]) {
-                    let trimmed = part.trim().to_lowercase();
-                    if !trimmed.is_empty() {
-                        *ctx.genre_counts.entry(trimmed).or_default() += 1;
-                    }
-                }
             }
             if let Some(p) = path {
                 ctx.queued_paths.insert(p.clone());
@@ -57,7 +48,7 @@ impl RadioContext {
 /// Strategy:
 /// 1. Try Subsonic getSimilarSongs2 if we have a remote and current track has a remote_id
 /// 2. Try similar artists from cache (populated from Subsonic or Last.fm)
-/// 3. Fall back to genre + artist matching from local library
+/// 3. Fall back to same-artist tracks from local library
 pub fn pick_tracks(
     conn: &Connection,
     ctx: &RadioContext,
@@ -66,48 +57,60 @@ pub fn pick_tracks(
 ) -> Vec<i64> {
     let mut picks: Vec<i64> = Vec::new();
 
+    log::info!(
+        "radio: picking {} tracks (context: {} artists, {} queued, remote_id={}, artist={})",
+        count,
+        ctx.artist_counts.len(),
+        ctx.queued_paths.len(),
+        ctx.current_remote_id.as_deref().unwrap_or("none"),
+        ctx.current_artist_name.as_deref().unwrap_or("none"),
+    );
+
     // Strategy 1: Subsonic similar songs.
     if let Some(client) = client {
         if let Some(ref remote_id) = ctx.current_remote_id {
-            picks.extend(pick_from_subsonic_similar(
-                conn, client, remote_id, ctx, count,
-            ));
+            let subsonic_picks = pick_from_subsonic_similar(conn, client, remote_id, ctx, count);
+            log::info!(
+                "radio: subsonic similar songs: {} picks",
+                subsonic_picks.len()
+            );
+            picks.extend(subsonic_picks);
         }
         // If we didn't get enough, try top songs for the current artist.
         if picks.len() < count
             && let Some(ref artist_name) = ctx.current_artist_name
         {
-            picks.extend(pick_from_subsonic_top_songs(
+            let top_picks = pick_from_subsonic_top_songs(
                 conn,
                 client,
                 artist_name,
                 ctx,
                 count - picks.len(),
                 &picks,
-            ));
+            );
+            log::info!("radio: subsonic top songs: {} picks", top_picks.len());
+            picks.extend(top_picks);
         }
     }
 
     // Strategy 2: Similar artists from cache.
     if picks.len() < count {
-        picks.extend(pick_from_similar_artists(
-            conn,
-            ctx,
-            count - picks.len(),
-            &picks,
-        ));
+        let similar_picks = pick_from_similar_artists(conn, ctx, count - picks.len(), &picks);
+        log::info!(
+            "radio: similar artists cache: {} picks",
+            similar_picks.len()
+        );
+        picks.extend(similar_picks);
     }
 
-    // Strategy 3: Genre + artist matching from local library.
+    // Strategy 3: Same-artist tracks from local library (no genre matching).
     if picks.len() < count {
-        picks.extend(pick_from_local_library(
-            conn,
-            ctx,
-            count - picks.len(),
-            &picks,
-        ));
+        let local_picks = pick_from_local_library(conn, ctx, count - picks.len(), &picks);
+        log::info!("radio: local artist fallback: {} picks", local_picks.len());
+        picks.extend(local_picks);
     }
 
+    log::info!("radio: total {} picks", picks.len());
     picks
 }
 
@@ -229,8 +232,7 @@ fn pick_from_similar_artists(
     let artist_ids: Vec<i64> = similar_artist_ids.iter().take(10).map(|x| x.0).collect();
     let exclude: Vec<String> = ctx.queued_paths.iter().cloned().collect();
 
-    let genres: Vec<String> = ctx.genre_counts.keys().cloned().collect();
-    match queries::random_tracks_excluding(conn, &exclude, &artist_ids, &genres, count * 3) {
+    match queries::random_tracks_excluding(conn, &exclude, &artist_ids, &[], count * 3) {
         Ok(tracks) => tracks
             .into_iter()
             .filter(|t| !already_picked.contains(&t.id))
@@ -244,7 +246,8 @@ fn pick_from_similar_artists(
     }
 }
 
-/// Fall back to genre + artist matching from the local library.
+/// Fall back to same-artist tracks from the local library.
+/// Genre tags are not used — they're too unreliable for similarity.
 fn pick_from_local_library(
     conn: &Connection,
     ctx: &RadioContext,
@@ -252,10 +255,9 @@ fn pick_from_local_library(
     already_picked: &[i64],
 ) -> Vec<i64> {
     let artist_ids: Vec<i64> = ctx.artist_counts.keys().copied().collect();
-    let genres: Vec<String> = ctx.genre_counts.keys().cloned().collect();
     let exclude: Vec<String> = ctx.queued_paths.iter().cloned().collect();
 
-    match queries::random_tracks_excluding(conn, &exclude, &artist_ids, &genres, count * 3) {
+    match queries::random_tracks_excluding(conn, &exclude, &artist_ids, &[], count * 3) {
         Ok(tracks) => tracks
             .into_iter()
             .filter(|t| !already_picked.contains(&t.id))

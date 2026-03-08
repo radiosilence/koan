@@ -762,10 +762,10 @@ impl App {
                 let (items, cursor) = state.snapshot_playlist();
                 let current_item = cursor.and_then(|cid| items.iter().find(|i| i.id == cid));
 
-                let context_data: Vec<(Option<i64>, Option<String>, Option<String>)> = items
+                let context_data: Vec<(Option<i64>, Option<String>)> = items
                     .iter()
                     .map(|item| {
-                        // Look up artist_id and genre from DB by path.
+                        // Look up artist_id from DB by path.
                         let track = item
                             .path
                             .to_str()
@@ -777,7 +777,6 @@ impl App {
                             .flatten();
                         (
                             track.as_ref().and_then(|t| t.artist_id),
-                            track.as_ref().and_then(|t| t.genre.clone()),
                             Some(item.path.to_string_lossy().into_owned()),
                         )
                     })
