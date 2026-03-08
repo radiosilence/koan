@@ -71,6 +71,14 @@ const SECTIONS: &[Section] = &[
         ],
     },
     Section {
+        title: "Toggles",
+        bindings: &[
+            ("L", "Lyrics panel"),
+            ("R", "Radio mode (auto-queue)"),
+            ("f", "Favourite track"),
+        ],
+    },
+    Section {
         title: "General",
         bindings: &[
             ("?", "This help"),

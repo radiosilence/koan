@@ -186,16 +186,49 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Key hints / status message.
+    let radio_badge = if app.radio_mode {
+        Some(ratatui::text::Span::styled(
+            " RADIO ",
+            ratatui::style::Style::new()
+                .fg(ratatui::style::Color::Black)
+                .bg(ratatui::style::Color::Magenta)
+                .add_modifier(ratatui::style::Modifier::BOLD),
+        ))
+    } else {
+        None
+    };
+
     if let Some((ref msg, _)) = app.status_message {
         let style = app.theme.hint_key;
-        let line = ratatui::text::Line::from(vec![
+        let mut spans = vec![
             ratatui::text::Span::styled(msg.as_str(), style),
             ratatui::text::Span::styled("  [Esc] dismiss", app.theme.hint_desc),
-        ]);
+        ];
+        if let Some(badge) = radio_badge {
+            spans.push(ratatui::text::Span::raw("  "));
+            spans.push(badge);
+        }
+        let line = ratatui::text::Line::from(spans);
         frame.render_widget(ratatui::widgets::Paragraph::new(line), chunks[2]);
     } else {
         let hint_bar = HintBar::new(&app.mode, &app.theme);
         frame.render_widget(hint_bar, chunks[2]);
+        // Overlay radio badge on the right edge of the hint bar.
+        if let Some(badge) = radio_badge {
+            let badge_width = 7u16;
+            if chunks[2].width > badge_width + 1 {
+                let badge_area = ratatui::layout::Rect {
+                    x: chunks[2].x + chunks[2].width - badge_width - 1,
+                    y: chunks[2].y,
+                    width: badge_width,
+                    height: 1,
+                };
+                frame.render_widget(
+                    ratatui::widgets::Paragraph::new(ratatui::text::Line::from(badge)),
+                    badge_area,
+                );
+            }
+        }
     }
 
     // Picker overlay (on top of everything).

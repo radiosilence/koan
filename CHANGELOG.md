@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Radio mode** — press `R` to toggle infinite play. When the queue runs low, koan automatically picks similar tracks using Subsonic `getSimilarSongs2` (when a remote server is configured), cached similar-artist relationships, and genre/artist matching from the local library. A magenta `RADIO` badge appears in the hint bar when active. Configurable via `[radio]` in config.toml (lookahead, batch_size, use_subsonic)
+
 ## 0.9.1
 
 ### Added
