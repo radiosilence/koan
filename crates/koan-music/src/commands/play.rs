@@ -24,6 +24,10 @@ use crate::tui::picker::{
 fn save_playback_state_from_app(app: &tui::app::App) {
     let (items, cursor) = app.state.snapshot_playlist();
     if items.is_empty() {
+        // Queue is empty — clear any persisted state.
+        if let Ok(db) = koan_core::db::connection::Database::open(&app.db_path) {
+            let _ = koan_core::db::queries::clear_playback_state(&db.conn);
+        }
         return;
     }
     let persisted: Vec<koan_core::db::queries::PersistedQueueItem> = items
@@ -37,13 +41,20 @@ fn save_playback_state_from_app(app: &tui::app::App) {
         .map(|i| i.path.to_string_lossy().into_owned());
     let position_ms = app.state.position_ms();
 
-    if let Ok(db) = koan_core::db::connection::Database::open(&app.db_path) {
-        let _ = koan_core::db::queries::save_playback_state(
-            &db.conn,
-            &persisted,
-            cursor_path.as_deref(),
-            position_ms,
-        );
+    match koan_core::db::connection::Database::open(&app.db_path) {
+        Ok(db) => {
+            if let Err(e) = koan_core::db::queries::save_playback_state(
+                &db.conn,
+                &persisted,
+                cursor_path.as_deref(),
+                position_ms,
+            ) {
+                log::warn!("failed to save playback state: {}", e);
+            }
+        }
+        Err(e) => {
+            log::warn!("failed to open db for autosave: {}", e);
+        }
     }
 }
 
@@ -265,7 +276,15 @@ fn run_tui(
     let mut media = crate::media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
     let mut last_track_path: Option<PathBuf> = None;
 
+    // Periodic auto-save: persist queue every second so state is always fresh.
+    let mut last_autosave = std::time::Instant::now();
+    const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(1);
+
     loop {
+        // Check for Ctrl+C (SIGINT).
+        if crate::sigint_received() {
+            app.quit = true;
+        }
         // 1. Render
         terminal.draw(|f| tui::ui::render(f, &mut app))?;
 
@@ -390,9 +409,8 @@ fn run_tui(
         }
         crate::media_keys::pump_run_loop();
 
-        // Check for external quit request.
+        // Check for external quit request (e.g. souvlaki).
         if app.state.quit_requested() {
-            app.tx.send(PlayerCommand::Stop).ok();
             app.quit = true;
         }
 
@@ -487,9 +505,16 @@ fn run_tui(
                 .ok();
         }
 
-        if app.quit {
-            // Persist queue and playback position before exiting.
+        // Auto-save playback state every second.
+        if last_autosave.elapsed() >= AUTOSAVE_INTERVAL {
             save_playback_state_from_app(&app);
+            last_autosave = std::time::Instant::now();
+        }
+
+        if app.quit {
+            // Save state BEFORE stopping the player (Stop clears the playlist).
+            save_playback_state_from_app(&app);
+            app.tx.send(PlayerCommand::Stop).ok();
             break;
         }
     }

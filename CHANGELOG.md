@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.1
+
+### Added
+
+- **Queue persistence** — queue and playback position are automatically saved every second and restored on next launch. Ctrl+C and `q` both trigger a clean save. Use `--clear` to start fresh instead of restoring
+- **Graceful Ctrl+C** — replaced raw `SIG_DFL` with a safe signal handler so Ctrl+C performs a clean shutdown (saving state, restoring terminal) instead of killing the process
+
+### Fixed
+
+- **Quit race condition** — quit handlers were sending `PlayerCommand::Stop` (which clears the playlist) before saving state, so persisted queue was always empty. Stop is now sent after saving
+
 ## 0.9.0
 
 ### Added
