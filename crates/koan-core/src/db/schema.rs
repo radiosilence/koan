@@ -106,6 +106,14 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             track_path  TEXT PRIMARY KEY,
             created_at  TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS playback_state (
+            id          INTEGER PRIMARY KEY CHECK (id = 1),
+            queue_json  TEXT NOT NULL DEFAULT '[]',
+            cursor_id   TEXT,
+            position_ms INTEGER NOT NULL DEFAULT 0,
+            updated_at  TEXT DEFAULT (datetime('now'))
+        );
         ",
     )?;
     Ok(())

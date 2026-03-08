@@ -1,6 +1,7 @@
 use std::fs::OpenOptions;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use clap::{CommandFactory, Parser, Subcommand};
@@ -125,6 +126,9 @@ enum Commands {
         /// Open the TUI in library browse mode
         #[arg(long, short = 'l')]
         library: bool,
+        /// Clear persisted queue instead of restoring it
+        #[arg(long)]
+        clear: bool,
     },
     /// Probe a file and show format info
     Probe {
@@ -217,11 +221,22 @@ enum CacheCommands {
     },
 }
 
+/// Global flag set by SIGINT handler for graceful Ctrl+C shutdown.
+static SIGINT_RECEIVED: AtomicBool = AtomicBool::new(false);
+
+/// Returns true if Ctrl+C has been pressed.
+pub fn sigint_received() -> bool {
+    SIGINT_RECEIVED.load(Ordering::Relaxed)
+}
+
 fn main() {
-    // Ensure Ctrl+C kills the process immediately, even during blocking I/O.
-    unsafe {
-        libc::signal(libc::SIGINT, libc::SIG_DFL);
-    }
+    // Graceful SIGINT: set a flag instead of killing immediately so we can
+    // persist queue state. In raw mode crossterm delivers Ctrl+C as a key
+    // event, but outside raw mode (e.g. during scan) we need this handler.
+    ctrlc::set_handler(|| {
+        SIGINT_RECEIVED.store(true, Ordering::Relaxed);
+    })
+    .ok();
 
     // Dynamic shell completions — handles COMPLETE=zsh/bash/fish env var.
     CompleteEnv::with_factory(Cli::command).complete();
@@ -232,14 +247,15 @@ fn main() {
 
     match cli.command {
         // No subcommand — open TUI (use `l` to browse library).
-        None => commands::cmd_play(&[], &[], None, None, false),
+        None => commands::cmd_play(&[], &[], None, None, false, false),
         Some(Commands::Play {
             paths,
             ids,
             album,
             artist,
             library,
-        }) => commands::cmd_play(&paths, &ids, album, artist, library),
+            clear,
+        }) => commands::cmd_play(&paths, &ids, album, artist, library, clear),
         Some(Commands::Probe { path }) => commands::cmd_probe(&path),
         Some(Commands::Devices) => commands::cmd_devices(),
         Some(Commands::Scan { path, force }) => commands::cmd_scan(path.as_deref(), force),

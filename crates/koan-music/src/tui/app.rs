@@ -680,9 +680,8 @@ impl App {
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
-        // Ctrl+C always quits.
+        // Ctrl+C always quits. Stop is sent by the main loop after saving state.
         if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
-            self.tx.send(PlayerCommand::Stop).ok();
             self.quit = true;
             return;
         }
@@ -712,7 +711,6 @@ impl App {
                 }
             }
             KeyCode::Char('q') => {
-                self.tx.send(PlayerCommand::Stop).ok();
                 self.quit = true;
             }
             KeyCode::Char(' ') => {
@@ -957,7 +955,6 @@ impl App {
                 self.queue.anchor_id = None;
             }
             KeyCode::Char('q') => {
-                self.tx.send(PlayerCommand::Stop).ok();
                 self.quit = true;
             }
             KeyCode::Up => {
@@ -2391,7 +2388,6 @@ impl App {
                 }
             }
             KeyCode::Char('q') => {
-                self.tx.send(PlayerCommand::Stop).ok();
                 self.quit = true;
             }
             KeyCode::Tab => {
