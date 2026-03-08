@@ -702,12 +702,41 @@ impl App {
             self.radio_rx = None;
             self.radio_pending = false;
             if !track_ids.is_empty() {
-                // Stash IDs for the main loop to enqueue (same pattern as picker_result).
-                self.picker_result = Some((
-                    crate::tui::picker::PickerKind::Track,
-                    track_ids,
-                    PickerAction::Append,
-                ));
+                // Dedup: filter out tracks already in the current playlist.
+                let (current_items, _) = self.state.snapshot_playlist();
+                let current_paths: std::collections::HashSet<String> = current_items
+                    .iter()
+                    .map(|i| i.path.to_string_lossy().into_owned())
+                    .collect();
+
+                let total = track_ids.len();
+                let deduped: Vec<i64> = track_ids
+                    .into_iter()
+                    .filter(|&id| {
+                        // Check if this track's path is already queued.
+                        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
+                            && let Ok(Some(track)) =
+                                koan_core::db::queries::get_track_row(&db.conn, id)
+                            && let Some(ref path) = track.path
+                        {
+                            !current_paths.contains(path)
+                        } else {
+                            true // can't check, let it through
+                        }
+                    })
+                    .collect();
+
+                let dupes = total - deduped.len();
+                if dupes > 0 {
+                    log::info!("radio: filtered {} dupes", dupes);
+                }
+                if !deduped.is_empty() {
+                    self.picker_result = Some((
+                        crate::tui::picker::PickerKind::Track,
+                        deduped,
+                        PickerAction::Append,
+                    ));
+                }
             }
         }
 
