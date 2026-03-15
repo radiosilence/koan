@@ -74,6 +74,10 @@ pub(crate) fn confirm(prompt: &str) -> bool {
 }
 
 /// Install a panic hook that logs the panic to the log file and restores the terminal.
+///
+/// Terminal restoration only happens when the *main thread* panics. Background
+/// thread panics (decode, download, etc.) are logged but must NOT touch the
+/// terminal — doing so corrupts the TUI and causes escape sequence leaks.
 pub(crate) fn install_terminal_panic_hook() {
     use crossterm::{
         event::DisableMouseCapture,
@@ -81,6 +85,7 @@ pub(crate) fn install_terminal_panic_hook() {
         terminal::{LeaveAlternateScreen, disable_raw_mode},
     };
     use std::io;
+    let main_thread_id = std::thread::current().id();
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         // Log the panic to the log file before restoring the terminal.
@@ -101,8 +106,11 @@ pub(crate) fn install_terminal_panic_hook() {
         log::error!("backtrace:\n{}", bt);
         log::logger().flush();
 
-        let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        // Only restore the terminal if this is the main (TUI) thread.
+        if std::thread::current().id() == main_thread_id {
+            let _ = disable_raw_mode();
+            let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+        }
         original_hook(panic);
     }));
 }

@@ -515,10 +515,10 @@ impl Player {
             path: path_buf,
             hint: decode_hint,
             make_mss: Box::new(move || {
-                symphonia::core::io::MediaSourceStream::new(
+                Ok(symphonia::core::io::MediaSourceStream::new(
                     Box::new(decode_reader),
                     Default::default(),
-                )
+                ))
             }),
         };
 
@@ -660,10 +660,22 @@ impl Player {
     }
 
     /// Stop the audio engine and decode thread without touching shared state.
+    ///
+    /// The engine is stopped synchronously (silence begins immediately), but
+    /// the heavy teardown (decode thread join + AudioUnit dispose) is moved to
+    /// a background thread so the player command loop never blocks — preventing
+    /// UI freezes when CoreAudio or the decode thread is slow to shut down.
     fn stop_engine(&mut self) {
-        if let Some(mut playback) = self.active_playback.take() {
+        if let Some(playback) = self.active_playback.take() {
+            // Stop audio output immediately.
             let _ = playback.engine.stop();
-            playback.decode_handle.stop();
+            // Signal decode thread to exit (non-blocking).
+            playback.decode_handle.signal_stop();
+            // Heavy cleanup on a background thread.
+            thread::Builder::new()
+                .name("koan-cleanup".into())
+                .spawn(move || drop(playback))
+                .ok();
         }
     }
 

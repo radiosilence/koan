@@ -50,11 +50,23 @@ pub struct DecodeHandle {
 }
 
 impl DecodeHandle {
+    /// Signal the decode thread to stop without waiting for it to exit.
+    pub fn signal_stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+
     /// Signal the decode thread to stop and wait for it.
     pub fn stop(&mut self) {
-        self.stop.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.thread.take() {
-            let _ = handle.join();
+        self.signal_stop();
+        if let Some(handle) = self.thread.take()
+            && let Err(payload) = handle.join()
+        {
+            let msg = payload
+                .downcast_ref::<String>()
+                .map(|s| s.as_str())
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("unknown");
+            log::error!("decode thread panicked: {}", msg);
         }
     }
 }
@@ -200,7 +212,7 @@ pub struct SourceEntry {
     /// Format hint for Symphonia (e.g. file extension).
     pub hint: Hint,
     /// Factory that creates the `MediaSourceStream`. Called exactly once per track.
-    pub make_mss: Box<dyn FnOnce() -> MediaSourceStream + Send>,
+    pub make_mss: Box<dyn FnOnce() -> std::io::Result<MediaSourceStream> + Send>,
 }
 
 impl SourceEntry {
@@ -221,10 +233,8 @@ impl SourceEntry {
             path,
             hint,
             make_mss: Box::new(move || {
-                let file = File::open(&path_clone).unwrap_or_else(|e| {
-                    panic!("failed to open audio file {}: {}", path_clone.display(), e)
-                });
-                MediaSourceStream::new(Box::new(file), Default::default())
+                let file = File::open(&path_clone)?;
+                Ok(MediaSourceStream::new(Box::new(file), Default::default()))
             }),
         }
     }
@@ -409,7 +419,15 @@ fn decode_queue_loop<N>(
 {
     let path = first.path.clone();
     let hint = first.hint.clone();
-    let mss = (first.make_mss)();
+    let mss = match (first.make_mss)() {
+        Ok(mss) => mss,
+        Err(e) => {
+            if !stop.load(Ordering::Relaxed) {
+                log::error!("failed to open {}: {}", path.display(), e);
+            }
+            return;
+        }
+    };
 
     if let Err(e) = decode_single(
         first.id,
@@ -439,7 +457,15 @@ fn decode_queue_loop<N>(
         log::info!("gapless transition → {}", entry.path.display());
         let next_path = entry.path.clone();
         let next_hint = entry.hint.clone();
-        let next_mss = (entry.make_mss)();
+        let next_mss = match (entry.make_mss)() {
+            Ok(mss) => mss,
+            Err(e) => {
+                if !stop.load(Ordering::Relaxed) {
+                    log::error!("failed to open {}: {}", next_path.display(), e);
+                }
+                break;
+            }
+        };
 
         if let Err(e) = decode_single(
             entry.id,

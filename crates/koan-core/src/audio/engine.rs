@@ -193,9 +193,11 @@ impl Drop for AudioEngine {
             );
         }
 
-        // Brief yield to let any in-flight render callback on the RT thread
-        // finish before we tear down the unit and free callback memory.
-        std::thread::yield_now();
+        // No explicit wait needed here: AudioOutputUnitStop (called by stop()
+        // above) is synchronous — CoreAudio guarantees the render callback has
+        // fully returned before it hands control back. The callback removal
+        // above is belt-and-suspenders for the (extremely rare) case where
+        // stop() returns an error and the unit is in a degraded state.
 
         unsafe {
             AudioUnitUninitialize(self.audio_unit);

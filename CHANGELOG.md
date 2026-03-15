@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.9.2
+
+### Fixed
+
+- **UI freeze on track change** — `stop_engine()` no longer blocks the player command loop waiting for the decode thread to join. Engine teardown (thread join + AudioUnit dispose) is moved to a background cleanup thread, so the player stays responsive even when CoreAudio or I/O is slow to shut down
+- **Escape sequence dump on crash** — the panic hook was calling `disable_raw_mode()` and `LeaveAlternateScreen` from whichever thread panicked, corrupting the terminal when a background thread (decode, download) hit an error. The hook now captures the main thread ID at install time and only restores terminal state from the TUI thread
+- **Decode thread panic on missing file** — `SourceEntry::from_file` used `panic!` when a file couldn't be opened (e.g. deleted during gapless lookahead). The `make_mss` closure is now fallible (`-> io::Result`), and decode errors are logged gracefully instead of crashing
+- **AudioEngine drop race** — removed unreliable `thread::yield_now()` before `AudioUnitUninitialize`. `AudioOutputUnitStop` is synchronous (callback guaranteed finished on return), so no extra wait is needed. The callback is also explicitly removed as a safety net for the rare case where stop fails
+- **Silent decode thread panics** — `DecodeHandle::stop()` now logs the panic message instead of silently swallowing `handle.join()` errors
+
 ## 0.9.1
 
 ### Added
