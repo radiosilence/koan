@@ -671,6 +671,9 @@ fn decode_single(
                         slot.write(val);
                     }
                 }
+                // SAFETY: All slots in the chunk have been initialized by the
+                // two loops above — first.len() + second.len() == chunk_size,
+                // and every slot is written via MaybeUninit::write().
                 unsafe { chunk.commit_all() };
                 offset += chunk_size;
             }

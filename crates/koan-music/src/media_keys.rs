@@ -17,6 +17,9 @@ use souvlaki::{
 #[cfg(target_os = "macos")]
 pub fn pump_run_loop() {
     use core_foundation::runloop::{CFRunLoopRunInMode, kCFRunLoopDefaultMode};
+    // SAFETY: CFRunLoopRunInMode is inherently safe — it pumps the current thread's
+    // run loop with a tiny timeout. The unsafe is only required because it's a C FFI
+    // call. No preconditions can be violated.
     unsafe {
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, 1);
     }

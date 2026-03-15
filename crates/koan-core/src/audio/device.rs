@@ -1,6 +1,8 @@
 use std::mem;
 use std::ptr;
 
+use core_foundation::base::TCFType;
+use core_foundation::string::CFString;
 use coreaudio_sys::*;
 use thiserror::Error;
 
@@ -44,6 +46,8 @@ pub fn default_output_device() -> Result<AudioDeviceID> {
     let mut device_id: AudioDeviceID = 0;
     let mut size = mem::size_of::<AudioDeviceID>() as u32;
 
+    // SAFETY: `device_id` is a stack-allocated AudioDeviceID with correct size.
+    // CoreAudio writes a single u32 device ID into the provided buffer.
     check(unsafe {
         AudioObjectGetPropertyData(
             kAudioObjectSystemObject,
@@ -71,6 +75,7 @@ pub fn list_output_devices() -> Result<Vec<AudioDevice>> {
     };
 
     let mut size: u32 = 0;
+    // SAFETY: Querying data size only — no output buffer, just writes to `size`.
     check(unsafe {
         AudioObjectGetPropertyDataSize(
             kAudioObjectSystemObject,
@@ -84,6 +89,8 @@ pub fn list_output_devices() -> Result<Vec<AudioDevice>> {
     let device_count = size as usize / mem::size_of::<AudioDeviceID>();
     let mut device_ids = vec![0u32; device_count];
 
+    // SAFETY: `device_ids` is pre-allocated to exactly the size returned by
+    // GetPropertyDataSize. CoreAudio fills it with `device_count` AudioDeviceIDs.
     check(unsafe {
         AudioObjectGetPropertyData(
             kAudioObjectSystemObject,
@@ -121,6 +128,7 @@ fn has_output_streams(device_id: AudioDeviceID) -> bool {
     };
 
     let mut size: u32 = 0;
+    // SAFETY: Querying data size only — no output buffer, just writes to `size`.
     let status =
         unsafe { AudioObjectGetPropertyDataSize(device_id, &property, 0, ptr::null(), &mut size) };
 
@@ -138,6 +146,9 @@ fn device_name(device_id: AudioDeviceID) -> Result<String> {
     let mut name_ref: CFStringRef = ptr::null();
     let mut size = mem::size_of::<CFStringRef>() as u32;
 
+    // SAFETY: Standard CoreAudio property query. `name_ref` is a correctly-sized
+    // output buffer for a single CFStringRef. CoreAudio writes the pointer and
+    // transfers ownership to the caller (Create Rule).
     check(unsafe {
         AudioObjectGetPropertyData(
             device_id,
@@ -149,41 +160,18 @@ fn device_name(device_id: AudioDeviceID) -> Result<String> {
         )
     })?;
 
-    let name = unsafe { cfstring_to_string(name_ref) };
-    if !name_ref.is_null() {
-        unsafe { CFRelease(name_ref as *const _) };
-    }
-    Ok(name)
-}
-
-/// Convert a CFStringRef to a Rust String.
-unsafe fn cfstring_to_string(cf_str: CFStringRef) -> String {
-    if cf_str.is_null() {
-        return String::new();
+    if name_ref.is_null() {
+        return Ok(String::new());
     }
 
-    let len = unsafe { CFStringGetLength(cf_str) };
-    let mut buf = vec![0u8; (len as usize) * 4];
-    let mut used: CFIndex = 0;
-
-    unsafe {
-        CFStringGetBytes(
-            cf_str,
-            CFRange {
-                location: 0,
-                length: len,
-            },
-            kCFStringEncodingUTF8,
-            0,
-            false as Boolean,
-            buf.as_mut_ptr(),
-            buf.len() as CFIndex,
-            &mut used,
-        );
-    }
-
-    buf.truncate(used as usize);
-    String::from_utf8_lossy(&buf).into_owned()
+    // SAFETY: `name_ref` was returned by a CoreAudio Create Rule API — the caller
+    // owns the reference. `wrap_under_create_rule` takes ownership and will
+    // CFRelease on drop, so no manual release is needed. The pointer cast bridges
+    // coreaudio-sys's CFStringRef and core-foundation's CFStringRef which are
+    // identical C types from different bindgen runs.
+    let cf_string: CFString =
+        unsafe { CFString::wrap_under_create_rule(name_ref as core_foundation::string::CFStringRef) };
+    Ok(cf_string.to_string())
 }
 
 /// Get available sample rates for a device.
@@ -195,6 +183,7 @@ pub fn available_sample_rates(device_id: AudioDeviceID) -> Result<Vec<f64>> {
     };
 
     let mut size: u32 = 0;
+    // SAFETY: Querying data size only — no output buffer, just writes to `size`.
     check(unsafe {
         AudioObjectGetPropertyDataSize(device_id, &property, 0, ptr::null(), &mut size)
     })?;
@@ -208,6 +197,8 @@ pub fn available_sample_rates(device_id: AudioDeviceID) -> Result<Vec<f64>> {
         count
     ];
 
+    // SAFETY: `ranges` is pre-allocated to exactly the size returned by
+    // GetPropertyDataSize. CoreAudio fills it with `count` AudioValueRange structs.
     check(unsafe {
         AudioObjectGetPropertyData(
             device_id,
@@ -237,6 +228,7 @@ pub fn get_device_sample_rate(device_id: AudioDeviceID) -> Result<f64> {
     let mut rate: f64 = 0.0;
     let mut size = mem::size_of::<f64>() as u32;
 
+    // SAFETY: `rate` is a stack-allocated f64 with correct size for the property.
     check(unsafe {
         AudioObjectGetPropertyData(
             device_id,
@@ -269,6 +261,7 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<()>
         mElement: kAudioObjectPropertyElementMain,
     };
 
+    // SAFETY: `rate` is a stack-allocated f64 with correct size for the property.
     check(unsafe {
         AudioObjectSetPropertyData(
             device_id,
