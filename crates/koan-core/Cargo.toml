@@ -10,6 +10,7 @@ categories = ["multimedia::audio"]
 
 [dependencies]
 # CoreAudio
+core-foundation = "0.9"
 coreaudio-sys = "0.2"
 crossbeam-channel = "0.5"
 # Config

@@ -38,8 +38,11 @@ struct CallbackData {
     samples_played: Arc<AtomicU64>,
 }
 
-// SAFETY: Consumer is only ever accessed from the CoreAudio render callback thread
-// (single-consumer). The raw pointer prevents auto-Send but the access pattern is safe.
+// SAFETY: `rtrb::Consumer` is `!Send` due to internal raw pointers, but our usage is
+// sound: the Consumer is moved into CallbackData on the creating thread, then only
+// ever accessed from the single CoreAudio render callback thread. It is never shared
+// or accessed from multiple threads simultaneously. If this invariant changes (e.g.
+// Consumer accessed outside the callback), this impl must be revisited.
 unsafe impl Send for CallbackData {}
 
 /// CoreAudio AUHAL output engine.
@@ -52,10 +55,12 @@ pub struct AudioEngine {
     running: Arc<AtomicBool>,
 }
 
-// SAFETY: AudioEngine is created on one thread and may be moved to the player thread
-// before start() is called. After start(), the AudioUnit and callback_data pointer are
-// only accessed from the CoreAudio render thread via the installed callback. The engine
-// itself is only used for start/stop/drop which are safe across threads.
+// SAFETY: AudioEngine contains an AudioUnit (opaque C pointer) and a *mut CallbackData.
+// The engine is created on one thread, moved to the player thread, then only used for
+// start/stop/drop — all of which are sequentially called from one thread at a time.
+// The AudioUnit and callback_data are accessed by the CoreAudio RT thread only through
+// the installed render callback, which is removed before drop. AudioEngine is not Clone
+// and not shared — it has a single owner at all times.
 unsafe impl Send for AudioEngine {}
 
 impl AudioEngine {
@@ -76,6 +81,11 @@ impl AudioEngine {
             componentFlags: 0,
             componentFlagsMask: 0,
         };
+
+        // SAFETY: All CoreAudio FFI calls below pass stack-allocated structs with
+        // correct sizes via mem::size_of. Pointers are valid for the duration of each
+        // call. Return values are checked via check(). The AudioUnit is created, configured,
+        // and initialized in sequence — no concurrent access is possible during setup.
 
         let component = unsafe { AudioComponentFindNext(ptr::null_mut(), &desc) };
         if component.is_null() {
@@ -182,6 +192,8 @@ impl Drop for AudioEngine {
             inputProc: None,
             inputProcRefCon: ptr::null_mut(),
         };
+        // SAFETY: Removing the callback from a valid AudioUnit. Even if the unit
+        // is in a degraded state, setting a null callback is a no-op at worst.
         unsafe {
             AudioUnitSetProperty(
                 self.audio_unit,
@@ -199,6 +211,10 @@ impl Drop for AudioEngine {
         // above is belt-and-suspenders for the (extremely rare) case where
         // stop() returns an error and the unit is in a degraded state.
 
+        // SAFETY: AudioUnit was successfully created in new(). Uninitialize and
+        // Dispose are the documented teardown sequence. callback_data was created
+        // via Box::into_raw in new() and is not aliased — the render callback
+        // has been removed and AudioOutputUnitStop guarantees it's not in flight.
         unsafe {
             AudioUnitUninitialize(self.audio_unit);
             AudioComponentInstanceDispose(self.audio_unit);
@@ -219,7 +235,12 @@ unsafe extern "C" fn render_callback(
     in_number_frames: UInt32,
     io_data: *mut AudioBufferList,
 ) -> OSStatus {
+    // SAFETY: `in_ref_con` points to a heap-allocated CallbackData created via
+    // Box::into_raw in AudioEngine::new. It remains valid for the lifetime of the
+    // engine — the callback is removed and the pointer freed only in Drop, after
+    // AudioOutputUnitStop guarantees no callbacks are in flight.
     let data = unsafe { &mut *(in_ref_con as *mut CallbackData) };
+    // SAFETY: `io_data` is provided by CoreAudio and is valid for the callback's duration.
     let buffer_list = unsafe { &mut *io_data };
 
     if !data.running.load(Ordering::Relaxed) {
@@ -234,9 +255,15 @@ unsafe extern "C" fn render_callback(
         return 0;
     }
 
+    // SAFETY: Accessing the first buffer in the CoreAudio-provided AudioBufferList.
+    // We configured a non-interleaved float format, so mNumberBuffers >= 1.
     let buf = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
     let channels = buf.mNumberChannels;
     let total_samples = (in_number_frames * channels) as usize;
+    debug_assert!(
+        (buf.mData as usize).is_multiple_of(mem::align_of::<f32>()),
+        "CoreAudio buffer not aligned for f32"
+    );
     let out_ptr = buf.mData as *mut f32;
 
     let available = data.consumer.slots();
