@@ -114,9 +114,9 @@ pub fn random_tracks_excluding(
             .enumerate()
             .map(|(i, _)| format!("?{}", base_offset + i + 1))
             .collect();
+        let joined = placeholders.join(",");
         format!(
-            "CASE WHEN t.artist_id IN ({}) OR al.artist_id IN ({0}) THEN 1 ELSE 0 END",
-            placeholders.join(",")
+            "CASE WHEN t.artist_id IN ({joined}) OR al.artist_id IN ({joined}) THEN 1 ELSE 0 END",
         )
     };
 

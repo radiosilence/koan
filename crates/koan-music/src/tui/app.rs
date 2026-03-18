@@ -288,13 +288,10 @@ pub struct App {
     /// Radio mode: automatically queue similar tracks when the queue runs low.
     pub radio_mode: bool,
     /// True while a background radio pick is in-flight (prevents duplicate requests).
-    #[allow(dead_code)]
     pub radio_pending: bool,
     /// Receiver for background radio pick results (track IDs to enqueue).
-    #[allow(dead_code)]
     pub radio_rx: Option<crossbeam_channel::Receiver<Vec<i64>>>,
     /// Radio config.
-    #[allow(dead_code)]
     pub radio_config: koan_core::config::RadioConfig,
 }
 
@@ -710,21 +707,24 @@ impl App {
                     .collect();
 
                 let total = track_ids.len();
-                let deduped: Vec<i64> = track_ids
-                    .into_iter()
-                    .filter(|&id| {
-                        // Check if this track's path is already queued.
-                        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
-                            && let Ok(Some(track)) =
-                                koan_core::db::queries::get_track_row(&db.conn, id)
-                            && let Some(ref path) = track.path
-                        {
-                            !current_paths.contains(path)
-                        } else {
-                            true // can't check, let it through
-                        }
-                    })
-                    .collect();
+                let deduped: Vec<i64> =
+                    if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path) {
+                        track_ids
+                            .into_iter()
+                            .filter(|&id| {
+                                if let Ok(Some(track)) =
+                                    koan_core::db::queries::get_track_row(&db.conn, id)
+                                    && let Some(ref path) = track.path
+                                {
+                                    !current_paths.contains(path)
+                                } else {
+                                    true // can't check, let it through
+                                }
+                            })
+                            .collect()
+                    } else {
+                        track_ids
+                    };
 
                 let dupes = total - deduped.len();
                 if dupes > 0 {
@@ -826,27 +826,9 @@ impl App {
                         ctx.current_remote_id = track.remote_id.clone();
                         ctx.current_artist_name = Some(track.artist_name.clone());
                     }
-
-                    // Pre-populate similar artist cache for queue artists.
-                    if use_subsonic
-                        && let Ok(cfg) = koan_core::config::Config::load()
-                        && cfg.remote.enabled
-                    {
-                        let client = koan_core::remote::client::SubsonicClient::new(
-                            &cfg.remote.url,
-                            &cfg.remote.username,
-                            &cfg.remote.password,
-                        );
-                        // Cache similar artists for the top queue artists.
-                        for &artist_id in ctx.artist_counts.keys().take(5) {
-                            let _ = koan_core::radio::fetch_and_cache_similar_artists(
-                                &db.conn, &client, artist_id,
-                            );
-                        }
-                    }
                 }
 
-                // Build Subsonic client if configured.
+                // Build Subsonic client if configured (load config once).
                 let client = if use_subsonic {
                     koan_core::config::Config::load()
                         .ok()
@@ -861,6 +843,15 @@ impl App {
                 } else {
                     None
                 };
+
+                // Pre-populate similar artist cache for queue artists.
+                if let Some(ref client) = client {
+                    for &artist_id in ctx.artist_counts.keys().take(5) {
+                        let _ = koan_core::radio::fetch_and_cache_similar_artists(
+                            &db.conn, client, artist_id,
+                        );
+                    }
+                }
 
                 let picks =
                     koan_core::radio::pick_tracks(&db.conn, &ctx, client.as_ref(), batch_size);
