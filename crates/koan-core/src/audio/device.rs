@@ -169,8 +169,9 @@ fn device_name(device_id: AudioDeviceID) -> Result<String> {
     // CFRelease on drop, so no manual release is needed. The pointer cast bridges
     // coreaudio-sys's CFStringRef and core-foundation's CFStringRef which are
     // identical C types from different bindgen runs.
-    let cf_string: CFString =
-        unsafe { CFString::wrap_under_create_rule(name_ref as core_foundation::string::CFStringRef) };
+    let cf_string: CFString = unsafe {
+        CFString::wrap_under_create_rule(name_ref as core_foundation::string::CFStringRef)
+    };
     Ok(cf_string.to_string())
 }
 
