@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Visualiser toggle** — press `V` (Shift-V) to enable/disable the spectrum visualiser at runtime. Persists to config.toml. Visible in `?` help menu under Toggles
+
 ## 0.10.0
 
 ### Added

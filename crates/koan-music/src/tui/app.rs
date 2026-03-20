@@ -967,6 +967,22 @@ impl App {
                     std::time::Instant::now(),
                 ));
             }
+            KeyCode::Char('V') => {
+                self.viz_config.enabled = !self.viz_config.enabled;
+                self.status_message = Some((
+                    if self.viz_config.enabled {
+                        "visualiser on".into()
+                    } else {
+                        "visualiser off".into()
+                    },
+                    std::time::Instant::now(),
+                ));
+                // Persist to config
+                if let Ok(mut cfg) = koan_core::config::Config::load() {
+                    cfg.visualizer.enabled = self.viz_config.enabled;
+                    let _ = cfg.save();
+                }
+            }
             KeyCode::Up => {
                 let visible = self.visible_queue();
                 if !visible.is_empty() {
