@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.1
+
+### Changed
+
+- **MCP server: GraphQL-first interface** — stripped 40+ individual tools down to just 2: `schema_sdl` (introspect the full schema) and `graphql` (execute any query or mutation). All operations go through GraphQL now. Claude calls `schema_sdl` first to learn the API, then uses `graphql` for everything. Cleaner, less context overhead, same capabilities
+
 ## 0.12.0
 
 ### Added

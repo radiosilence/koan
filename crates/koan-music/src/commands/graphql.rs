@@ -1513,12 +1513,6 @@ fn favourite_album_ids(db: &Database) -> async_graphql::Result<HashSet<i64>> {
     Ok(ids)
 }
 
-/// Sync a favourite action to the remote Subsonic server (best-effort, fire-and-forget).
-/// Called from both GQL mutations and MCP tools.
-pub fn sync_favourite_to_remote_from_path(db: &Database, path: &str, star: bool) {
-    sync_favourite_to_remote(db, path, star);
-}
-
 fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
     let cfg = Config::load().unwrap_or_default();
     if !cfg.remote.enabled {
