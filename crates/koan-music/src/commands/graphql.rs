@@ -1655,8 +1655,18 @@ pub fn cmd_graphql(port: Option<u16>, playground: bool) {
         let listener = tokio::net::TcpListener::bind(addr)
             .await
             .expect("failed to bind");
-        axum::serve(listener, app).await.expect("server error");
+        axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+            .expect("server error");
     });
+}
+
+async fn shutdown_signal() {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("failed to listen for ctrl+c");
+    eprintln!("\nshutting down...");
 }
 
 async fn graphql_handler(
