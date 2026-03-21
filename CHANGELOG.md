@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0
 
 ### Added
 
@@ -17,6 +17,13 @@
 - **`similarArtists` query** — returns scored similar artists (from ListenBrainz, MusicBrainz, Subsonic) with source and relationship type
 - **`playHistory` query** — recent play history with track info, paginated
 - **Comprehensive MCP instructions** — rewritten server instructions guide Claude through discovery, the graphql power tool, all filter params, snapshots, radio, favourites, and device control
+- **Rich metadata filters on all queries** — albums: `title`, `yearStart`/`yearEnd`, `codec`, `label`, `genre`. Tracks: `title`, `artistName`, `albumTitle`, `genre`, `codec`, `yearStart`/`yearEnd`, `minSampleRate`, `minBitDepth`, `channels`, `minDurationMs`/`maxDurationMs`. Artists: `genre`. All string filters case-insensitive substring
+
+### Fixed
+
+- **`insert_in_queue` MCP tool** — was silently appending instead of inserting after the specified `after_queue_item_id`. Now uses `InsertInPlaylist` command directly
+- **`--playground` CLI flag** — was `Option<bool>` requiring `--playground true`. Now a proper flag
+- **Ctrl+C on GraphQL server** — `axum::serve` was blocking forever. Added `with_graceful_shutdown` using `tokio::signal::ctrl_c`
 
 ## 0.11.1
 

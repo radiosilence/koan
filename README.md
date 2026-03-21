@@ -132,6 +132,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Spectrum analyzer** | **48-band FFT** | No | No | No | No | No | No |
 | **Favourites** | **Yes (syncs)** | Via MPD | No | Yes | No | Via MPD | **Yes** |
 | **Streaming playback** | **Yes (256KB)** | Via MPD | No | No | No | Via MPD | **Yes** |
+| **API / MCP** | **GraphQL + MCP** | MPD protocol | No | No | No | MPD protocol | No |
 | **Tag editing** | Soon³ | Via MPD | No | Yes | Yes | Via MPD | No |
 | **DSP / EQ** | Soon³ | Via MPD | Yes | Yes | No | Via MPD | No |
 | **Platforms** | macOS³ | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
@@ -168,6 +169,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Only TUI with Finder drag & drop.** Drop files from macOS Finder directly into the terminal to enqueue.
 - **Only standalone TUI with synced lyrics.** Auto-fetches synced (LRC) or plain lyrics from LRCLIB — no API key needed. Current line highlights and scrolls with playback.
 - **Only TUI with a real-time spectrum analyzer.** 48-band FFT on a dedicated thread, A-weighted amplitude, peak hold markers — runs at 60fps without blocking the UI.
+- **Only TUI with a GraphQL API.** Full programmatic control with rich metadata filtering, nested queries, and named queue snapshots. MPD has a protocol; kōan has a modern API.
 
 ### Coming soon
 
@@ -200,6 +202,8 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Track deduplication** — 3-strategy match (path → remote ID → content) merges local and remote into one DB row. No duplicates in search or browse. Playback priority: local file → cached download → remote stream
 - **Lyrics** — toggle a lyrics side panel with `L`. Fetches synced (LRC) or plain lyrics automatically; synced lyrics highlight the current line and scroll with playback. Lyrics are cached in the database per track
 - **Proper artist handling** — track artist stored separately from album artist; compilations/VA albums display correctly
+- **GraphQL API** — `koan graphql` runs a headless player with an HTTP API. Full Relay-style cursor pagination, rich metadata filters (year range, codec, genre, sample rate, bit depth, duration), nested queries (artists→albums→tracks), mutations for all playback/queue/device/favourite control, named queue snapshots, radio mode control. Optional GraphQL Playground at `/graphql`. Daemon mode (`-d`) for background operation
+- **MCP server** — `koan mcp` exposes the player as an MCP server on stdio for Claude Desktop. 40+ tools including a `graphql` tool for in-process queries and a `schema_sdl` tool for schema introspection. Claude gets comprehensive instructions covering all tools, filters, and workflows on connect
 
 ## Architecture
 
@@ -272,6 +276,13 @@ koan probe track.flac         # show format/codec info for a file
 
 # mcp
 koan mcp                      # start headless MCP server on stdio
+
+# graphql api
+koan graphql                  # start GraphQL server on port 4000
+koan graphql --playground     # with GraphQL Playground web UI
+koan graphql --port 8080      # custom port
+koan graphql -d               # run as background daemon
+koan graphql -d --playground  # daemon with playground
 ```
 
 ### MCP server (Claude Desktop integration)
@@ -321,6 +332,43 @@ If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the f
 - "Play something like what's on now but more upbeat"
 - "Search my library for anything with 'rain' in the title"
 - "Switch audio output to my DAC"
+- "Save this queue as 'techno friday'" / "Restore my chill mix"
+- "Turn on radio mode" / "Star this track"
+
+### GraphQL API
+
+`koan graphql` starts a headless player with an HTTP GraphQL server. Full programmatic control — everything the TUI can do, minus the visualizer.
+
+```bash
+# Start the server
+koan graphql --playground
+
+# Or as a daemon (for Claude Code / scripts)
+koan graphql -d --playground
+```
+
+Then query at `http://localhost:4000/graphql`:
+
+```graphql
+# Find early FLAC albums
+{ albums(yearEnd: 1995, codec: "FLAC") { edges { node { title, artistName, date } } } }
+
+# Hi-res techno tracks
+{ tracks(genre: "techno", minSampleRate: 96000, minBitDepth: 24) { edges { node { title, artist, codec, sampleRate } } } }
+
+# Nested: artist → albums → tracks in one query
+{ artists(search: "Aphex") { edges { node { name, albums { edges { node { title, tracks { edges { node { title } } } } } } } } } }
+
+# What's playing?
+{ nowPlaying { state, positionMs, track { title, artist, codec, sampleRate, bitDepth } } }
+
+# Queue management
+mutation { replaceQueue(trackIds: [42, 43, 44]) { ok, addedCount } }
+mutation { saveSnapshot(name: "techno friday") { ok } }
+mutation { enableRadio { ok } }
+```
+
+Every query supports rich filtering — albums by year/codec/label/genre, tracks by genre/codec/sample rate/bit depth/duration, artists by genre. All string filters are case-insensitive substrings. The MCP server's `graphql` tool uses the same schema in-process (no HTTP round-trip)
 
 **Available tools:**
 
