@@ -186,7 +186,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Key hints / status message.
-    let radio_badge = if app.radio_mode {
+    let radio_badge = if app.state.radio_mode() {
         Some(ratatui::text::Span::styled(
             " RADIO ",
             ratatui::style::Style::new()

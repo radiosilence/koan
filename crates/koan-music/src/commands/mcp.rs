@@ -7,9 +7,7 @@ use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{
-    PlaybackState, QueueItemId, SharedPlayerState,
-};
+use koan_core::player::state::{PlaybackState, QueueItemId, SharedPlayerState};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Json;
 use rmcp::model::{ServerCapabilities, ServerInfo};
@@ -46,7 +44,9 @@ pub struct AddToQueueParams {
 pub struct InsertInQueueParams {
     #[schemars(description = "Track IDs from the library database to insert")]
     pub track_ids: Vec<i64>,
-    #[schemars(description = "Queue item ID (UUID string) to insert after (not yet used — currently appends)")]
+    #[schemars(
+        description = "Queue item ID (UUID string) to insert after (not yet used — currently appends)"
+    )]
     pub after_queue_item_id: String,
 }
 
@@ -128,6 +128,29 @@ pub struct SetDeviceParams {
 pub struct FavouriteParams {
     #[schemars(description = "Track ID from the library database")]
     pub track_id: i64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SnapshotNameParams {
+    #[schemars(description = "Name for the snapshot (e.g. 'techno', 'chill morning')")]
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GraphqlParams {
+    #[schemars(
+        description = "GraphQL query string — supports queries and mutations against the koan schema"
+    )]
+    pub query: String,
+    #[schemars(description = "Optional JSON object of query variables")]
+    pub variables: Option<serde_json::Value>,
+}
+
+/// GraphQL execution result wrapper — MCP spec requires outputSchema to be an object type.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct GraphqlResponse {
+    /// The GraphQL response JSON (contains data and/or errors fields).
+    pub result: serde_json::Value,
 }
 
 // ---------------------------------------------------------------------------
@@ -262,6 +285,25 @@ pub struct DeviceResponse {
     sample_rates: Vec<f64>,
 }
 
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SnapshotListResponse {
+    pub snapshots: Vec<SnapshotSummaryResponse>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SnapshotSummaryResponse {
+    name: String,
+    track_count: usize,
+    position_ms: u64,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct RadioStatusResponse {
+    pub enabled: bool,
+}
+
 // ---------------------------------------------------------------------------
 // Helper conversions
 // ---------------------------------------------------------------------------
@@ -323,6 +365,7 @@ pub struct KoanMcpServer {
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
     db_path: PathBuf,
+    graphql_schema: super::graphql::KoanSchema,
 }
 
 impl KoanMcpServer {
@@ -331,11 +374,14 @@ impl KoanMcpServer {
         cmd_tx: Sender<PlayerCommand>,
         db_path: PathBuf,
     ) -> Self {
+        let graphql_schema =
+            super::graphql::build_schema(state.clone(), cmd_tx.clone(), db_path.clone());
         Self {
             tool_router: Self::tool_router(),
             state,
             cmd_tx,
             db_path,
+            graphql_schema,
         }
     }
 
@@ -422,7 +468,9 @@ impl KoanMcpServer {
     // Queue management
     // -----------------------------------------------------------------------
 
-    #[tool(description = "Add tracks to the end of the queue by their library track IDs. Remote tracks are downloaded automatically in the background.")]
+    #[tool(
+        description = "Add tracks to the end of the queue by their library track IDs. Remote tracks are downloaded automatically in the background."
+    )]
     fn add_to_queue(
         &self,
         Parameters(params): Parameters<AddToQueueParams>,
@@ -443,17 +491,49 @@ impl KoanMcpServer {
     fn insert_in_queue(
         &self,
         Parameters(params): Parameters<InsertInQueueParams>,
-    ) -> Json<StatusResponse> {
-        // InsertInPlaylist isn't supported by enqueue_playlist, so fall back to Append.
-        // TODO: add InsertAfter support to enqueue_playlist.
-        let count = params.track_ids.len();
-        enqueue_tracks_bg(
-            params.track_ids,
-            PickerAction::Append,
-            self.cmd_tx.clone(),
-            self.state.clone(),
-        );
-        StatusResponse::ok(format!("queueing {} tracks (downloading if needed)", count))
+    ) -> Result<Json<StatusResponse>, String> {
+        let after_id = parse_queue_item_id(&params.after_queue_item_id)?;
+        let db = self.open_db()?;
+        let mut items = Vec::new();
+        let mut remote_ids = Vec::new();
+
+        for &tid in &params.track_ids {
+            if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid) {
+                let item = super::graphql::track_to_playlist_item(&track, &db);
+                if matches!(
+                    item.load_state,
+                    koan_core::player::state::LoadState::Pending
+                ) {
+                    remote_ids.push(tid);
+                }
+                items.push(item);
+            }
+        }
+
+        let count = items.len();
+        if !items.is_empty() {
+            self.cmd_tx
+                .send(PlayerCommand::InsertInPlaylist {
+                    items,
+                    after: after_id,
+                })
+                .map_err(|e| format!("send error: {}", e))?;
+        }
+
+        // Kick off background downloads for any remote tracks.
+        if !remote_ids.is_empty() {
+            enqueue_tracks_bg(
+                remote_ids,
+                PickerAction::Append,
+                self.cmd_tx.clone(),
+                self.state.clone(),
+            );
+        }
+
+        Ok(StatusResponse::ok(format!(
+            "inserted {} tracks after queue item",
+            count
+        )))
     }
 
     #[tool(description = "Remove tracks from the queue by their queue item IDs")]
@@ -777,7 +857,9 @@ impl KoanMcpServer {
     // Favourites
     // -----------------------------------------------------------------------
 
-    #[tool(description = "Star/favourite a track by its library track ID")]
+    #[tool(
+        description = "Star/favourite a track by its library track ID. Automatically syncs to the remote server if configured."
+    )]
     fn favourite(
         &self,
         Parameters(params): Parameters<FavouriteParams>,
@@ -793,13 +875,16 @@ impl KoanMcpServer {
             .ok_or_else(|| format!("track {} has no path", params.track_id))?;
         queries::add_favourite(&db.conn, std::path::Path::new(path))
             .map_err(|e| format!("db error: {}", e))?;
+        super::graphql::sync_favourite_to_remote_from_path(&db, path, true);
         Ok(StatusResponse::ok(format!(
             "favourited track {}",
             params.track_id
         )))
     }
 
-    #[tool(description = "Unstar/unfavourite a track by its library track ID")]
+    #[tool(
+        description = "Unstar/unfavourite a track by its library track ID. Automatically syncs to the remote server if configured."
+    )]
     fn unfavourite(
         &self,
         Parameters(params): Parameters<FavouriteParams>,
@@ -815,10 +900,43 @@ impl KoanMcpServer {
             .ok_or_else(|| format!("track {} has no path", params.track_id))?;
         queries::remove_favourite(&db.conn, std::path::Path::new(path))
             .map_err(|e| format!("db error: {}", e))?;
+        super::graphql::sync_favourite_to_remote_from_path(&db, path, false);
         Ok(StatusResponse::ok(format!(
             "unfavourited track {}",
             params.track_id
         )))
+    }
+
+    #[tool(
+        description = "Execute a GraphQL query against the koan music library and player. \
+        Supports nested queries (artists→albums→tracks), cursor pagination, mutations for \
+        playback/queue control, and more. Use introspection or the schema docs to explore. \
+        This single tool can replace most other library/discovery tools."
+    )]
+    fn graphql(
+        &self,
+        Parameters(params): Parameters<GraphqlParams>,
+    ) -> Result<Json<GraphqlResponse>, String> {
+        let schema = self.graphql_schema.clone();
+        let rt =
+            tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime".to_string())?;
+        let result = rt.block_on(super::graphql::execute_in_process(
+            &schema,
+            &params.query,
+            params.variables,
+        ));
+        Ok(Json(GraphqlResponse { result }))
+    }
+
+    #[tool(
+        description = "Get the full GraphQL schema in SDL format. Call this first to understand all available \
+        queries, mutations, types, and filter parameters before using the graphql tool."
+    )]
+    fn schema_sdl(&self) -> Json<GraphqlResponse> {
+        let sdl = self.graphql_schema.sdl();
+        Json(GraphqlResponse {
+            result: serde_json::Value::String(sdl),
+        })
     }
 
     #[tool(description = "List all favourited/starred tracks")]
@@ -839,18 +957,210 @@ impl KoanMcpServer {
         let count = tracks.len();
         Ok(Json(TrackListResponse { tracks, count }))
     }
+
+    // -----------------------------------------------------------------------
+    // Device control
+    // -----------------------------------------------------------------------
+
+    #[tool(description = "Reset audio output to the system default device")]
+    fn clear_device(&self) -> Result<Json<StatusResponse>, String> {
+        self.cmd_tx
+            .send(PlayerCommand::ClearOutputDevice)
+            .map_err(|e| format!("send error: {}", e))?;
+        Ok(StatusResponse::ok("device cleared, using system default"))
+    }
+
+    // -----------------------------------------------------------------------
+    // Snapshots — save/restore/list/delete named queue states
+    // -----------------------------------------------------------------------
+
+    #[tool(
+        description = "Save the current queue, cursor position, and playback position as a named snapshot. \
+        Overwrites if a snapshot with the same name already exists. \
+        Use this to bank a curated mix and restore it later."
+    )]
+    fn save_snapshot(
+        &self,
+        Parameters(params): Parameters<SnapshotNameParams>,
+    ) -> Result<Json<StatusResponse>, String> {
+        let db = self.open_db()?;
+        let (items, cursor) = self.state.snapshot_playlist();
+        let position_ms = self.state.position_ms();
+
+        let persisted: Vec<koan_core::db::queries::playback_state::PersistedQueueItem> = items
+            .iter()
+            .map(koan_core::db::queries::playback_state::PersistedQueueItem::from_playlist_item)
+            .collect();
+        let cursor_path = cursor.and_then(|cid| {
+            items
+                .iter()
+                .find(|i| i.id == cid)
+                .map(|i| i.path.to_string_lossy().into_owned())
+        });
+
+        queries::save_snapshot(
+            &db.conn,
+            &params.name,
+            &persisted,
+            cursor_path.as_deref(),
+            position_ms,
+        )
+        .map_err(|e| format!("db error: {}", e))?;
+
+        Ok(StatusResponse::ok(format!(
+            "saved snapshot '{}' ({} tracks)",
+            params.name,
+            items.len()
+        )))
+    }
+
+    #[tool(
+        description = "Restore a named snapshot — replaces the current queue and resumes playback \
+        at the saved cursor position. Use list_snapshots to see available names."
+    )]
+    fn restore_snapshot(
+        &self,
+        Parameters(params): Parameters<SnapshotNameParams>,
+    ) -> Result<Json<StatusResponse>, String> {
+        let db = self.open_db()?;
+        let snap = queries::load_snapshot(&db.conn, &params.name)
+            .map_err(|e| format!("db error: {}", e))?
+            .ok_or_else(|| format!("snapshot '{}' not found", params.name))?;
+
+        let items: Vec<koan_core::player::state::PlaylistItem> =
+            snap.items.iter().map(|i| i.to_playlist_item()).collect();
+
+        self.cmd_tx
+            .send(PlayerCommand::ClearPlaylist)
+            .map_err(|e| format!("send error: {}", e))?;
+
+        let cursor_item_id = snap.cursor_path.as_ref().and_then(|cp| {
+            items
+                .iter()
+                .find(|i| i.path.to_string_lossy() == cp.as_str())
+                .map(|i| i.id)
+        });
+
+        if !items.is_empty() {
+            let first_id = cursor_item_id.unwrap_or(items[0].id);
+            self.cmd_tx
+                .send(PlayerCommand::AddToPlaylist(items))
+                .map_err(|e| format!("send error: {}", e))?;
+            let _ = self.cmd_tx.send(PlayerCommand::Play(first_id));
+            if snap.position_ms > 0 {
+                let _ = self.cmd_tx.send(PlayerCommand::Seek(snap.position_ms));
+            }
+        }
+
+        Ok(StatusResponse::ok(format!(
+            "restored snapshot '{}'",
+            params.name
+        )))
+    }
+
+    #[tool(
+        description = "List all saved queue snapshots with name, track count, and creation date"
+    )]
+    fn list_snapshots(&self) -> Result<Json<SnapshotListResponse>, String> {
+        let db = self.open_db()?;
+        let list = queries::list_snapshots(&db.conn).map_err(|e| format!("db error: {}", e))?;
+        let snapshots: Vec<SnapshotSummaryResponse> = list
+            .into_iter()
+            .map(|s| SnapshotSummaryResponse {
+                name: s.name,
+                track_count: s.track_count,
+                position_ms: s.position_ms,
+                created_at: s.created_at,
+            })
+            .collect();
+        let count = snapshots.len();
+        Ok(Json(SnapshotListResponse { snapshots, count }))
+    }
+
+    #[tool(description = "Delete a named snapshot")]
+    fn delete_snapshot(
+        &self,
+        Parameters(params): Parameters<SnapshotNameParams>,
+    ) -> Result<Json<StatusResponse>, String> {
+        let db = self.open_db()?;
+        let deleted = queries::delete_snapshot(&db.conn, &params.name)
+            .map_err(|e| format!("db error: {}", e))?;
+        if deleted {
+            Ok(StatusResponse::ok(format!(
+                "deleted snapshot '{}'",
+                params.name
+            )))
+        } else {
+            Err(format!("snapshot '{}' not found", params.name))
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Radio mode
+    // -----------------------------------------------------------------------
+
+    #[tool(
+        description = "Enable radio mode — automatically discovers and queues similar tracks \
+        when the queue runs low. Uses ListenBrainz, MusicBrainz, genre/era matching, \
+        and Subsonic (if configured) for multi-signal discovery."
+    )]
+    fn enable_radio(&self) -> Json<StatusResponse> {
+        self.state.set_radio_mode(true);
+        StatusResponse::ok("radio mode enabled")
+    }
+
+    #[tool(description = "Disable radio mode — stop auto-queueing tracks")]
+    fn disable_radio(&self) -> Json<StatusResponse> {
+        self.state.set_radio_mode(false);
+        StatusResponse::ok("radio mode disabled")
+    }
+
+    #[tool(description = "Check whether radio mode is currently enabled")]
+    fn radio_status(&self) -> Json<RadioStatusResponse> {
+        Json(RadioStatusResponse {
+            enabled: self.state.radio_mode(),
+        })
+    }
 }
 
 #[rmcp::tool_handler]
 impl ServerHandler for KoanMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "koan is a bit-perfect macOS music player. You can control playback, \
-                 manage the queue, search the music library, and manage favourites. \
-                 Use search and list_artists/list_albums/list_tracks to discover music, \
-                 then add_to_queue or replace_queue to play it. Track IDs are library \
-                 database IDs (integers). Queue item IDs are UUIDs assigned when tracks \
-                 are added to the queue.",
+            "koan is a bit-perfect macOS music player with a full library database, queue, \
+             and playback engine. You control it via these tools.\n\n\
+             ## Quick start\n\
+             1. Use `search` or `list_artists` to discover music\n\
+             2. Use `add_to_queue` or `replace_queue` with track IDs to play\n\
+             3. Use `now_playing` to see what's on\n\n\
+             ## ID conventions\n\
+             - **Track IDs**: integers from the library database (search, list_tracks, etc.)\n\
+             - **Queue item IDs**: UUIDs assigned when tracks enter the queue (play, remove_from_queue, etc.)\n\n\
+             ## The `graphql` tool (power mode)\n\
+             Executes GraphQL queries in-process — use for nested queries and rich filtering:\n\
+             - Nested: `{ artists { edges { node { name, albums { edges { node { title } } } } } } }`\n\
+             - Albums: filter by `title`, `yearStart`/`yearEnd`, `codec`, `label`, `genre`\n\
+             - Tracks: filter by `title`, `artistName`, `albumTitle`, `genre`, `codec`, `yearStart`/`yearEnd`, \
+               `minSampleRate`, `minBitDepth`, `channels`, `minDurationMs`/`maxDurationMs`, `source`, `favouritesOnly`\n\
+             - Artists: filter by `search`, `genre`\n\
+             - All string filters are case-insensitive substrings\n\
+             - Queries: `artists`, `albums`, `tracks`, `track`, `randomTracks`, `nowPlaying`, `queue`, \
+               `libraryStats`, `devices`, `favourites`, `snapshots`, `radioStatus`, `similarArtists`, `playHistory`\n\
+             - Mutations: playback (`play`/`pause`/`resume`/`stop`/`next`/`previous`/`seek`), \
+               queue (`addToQueue`/`replaceQueue`/`removeFromQueue`/`moveInQueue`/`clearQueue`/`undo`/`redo`), \
+               device (`setDevice`/`clearDevice`), favourites (`favourite`/`unfavourite`/`toggleFavourite`), \
+               snapshots (`saveSnapshot`/`restoreSnapshot`/`deleteSnapshot`), radio (`enableRadio`/`disableRadio`)\n\n\
+             ## Snapshots\n\
+             Save the current queue as a named snapshot (`save_snapshot`), restore later (`restore_snapshot`). \
+             Bank curated mixes and switch between them.\n\n\
+             ## Radio mode\n\
+             `enable_radio` activates multi-signal discovery — koan auto-queues similar tracks using \
+             ListenBrainz, MusicBrainz, genre/era matching, and Subsonic when the queue runs low.\n\n\
+             ## Favourites\n\
+             `favourite`/`unfavourite` star tracks locally and auto-sync to remote (Subsonic/Navidrome). \
+             Filter any query with `favouritesOnly: true`.\n\n\
+             ## Devices\n\
+             `list_devices` + `set_device` to switch audio output. `now_playing` shows codec, sample rate, bit depth.",
         )
     }
 }
@@ -1107,9 +1417,8 @@ mod tests {
     #[test]
     fn replace_queue_returns_status() {
         let (server, _rx, _tmp) = test_server();
-        let Json(resp) = server.replace_queue(Parameters(ReplaceQueueParams {
-            track_ids: vec![1],
-        }));
+        let Json(resp) =
+            server.replace_queue(Parameters(ReplaceQueueParams { track_ids: vec![1] }));
         assert!(resp.message.contains("1 tracks"));
     }
 
@@ -1290,5 +1599,4 @@ mod tests {
             other => panic!("expected MoveItemsInPlaylist, got {:?}", other),
         }
     }
-
 }

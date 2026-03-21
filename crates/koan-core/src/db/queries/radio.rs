@@ -203,6 +203,37 @@ pub fn play_count(conn: &Connection, track_id: i64) -> Result<i64, DbError> {
     Ok(count)
 }
 
+/// A play history entry with full track info.
+#[derive(Debug, Clone)]
+pub struct PlayHistoryEntry {
+    pub track_id: i64,
+    pub played_at: i64,
+    pub duration_ms: Option<i64>,
+}
+
+/// Get recent play history entries (most recent first).
+pub fn get_play_history(
+    conn: &Connection,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<PlayHistoryEntry>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT track_id, played_at, duration_ms FROM play_history
+         ORDER BY played_at DESC
+         LIMIT ?1 OFFSET ?2",
+    )?;
+    let rows = stmt
+        .query_map(params![limit as i64, offset as i64], |row| {
+            Ok(PlayHistoryEntry {
+                track_id: row.get(0)?,
+                played_at: row.get(1)?,
+                duration_ms: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Get random tracks from the library, excluding specific track paths.
 /// Returns up to `count` tracks, weighted towards tracks matching the given
 /// genres and artist IDs (preferred tracks sorted first, then random fill).

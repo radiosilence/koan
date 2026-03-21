@@ -25,6 +25,7 @@ pub struct Config {
     #[serde(alias = "visualiser")]
     pub visualizer: VisualizerConfig,
     pub radio: RadioConfig,
+    pub graphql: GraphqlConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +177,25 @@ impl OrganizeConfig {
             .as_ref()
             .and_then(|name| self.patterns.get(name))
             .map(|s| s.as_str())
+    }
+}
+
+/// GraphQL API server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GraphqlConfig {
+    /// Port to listen on (default: 4000).
+    pub port: u16,
+    /// Enable the GraphQL Playground web UI at GET /graphql.
+    pub playground: bool,
+}
+
+impl Default for GraphqlConfig {
+    fn default() -> Self {
+        Self {
+            port: 4000,
+            playground: false,
+        }
     }
 }
 

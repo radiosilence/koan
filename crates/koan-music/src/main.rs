@@ -190,6 +190,18 @@ enum Commands {
     },
     /// Run as a headless MCP server on stdio (for Claude Desktop / MCP clients)
     Mcp,
+    /// Start a GraphQL API server (headless player + HTTP)
+    Graphql {
+        /// Port to listen on (default: from config or 4000)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Enable GraphQL Playground web UI
+        #[arg(long)]
+        playground: bool,
+        /// Run as a background daemon (fork and detach)
+        #[arg(short, long)]
+        daemonize: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -285,6 +297,17 @@ fn main() {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }
         Some(Commands::Mcp) => commands::cmd_mcp(),
+        Some(Commands::Graphql {
+            port,
+            playground,
+            daemonize,
+        }) => {
+            if daemonize {
+                commands::cmd_graphql_daemon(port, playground);
+            } else {
+                commands::cmd_graphql(port, playground);
+            }
+        }
     }
 }
 
