@@ -197,7 +197,7 @@ enum Commands {
         port: Option<u16>,
         /// Enable GraphQL Playground web UI
         #[arg(long)]
-        playground: Option<bool>,
+        playground: bool,
         /// Run as a background daemon (fork and detach)
         #[arg(short, long)]
         daemonize: bool,

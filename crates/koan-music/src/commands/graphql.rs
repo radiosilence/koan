@@ -1621,7 +1621,7 @@ pub fn build_schema(
 // `koan graphql` entry point
 // ---------------------------------------------------------------------------
 
-pub fn cmd_graphql(port: Option<u16>, playground: Option<bool>) {
+pub fn cmd_graphql(port: Option<u16>, playground: bool) {
     use axum::routing::{get, post};
     use koan_core::player::Player;
 
@@ -1630,7 +1630,7 @@ pub fn cmd_graphql(port: Option<u16>, playground: Option<bool>) {
 
     let cfg = Config::load().unwrap_or_default();
     let port = port.unwrap_or(cfg.graphql.port);
-    let playground_enabled = playground.unwrap_or(cfg.graphql.playground);
+    let playground_enabled = playground || cfg.graphql.playground;
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
@@ -1674,7 +1674,7 @@ async fn graphql_playground() -> axum::response::Html<String> {
 
 /// Run the GraphQL server as a background daemon.
 /// Forks the process, writes the PID to ~/.config/koan/graphql.pid, and exits.
-pub fn cmd_graphql_daemon(port: Option<u16>, playground: Option<bool>) {
+pub fn cmd_graphql_daemon(port: Option<u16>, playground: bool) {
     use std::fs;
     use std::process::Command;
 
@@ -1685,8 +1685,8 @@ pub fn cmd_graphql_daemon(port: Option<u16>, playground: Option<bool>) {
     let mut cmd = Command::new(exe);
     cmd.arg("graphql");
     cmd.arg("--port").arg(port_val.to_string());
-    if playground.unwrap_or(cfg.graphql.playground) {
-        cmd.arg("--playground").arg("true");
+    if playground || cfg.graphql.playground {
+        cmd.arg("--playground");
     }
 
     // Detach: redirect stdio to /dev/null, start in new session
