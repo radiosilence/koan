@@ -1,45 +1,68 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 use rusqlite::{Connection, params};
 
 use crate::db::connection::DbError;
 
 use super::{ArtistRow, TrackRow};
 
-/// Cache similar artist relationships.
-/// Clears existing entries for the given artist_id, then inserts the new set.
+/// A similar artist entry with relationship metadata.
+#[derive(Debug, Clone)]
+pub struct SimilarArtistEntry {
+    pub artist: ArtistRow,
+    pub score: f64,
+    pub source: String,
+    pub relationship: String,
+}
+
+/// Cache similar artist relationships for a specific source.
+/// Clears existing entries for the given (artist_id, source), then inserts the new set.
 pub fn save_similar_artists(
     conn: &Connection,
     artist_id: i64,
     similar: &[(i64, f64)],
     source: &str,
 ) -> Result<(), DbError> {
+    save_similar_artists_with_rel(conn, artist_id, similar, source, "similar")
+}
+
+/// Cache similar artist relationships with an explicit relationship type.
+pub fn save_similar_artists_with_rel(
+    conn: &Connection,
+    artist_id: i64,
+    similar: &[(i64, f64)],
+    source: &str,
+    relationship: &str,
+) -> Result<(), DbError> {
     conn.execute(
-        "DELETE FROM similar_artists WHERE artist_id = ?1",
-        params![artist_id],
+        "DELETE FROM similar_artists WHERE artist_id = ?1 AND source = ?2",
+        params![artist_id, source],
     )?;
 
     let mut stmt = conn.prepare(
-        "INSERT OR REPLACE INTO similar_artists (artist_id, similar_id, score, source)
-         VALUES (?1, ?2, ?3, ?4)",
+        "INSERT OR REPLACE INTO similar_artists (artist_id, similar_id, score, source, relationship)
+         VALUES (?1, ?2, ?3, ?4, ?5)",
     )?;
 
     for &(similar_id, score) in similar {
-        stmt.execute(params![artist_id, similar_id, score, source])?;
+        stmt.execute(params![artist_id, similar_id, score, source, relationship])?;
     }
 
     Ok(())
 }
 
-/// Load cached similar artists for a given artist.
+/// Load cached similar artists for a given artist (all sources merged, best score wins).
 pub fn get_similar_artists(
     conn: &Connection,
     artist_id: i64,
 ) -> Result<Vec<(ArtistRow, f64)>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT a.id, a.name, a.sort_name, a.remote_id, sa.score
+        "SELECT a.id, a.name, a.sort_name, a.remote_id, MAX(sa.score) as best_score
          FROM similar_artists sa
          JOIN artists a ON a.id = sa.similar_id
          WHERE sa.artist_id = ?1
-         ORDER BY sa.score DESC",
+         GROUP BY a.id
+         ORDER BY best_score DESC",
     )?;
 
     let rows = stmt
@@ -59,20 +82,125 @@ pub fn get_similar_artists(
     Ok(rows)
 }
 
-/// Check if we have cached similar artists for a given artist (and cache isn't stale).
-/// Consider cache stale after 7 days.
+/// Load similar artists with full metadata (source, relationship type).
+pub fn get_similar_artists_detailed(
+    conn: &Connection,
+    artist_id: i64,
+) -> Result<Vec<SimilarArtistEntry>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT a.id, a.name, a.sort_name, a.remote_id, sa.score, sa.source, sa.relationship
+         FROM similar_artists sa
+         JOIN artists a ON a.id = sa.similar_id
+         WHERE sa.artist_id = ?1
+         ORDER BY sa.score DESC",
+    )?;
+
+    let rows = stmt
+        .query_map(params![artist_id], |row| {
+            Ok(SimilarArtistEntry {
+                artist: ArtistRow {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    sort_name: row.get(2)?,
+                    remote_id: row.get(3)?,
+                },
+                score: row.get(4)?,
+                source: row.get(5)?,
+                relationship: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    Ok(rows)
+}
+
+/// Check if we have cached similar artists for a given artist from a specific source
+/// (and cache isn't stale). Consider cache stale after 7 days.
 pub fn has_fresh_similar_artists(conn: &Connection, artist_id: i64) -> Result<bool, DbError> {
-    let count: i64 = conn
-        .query_row(
+    has_fresh_similar_artists_for_source(conn, artist_id, None)
+}
+
+/// Check freshness for a specific source, or any source if `source` is None.
+pub fn has_fresh_similar_artists_for_source(
+    conn: &Connection,
+    artist_id: i64,
+    source: Option<&str>,
+) -> Result<bool, DbError> {
+    let count: i64 = if let Some(src) = source {
+        conn.query_row(
+            "SELECT COUNT(*) FROM similar_artists
+             WHERE artist_id = ?1 AND source = ?2
+               AND datetime(updated_at) > datetime('now', '-7 days')",
+            params![artist_id, src],
+            |row| row.get(0),
+        )
+        .unwrap_or(0)
+    } else {
+        conn.query_row(
             "SELECT COUNT(*) FROM similar_artists
              WHERE artist_id = ?1
                AND datetime(updated_at) > datetime('now', '-7 days')",
             params![artist_id],
             |row| row.get(0),
         )
-        .unwrap_or(0);
+        .unwrap_or(0)
+    };
 
     Ok(count > 0)
+}
+
+// --- Play history ---
+
+/// Record a play event.
+pub fn record_play(
+    conn: &Connection,
+    track_id: i64,
+    duration_ms: Option<i64>,
+) -> Result<(), DbError> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+
+    conn.execute(
+        "INSERT INTO play_history (track_id, played_at, duration_ms)
+         VALUES (?1, ?2, ?3)",
+        params![track_id, now, duration_ms],
+    )?;
+    Ok(())
+}
+
+/// Get the last play timestamp for a track, or None if never played.
+pub fn last_played_at(conn: &Connection, track_id: i64) -> Result<Option<i64>, DbError> {
+    let result = conn.query_row(
+        "SELECT MAX(played_at) FROM play_history WHERE track_id = ?1",
+        params![track_id],
+        |row| row.get::<_, Option<i64>>(0),
+    )?;
+    Ok(result)
+}
+
+/// Get track IDs from recent play history (most recent first), up to `limit`.
+pub fn recent_track_ids(conn: &Connection, limit: usize) -> Result<Vec<i64>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT track_id FROM play_history
+         ORDER BY played_at DESC
+         LIMIT ?1",
+    )?;
+    let rows = stmt
+        .query_map(params![limit as i64], |row| row.get(0))?
+        .collect::<Result<Vec<i64>, _>>()?;
+    Ok(rows)
+}
+
+/// Get play count for a track.
+pub fn play_count(conn: &Connection, track_id: i64) -> Result<i64, DbError> {
+    let count = conn.query_row(
+        "SELECT COUNT(*) FROM play_history WHERE track_id = ?1",
+        params![track_id],
+        |row| row.get(0),
+    )?;
+    Ok(count)
 }
 
 /// Get random tracks from the library, excluding specific track paths.
@@ -250,7 +378,7 @@ mod tests {
     }
 
     #[test]
-    fn test_save_replaces_old_entries() {
+    fn test_save_replaces_per_source() {
         let db = test_db();
         let a1 = get_or_create_artist(&db.conn, "Aphex Twin", None).unwrap();
         let a2 = get_or_create_artist(&db.conn, "Squarepusher", None).unwrap();
@@ -259,9 +387,15 @@ mod tests {
         save_similar_artists(&db.conn, a1, &[(a2, 0.9)], "subsonic").unwrap();
         assert_eq!(get_similar_artists(&db.conn, a1).unwrap().len(), 1);
 
-        // Replace with different set.
+        // Adding from different source keeps both.
         save_similar_artists(&db.conn, a1, &[(a3, 0.5)], "lastfm").unwrap();
         let similar = get_similar_artists(&db.conn, a1).unwrap();
+        assert_eq!(similar.len(), 2);
+
+        // Replacing same source only clears that source.
+        save_similar_artists(&db.conn, a1, &[(a3, 0.8)], "subsonic").unwrap();
+        let similar = get_similar_artists(&db.conn, a1).unwrap();
+        // a3 from both sources (merged via MAX), a2 gone (subsonic replaced)
         assert_eq!(similar.len(), 1);
         assert_eq!(similar[0].0.name, "Autechre");
     }
@@ -406,5 +540,75 @@ mod tests {
         let db = test_db();
         let tracks = random_tracks_excluding(&db.conn, &[], &[], &[], 10).unwrap();
         assert!(tracks.is_empty());
+    }
+
+    #[test]
+    fn test_record_and_query_play_history() {
+        let db = test_db();
+        let mut meta = sample_meta("Track1", "Artist1", "Album1");
+        meta.path = Some("/music/Track1.flac".into());
+        upsert_track(&db.conn, &meta).unwrap();
+
+        let track_id: i64 = db
+            .conn
+            .query_row("SELECT id FROM tracks LIMIT 1", [], |row| row.get(0))
+            .unwrap();
+
+        // No plays yet.
+        assert_eq!(play_count(&db.conn, track_id).unwrap(), 0);
+        assert!(last_played_at(&db.conn, track_id).unwrap().is_none());
+        assert!(recent_track_ids(&db.conn, 10).unwrap().is_empty());
+
+        // Record a play.
+        record_play(&db.conn, track_id, Some(240_000)).unwrap();
+        assert_eq!(play_count(&db.conn, track_id).unwrap(), 1);
+        assert!(last_played_at(&db.conn, track_id).unwrap().is_some());
+
+        let recent = recent_track_ids(&db.conn, 10).unwrap();
+        assert_eq!(recent.len(), 1);
+        assert_eq!(recent[0], track_id);
+
+        // Record another play.
+        record_play(&db.conn, track_id, Some(240_000)).unwrap();
+        assert_eq!(play_count(&db.conn, track_id).unwrap(), 2);
+        // Still only 1 distinct track.
+        assert_eq!(recent_track_ids(&db.conn, 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_similar_artists_detailed() {
+        let db = test_db();
+        let a1 = get_or_create_artist(&db.conn, "Aphex Twin", None).unwrap();
+        let a2 = get_or_create_artist(&db.conn, "Squarepusher", None).unwrap();
+        let a3 = get_or_create_artist(&db.conn, "Autechre", None).unwrap();
+
+        save_similar_artists(&db.conn, a1, &[(a2, 0.9)], "subsonic").unwrap();
+        save_similar_artists_with_rel(&db.conn, a1, &[(a3, 0.7)], "musicbrainz", "collaborator")
+            .unwrap();
+
+        let detailed = get_similar_artists_detailed(&db.conn, a1).unwrap();
+        assert_eq!(detailed.len(), 2);
+
+        let subsonic_entry = detailed.iter().find(|e| e.source == "subsonic").unwrap();
+        assert_eq!(subsonic_entry.artist.name, "Squarepusher");
+        assert_eq!(subsonic_entry.relationship, "similar");
+
+        let mb_entry = detailed.iter().find(|e| e.source == "musicbrainz").unwrap();
+        assert_eq!(mb_entry.artist.name, "Autechre");
+        assert_eq!(mb_entry.relationship, "collaborator");
+    }
+
+    #[test]
+    fn test_fresh_similar_artists_per_source() {
+        let db = test_db();
+        let a1 = get_or_create_artist(&db.conn, "Aphex Twin", None).unwrap();
+        let a2 = get_or_create_artist(&db.conn, "Squarepusher", None).unwrap();
+
+        save_similar_artists(&db.conn, a1, &[(a2, 0.8)], "listenbrainz").unwrap();
+
+        assert!(has_fresh_similar_artists_for_source(&db.conn, a1, Some("listenbrainz")).unwrap());
+        assert!(!has_fresh_similar_artists_for_source(&db.conn, a1, Some("musicbrainz")).unwrap());
+        // Any source.
+        assert!(has_fresh_similar_artists(&db.conn, a1).unwrap());
     }
 }

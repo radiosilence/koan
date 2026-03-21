@@ -116,13 +116,25 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         );
 
         CREATE TABLE IF NOT EXISTS similar_artists (
-            artist_id    INTEGER NOT NULL REFERENCES artists(id),
-            similar_id   INTEGER NOT NULL REFERENCES artists(id),
-            score        REAL NOT NULL DEFAULT 0.0,
-            source       TEXT NOT NULL DEFAULT 'subsonic',
-            updated_at   TEXT DEFAULT (datetime('now')),
-            PRIMARY KEY (artist_id, similar_id)
+            artist_id       INTEGER NOT NULL REFERENCES artists(id),
+            similar_id      INTEGER NOT NULL REFERENCES artists(id),
+            score           REAL NOT NULL DEFAULT 0.0,
+            source          TEXT NOT NULL DEFAULT 'subsonic',
+            relationship    TEXT NOT NULL DEFAULT 'similar',
+            updated_at      TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (artist_id, similar_id, source)
         );
+
+        CREATE TABLE IF NOT EXISTS play_history (
+            id          INTEGER PRIMARY KEY,
+            track_id    INTEGER REFERENCES tracks(id),
+            played_at   INTEGER NOT NULL,
+            duration_ms INTEGER,
+            source      TEXT DEFAULT 'local'
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_play_history_track ON play_history(track_id);
+        CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
         ",
     )?;
     Ok(())

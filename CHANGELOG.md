@@ -5,6 +5,8 @@
 ### Added
 
 - **Visualiser toggle** — press `V` (Shift-V) to enable/disable the spectrum visualiser at runtime. Persists to config.toml. Visible in `?` help menu under Toggles
+- **Multi-signal radio mode** — radio now uses ListenBrainz ML similarity, MusicBrainz relationship graph (collaborators, band members, associated acts), Subsonic, genre/era matching, and play history to pick tracks across multiple axes instead of just one source. Drifting seed window follows your recent plays instead of anchoring to a single track. Recency scoring surfaces buried gems (never-played and long-forgotten tracks get a discovery bonus). New config options: `history_window` (don't repeat last N, default 200), `seed_window` (last N plays as seed, default 5), `discovery_weight` (0.0-1.0, default 0.3)
+- **Play history tracking** — koan now records track completions in a `play_history` table, used for recency scoring in radio mode and future scrobbling
 
 ## 0.10.0
 

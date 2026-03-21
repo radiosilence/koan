@@ -189,6 +189,13 @@ pub struct RadioConfig {
     pub batch_size: usize,
     /// Use Subsonic getSimilarSongs2 when a remote server is configured.
     pub use_subsonic: bool,
+    /// Don't repeat any of the last N tracks (play history exclusion window).
+    pub history_window: usize,
+    /// Number of recently played tracks to use as seed (drifting seed window).
+    pub seed_window: usize,
+    /// Discovery weight: 0.0 = only familiar tracks, 1.0 = maximise discovery.
+    /// Controls the recency bonus — higher values boost never-played/long-forgotten tracks.
+    pub discovery_weight: f64,
 }
 
 impl Default for RadioConfig {
@@ -197,6 +204,9 @@ impl Default for RadioConfig {
             lookahead: 5,
             batch_size: 5,
             use_subsonic: true,
+            history_window: 200,
+            seed_window: 5,
+            discovery_weight: 0.3,
         }
     }
 }

@@ -77,6 +77,35 @@ pub fn albums_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<AlbumR
     Ok(rows)
 }
 
+/// Get a single album by ID.
+pub fn get_album(conn: &Connection, album_id: i64) -> Result<Option<AlbumRow>, DbError> {
+    let result = conn
+        .query_row(
+            "SELECT al.id, al.title, al.artist_id, a.name, al.date,
+                    al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id
+             FROM albums al
+             LEFT JOIN artists a ON al.artist_id = a.id
+             WHERE al.id = ?1",
+            params![album_id],
+            |row| {
+                Ok(AlbumRow {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    artist_id: row.get(2)?,
+                    artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+                    date: row.get(4)?,
+                    total_discs: row.get(5)?,
+                    total_tracks: row.get(6)?,
+                    codec: row.get(7)?,
+                    label: row.get(8)?,
+                    remote_id: row.get(9)?,
+                })
+            },
+        )
+        .ok();
+    Ok(result)
+}
+
 /// Get the date string for an album by ID.
 pub fn album_date(conn: &Connection, album_id: i64) -> Result<Option<String>, DbError> {
     Ok(conn
