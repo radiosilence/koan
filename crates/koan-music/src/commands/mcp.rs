@@ -491,17 +491,49 @@ impl KoanMcpServer {
     fn insert_in_queue(
         &self,
         Parameters(params): Parameters<InsertInQueueParams>,
-    ) -> Json<StatusResponse> {
-        // InsertInPlaylist isn't supported by enqueue_playlist, so fall back to Append.
-        // TODO: add InsertAfter support to enqueue_playlist.
-        let count = params.track_ids.len();
-        enqueue_tracks_bg(
-            params.track_ids,
-            PickerAction::Append,
-            self.cmd_tx.clone(),
-            self.state.clone(),
-        );
-        StatusResponse::ok(format!("queueing {} tracks (downloading if needed)", count))
+    ) -> Result<Json<StatusResponse>, String> {
+        let after_id = parse_queue_item_id(&params.after_queue_item_id)?;
+        let db = self.open_db()?;
+        let mut items = Vec::new();
+        let mut remote_ids = Vec::new();
+
+        for &tid in &params.track_ids {
+            if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid) {
+                let item = super::graphql::track_to_playlist_item(&track, &db);
+                if matches!(
+                    item.load_state,
+                    koan_core::player::state::LoadState::Pending
+                ) {
+                    remote_ids.push(tid);
+                }
+                items.push(item);
+            }
+        }
+
+        let count = items.len();
+        if !items.is_empty() {
+            self.cmd_tx
+                .send(PlayerCommand::InsertInPlaylist {
+                    items,
+                    after: after_id,
+                })
+                .map_err(|e| format!("send error: {}", e))?;
+        }
+
+        // Kick off background downloads for any remote tracks.
+        if !remote_ids.is_empty() {
+            enqueue_tracks_bg(
+                remote_ids,
+                PickerAction::Append,
+                self.cmd_tx.clone(),
+                self.state.clone(),
+            );
+        }
+
+        Ok(StatusResponse::ok(format!(
+            "inserted {} tracks after queue item",
+            count
+        )))
     }
 
     #[tool(description = "Remove tracks from the queue by their queue item IDs")]

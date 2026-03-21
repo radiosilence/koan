@@ -515,6 +515,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         ids: Option<Vec<i64>>,
         search: Option<String>,
+        genre: Option<String>,
         #[graphql(default = false)] favourites_only: bool,
         after: Option<String>,
         first: Option<i32>,
@@ -532,6 +533,15 @@ impl QueryRoot {
 
         if let Some(ref id_list) = ids {
             artists.retain(|a| id_list.contains(&a.id));
+        }
+
+        if let Some(ref g) = genre {
+            let g_lower = g.to_lowercase();
+            artists.retain(|a| {
+                artist_genres(&db, a.id)
+                    .iter()
+                    .any(|ag| ag.contains(&g_lower))
+            });
         }
 
         if favourites_only {
@@ -554,6 +564,12 @@ impl QueryRoot {
         artist_id: Option<i64>,
         artist_ids: Option<Vec<i64>>,
         search: Option<String>,
+        title: Option<String>,
+        year_start: Option<i32>,
+        year_end: Option<i32>,
+        codec: Option<String>,
+        label: Option<String>,
+        genre: Option<String>,
         #[graphql(default = false)] favourites_only: bool,
         after: Option<String>,
         first: Option<i32>,
@@ -589,6 +605,48 @@ impl QueryRoot {
             });
         }
 
+        if let Some(ref t) = title {
+            let t_lower = t.to_lowercase();
+            albums.retain(|a| a.title.to_lowercase().contains(&t_lower));
+        }
+
+        if let Some(ys) = year_start {
+            albums.retain(|a| album_year(a).map(|y| y >= ys).unwrap_or(false));
+        }
+
+        if let Some(ye) = year_end {
+            albums.retain(|a| album_year(a).map(|y| y <= ye).unwrap_or(false));
+        }
+
+        if let Some(ref c) = codec {
+            let c_lower = c.to_lowercase();
+            albums.retain(|a| {
+                a.codec
+                    .as_ref()
+                    .map(|ac| ac.to_lowercase().contains(&c_lower))
+                    .unwrap_or(false)
+            });
+        }
+
+        if let Some(ref l) = label {
+            let l_lower = l.to_lowercase();
+            albums.retain(|a| {
+                a.label
+                    .as_ref()
+                    .map(|al| al.to_lowercase().contains(&l_lower))
+                    .unwrap_or(false)
+            });
+        }
+
+        if let Some(ref g) = genre {
+            let g_lower = g.to_lowercase();
+            albums.retain(|a| {
+                album_genres(&db, a.id)
+                    .iter()
+                    .any(|ag| ag.contains(&g_lower))
+            });
+        }
+
         if favourites_only {
             let fav_album_ids = favourite_album_ids(&db)?;
             albums.retain(|a| fav_album_ids.contains(&a.id));
@@ -610,7 +668,19 @@ impl QueryRoot {
         artist_id: Option<i64>,
         artist_ids: Option<Vec<i64>>,
         search: Option<String>,
+        title: Option<String>,
+        artist_name: Option<String>,
+        album_title: Option<String>,
+        genre: Option<String>,
+        codec: Option<String>,
         source: Option<TrackSource>,
+        year_start: Option<i32>,
+        year_end: Option<i32>,
+        min_sample_rate: Option<i32>,
+        min_bit_depth: Option<i32>,
+        channels: Option<i32>,
+        min_duration_ms: Option<i64>,
+        max_duration_ms: Option<i64>,
         #[graphql(default = false)] favourites_only: bool,
         after: Option<String>,
         first: Option<i32>,
@@ -645,6 +715,44 @@ impl QueryRoot {
             tracks.retain(|t| id_list.contains(&t.id));
         }
 
+        if let Some(ref t) = title {
+            let t_lower = t.to_lowercase();
+            tracks.retain(|tr| tr.title.to_lowercase().contains(&t_lower));
+        }
+
+        if let Some(ref a) = artist_name {
+            let a_lower = a.to_lowercase();
+            tracks.retain(|tr| {
+                tr.artist_name.to_lowercase().contains(&a_lower)
+                    || tr.album_artist_name.to_lowercase().contains(&a_lower)
+            });
+        }
+
+        if let Some(ref al) = album_title {
+            let al_lower = al.to_lowercase();
+            tracks.retain(|tr| tr.album_title.to_lowercase().contains(&al_lower));
+        }
+
+        if let Some(ref g) = genre {
+            let g_lower = g.to_lowercase();
+            tracks.retain(|tr| {
+                tr.genre
+                    .as_ref()
+                    .map(|tg| tg.to_lowercase().contains(&g_lower))
+                    .unwrap_or(false)
+            });
+        }
+
+        if let Some(ref c) = codec {
+            let c_lower = c.to_lowercase();
+            tracks.retain(|tr| {
+                tr.codec
+                    .as_ref()
+                    .map(|tc| tc.to_lowercase().contains(&c_lower))
+                    .unwrap_or(false)
+            });
+        }
+
         if let Some(src) = source {
             let src_str = match src {
                 TrackSource::Local => "local",
@@ -652,6 +760,39 @@ impl QueryRoot {
                 TrackSource::Cached => "cached",
             };
             tracks.retain(|t| t.source == src_str);
+        }
+
+        if year_start.is_some() || year_end.is_some() {
+            tracks.retain(|t| {
+                let y = track_year(&db, t);
+                match y {
+                    Some(year) => {
+                        year_start.is_none_or(|ys| year >= ys)
+                            && year_end.is_none_or(|ye| year <= ye)
+                    }
+                    None => false,
+                }
+            });
+        }
+
+        if let Some(sr) = min_sample_rate {
+            tracks.retain(|t| t.sample_rate.map(|v| v >= sr).unwrap_or(false));
+        }
+
+        if let Some(bd) = min_bit_depth {
+            tracks.retain(|t| t.bit_depth.map(|v| v >= bd).unwrap_or(false));
+        }
+
+        if let Some(ch) = channels {
+            tracks.retain(|t| t.channels == Some(ch));
+        }
+
+        if let Some(min_d) = min_duration_ms {
+            tracks.retain(|t| t.duration_ms.map(|d| d >= min_d).unwrap_or(false));
+        }
+
+        if let Some(max_d) = max_duration_ms {
+            tracks.retain(|t| t.duration_ms.map(|d| d <= max_d).unwrap_or(false));
         }
 
         if favourites_only {
@@ -1212,6 +1353,48 @@ impl MutationRoot {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: year extraction from date strings ("2024", "2024-01-15", etc)
+// ---------------------------------------------------------------------------
+
+fn extract_year(date: &str) -> Option<i32> {
+    date.get(..4).and_then(|s| s.parse().ok())
+}
+
+/// Get album year from its date field.
+fn album_year(album: &queries::AlbumRow) -> Option<i32> {
+    album.date.as_deref().and_then(extract_year)
+}
+
+/// Get genres for an artist (distinct genres from their tracks).
+fn artist_genres(db: &Database, artist_id: i64) -> HashSet<String> {
+    queries::tracks_for_artist(&db.conn, artist_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|t| t.genre)
+        .map(|g| g.to_lowercase())
+        .collect()
+}
+
+/// Get genres for an album (distinct genres from its tracks).
+fn album_genres(db: &Database, album_id: i64) -> HashSet<String> {
+    queries::tracks_for_album(&db.conn, album_id)
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|t| t.genre)
+        .map(|g| g.to_lowercase())
+        .collect()
+}
+
+/// Get the year for a track via its album's date.
+fn track_year(db: &Database, track: &queries::TrackRow) -> Option<i32> {
+    track
+        .album_id
+        .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten())
+        .as_deref()
+        .and_then(extract_year)
+}
+
+// ---------------------------------------------------------------------------
 // Helper: favourite ID sets for filtering
 // ---------------------------------------------------------------------------
 
@@ -1290,7 +1473,7 @@ fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
 // Helper: TrackRow -> PlaylistItem (for queue mutations via GraphQL)
 // ---------------------------------------------------------------------------
 
-fn track_to_playlist_item(
+pub fn track_to_playlist_item(
     track: &queries::TrackRow,
     db: &Database,
 ) -> koan_core::player::state::PlaylistItem {
