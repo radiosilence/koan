@@ -772,8 +772,7 @@ impl App {
 
         let db_path = self.db_path.clone();
         let state = self.state.clone();
-        let batch_size = self.radio_config.batch_size;
-        let use_subsonic = self.radio_config.use_subsonic;
+        let radio_config = self.radio_config.clone();
 
         std::thread::Builder::new()
             .name("koan-radio".into())
@@ -787,14 +786,13 @@ impl App {
                     }
                 };
 
-                // Build context from current queue.
+                // Build context from current queue + play history.
                 let (items, cursor) = state.snapshot_playlist();
                 let current_item = cursor.and_then(|cid| items.iter().find(|i| i.id == cid));
 
                 let context_data: Vec<(Option<i64>, Option<String>)> = items
                     .iter()
                     .map(|item| {
-                        // Look up artist_id from DB by path.
                         let track = item
                             .path
                             .to_str()
@@ -811,7 +809,12 @@ impl App {
                     })
                     .collect();
 
-                let mut ctx = koan_core::radio::RadioContext::from_queue(&context_data);
+                let mut ctx = koan_core::radio::RadioContext::build(
+                    &db.conn,
+                    &context_data,
+                    radio_config.seed_window,
+                    radio_config.history_window,
+                );
 
                 // Set current track info for Subsonic queries.
                 if let Some(current) = current_item {
@@ -828,8 +831,8 @@ impl App {
                     }
                 }
 
-                // Build Subsonic client if configured (load config once).
-                let client = if use_subsonic {
+                // Build Subsonic client if configured.
+                let client = if radio_config.use_subsonic {
                     koan_core::config::Config::load()
                         .ok()
                         .filter(|cfg| cfg.remote.enabled)
@@ -844,9 +847,9 @@ impl App {
                     None
                 };
 
-                // Pre-populate similar artist cache for queue artists.
+                // Pre-populate similar artist cache for seed artists.
                 if let Some(ref client) = client {
-                    for &artist_id in ctx.artist_counts.keys().take(5) {
+                    for &artist_id in ctx.seed_artists.keys().take(5) {
                         let _ = koan_core::radio::fetch_and_cache_similar_artists(
                             &db.conn, client, artist_id,
                         );
@@ -854,7 +857,7 @@ impl App {
                 }
 
                 let picks =
-                    koan_core::radio::pick_tracks(&db.conn, &ctx, client.as_ref(), batch_size);
+                    koan_core::radio::pick_tracks(&db.conn, &ctx, client.as_ref(), &radio_config);
 
                 log::info!("radio: picked {} tracks", picks.len());
                 let _ = tx.send(picks);
