@@ -269,7 +269,70 @@ koan devices                  # list audio output devices
 koan cache status             # show download cache size
 koan cache clear              # clear cached remote downloads
 koan probe track.flac         # show format/codec info for a file
+
+# mcp
+koan mcp                      # start headless MCP server on stdio
 ```
+
+### MCP server (Claude Desktop integration)
+
+`koan mcp` runs koan as a headless player controllable by Claude Desktop (or any MCP client). No TUI, no terminal — just the audio engine and 21 tools exposed over the Model Context Protocol. The LLM provides the taste; koan provides the controls.
+
+**Setup:**
+
+1. Make sure `koan` is on your PATH (or note the full path from `which koan`)
+
+2. Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "koan": {
+      "command": "koan",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the full path:
+
+```json
+{
+  "mcpServers": {
+    "koan": {
+      "command": "/opt/homebrew/bin/koan",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+3. Restart Claude Desktop. You should see koan in the MCP server list (🔌 icon).
+
+4. Make sure you've run `koan scan` at least once so your library is indexed.
+
+**What you can ask Claude:**
+
+- "Play me some ambient music"
+- "What albums do I have by Aphex Twin?"
+- "Queue up Tri Repetae but skip the interludes"
+- "Pause" / "Skip this" / "What's playing?"
+- "Play something like what's on now but more upbeat"
+- "Search my library for anything with 'rain' in the title"
+- "Switch audio output to my DAC"
+
+**Available tools:**
+
+| Category | Tools |
+|----------|-------|
+| Playback | `play`, `pause`, `resume`, `stop`, `next`, `previous`, `seek` |
+| Queue | `add_to_queue`, `insert_in_queue`, `remove_from_queue`, `clear_queue`, `replace_queue`, `get_queue`, `reorder_queue` |
+| Library | `search`, `list_artists`, `list_albums`, `list_tracks`, `get_track`, `library_stats` |
+| State | `now_playing`, `list_devices`, `set_device` |
+| Favourites | `favourite`, `unfavourite`, `list_favourites` |
+
+The LLM can chain these together for complex operations — "find all my 90s electronic albums, pick one at random, and queue it up" becomes a search → filter → add_to_queue → play sequence that Claude handles naturally.
 
 ### Playback TUI
 
