@@ -19,13 +19,14 @@ Two crates, one workspace. `koan-core` is the engine, `koan-music` is the interf
 
 ## Threading model
 
-Four threads at steady state during playback:
+Five threads at steady state during playback:
 
 ```
 ┌─────────────────────────────────────────────────┐
 │ Main Thread (TUI)                               │
-│ Event loop: poll keyboard/mouse/tick at 50ms    │
-│ Sends PlayerCommands, reads SharedPlayerState    │
+│ Event loop: configurable fps (default 60,       │
+│ ~16.7ms per frame). Sends PlayerCommands,       │
+│ reads SharedPlayerState.                        │
 └───────────────┬─────────────────────────────────┘
                 │ crossbeam channel (bounded 16)
                 ▼
@@ -45,6 +46,13 @@ Four threads at steady state during playback:
 │ side of ring    │  │ Increments samples_played│
 │ buffer          │  │ MUST NOT allocate/lock   │
 └─────────────────┘  └──────────────────────────┘
+
+┌─────────────────────────────────────────────────┐
+│ Analyzer Thread ("koan-analyzer")               │
+│ Always spawned. Reads VizBuffer, runs FFT,      │
+│ writes VizSnapshot. Configurable fps (default   │
+│ 60). Never blocks audio or UI.                  │
+└─────────────────────────────────────────────────┘
 ```
 
 **Sync primitives by thread:**
@@ -60,6 +68,8 @@ Four threads at steady state during playback:
 | `playlist_version` | Player | TUI | `AtomicU64` (Relaxed) |
 | Track boundaries | Decode | TUI, Player | `parking_lot::RwLock` |
 | `running` flag | Player (start/stop) | CoreAudio RT | `AtomicBool` (Relaxed) |
+| Viz samples | Decode | Analyzer | `VizBuffer` (`parking_lot::Mutex` ring) |
+| Analysis output | Analyzer | TUI | `VizSnapshot` (`parking_lot::Mutex`) |
 
 **The golden rule: nothing on the CoreAudio render thread may allocate or lock.** It only touches atomics and the ring buffer consumer.
 
@@ -78,7 +88,7 @@ SampleBuffer<f32> (interleaved)
 rtrb::Producer::write_chunk_uninit()
     │
     ▼
-Ring Buffer (SPSC, ~192k samples)
+Ring Buffer (SPSC, 384k samples — 192k frames × 2 channels)
     │
     ▼
 rtrb::Consumer::read_chunk() ─── CoreAudio RT Thread
@@ -152,6 +162,9 @@ struct Playlist {
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
 | `device.rs` | CoreAudio device enumeration, sample rate get/set |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
+| `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread) |
+| `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold. Configurable fps. Writes to `VizSnapshot`. |
+| `streaming.rs` | Progressive download with `Condvar`-based ready signaling for streaming playback |
 
 ### `player/`
 
@@ -160,6 +173,7 @@ struct Playlist {
 | `mod.rs` | `Player` struct, command loop (`run()`), `start_playback()`, `update_playback_state()` |
 | `commands.rs` | `PlayerCommand` enum (includes `UpdatePaths`, `InsertInPlaylist`), `CommandChannel` (bounded crossbeam) |
 | `state.rs` | `SharedPlayerState`, `PlaylistItem`, `Playlist`, `QueueItemId`, `LoadState`, `PlaybackState`, `derive_visible_queue()`, `insert_items_after()`, `update_paths()` |
+| `undo.rs` | Undo/redo stack for playlist operations (100-deep). Batching support for multi-step ops (e.g. drag). |
 
 ### `db/`
 
@@ -174,6 +188,9 @@ struct Playlist {
 | `queries/search.rs` | FTS5 full-text search |
 | `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files |
 | `queries/stats.rs` | Library statistics |
+| `queries/lyrics.rs` | Lyrics caching (synced + plain, per-track) |
+| `queries/favourites.rs` | Favourite/star status (syncs with Navidrome) |
+| `queries/playback_state.rs` | Queue and playback position persistence across sessions |
 
 **Track dedup:** `upsert_track` tries three match strategies in order: (1) exact path match, (2) remote_id match, (3) content match (artist + album + title + track#). First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows.
 
@@ -192,7 +209,7 @@ fb2k-compatible template engine.
 |---|---|
 | `parser.rs` | Recursive descent tokenizer: `%field%`, `[conditional]`, `$function(args)`, `'quoted'` |
 | `eval.rs` | Evaluates token tree against a `MetadataProvider` trait. Conditionals omit block if any field missing. |
-| `functions.rs` | 23 built-in functions: string ops (`left`, `right`, `pad`, `replace`, `trim`, `caps`), logic (`if`, `if2`, `if3`), numeric (`num`, `div`, `mod`), path (`directory`, `ext`, `filename`) |
+| `functions.rs` | 55 built-in functions: string ops (`left`, `right`, `pad`, `replace`, `trim`, `caps`, `abbr`, `substr`, `insert`, `repeat`, `rot13`, etc.), logic (`if`, `if2`, `if3`, `ifequal`, `ifgreater`, `iflonger`, `select`, `not`, `and`, `or`, `xor`), numeric (`num`, `add`, `sub`, `mul`, `div`, `mod`, `max`, `min`, `hex`), path (`directory`, `directory_path`, `ext`, `filename`), info (`len`, `info`), special (`tab`, `crlf`, `char`) |
 
 ### `remote/`
 
@@ -200,6 +217,7 @@ fb2k-compatible template engine.
 |---|---|
 | `client.rs` | Subsonic/Navidrome HTTP client. Token auth (MD5+salt). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, download |
 | `sync.rs` | Parallel library sync: paginate albums (500/page) → rayon fetch full details → batch DB write per page |
+| `lrclib.rs` | LRCLIB API client for lyrics fetching (synced LRC + plain text) |
 
 ### Other
 
@@ -208,6 +226,7 @@ fb2k-compatible template engine.
 | `config.rs` | Two-layer TOML config: `config.toml` (base) + `config.local.toml` (override). Playback, library, remote settings. |
 | `credentials.rs` | macOS Keychain integration via security-framework |
 | `organize.rs` | File renaming using format strings. Preview/execute/undo. Scoped operations via `preview_for_tracks()`/`execute_for_tracks()` (used by TUI modal). Moves ancillary files (cover art, cue sheets). Logs moves for undo. |
+| `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
 
 ## koan-music modules
 
@@ -250,7 +269,10 @@ Subcommand handlers split into focused modules:
 | `theme.rs` | Color palette. Cyan for active/cursor, green for albums, DarkGray for hints. |
 | `context_menu.rs` | `ContextMenuOverlay` widget: action list popup (currently: Organize) |
 | `organize.rs` | `OrganizeModalState` + `OrganizeOverlay`: pattern picker, scoped preview table, background execute with path update propagation to player |
-| `event.rs` | Event enum wrapper (includes `Paste` for bracketed paste / drag-drop) |
+| `visualizer.rs` | Spectrum analyzer widget: reads `VizSnapshot`, renders 48-band bars with Unicode block chars, peak markers, amplitude coloring |
+| `lyrics.rs` | Lyrics side panel: synced (LRC) line highlighting with auto-scroll, plain text fallback |
+| `device_selector.rs` | Audio output device selection modal |
+| `help_modal.rs` | Help overlay with key binding reference |
 | `keys.rs` | `HintBar` widget: mode-specific key binding hints |
 
 ### `media_keys.rs`
