@@ -98,7 +98,6 @@ impl log::Log for BufferedLogger {
 }
 
 mod commands;
-mod graphql;
 mod media_keys;
 mod tui;
 
@@ -191,14 +190,14 @@ enum Commands {
     },
     /// Run as a headless MCP server on stdio (for Claude Desktop / MCP clients)
     Mcp,
-    /// Run a headless GraphQL HTTP server for library queries and player control
+    /// Start a GraphQL API server (headless player + HTTP)
     Graphql {
         /// Port to listen on (default: from config or 4000)
         #[arg(long)]
         port: Option<u16>,
         /// Enable GraphQL Playground web UI
         #[arg(long)]
-        playground: bool,
+        playground: Option<bool>,
     },
 }
 
@@ -295,9 +294,7 @@ fn main() {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }
         Some(Commands::Mcp) => commands::cmd_mcp(),
-        Some(Commands::Graphql { port, playground }) => {
-            commands::cmd_graphql(port, playground);
-        }
+        Some(Commands::Graphql { port, playground }) => commands::cmd_graphql(port, playground),
     }
 }
 

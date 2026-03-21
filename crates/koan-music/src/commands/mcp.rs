@@ -17,8 +17,6 @@ use uuid::Uuid;
 
 use super::open_db;
 
-// async_graphql used by the `graphql` MCP tool for in-process query execution.
-
 // ---------------------------------------------------------------------------
 // Parameter types
 // ---------------------------------------------------------------------------
@@ -134,12 +132,19 @@ pub struct FavouriteParams {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GraphqlParams {
-    #[schemars(description = "GraphQL query string")]
-    pub query: String,
     #[schemars(
-        description = "Optional JSON object of query variables (as a JSON string, e.g. {\"id\": 42})"
+        description = "GraphQL query string — supports queries and mutations against the koan schema"
     )]
-    pub variables: Option<String>,
+    pub query: String,
+    #[schemars(description = "Optional JSON object of query variables")]
+    pub variables: Option<serde_json::Value>,
+}
+
+/// GraphQL execution result wrapper — MCP spec requires outputSchema to be an object type.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct GraphqlResponse {
+    /// The GraphQL response JSON (contains data and/or errors fields).
+    pub result: serde_json::Value,
 }
 
 // ---------------------------------------------------------------------------
@@ -335,7 +340,7 @@ pub struct KoanMcpServer {
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
     db_path: PathBuf,
-    gql_schema: crate::graphql::KoanSchema,
+    graphql_schema: super::graphql::KoanSchema,
 }
 
 impl KoanMcpServer {
@@ -344,14 +349,14 @@ impl KoanMcpServer {
         cmd_tx: Sender<PlayerCommand>,
         db_path: PathBuf,
     ) -> Self {
-        let gql_schema =
-            crate::graphql::build_schema(state.clone(), cmd_tx.clone(), db_path.clone());
+        let graphql_schema =
+            super::graphql::build_schema(state.clone(), cmd_tx.clone(), db_path.clone());
         Self {
             tool_router: Self::tool_router(),
             state,
             cmd_tx,
             db_path,
-            gql_schema,
+            graphql_schema,
         }
     }
 
@@ -839,6 +844,27 @@ impl KoanMcpServer {
         )))
     }
 
+    #[tool(
+        description = "Execute a GraphQL query against the koan music library and player. \
+        Supports nested queries (artists→albums→tracks), cursor pagination, mutations for \
+        playback/queue control, and more. Use introspection or the schema docs to explore. \
+        This single tool can replace most other library/discovery tools."
+    )]
+    fn graphql(
+        &self,
+        Parameters(params): Parameters<GraphqlParams>,
+    ) -> Result<Json<GraphqlResponse>, String> {
+        let schema = self.graphql_schema.clone();
+        let rt =
+            tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime".to_string())?;
+        let result = rt.block_on(super::graphql::execute_in_process(
+            &schema,
+            &params.query,
+            params.variables,
+        ));
+        Ok(Json(GraphqlResponse { result }))
+    }
+
     #[tool(description = "List all favourited/starred tracks")]
     fn list_favourites(&self) -> Result<Json<TrackListResponse>, String> {
         let db = self.open_db()?;
@@ -857,51 +883,6 @@ impl KoanMcpServer {
         let count = tracks.len();
         Ok(Json(TrackListResponse { tracks, count }))
     }
-
-    #[tool(
-        description = "Execute a GraphQL query against the koan music library and player. \
-        Supports nested queries for efficient library discovery (artists → albums → tracks in one call), \
-        mutations for playback control and queue management, and Relay-style cursor pagination. \
-        Use this instead of individual tools when you need to fetch related data in a single round-trip. \
-        Example: query { artists(first: 100) { edges { node { id, name } } } }"
-    )]
-    fn graphql(&self, Parameters(params): Parameters<GraphqlParams>) -> Json<GraphqlResponse> {
-        let mut request = async_graphql::Request::new(&params.query);
-
-        // Parse variables if provided.
-        if let Some(ref vars_str) = params.variables
-            && let Ok(serde_json::Value::Object(map)) =
-                serde_json::from_str::<serde_json::Value>(vars_str)
-        {
-            let variables = async_graphql::Variables::from_json(serde_json::Value::Object(map));
-            request = request.variables(variables);
-        }
-
-        // Execute synchronously — we're already in a tokio context from rmcp.
-        let response = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(self.gql_schema.execute(request))
-        });
-
-        let json_value = serde_json::to_value(&response).unwrap_or_default();
-
-        Json(GraphqlResponse {
-            data: json_value.get("data").cloned(),
-            errors: if response.errors.is_empty() {
-                None
-            } else {
-                Some(response.errors.iter().map(|e| e.message.clone()).collect())
-            },
-        })
-    }
-}
-
-/// Response wrapper for the GraphQL MCP tool.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-pub struct GraphqlResponse {
-    /// The data returned by the GraphQL query.
-    pub data: Option<serde_json::Value>,
-    /// Any errors from query execution.
-    pub errors: Option<Vec<String>>,
 }
 
 #[rmcp::tool_handler]
@@ -910,11 +891,10 @@ impl ServerHandler for KoanMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "koan is a bit-perfect macOS music player. You can control playback, \
                  manage the queue, search the music library, and manage favourites. \
-                 Use the `graphql` tool for efficient library discovery — it supports \
-                 nested queries (artists → albums → tracks in one call) with Relay-style \
-                 cursor pagination. Use individual tools (pause/play/stop) for simple \
-                 playback control. Track IDs are library database IDs (integers). \
-                 Queue item IDs are UUIDs assigned when tracks are added to the queue.",
+                 Use search and list_artists/list_albums/list_tracks to discover music, \
+                 then add_to_queue or replace_queue to play it. Track IDs are library \
+                 database IDs (integers). Queue item IDs are UUIDs assigned when tracks \
+                 are added to the queue.",
         )
     }
 }

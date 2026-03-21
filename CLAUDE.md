@@ -117,10 +117,8 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `commands/search.rs` | `cmd_search` (FTS5 with tree output) |
 | `commands/pick.rs` | Standalone fuzzy picker TUI |
 | `commands/remote.rs` | Remote login/sync/status |
-| `commands/graphql.rs` | `cmd_graphql` — headless GraphQL HTTP server (axum) |
+| `commands/graphql.rs` | GraphQL schema (async-graphql), resolvers, axum HTTP server, in-process execution for MCP |
 | `commands/mod.rs` | Shared helpers: `open_db`, formatters, cache paths, playlist item builders |
-| `graphql/schema.rs` | GraphQL query/mutation resolvers wrapping koan-core queries |
-| `graphql/types.rs` | GraphQL types: connections, edges, enums, cursor pagination helpers |
 | `tui/app.rs` | `App` state machine, `Mode` enum, event handlers per mode |
 | `tui/ui.rs` | Render pipeline: layout → transport → content → overlays → hints |
 | `tui/transport.rs` | Transport bar widget: seek bar, track info, click-to-seek |

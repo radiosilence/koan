@@ -3,7 +3,7 @@ use rayon::prelude::*;
 mod cache;
 mod config;
 mod enqueue;
-mod graphql;
+pub mod graphql;
 mod library;
 pub mod mcp;
 mod pick;
