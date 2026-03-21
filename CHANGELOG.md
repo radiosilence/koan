@@ -4,6 +4,7 @@
 
 ### Added
 
+- **MCP server** — `koan mcp` runs koan as a headless MCP (Model Context Protocol) server on stdio, controllable by Claude Desktop or any MCP client. Exposes 21 tools: playback control (play/pause/resume/stop/next/previous/seek), queue management (add/insert/remove/clear/replace/reorder/get), library discovery (search/list_artists/list_albums/list_tracks/get_track/library_stats), state queries (now_playing/list_devices/set_device), and favourites (favourite/unfavourite/list_favourites). The LLM provides the taste and reasoning — koan just exposes the controls. Configure in Claude Desktop with `{"command": "koan", "args": ["mcp"]}`
 - **Visualiser toggle** — press `V` (Shift-V) to enable/disable the spectrum visualiser at runtime. Persists to config.toml. Visible in `?` help menu under Toggles
 
 ## 0.10.0

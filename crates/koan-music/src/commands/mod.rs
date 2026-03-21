@@ -4,6 +4,7 @@ mod cache;
 mod config;
 mod enqueue;
 mod library;
+pub mod mcp;
 mod pick;
 mod picker_items;
 mod play;
@@ -13,6 +14,7 @@ mod scan;
 mod search;
 
 pub use cache::{cmd_cache_clear, cmd_cache_status};
+pub use mcp::cmd_mcp;
 
 pub use config::{cmd_config, cmd_init};
 pub use enqueue::enqueue_playlist;

@@ -188,6 +188,8 @@ enum Commands {
         /// Shell to generate for
         shell: clap_complete::Shell,
     },
+    /// Run as a headless MCP server on stdio (for Claude Desktop / MCP clients)
+    Mcp,
 }
 
 #[derive(Subcommand)]
@@ -282,6 +284,7 @@ fn main() {
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }
+        Some(Commands::Mcp) => commands::cmd_mcp(),
     }
 }
 
