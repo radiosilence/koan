@@ -289,6 +289,7 @@ During playback, a full-screen Ratatui TUI shows the transport bar, queue, and k
 | `z`     | zoom album art         |
 | `f`     | favourite / unfavourite |
 | `Ctrl+Z` | undo last queue change |
+| `Ctrl+Y` / `Ctrl+Shift+Z` | redo last undone change |
 | `l`     | library browser        |
 | `L`     | lyrics panel           |
 | `f`     | filter library (in library mode) |

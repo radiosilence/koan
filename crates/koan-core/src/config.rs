@@ -114,7 +114,7 @@ pub struct VisualizerConfig {
     pub fps: u8,
     /// Frequency scale: "bark" (default), "mel", "log", "linear".
     pub scale: String,
-    /// Amplitude scale: "perceptual" (default, A-weighted + gamma), "aweight", "sqrt", "linear".
+    /// Amplitude scale: "aweight" (default, A-weighted), "perceptual" (A-weighted + gamma), "sqrt", "linear".
     pub amplitude_scale: String,
     /// Bar decay half-life in milliseconds (how fast bars drop).
     pub bar_decay_ms: u32,
