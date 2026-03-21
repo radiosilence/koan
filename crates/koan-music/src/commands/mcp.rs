@@ -860,7 +860,6 @@ mod tests {
     use koan_core::db::connection::Database;
     use koan_core::db::queries;
     use koan_core::player::commands::CommandChannel;
-    use std::path::PathBuf;
     use tempfile::TempDir;
 
     /// Create a test server with an in-memory-like temp DB and a channel we can drain.
