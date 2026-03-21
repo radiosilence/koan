@@ -131,6 +131,12 @@ pub struct FavouriteParams {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SnapshotNameParams {
+    #[schemars(description = "Name for the snapshot (e.g. 'techno', 'chill morning')")]
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct GraphqlParams {
     #[schemars(
         description = "GraphQL query string — supports queries and mutations against the koan schema"
@@ -277,6 +283,25 @@ pub struct DeviceListResponse {
 pub struct DeviceResponse {
     name: String,
     sample_rates: Vec<f64>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SnapshotListResponse {
+    pub snapshots: Vec<SnapshotSummaryResponse>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SnapshotSummaryResponse {
+    name: String,
+    track_count: usize,
+    position_ms: u64,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct RadioStatusResponse {
+    pub enabled: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -800,7 +825,9 @@ impl KoanMcpServer {
     // Favourites
     // -----------------------------------------------------------------------
 
-    #[tool(description = "Star/favourite a track by its library track ID")]
+    #[tool(
+        description = "Star/favourite a track by its library track ID. Automatically syncs to the remote server if configured."
+    )]
     fn favourite(
         &self,
         Parameters(params): Parameters<FavouriteParams>,
@@ -816,13 +843,16 @@ impl KoanMcpServer {
             .ok_or_else(|| format!("track {} has no path", params.track_id))?;
         queries::add_favourite(&db.conn, std::path::Path::new(path))
             .map_err(|e| format!("db error: {}", e))?;
+        super::graphql::sync_favourite_to_remote_from_path(&db, path, true);
         Ok(StatusResponse::ok(format!(
             "favourited track {}",
             params.track_id
         )))
     }
 
-    #[tool(description = "Unstar/unfavourite a track by its library track ID")]
+    #[tool(
+        description = "Unstar/unfavourite a track by its library track ID. Automatically syncs to the remote server if configured."
+    )]
     fn unfavourite(
         &self,
         Parameters(params): Parameters<FavouriteParams>,
@@ -838,6 +868,7 @@ impl KoanMcpServer {
             .ok_or_else(|| format!("track {} has no path", params.track_id))?;
         queries::remove_favourite(&db.conn, std::path::Path::new(path))
             .map_err(|e| format!("db error: {}", e))?;
+        super::graphql::sync_favourite_to_remote_from_path(&db, path, false);
         Ok(StatusResponse::ok(format!(
             "unfavourited track {}",
             params.track_id
@@ -882,6 +913,170 @@ impl KoanMcpServer {
         }
         let count = tracks.len();
         Ok(Json(TrackListResponse { tracks, count }))
+    }
+
+    // -----------------------------------------------------------------------
+    // Device control
+    // -----------------------------------------------------------------------
+
+    #[tool(description = "Reset audio output to the system default device")]
+    fn clear_device(&self) -> Result<Json<StatusResponse>, String> {
+        self.cmd_tx
+            .send(PlayerCommand::ClearOutputDevice)
+            .map_err(|e| format!("send error: {}", e))?;
+        Ok(StatusResponse::ok("device cleared, using system default"))
+    }
+
+    // -----------------------------------------------------------------------
+    // Snapshots — save/restore/list/delete named queue states
+    // -----------------------------------------------------------------------
+
+    #[tool(
+        description = "Save the current queue, cursor position, and playback position as a named snapshot. \
+        Overwrites if a snapshot with the same name already exists. \
+        Use this to bank a curated mix and restore it later."
+    )]
+    fn save_snapshot(
+        &self,
+        Parameters(params): Parameters<SnapshotNameParams>,
+    ) -> Result<Json<StatusResponse>, String> {
+        let db = self.open_db()?;
+        let (items, cursor) = self.state.snapshot_playlist();
+        let position_ms = self.state.position_ms();
+
+        let persisted: Vec<koan_core::db::queries::playback_state::PersistedQueueItem> = items
+            .iter()
+            .map(koan_core::db::queries::playback_state::PersistedQueueItem::from_playlist_item)
+            .collect();
+        let cursor_path = cursor.and_then(|cid| {
+            items
+                .iter()
+                .find(|i| i.id == cid)
+                .map(|i| i.path.to_string_lossy().into_owned())
+        });
+
+        queries::save_snapshot(
+            &db.conn,
+            &params.name,
+            &persisted,
+            cursor_path.as_deref(),
+            position_ms,
+        )
+        .map_err(|e| format!("db error: {}", e))?;
+
+        Ok(StatusResponse::ok(format!(
+            "saved snapshot '{}' ({} tracks)",
+            params.name,
+            items.len()
+        )))
+    }
+
+    #[tool(
+        description = "Restore a named snapshot — replaces the current queue and resumes playback \
+        at the saved cursor position. Use list_snapshots to see available names."
+    )]
+    fn restore_snapshot(
+        &self,
+        Parameters(params): Parameters<SnapshotNameParams>,
+    ) -> Result<Json<StatusResponse>, String> {
+        let db = self.open_db()?;
+        let snap = queries::load_snapshot(&db.conn, &params.name)
+            .map_err(|e| format!("db error: {}", e))?
+            .ok_or_else(|| format!("snapshot '{}' not found", params.name))?;
+
+        let items: Vec<koan_core::player::state::PlaylistItem> =
+            snap.items.iter().map(|i| i.to_playlist_item()).collect();
+
+        self.cmd_tx
+            .send(PlayerCommand::ClearPlaylist)
+            .map_err(|e| format!("send error: {}", e))?;
+
+        let cursor_item_id = snap.cursor_path.as_ref().and_then(|cp| {
+            items
+                .iter()
+                .find(|i| i.path.to_string_lossy() == cp.as_str())
+                .map(|i| i.id)
+        });
+
+        if !items.is_empty() {
+            let first_id = cursor_item_id.unwrap_or(items[0].id);
+            self.cmd_tx
+                .send(PlayerCommand::AddToPlaylist(items))
+                .map_err(|e| format!("send error: {}", e))?;
+            let _ = self.cmd_tx.send(PlayerCommand::Play(first_id));
+            if snap.position_ms > 0 {
+                let _ = self.cmd_tx.send(PlayerCommand::Seek(snap.position_ms));
+            }
+        }
+
+        Ok(StatusResponse::ok(format!(
+            "restored snapshot '{}'",
+            params.name
+        )))
+    }
+
+    #[tool(
+        description = "List all saved queue snapshots with name, track count, and creation date"
+    )]
+    fn list_snapshots(&self) -> Result<Json<SnapshotListResponse>, String> {
+        let db = self.open_db()?;
+        let list = queries::list_snapshots(&db.conn).map_err(|e| format!("db error: {}", e))?;
+        let snapshots: Vec<SnapshotSummaryResponse> = list
+            .into_iter()
+            .map(|s| SnapshotSummaryResponse {
+                name: s.name,
+                track_count: s.track_count,
+                position_ms: s.position_ms,
+                created_at: s.created_at,
+            })
+            .collect();
+        let count = snapshots.len();
+        Ok(Json(SnapshotListResponse { snapshots, count }))
+    }
+
+    #[tool(description = "Delete a named snapshot")]
+    fn delete_snapshot(
+        &self,
+        Parameters(params): Parameters<SnapshotNameParams>,
+    ) -> Result<Json<StatusResponse>, String> {
+        let db = self.open_db()?;
+        let deleted = queries::delete_snapshot(&db.conn, &params.name)
+            .map_err(|e| format!("db error: {}", e))?;
+        if deleted {
+            Ok(StatusResponse::ok(format!(
+                "deleted snapshot '{}'",
+                params.name
+            )))
+        } else {
+            Err(format!("snapshot '{}' not found", params.name))
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Radio mode
+    // -----------------------------------------------------------------------
+
+    #[tool(
+        description = "Enable radio mode — automatically discovers and queues similar tracks \
+        when the queue runs low. Uses ListenBrainz, MusicBrainz, genre/era matching, \
+        and Subsonic (if configured) for multi-signal discovery."
+    )]
+    fn enable_radio(&self) -> Json<StatusResponse> {
+        self.state.set_radio_mode(true);
+        StatusResponse::ok("radio mode enabled")
+    }
+
+    #[tool(description = "Disable radio mode — stop auto-queueing tracks")]
+    fn disable_radio(&self) -> Json<StatusResponse> {
+        self.state.set_radio_mode(false);
+        StatusResponse::ok("radio mode disabled")
+    }
+
+    #[tool(description = "Check whether radio mode is currently enabled")]
+    fn radio_status(&self) -> Json<RadioStatusResponse> {
+        Json(RadioStatusResponse {
+            enabled: self.state.radio_mode(),
+        })
     }
 }
 

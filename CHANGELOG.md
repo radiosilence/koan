@@ -7,6 +7,11 @@
 - **GraphQL API** — `koan graphql` starts a headless player with an HTTP GraphQL server (default port 4000). Full Relay-style cursor pagination on artists, albums, and tracks. One nested query replaces multiple MCP tool calls: `{ artists(first: 100) { edges { node { id, name } } } }`. Mutations for all playback control, queue management, favourites, and device switching. Optional GraphQL Playground UI at `GET /graphql` with `--playground` flag or `playground = true` in `[graphql]` config
 - **MCP `graphql` tool** — single tool on the MCP server that executes GraphQL queries in-process (no HTTP). Claude Desktop can now fetch artists, albums, and tracks with nested queries in one round-trip instead of fanning out across individual tools
 - **`[graphql]` config section** — `port` (default 4000) and `playground` (default false) in config.toml
+- **Named queue snapshots** — save/restore/list/delete named queue states via GQL mutations (`saveSnapshot`, `restoreSnapshot`, `deleteSnapshot`) and MCP tools (`save_snapshot`, `restore_snapshot`, `list_snapshots`, `delete_snapshot`). Bank the techno, switch to hardcore, jump back. Stored in the DB (`queue_snapshots` table) with queue JSON, cursor path, and playback position
+- **Radio mode via API** — `enableRadio`/`disableRadio` GQL mutations and `enable_radio`/`disable_radio`/`radio_status` MCP tools. Radio mode was previously TUI-only (Shift+R). Uses SharedPlayerState atomic so TUI and API stay in sync
+- **Favourites filter** — `favouritesOnly: true` parameter on `artists`, `albums`, and `tracks` queries. Dedicated `favourites` query with cursor pagination. `isFavourite` field on track type
+- **Favourite → remote sync** — favouriting/unfavouriting via GQL or MCP automatically syncs to Subsonic/Navidrome (`star`/`unstar` API) on a background thread. Fire-and-forget, best-effort
+- **`clear_device` MCP tool** — reset audio output to system default (was GQL-only)
 
 ## 0.11.1
 

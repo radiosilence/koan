@@ -285,8 +285,6 @@ pub struct App {
     /// Last computed display FPS value.
     pub display_fps: u16,
 
-    /// Radio mode: automatically queue similar tracks when the queue runs low.
-    pub radio_mode: bool,
     /// True while a background radio pick is in-flight (prevents duplicate requests).
     pub radio_pending: bool,
     /// Receiver for background radio pick results (track IDs to enqueue).
@@ -363,7 +361,6 @@ impl App {
             fps_sample_time: std::time::Instant::now(),
             fps_sample_count: 0,
             display_fps: 0,
-            radio_mode: false,
             radio_pending: false,
             radio_rx: None,
             radio_config: cfg.radio,
@@ -741,7 +738,7 @@ impl App {
         }
 
         // Trigger radio pick when queue is running low.
-        if self.radio_mode && !self.radio_pending && self.has_played {
+        if self.state.radio_mode() && !self.radio_pending && self.has_played {
             let vq = &self.queue.vq_cache;
             // Count tracks remaining after the playing track.
             let playing_idx = vq
@@ -960,9 +957,10 @@ impl App {
                 }
             }
             KeyCode::Char('R') => {
-                self.radio_mode = !self.radio_mode;
+                let new_val = !self.state.radio_mode();
+                self.state.set_radio_mode(new_val);
                 self.status_message = Some((
-                    if self.radio_mode {
+                    if new_val {
                         "radio mode on".into()
                     } else {
                         "radio mode off".into()

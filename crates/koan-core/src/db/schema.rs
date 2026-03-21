@@ -135,6 +135,15 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_play_history_track ON play_history(track_id);
         CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
+
+        CREATE TABLE IF NOT EXISTS queue_snapshots (
+            id          INTEGER PRIMARY KEY,
+            name        TEXT NOT NULL UNIQUE,
+            queue_json  TEXT NOT NULL DEFAULT '[]',
+            cursor_path TEXT,
+            position_ms INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
         ",
     )?;
     Ok(())

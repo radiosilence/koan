@@ -95,7 +95,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `player/undo.rs` | Undo/redo stack for playlist operations (100-deep) |
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |
-| `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats |
+| `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats, snapshots |
 | `index/scanner.rs` | Parallel library scan: walkdir → rayon → sequential DB upsert |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
 | `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 55 built-in functions |
@@ -117,7 +117,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `commands/search.rs` | `cmd_search` (FTS5 with tree output) |
 | `commands/pick.rs` | Standalone fuzzy picker TUI |
 | `commands/remote.rs` | Remote login/sync/status |
-| `commands/graphql.rs` | GraphQL schema (async-graphql), resolvers, axum HTTP server, in-process execution for MCP |
+| `commands/graphql.rs` | GraphQL schema (async-graphql), resolvers, axum HTTP server, in-process execution for MCP. Snapshot/radio/favourite mutations with remote sync |
 | `commands/mod.rs` | Shared helpers: `open_db`, formatters, cache paths, playlist item builders |
 | `tui/app.rs` | `App` state machine, `Mode` enum, event handlers per mode |
 | `tui/ui.rs` | Render pipeline: layout → transport → content → overlays → hints |

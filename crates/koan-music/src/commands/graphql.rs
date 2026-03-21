@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -8,6 +9,7 @@ use koan_core::audio::device;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
+use koan_core::db::queries::playback_state::PersistedQueueItem;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, QueueItemId, SharedPlayerState};
 use uuid::Uuid;
@@ -315,6 +317,19 @@ impl GqlTrack {
     async fn cached_path(&self) -> Option<&str> {
         self.row.cached_path.as_deref()
     }
+
+    async fn is_favourite(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let favs = queries::load_favourites(&db.conn)
+            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
+        let path = self
+            .row
+            .path
+            .as_ref()
+            .or(self.row.cached_path.as_ref())
+            .map(std::path::PathBuf::from);
+        Ok(path.map(|p| favs.contains(&p)).unwrap_or(false))
+    }
 }
 
 #[derive(SimpleObject)]
@@ -405,6 +420,19 @@ struct GqlDevice {
     sample_rates: Vec<f64>,
 }
 
+#[derive(SimpleObject)]
+struct GqlSnapshot {
+    name: String,
+    track_count: i32,
+    position_ms: u64,
+    created_at: String,
+}
+
+#[derive(SimpleObject)]
+struct GqlRadioStatus {
+    enabled: bool,
+}
+
 /// Mutation/query result status.
 struct GqlStatus {
     success: bool,
@@ -487,6 +515,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         ids: Option<Vec<i64>>,
         search: Option<String>,
+        #[graphql(default = false)] favourites_only: bool,
         after: Option<String>,
         first: Option<i32>,
         #[graphql(default_with = "ArtistSortField::Name")] _sort_by: ArtistSortField,
@@ -505,6 +534,11 @@ impl QueryRoot {
             artists.retain(|a| id_list.contains(&a.id));
         }
 
+        if favourites_only {
+            let fav_artist_ids = favourite_artist_ids(&db)?;
+            artists.retain(|a| fav_artist_ids.contains(&a.id));
+        }
+
         paginate(
             artists.into_iter().map(|row| GqlArtist { row }).collect(),
             after,
@@ -520,6 +554,7 @@ impl QueryRoot {
         artist_id: Option<i64>,
         artist_ids: Option<Vec<i64>>,
         search: Option<String>,
+        #[graphql(default = false)] favourites_only: bool,
         after: Option<String>,
         first: Option<i32>,
         #[graphql(default_with = "AlbumSortField::ArtistThenDate")] _sort_by: AlbumSortField,
@@ -554,6 +589,11 @@ impl QueryRoot {
             });
         }
 
+        if favourites_only {
+            let fav_album_ids = favourite_album_ids(&db)?;
+            albums.retain(|a| fav_album_ids.contains(&a.id));
+        }
+
         paginate(
             albums.into_iter().map(|row| GqlAlbum { row }).collect(),
             after,
@@ -571,6 +611,7 @@ impl QueryRoot {
         artist_ids: Option<Vec<i64>>,
         search: Option<String>,
         source: Option<TrackSource>,
+        #[graphql(default = false)] favourites_only: bool,
         after: Option<String>,
         first: Option<i32>,
         #[graphql(default_with = "TrackSortField::ArtistAlbumDiscTrack")] _sort_by: TrackSortField,
@@ -611,6 +652,18 @@ impl QueryRoot {
                 TrackSource::Cached => "cached",
             };
             tracks.retain(|t| t.source == src_str);
+        }
+
+        if favourites_only {
+            let fav_paths = queries::load_favourites(&db.conn)
+                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            tracks.retain(|t| {
+                t.path
+                    .as_ref()
+                    .or(t.cached_path.as_ref())
+                    .map(|p| fav_paths.contains(std::path::Path::new(p)))
+                    .unwrap_or(false)
+            });
         }
 
         paginate(
@@ -735,6 +788,49 @@ impl QueryRoot {
                 sample_rates: d.sample_rates.clone(),
             })
             .collect())
+    }
+
+    async fn favourites(
+        &self,
+        ctx: &Context<'_>,
+        after: Option<String>,
+        first: Option<i32>,
+    ) -> async_graphql::Result<Connection<usize, GqlTrack, EmptyFields, EmptyFields>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let fav_paths = queries::load_favourites(&db.conn)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let mut tracks = Vec::new();
+        for path in &fav_paths {
+            let path_str = path.to_string_lossy();
+            if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &path_str)
+                && let Ok(Some(row)) = queries::get_track_row(&db.conn, tid)
+            {
+                tracks.push(GqlTrack { row });
+            }
+        }
+        paginate(tracks, after, first)
+    }
+
+    async fn snapshots(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlSnapshot>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let list = queries::list_snapshots(&db.conn)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        Ok(list
+            .into_iter()
+            .map(|s| GqlSnapshot {
+                name: s.name,
+                track_count: s.track_count as i32,
+                position_ms: s.position_ms,
+                created_at: s.created_at,
+            })
+            .collect())
+    }
+
+    async fn radio_status(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlRadioStatus> {
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        Ok(GqlRadioStatus {
+            enabled: state.radio_mode(),
+        })
     }
 }
 
@@ -964,6 +1060,7 @@ impl MutationRoot {
             .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
         queries::add_favourite(&db.conn, std::path::Path::new(path))
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        sync_favourite_to_remote(&db, path, true);
         Ok(GqlTrack { row: track })
     }
 
@@ -983,6 +1080,7 @@ impl MutationRoot {
             .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
         queries::remove_favourite(&db.conn, std::path::Path::new(path))
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        sync_favourite_to_remote(&db, path, false);
         Ok(GqlTrack { row: track })
     }
 
@@ -1000,9 +1098,191 @@ impl MutationRoot {
             .as_ref()
             .or(track.cached_path.as_ref())
             .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
-        queries::toggle_favourite(&db.conn, std::path::Path::new(path))
+        let is_now_fav = queries::toggle_favourite(&db.conn, std::path::Path::new(path))
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        sync_favourite_to_remote(&db, path, is_now_fav);
         Ok(GqlTrack { row: track })
+    }
+
+    // -- Snapshots --
+
+    async fn save_snapshot(
+        &self,
+        ctx: &Context<'_>,
+        name: String,
+    ) -> async_graphql::Result<GqlStatus> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        let (items, cursor) = state.snapshot_playlist();
+        let position_ms = state.position_ms();
+
+        let persisted: Vec<PersistedQueueItem> = items
+            .iter()
+            .map(PersistedQueueItem::from_playlist_item)
+            .collect();
+        let cursor_path = cursor.and_then(|cid| {
+            items
+                .iter()
+                .find(|i| i.id == cid)
+                .map(|i| i.path.to_string_lossy().into_owned())
+        });
+
+        queries::save_snapshot(
+            &db.conn,
+            &name,
+            &persisted,
+            cursor_path.as_deref(),
+            position_ms,
+        )
+        .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+
+        Ok(GqlStatus::success(format!("saved snapshot '{}'", name)))
+    }
+
+    async fn restore_snapshot(
+        &self,
+        ctx: &Context<'_>,
+        name: String,
+    ) -> async_graphql::Result<GqlStatus> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let tx = ctx.data::<Sender<PlayerCommand>>()?;
+
+        let snap = queries::load_snapshot(&db.conn, &name)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new(format!("snapshot '{}' not found", name)))?;
+
+        let items: Vec<koan_core::player::state::PlaylistItem> =
+            snap.items.iter().map(|i| i.to_playlist_item()).collect();
+
+        // Clear + add + play the cursor track
+        tx.send(PlayerCommand::ClearPlaylist)
+            .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
+
+        let cursor_item_id = snap.cursor_path.as_ref().and_then(|cp| {
+            items
+                .iter()
+                .find(|i| i.path.to_string_lossy() == cp.as_str())
+                .map(|i| i.id)
+        });
+
+        if !items.is_empty() {
+            let first_id = cursor_item_id.unwrap_or(items[0].id);
+            tx.send(PlayerCommand::AddToPlaylist(items))
+                .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
+            let _ = tx.send(PlayerCommand::Play(first_id));
+            if snap.position_ms > 0 {
+                let _ = tx.send(PlayerCommand::Seek(snap.position_ms));
+            }
+        }
+
+        Ok(GqlStatus::success(format!("restored snapshot '{}'", name)))
+    }
+
+    async fn delete_snapshot(
+        &self,
+        ctx: &Context<'_>,
+        name: String,
+    ) -> async_graphql::Result<GqlStatus> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let deleted = queries::delete_snapshot(&db.conn, &name)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        if deleted {
+            Ok(GqlStatus::success(format!("deleted snapshot '{}'", name)))
+        } else {
+            Err(async_graphql::Error::new(format!(
+                "snapshot '{}' not found",
+                name
+            )))
+        }
+    }
+
+    // -- Radio --
+
+    async fn enable_radio(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        state.set_radio_mode(true);
+        Ok(GqlStatus::success("radio mode enabled"))
+    }
+
+    async fn disable_radio(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        state.set_radio_mode(false);
+        Ok(GqlStatus::success("radio mode disabled"))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: favourite ID sets for filtering
+// ---------------------------------------------------------------------------
+
+/// Get the set of artist IDs that have at least one favourited track.
+fn favourite_artist_ids(db: &Database) -> async_graphql::Result<HashSet<i64>> {
+    let fav_paths =
+        queries::load_favourites(&db.conn).map_err(|e| async_graphql::Error::new(e.to_string()))?;
+    let mut ids = HashSet::new();
+    for path in &fav_paths {
+        let path_str = path.to_string_lossy();
+        if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &path_str)
+            && let Ok(Some(row)) = queries::get_track_row(&db.conn, tid)
+            && let Some(aid) = row.artist_id
+        {
+            ids.insert(aid);
+        }
+    }
+    Ok(ids)
+}
+
+/// Get the set of album IDs that have at least one favourited track.
+fn favourite_album_ids(db: &Database) -> async_graphql::Result<HashSet<i64>> {
+    let fav_paths =
+        queries::load_favourites(&db.conn).map_err(|e| async_graphql::Error::new(e.to_string()))?;
+    let mut ids = HashSet::new();
+    for path in &fav_paths {
+        let path_str = path.to_string_lossy();
+        if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &path_str)
+            && let Ok(Some(row)) = queries::get_track_row(&db.conn, tid)
+            && let Some(aid) = row.album_id
+        {
+            ids.insert(aid);
+        }
+    }
+    Ok(ids)
+}
+
+/// Sync a favourite action to the remote Subsonic server (best-effort, fire-and-forget).
+/// Called from both GQL mutations and MCP tools.
+pub fn sync_favourite_to_remote_from_path(db: &Database, path: &str, star: bool) {
+    sync_favourite_to_remote(db, path, star);
+}
+
+fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
+    let cfg = Config::load().unwrap_or_default();
+    if !cfg.remote.enabled {
+        return;
+    }
+    let remote_id = queries::remote_id_for_path(&db.conn, std::path::Path::new(path))
+        .ok()
+        .flatten();
+    if let Some(rid) = remote_id {
+        let password = super::get_remote_password(&cfg);
+        let client = koan_core::remote::client::SubsonicClient::new(
+            &cfg.remote.url,
+            &cfg.remote.username,
+            &password,
+        );
+        std::thread::Builder::new()
+            .name("koan-fav-sync".into())
+            .spawn(move || {
+                let result = if star {
+                    client.star(&rid)
+                } else {
+                    client.unstar(&rid)
+                };
+                if let Err(e) = result {
+                    log::warn!("failed to sync favourite to remote: {}", e);
+                }
+            })
+            .ok();
     }
 }
 

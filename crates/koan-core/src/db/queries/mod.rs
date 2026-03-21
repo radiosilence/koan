@@ -6,6 +6,7 @@ pub mod playback_state;
 pub mod radio;
 mod scan_cache;
 mod search;
+pub mod snapshots;
 mod stats;
 pub mod tracks;
 
@@ -20,6 +21,7 @@ pub use playback_state::*;
 pub use radio::*;
 pub use scan_cache::*;
 pub use search::*;
+pub use snapshots::*;
 pub use stats::*;
 pub use tracks::*;
 

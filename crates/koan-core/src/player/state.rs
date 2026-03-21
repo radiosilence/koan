@@ -181,6 +181,10 @@ pub struct SharedPlayerState {
     /// Set when metadata has been refreshed (e.g. download completed while streaming).
     /// The UI loop checks this to force a souvlaki/cover-art update without a track change.
     metadata_refresh_pending: AtomicBool,
+
+    /// Radio mode — automatically queue similar tracks when the queue runs low.
+    /// Shared so GQL/MCP can toggle it without going through the TUI.
+    radio_mode: AtomicBool,
 }
 
 impl SharedPlayerState {
@@ -194,6 +198,7 @@ impl SharedPlayerState {
             playback_generation: AtomicU64::new(0),
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
+            radio_mode: AtomicBool::new(false),
         })
     }
 
@@ -283,6 +288,16 @@ impl SharedPlayerState {
         self.metadata_refresh_pending
             .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
             .is_ok()
+    }
+
+    // --- Radio mode ---
+
+    pub fn radio_mode(&self) -> bool {
+        self.radio_mode.load(Ordering::Relaxed)
+    }
+
+    pub fn set_radio_mode(&self, enabled: bool) {
+        self.radio_mode.store(enabled, Ordering::Relaxed);
     }
 
     // --- Playlist version ---
