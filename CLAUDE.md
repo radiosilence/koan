@@ -117,7 +117,10 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `commands/search.rs` | `cmd_search` (FTS5 with tree output) |
 | `commands/pick.rs` | Standalone fuzzy picker TUI |
 | `commands/remote.rs` | Remote login/sync/status |
+| `commands/graphql.rs` | `cmd_graphql` — headless GraphQL HTTP server (axum) |
 | `commands/mod.rs` | Shared helpers: `open_db`, formatters, cache paths, playlist item builders |
+| `graphql/schema.rs` | GraphQL query/mutation resolvers wrapping koan-core queries |
+| `graphql/types.rs` | GraphQL types: connections, edges, enums, cursor pagination helpers |
 | `tui/app.rs` | `App` state machine, `Mode` enum, event handlers per mode |
 | `tui/ui.rs` | Render pipeline: layout → transport → content → overlays → hints |
 | `tui/transport.rs` | Transport bar widget: seek bar, track info, click-to-seek |
@@ -165,6 +168,8 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `rayon` | Data parallelism for scan + sync |
 | `ebur128` | EBU R128 loudness measurement for ReplayGain |
 | `realfft` | FFT for spectrum analyzer |
+| `async-graphql` | GraphQL schema derivation, execution engine |
+| `axum` | HTTP server for `koan graphql` standalone mode |
 
 ## Roadmap
 

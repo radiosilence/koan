@@ -7,9 +7,7 @@ use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{
-    PlaybackState, QueueItemId, SharedPlayerState,
-};
+use koan_core::player::state::{PlaybackState, QueueItemId, SharedPlayerState};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Json;
 use rmcp::model::{ServerCapabilities, ServerInfo};
@@ -18,6 +16,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::open_db;
+
+// async_graphql used by the `graphql` MCP tool for in-process query execution.
 
 // ---------------------------------------------------------------------------
 // Parameter types
@@ -46,7 +46,9 @@ pub struct AddToQueueParams {
 pub struct InsertInQueueParams {
     #[schemars(description = "Track IDs from the library database to insert")]
     pub track_ids: Vec<i64>,
-    #[schemars(description = "Queue item ID (UUID string) to insert after (not yet used — currently appends)")]
+    #[schemars(
+        description = "Queue item ID (UUID string) to insert after (not yet used — currently appends)"
+    )]
     pub after_queue_item_id: String,
 }
 
@@ -128,6 +130,16 @@ pub struct SetDeviceParams {
 pub struct FavouriteParams {
     #[schemars(description = "Track ID from the library database")]
     pub track_id: i64,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct GraphqlParams {
+    #[schemars(description = "GraphQL query string")]
+    pub query: String,
+    #[schemars(
+        description = "Optional JSON object of query variables (as a JSON string, e.g. {\"id\": 42})"
+    )]
+    pub variables: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +335,7 @@ pub struct KoanMcpServer {
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
     db_path: PathBuf,
+    gql_schema: crate::graphql::KoanSchema,
 }
 
 impl KoanMcpServer {
@@ -331,11 +344,14 @@ impl KoanMcpServer {
         cmd_tx: Sender<PlayerCommand>,
         db_path: PathBuf,
     ) -> Self {
+        let gql_schema =
+            crate::graphql::build_schema(state.clone(), cmd_tx.clone(), db_path.clone());
         Self {
             tool_router: Self::tool_router(),
             state,
             cmd_tx,
             db_path,
+            gql_schema,
         }
     }
 
@@ -422,7 +438,9 @@ impl KoanMcpServer {
     // Queue management
     // -----------------------------------------------------------------------
 
-    #[tool(description = "Add tracks to the end of the queue by their library track IDs. Remote tracks are downloaded automatically in the background.")]
+    #[tool(
+        description = "Add tracks to the end of the queue by their library track IDs. Remote tracks are downloaded automatically in the background."
+    )]
     fn add_to_queue(
         &self,
         Parameters(params): Parameters<AddToQueueParams>,
@@ -839,6 +857,51 @@ impl KoanMcpServer {
         let count = tracks.len();
         Ok(Json(TrackListResponse { tracks, count }))
     }
+
+    #[tool(
+        description = "Execute a GraphQL query against the koan music library and player. \
+        Supports nested queries for efficient library discovery (artists → albums → tracks in one call), \
+        mutations for playback control and queue management, and Relay-style cursor pagination. \
+        Use this instead of individual tools when you need to fetch related data in a single round-trip. \
+        Example: query { artists(first: 100) { edges { node { id, name } } } }"
+    )]
+    fn graphql(&self, Parameters(params): Parameters<GraphqlParams>) -> Json<GraphqlResponse> {
+        let mut request = async_graphql::Request::new(&params.query);
+
+        // Parse variables if provided.
+        if let Some(ref vars_str) = params.variables
+            && let Ok(serde_json::Value::Object(map)) =
+                serde_json::from_str::<serde_json::Value>(vars_str)
+        {
+            let variables = async_graphql::Variables::from_json(serde_json::Value::Object(map));
+            request = request.variables(variables);
+        }
+
+        // Execute synchronously — we're already in a tokio context from rmcp.
+        let response = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(self.gql_schema.execute(request))
+        });
+
+        let json_value = serde_json::to_value(&response).unwrap_or_default();
+
+        Json(GraphqlResponse {
+            data: json_value.get("data").cloned(),
+            errors: if response.errors.is_empty() {
+                None
+            } else {
+                Some(response.errors.iter().map(|e| e.message.clone()).collect())
+            },
+        })
+    }
+}
+
+/// Response wrapper for the GraphQL MCP tool.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct GraphqlResponse {
+    /// The data returned by the GraphQL query.
+    pub data: Option<serde_json::Value>,
+    /// Any errors from query execution.
+    pub errors: Option<Vec<String>>,
 }
 
 #[rmcp::tool_handler]
@@ -847,10 +910,11 @@ impl ServerHandler for KoanMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "koan is a bit-perfect macOS music player. You can control playback, \
                  manage the queue, search the music library, and manage favourites. \
-                 Use search and list_artists/list_albums/list_tracks to discover music, \
-                 then add_to_queue or replace_queue to play it. Track IDs are library \
-                 database IDs (integers). Queue item IDs are UUIDs assigned when tracks \
-                 are added to the queue.",
+                 Use the `graphql` tool for efficient library discovery — it supports \
+                 nested queries (artists → albums → tracks in one call) with Relay-style \
+                 cursor pagination. Use individual tools (pause/play/stop) for simple \
+                 playback control. Track IDs are library database IDs (integers). \
+                 Queue item IDs are UUIDs assigned when tracks are added to the queue.",
         )
     }
 }
@@ -1107,9 +1171,8 @@ mod tests {
     #[test]
     fn replace_queue_returns_status() {
         let (server, _rx, _tmp) = test_server();
-        let Json(resp) = server.replace_queue(Parameters(ReplaceQueueParams {
-            track_ids: vec![1],
-        }));
+        let Json(resp) =
+            server.replace_queue(Parameters(ReplaceQueueParams { track_ids: vec![1] }));
         assert!(resp.message.contains("1 tracks"));
     }
 
@@ -1290,5 +1353,4 @@ mod tests {
             other => panic!("expected MoveItemsInPlaylist, got {:?}", other),
         }
     }
-
 }

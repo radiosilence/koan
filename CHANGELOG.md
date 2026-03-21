@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **GraphQL API** — `koan graphql` starts a headless player with an HTTP GraphQL server (default port 4000). Full Relay-style cursor pagination on artists, albums, and tracks. One nested query replaces multiple MCP tool calls: `{ artists(first: 100) { edges { node { id, name } } } }`. Mutations for all playback control, queue management, favourites, and device switching. Optional GraphQL Playground UI at `GET /graphql` with `--playground` flag or `playground = true` in `[graphql]` config
+- **MCP `graphql` tool** — single tool on the MCP server that executes GraphQL queries in-process (no HTTP). Claude Desktop can now fetch artists, albums, and tracks with nested queries in one round-trip instead of fanning out across individual tools
+- **`[graphql]` config section** — `port` (default 4000) and `playground` (default false) in config.toml
+
 ## 0.11.1
 
 ### Fixed

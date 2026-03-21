@@ -25,6 +25,7 @@ pub struct Config {
     #[serde(alias = "visualiser")]
     pub visualizer: VisualizerConfig,
     pub radio: RadioConfig,
+    pub graphql: GraphqlConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,6 +208,25 @@ impl Default for RadioConfig {
             history_window: 200,
             seed_window: 5,
             discovery_weight: 0.3,
+        }
+    }
+}
+
+/// GraphQL server configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GraphqlConfig {
+    /// HTTP port for `koan graphql` (default: 4000).
+    pub port: u16,
+    /// Enable GraphQL Playground at GET /graphql (default: false).
+    pub playground: bool,
+}
+
+impl Default for GraphqlConfig {
+    fn default() -> Self {
+        Self {
+            port: 4000,
+            playground: false,
         }
     }
 }

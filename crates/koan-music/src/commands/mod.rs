@@ -3,6 +3,7 @@ use rayon::prelude::*;
 mod cache;
 mod config;
 mod enqueue;
+mod graphql;
 mod library;
 pub mod mcp;
 mod pick;
@@ -14,6 +15,7 @@ mod scan;
 mod search;
 
 pub use cache::{cmd_cache_clear, cmd_cache_status};
+pub use graphql::cmd_graphql;
 pub use mcp::cmd_mcp;
 
 pub use config::{cmd_config, cmd_init};
