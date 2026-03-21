@@ -379,6 +379,81 @@ pub fn all_tracks(conn: &Connection) -> Result<Vec<TrackRow>, DbError> {
     Ok(rows)
 }
 
+/// Get random tracks from the library, optionally filtered by artist.
+pub fn random_tracks(
+    conn: &Connection,
+    count: u32,
+    artist_id: Option<i64>,
+) -> Result<Vec<TrackRow>, DbError> {
+    let (sql, params_vec): (String, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(aid) =
+        artist_id
+    {
+        (
+            "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                    t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                    t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                    t.genre, t.source, t.remote_id, t.cached_path
+             FROM tracks t
+             LEFT JOIN artists a ON t.artist_id = a.id
+             LEFT JOIN albums al ON t.album_id = al.id
+             LEFT JOIN artists aa ON al.artist_id = aa.id
+             WHERE t.artist_id = ?1 OR al.artist_id = ?1
+             ORDER BY RANDOM()
+             LIMIT ?2"
+                .into(),
+            vec![
+                Box::new(aid) as Box<dyn rusqlite::types::ToSql>,
+                Box::new(count),
+            ],
+        )
+    } else {
+        (
+            "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                    t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                    t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                    t.genre, t.source, t.remote_id, t.cached_path
+             FROM tracks t
+             LEFT JOIN artists a ON t.artist_id = a.id
+             LEFT JOIN albums al ON t.album_id = al.id
+             LEFT JOIN artists aa ON al.artist_id = aa.id
+             ORDER BY RANDOM()
+             LIMIT ?1"
+                .into(),
+            vec![Box::new(count) as Box<dyn rusqlite::types::ToSql>],
+        )
+    };
+    let mut stmt = conn.prepare(&sql)?;
+    let params_refs: Vec<&dyn rusqlite::types::ToSql> = params_vec.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt
+        .query_map(params_refs.as_slice(), row_to_track_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Get all tracks with pagination.
+pub fn all_tracks_paged(
+    conn: &Connection,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<TrackRow>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         ORDER BY a.name, al.date, al.title, t.disc, t.track_number
+         LIMIT ?1 OFFSET ?2",
+    )?;
+    let rows = stmt
+        .query_map(params![limit, offset], row_to_track_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Get a single track by ID with full metadata.
 pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow>, DbError> {
     let result = conn.query_row(

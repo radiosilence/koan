@@ -18,6 +18,16 @@ fn sanitize_fts_query(query: &str) -> String {
 
 /// Full-text search across track title, artist, album, genre.
 pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, DbError> {
+    search_tracks_paged(conn, query, 100, 0)
+}
+
+/// Full-text search with configurable limit and offset for pagination.
+pub fn search_tracks_paged(
+    conn: &Connection,
+    query: &str,
+    limit: u32,
+    offset: u32,
+) -> Result<Vec<TrackRow>, DbError> {
     // FTS5 query — sanitize input and append * for prefix matching.
     let fts_query = sanitize_fts_query(query);
 
@@ -33,11 +43,11 @@ pub fn search_tracks(conn: &Connection, query: &str) -> Result<Vec<TrackRow>, Db
          LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE tracks_fts MATCH ?1
          ORDER BY a.name, al.date, al.title, t.disc, t.track_number
-         LIMIT 100",
+         LIMIT ?2 OFFSET ?3",
     )?;
 
     let rows = stmt
-        .query_map(params![fts_query], |row| {
+        .query_map(params![fts_query, limit, offset], |row| {
             let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
             Ok(TrackRow {
                 id: row.get(0)?,
