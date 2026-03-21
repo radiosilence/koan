@@ -198,6 +198,9 @@ enum Commands {
         /// Enable GraphQL Playground web UI
         #[arg(long)]
         playground: Option<bool>,
+        /// Run as a background daemon (fork and detach)
+        #[arg(short, long)]
+        daemonize: bool,
     },
 }
 
@@ -294,7 +297,17 @@ fn main() {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }
         Some(Commands::Mcp) => commands::cmd_mcp(),
-        Some(Commands::Graphql { port, playground }) => commands::cmd_graphql(port, playground),
+        Some(Commands::Graphql {
+            port,
+            playground,
+            daemonize,
+        }) => {
+            if daemonize {
+                commands::cmd_graphql_daemon(port, playground);
+            } else {
+                commands::cmd_graphql(port, playground);
+            }
+        }
     }
 }
 

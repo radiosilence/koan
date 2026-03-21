@@ -15,7 +15,7 @@ mod scan;
 mod search;
 
 pub use cache::{cmd_cache_clear, cmd_cache_status};
-pub use graphql::cmd_graphql;
+pub use graphql::{cmd_graphql, cmd_graphql_daemon};
 pub use mcp::cmd_mcp;
 
 pub use config::{cmd_config, cmd_init};

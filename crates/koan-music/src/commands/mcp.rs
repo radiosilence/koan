@@ -928,6 +928,17 @@ impl KoanMcpServer {
         Ok(Json(GraphqlResponse { result }))
     }
 
+    #[tool(
+        description = "Get the full GraphQL schema in SDL format. Call this first to understand all available \
+        queries, mutations, types, and filter parameters before using the graphql tool."
+    )]
+    fn schema_sdl(&self) -> Json<GraphqlResponse> {
+        let sdl = self.graphql_schema.sdl();
+        Json(GraphqlResponse {
+            result: serde_json::Value::String(sdl),
+        })
+    }
+
     #[tool(description = "List all favourited/starred tracks")]
     fn list_favourites(&self) -> Result<Json<TrackListResponse>, String> {
         let db = self.open_db()?;
@@ -1116,12 +1127,40 @@ impl KoanMcpServer {
 impl ServerHandler for KoanMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "koan is a bit-perfect macOS music player. You can control playback, \
-                 manage the queue, search the music library, and manage favourites. \
-                 Use search and list_artists/list_albums/list_tracks to discover music, \
-                 then add_to_queue or replace_queue to play it. Track IDs are library \
-                 database IDs (integers). Queue item IDs are UUIDs assigned when tracks \
-                 are added to the queue.",
+            "koan is a bit-perfect macOS music player with a full library database, queue, \
+             and playback engine. You control it via these tools.\n\n\
+             ## Quick start\n\
+             1. Use `search` or `list_artists` to discover music\n\
+             2. Use `add_to_queue` or `replace_queue` with track IDs to play\n\
+             3. Use `now_playing` to see what's on\n\n\
+             ## ID conventions\n\
+             - **Track IDs**: integers from the library database (search, list_tracks, etc.)\n\
+             - **Queue item IDs**: UUIDs assigned when tracks enter the queue (play, remove_from_queue, etc.)\n\n\
+             ## The `graphql` tool (power mode)\n\
+             Executes GraphQL queries in-process — use for nested queries and rich filtering:\n\
+             - Nested: `{ artists { edges { node { name, albums { edges { node { title } } } } } } }`\n\
+             - Albums: filter by `title`, `yearStart`/`yearEnd`, `codec`, `label`, `genre`\n\
+             - Tracks: filter by `title`, `artistName`, `albumTitle`, `genre`, `codec`, `yearStart`/`yearEnd`, \
+               `minSampleRate`, `minBitDepth`, `channels`, `minDurationMs`/`maxDurationMs`, `source`, `favouritesOnly`\n\
+             - Artists: filter by `search`, `genre`\n\
+             - All string filters are case-insensitive substrings\n\
+             - Queries: `artists`, `albums`, `tracks`, `track`, `randomTracks`, `nowPlaying`, `queue`, \
+               `libraryStats`, `devices`, `favourites`, `snapshots`, `radioStatus`, `similarArtists`, `playHistory`\n\
+             - Mutations: playback (`play`/`pause`/`resume`/`stop`/`next`/`previous`/`seek`), \
+               queue (`addToQueue`/`replaceQueue`/`removeFromQueue`/`moveInQueue`/`clearQueue`/`undo`/`redo`), \
+               device (`setDevice`/`clearDevice`), favourites (`favourite`/`unfavourite`/`toggleFavourite`), \
+               snapshots (`saveSnapshot`/`restoreSnapshot`/`deleteSnapshot`), radio (`enableRadio`/`disableRadio`)\n\n\
+             ## Snapshots\n\
+             Save the current queue as a named snapshot (`save_snapshot`), restore later (`restore_snapshot`). \
+             Bank curated mixes and switch between them.\n\n\
+             ## Radio mode\n\
+             `enable_radio` activates multi-signal discovery — koan auto-queues similar tracks using \
+             ListenBrainz, MusicBrainz, genre/era matching, and Subsonic when the queue runs low.\n\n\
+             ## Favourites\n\
+             `favourite`/`unfavourite` star tracks locally and auto-sync to remote (Subsonic/Navidrome). \
+             Filter any query with `favouritesOnly: true`.\n\n\
+             ## Devices\n\
+             `list_devices` + `set_device` to switch audio output. `now_playing` shows codec, sample rate, bit depth.",
         )
     }
 }

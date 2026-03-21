@@ -12,6 +12,11 @@
 - **Favourites filter** — `favouritesOnly: true` parameter on `artists`, `albums`, and `tracks` queries. Dedicated `favourites` query with cursor pagination. `isFavourite` field on track type
 - **Favourite → remote sync** — favouriting/unfavouriting via GQL or MCP automatically syncs to Subsonic/Navidrome (`star`/`unstar` API) on a background thread. Fire-and-forget, best-effort
 - **`clear_device` MCP tool** — reset audio output to system default (was GQL-only)
+- **Daemon mode** — `koan graphql -d` forks the server into background, writes PID to `~/.config/koan/graphql.pid`. Claude Code can start it and query via HTTP
+- **`schema_sdl` MCP tool** — dumps the full GraphQL schema in SDL format so Claude can introspect all available queries, mutations, types, and filter params on first connect
+- **`similarArtists` query** — returns scored similar artists (from ListenBrainz, MusicBrainz, Subsonic) with source and relationship type
+- **`playHistory` query** — recent play history with track info, paginated
+- **Comprehensive MCP instructions** — rewritten server instructions guide Claude through discovery, the graphql power tool, all filter params, snapshots, radio, favourites, and device control
 
 ## 0.11.1
 

@@ -421,6 +421,35 @@ struct GqlDevice {
 }
 
 #[derive(SimpleObject)]
+struct GqlSimilarArtist {
+    artist: GqlSimilarArtistInfo,
+    score: f64,
+    source: String,
+    relationship: String,
+}
+
+#[derive(SimpleObject)]
+struct GqlSimilarArtistInfo {
+    id: i64,
+    name: String,
+}
+
+#[derive(SimpleObject)]
+struct GqlPlayHistoryEntry {
+    track_id: i64,
+    played_at: i64,
+    duration_ms: Option<i64>,
+    track: Option<GqlPlayHistoryTrack>,
+}
+
+#[derive(SimpleObject)]
+struct GqlPlayHistoryTrack {
+    title: String,
+    artist: String,
+    album: String,
+}
+
+#[derive(SimpleObject)]
 struct GqlSnapshot {
     name: String,
     track_count: i32,
@@ -972,6 +1001,58 @@ impl QueryRoot {
         Ok(GqlRadioStatus {
             enabled: state.radio_mode(),
         })
+    }
+
+    async fn similar_artists(
+        &self,
+        ctx: &Context<'_>,
+        artist_id: i64,
+    ) -> async_graphql::Result<Vec<GqlSimilarArtist>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let entries = queries::get_similar_artists_detailed(&db.conn, artist_id)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        Ok(entries
+            .into_iter()
+            .map(|e| GqlSimilarArtist {
+                artist: GqlSimilarArtistInfo {
+                    id: e.artist.id,
+                    name: e.artist.name,
+                },
+                score: e.score,
+                source: e.source,
+                relationship: e.relationship,
+            })
+            .collect())
+    }
+
+    async fn play_history(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(default = 50)] limit: i32,
+        #[graphql(default = 0)] offset: i32,
+    ) -> async_graphql::Result<Vec<GqlPlayHistoryEntry>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let entries = queries::get_play_history(&db.conn, limit as u32, offset as u32)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        Ok(entries
+            .into_iter()
+            .map(|e| {
+                let track = queries::get_track_row(&db.conn, e.track_id)
+                    .ok()
+                    .flatten()
+                    .map(|t| GqlPlayHistoryTrack {
+                        title: t.title,
+                        artist: t.artist_name,
+                        album: t.album_title,
+                    });
+                GqlPlayHistoryEntry {
+                    track_id: e.track_id,
+                    played_at: e.played_at,
+                    duration_ms: e.duration_ms,
+                    track,
+                }
+            })
+            .collect())
     }
 }
 
@@ -1589,6 +1670,48 @@ async fn graphql_playground() -> axum::response::Html<String> {
     axum::response::Html(async_graphql::http::playground_source(
         async_graphql::http::GraphQLPlaygroundConfig::new("/graphql"),
     ))
+}
+
+/// Run the GraphQL server as a background daemon.
+/// Forks the process, writes the PID to ~/.config/koan/graphql.pid, and exits.
+pub fn cmd_graphql_daemon(port: Option<u16>, playground: Option<bool>) {
+    use std::fs;
+    use std::process::Command;
+
+    let cfg = Config::load().unwrap_or_default();
+    let port_val = port.unwrap_or(cfg.graphql.port);
+
+    let exe = std::env::current_exe().expect("failed to get current exe path");
+    let mut cmd = Command::new(exe);
+    cmd.arg("graphql");
+    cmd.arg("--port").arg(port_val.to_string());
+    if playground.unwrap_or(cfg.graphql.playground) {
+        cmd.arg("--playground").arg("true");
+    }
+
+    // Detach: redirect stdio to /dev/null, start in new session
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+
+    let mut child = cmd.spawn().expect("failed to spawn daemon process");
+    let pid = child.id();
+
+    // Write PID file
+    let pid_path = koan_core::config::config_dir().join("graphql.pid");
+    fs::write(&pid_path, pid.to_string()).ok();
+
+    // Detach — we don't want to wait, the child is a long-running server.
+    // Spawn a thread to reap it so we don't leave a zombie.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+
+    eprintln!(
+        "koan graphql daemon started (pid {}) on port {}",
+        pid, port_val
+    );
+    eprintln!("  PID file: {}", pid_path.display());
 }
 
 // ---------------------------------------------------------------------------
