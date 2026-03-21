@@ -113,15 +113,29 @@ pub struct FavouriteParams {
 // Response types
 // ---------------------------------------------------------------------------
 
+/// Generic status response — MCP spec requires tool outputs to be objects, not bare strings.
+#[derive(Debug, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct StatusResponse {
+    pub message: String,
+}
+
+impl StatusResponse {
+    fn ok(msg: impl Into<String>) -> Json<Self> {
+        Json(Self {
+            message: msg.into(),
+        })
+    }
+}
+
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-struct NowPlayingResponse {
+pub struct NowPlayingResponse {
     state: String,
     position_ms: u64,
     track: Option<NowPlayingTrack>,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-struct NowPlayingTrack {
+pub struct NowPlayingTrack {
     queue_item_id: String,
     title: String,
     artist: String,
@@ -134,7 +148,13 @@ struct NowPlayingTrack {
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-struct QueueEntryResponse {
+pub struct QueueResponse {
+    pub items: Vec<QueueEntryResponse>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct QueueEntryResponse {
     queue_item_id: String,
     title: String,
     artist: String,
@@ -147,7 +167,13 @@ struct QueueEntryResponse {
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-struct TrackResponse {
+pub struct TrackListResponse {
+    pub tracks: Vec<TrackResponse>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct TrackResponse {
     id: i64,
     title: String,
     artist: String,
@@ -165,13 +191,25 @@ struct TrackResponse {
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-struct ArtistResponse {
+pub struct ArtistListResponse {
+    pub artists: Vec<ArtistResponse>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct ArtistResponse {
     id: i64,
     name: String,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-struct AlbumResponse {
+pub struct AlbumListResponse {
+    pub albums: Vec<AlbumResponse>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct AlbumResponse {
     id: i64,
     title: String,
     artist_id: i64,
@@ -182,7 +220,7 @@ struct AlbumResponse {
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-struct LibraryStatsResponse {
+pub struct LibraryStatsResponse {
     total_tracks: i64,
     local_tracks: i64,
     remote_tracks: i64,
@@ -192,7 +230,13 @@ struct LibraryStatsResponse {
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
-struct DeviceResponse {
+pub struct DeviceListResponse {
+    pub devices: Vec<DeviceResponse>,
+    pub count: usize,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct DeviceResponse {
     name: String,
     sample_rates: Vec<f64>,
 }
@@ -300,60 +344,69 @@ impl KoanMcpServer {
     // -----------------------------------------------------------------------
 
     #[tool(description = "Play a specific queue item by its queue item ID")]
-    fn play(&self, Parameters(params): Parameters<PlayParams>) -> Result<Json<String>, String> {
+    fn play(
+        &self,
+        Parameters(params): Parameters<PlayParams>,
+    ) -> Result<Json<StatusResponse>, String> {
         let id = parse_queue_item_id(&params.queue_item_id)?;
         self.cmd_tx
             .send(PlayerCommand::Play(id))
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json("playing".into()))
+        Ok(StatusResponse::ok("playing"))
     }
 
     #[tool(description = "Pause playback")]
-    fn pause(&self) -> Result<Json<String>, String> {
+    fn pause(&self) -> Result<Json<StatusResponse>, String> {
         self.cmd_tx
             .send(PlayerCommand::Pause)
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json("paused".into()))
+        Ok(StatusResponse::ok("paused"))
     }
 
     #[tool(description = "Resume playback")]
-    fn resume(&self) -> Result<Json<String>, String> {
+    fn resume(&self) -> Result<Json<StatusResponse>, String> {
         self.cmd_tx
             .send(PlayerCommand::Resume)
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json("resumed".into()))
+        Ok(StatusResponse::ok("resumed"))
     }
 
     #[tool(description = "Stop playback")]
-    fn stop(&self) -> Result<Json<String>, String> {
+    fn stop(&self) -> Result<Json<StatusResponse>, String> {
         self.cmd_tx
             .send(PlayerCommand::Stop)
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json("stopped".into()))
+        Ok(StatusResponse::ok("stopped"))
     }
 
     #[tool(description = "Skip to the next track in the queue")]
-    fn next(&self) -> Result<Json<String>, String> {
+    fn next(&self) -> Result<Json<StatusResponse>, String> {
         self.cmd_tx
             .send(PlayerCommand::NextTrack)
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json("skipped to next".into()))
+        Ok(StatusResponse::ok("skipped to next"))
     }
 
     #[tool(description = "Skip to the previous track in the queue")]
-    fn previous(&self) -> Result<Json<String>, String> {
+    fn previous(&self) -> Result<Json<StatusResponse>, String> {
         self.cmd_tx
             .send(PlayerCommand::PrevTrack)
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json("skipped to previous".into()))
+        Ok(StatusResponse::ok("skipped to previous"))
     }
 
     #[tool(description = "Seek to a position in the current track (milliseconds)")]
-    fn seek(&self, Parameters(params): Parameters<SeekParams>) -> Result<Json<String>, String> {
+    fn seek(
+        &self,
+        Parameters(params): Parameters<SeekParams>,
+    ) -> Result<Json<StatusResponse>, String> {
         self.cmd_tx
             .send(PlayerCommand::Seek(params.position_ms))
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json(format!("seeked to {}ms", params.position_ms)))
+        Ok(StatusResponse::ok(format!(
+            "seeked to {}ms",
+            params.position_ms
+        )))
     }
 
     // -----------------------------------------------------------------------
@@ -364,14 +417,17 @@ impl KoanMcpServer {
     fn add_to_queue(
         &self,
         Parameters(params): Parameters<AddToQueueParams>,
-    ) -> Result<Json<String>, String> {
+    ) -> Result<Json<StatusResponse>, String> {
         let db = self.open_db()?;
         let items = resolve_tracks_to_items(&db, &params.track_ids)?;
         let count = items.len();
         self.cmd_tx
             .send(PlayerCommand::AddToPlaylist(items))
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json(format!("added {} tracks to queue", count)))
+        Ok(StatusResponse::ok(format!(
+            "added {} tracks to queue",
+            count
+        )))
     }
 
     #[tool(
@@ -380,7 +436,7 @@ impl KoanMcpServer {
     fn insert_in_queue(
         &self,
         Parameters(params): Parameters<InsertInQueueParams>,
-    ) -> Result<Json<String>, String> {
+    ) -> Result<Json<StatusResponse>, String> {
         let after = parse_queue_item_id(&params.after_queue_item_id)?;
         let db = self.open_db()?;
         let items = resolve_tracks_to_items(&db, &params.track_ids)?;
@@ -388,7 +444,7 @@ impl KoanMcpServer {
         self.cmd_tx
             .send(PlayerCommand::InsertInPlaylist { items, after })
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json(format!(
+        Ok(StatusResponse::ok(format!(
             "inserted {} tracks after {}",
             count, params.after_queue_item_id
         )))
@@ -398,7 +454,7 @@ impl KoanMcpServer {
     fn remove_from_queue(
         &self,
         Parameters(params): Parameters<RemoveFromQueueParams>,
-    ) -> Result<Json<String>, String> {
+    ) -> Result<Json<StatusResponse>, String> {
         let ids: Vec<QueueItemId> = params
             .queue_item_ids
             .iter()
@@ -408,15 +464,18 @@ impl KoanMcpServer {
         self.cmd_tx
             .send(PlayerCommand::RemoveFromPlaylistBatch(ids))
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json(format!("removed {} items from queue", count)))
+        Ok(StatusResponse::ok(format!(
+            "removed {} items from queue",
+            count
+        )))
     }
 
     #[tool(description = "Clear the entire queue and stop playback")]
-    fn clear_queue(&self) -> Result<Json<String>, String> {
+    fn clear_queue(&self) -> Result<Json<StatusResponse>, String> {
         self.cmd_tx
             .send(PlayerCommand::ClearPlaylist)
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json("queue cleared".into()))
+        Ok(StatusResponse::ok("queue cleared"))
     }
 
     #[tool(
@@ -425,7 +484,7 @@ impl KoanMcpServer {
     fn replace_queue(
         &self,
         Parameters(params): Parameters<ReplaceQueueParams>,
-    ) -> Result<Json<String>, String> {
+    ) -> Result<Json<StatusResponse>, String> {
         let db = self.open_db()?;
         let items = resolve_tracks_to_items(&db, &params.track_ids)?;
         if items.is_empty() {
@@ -445,14 +504,14 @@ impl KoanMcpServer {
             .send(PlayerCommand::Play(first_id))
             .map_err(|e| format!("send error: {}", e))?;
 
-        Ok(Json(format!(
+        Ok(StatusResponse::ok(format!(
             "replaced queue with {} tracks, now playing",
             count
         )))
     }
 
     #[tool(description = "Get the current queue with track info and playback status")]
-    fn get_queue(&self) -> Json<Vec<QueueEntryResponse>> {
+    fn get_queue(&self) -> Json<QueueResponse> {
         let (items, cursor) = self.state.snapshot_playlist();
         let entries: Vec<QueueEntryResponse> = items
             .iter()
@@ -468,14 +527,18 @@ impl KoanMcpServer {
                 is_current: cursor == Some(item.id),
             })
             .collect();
-        Json(entries)
+        let count = entries.len();
+        Json(QueueResponse {
+            items: entries,
+            count,
+        })
     }
 
     #[tool(description = "Reorder items within the queue — move items to before/after a target")]
     fn reorder_queue(
         &self,
         Parameters(params): Parameters<ReorderQueueParams>,
-    ) -> Result<Json<String>, String> {
+    ) -> Result<Json<StatusResponse>, String> {
         let ids: Vec<QueueItemId> = params
             .queue_item_ids
             .iter()
@@ -489,7 +552,7 @@ impl KoanMcpServer {
                 after: params.after,
             })
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json("queue reordered".into()))
+        Ok(StatusResponse::ok("queue reordered"))
     }
 
     // -----------------------------------------------------------------------
@@ -502,26 +565,34 @@ impl KoanMcpServer {
     fn search(
         &self,
         Parameters(params): Parameters<SearchParams>,
-    ) -> Result<Json<Vec<TrackResponse>>, String> {
+    ) -> Result<Json<TrackListResponse>, String> {
         let db = self.open_db()?;
         let tracks = queries::search_tracks(&db.conn, &params.query)
             .map_err(|e| format!("search error: {}", e))?;
-        Ok(Json(tracks.iter().map(track_row_to_response).collect()))
+        let items: Vec<TrackResponse> = tracks.iter().map(track_row_to_response).collect();
+        let count = items.len();
+        Ok(Json(TrackListResponse {
+            tracks: items,
+            count,
+        }))
     }
 
     #[tool(description = "List all artists in the library (album artists only, sorted by name)")]
-    fn list_artists(&self) -> Result<Json<Vec<ArtistResponse>>, String> {
+    fn list_artists(&self) -> Result<Json<ArtistListResponse>, String> {
         let db = self.open_db()?;
         let artists = queries::all_artists(&db.conn).map_err(|e| format!("db error: {}", e))?;
-        Ok(Json(
-            artists
-                .iter()
-                .map(|a| ArtistResponse {
-                    id: a.id,
-                    name: a.name.clone(),
-                })
-                .collect(),
-        ))
+        let items: Vec<ArtistResponse> = artists
+            .iter()
+            .map(|a| ArtistResponse {
+                id: a.id,
+                name: a.name.clone(),
+            })
+            .collect();
+        let count = items.len();
+        Ok(Json(ArtistListResponse {
+            artists: items,
+            count,
+        }))
     }
 
     #[tool(
@@ -530,7 +601,7 @@ impl KoanMcpServer {
     fn list_albums(
         &self,
         Parameters(params): Parameters<ListAlbumsParams>,
-    ) -> Result<Json<Vec<AlbumResponse>>, String> {
+    ) -> Result<Json<AlbumListResponse>, String> {
         let db = self.open_db()?;
         let albums = if let Some(artist_id) = params.artist_id {
             queries::albums_for_artist(&db.conn, artist_id)
@@ -538,20 +609,23 @@ impl KoanMcpServer {
         } else {
             queries::all_albums(&db.conn).map_err(|e| format!("db error: {}", e))?
         };
-        Ok(Json(
-            albums
-                .iter()
-                .map(|a| AlbumResponse {
-                    id: a.id,
-                    title: a.title.clone(),
-                    artist_id: a.artist_id,
-                    artist_name: a.artist_name.clone(),
-                    date: a.date.clone(),
-                    codec: a.codec.clone(),
-                    label: a.label.clone(),
-                })
-                .collect(),
-        ))
+        let items: Vec<AlbumResponse> = albums
+            .iter()
+            .map(|a| AlbumResponse {
+                id: a.id,
+                title: a.title.clone(),
+                artist_id: a.artist_id,
+                artist_name: a.artist_name.clone(),
+                date: a.date.clone(),
+                codec: a.codec.clone(),
+                label: a.label.clone(),
+            })
+            .collect();
+        let count = items.len();
+        Ok(Json(AlbumListResponse {
+            albums: items,
+            count,
+        }))
     }
 
     #[tool(
@@ -560,7 +634,7 @@ impl KoanMcpServer {
     fn list_tracks(
         &self,
         Parameters(params): Parameters<ListTracksParams>,
-    ) -> Result<Json<Vec<TrackResponse>>, String> {
+    ) -> Result<Json<TrackListResponse>, String> {
         let db = self.open_db()?;
         let tracks = if let Some(album_id) = params.album_id {
             queries::tracks_for_album(&db.conn, album_id).map_err(|e| format!("db error: {}", e))?
@@ -570,7 +644,12 @@ impl KoanMcpServer {
         } else {
             queries::all_tracks(&db.conn).map_err(|e| format!("db error: {}", e))?
         };
-        Ok(Json(tracks.iter().map(track_row_to_response).collect()))
+        let items: Vec<TrackResponse> = tracks.iter().map(track_row_to_response).collect();
+        let count = items.len();
+        Ok(Json(TrackListResponse {
+            tracks: items,
+            count,
+        }))
     }
 
     #[tool(description = "Get full metadata for a specific track by ID")]
@@ -615,7 +694,6 @@ impl KoanMcpServer {
         };
         let position_ms = self.state.position_ms();
         let track = self.state.track_info().map(|info| {
-            // Get title/artist/album from the playlist item, not TrackInfo (which only has codec data).
             let (items, _cursor) = self.state.snapshot_playlist();
             let playlist_item = items.iter().find(|i| i.id == info.id);
             NowPlayingTrack {
@@ -638,28 +716,34 @@ impl KoanMcpServer {
     }
 
     #[tool(description = "List available audio output devices")]
-    fn list_devices(&self) -> Result<Json<Vec<DeviceResponse>>, String> {
+    fn list_devices(&self) -> Result<Json<DeviceListResponse>, String> {
         let devices = device::list_output_devices().map_err(|e| format!("device error: {}", e))?;
-        Ok(Json(
-            devices
-                .iter()
-                .map(|d| DeviceResponse {
-                    name: d.name.clone(),
-                    sample_rates: d.sample_rates.clone(),
-                })
-                .collect(),
-        ))
+        let items: Vec<DeviceResponse> = devices
+            .iter()
+            .map(|d| DeviceResponse {
+                name: d.name.clone(),
+                sample_rates: d.sample_rates.clone(),
+            })
+            .collect();
+        let count = items.len();
+        Ok(Json(DeviceListResponse {
+            devices: items,
+            count,
+        }))
     }
 
     #[tool(description = "Switch audio output to a different device by name")]
     fn set_device(
         &self,
         Parameters(params): Parameters<SetDeviceParams>,
-    ) -> Result<Json<String>, String> {
+    ) -> Result<Json<StatusResponse>, String> {
         self.cmd_tx
             .send(PlayerCommand::SetOutputDevice(params.device_name.clone()))
             .map_err(|e| format!("send error: {}", e))?;
-        Ok(Json(format!("switched to device '{}'", params.device_name)))
+        Ok(StatusResponse::ok(format!(
+            "switched to device '{}'",
+            params.device_name
+        )))
     }
 
     // -----------------------------------------------------------------------
@@ -670,7 +754,7 @@ impl KoanMcpServer {
     fn favourite(
         &self,
         Parameters(params): Parameters<FavouriteParams>,
-    ) -> Result<Json<String>, String> {
+    ) -> Result<Json<StatusResponse>, String> {
         let db = self.open_db()?;
         let track = queries::get_track_row(&db.conn, params.track_id)
             .map_err(|e| format!("db error: {}", e))?
@@ -682,14 +766,17 @@ impl KoanMcpServer {
             .ok_or_else(|| format!("track {} has no path", params.track_id))?;
         queries::add_favourite(&db.conn, std::path::Path::new(path))
             .map_err(|e| format!("db error: {}", e))?;
-        Ok(Json(format!("favourited track {}", params.track_id)))
+        Ok(StatusResponse::ok(format!(
+            "favourited track {}",
+            params.track_id
+        )))
     }
 
     #[tool(description = "Unstar/unfavourite a track by its library track ID")]
     fn unfavourite(
         &self,
         Parameters(params): Parameters<FavouriteParams>,
-    ) -> Result<Json<String>, String> {
+    ) -> Result<Json<StatusResponse>, String> {
         let db = self.open_db()?;
         let track = queries::get_track_row(&db.conn, params.track_id)
             .map_err(|e| format!("db error: {}", e))?
@@ -701,11 +788,14 @@ impl KoanMcpServer {
             .ok_or_else(|| format!("track {} has no path", params.track_id))?;
         queries::remove_favourite(&db.conn, std::path::Path::new(path))
             .map_err(|e| format!("db error: {}", e))?;
-        Ok(Json(format!("unfavourited track {}", params.track_id)))
+        Ok(StatusResponse::ok(format!(
+            "unfavourited track {}",
+            params.track_id
+        )))
     }
 
     #[tool(description = "List all favourited/starred tracks")]
-    fn list_favourites(&self) -> Result<Json<Vec<TrackResponse>>, String> {
+    fn list_favourites(&self) -> Result<Json<TrackListResponse>, String> {
         let db = self.open_db()?;
         let fav_paths =
             queries::load_favourites(&db.conn).map_err(|e| format!("db error: {}", e))?;
@@ -719,7 +809,8 @@ impl KoanMcpServer {
                 tracks.push(track_row_to_response(&row));
             }
         }
-        Ok(Json(tracks))
+        let count = tracks.len();
+        Ok(Json(TrackListResponse { tracks, count }))
     }
 }
 
@@ -757,4 +848,496 @@ pub fn cmd_mcp() {
             .expect("failed to start MCP server");
         let _ = service.waiting().await;
     });
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koan_core::db::connection::Database;
+    use koan_core::db::queries;
+    use koan_core::player::commands::CommandChannel;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    /// Create a test server with an in-memory-like temp DB and a channel we can drain.
+    fn test_server() -> (
+        KoanMcpServer,
+        crossbeam_channel::Receiver<PlayerCommand>,
+        TempDir,
+    ) {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+        koan_core::db::schema::create_tables(&db.conn).unwrap();
+
+        let state = SharedPlayerState::new();
+        let ch = CommandChannel::new();
+        let tx = ch.tx.clone();
+        let rx = ch.rx.clone();
+
+        let server = KoanMcpServer::new(state, tx, db_path);
+        (server, rx, tmp)
+    }
+
+    /// Insert a test track into the DB, returns track_id.
+    fn insert_test_track(db_path: &PathBuf, title: &str, artist: &str, album: &str) -> i64 {
+        let db = Database::open(db_path).unwrap();
+        let meta = queries::TrackMeta {
+            title: title.to_string(),
+            artist: artist.to_string(),
+            album_artist: Some(artist.to_string()),
+            album: album.to_string(),
+            track_number: Some(1),
+            disc: Some(1),
+            date: Some("2024".into()),
+            genre: Some("Electronic".into()),
+            duration_ms: Some(240000),
+            path: Some(format!(
+                "/tmp/test/{}.flac",
+                title.to_lowercase().replace(' ', "_")
+            )),
+            codec: Some("FLAC".into()),
+            sample_rate: Some(44100),
+            bit_depth: Some(16),
+            channels: Some(2),
+            bitrate: Some(1411),
+            size_bytes: Some(42_000_000),
+            mtime: Some(1700000000),
+            source: "local".into(),
+            remote_id: None,
+            remote_url: None,
+            label: None,
+        };
+        queries::upsert_track(&db.conn, &meta).unwrap()
+    }
+
+    // --- parse_queue_item_id ---
+
+    #[test]
+    fn parse_valid_uuid() {
+        let uuid = Uuid::now_v7();
+        let result = parse_queue_item_id(&uuid.to_string());
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().0, uuid);
+    }
+
+    #[test]
+    fn parse_invalid_uuid() {
+        let result = parse_queue_item_id("not-a-uuid");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid queue item ID"));
+    }
+
+    #[test]
+    fn parse_empty_string() {
+        let result = parse_queue_item_id("");
+        assert!(result.is_err());
+    }
+
+    // --- StatusResponse ---
+
+    #[test]
+    fn status_response_serializes_as_object() {
+        let resp = StatusResponse {
+            message: "test".into(),
+        };
+        let json = serde_json::to_value(&resp).unwrap();
+        assert!(json.is_object());
+        assert_eq!(json["message"], "test");
+    }
+
+    // --- Playback commands send correct PlayerCommand ---
+
+    #[test]
+    fn pause_sends_command() {
+        let (server, rx, _tmp) = test_server();
+        let result = server.pause();
+        assert!(result.is_ok());
+        assert!(matches!(rx.try_recv().unwrap(), PlayerCommand::Pause));
+    }
+
+    #[test]
+    fn resume_sends_command() {
+        let (server, rx, _tmp) = test_server();
+        let result = server.resume();
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        assert!(matches!(cmd, PlayerCommand::Resume));
+    }
+
+    #[test]
+    fn stop_sends_command() {
+        let (server, rx, _tmp) = test_server();
+        let result = server.stop();
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        assert!(matches!(cmd, PlayerCommand::Stop));
+    }
+
+    #[test]
+    fn next_sends_command() {
+        let (server, rx, _tmp) = test_server();
+        let result = server.next();
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        assert!(matches!(cmd, PlayerCommand::NextTrack));
+    }
+
+    #[test]
+    fn previous_sends_command() {
+        let (server, rx, _tmp) = test_server();
+        let result = server.previous();
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        assert!(matches!(cmd, PlayerCommand::PrevTrack));
+    }
+
+    #[test]
+    fn seek_sends_command() {
+        let (server, rx, _tmp) = test_server();
+        let result = server.seek(Parameters(SeekParams { position_ms: 5000 }));
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        assert!(matches!(cmd, PlayerCommand::Seek(5000)));
+    }
+
+    #[test]
+    fn play_sends_command_with_id() {
+        let (server, rx, _tmp) = test_server();
+        let uuid = Uuid::now_v7();
+        let result = server.play(Parameters(PlayParams {
+            queue_item_id: uuid.to_string(),
+        }));
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PlayerCommand::Play(id) => assert_eq!(id.0, uuid),
+            other => panic!("expected Play, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn play_rejects_invalid_uuid() {
+        let (server, _rx, _tmp) = test_server();
+        let result = server.play(Parameters(PlayParams {
+            queue_item_id: "garbage".into(),
+        }));
+        assert!(result.is_err());
+    }
+
+    // --- Queue management ---
+
+    #[test]
+    fn clear_queue_sends_command() {
+        let (server, rx, _tmp) = test_server();
+        let result = server.clear_queue();
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        assert!(matches!(cmd, PlayerCommand::ClearPlaylist));
+    }
+
+    #[test]
+    fn get_queue_returns_empty() {
+        let (server, _rx, _tmp) = test_server();
+        let Json(resp) = server.get_queue();
+        assert_eq!(resp.count, 0);
+        assert!(resp.items.is_empty());
+    }
+
+    #[test]
+    fn add_to_queue_resolves_tracks() {
+        let (server, rx, _tmp) = test_server();
+        let tid = insert_test_track(&server.db_path, "Test Track", "Test Artist", "Test Album");
+
+        let result = server.add_to_queue(Parameters(AddToQueueParams {
+            track_ids: vec![tid],
+        }));
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PlayerCommand::AddToPlaylist(items) => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].title, "Test Track");
+                assert_eq!(items[0].artist, "Test Artist");
+            }
+            other => panic!("expected AddToPlaylist, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn add_to_queue_rejects_missing_track() {
+        let (server, _rx, _tmp) = test_server();
+        let result = server.add_to_queue(Parameters(AddToQueueParams {
+            track_ids: vec![99999],
+        }));
+        let err = result.err().expect("expected error");
+        assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn remove_from_queue_sends_batch() {
+        let (server, rx, _tmp) = test_server();
+        let id1 = Uuid::now_v7();
+        let id2 = Uuid::now_v7();
+        let result = server.remove_from_queue(Parameters(RemoveFromQueueParams {
+            queue_item_ids: vec![id1.to_string(), id2.to_string()],
+        }));
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PlayerCommand::RemoveFromPlaylistBatch(ids) => {
+                assert_eq!(ids.len(), 2);
+                assert_eq!(ids[0].0, id1);
+                assert_eq!(ids[1].0, id2);
+            }
+            other => panic!("expected RemoveFromPlaylistBatch, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn replace_queue_sends_clear_add_play() {
+        let (server, rx, _tmp) = test_server();
+        let tid = insert_test_track(&server.db_path, "Replace Me", "Artist", "Album");
+
+        let result = server.replace_queue(Parameters(ReplaceQueueParams {
+            track_ids: vec![tid],
+        }));
+        assert!(result.is_ok());
+
+        // Should get Clear, Add, Play in order.
+        let cmd1 = rx.try_recv().unwrap();
+        assert!(matches!(cmd1, PlayerCommand::ClearPlaylist));
+        let cmd2 = rx.try_recv().unwrap();
+        assert!(matches!(cmd2, PlayerCommand::AddToPlaylist(_)));
+        let cmd3 = rx.try_recv().unwrap();
+        assert!(matches!(cmd3, PlayerCommand::Play(_)));
+    }
+
+    #[test]
+    fn replace_queue_rejects_empty() {
+        let (server, _rx, _tmp) = test_server();
+        // Track ID that doesn't exist → resolve fails before we even get to "empty" check.
+        let result = server.replace_queue(Parameters(ReplaceQueueParams {
+            track_ids: vec![99999],
+        }));
+        assert!(result.is_err());
+    }
+
+    // --- Library discovery ---
+
+    #[test]
+    fn search_returns_matches() {
+        let (server, _rx, _tmp) = test_server();
+        insert_test_track(
+            &server.db_path,
+            "Windowlicker",
+            "Aphex Twin",
+            "Windowlicker EP",
+        );
+        insert_test_track(&server.db_path, "Avril 14th", "Aphex Twin", "Drukqs");
+
+        let result = server.search(Parameters(SearchParams {
+            query: "aphex".into(),
+        }));
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        assert_eq!(resp.count, 2);
+    }
+
+    #[test]
+    fn search_empty_query() {
+        let (server, _rx, _tmp) = test_server();
+        let result = server.search(Parameters(SearchParams {
+            query: "nonexistent_xyzzy".into(),
+        }));
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        assert_eq!(resp.count, 0);
+    }
+
+    #[test]
+    fn list_artists_returns_all() {
+        let (server, _rx, _tmp) = test_server();
+        insert_test_track(&server.db_path, "Track A", "Artist One", "Album");
+        insert_test_track(&server.db_path, "Track B", "Artist Two", "Album");
+
+        let result = server.list_artists();
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        assert!(resp.count >= 2);
+    }
+
+    #[test]
+    fn list_albums_all() {
+        let (server, _rx, _tmp) = test_server();
+        insert_test_track(&server.db_path, "T1", "A", "Album One");
+        insert_test_track(&server.db_path, "T2", "A", "Album Two");
+
+        let result = server.list_albums(Parameters(ListAlbumsParams { artist_id: None }));
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        assert!(resp.count >= 2);
+    }
+
+    #[test]
+    fn list_tracks_for_album() {
+        let (server, _rx, _tmp) = test_server();
+        insert_test_track(&server.db_path, "T1", "A", "MyAlbum");
+        insert_test_track(&server.db_path, "T2", "A", "MyAlbum");
+        insert_test_track(&server.db_path, "T3", "A", "OtherAlbum");
+
+        // Find the album ID for MyAlbum.
+        let db = Database::open(&server.db_path).unwrap();
+        let albums = queries::all_albums(&db.conn).unwrap();
+        let my_album = albums.iter().find(|a| a.title == "MyAlbum").unwrap();
+
+        let result = server.list_tracks(Parameters(ListTracksParams {
+            album_id: Some(my_album.id),
+            artist_id: None,
+        }));
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        assert_eq!(resp.count, 2);
+    }
+
+    #[test]
+    fn get_track_found() {
+        let (server, _rx, _tmp) = test_server();
+        let tid = insert_test_track(&server.db_path, "Found Track", "Artist", "Album");
+
+        let result = server.get_track(Parameters(GetTrackParams { track_id: tid }));
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        assert_eq!(resp.title, "Found Track");
+        assert_eq!(resp.id, tid);
+    }
+
+    #[test]
+    fn get_track_not_found() {
+        let (server, _rx, _tmp) = test_server();
+        let result = server.get_track(Parameters(GetTrackParams { track_id: 99999 }));
+        let err = result.err().expect("expected error");
+        assert!(err.contains("not found"));
+    }
+
+    #[test]
+    fn library_stats_works() {
+        let (server, _rx, _tmp) = test_server();
+        insert_test_track(&server.db_path, "T", "A", "B");
+
+        let result = server.library_stats();
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        assert!(resp.total_tracks >= 1);
+    }
+
+    // --- State queries ---
+
+    #[test]
+    fn now_playing_stopped() {
+        let (server, _rx, _tmp) = test_server();
+        let Json(resp) = server.now_playing();
+        assert_eq!(resp.state, "stopped");
+        assert!(resp.track.is_none());
+    }
+
+    #[test]
+    fn list_devices_returns_at_least_one() {
+        let (server, _rx, _tmp) = test_server();
+        let result = server.list_devices();
+        assert!(result.is_ok());
+        let Json(resp) = result.unwrap();
+        // macOS always has at least one audio device.
+        assert!(resp.count >= 1);
+    }
+
+    #[test]
+    fn set_device_sends_command() {
+        let (server, rx, _tmp) = test_server();
+        let result = server.set_device(Parameters(SetDeviceParams {
+            device_name: "Test DAC".into(),
+        }));
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PlayerCommand::SetOutputDevice(name) => assert_eq!(name, "Test DAC"),
+            other => panic!("expected SetOutputDevice, got {:?}", other),
+        }
+    }
+
+    // --- Reorder ---
+
+    #[test]
+    fn reorder_queue_sends_command() {
+        let (server, rx, _tmp) = test_server();
+        let id1 = Uuid::now_v7();
+        let target = Uuid::now_v7();
+        let result = server.reorder_queue(Parameters(ReorderQueueParams {
+            queue_item_ids: vec![id1.to_string()],
+            target_queue_item_id: target.to_string(),
+            after: true,
+        }));
+        assert!(result.is_ok());
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PlayerCommand::MoveItemsInPlaylist {
+                ids,
+                target: t,
+                after,
+            } => {
+                assert_eq!(ids.len(), 1);
+                assert_eq!(ids[0].0, id1);
+                assert_eq!(t.0, target);
+                assert!(after);
+            }
+            other => panic!("expected MoveItemsInPlaylist, got {:?}", other),
+        }
+    }
+
+    // --- resolve_tracks_to_items ---
+
+    #[test]
+    fn resolve_tracks_builds_playlist_items() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+        koan_core::db::schema::create_tables(&db.conn).unwrap();
+
+        let meta = queries::TrackMeta {
+            title: "Resolve Test".into(),
+            artist: "R Artist".into(),
+            album_artist: Some("R Artist".into()),
+            album: "R Album".into(),
+            track_number: Some(3),
+            disc: Some(1),
+            date: None,
+            genre: None,
+            duration_ms: Some(180000),
+            path: Some("/tmp/resolve_test.flac".into()),
+            codec: Some("FLAC".into()),
+            sample_rate: Some(96000),
+            bit_depth: Some(24),
+            channels: Some(2),
+            bitrate: None,
+            size_bytes: None,
+            mtime: Some(1700000000),
+            source: "local".into(),
+            remote_id: None,
+            remote_url: None,
+            label: None,
+        };
+        let tid = queries::upsert_track(&db.conn, &meta).unwrap();
+
+        let items = resolve_tracks_to_items(&db, &[tid]).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Resolve Test");
+        assert_eq!(items[0].artist, "R Artist");
+        assert_eq!(items[0].track_number, Some(3));
+        assert_eq!(items[0].duration_ms, Some(180000));
+        assert!(matches!(items[0].load_state, LoadState::Ready));
+    }
 }
