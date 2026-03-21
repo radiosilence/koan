@@ -884,7 +884,7 @@ mod tests {
     }
 
     /// Insert a test track into the DB, returns track_id.
-    fn insert_test_track(db_path: &PathBuf, title: &str, artist: &str, album: &str) -> i64 {
+    fn insert_test_track(db_path: &std::path::Path, title: &str, artist: &str, album: &str) -> i64 {
         let db = Database::open(db_path).unwrap();
         let meta = queries::TrackMeta {
             title: title.to_string(),
