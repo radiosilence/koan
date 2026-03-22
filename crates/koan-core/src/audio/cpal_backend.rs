@@ -6,6 +6,54 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo};
 
+/// Temporarily redirect stderr to /dev/null while running a closure.
+/// ALSA/JACK/PipeWire C libraries spam stderr when probing unavailable
+/// backends. In TUI mode this corrupts the alternate screen display.
+fn suppress_stderr<F: FnOnce() -> T, T>(f: F) -> T {
+    use std::os::fd::AsRawFd;
+
+    // dup(2) to save original stderr, dup2(/dev/null, 2) to suppress, restore after.
+    let devnull = std::fs::File::open("/dev/null").ok();
+    let saved_fd = unsafe { nix_dup(2) };
+
+    if let Some(ref null) = devnull {
+        if saved_fd >= 0 {
+            unsafe { nix_dup2(null.as_raw_fd(), 2) };
+        }
+    }
+
+    let result = f();
+
+    if saved_fd >= 0 {
+        unsafe {
+            nix_dup2(saved_fd, 2);
+            nix_close(saved_fd);
+        }
+    }
+
+    result
+}
+
+// Thin wrappers around libc dup/dup2/close — avoids adding libc as a dep.
+unsafe fn nix_dup(fd: i32) -> i32 {
+    extern "C" {
+        fn dup(fd: i32) -> i32;
+    }
+    unsafe { dup(fd) }
+}
+unsafe fn nix_dup2(oldfd: i32, newfd: i32) -> i32 {
+    extern "C" {
+        fn dup2(oldfd: i32, newfd: i32) -> i32;
+    }
+    unsafe { dup2(oldfd, newfd) }
+}
+unsafe fn nix_close(fd: i32) -> i32 {
+    extern "C" {
+        fn close(fd: i32) -> i32;
+    }
+    unsafe { close(fd) }
+}
+
 /// cpal-based audio backend for Linux (ALSA / PipeWire / PulseAudio).
 ///
 /// The callback drains the rtrb consumer identically to the CoreAudio
@@ -23,9 +71,12 @@ impl Default for CpalBackend {
 
 impl CpalBackend {
     pub fn new() -> Self {
-        Self {
-            host: cpal::default_host(),
-        }
+        // Suppress ALSA/JACK/OSS probe spam on stderr during host initialization.
+        // These C libraries write directly to fd 2 when probing unavailable backends
+        // (JACK not running, OSS /dev/dsp missing, etc.). In TUI mode this bleeds
+        // through the alternate screen and corrupts the display.
+        let host = suppress_stderr(|| cpal::default_host());
+        Self { host }
     }
 
     /// Resolve a `DeviceInfo` back to a cpal `Device` by matching name.
@@ -145,8 +196,8 @@ impl AudioBackend for CpalBackend {
         // The callback runs on a single audio thread so contention is zero.
         let consumer = std::sync::Mutex::new(consumer);
 
-        let stream = dev
-            .build_output_stream(
+        let stream = suppress_stderr(|| {
+            dev.build_output_stream(
                 &config,
                 move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
                     if !running_cb.load(Ordering::Relaxed) {
@@ -195,7 +246,8 @@ impl AudioBackend for CpalBackend {
                 },
                 None,
             )
-            .map_err(|e| BackendError::StreamCreation(e.to_string()))?;
+            .map_err(|e| BackendError::StreamCreation(e.to_string()))
+        })?;
 
         Ok(Box::new(CpalEngineHandle { stream, running }))
     }
