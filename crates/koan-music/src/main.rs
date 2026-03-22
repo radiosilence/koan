@@ -99,6 +99,7 @@ impl log::Log for BufferedLogger {
 
 mod commands;
 mod media_keys;
+mod remote_bridge;
 mod tui;
 
 #[derive(Parser)]
@@ -129,6 +130,12 @@ enum Commands {
         /// Clear persisted queue instead of restoring it
         #[arg(long)]
         clear: bool,
+        /// Connect to a remote koan server (e.g. http://host:4000)
+        #[arg(long)]
+        server: Option<String>,
+        /// Jukebox mode: server plays audio, client is remote control only
+        #[arg(long, requires = "server")]
+        jukebox: bool,
     },
     /// Probe a file and show format info
     Probe {
@@ -282,7 +289,15 @@ fn main() {
             artist,
             library,
             clear,
-        }) => commands::cmd_play(&paths, &ids, album, artist, library, clear),
+            server,
+            jukebox,
+        }) => {
+            if let Some(ref url) = server {
+                commands::cmd_play_remote(url, jukebox);
+            } else {
+                commands::cmd_play(&paths, &ids, album, artist, library, clear);
+            }
+        }
         Some(Commands::Probe { path }) => commands::cmd_probe(&path),
         Some(Commands::Devices) => commands::cmd_devices(),
         Some(Commands::Scan { path, force }) => commands::cmd_scan(path.as_deref(), force),

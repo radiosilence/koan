@@ -26,7 +26,7 @@ pub use pick::cmd_pick;
 pub use picker_items::{
     load_picker_items, make_album_picker_items, make_artist_picker_items, make_track_picker_items,
 };
-pub use play::cmd_play;
+pub use play::{cmd_play, cmd_play_remote};
 pub use probe::{cmd_devices, cmd_probe};
 pub use remote::{cmd_remote_login, cmd_remote_status, cmd_remote_sync};
 pub use scan::cmd_scan;

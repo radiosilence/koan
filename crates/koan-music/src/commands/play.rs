@@ -206,6 +206,58 @@ pub fn cmd_play(
     std::thread::sleep(Duration::from_millis(100));
 }
 
+pub fn cmd_play_remote(server_url: &str, _jukebox: bool) {
+    use crate::remote_bridge;
+
+    eprintln!("connecting to koan server at {}...", server_url);
+
+    // Verify the server is reachable.
+    let client = koan_core::graphql_client::GraphQLClient::new(server_url);
+    match client.library_stats() {
+        Ok(stats) => {
+            let total = stats["libraryStats"]["totalTracks"].as_i64().unwrap_or(0);
+            let artists = stats["libraryStats"]["totalArtists"].as_i64().unwrap_or(0);
+            let albums = stats["libraryStats"]["totalAlbums"].as_i64().unwrap_or(0);
+            eprintln!(
+                "connected — {} tracks, {} artists, {} albums",
+                total, artists, albums
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "{} failed to connect to {}: {}",
+                "error:".red().bold(),
+                server_url,
+                e
+            );
+            std::process::exit(1);
+        }
+    }
+
+    // Spawn the remote bridge — returns the same types as Player::spawn().
+    let (state, _timeline, viz_snapshot, cmd_tx) = remote_bridge::spawn_remote_bridge(server_url);
+
+    let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    BufferedLogger::set_buffer(log_buffer.clone());
+
+    // Give the poller a moment to populate state.
+    std::thread::sleep(Duration::from_millis(300));
+
+    if let Err(e) = run_tui(
+        state,
+        viz_snapshot,
+        cmd_tx,
+        log_buffer,
+        true, // start in library mode for remote
+        false,
+        None,
+    ) {
+        eprintln!("{} {}", "tui error:".red().bold(), e);
+    }
+
+    BufferedLogger::clear_buffer();
+}
+
 fn run_tui(
     state: Arc<koan_core::player::state::SharedPlayerState>,
     viz_snapshot: Arc<koan_core::audio::viz::VizSnapshot>,

@@ -3,6 +3,7 @@ pub mod config;
 pub mod credentials;
 pub mod db;
 pub mod format;
+pub mod graphql_client;
 pub mod index;
 pub mod lyrics;
 pub mod organize;
