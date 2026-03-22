@@ -13,6 +13,8 @@ mod probe;
 mod remote;
 mod scan;
 mod search;
+#[allow(dead_code)]
+mod serve;
 
 pub use cache::{cmd_cache_clear, cmd_cache_status};
 pub use graphql::{cmd_graphql, cmd_graphql_daemon};
