@@ -9,6 +9,7 @@ mod search;
 pub mod snapshots;
 mod stats;
 pub mod tracks;
+pub mod vectors;
 
 use std::path::PathBuf;
 
@@ -24,6 +25,7 @@ pub use search::*;
 pub use snapshots::*;
 pub use stats::*;
 pub use tracks::*;
+pub use vectors::*;
 
 // --- Row types ---
 

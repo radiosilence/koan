@@ -8,12 +8,12 @@ use super::open_db;
 
 pub fn cmd_scan(path: Option<&Path>, force: bool) {
     let db = open_db();
+    let cfg = config::Config::load().unwrap_or_default();
 
     let folders: Vec<std::path::PathBuf> = if let Some(p) = path {
         vec![p.to_path_buf()]
     } else {
-        let cfg = config::Config::load().unwrap_or_default();
-        cfg.library.folders
+        cfg.library.folders.clone()
     };
 
     if folders.is_empty() {
@@ -82,6 +82,28 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
                 "  {} {}",
                 "\u{2514}".dimmed(),
                 format!("... and {} more", result.errors.len() - 10).dimmed()
+            );
+        }
+    }
+
+    // Run acoustic analysis if configured.
+    if cfg.discovery.analysis_on_scan {
+        let missing = koan_core::db::queries::tracks_missing_vectors(&db.conn).unwrap_or_default();
+        if !missing.is_empty() {
+            println!(
+                "\n{} analyzing {} tracks for acoustic features...",
+                "\u{2022}".green(),
+                missing.len().to_string().cyan()
+            );
+            let analysis_start = std::time::Instant::now();
+            let (ok, err) = koan_core::index::scanner::analyze_missing(&db, None);
+            let analysis_elapsed = analysis_start.elapsed();
+            println!(
+                "{} {} analyzed, {} errors {}",
+                "analysis".green().bold(),
+                ok.to_string().green(),
+                err.to_string().red(),
+                format!("({:.1}s)", analysis_elapsed.as_secs_f64()).dimmed(),
             );
         }
     }

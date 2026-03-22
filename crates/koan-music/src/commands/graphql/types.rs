@@ -484,6 +484,42 @@ pub(super) struct GqlShare {
     pub id: String,
 }
 
+pub(super) struct GqlSimilarTrack {
+    pub row: queries::TrackRow,
+    pub distance: f64,
+}
+
+#[Object]
+impl GqlSimilarTrack {
+    async fn track_id(&self) -> i64 {
+        self.row.id
+    }
+
+    async fn title(&self) -> &str {
+        &self.row.title
+    }
+
+    async fn artist(&self) -> &str {
+        &self.row.artist_name
+    }
+
+    async fn album(&self) -> &str {
+        &self.row.album_title
+    }
+
+    async fn distance(&self) -> f64 {
+        self.distance
+    }
+
+    async fn duration_ms(&self) -> Option<i64> {
+        self.row.duration_ms
+    }
+
+    async fn genre(&self) -> Option<&str> {
+        self.row.genre.as_deref()
+    }
+}
+
 /// Mutation/query result status.
 pub(super) struct GqlStatus {
     pub success: bool,

@@ -26,6 +26,7 @@ pub struct Config {
     pub visualizer: VisualizerConfig,
     pub radio: RadioConfig,
     pub graphql: GraphqlConfig,
+    pub discovery: DiscoveryConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -227,6 +228,25 @@ impl Default for RadioConfig {
             history_window: 200,
             seed_window: 5,
             discovery_weight: 0.3,
+        }
+    }
+}
+
+/// Acoustic analysis / discovery configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DiscoveryConfig {
+    /// Run acoustic analysis automatically after library scan (default: false).
+    pub analysis_on_scan: bool,
+    /// Weight for acoustic similarity signal in radio mode scoring (0.0..1.0).
+    pub acoustic_weight: f64,
+}
+
+impl Default for DiscoveryConfig {
+    fn default() -> Self {
+        Self {
+            analysis_on_scan: false,
+            acoustic_weight: 0.5,
         }
     }
 }
