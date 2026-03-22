@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.0
+
+### Added
+
+- **Acoustic similarity** — `koan analyze` generates 23-dim acoustic fingerprints (tempo, timbre, chroma, spectral features) via bliss-audio. Stored in SQLite, brute-force KNN is sub-millisecond. Radio mode gains `SimilarityAxis::Acoustic` — finds tracks that *sound* similar regardless of metadata. `similarTracks(trackId, limit)` GraphQL query for "more like this"
+- **`[discovery]` config section** — `analysis_on_scan` (run analysis during library scan, default false) and `acoustic_weight` (scoring weight for acoustic signal)
+- **Empty file handling** — scanner skips 0-byte files with a clear error instead of confusing "probe reach EOF" messages
+
 ## 0.13.1
 
 ### Fixed
