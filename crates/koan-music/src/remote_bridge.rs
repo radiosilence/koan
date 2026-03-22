@@ -104,7 +104,10 @@ fn download_and_play(
         return;
     }
 
-    let http = reqwest::blocking::Client::new();
+    let http = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap();
     let resp = match http.get(stream_url).send() {
         Ok(r) => r,
         Err(e) => {
@@ -170,6 +173,23 @@ fn download_and_play(
     }
 
     std::io::Write::flush(&mut file).ok();
+
+    let written = bytes_written.load(Ordering::Acquire);
+    if total > 0 && written < total {
+        log::warn!(
+            "incomplete download for {}: {} of {} bytes",
+            queue_id.0,
+            written,
+            total
+        );
+        std::fs::remove_file(&dest).ok();
+        state.update_load_state(
+            queue_id,
+            LoadState::Failed("incomplete download".to_string()),
+        );
+        return;
+    }
+
     state.update_load_state(queue_id, LoadState::Ready);
     local_tx.send(PlayerCommand::TrackReady(queue_id)).ok();
 }
@@ -370,8 +390,19 @@ fn command_loop(
             PlayerCommand::ClearOutputDevice => {
                 local_tx.send(PlayerCommand::ClearOutputDevice).ok();
             }
-            // Not applicable in remote mode.
-            _ => {}
+            // Not applicable in remote mode — listed explicitly so the compiler
+            // catches new variants.
+            PlayerCommand::TrackReady(_)
+            | PlayerCommand::TrackStreamReady(_)
+            | PlayerCommand::BeginUndoBatch
+            | PlayerCommand::EndUndoBatch
+            | PlayerCommand::UpdatePaths(_)
+            | PlayerCommand::MoveInPlaylist { .. }
+            | PlayerCommand::MoveItemsInPlaylist { .. }
+            | PlayerCommand::InsertInPlaylist { .. }
+            | PlayerCommand::AddToPlaylist(_) => {
+                log::debug!("ignoring {:?} in remote mode", cmd);
+            }
         }
     }
 }
