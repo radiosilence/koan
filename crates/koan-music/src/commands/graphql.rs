@@ -10,8 +10,10 @@ use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::db::queries::playback_state::PersistedQueueItem;
+use koan_core::index::scanner;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, QueueItemId, SharedPlayerState};
+use koan_core::remote::{client::SubsonicClient, sync as remote_sync};
 use uuid::Uuid;
 
 use super::open_db;
@@ -460,6 +462,22 @@ struct GqlSnapshot {
 #[derive(SimpleObject)]
 struct GqlRadioStatus {
     enabled: bool,
+}
+
+#[derive(SimpleObject)]
+struct GqlScanResult {
+    added: i32,
+    updated: i32,
+    removed: i32,
+    skipped: i32,
+    errors: i32,
+}
+
+#[derive(SimpleObject)]
+struct GqlSyncResult {
+    artists_synced: i32,
+    albums_synced: i32,
+    tracks_synced: i32,
 }
 
 /// Mutation/query result status.
@@ -1431,6 +1449,73 @@ impl MutationRoot {
         state.set_radio_mode(false);
         Ok(GqlStatus::success("radio mode disabled"))
     }
+
+    // -- Library scan --
+
+    async fn trigger_scan(
+        &self,
+        ctx: &Context<'_>,
+        folders: Option<Vec<String>>,
+    ) -> async_graphql::Result<GqlScanResult> {
+        let db_handle = ctx.data::<DbHandle>()?.clone();
+        let cfg = Config::load().unwrap_or_default();
+
+        let scan_folders: Vec<PathBuf> = folders
+            .map(|f| f.into_iter().map(PathBuf::from).collect())
+            .unwrap_or_else(|| cfg.library.folders.clone());
+
+        if scan_folders.is_empty() {
+            return Err(async_graphql::Error::new(
+                "no folders to scan — pass folders arg or configure library.folders",
+            ));
+        }
+
+        let result = tokio::task::spawn_blocking(move || {
+            let db = db_handle.open()?;
+            Ok::<_, async_graphql::Error>(scanner::full_scan(&db, &scan_folders, false, None))
+        })
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("scan task failed: {}", e)))??;
+
+        Ok(GqlScanResult {
+            added: result.added as i32,
+            updated: result.updated as i32,
+            removed: result.removed as i32,
+            skipped: result.skipped as i32,
+            errors: result.errors.len() as i32,
+        })
+    }
+
+    // -- Remote sync --
+
+    async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlSyncResult> {
+        let cfg = Config::load().unwrap_or_default();
+
+        if !cfg.remote.enabled {
+            return Err(async_graphql::Error::new(
+                "remote not enabled — configure [remote] in config.toml",
+            ));
+        }
+
+        let db_handle = ctx.data::<DbHandle>()?.clone();
+
+        let result = tokio::task::spawn_blocking(move || {
+            let db = db_handle.open()?;
+            let password = super::get_remote_password(&cfg);
+            let client = SubsonicClient::new(&cfg.remote.url, &cfg.remote.username, &password);
+
+            remote_sync::sync_library(&db, &client, false, &cfg.remote.url, &cfg.remote.username)
+                .map_err(|e| async_graphql::Error::new(format!("sync error: {}", e)))
+        })
+        .await
+        .map_err(|e| async_graphql::Error::new(format!("sync task failed: {}", e)))??;
+
+        Ok(GqlSyncResult {
+            artists_synced: result.artists_synced as i32,
+            albums_synced: result.albums_synced as i32,
+            tracks_synced: result.tracks_synced as i32,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1948,5 +2033,55 @@ mod tests {
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
         let cmd = rx.try_recv().unwrap();
         assert!(matches!(cmd, PlayerCommand::ClearPlaylist));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trigger_scan_empty_folder() {
+        let (schema, _rx, _tmp) = test_schema();
+        let scan_dir = tempfile::tempdir().unwrap();
+        let folder = scan_dir.path().to_string_lossy().to_string();
+
+        let query = format!(
+            r#"mutation {{ triggerScan(folders: ["{}"]) {{ added updated removed skipped errors }} }}"#,
+            folder
+        );
+        let resp = schema.execute(&query).await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["triggerScan"]["added"], 0);
+        assert_eq!(data["triggerScan"]["skipped"], 0);
+        assert_eq!(data["triggerScan"]["errors"], 0);
+    }
+
+    #[tokio::test]
+    async fn trigger_scan_no_folders_errors() {
+        let (schema, _rx, _tmp) = test_schema();
+        let resp = schema
+            .execute(r#"mutation { triggerScan(folders: []) { added } }"#)
+            .await;
+        assert!(!resp.errors.is_empty(), "expected error for empty folders");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn trigger_remote_sync_returns_result_or_error() {
+        // triggerRemoteSync should either error (remote not enabled / connection
+        // failed) or succeed — it must never panic.
+        let (schema, _rx, _tmp) = test_schema();
+        let resp = schema
+            .execute(
+                r#"mutation { triggerRemoteSync { artistsSynced albumsSynced tracksSynced } }"#,
+            )
+            .await;
+        // If remote is disabled in config, we get an error. If enabled but
+        // server is unreachable, we also get an error. Either way, no panic.
+        if !resp.errors.is_empty() {
+            let msg = &resp.errors[0].message;
+            assert!(
+                msg.contains("remote not enabled") || msg.contains("sync error"),
+                "unexpected error: {}",
+                msg
+            );
+        }
+        // If it somehow succeeds (local server running), that's fine too.
     }
 }
