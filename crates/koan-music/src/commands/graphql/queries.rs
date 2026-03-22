@@ -651,6 +651,27 @@ impl QueryRoot {
         }
     }
 
+    async fn similar_tracks(
+        &self,
+        ctx: &Context<'_>,
+        track_id: i64,
+        #[graphql(default = 20)] limit: i32,
+    ) -> async_graphql::Result<Vec<GqlSimilarTrack>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let results = queries::find_similar(&db.conn, track_id, limit as usize)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let mut out = Vec::with_capacity(results.len());
+        for (tid, dist) in results {
+            if let Ok(Some(row)) = queries::get_track_row(&db.conn, tid) {
+                out.push(GqlSimilarTrack {
+                    row,
+                    distance: dist as f64,
+                });
+            }
+        }
+        Ok(out)
+    }
+
     async fn cover_art(
         &self,
         ctx: &Context<'_>,

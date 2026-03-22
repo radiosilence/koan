@@ -144,6 +144,12 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             position_ms INTEGER NOT NULL DEFAULT 0,
             created_at  TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS track_vectors (
+            track_id    INTEGER PRIMARY KEY REFERENCES tracks(id),
+            embedding   BLOB NOT NULL,
+            updated_at  TEXT DEFAULT (datetime('now'))
+        );
         ",
     )?;
     Ok(())

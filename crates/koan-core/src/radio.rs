@@ -30,6 +30,7 @@ pub enum SimilarityAxis {
     GenreEra,
     SameArtist,
     Random,
+    Acoustic,
 }
 
 /// A candidate track with its scoring breakdown.
@@ -226,7 +227,10 @@ pub fn pick_tracks(
     // --- Signal 5: Same-artist tracks ---
     gather_same_artist_candidates(conn, ctx, &mut candidates);
 
-    // --- Signal 6: Random library tracks ---
+    // --- Signal 6: Acoustic similarity (vector KNN) ---
+    gather_acoustic_candidates(conn, ctx, &mut candidates);
+
+    // --- Signal 7: Random library tracks ---
     gather_random_candidates(conn, ctx, &mut candidates);
 
     log::info!("radio: {} raw candidates before scoring", candidates.len());
@@ -730,6 +734,62 @@ fn gather_same_artist_candidates(
         }
         Err(e) => {
             log::debug!("radio: same-artist query failed: {}", e);
+        }
+    }
+}
+
+fn gather_acoustic_candidates(
+    conn: &Connection,
+    _ctx: &RadioContext,
+    candidates: &mut Vec<Candidate>,
+) {
+    // Collect vectors for recent seed tracks (same ones driving seed_artists).
+    let seed_ids = queries::recent_track_ids(conn, 5).unwrap_or_default();
+    let mut seed_embeddings = Vec::new();
+    for tid in &seed_ids {
+        if let Ok(Some(emb)) = queries::get_vector(conn, *tid) {
+            seed_embeddings.push(emb);
+        }
+    }
+
+    if seed_embeddings.is_empty() {
+        return;
+    }
+
+    let centroid = crate::index::features::centroid(&seed_embeddings);
+    let knn_result = queries::find_similar_to_vector(conn, &centroid, 30, None);
+    match knn_result {
+        Ok(ref results) => {
+            let max_dist = results.last().map(|r| r.1).unwrap_or(1.0).max(0.001);
+            let mut added = 0;
+            for &(track_id, dist) in results {
+                // Skip seed tracks themselves.
+                if seed_ids.contains(&track_id) {
+                    continue;
+                }
+                // Score: inverse of normalised distance. Closer = higher score.
+                let score = (1.0 - (dist / max_dist)).max(0.0) as f64 * 0.7;
+                let track = queries::get_track_row(conn, track_id).ok().flatten();
+                candidates.push(Candidate {
+                    track_id,
+                    artist_id: track.as_ref().and_then(|t| t.artist_id),
+                    path: track.as_ref().and_then(|t| t.path.clone()),
+                    genre: track.as_ref().and_then(|t| t.genre.clone()),
+                    year: None,
+                    duration_ms: track.as_ref().and_then(|t| t.duration_ms),
+                    axes: [SimilarityAxis::Acoustic].into_iter().collect(),
+                    base_score: score,
+                });
+                added += 1;
+            }
+            log::info!(
+                "radio: acoustic signal added {} candidates from {} seed vectors",
+                added,
+                seed_embeddings.len()
+            );
+        }
+        Err(e) => {
+            log::debug!("radio: acoustic similarity query failed: {}", e);
         }
     }
 }
