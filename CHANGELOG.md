@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.4
+
+### Fixed
+
+- **Remote tracks silently skipped when queued via GQL/MCP** — `addToQueue` and `replaceQueue` mutations created remote tracks with `LoadState::Pending` but never triggered downloads. The player tried to decode a non-existent file and silently skipped. Now spawns background downloads using the same pipeline as the TUI (progressive download with streaming playback after 256KB buffered)
+
 ## 0.12.3
 
 ### Added
