@@ -94,6 +94,13 @@ enum SortDirection {
     Desc,
 }
 
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+enum FuzzySearchKind {
+    Track,
+    Album,
+    Artist,
+}
+
 // ---------------------------------------------------------------------------
 // GraphQL types
 // ---------------------------------------------------------------------------
@@ -460,6 +467,14 @@ struct GqlSnapshot {
 #[derive(SimpleObject)]
 struct GqlRadioStatus {
     enabled: bool,
+}
+
+#[derive(SimpleObject)]
+struct GqlFuzzyMatch {
+    id: i64,
+    name: String,
+    rank: i32,
+    kind: FuzzySearchKind,
 }
 
 /// Mutation/query result status.
@@ -1053,6 +1068,87 @@ impl QueryRoot {
                 }
             })
             .collect())
+    }
+
+    async fn fuzzy_search(
+        &self,
+        ctx: &Context<'_>,
+        query: String,
+        #[graphql(default_with = "FuzzySearchKind::Track")] kind: FuzzySearchKind,
+        #[graphql(default = 50)] limit: i32,
+    ) -> async_graphql::Result<Vec<GqlFuzzyMatch>> {
+        use nucleo::pattern::{CaseMatching, Normalization};
+        use nucleo::{Config, Nucleo};
+
+        let db = ctx.data::<DbHandle>()?.open()?;
+
+        // Build (id, match_text) pairs based on kind.
+        let items: Vec<(i64, String)> = match kind {
+            FuzzySearchKind::Track => {
+                let tracks = queries::all_tracks(&db.conn)
+                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                tracks
+                    .into_iter()
+                    .map(|t| {
+                        (
+                            t.id,
+                            format!("{} — {} — {}", t.artist_name, t.album_title, t.title),
+                        )
+                    })
+                    .collect()
+            }
+            FuzzySearchKind::Album => {
+                let albums = queries::all_albums(&db.conn)
+                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                albums
+                    .into_iter()
+                    .map(|a| (a.id, format!("{} — {}", a.artist_name, a.title)))
+                    .collect()
+            }
+            FuzzySearchKind::Artist => {
+                let artists = queries::all_artists(&db.conn)
+                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                artists.into_iter().map(|a| (a.id, a.name)).collect()
+            }
+        };
+
+        // Run nucleo fuzzy matching.
+        let mut nucleo: Nucleo<u32> =
+            Nucleo::new(Config::DEFAULT, std::sync::Arc::new(|| {}), None, 1);
+        let injector = nucleo.injector();
+        for (i, (_id, text)) in items.iter().enumerate() {
+            let text = text.clone();
+            injector.push(i as u32, |_val, cols| {
+                cols[0] = text.into();
+            });
+        }
+
+        // Parse pattern and tick until matching settles.
+        nucleo
+            .pattern
+            .reparse(0, &query, CaseMatching::Smart, Normalization::Smart, false);
+        // Tick enough times for matching to complete on the dataset.
+        for _ in 0..20 {
+            nucleo.tick(10);
+        }
+
+        let snap = nucleo.snapshot();
+        let count = (snap.matched_item_count() as usize).min(limit as usize);
+        let mut results = Vec::with_capacity(count);
+        for i in 0..count as u32 {
+            if let Some(item) = snap.get_matched_item(i) {
+                let idx = *item.data as usize;
+                if idx < items.len() {
+                    results.push(GqlFuzzyMatch {
+                        id: items[idx].0,
+                        name: items[idx].1.clone(),
+                        rank: i as i32,
+                        kind,
+                    });
+                }
+            }
+        }
+        Ok(results)
     }
 }
 
