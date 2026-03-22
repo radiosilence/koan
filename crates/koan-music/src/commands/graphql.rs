@@ -462,6 +462,57 @@ struct GqlRadioStatus {
     enabled: bool,
 }
 
+#[derive(SimpleObject)]
+struct GqlLrcLine {
+    time_secs: f64,
+    text: String,
+}
+
+#[derive(SimpleObject)]
+struct GqlLyrics {
+    content: String,
+    synced: bool,
+    source: String,
+    lines: Option<Vec<GqlLrcLine>>,
+}
+
+impl GqlLyrics {
+    fn from_lyrics(lyrics: koan_core::lyrics::Lyrics) -> Self {
+        let lines = parse_lrc_lines(&lyrics.content, lyrics.synced);
+        Self {
+            source: lyrics.source.as_str().to_string(),
+            content: lyrics.content,
+            synced: lyrics.synced,
+            lines,
+        }
+    }
+
+    fn from_cached(content: String, synced: bool) -> Self {
+        let lines = parse_lrc_lines(&content, synced);
+        Self {
+            content,
+            synced,
+            source: "cache".to_string(),
+            lines,
+        }
+    }
+}
+
+fn parse_lrc_lines(content: &str, synced: bool) -> Option<Vec<GqlLrcLine>> {
+    if !synced {
+        return None;
+    }
+    Some(
+        koan_core::lyrics::parse_lrc(content)
+            .into_iter()
+            .map(|l| GqlLrcLine {
+                time_secs: l.time_secs,
+                text: l.text,
+            })
+            .collect(),
+    )
+}
+
 /// Mutation/query result status.
 struct GqlStatus {
     success: bool,
@@ -1054,6 +1105,17 @@ impl QueryRoot {
             })
             .collect())
     }
+
+    async fn lyrics(
+        &self,
+        ctx: &Context<'_>,
+        track_id: i64,
+    ) -> async_graphql::Result<Option<GqlLyrics>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let cached = koan_core::db::queries::lyrics::get_cached_lyrics(&db.conn, track_id)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        Ok(cached.map(|(content, synced)| GqlLyrics::from_cached(content, synced)))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1324,6 +1386,33 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
         sync_favourite_to_remote(&db, path, is_now_fav);
         Ok(GqlTrack { row: track })
+    }
+
+    // -- Lyrics --
+
+    async fn fetch_lyrics(
+        &self,
+        ctx: &Context<'_>,
+        track_id: i64,
+    ) -> async_graphql::Result<GqlLyrics> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let track = queries::get_track_row(&db.conn, track_id)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
+
+        let duration_secs = track.duration_ms.map(|ms| ms as u64 / 1000).unwrap_or(0);
+
+        let lyrics = koan_core::lyrics::fetch_lyrics(
+            &db.conn,
+            track_id,
+            &track.artist_name,
+            &track.title,
+            &track.album_title,
+            duration_secs,
+        )
+        .map_err(|e| async_graphql::Error::new(format!("lyrics error: {}", e)))?;
+
+        Ok(GqlLyrics::from_lyrics(lyrics))
     }
 
     // -- Snapshots --
@@ -1948,5 +2037,87 @@ mod tests {
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
         let cmd = rx.try_recv().unwrap();
         assert!(matches!(cmd, PlayerCommand::ClearPlaylist));
+    }
+
+    #[tokio::test]
+    async fn lyrics_query_returns_none_when_not_cached() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        let track_id = insert_test_track(&db_path, "Windowlicker", "Aphex Twin", "Windowlicker EP");
+
+        let resp = schema
+            .execute(&format!(
+                "{{ lyrics(trackId: {}) {{ content synced source }} }}",
+                track_id
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert!(data["lyrics"].is_null());
+    }
+
+    #[tokio::test]
+    async fn lyrics_query_returns_cached_plain() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        let track_id = insert_test_track(&db_path, "Windowlicker", "Aphex Twin", "Windowlicker EP");
+
+        // Cache some plain lyrics
+        let db = Database::open(&db_path).unwrap();
+        koan_core::db::queries::lyrics::cache_lyrics(
+            &db.conn,
+            track_id,
+            "lrclib",
+            false,
+            "Hello world\nSecond line",
+        )
+        .unwrap();
+        drop(db);
+
+        let resp = schema
+            .execute(&format!(
+                "{{ lyrics(trackId: {}) {{ content synced source lines {{ timeSecs text }} }} }}",
+                track_id
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["lyrics"]["content"], "Hello world\nSecond line");
+        assert_eq!(data["lyrics"]["synced"], false);
+        assert_eq!(data["lyrics"]["source"], "cache");
+        assert!(data["lyrics"]["lines"].is_null());
+    }
+
+    #[tokio::test]
+    async fn lyrics_query_returns_cached_synced_with_lines() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        let track_id = insert_test_track(&db_path, "Windowlicker", "Aphex Twin", "Windowlicker EP");
+
+        let db = Database::open(&db_path).unwrap();
+        koan_core::db::queries::lyrics::cache_lyrics(
+            &db.conn,
+            track_id,
+            "lrclib",
+            true,
+            "[00:12.00]Hello world\n[00:17.20]Second line",
+        )
+        .unwrap();
+        drop(db);
+
+        let resp = schema
+            .execute(&format!(
+                "{{ lyrics(trackId: {}) {{ content synced source lines {{ timeSecs text }} }} }}",
+                track_id
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["lyrics"]["synced"], true);
+        let lines = data["lyrics"]["lines"].as_array().unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0]["text"], "Hello world");
+        assert!((lines[0]["timeSecs"].as_f64().unwrap() - 12.0).abs() < 0.01);
+        assert_eq!(lines[1]["text"], "Second line");
     }
 }

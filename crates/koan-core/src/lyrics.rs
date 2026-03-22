@@ -37,7 +37,7 @@ pub enum LyricsSource {
 }
 
 impl LyricsSource {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             LyricsSource::Embedded => "embedded",
             LyricsSource::Sidecar => "sidecar",
