@@ -190,6 +190,18 @@ enum Commands {
     },
     /// Run as a headless MCP server on stdio (for Claude Desktop / MCP clients)
     Mcp,
+    /// Start a Subsonic-compatible REST API server
+    Serve {
+        /// Port to listen on (default: 4040)
+        #[arg(long)]
+        port: Option<u16>,
+        /// Username for Subsonic auth
+        #[arg(long, default_value = "koan")]
+        username: String,
+        /// Password for Subsonic auth (prompted if omitted)
+        #[arg(long)]
+        password: Option<String>,
+    },
     /// Start a GraphQL API server (headless player + HTTP)
     Graphql {
         /// Port to listen on (default: from config or 4000)
@@ -297,6 +309,16 @@ fn main() {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }
         Some(Commands::Mcp) => commands::cmd_mcp(),
+        Some(Commands::Serve {
+            port,
+            username,
+            password,
+        }) => {
+            let password = password.unwrap_or_else(|| {
+                rpassword::prompt_password("Subsonic password: ").expect("failed to read password")
+            });
+            commands::cmd_serve(port, &username, &password);
+        }
         Some(Commands::Graphql {
             port,
             playground,

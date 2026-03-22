@@ -13,10 +13,12 @@ mod probe;
 mod remote;
 mod scan;
 mod search;
+pub mod serve;
 
 pub use cache::{cmd_cache_clear, cmd_cache_status};
 pub use graphql::{cmd_graphql, cmd_graphql_daemon};
 pub use mcp::cmd_mcp;
+pub use serve::cmd_serve;
 
 pub use config::{cmd_config, cmd_init};
 pub use enqueue::enqueue_playlist;
