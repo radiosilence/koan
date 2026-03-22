@@ -1953,22 +1953,15 @@ pub fn track_to_playlist_item(
     track: &queries::TrackRow,
     db: &Database,
 ) -> koan_core::player::state::PlaylistItem {
-    use koan_core::player::state::{LoadState, PlaylistItem};
+    use koan_core::player::state::PlaylistItem;
 
     let album_date = track
         .album_id
         .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten());
 
-    let (path, load_state) = if let Some(ref p) = track.path {
-        (std::path::PathBuf::from(p), LoadState::Ready)
-    } else if let Some(ref cp) = track.cached_path {
-        (std::path::PathBuf::from(cp), LoadState::Ready)
-    } else {
-        (
-            std::path::PathBuf::from(format!("/tmp/koan-pending-{}", track.id)),
-            LoadState::Pending,
-        )
-    };
+    let cfg = Config::load().unwrap_or_default();
+    let (path, load_state) =
+        super::enqueue::resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
 
     let year = album_date.as_deref().and_then(|d| {
         if d.len() >= 4 {

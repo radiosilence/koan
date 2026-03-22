@@ -5,7 +5,21 @@
 ### Added
 
 - **`koan serve`** — unified server command. Runs GraphQL API (always on) + optional Subsonic REST compatibility layer (`--subsonic <port>`). Replaces `koan graphql` (which remains as a hidden alias). One process, one player, two interfaces
-- **Subsonic REST API** (`--subsonic 4040`) — full compatibility layer for third-party clients (play:Sub, Amperfy, etc.). 16 endpoints: `ping`, `getLicense`, `getArtists`, `getArtist`, `getAlbum`, `getAlbumList2`, `getSong`, `search3`, `stream` (with HTTP Range for seeking), `getCoverArt`, `star`/`unstar`, `getStarred2`, `scrobble`, `getRandomSongs`, `getSimilarSongs2`. XML + JSON dual format, MD5+salt + legacy plaintext auth
+- **Subsonic REST API** (`--subsonic 4040`) — full compatibility layer for third-party clients (play:Sub, Amperfy, etc.). 22 endpoints including playlists (mapped to snapshots), genres, getMusicFolders. XML + JSON dual format, MD5+salt + legacy plaintext auth
+
+## 0.12.5
+
+### Fixed
+
+- **Remote tracks now play when queued via GQL/MCP** — two-part fix:
+  1. GQL mutations now trigger background downloads for remote tracks (0.12.4)
+  2. Remote tracks now get the correct cache path via `resolve_item_path()` — same code path as the TUI
+
+## 0.12.4
+
+### Fixed
+
+- **Remote track download pipeline wired to GQL mutations** — `addToQueue` and `replaceQueue` now spawn background downloads for remote tracks using the same pipeline as the TUI
 
 ## 0.12.3
 

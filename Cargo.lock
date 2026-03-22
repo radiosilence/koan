@@ -1805,7 +1805,7 @@ dependencies = [
 
 [[package]]
 name = "koan-core"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "core-foundation 0.9.4",
  "coreaudio-sys",
@@ -1835,7 +1835,7 @@ dependencies = [
 
 [[package]]
 name = "koan-music"
-version = "0.12.3"
+version = "0.12.4"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",

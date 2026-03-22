@@ -155,7 +155,7 @@ pub fn enqueue_playlist(
 
 /// Resolve a track to its path + load state (without downloading).
 /// Returns (path, LoadState::Ready) for local/cached, (cache_path, LoadState::Pending) for remote.
-fn resolve_item_path(
+pub(crate) fn resolve_item_path(
     db: &Database,
     cfg: &config::Config,
     id: i64,
