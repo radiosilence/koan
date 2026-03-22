@@ -1397,6 +1397,249 @@ async fn get_similar_songs2(
     SubsonicResponse::ok(json).child(node).build()
 }
 
+// ---------------------------------------------------------------------------
+// Endpoint: getMusicFolders (stub — clients call this on first connect)
+// ---------------------------------------------------------------------------
+
+async fn get_music_folders(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    if let Err(e) = validate_auth(&params, &state) {
+        return SubsonicResponse::error(params.wants_json(), &e);
+    }
+    let json = params.wants_json();
+
+    SubsonicResponse::ok(json)
+        .child(
+            XmlNode::new("musicFolders").child(
+                XmlNode::new("musicFolder")
+                    .attr("id", "1")
+                    .attr("name", "Music"),
+            ),
+        )
+        .build()
+}
+
+// ---------------------------------------------------------------------------
+// Endpoint: getGenres
+// ---------------------------------------------------------------------------
+
+async fn get_genres(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    if let Err(e) = validate_auth(&params, &state) {
+        return SubsonicResponse::error(params.wants_json(), &e);
+    }
+    let json = params.wants_json();
+
+    let db = match state.open_db() {
+        Ok(db) => db,
+        Err(e) => return SubsonicResponse::error(json, &e),
+    };
+
+    let tracks = queries::all_tracks(&db.conn).unwrap_or_default();
+    let mut genre_counts: std::collections::BTreeMap<String, usize> =
+        std::collections::BTreeMap::new();
+    for t in &tracks {
+        if let Some(ref g) = t.genre {
+            *genre_counts.entry(g.clone()).or_default() += 1;
+        }
+    }
+
+    let mut genres_node = XmlNode::new("genres").array_of("genre");
+    for (name, count) in &genre_counts {
+        genres_node = genres_node.child(
+            XmlNode::new("genre")
+                .attr("songCount", &count.to_string())
+                .attr("albumCount", "0")
+                .attr("value", name),
+        );
+    }
+
+    SubsonicResponse::ok(json).child(genres_node).build()
+}
+
+// ---------------------------------------------------------------------------
+// Playlist endpoints (mapped to koan snapshots)
+// ---------------------------------------------------------------------------
+
+async fn get_playlists(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    if let Err(e) = validate_auth(&params, &state) {
+        return SubsonicResponse::error(params.wants_json(), &e);
+    }
+    let json = params.wants_json();
+
+    let db = match state.open_db() {
+        Ok(db) => db,
+        Err(e) => return SubsonicResponse::error(json, &e),
+    };
+
+    let snaps = queries::list_snapshots(&db.conn).unwrap_or_default();
+
+    let mut playlists_node = XmlNode::new("playlists").array_of("playlist");
+    for snap in &snaps {
+        playlists_node = playlists_node.child(
+            XmlNode::new("playlist")
+                .attr("id", &snap.name)
+                .attr("name", &snap.name)
+                .attr("songCount", &snap.track_count.to_string())
+                .attr("owner", &state.username)
+                .attr("public", "false")
+                .attr("created", &snap.created_at),
+        );
+    }
+
+    SubsonicResponse::ok(json).child(playlists_node).build()
+}
+
+#[derive(Debug, Deserialize)]
+struct PlaylistIdParam {
+    id: Option<String>,
+    #[serde(flatten)]
+    auth: SubsonicParams,
+}
+
+async fn get_playlist(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PlaylistIdParam>,
+) -> Response {
+    if let Err(e) = validate_auth(&params.auth, &state) {
+        return SubsonicResponse::error(params.auth.wants_json(), &e);
+    }
+    let json = params.auth.wants_json();
+
+    let name = match params.id.as_deref() {
+        Some(n) => n,
+        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
+    };
+
+    let db = match state.open_db() {
+        Ok(db) => db,
+        Err(e) => return SubsonicResponse::error(json, &e),
+    };
+
+    let snap = match queries::load_snapshot(&db.conn, name) {
+        Ok(Some(s)) => s,
+        _ => return SubsonicResponse::error(json, &SubsonicError::not_found("Playlist")),
+    };
+
+    let mut playlist_node = XmlNode::new("playlist")
+        .attr("id", &snap.name)
+        .attr("name", &snap.name)
+        .attr("songCount", &snap.items.len().to_string())
+        .attr("owner", &state.username)
+        .attr("public", "false")
+        .attr("created", &snap.created_at)
+        .array_of("entry");
+
+    // Resolve snapshot items to track entries.
+    for item in &snap.items {
+        if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &item.path)
+            && let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
+        {
+            playlist_node = playlist_node.child(track_to_xml_node(&track));
+        }
+    }
+
+    SubsonicResponse::ok(json).child(playlist_node).build()
+}
+
+#[derive(Debug, Deserialize)]
+struct CreatePlaylistParams {
+    name: Option<String>,
+    #[serde(rename = "playlistId")]
+    playlist_id: Option<String>,
+    #[serde(rename = "songId")]
+    song_id: Option<Vec<String>>,
+    #[serde(flatten)]
+    auth: SubsonicParams,
+}
+
+async fn create_playlist(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<CreatePlaylistParams>,
+) -> Response {
+    if let Err(e) = validate_auth(&params.auth, &state) {
+        return SubsonicResponse::error(params.auth.wants_json(), &e);
+    }
+    let json = params.auth.wants_json();
+
+    let name = match params.name.as_deref().or(params.playlist_id.as_deref()) {
+        Some(n) => n,
+        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("name")),
+    };
+
+    let db = match state.open_db() {
+        Ok(db) => db,
+        Err(e) => return SubsonicResponse::error(json, &e),
+    };
+
+    // Build persisted items from song IDs.
+    let mut items = Vec::new();
+    if let Some(ref ids) = params.song_id {
+        for id_str in ids {
+            if let Ok(tid) = id_str.parse::<i64>()
+                && let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
+            {
+                let path = track
+                    .path
+                    .as_deref()
+                    .or(track.cached_path.as_deref())
+                    .unwrap_or("");
+                items.push(koan_core::db::queries::playback_state::PersistedQueueItem {
+                    path: path.to_string(),
+                    title: track.title,
+                    artist: track.artist_name,
+                    album_artist: track.album_artist_name,
+                    album: track.album_title,
+                    year: None,
+                    codec: track.codec,
+                    track_number: track.track_number.map(|n| n as i64),
+                    disc: track.disc.map(|n| n as i64),
+                    duration_ms: track.duration_ms.map(|d| d as u64),
+                });
+            }
+        }
+    }
+
+    if let Err(e) = queries::save_snapshot(&db.conn, name, &items, None, 0) {
+        return SubsonicResponse::error(json, &SubsonicError::from(e.to_string()));
+    }
+
+    SubsonicResponse::ok(json).build()
+}
+
+async fn delete_playlist(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<PlaylistIdParam>,
+) -> Response {
+    if let Err(e) = validate_auth(&params.auth, &state) {
+        return SubsonicResponse::error(params.auth.wants_json(), &e);
+    }
+    let json = params.auth.wants_json();
+
+    let name = match params.id.as_deref() {
+        Some(n) => n,
+        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
+    };
+
+    let db = match state.open_db() {
+        Ok(db) => db,
+        Err(e) => return SubsonicResponse::error(json, &e),
+    };
+
+    match queries::delete_snapshot(&db.conn, name) {
+        Ok(true) => SubsonicResponse::ok(json).build(),
+        Ok(false) => SubsonicResponse::error(json, &SubsonicError::not_found("Playlist")),
+        Err(e) => SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
+    }
+}
+
 // ===========================================================================
 // Public router
 // ===========================================================================
@@ -1458,6 +1701,20 @@ pub fn subsonic_router(db_path: PathBuf) -> axum::Router {
         .route("/rest/getRandomSongs.view", get(get_random_songs))
         .route("/rest/getSimilarSongs2", get(get_similar_songs2))
         .route("/rest/getSimilarSongs2.view", get(get_similar_songs2))
+        // Stubs + extras
+        .route("/rest/getMusicFolders", get(get_music_folders))
+        .route("/rest/getMusicFolders.view", get(get_music_folders))
+        .route("/rest/getGenres", get(get_genres))
+        .route("/rest/getGenres.view", get(get_genres))
+        // Playlists (mapped to koan snapshots)
+        .route("/rest/getPlaylists", get(get_playlists))
+        .route("/rest/getPlaylists.view", get(get_playlists))
+        .route("/rest/getPlaylist", get(get_playlist))
+        .route("/rest/getPlaylist.view", get(get_playlist))
+        .route("/rest/createPlaylist", get(create_playlist))
+        .route("/rest/createPlaylist.view", get(create_playlist))
+        .route("/rest/deletePlaylist", get(delete_playlist))
+        .route("/rest/deletePlaylist.view", get(delete_playlist))
         .with_state(state)
 }
 
@@ -1518,6 +1775,18 @@ mod tests {
             .route("/rest/getRandomSongs.view", get(get_random_songs))
             .route("/rest/getSimilarSongs2", get(get_similar_songs2))
             .route("/rest/getSimilarSongs2.view", get(get_similar_songs2))
+            .route("/rest/getMusicFolders", get(get_music_folders))
+            .route("/rest/getMusicFolders.view", get(get_music_folders))
+            .route("/rest/getGenres", get(get_genres))
+            .route("/rest/getGenres.view", get(get_genres))
+            .route("/rest/getPlaylists", get(get_playlists))
+            .route("/rest/getPlaylists.view", get(get_playlists))
+            .route("/rest/getPlaylist", get(get_playlist))
+            .route("/rest/getPlaylist.view", get(get_playlist))
+            .route("/rest/createPlaylist", get(create_playlist))
+            .route("/rest/createPlaylist.view", get(create_playlist))
+            .route("/rest/deletePlaylist", get(delete_playlist))
+            .route("/rest/deletePlaylist.view", get(delete_playlist))
             .with_state(state)
     }
 
@@ -1834,5 +2103,144 @@ mod tests {
             get_response(app, &format!("/rest/ping.view?{}", auth_query(""))).await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("status=\"ok\""));
+    }
+
+    // --- New endpoint tests ---
+
+    #[tokio::test]
+    async fn test_get_music_folders() {
+        let (state, _dir) = test_state();
+        let app = build_test_router(state);
+        let (_, body) =
+            get_response(app, &format!("/rest/getMusicFolders?{}", auth_query(""))).await;
+        assert!(body.contains("musicFolder"));
+        assert!(body.contains("Music"));
+    }
+
+    #[tokio::test]
+    async fn test_get_genres() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let app = build_test_router(state);
+        let (_, body) = get_response(app, &format!("/rest/getGenres?{}", auth_query(""))).await;
+        assert!(body.contains("Rock"));
+    }
+
+    #[tokio::test]
+    async fn test_search3() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let app = build_test_router(state);
+        let (_, body) =
+            get_response(app, &format!("/rest/search3?{}&query=Test", auth_query(""))).await;
+        assert!(body.contains("Test Song"));
+        assert!(body.contains("Test Artist"));
+    }
+
+    #[tokio::test]
+    async fn test_star_and_get_starred() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let tracks = queries::all_tracks(&db.conn).unwrap();
+        let track_id = tracks[0].id;
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/star?{}&id={}", auth_query(""), track_id),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""));
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(app, &format!("/rest/getStarred2?{}", auth_query(""))).await;
+        assert!(body.contains("Test Song"));
+    }
+
+    #[tokio::test]
+    async fn test_playlists_crud() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let tracks = queries::all_tracks(&db.conn).unwrap();
+        let tid = tracks[0].id;
+
+        // Create (empty playlist first — songId[] parsing needs special handling)
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/createPlaylist?{}&name=testmix", auth_query("")),
+        )
+        .await;
+        assert!(
+            body.contains("status=\"ok\""),
+            "createPlaylist failed: {}",
+            body
+        );
+
+        // List
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/getPlaylists?{}", auth_query(""))).await;
+        assert!(body.contains("testmix"));
+
+        // Get
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getPlaylist?{}&id=testmix", auth_query("")),
+        )
+        .await;
+        assert!(body.contains("testmix"));
+
+        // Delete
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/deletePlaylist?{}&id=testmix", auth_query("")),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""));
+
+        // Verify deleted
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getPlaylist?{}&id=testmix", auth_query("")),
+        )
+        .await;
+        assert!(body.contains("status=\"failed\""));
+    }
+
+    #[tokio::test]
+    async fn test_scrobble() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let tracks = queries::all_tracks(&db.conn).unwrap();
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/scrobble?{}&id={}", auth_query(""), tracks[0].id),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""));
+    }
+
+    #[tokio::test]
+    async fn test_get_random_songs() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getRandomSongs?{}&size=5", auth_query("")),
+        )
+        .await;
+        assert!(body.contains("randomSongs"));
     }
 }
