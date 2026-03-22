@@ -1776,15 +1776,8 @@ impl MutationRoot {
     async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let cfg = Config::load().unwrap_or_default();
-        if !cfg.remote.enabled {
-            return Err(async_graphql::Error::new("remote not configured"));
-        }
-        let password = super::get_remote_password(&cfg);
-        let client = koan_core::remote::client::SubsonicClient::new(
-            &cfg.remote.url,
-            &cfg.remote.username,
-            &password,
-        );
+        let client = super::subsonic_client(&cfg)
+            .ok_or_else(|| async_graphql::Error::new("remote not configured"))?;
         koan_core::remote::sync::sync_library(
             &db,
             &client,
@@ -1806,15 +1799,8 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlShare> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let cfg = Config::load().unwrap_or_default();
-        if !cfg.remote.enabled {
-            return Err(async_graphql::Error::new("remote not configured"));
-        }
-        let password = super::get_remote_password(&cfg);
-        let client = koan_core::remote::client::SubsonicClient::new(
-            &cfg.remote.url,
-            &cfg.remote.username,
-            &password,
-        );
+        let client = super::subsonic_client(&cfg)
+            .ok_or_else(|| async_graphql::Error::new("remote not configured"))?;
 
         // Resolve track IDs to remote IDs.
         let mut remote_ids = Vec::new();
@@ -1875,12 +1861,9 @@ fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
         .ok()
         .flatten();
     if let Some(rid) = remote_id {
-        let password = super::get_remote_password(&cfg);
-        let client = koan_core::remote::client::SubsonicClient::new(
-            &cfg.remote.url,
-            &cfg.remote.username,
-            &password,
-        );
+        let Some(client) = super::subsonic_client(&cfg) else {
+            return;
+        };
         std::thread::Builder::new()
             .name("koan-fav-sync".into())
             .spawn(move || {

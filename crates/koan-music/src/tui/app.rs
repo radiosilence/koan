@@ -401,12 +401,7 @@ impl App {
             if let Ok(Some(remote_id)) = koan_core::db::queries::remote_id_for_path(&db.conn, path)
             {
                 let cfg = koan_core::config::Config::load().unwrap_or_default();
-                if cfg.remote.enabled && !cfg.remote.password.is_empty() {
-                    let client = koan_core::remote::client::SubsonicClient::new(
-                        &cfg.remote.url,
-                        &cfg.remote.username,
-                        &cfg.remote.password,
-                    );
+                if let Some(client) = crate::commands::subsonic_client(&cfg) {
                     let rid = remote_id.clone();
                     let star = is_fav;
                     std::thread::spawn(move || {
@@ -832,14 +827,7 @@ impl App {
                 let client = if radio_config.use_subsonic {
                     koan_core::config::Config::load()
                         .ok()
-                        .filter(|cfg| cfg.remote.enabled)
-                        .map(|cfg| {
-                            koan_core::remote::client::SubsonicClient::new(
-                                &cfg.remote.url,
-                                &cfg.remote.username,
-                                &cfg.remote.password,
-                            )
-                        })
+                        .and_then(|cfg| crate::commands::subsonic_client(&cfg))
                 } else {
                     None
                 };
@@ -1491,9 +1479,10 @@ impl App {
             return;
         }
 
-        let url = cfg.remote.url.clone();
-        let username = cfg.remote.username.clone();
-        let password = cfg.remote.password.clone();
+        let Some(client) = crate::commands::subsonic_client(&cfg) else {
+            self.status_message = Some(("Remote not configured".into(), std::time::Instant::now()));
+            return;
+        };
         let log_buffer = Arc::clone(&self.log_buffer);
 
         // Fire off share creation in a background thread to avoid blocking the UI.
@@ -1501,7 +1490,6 @@ impl App {
         let status_clone = Arc::clone(&status_msg);
 
         std::thread::spawn(move || {
-            let client = koan_core::remote::client::SubsonicClient::new(&url, &username, &password);
             let id_refs: Vec<&str> = share_ids.iter().map(|s| s.as_str()).collect();
             match client.create_share(&id_refs, None) {
                 Ok(share) => {

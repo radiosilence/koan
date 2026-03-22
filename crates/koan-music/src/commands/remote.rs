@@ -1,7 +1,7 @@
 use koan_core::config;
 use owo_colors::OwoColorize;
 
-use super::{get_remote_password, open_db};
+use super::open_db;
 
 pub fn cmd_remote_login(url: &str, username: &str) {
     if !url.starts_with("https://") && !url.contains("localhost") && !url.contains("127.0.0.1") {
@@ -42,22 +42,17 @@ pub fn cmd_remote_login(url: &str, username: &str) {
 
 pub fn cmd_remote_sync(full: bool) {
     let cfg = config::Config::load().unwrap_or_default();
-    if !cfg.remote.enabled || cfg.remote.url.is_empty() {
-        eprintln!(
-            "{} no remote server configured — run {} first",
-            "error:".red().bold(),
-            "koan remote login".bold()
-        );
-        std::process::exit(1);
-    }
-
-    let password = get_remote_password(&cfg);
-
-    let client = koan_core::remote::client::SubsonicClient::new(
-        &cfg.remote.url,
-        &cfg.remote.username,
-        &password,
-    );
+    let client = match super::subsonic_client(&cfg) {
+        Some(c) => c,
+        None => {
+            eprintln!(
+                "{} no remote server configured — run {} first",
+                "error:".red().bold(),
+                "koan remote login".bold()
+            );
+            std::process::exit(1);
+        }
+    };
 
     let db = open_db();
     let start = std::time::Instant::now();
@@ -148,12 +143,7 @@ pub fn cmd_remote_status() {
         }
     );
 
-    if has_password {
-        let client = koan_core::remote::client::SubsonicClient::new(
-            &cfg.remote.url,
-            &cfg.remote.username,
-            &cfg.remote.password,
-        );
+    if has_password && let Some(client) = super::subsonic_client(&cfg) {
         match client.ping() {
             Ok(()) => println!("{} {}", "status:".cyan(), "connected".green()),
             Err(e) => println!(

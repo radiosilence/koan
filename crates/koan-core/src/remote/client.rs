@@ -34,7 +34,10 @@ impl SubsonicClient {
             base_url,
             username: username.to_string(),
             password: password.to_string(),
-            http: reqwest::blocking::Client::new(),
+            http: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("failed to build HTTP client"),
         }
     }
 
