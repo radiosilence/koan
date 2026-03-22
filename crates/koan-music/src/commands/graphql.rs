@@ -65,6 +65,13 @@ enum TrackSource {
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
+enum GqlFuzzySearchKind {
+    Artist,
+    Album,
+    Track,
+}
+
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
 enum ArtistSortField {
     Name,
     TrackCount,
@@ -460,6 +467,33 @@ struct GqlSnapshot {
 #[derive(SimpleObject)]
 struct GqlRadioStatus {
     enabled: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Fuzzy search types
+// ---------------------------------------------------------------------------
+
+#[derive(async_graphql::Union)]
+enum GqlFuzzyItem {
+    Artist(GqlArtist),
+    Album(GqlAlbum),
+    Track(GqlTrack),
+}
+
+struct GqlFuzzyResult {
+    score: u32,
+    item: GqlFuzzyItem,
+}
+
+#[Object]
+impl GqlFuzzyResult {
+    async fn score(&self) -> i32 {
+        self.score as i32
+    }
+
+    async fn item(&self) -> &GqlFuzzyItem {
+        &self.item
+    }
 }
 
 /// Mutation/query result status.
@@ -1054,6 +1088,53 @@ impl QueryRoot {
             })
             .collect())
     }
+
+    async fn fuzzy_search(
+        &self,
+        ctx: &Context<'_>,
+        query: String,
+        kind: GqlFuzzySearchKind,
+        #[graphql(default = 50)] limit: i32,
+    ) -> async_graphql::Result<Vec<GqlFuzzyResult>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let limit = (limit as usize).min(500);
+
+        match kind {
+            GqlFuzzySearchKind::Artist => {
+                let artists = queries::all_artists(&db.conn)
+                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                Ok(fuzzy_match_items(
+                    &query,
+                    &artists,
+                    |a| &a.name,
+                    |a| GqlFuzzyItem::Artist(GqlArtist { row: a }),
+                    limit,
+                ))
+            }
+            GqlFuzzySearchKind::Album => {
+                let albums = queries::all_albums(&db.conn)
+                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                Ok(fuzzy_match_items(
+                    &query,
+                    &albums,
+                    |a| &a.title,
+                    |a| GqlFuzzyItem::Album(GqlAlbum { row: a }),
+                    limit,
+                ))
+            }
+            GqlFuzzySearchKind::Track => {
+                let tracks = queries::all_tracks(&db.conn)
+                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                Ok(fuzzy_match_items(
+                    &query,
+                    &tracks,
+                    |t| &t.title,
+                    |t| GqlFuzzyItem::Track(GqlTrack { row: t }),
+                    limit,
+                ))
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1431,6 +1512,45 @@ impl MutationRoot {
         state.set_radio_mode(false);
         Ok(GqlStatus::success("radio mode disabled"))
     }
+}
+
+// ---------------------------------------------------------------------------
+// Helper: fuzzy matching via nucleo
+// ---------------------------------------------------------------------------
+
+fn fuzzy_match_items<T: Clone>(
+    query: &str,
+    items: &[T],
+    display_fn: impl Fn(&T) -> &str,
+    into_item: impl Fn(T) -> GqlFuzzyItem,
+    limit: usize,
+) -> Vec<GqlFuzzyResult> {
+    use nucleo::pattern::{CaseMatching, Normalization, Pattern};
+    use nucleo::{Matcher, Utf32String};
+
+    let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+    let mut matcher = Matcher::default();
+
+    let mut scored: Vec<(usize, u32)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, item)| {
+            let haystack = Utf32String::from(display_fn(item));
+            let score = pattern.score(haystack.slice(..), &mut matcher)?;
+            Some((idx, score))
+        })
+        .collect();
+
+    scored.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    scored.truncate(limit);
+
+    scored
+        .into_iter()
+        .map(|(idx, score)| GqlFuzzyResult {
+            score,
+            item: into_item(items[idx].clone()),
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -1937,6 +2057,111 @@ mod tests {
         // Only 1 artist ("Artist"), so hasNextPage should be false
         // since all 5 tracks are by the same artist.
         assert_eq!(data["artists"]["edges"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn fuzzy_search_artists() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        insert_test_track(&db_path, "T1", "Aphex Twin", "Drukqs");
+        insert_test_track(&db_path, "T2", "Boards of Canada", "MHTRTC");
+        insert_test_track(&db_path, "T3", "Autechre", "Tri Repetae");
+
+        let resp = schema
+            .execute(r#"{ fuzzySearch(query: "aphx", kind: ARTIST) { score item { ... on GqlArtist { name } } } }"#)
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let results = data["fuzzySearch"].as_array().unwrap();
+        assert!(!results.is_empty(), "should have fuzzy matches");
+        assert_eq!(results[0]["item"]["name"], "Aphex Twin");
+    }
+
+    #[tokio::test]
+    async fn fuzzy_search_tracks() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        insert_test_track(&db_path, "Windowlicker", "Aphex Twin", "Windowlicker EP");
+        insert_test_track(&db_path, "Roygbiv", "Boards of Canada", "MHTRTC");
+
+        let resp = schema
+            .execute(r#"{ fuzzySearch(query: "wndwlckr", kind: TRACK) { score item { ... on GqlTrack { title } } } }"#)
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let results = data["fuzzySearch"].as_array().unwrap();
+        assert!(!results.is_empty(), "should have fuzzy matches");
+        assert_eq!(results[0]["item"]["title"], "Windowlicker");
+    }
+
+    #[tokio::test]
+    async fn fuzzy_search_albums() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        insert_test_track(&db_path, "T1", "Aphex Twin", "Drukqs");
+        insert_test_track(&db_path, "T2", "Boards of Canada", "MHTRTC");
+
+        let resp = schema
+            .execute(r#"{ fuzzySearch(query: "drukq", kind: ALBUM) { score item { ... on GqlAlbum { title } } } }"#)
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let results = data["fuzzySearch"].as_array().unwrap();
+        assert!(!results.is_empty(), "should have fuzzy matches");
+        assert_eq!(results[0]["item"]["title"], "Drukqs");
+    }
+
+    #[tokio::test]
+    async fn fuzzy_search_empty_query() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        insert_test_track(&db_path, "T1", "Artist1", "Album1");
+
+        let resp = schema
+            .execute(r#"{ fuzzySearch(query: "", kind: ARTIST) { score item { ... on GqlArtist { name } } } }"#)
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let results = data["fuzzySearch"].as_array().unwrap();
+        // Empty query returns all items with score 0
+        assert_eq!(results.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn fuzzy_search_no_match() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        insert_test_track(&db_path, "T1", "Aphex Twin", "Drukqs");
+
+        let resp = schema
+            .execute(r#"{ fuzzySearch(query: "zzzzzzzzz", kind: ARTIST) { score item { ... on GqlArtist { name } } } }"#)
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let results = data["fuzzySearch"].as_array().unwrap();
+        assert!(results.is_empty(), "should have no matches for gibberish");
+    }
+
+    #[tokio::test]
+    async fn fuzzy_search_respects_limit() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        for i in 0..10 {
+            insert_test_track(
+                &db_path,
+                &format!("Track{}", i),
+                &format!("Artist{}", i),
+                &format!("Album{}", i),
+            );
+        }
+
+        let resp = schema
+            .execute(r#"{ fuzzySearch(query: "art", kind: ARTIST, limit: 3) { score item { ... on GqlArtist { name } } } }"#)
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let results = data["fuzzySearch"].as_array().unwrap();
+        assert!(results.len() <= 3, "should respect limit");
     }
 
     #[tokio::test]
