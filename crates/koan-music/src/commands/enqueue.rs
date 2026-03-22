@@ -127,7 +127,7 @@ pub fn enqueue_playlist(
                 for (db_id, queue_id) in priority_items {
                     log::info!("priority: spawning immediate download for {:?}", queue_id);
                     s.spawn(move || {
-                        download_single_track(db_id, queue_id, tx_ref, log_ref, state_ref, cfg_ref);
+                        download_track(db_id, queue_id, tx_ref, log_ref, state_ref, cfg_ref);
                     });
                 }
             }
@@ -146,7 +146,7 @@ pub fn enqueue_playlist(
                     let Some((db_id, queue_id)) = item else {
                         break;
                     };
-                    download_single_track(db_id, queue_id, tx_ref, log_ref, state_ref, cfg_ref);
+                    download_track(db_id, queue_id, tx_ref, log_ref, state_ref, cfg_ref);
                 }
             });
         }
@@ -182,7 +182,7 @@ fn resolve_item_path(
 }
 
 /// Download a single track and update playlist state.
-fn download_single_track(
+pub(crate) fn download_track(
     db_id: i64,
     queue_id: QueueItemId,
     tx: &crossbeam_channel::Sender<PlayerCommand>,

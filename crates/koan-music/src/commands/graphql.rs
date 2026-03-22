@@ -1337,10 +1337,17 @@ impl MutationRoot {
 
         let mut items = Vec::new();
         let mut queue_item_ids = Vec::new();
+        let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
         for &tid in &track_ids {
             if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid) {
                 let item = track_to_playlist_item(&track, &db);
                 queue_item_ids.push(item.id.0.to_string());
+                if matches!(
+                    item.load_state,
+                    koan_core::player::state::LoadState::Pending
+                ) {
+                    pending_downloads.push((tid, item.id));
+                }
                 items.push(item);
             }
         }
@@ -1356,6 +1363,11 @@ impl MutationRoot {
                 && let Ok(id) = Uuid::parse_str(first_id).map(QueueItemId)
             {
                 let _ = tx.send(PlayerCommand::Play(id));
+            }
+
+            // Kick off downloads for remote tracks.
+            if !pending_downloads.is_empty() {
+                spawn_downloads(pending_downloads, tx.clone(), state.clone());
             }
         }
 
@@ -1378,12 +1390,20 @@ impl MutationRoot {
         tx.send(PlayerCommand::ClearPlaylist)
             .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
 
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let mut items = Vec::new();
         let mut queue_item_ids = Vec::new();
+        let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
         for &tid in &track_ids {
             if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid) {
                 let item = track_to_playlist_item(&track, &db);
                 queue_item_ids.push(item.id.0.to_string());
+                if matches!(
+                    item.load_state,
+                    koan_core::player::state::LoadState::Pending
+                ) {
+                    pending_downloads.push((tid, item.id));
+                }
                 items.push(item);
             }
         }
@@ -1396,6 +1416,10 @@ impl MutationRoot {
 
             if let Some(id) = first_id {
                 let _ = tx.send(PlayerCommand::Play(id));
+            }
+
+            if !pending_downloads.is_empty() {
+                spawn_downloads(pending_downloads, tx.clone(), state.clone());
             }
         }
 
@@ -1903,6 +1927,27 @@ fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
 // ---------------------------------------------------------------------------
 // Helper: TrackRow -> PlaylistItem (for queue mutations via GraphQL)
 // ---------------------------------------------------------------------------
+
+/// Spawn background downloads for remote tracks that were added to the queue
+/// with LoadState::Pending. Uses the same download pipeline as the TUI.
+fn spawn_downloads(
+    pending: Vec<(i64, QueueItemId)>,
+    tx: Sender<PlayerCommand>,
+    state: Arc<SharedPlayerState>,
+) {
+    use std::sync::Mutex;
+
+    let log_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    std::thread::Builder::new()
+        .name("koan-gql-download".into())
+        .spawn(move || {
+            let cfg = Config::load().unwrap_or_default();
+            for (db_id, queue_id) in pending {
+                super::enqueue::download_track(db_id, queue_id, &tx, &log_buf, &state, &cfg);
+            }
+        })
+        .ok();
+}
 
 pub fn track_to_playlist_item(
     track: &queries::TrackRow,
