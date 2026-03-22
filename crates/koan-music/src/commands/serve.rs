@@ -934,10 +934,25 @@ async fn stream(
         .map_err(|e| SubsonicError::internal(e.to_string()))?
         .ok_or_else(|| SubsonicError::not_found("Track"))?;
 
-    let file_path = track_file_path(&track)
-        .ok_or_else(|| SubsonicError::not_found("Track has no local file"))?;
+    // Try local/cached file first; fall back to proxying from upstream.
+    let local_path = track_file_path(&track).map(PathBuf::from);
+    let local_exists = if let Some(ref p) = local_path {
+        tokio::fs::metadata(p).await.is_ok()
+    } else {
+        false
+    };
 
-    let path = PathBuf::from(file_path);
+    if !local_exists {
+        // Proxy from upstream Navidrome/Subsonic server.
+        if let Some(ref remote_id) = track.remote_id {
+            return proxy_stream_from_upstream(remote_id, &track, &headers).await;
+        }
+        return Err(SubsonicError::not_found(
+            "Track has no local file and no remote source",
+        ));
+    }
+
+    let path = local_path.unwrap();
     let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             SubsonicError::not_found("File not found on disk")
@@ -998,6 +1013,67 @@ async fn stream(
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CONTENT_LENGTH, total_size)
         .header(header::ACCEPT_RANGES, "bytes")
+        .body(body)
+        .map_err(|e| SubsonicError::internal(e.to_string()))
+}
+
+/// Proxy a stream from the upstream Navidrome/Subsonic server.
+/// Forwards the audio bytes through to the client, passing along Range headers.
+async fn proxy_stream_from_upstream(
+    remote_id: &str,
+    track: &queries::TrackRow,
+    client_headers: &HeaderMap,
+) -> Result<Response, SubsonicError> {
+    let cfg = Config::load().unwrap_or_default();
+    if !cfg.remote.enabled {
+        return Err(SubsonicError::not_found("Remote server not configured"));
+    }
+
+    let password = super::get_remote_password(&cfg);
+    let client = koan_core::remote::client::SubsonicClient::new(
+        &cfg.remote.url,
+        &cfg.remote.username,
+        &password,
+    );
+    let upstream_url = client.stream_url(remote_id);
+
+    // Use reqwest async to proxy the stream.
+    let http = reqwest::Client::new();
+    let mut req = http.get(&upstream_url);
+
+    // Forward Range header if present.
+    if let Some(range) = client_headers.get(header::RANGE)
+        && let Ok(range_str) = range.to_str()
+    {
+        req = req.header("Range", range_str);
+    }
+
+    let upstream_resp = req
+        .send()
+        .await
+        .map_err(|e| SubsonicError::internal(format!("upstream error: {}", e)))?;
+
+    let status = upstream_resp.status();
+    let content_type = track
+        .codec
+        .as_deref()
+        .map(|c| codec_to_mime(c).1)
+        .unwrap_or("application/octet-stream");
+
+    let mut builder = Response::builder().status(status.as_u16());
+    builder = builder.header(header::CONTENT_TYPE, content_type);
+
+    // Forward content-length and range headers from upstream.
+    if let Some(cl) = upstream_resp.headers().get(header::CONTENT_LENGTH) {
+        builder = builder.header(header::CONTENT_LENGTH, cl);
+    }
+    if let Some(cr) = upstream_resp.headers().get(header::CONTENT_RANGE) {
+        builder = builder.header(header::CONTENT_RANGE, cr);
+    }
+    builder = builder.header(header::ACCEPT_RANGES, "bytes");
+
+    let body = axum::body::Body::from_stream(upstream_resp.bytes_stream());
+    builder
         .body(body)
         .map_err(|e| SubsonicError::internal(e.to_string()))
 }
