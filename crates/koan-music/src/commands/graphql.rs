@@ -10,6 +10,7 @@ use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::db::queries::playback_state::PersistedQueueItem;
+use koan_core::index::metadata::extract_cover_art;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, QueueItemId, SharedPlayerState};
 use uuid::Uuid;
@@ -460,6 +461,14 @@ struct GqlSnapshot {
 #[derive(SimpleObject)]
 struct GqlRadioStatus {
     enabled: bool,
+}
+
+#[derive(SimpleObject)]
+struct GqlCoverArt {
+    /// Relative URL to fetch raw cover art bytes (e.g. `/cover/42`).
+    url: String,
+    /// MIME type detected from magic bytes (image/jpeg, image/png, image/webp).
+    mime: Option<String>,
 }
 
 /// Mutation/query result status.
@@ -1054,6 +1063,29 @@ impl QueryRoot {
             })
             .collect())
     }
+
+    /// Look up cover art metadata for a track. Returns a relative URL and MIME type.
+    async fn cover_art(
+        &self,
+        ctx: &Context<'_>,
+        track_id: i64,
+    ) -> async_graphql::Result<Option<GqlCoverArt>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let track = queries::get_track_row(&db.conn, track_id)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let track = match track {
+            Some(t) => t,
+            None => return Ok(None),
+        };
+        let (_bytes, mime) = match extract_track_cover_art(&track) {
+            Some(result) => result,
+            None => return Ok(None),
+        };
+        Ok(Some(GqlCoverArt {
+            url: format!("/cover/{}", track_id),
+            mime: mime.map(String::from),
+        }))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1545,6 +1577,82 @@ fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
 }
 
 // ---------------------------------------------------------------------------
+// Helper: detect image MIME from magic bytes
+// ---------------------------------------------------------------------------
+
+fn detect_image_mime(data: &[u8]) -> Option<&'static str> {
+    if data.len() < 4 {
+        return None;
+    }
+    if data.starts_with(b"\xFF\xD8\xFF") {
+        Some("image/jpeg")
+    } else if data.starts_with(b"\x89PNG") {
+        Some("image/png")
+    } else if data.len() >= 12 && &data[0..4] == b"RIFF" && &data[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else {
+        None
+    }
+}
+
+/// Resolve a track's file path (local path, then cached path) and extract embedded cover art.
+fn extract_track_cover_art(track: &queries::TrackRow) -> Option<(Vec<u8>, Option<&'static str>)> {
+    let file_path = track
+        .path
+        .as_ref()
+        .or(track.cached_path.as_ref())
+        .map(std::path::Path::new)?;
+    let art_bytes = extract_cover_art(file_path)?;
+    let mime = detect_image_mime(&art_bytes);
+    Some((art_bytes, mime))
+}
+
+// ---------------------------------------------------------------------------
+// REST handler: GET /cover/:track_id
+// ---------------------------------------------------------------------------
+
+async fn cover_art_handler(
+    axum::extract::Path(track_id): axum::extract::Path<i64>,
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> axum::response::Response {
+    use axum::http::{StatusCode, header};
+    use axum::response::IntoResponse;
+
+    let db = match Database::open(&state.db_path) {
+        Ok(d) => d,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("db error: {}", e),
+            )
+                .into_response();
+        }
+    };
+    let track = match queries::get_track_row(&db.conn, track_id) {
+        Ok(Some(t)) => t,
+        Ok(None) => return (StatusCode::NOT_FOUND, "track not found").into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("db error: {}", e),
+            )
+                .into_response();
+        }
+    };
+    let (art_bytes, mime) = match extract_track_cover_art(&track) {
+        Some(result) => result,
+        None => return (StatusCode::NOT_FOUND, "no cover art found").into_response(),
+    };
+    let content_type = mime.unwrap_or("application/octet-stream");
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, content_type.to_string())],
+        art_bytes,
+    )
+        .into_response()
+}
+
+// ---------------------------------------------------------------------------
 // Helper: TrackRow -> PlaylistItem (for queue mutations via GraphQL)
 // ---------------------------------------------------------------------------
 
@@ -1599,6 +1707,12 @@ pub fn track_to_playlist_item(
 
 pub type KoanSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
 
+#[derive(Clone)]
+struct AppState {
+    schema: KoanSchema,
+    db_path: PathBuf,
+}
+
 pub fn build_schema(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
@@ -1628,17 +1742,19 @@ pub fn cmd_graphql(port: Option<u16>, playground: bool) {
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
-    let schema = build_schema(state, cmd_tx, db_path);
+    let schema = build_schema(state, cmd_tx, db_path.clone());
 
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
-        let mut app = axum::Router::new().route("/graphql", post(graphql_handler));
+        let mut app = axum::Router::new()
+            .route("/graphql", post(graphql_handler))
+            .route("/cover/{track_id}", get(cover_art_handler));
 
         if playground_enabled {
             app = app.route("/graphql", get(graphql_playground));
         }
 
-        let app = app.with_state(schema);
+        let app = app.with_state(AppState { schema, db_path });
 
         let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
         eprintln!("koan graphql server listening on http://0.0.0.0:{}", port);
@@ -1664,10 +1780,10 @@ async fn shutdown_signal() {
 }
 
 async fn graphql_handler(
-    axum::extract::State(schema): axum::extract::State<KoanSchema>,
+    axum::extract::State(state): axum::extract::State<AppState>,
     req: async_graphql_axum::GraphQLRequest,
 ) -> async_graphql_axum::GraphQLResponse {
-    schema.execute(req.into_inner()).await.into()
+    state.schema.execute(req.into_inner()).await.into()
 }
 
 async fn graphql_playground() -> axum::response::Html<String> {
@@ -1948,5 +2064,72 @@ mod tests {
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
         let cmd = rx.try_recv().unwrap();
         assert!(matches!(cmd, PlayerCommand::ClearPlaylist));
+    }
+
+    #[tokio::test]
+    async fn cover_art_query_nonexistent_track() {
+        let (schema, _rx, _tmp) = test_schema();
+        let resp = schema
+            .execute(r#"{ coverArt(trackId: 999) { url mime } }"#)
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert!(
+            data["coverArt"].is_null(),
+            "should be null for missing track"
+        );
+    }
+
+    #[tokio::test]
+    async fn cover_art_query_no_file() {
+        // Track exists in DB but file doesn't exist on disk -> None
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        let tid = insert_test_track(&db_path, "Ghost", "Nobody", "Void");
+        let resp = schema
+            .execute(&format!(
+                r#"{{ coverArt(trackId: {}) {{ url mime }} }}"#,
+                tid
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        // File doesn't exist so extract_cover_art returns None
+        assert!(data["coverArt"].is_null());
+    }
+
+    #[test]
+    fn detect_mime_jpeg() {
+        assert_eq!(
+            super::detect_image_mime(&[0xFF, 0xD8, 0xFF, 0xE0]),
+            Some("image/jpeg")
+        );
+    }
+
+    #[test]
+    fn detect_mime_png() {
+        assert_eq!(
+            super::detect_image_mime(&[0x89, 0x50, 0x4E, 0x47]),
+            Some("image/png")
+        );
+    }
+
+    #[test]
+    fn detect_mime_webp() {
+        let mut data = Vec::new();
+        data.extend_from_slice(b"RIFF");
+        data.extend_from_slice(&[0; 4]);
+        data.extend_from_slice(b"WEBP");
+        assert_eq!(super::detect_image_mime(&data), Some("image/webp"));
+    }
+
+    #[test]
+    fn detect_mime_unknown() {
+        assert_eq!(super::detect_image_mime(&[0x00, 0x01, 0x02, 0x03]), None);
+    }
+
+    #[test]
+    fn detect_mime_too_short() {
+        assert_eq!(super::detect_image_mime(&[0xFF, 0xD8]), None);
     }
 }
