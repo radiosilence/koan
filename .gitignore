@@ -21,3 +21,4 @@
 .vscode/
 *.swp
 *.swo
+ios/.build/
