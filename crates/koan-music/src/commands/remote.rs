@@ -143,9 +143,7 @@ pub fn cmd_remote_status() {
         }
     );
 
-    if has_password
-        && let Some(client) = super::subsonic_client(&cfg)
-    {
+    if has_password && let Some(client) = super::subsonic_client(&cfg) {
         match client.ping() {
             Ok(()) => println!("{} {}", "status:".cyan(), "connected".green()),
             Err(e) => println!(
