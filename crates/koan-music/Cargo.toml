@@ -22,12 +22,14 @@ crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 koan-core = { path = "../koan-core", version = "0.12.1" }
 log = "0.4"
+md5 = "0.8"
 nucleo = "0.5"
 owo-colors = "4"
 ratatui = "0.29"
 jwalk = "0.8"
 rayon = "1"
 rpassword = "7.4"
+rusqlite = { workspace = true }
 souvlaki = "0.8"
 core-foundation = "0.9"
 toml = "0.9"

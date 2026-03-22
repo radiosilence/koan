@@ -1783,7 +1783,7 @@ dependencies = [
 
 [[package]]
 name = "koan-core"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "core-foundation 0.9.4",
  "coreaudio-sys",
@@ -1813,7 +1813,7 @@ dependencies = [
 
 [[package]]
 name = "koan-music"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
@@ -1829,12 +1829,14 @@ dependencies = [
  "jwalk",
  "koan-core",
  "log",
+ "md5",
  "nucleo",
  "owo-colors",
  "ratatui",
  "rayon",
  "rmcp",
  "rpassword",
+ "rusqlite",
  "serde",
  "serde_json",
  "souvlaki",

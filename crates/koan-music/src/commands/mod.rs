@@ -13,6 +13,7 @@ mod probe;
 mod remote;
 mod scan;
 mod search;
+pub mod serve;
 
 pub use cache::{cmd_cache_clear, cmd_cache_status};
 pub use graphql::{cmd_graphql, cmd_graphql_daemon};
@@ -30,6 +31,7 @@ pub use probe::{cmd_devices, cmd_probe};
 pub use remote::{cmd_remote_login, cmd_remote_status, cmd_remote_sync};
 pub use scan::cmd_scan;
 pub use search::cmd_search;
+pub use serve::cmd_serve;
 
 use std::path::{Path, PathBuf};
 
