@@ -1,0 +1,421 @@
+{
+  "builtTestProducts" : [
+
+  ],
+  "copyCommands" : {
+
+  },
+  "explicitTargetDependencyImportCheckingMode" : {
+    "none" : {
+
+    }
+  },
+  "generatedSourceTargetSet" : [
+
+  ],
+  "pluginDescriptions" : [
+
+  ],
+  "swiftCommands" : {
+    "C.Koan-arm64-apple-macosx26.0-debug.module" : {
+      "executable" : "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "fileList" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/sources",
+      "importPath" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Modules",
+      "inputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/ContentView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/GraphQLClient.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/GraphQLTypes.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/Queries.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Models/Models.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Models/ServerConfig.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Favourites/FavouritesView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/AlbumDetailView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/AlbumListView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/ArtistDetailView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/ArtistListView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/LibraryRootView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/SearchView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/TrackRowView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Settings/ServerSettingsView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/sources"
+        }
+      ],
+      "isLibrary" : true,
+      "moduleName" : "Koan",
+      "moduleOutputPath" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Modules/Koan.swiftmodule",
+      "objects" : [
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ContentView.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/GraphQLClient.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/GraphQLTypes.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/Queries.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/Models.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ServerConfig.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/FavouritesView.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/AlbumDetailView.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/AlbumListView.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ArtistDetailView.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ArtistListView.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/LibraryRootView.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/SearchView.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/TrackRowView.swift.o",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ServerSettingsView.swift.o"
+      ],
+      "otherArguments" : [
+        "-target",
+        "arm64-apple-macosx14.0",
+        "-incremental",
+        "-enable-batch-mode",
+        "-serialize-diagnostics",
+        "-index-store-path",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/index/store",
+        "-Onone",
+        "-enable-testing",
+        "-j14",
+        "-DSWIFT_PACKAGE",
+        "-DDEBUG",
+        "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+        "-module-cache-path",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/ModuleCache",
+        "-parseable-output",
+        "-parse-as-library",
+        "-emit-objc-header",
+        "-emit-objc-header-path",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/include/Koan-Swift.h",
+        "-swift-version",
+        "5",
+        "-I",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-L",
+        "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+        "-plugin-path",
+        "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+        "-sdk",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-g",
+        "-Xcc",
+        "-isysroot",
+        "-Xcc",
+        "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+        "-Xcc",
+        "-fPIC",
+        "-Xcc",
+        "-g",
+        "-package-name",
+        "ios"
+      ],
+      "outputFileMapPath" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/output-file-map.json",
+      "outputs" : [
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ContentView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/GraphQLClient.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/GraphQLTypes.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/Queries.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/Models.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ServerConfig.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/FavouritesView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/AlbumDetailView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/AlbumListView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ArtistDetailView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ArtistListView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/LibraryRootView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/SearchView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/TrackRowView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/ServerSettingsView.swift.o"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Modules/Koan.swiftmodule"
+        }
+      ],
+      "prepareForIndexing" : false,
+      "sources" : [
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/ContentView.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/GraphQLClient.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/GraphQLTypes.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/Queries.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Models/Models.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Models/ServerConfig.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Favourites/FavouritesView.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/AlbumDetailView.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/AlbumListView.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/ArtistDetailView.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/ArtistListView.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/LibraryRootView.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/SearchView.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/TrackRowView.swift",
+        "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Settings/ServerSettingsView.swift"
+      ],
+      "tempsPath" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build",
+      "wholeModuleOptimization" : false
+    }
+  },
+  "swiftFrontendCommands" : {
+
+  },
+  "swiftTargetScanArgs" : {
+    "Koan" : [
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc",
+      "-module-name",
+      "Koan",
+      "-package-name",
+      "ios",
+      "-c",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/ContentView.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/GraphQLClient.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/GraphQLTypes.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/Queries.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Models/Models.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Models/ServerConfig.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Favourites/FavouritesView.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/AlbumDetailView.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/AlbumListView.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/ArtistDetailView.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/ArtistListView.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/LibraryRootView.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/SearchView.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/TrackRowView.swift",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Settings/ServerSettingsView.swift",
+      "-I",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Modules",
+      "-target",
+      "arm64-apple-macosx14.0",
+      "-incremental",
+      "-enable-batch-mode",
+      "-serialize-diagnostics",
+      "-index-store-path",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/index/store",
+      "-Onone",
+      "-enable-testing",
+      "-j14",
+      "-DSWIFT_PACKAGE",
+      "-DDEBUG",
+      "-DSWIFT_MODULE_RESOURCE_BUNDLE_UNAVAILABLE",
+      "-module-cache-path",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/ModuleCache",
+      "-parseable-output",
+      "-parse-as-library",
+      "-emit-objc-header",
+      "-emit-objc-header-path",
+      "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/include/Koan-Swift.h",
+      "-swift-version",
+      "5",
+      "-I",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-L",
+      "/Library/Developer/CommandLineTools/Library/Developer/Frameworks",
+      "-plugin-path",
+      "/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing",
+      "-sdk",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-g",
+      "-Xcc",
+      "-isysroot",
+      "-Xcc",
+      "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
+      "-Xcc",
+      "-fPIC",
+      "-Xcc",
+      "-g",
+      "-package-name",
+      "ios",
+      "-driver-use-frontend-path",
+      "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+    ]
+  },
+  "targetDependencyMap" : {
+    "Koan" : [
+
+    ]
+  },
+  "testDiscoveryCommands" : {
+
+  },
+  "testEntryPointCommands" : {
+
+  },
+  "traitConfiguration" : {
+    "default" : {
+
+    }
+  },
+  "writeCommands" : {
+    "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/sources" : {
+      "alwaysOutOfDate" : false,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<sources-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/ContentView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/GraphQLClient.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/GraphQLTypes.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/GraphQL/Queries.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Models/Models.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Models/ServerConfig.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Favourites/FavouritesView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/AlbumDetailView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/AlbumListView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/ArtistDetailView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/ArtistListView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/LibraryRootView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/SearchView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Library/TrackRowView.swift"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/Sources/Koan/Views/Settings/ServerSettingsView.swift"
+        }
+      ],
+      "outputFilePath" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/Koan.build/sources"
+    },
+    "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt" : {
+      "alwaysOutOfDate" : true,
+      "inputs" : [
+        {
+          "kind" : "virtual",
+          "name" : "<swift-get-version>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Library/Developer/CommandLineTools/usr/bin/swiftc"
+        }
+      ],
+      "outputFilePath" : "/Users/james.cleveland/workspace/radiosilence/koan/.claude/worktrees/agent-aac8d548/ios/.build/arm64-apple-macosx/debug/swift-version--1AB21518FC5DEDBE.txt"
+    }
+  }
+}
