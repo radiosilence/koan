@@ -8,10 +8,16 @@ description = "Core library for koan — bit-perfect music player. Audio engine,
 keywords = ["audio", "music", "player"]
 categories = ["multimedia::audio"]
 
+[features]
+default = []
+neural-discovery = ["ort"]
+
 [dependencies]
 # Acoustic analysis
 bliss-audio = { version = "0.11", default-features = false, features = ["aubio-static", "symphonia-all"] }
 bliss-audio-aubio-rs = { version = "0.2", features = ["bindgen"] }
+# Neural embeddings (DCLAP via ONNX Runtime) — opt-in
+ort = { version = "2.0.0-rc.12", optional = true }
 crossbeam-channel = "0.5"
 # Config
 dirs = "6"

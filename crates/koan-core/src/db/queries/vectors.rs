@@ -65,7 +65,20 @@ pub fn find_similar_to_vector(
     k: usize,
     exclude_track_id: Option<i64>,
 ) -> Result<Vec<(i64, f32)>, DbError> {
-    let mut stmt = conn.prepare("SELECT track_id, embedding FROM track_vectors")?;
+    brute_force_knn(conn, "track_vectors", target, k, exclude_track_id)
+}
+
+/// Brute-force KNN against any table with (track_id, embedding) columns.
+/// Shared by both acoustic (track_vectors) and neural (track_neural_vectors) queries.
+pub(crate) fn brute_force_knn(
+    conn: &Connection,
+    table: &str,
+    target: &[f32],
+    k: usize,
+    exclude_track_id: Option<i64>,
+) -> Result<Vec<(i64, f32)>, DbError> {
+    let sql = format!("SELECT track_id, embedding FROM {}", table);
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map([], |row| {
         let tid: i64 = row.get(0)?;
         let bytes: Vec<u8> = row.get(1)?;

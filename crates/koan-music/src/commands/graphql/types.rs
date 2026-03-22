@@ -379,6 +379,12 @@ pub(super) struct GqlLibraryStats {
     pub cached_tracks: i64,
     pub total_albums: i64,
     pub total_artists: i64,
+    /// Whether the neural-discovery feature was compiled in.
+    pub neural_embeddings_available: bool,
+    /// Number of tracks with neural (DCLAP) embeddings.
+    pub neural_embedding_count: i64,
+    /// Number of tracks with acoustic (bliss) embeddings.
+    pub acoustic_embedding_count: i64,
 }
 
 #[derive(SimpleObject)]

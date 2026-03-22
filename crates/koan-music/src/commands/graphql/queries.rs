@@ -426,6 +426,9 @@ impl QueryRoot {
         let db = ctx.data::<DbHandle>()?.open()?;
         let stats = queries::library_stats(&db.conn)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let acoustic_count = queries::vector_count(&db.conn).unwrap_or(0);
+        let neural_count = queries::neural_vector_count(&db.conn).unwrap_or(0);
+        let neural_available = cfg!(feature = "neural-discovery");
         Ok(GqlLibraryStats {
             total_tracks: stats.total_tracks,
             local_tracks: stats.local_tracks,
@@ -433,6 +436,9 @@ impl QueryRoot {
             cached_tracks: stats.cached_tracks,
             total_albums: stats.total_albums,
             total_artists: stats.total_artists,
+            neural_embeddings_available: neural_available,
+            neural_embedding_count: neural_count,
+            acoustic_embedding_count: acoustic_count,
         })
     }
 
@@ -659,6 +665,64 @@ impl QueryRoot {
     ) -> async_graphql::Result<Vec<GqlSimilarTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let results = queries::find_similar(&db.conn, track_id, limit as usize)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let mut out = Vec::with_capacity(results.len());
+        for (tid, dist) in results {
+            if let Ok(Some(row)) = queries::get_track_row(&db.conn, tid) {
+                out.push(GqlSimilarTrack {
+                    row,
+                    distance: dist as f64,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Find similar tracks using neural (DCLAP) embeddings.
+    /// Returns empty if the track has no neural embedding.
+    async fn neural_similar_tracks(
+        &self,
+        ctx: &Context<'_>,
+        track_id: i64,
+        #[graphql(default = 20)] limit: i32,
+    ) -> async_graphql::Result<Vec<GqlSimilarTrack>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let results = queries::find_similar_neural(&db.conn, track_id, limit as usize)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let mut out = Vec::with_capacity(results.len());
+        for (tid, dist) in results {
+            if let Ok(Some(row)) = queries::get_track_row(&db.conn, tid) {
+                out.push(GqlSimilarTrack {
+                    row,
+                    distance: dist as f64,
+                });
+            }
+        }
+        Ok(out)
+    }
+
+    /// Semantic text-to-music search using DCLAP text encoder.
+    /// Encodes the query string to a 512-dim vector and finds nearest tracks.
+    /// Requires neural-discovery feature and text model. Returns empty if unavailable.
+    async fn text_search(
+        &self,
+        ctx: &Context<'_>,
+        query: String,
+        #[graphql(default = 20)] limit: i32,
+    ) -> async_graphql::Result<Vec<GqlSimilarTrack>> {
+        let cfg = koan_core::config::Config::load_or_default();
+        let model_dir = cfg.discovery.model_dir();
+
+        let text_embedding = match koan_core::index::neural::encode_text(&query, &model_dir) {
+            Ok(emb) => emb,
+            Err(e) => {
+                log::warn!("text search unavailable: {}", e);
+                return Ok(vec![]);
+            }
+        };
+
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let results = queries::find_by_text_embedding(&db.conn, &text_embedding, limit as usize)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
         let mut out = Vec::with_capacity(results.len());
         for (tid, dist) in results {

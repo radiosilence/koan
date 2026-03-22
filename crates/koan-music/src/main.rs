@@ -153,7 +153,12 @@ enum Commands {
         force: bool,
     },
     /// Run acoustic analysis on the library for similarity features
-    Analyze,
+    Analyze {
+        /// Run neural (DCLAP) analysis instead of bliss acoustic analysis.
+        /// Requires the neural-discovery feature and ONNX model files.
+        #[arg(long)]
+        neural: bool,
+    },
     /// Search the library
     Search {
         /// Search query
@@ -303,7 +308,13 @@ fn main() {
         Some(Commands::Probe { path }) => commands::cmd_probe(&path),
         Some(Commands::Devices) => commands::cmd_devices(),
         Some(Commands::Scan { path, force }) => commands::cmd_scan(path.as_deref(), force),
-        Some(Commands::Analyze) => commands::cmd_analyze(),
+        Some(Commands::Analyze { neural }) => {
+            if neural {
+                commands::cmd_analyze_neural();
+            } else {
+                commands::cmd_analyze();
+            }
+        }
         Some(Commands::Search { query }) => commands::cmd_search(&query),
         Some(Commands::Artists { query }) => commands::cmd_artists(query.as_deref()),
         Some(Commands::Albums { query }) => commands::cmd_albums(query.as_deref()),

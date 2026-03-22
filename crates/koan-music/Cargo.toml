@@ -8,6 +8,10 @@ description = "Bit-perfect music player — Ratatui TUI, gapless playback, Navid
 keywords = ["audio", "music", "player", "tui"]
 categories = ["multimedia::audio"]
 
+[features]
+default = []
+neural-discovery = ["koan-core/neural-discovery"]
+
 [[bin]]
 name = "koan"
 path = "src/main.rs"

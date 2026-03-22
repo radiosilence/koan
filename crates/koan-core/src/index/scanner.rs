@@ -8,6 +8,7 @@ use crate::db::queries::{self, TrackMeta};
 
 use super::features;
 use super::metadata::{self, is_audio_file};
+use super::neural;
 
 /// Result of a folder scan.
 #[derive(Debug, Default)]
@@ -165,6 +166,72 @@ pub struct AnalysisEvent<'a> {
     pub total: usize,
 }
 
+/// Type alias for a vector store function (track_id, embedding) → Result.
+type StoreFn =
+    dyn Fn(&rusqlite::Connection, i64, &[f32]) -> Result<(), crate::db::connection::DbError>;
+
+/// Generic batch analysis: query missing tracks, analyze in parallel, store sequentially.
+fn run_batch_analysis<E: Send + std::fmt::Display>(
+    db: &Database,
+    missing: Vec<(i64, String)>,
+    label: &str,
+    analyze_fn: &(dyn Fn(&Path) -> Result<Vec<f32>, E> + Sync),
+    store_fn: &StoreFn,
+    on_track: Option<&(dyn Fn(AnalysisEvent) + Sync)>,
+) -> (usize, usize) {
+    if missing.is_empty() {
+        return (0, 0);
+    }
+
+    let total = missing.len();
+    log::info!("analyzing {} tracks for {}", total, label);
+
+    let results: Vec<(i64, String, bool, Option<Vec<f32>>)> = missing
+        .par_iter()
+        .enumerate()
+        .map(|(i, (track_id, path))| {
+            let result = analyze_fn(Path::new(path));
+            let success = result.is_ok();
+            if let Some(cb) = &on_track {
+                cb(AnalysisEvent {
+                    path,
+                    success,
+                    current: i + 1,
+                    total,
+                });
+            }
+            match result {
+                Ok(emb) => (*track_id, path.clone(), true, Some(emb)),
+                Err(e) => {
+                    log::warn!("{} analysis failed for {}: {}", label, path, e);
+                    (*track_id, path.clone(), false, None)
+                }
+            }
+        })
+        .collect();
+
+    let mut analyzed = 0usize;
+    let mut errors = 0usize;
+    let _ = db.conn.execute_batch("BEGIN");
+    for (track_id, path, success, embedding) in results {
+        if !success {
+            errors += 1;
+            continue;
+        }
+        let embedding = embedding.unwrap();
+        if let Err(e) = store_fn(&db.conn, track_id, &embedding) {
+            log::warn!("failed to store {} vector for {}: {}", label, path, e);
+            errors += 1;
+        } else {
+            analyzed += 1;
+        }
+    }
+    let _ = db.conn.execute_batch("COMMIT");
+
+    log::info!("{} complete: {} ok, {} errors", label, analyzed, errors);
+    (analyzed, errors)
+}
+
 /// Run acoustic analysis on all tracks missing vectors.
 /// Uses rayon for parallel analysis, stores results sequentially.
 pub fn analyze_missing(
@@ -179,53 +246,48 @@ pub fn analyze_missing(
         }
     };
 
-    if missing.is_empty() {
+    run_batch_analysis(
+        db,
+        missing,
+        "acoustic",
+        &|path| features::analyze_track(path).map_err(|e| e.to_string()),
+        &queries::store_vector,
+        on_track,
+    )
+}
+
+/// Run neural analysis on all tracks missing neural vectors.
+/// Returns (ok_count, error_count). If the model is missing or the feature
+/// is disabled, returns (0, 0) after logging a warning.
+pub fn analyze_missing_neural(
+    db: &Database,
+    model_dir: &Path,
+    on_track: Option<&(dyn Fn(AnalysisEvent) + Sync)>,
+) -> (usize, usize) {
+    if !neural::is_audio_model_available(model_dir) {
+        log::warn!(
+            "neural model not found at {}. Download DCLAP ONNX models and place them at: {}/",
+            neural::audio_model_path(model_dir).display(),
+            model_dir.display(),
+        );
         return (0, 0);
     }
 
-    let total = missing.len();
-    log::info!("analyzing {} tracks for acoustic features", total);
-
-    // Analyze in parallel.
-    let results: Vec<(i64, String, Result<Vec<f32>, features::AnalysisError>)> = missing
-        .par_iter()
-        .enumerate()
-        .map(|(i, (track_id, path))| {
-            let result = features::analyze_track(Path::new(path));
-            if let Some(cb) = &on_track {
-                cb(AnalysisEvent {
-                    path,
-                    success: result.is_ok(),
-                    current: i + 1,
-                    total,
-                });
-            }
-            (*track_id, path.clone(), result)
-        })
-        .collect();
-
-    // Store sequentially.
-    let mut analyzed = 0usize;
-    let mut errors = 0usize;
-    let _ = db.conn.execute_batch("BEGIN");
-    for (track_id, path, result) in results {
-        match result {
-            Ok(embedding) => {
-                if let Err(e) = queries::store_vector(&db.conn, track_id, &embedding) {
-                    log::warn!("failed to store vector for {}: {}", path, e);
-                    errors += 1;
-                } else {
-                    analyzed += 1;
-                }
-            }
-            Err(e) => {
-                log::warn!("analysis failed for {}: {}", path, e);
-                errors += 1;
-            }
+    let missing = match queries::tracks_missing_neural_vectors(&db.conn) {
+        Ok(m) => m,
+        Err(e) => {
+            log::error!("failed to query missing neural vectors: {}", e);
+            return (0, 0);
         }
-    }
-    let _ = db.conn.execute_batch("COMMIT");
+    };
 
-    log::info!("analysis complete: {} ok, {} errors", analyzed, errors);
-    (analyzed, errors)
+    let model_dir = model_dir.to_path_buf();
+    run_batch_analysis(
+        db,
+        missing,
+        "neural",
+        &|path| neural::analyze_track_neural(path, &model_dir).map_err(|e| e.to_string()),
+        &queries::store_neural_vector,
+        on_track,
+    )
 }
