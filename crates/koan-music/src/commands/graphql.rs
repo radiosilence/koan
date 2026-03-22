@@ -462,6 +462,15 @@ struct GqlRadioStatus {
     enabled: bool,
 }
 
+#[derive(SimpleObject)]
+struct GqlShare {
+    id: String,
+    url: Option<String>,
+    description: Option<String>,
+    expires: Option<String>,
+    visit_count: i64,
+}
+
 /// Mutation/query result status.
 struct GqlStatus {
     success: bool,
@@ -1418,6 +1427,51 @@ impl MutationRoot {
         }
     }
 
+    // -- Sharing --
+
+    async fn create_share(
+        &self,
+        ctx: &Context<'_>,
+        track_ids: Vec<i64>,
+        description: Option<String>,
+    ) -> async_graphql::Result<GqlShare> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let mut remote_ids = Vec::new();
+        for &tid in &track_ids {
+            let track = queries::get_track_row(&db.conn, tid)
+                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+                .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", tid)))?;
+            let rid = track.remote_id.ok_or_else(|| {
+                async_graphql::Error::new(format!("track {} has no remote_id", tid))
+            })?;
+            remote_ids.push(rid);
+        }
+
+        let cfg = Config::load().unwrap_or_default();
+        if !cfg.remote.enabled {
+            return Err(async_graphql::Error::new("remote server not configured"));
+        }
+        let password = super::get_remote_password(&cfg);
+        let client = koan_core::remote::client::SubsonicClient::new(
+            &cfg.remote.url,
+            &cfg.remote.username,
+            &password,
+        );
+
+        let id_refs: Vec<&str> = remote_ids.iter().map(|s| s.as_str()).collect();
+        let share = client
+            .create_share(&id_refs, description.as_deref())
+            .map_err(|e| async_graphql::Error::new(format!("remote error: {}", e)))?;
+
+        Ok(GqlShare {
+            id: share.id,
+            url: share.url,
+            description: share.description,
+            expires: share.expires,
+            visit_count: share.visit_count.unwrap_or(0),
+        })
+    }
+
     // -- Radio --
 
     async fn enable_radio(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
@@ -1948,5 +2002,38 @@ mod tests {
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
         let cmd = rx.try_recv().unwrap();
         assert!(matches!(cmd, PlayerCommand::ClearPlaylist));
+    }
+
+    #[tokio::test]
+    async fn create_share_track_not_found() {
+        let (schema, _rx, _tmp) = test_schema();
+        let resp = schema
+            .execute(r#"mutation { createShare(trackIds: [9999]) { id url } }"#)
+            .await;
+        assert!(!resp.errors.is_empty(), "should error for missing track");
+        assert!(
+            resp.errors[0].message.contains("not found"),
+            "error: {}",
+            resp.errors[0].message,
+        );
+    }
+
+    #[tokio::test]
+    async fn create_share_no_remote_id() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+        let tid = insert_test_track(&db_path, "LocalOnly", "Artist", "Album");
+
+        let query = format!(
+            r#"mutation {{ createShare(trackIds: [{}]) {{ id url }} }}"#,
+            tid,
+        );
+        let resp = schema.execute(&query).await;
+        assert!(!resp.errors.is_empty(), "should error for local-only track");
+        assert!(
+            resp.errors[0].message.contains("no remote_id"),
+            "error: {}",
+            resp.errors[0].message,
+        );
     }
 }
