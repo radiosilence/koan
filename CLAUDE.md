@@ -2,7 +2,7 @@
 
 ## What is koan
 
-Bit-perfect macOS music player. Pure Rust, Ratatui TUI. Two crates:
+Bit-perfect music player (macOS + Linux). Pure Rust, Ratatui TUI. Two crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client. No UI code, no terminal deps.
 - **koan-music** — binary crate (`koan`). Ratatui TUI, CLI (clap), media keys. Depends on koan-core.
@@ -20,19 +20,19 @@ Main Thread (TUI, 60fps)   ──crossbeam channel──►  Player Thread ("koa
                                                        │
                                                        ├──rtrb ring buffer──►  Decode Thread ("koan-decode")
                                                        │
-                                                       └──controls──►  CoreAudio RT Thread (system-managed)
+                                                       └──controls──►  Audio RT Thread (CoreAudio/cpal, system-managed)
 
 Analyzer Thread ("koan-analyzer") ◄──VizBuffer──  Decode Thread
                                   ──VizSnapshot──►  Main Thread (TUI)
 ```
 
-**Golden rule: the CoreAudio render callback must NEVER allocate or lock.** It only touches atomics and the rtrb consumer.
+**Golden rule: the audio render callback must NEVER allocate or lock.** It only touches atomics and the rtrb consumer.
 
 ### Sync primitives
 
 | Data | Primitive | Why |
 |------|-----------|-----|
-| PCM samples (decode→CoreAudio) | `rtrb` SPSC ring buffer | Lock-free, cache-friendly |
+| PCM samples (decode→audio output) | `rtrb` SPSC ring buffer | Lock-free, cache-friendly |
 | Commands (TUI→Player) | `crossbeam-channel` bounded(16) | Backpressure, timeout recv |
 | Atomics (position, state, samples_played) | `AtomicU8/U64/Bool` Relaxed | Hot path, no contention |
 | Complex shared state (playlist, track info) | `parking_lot::RwLock` | Faster than std, no poisoning |
@@ -43,7 +43,7 @@ Analyzer Thread ("koan-analyzer") ◄──VizBuffer──  Decode Thread
 ### Key data flow
 
 ```
-File → Symphonia → f32 → rtrb ring buffer → CoreAudio render callback → DAC
+File → Symphonia → f32 → rtrb ring buffer → platform audio callback → DAC
 ```
 
 No resampling. Device sample rate switched to match source (bit-perfect). Float32 all the way.
@@ -82,9 +82,12 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 
 | Module | What |
 |--------|------|
-| `audio/engine.rs` | CoreAudio AUHAL setup, render callback (unsafe extern "C") |
+| `audio/backend.rs` | `AudioBackend` + `AudioEngineHandle` traits — platform-agnostic audio output |
+| `audio/coreaudio_backend.rs` | macOS `CoreAudioBackend` impl (wraps engine.rs + device.rs) |
+| `audio/cpal_backend.rs` | Linux `CpalBackend` impl (ALSA/PipeWire/PulseAudio via cpal) |
+| `audio/engine.rs` | CoreAudio AUHAL setup, render callback (macOS only) |
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
-| `audio/device.rs` | CoreAudio device enumeration, sample rate get/set |
+| `audio/device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
 | `audio/replaygain.rs` | EBU R128 loudness scanning, gain application via lofty |
 | `audio/viz.rs` | `VizBuffer` (ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI) |
 | `audio/analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold. Runs at configurable FPS |
@@ -102,7 +105,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/sync.rs` | Parallel library sync: paginate → rayon fetch → batch DB write |
 | `config.rs` | Two-layer TOML config loader |
-| `credentials.rs` | macOS Keychain via security-framework |
+| `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
 | `organize.rs` | File rename using format strings. Preview/execute/undo. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
 
@@ -143,7 +146,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 
 - **TUI→Player communication:** always via `PlayerCommand` through the crossbeam channel. Never reach into player internals from the TUI thread.
 - **Player→TUI communication:** via `SharedPlayerState` (atomics + RwLock). TUI polls on tick (50ms).
-- **Audio thread:** atomics and rtrb only. No allocations, no locks, no channels.
+- **Audio thread (CoreAudio/cpal):** atomics and rtrb only. No allocations, no locks, no channels.
 - **Decode thread:** owns the Symphonia decoder. Communicates via rtrb producer + `PlaybackTimeline` (RwLock for boundaries, atomics for counters).
 - **Background work** (downloads, lyrics fetch, organize): spawn named threads, communicate results via crossbeam one-shot channels or `Arc<Mutex<Option<T>>>` polling.
 - **Parallel iteration** (scan, remote sync): rayon. Don't hand-roll thread pools.
@@ -153,8 +156,10 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | Dep | Why chosen |
 |-----|-----------|
 | `symphonia` | Rust-native decoder, all codecs, gapless support |
-| `rtrb` | Lock-free SPSC ring buffer for audio — the only bridge between decode and CoreAudio |
-| `coreaudio-sys` | Raw CoreAudio AUHAL bindings for bit-perfect output |
+| `rtrb` | Lock-free SPSC ring buffer for audio — the only bridge between decode and audio output |
+| `coreaudio-sys` | Raw CoreAudio AUHAL bindings for bit-perfect output (macOS) |
+| `cpal` | Cross-platform audio I/O — ALSA/PipeWire/PulseAudio (Linux) |
+| `keyring` | Cross-platform credential storage (macOS Keychain, Linux secret-service) |
 | `crossbeam-channel` | Bounded MPSC with timeout recv — command channel + one-shots |
 | `parking_lot` | Faster RwLock/Mutex, no poisoning |
 | `rusqlite` (bundled) | SQLite with FTS5 for full-text search |

@@ -11,7 +11,8 @@ use thiserror::Error;
 
 use crate::audio::{
     analyzer::VizAnalyzer,
-    buffer, device, engine, streaming,
+    backend::{self, AudioBackend, AudioEngineHandle, BackendError},
+    buffer, streaming,
     viz::{VizBuffer, VizSnapshot},
 };
 use buffer::PlaybackTimeline;
@@ -24,12 +25,10 @@ const RING_BUFFER_SIZE: usize = 192_000 * 2;
 
 #[derive(Debug, Error)]
 pub enum PlayerError {
-    #[error("device error: {0}")]
-    Device(#[from] device::DeviceError),
+    #[error("backend error: {0}")]
+    Backend(#[from] BackendError),
     #[error("decode error: {0}")]
     Decode(#[from] buffer::DecodeError),
-    #[error("engine error: {0}")]
-    Engine(#[from] engine::EngineError),
 }
 
 /// The player controller. Owns the audio pipeline and processes commands.
@@ -48,11 +47,13 @@ pub struct Player {
     batch_buffer: Option<Vec<UndoEntry>>,
     /// Configured output device name. None = system default.
     output_device_name: Option<String>,
+    /// Platform audio backend (CoreAudio on macOS, cpal on Linux).
+    backend: Box<dyn AudioBackend>,
 }
 
 /// Holds the resources for an active playback session.
 struct ActivePlayback {
-    engine: engine::AudioEngine,
+    engine: Box<dyn AudioEngineHandle>,
     decode_handle: buffer::DecodeHandle,
 }
 
@@ -84,6 +85,7 @@ impl Player {
             undo_stack: UndoStack::new(),
             batch_buffer: None,
             output_device_name: cfg.playback.output_device.clone(),
+            backend: crate::audio::platform_backend(),
         }
     }
 
@@ -113,22 +115,26 @@ impl Player {
         &self.undo_stack
     }
 
-    /// Resolve the output device ID: use configured device name if set,
+    /// Resolve the output device: use configured device name if set,
     /// falling back to system default if not set or if the named device is unavailable.
-    fn resolve_device_id(&self) -> Result<coreaudio_sys::AudioDeviceID, PlayerError> {
+    fn resolve_device(&self) -> Result<backend::DeviceInfo, PlayerError> {
         if let Some(ref name) = self.output_device_name {
-            match device::find_output_device_by_name(name) {
-                Ok(id) => return Ok(id),
-                Err(e) => {
+            match self.backend.list_devices() {
+                Ok(devices) => {
+                    if let Some(dev) = devices.into_iter().find(|d| d.name == *name) {
+                        return Ok(dev);
+                    }
                     log::warn!(
-                        "configured output device '{}' not found, falling back to default: {}",
+                        "configured output device '{}' not found, falling back to default",
                         name,
-                        e
                     );
+                }
+                Err(e) => {
+                    log::warn!("failed to list devices while resolving '{}': {}", name, e);
                 }
             }
         }
-        Ok(device::default_output_device()?)
+        Ok(self.backend.default_device()?)
     }
 
     /// Switch the output device. Persists to config and restarts the engine
@@ -267,8 +273,8 @@ impl Player {
             }
         );
 
-        let device_id = self.resolve_device_id()?;
-        let device_rate = device::get_device_sample_rate(device_id)?;
+        let device = self.resolve_device()?;
+        let device_rate = self.backend.get_device_sample_rate(&device)?;
         let source_rate = info.sample_rate as f64;
 
         if (device_rate - source_rate).abs() > 0.1 {
@@ -277,7 +283,7 @@ impl Player {
                 device_rate,
                 source_rate
             );
-            if let Err(e) = device::set_device_sample_rate(device_id, source_rate) {
+            if let Err(e) = self.backend.set_device_sample_rate(&device, source_rate) {
                 log::warn!(
                     "failed to set sample rate (continuing at device rate): {}",
                     e
@@ -326,9 +332,12 @@ impl Player {
         )?;
 
         // Create and start audio engine with the timeline's sample counter.
-        let actual_rate = device::get_device_sample_rate(device_id).unwrap_or(source_rate);
-        let engine = engine::AudioEngine::new(
-            device_id,
+        let actual_rate = self
+            .backend
+            .get_device_sample_rate(&device)
+            .unwrap_or(source_rate);
+        let engine = self.backend.create_engine(
+            &device,
             actual_rate,
             info.channels as u32,
             consumer,
@@ -458,8 +467,8 @@ impl Player {
             info.duration_ms,
         );
 
-        let device_id = self.resolve_device_id()?;
-        let device_rate = device::get_device_sample_rate(device_id)?;
+        let device = self.resolve_device()?;
+        let device_rate = self.backend.get_device_sample_rate(&device)?;
         let source_rate = info.sample_rate as f64;
 
         if (device_rate - source_rate).abs() > 0.1 {
@@ -468,7 +477,7 @@ impl Player {
                 device_rate,
                 source_rate
             );
-            if let Err(e) = device::set_device_sample_rate(device_id, source_rate) {
+            if let Err(e) = self.backend.set_device_sample_rate(&device, source_rate) {
                 log::warn!(
                     "failed to set sample rate (continuing at device rate): {}",
                     e
@@ -541,9 +550,12 @@ impl Player {
             pre_amp_db,
         )?;
 
-        let actual_rate = device::get_device_sample_rate(device_id).unwrap_or(source_rate);
-        let engine = engine::AudioEngine::new(
-            device_id,
+        let actual_rate = self
+            .backend
+            .get_device_sample_rate(&device)
+            .unwrap_or(source_rate);
+        let engine = self.backend.create_engine(
+            &device,
             actual_rate,
             info.channels as u32,
             consumer,

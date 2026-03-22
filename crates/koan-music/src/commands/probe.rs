@@ -1,6 +1,7 @@
 use std::path::Path;
 
-use koan_core::audio::{buffer, device};
+use koan_core::audio;
+use koan_core::audio::buffer;
 use owo_colors::OwoColorize;
 
 use super::format_time;
@@ -33,11 +34,12 @@ pub fn cmd_probe(path: &Path) {
 }
 
 pub fn cmd_devices() {
-    match device::list_output_devices() {
+    match audio::list_output_devices() {
         Ok(devices) => {
-            let default_id = device::default_output_device().ok();
+            let default = audio::default_output_device().ok();
+            let default_name = default.as_ref().map(|d| d.name.as_str());
             for dev in &devices {
-                let is_default = Some(dev.id) == default_id;
+                let is_default = Some(dev.name.as_str()) == default_name;
                 let marker = if is_default {
                     " *".yellow().bold().to_string()
                 } else {
@@ -45,7 +47,7 @@ pub fn cmd_devices() {
                 };
                 println!(
                     "{} {}{}",
-                    format!("[{}]", dev.id).dimmed(),
+                    format!("[{}]", dev.platform_id).dimmed(),
                     if is_default {
                         dev.name.bold().to_string()
                     } else {
