@@ -270,6 +270,17 @@ fn main() {
     // persist queue state. In raw mode crossterm delivers Ctrl+C as a key
     // event, but outside raw mode (e.g. during scan) we need this handler.
     ctrlc::set_handler(|| {
+        if SIGINT_RECEIVED.load(Ordering::Relaxed) {
+            // Second Ctrl+C — force restore terminal and exit.
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = crossterm::execute!(
+                std::io::stdout(),
+                crossterm::terminal::LeaveAlternateScreen,
+                crossterm::event::DisableMouseCapture,
+                crossterm::cursor::Show
+            );
+            std::process::exit(130);
+        }
         SIGINT_RECEIVED.store(true, Ordering::Relaxed);
     })
     .ok();
