@@ -20,7 +20,7 @@ ctrlc = "3"
 crossbeam-channel = "0.5"
 crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-koan-core = { path = "../koan-core", version = "0.12.2" }
+koan-core = { path = "../koan-core", version = "0.12.3" }
 log = "0.4"
 nucleo = "0.5"
 owo-colors = "4"
@@ -40,6 +40,7 @@ uuid = { version = "1.22.0", features = ["v7"] }
 async-graphql = "7"
 async-graphql-axum = "7"
 axum = "0.8"
+base64 = "0.22.1"
 
 [dev-dependencies]
 tempfile = "3"

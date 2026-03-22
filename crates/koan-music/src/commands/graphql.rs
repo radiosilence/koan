@@ -477,6 +477,53 @@ struct GqlFuzzyMatch {
     kind: FuzzySearchKind,
 }
 
+#[derive(SimpleObject)]
+struct GqlLyrics {
+    content: String,
+    synced: bool,
+    source: String,
+}
+
+#[derive(SimpleObject)]
+struct GqlCoverArt {
+    data_base64: String,
+    mime: String,
+}
+
+#[derive(SimpleObject)]
+struct GqlOrganizePreview {
+    moves: Vec<GqlFileMove>,
+    errors: Vec<String>,
+    skipped: i32,
+}
+
+#[derive(SimpleObject)]
+struct GqlFileMove {
+    track_id: i64,
+    from_path: String,
+    to_path: String,
+}
+
+#[derive(SimpleObject)]
+struct GqlOrganizeResult {
+    moved_count: i32,
+    errors: Vec<String>,
+    skipped: i32,
+}
+
+#[derive(SimpleObject)]
+struct GqlScanResult {
+    tracks_added: i64,
+    tracks_updated: i64,
+    tracks_unchanged: i64,
+}
+
+#[derive(SimpleObject)]
+struct GqlShare {
+    url: Option<String>,
+    id: String,
+}
+
 /// Mutation/query result status.
 struct GqlStatus {
     success: bool,
@@ -1150,6 +1197,69 @@ impl QueryRoot {
         }
         Ok(results)
     }
+
+    async fn lyrics(
+        &self,
+        ctx: &Context<'_>,
+        track_id: i64,
+    ) -> async_graphql::Result<Option<GqlLyrics>> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let track = queries::get_track_row(&db.conn, track_id)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
+        let duration_secs = track.duration_ms.map(|d| d as u64 / 1000).unwrap_or(0);
+        match koan_core::lyrics::fetch_lyrics(
+            &db.conn,
+            track_id,
+            &track.artist_name,
+            &track.title,
+            &track.album_title,
+            duration_secs,
+        ) {
+            Ok(lyrics) => Ok(Some(GqlLyrics {
+                content: lyrics.content,
+                synced: lyrics.synced,
+                source: format!("{:?}", lyrics.source),
+            })),
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn cover_art(
+        &self,
+        ctx: &Context<'_>,
+        track_id: i64,
+    ) -> async_graphql::Result<Option<GqlCoverArt>> {
+        use base64::Engine;
+
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let track = queries::get_track_row(&db.conn, track_id)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
+        let path = track
+            .path
+            .as_ref()
+            .or(track.cached_path.as_ref())
+            .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
+
+        match koan_core::index::metadata::extract_cover_art(std::path::Path::new(path)) {
+            Some(data) => {
+                let mime = if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+                    "image/png"
+                } else if data.starts_with(&[0xFF, 0xD8]) {
+                    "image/jpeg"
+                } else {
+                    "application/octet-stream"
+                };
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                Ok(Some(GqlCoverArt {
+                    data_base64: encoded,
+                    mime: mime.into(),
+                }))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1526,6 +1636,156 @@ impl MutationRoot {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         state.set_radio_mode(false);
         Ok(GqlStatus::success("radio mode disabled"))
+    }
+
+    // -- Organize --
+
+    async fn organize_preview(
+        &self,
+        ctx: &Context<'_>,
+        pattern: String,
+        track_ids: Option<Vec<i64>>,
+    ) -> async_graphql::Result<GqlOrganizePreview> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let result = if let Some(ids) = track_ids {
+            koan_core::organize::preview_for_tracks(&db, &ids, &pattern, None)
+        } else {
+            koan_core::organize::preview(&db, &pattern, None)
+        }
+        .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
+
+        Ok(GqlOrganizePreview {
+            moves: result
+                .moves
+                .iter()
+                .map(|m| GqlFileMove {
+                    track_id: m.track_id,
+                    from_path: m.from.to_string_lossy().into_owned(),
+                    to_path: m.to.to_string_lossy().into_owned(),
+                })
+                .collect(),
+            errors: result
+                .errors
+                .iter()
+                .map(|(p, e)| format!("{}: {}", p.display(), e))
+                .collect(),
+            skipped: result.skipped as i32,
+        })
+    }
+
+    async fn organize_execute(
+        &self,
+        ctx: &Context<'_>,
+        pattern: String,
+        track_ids: Option<Vec<i64>>,
+    ) -> async_graphql::Result<GqlOrganizeResult> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let result = if let Some(ids) = track_ids {
+            koan_core::organize::execute_for_tracks(&db, &ids, &pattern, None)
+        } else {
+            koan_core::organize::execute(&db, &pattern, None)
+        }
+        .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
+
+        Ok(GqlOrganizeResult {
+            moved_count: result.moves.len() as i32,
+            errors: result
+                .errors
+                .iter()
+                .map(|(p, e)| format!("{}: {}", p.display(), e))
+                .collect(),
+            skipped: result.skipped as i32,
+        })
+    }
+
+    async fn organize_undo(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let count = koan_core::organize::undo(&db)
+            .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
+        Ok(GqlStatus::success(format!("undone {} moves", count)))
+    }
+
+    // -- Library management --
+
+    async fn trigger_scan(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlScanResult> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let cfg = Config::load().unwrap_or_default();
+        let result = koan_core::index::scanner::full_scan(&db, &cfg.library.folders, false, None);
+        Ok(GqlScanResult {
+            tracks_added: result.added as i64,
+            tracks_updated: result.updated as i64,
+            tracks_unchanged: result.skipped as i64,
+        })
+    }
+
+    async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let cfg = Config::load().unwrap_or_default();
+        if !cfg.remote.enabled {
+            return Err(async_graphql::Error::new("remote not configured"));
+        }
+        let password = super::get_remote_password(&cfg);
+        let client = koan_core::remote::client::SubsonicClient::new(
+            &cfg.remote.url,
+            &cfg.remote.username,
+            &password,
+        );
+        koan_core::remote::sync::sync_library(
+            &db,
+            &client,
+            false,
+            &cfg.remote.url,
+            &cfg.remote.username,
+        )
+        .map_err(|e| async_graphql::Error::new(format!("sync error: {}", e)))?;
+        Ok(GqlStatus::success("remote sync complete"))
+    }
+
+    // -- Sharing --
+
+    async fn create_share(
+        &self,
+        ctx: &Context<'_>,
+        track_ids: Vec<i64>,
+        description: Option<String>,
+    ) -> async_graphql::Result<GqlShare> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let cfg = Config::load().unwrap_or_default();
+        if !cfg.remote.enabled {
+            return Err(async_graphql::Error::new("remote not configured"));
+        }
+        let password = super::get_remote_password(&cfg);
+        let client = koan_core::remote::client::SubsonicClient::new(
+            &cfg.remote.url,
+            &cfg.remote.username,
+            &password,
+        );
+
+        // Resolve track IDs to remote IDs.
+        let mut remote_ids = Vec::new();
+        for &tid in &track_ids {
+            if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
+                && let Some(rid) = track.remote_id
+            {
+                remote_ids.push(rid);
+            }
+        }
+
+        if remote_ids.is_empty() {
+            return Err(async_graphql::Error::new(
+                "none of the tracks have remote IDs (local-only tracks can't be shared)",
+            ));
+        }
+
+        let id_refs: Vec<&str> = remote_ids.iter().map(|s| s.as_str()).collect();
+        let share = client
+            .create_share(&id_refs, description.as_deref())
+            .map_err(|e| async_graphql::Error::new(format!("share error: {}", e)))?;
+
+        Ok(GqlShare {
+            url: share.url,
+            id: share.id,
+        })
     }
 }
 

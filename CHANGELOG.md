@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.12.3
+
+### Added
+
+- **`lyrics(trackId)` query** — fetch synced LRC or plain text lyrics for any track. Checks embedded tags, sidecar `.lrc` files, and LRCLIB. Cached in DB
+- **`coverArt(trackId)` query** — extract embedded cover art as base64 with MIME type. Supports JPEG and PNG
+- **`organizePreview` / `organizeExecute` mutations** — preview and execute file renames using fb2k-compatible format strings. Supports per-track or whole-library operations
+- **`organizeUndo` mutation** — undo the last organize batch
+- **`triggerScan` mutation** — trigger a library rescan from the API. Returns added/updated/unchanged counts
+- **`triggerRemoteSync` mutation** — trigger Subsonic/Navidrome library sync from the API
+- **`createShare(trackIds, description)` mutation** — create Subsonic sharing links for tracks. Returns the public URL. Claude can now share what it's playing
+
 ## 0.12.2
 
 ### Added
