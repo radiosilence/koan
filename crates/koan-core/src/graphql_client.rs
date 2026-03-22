@@ -16,7 +16,10 @@ impl GraphQLClient {
         let url = format!("{}/graphql", server_url.trim_end_matches('/'));
         Self {
             url,
-            http: reqwest::blocking::Client::new(),
+            http: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(30))
+                .build()
+                .expect("failed to build HTTP client"),
         }
     }
 
@@ -118,12 +121,8 @@ impl GraphQLClient {
 
     pub fn search(&self, query: &str, limit: u32) -> Result<Vec<TrackResult>, GraphQLError> {
         let data = self.execute(
-            &format!(
-                r#"{{ tracks(search: "{}", first: {}) {{ edges {{ node {{ id title artist album albumId artistId disc trackNumber durationMs codec genre source }} }} }} }}"#,
-                query.replace('"', "\\\""),
-                limit
-            ),
-            None,
+            "query($search: String!, $first: Int) { tracks(search: $search, first: $first) { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source } } } }",
+            Some(serde_json::json!({ "search": query, "first": limit })),
         )?;
         parse_track_edges(&data["tracks"])
     }
@@ -148,22 +147,16 @@ impl GraphQLClient {
 
     pub fn albums_for_artist(&self, artist_id: i64) -> Result<Vec<AlbumResult>, GraphQLError> {
         let data = self.execute(
-            &format!(
-                "{{ albums(artistId: {}) {{ edges {{ node {{ id title artistName date codec }} }} }} }}",
-                artist_id
-            ),
-            None,
+            "query($artistId: Int!) { albums(artistId: $artistId) { edges { node { id title artistName date codec } } } }",
+            Some(serde_json::json!({ "artistId": artist_id })),
         )?;
         parse_album_edges(&data["albums"])
     }
 
     pub fn tracks_for_album(&self, album_id: i64) -> Result<Vec<TrackResult>, GraphQLError> {
         let data = self.execute(
-            &format!(
-                "{{ tracks(albumId: {}) {{ edges {{ node {{ id title artist album albumId artistId disc trackNumber durationMs codec genre source }} }} }} }}",
-                album_id
-            ),
-            None,
+            "query($albumId: Int!) { tracks(albumId: $albumId) { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source } } } }",
+            Some(serde_json::json!({ "albumId": album_id })),
         )?;
         parse_track_edges(&data["tracks"])
     }
@@ -175,13 +168,8 @@ impl GraphQLClient {
         limit: u32,
     ) -> Result<Vec<FuzzyMatch>, GraphQLError> {
         let data = self.execute(
-            &format!(
-                r#"{{ fuzzySearch(query: "{}", kind: {}, limit: {}) {{ id name rank kind }} }}"#,
-                query.replace('"', "\\\""),
-                kind,
-                limit
-            ),
-            None,
+            "query($query: String!, $kind: FuzzySearchKind!, $limit: Int) { fuzzySearch(query: $query, kind: $kind, limit: $limit) { id name rank kind } }",
+            Some(serde_json::json!({ "query": query, "kind": kind, "limit": limit })),
         )?;
         Ok(data["fuzzySearch"]
             .as_array()
@@ -226,31 +214,24 @@ impl GraphQLClient {
 
     pub fn seek(&self, position_ms: u64) -> Result<(), GraphQLError> {
         self.execute(
-            &format!("mutation {{ seek(positionMs: {}) {{ ok }} }}", position_ms),
-            None,
+            "mutation($positionMs: Int!) { seek(positionMs: $positionMs) { ok } }",
+            Some(serde_json::json!({ "positionMs": position_ms })),
         )?;
         Ok(())
     }
 
     pub fn play(&self, queue_item_id: &str) -> Result<(), GraphQLError> {
         self.execute(
-            &format!(
-                r#"mutation {{ play(queueItemId: "{}") {{ ok }} }}"#,
-                queue_item_id
-            ),
-            None,
+            "mutation($queueItemId: String!) { play(queueItemId: $queueItemId) { ok } }",
+            Some(serde_json::json!({ "queueItemId": queue_item_id })),
         )?;
         Ok(())
     }
 
     pub fn add_to_queue(&self, track_ids: &[i64]) -> Result<Vec<String>, GraphQLError> {
-        let ids_str: Vec<String> = track_ids.iter().map(|id| id.to_string()).collect();
         let data = self.execute(
-            &format!(
-                "mutation {{ addToQueue(trackIds: [{}]) {{ ok addedCount queueItemIds }} }}",
-                ids_str.join(", ")
-            ),
-            None,
+            "mutation($trackIds: [Int!]!) { addToQueue(trackIds: $trackIds) { ok addedCount queueItemIds } }",
+            Some(serde_json::json!({ "trackIds": track_ids })),
         )?;
         Ok(data["addToQueue"]["queueItemIds"]
             .as_array()
@@ -263,13 +244,9 @@ impl GraphQLClient {
     }
 
     pub fn replace_queue(&self, track_ids: &[i64]) -> Result<Vec<String>, GraphQLError> {
-        let ids_str: Vec<String> = track_ids.iter().map(|id| id.to_string()).collect();
         let data = self.execute(
-            &format!(
-                "mutation {{ replaceQueue(trackIds: [{}]) {{ ok addedCount queueItemIds }} }}",
-                ids_str.join(", ")
-            ),
-            None,
+            "mutation($trackIds: [Int!]!) { replaceQueue(trackIds: $trackIds) { ok addedCount queueItemIds } }",
+            Some(serde_json::json!({ "trackIds": track_ids })),
         )?;
         Ok(data["replaceQueue"]["queueItemIds"]
             .as_array()
@@ -288,38 +265,32 @@ impl GraphQLClient {
 
     pub fn favourite(&self, track_id: i64) -> Result<(), GraphQLError> {
         self.execute(
-            &format!("mutation {{ favourite(trackId: {}) {{ id }} }}", track_id),
-            None,
+            "mutation($trackId: Int!) { favourite(trackId: $trackId) { id } }",
+            Some(serde_json::json!({ "trackId": track_id })),
         )?;
         Ok(())
     }
 
     pub fn unfavourite(&self, track_id: i64) -> Result<(), GraphQLError> {
         self.execute(
-            &format!("mutation {{ unfavourite(trackId: {}) {{ id }} }}", track_id),
-            None,
+            "mutation($trackId: Int!) { unfavourite(trackId: $trackId) { id } }",
+            Some(serde_json::json!({ "trackId": track_id })),
         )?;
         Ok(())
     }
 
     pub fn save_snapshot(&self, name: &str) -> Result<(), GraphQLError> {
         self.execute(
-            &format!(
-                r#"mutation {{ saveSnapshot(name: "{}") {{ ok }} }}"#,
-                name.replace('"', "\\\"")
-            ),
-            None,
+            "mutation($name: String!) { saveSnapshot(name: $name) { ok } }",
+            Some(serde_json::json!({ "name": name })),
         )?;
         Ok(())
     }
 
     pub fn restore_snapshot(&self, name: &str) -> Result<(), GraphQLError> {
         self.execute(
-            &format!(
-                r#"mutation {{ restoreSnapshot(name: "{}") {{ ok }} }}"#,
-                name.replace('"', "\\\"")
-            ),
-            None,
+            "mutation($name: String!) { restoreSnapshot(name: $name) { ok } }",
+            Some(serde_json::json!({ "name": name })),
         )?;
         Ok(())
     }
