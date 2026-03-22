@@ -1,10 +1,18 @@
 # Changelog
 
+## 0.12.5
+
+### Fixed
+
+- **Remote tracks now play when queued via GQL/MCP** — two-part fix:
+  1. GQL mutations now trigger background downloads for remote tracks (0.12.4)
+  2. Remote tracks now get the correct cache path via `resolve_item_path()` — same code path as the TUI. Previously used a dummy `/tmp/koan-pending-{id}` path that didn't match where downloads write, so the player couldn't find the file even after download completed
+
 ## 0.12.4
 
 ### Fixed
 
-- **Remote tracks silently skipped when queued via GQL/MCP** — `addToQueue` and `replaceQueue` mutations created remote tracks with `LoadState::Pending` but never triggered downloads. The player tried to decode a non-existent file and silently skipped. Now spawns background downloads using the same pipeline as the TUI (progressive download with streaming playback after 256KB buffered)
+- **Remote track download pipeline wired to GQL mutations** — `addToQueue` and `replaceQueue` now spawn background downloads for remote tracks using the same pipeline as the TUI (progressive download with streaming playback after 256KB buffered)
 
 ## 0.12.3
 
