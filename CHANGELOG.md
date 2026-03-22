@@ -1,24 +1,22 @@
 # Changelog
 
-## Unreleased
+## 0.13.0
 
 ### Added
 
-<<<<<<< HEAD
-- **`koan serve`** — unified server command. Runs GraphQL API (always on) + optional Subsonic REST compatibility layer (`--subsonic <port>`). Replaces `koan graphql` (which remains as a hidden alias). One process, one player, two interfaces
-- **Subsonic REST API** (`--subsonic 4040`) — full compatibility layer for third-party clients (play:Sub, Amperfy, etc.). 22 endpoints including playlists (mapped to snapshots), genres, getMusicFolders. XML + JSON dual format, MD5+salt + legacy plaintext auth
-||||||| 10cf0f0
-=======
-- **Linux audio support** — `AudioBackend` trait abstraction with `CpalBackend` (ALSA/PipeWire/PulseAudio via cpal) for Linux and `CoreAudioBackend` wrapper for macOS. The decode pipeline, gapless playback, and ring buffer architecture are completely untouched — backends are dumb consumers
-- **Cross-platform credentials** — replaced `security-framework` with `keyring` crate. macOS still uses Keychain; Linux uses secret-service (GNOME Keyring / KDE Wallet)
-- **Platform-gated dependencies** — `coreaudio-sys` and `core-foundation` are now macOS-only; `cpal` is Linux-only. Builds on both platforms without pulling unused deps
+- **Linux audio support** — `AudioBackend` trait abstraction with `CpalBackend` (ALSA/PipeWire/PulseAudio via cpal) for Linux and `CoreAudioBackend` wrapper for macOS. Bit-perfect gapless playback on both platforms. The decode pipeline and ring buffer are untouched — backends are dumb consumers
+- **`koan serve`** — unified server command. GraphQL API (always on) + optional Subsonic REST (`--subsonic <port>`). Replaces `koan graphql` (kept as hidden alias). One process, one player, two interfaces
+- **Subsonic REST API** — 22 endpoints for third-party client compatibility (play:Sub, Amperfy). Browsing, search, streaming with Range support, cover art, star/unstar, scrobble, playlists (mapped to snapshots), genres. XML + JSON, MD5+salt auth. Proxy streaming for remote tracks
+- **`koan play --server`** — TUI client mode. Connects to a remote `koan serve` via GQL. Client streams audio locally from the server
+- **`--jukebox` mode** — server plays audio, client is remote control only
+- **GQL client library** in koan-core — typed helpers for all queries and mutations
+- **Cross-platform credentials** — `keyring` crate replaces `security-framework`. macOS Keychain + Linux secret-service
+- **CI builds for Linux** — clippy, test, build on both macOS and Ubuntu. Release binaries for macOS arm64/x86_64 + Linux x86_64/arm64
 
 ### Changed
 
-- `Player` now holds a `Box<dyn AudioBackend>` instead of directly calling CoreAudio FFI. All device enumeration, sample rate control, and engine creation go through the trait
-- `device.rs` and `engine.rs` are now `#[cfg(target_os = "macos")]` — they're implementation details of `CoreAudioBackend`
-- Cross-platform device listing available via `audio::list_output_devices()` facade
->>>>>>> main
+- `Player` holds `Box<dyn AudioBackend>` instead of direct CoreAudio FFI
+- Platform-gated deps: `coreaudio-sys`/`core-foundation` macOS-only, `cpal` Linux-only
 
 ## 0.12.5
 

@@ -2166,7 +2166,7 @@ mod tests {
 
         let db = Database::open(&state.db_path).unwrap();
         let tracks = queries::all_tracks(&db.conn).unwrap();
-        let tid = tracks[0].id;
+        let _tid = tracks[0].id;
 
         // Create (empty playlist first — songId[] parsing needs special handling)
         let app = build_test_router(state.clone());
