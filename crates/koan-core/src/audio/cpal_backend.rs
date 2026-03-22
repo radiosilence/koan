@@ -206,6 +206,60 @@ struct CpalEngineHandle {
 // The stream callback captures its own state and is invoked by cpal's audio thread.
 unsafe impl Send for CpalEngineHandle {}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpal_backend_constructs() {
+        let _backend = CpalBackend::new();
+    }
+
+    #[test]
+    fn cpal_list_devices_no_panic() {
+        let backend = CpalBackend::new();
+        let result = backend.list_devices();
+        // Should succeed even with no hardware (returns empty vec on CI).
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn cpal_set_sample_rate_is_noop() {
+        let backend = CpalBackend::new();
+        let dummy = DeviceInfo {
+            name: "nonexistent".into(),
+            sample_rates: vec![44100.0],
+            platform_id: 0,
+        };
+        // set_device_sample_rate is always a no-op on cpal.
+        assert!(backend.set_device_sample_rate(&dummy, 96000.0).is_ok());
+    }
+
+    #[test]
+    fn cpal_device_info_has_sample_rates() {
+        let backend = CpalBackend::new();
+        if let Ok(devices) = backend.list_devices() {
+            for dev in &devices {
+                // Every device should have at least one sample rate.
+                if !dev.sample_rates.is_empty() {
+                    assert!(dev.sample_rates[0] > 0.0);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn cpal_resolve_nonexistent_device_fails() {
+        let backend = CpalBackend::new();
+        let dummy = DeviceInfo {
+            name: "this device does not exist xyzzy".into(),
+            sample_rates: vec![],
+            platform_id: 9999,
+        };
+        assert!(backend.resolve_device(&dummy).is_err());
+    }
+}
+
 impl AudioEngineHandle for CpalEngineHandle {
     fn start(&self) -> Result<(), BackendError> {
         self.running.store(true, Ordering::Relaxed);

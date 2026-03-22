@@ -66,3 +66,78 @@ pub trait AudioEngineHandle: Send {
     fn stop(&self) -> Result<(), BackendError>;
     fn is_running(&self) -> bool;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn device_info_construction() {
+        let info = DeviceInfo {
+            name: "Test DAC".into(),
+            sample_rates: vec![44100.0, 48000.0, 96000.0],
+            platform_id: 42,
+        };
+        assert_eq!(info.name, "Test DAC");
+        assert_eq!(info.sample_rates.len(), 3);
+        assert_eq!(info.platform_id, 42);
+    }
+
+    #[test]
+    fn backend_error_formatting() {
+        let err = BackendError::NoDevices;
+        assert_eq!(err.to_string(), "no output devices found");
+
+        let err = BackendError::DeviceNotFound("Missing".into());
+        assert!(err.to_string().contains("Missing"));
+
+        let err = BackendError::UnsupportedSampleRate(192000.0);
+        assert!(err.to_string().contains("192000"));
+    }
+
+    #[test]
+    fn platform_backend_constructs() {
+        // Verify the platform backend can be created without panicking.
+        let _backend = super::super::platform_backend();
+    }
+
+    #[test]
+    fn platform_backend_lists_devices() {
+        let backend = super::super::platform_backend();
+        // Should not panic. May return empty on CI (no audio hardware).
+        let result = backend.list_devices();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn platform_backend_has_default_device() {
+        let backend = super::super::platform_backend();
+        // On real hardware this should succeed. On CI it might fail (no device).
+        // We just verify it doesn't panic.
+        let _ = backend.default_device();
+    }
+
+    #[test]
+    fn engine_create_with_ring_buffer() {
+        let backend = super::super::platform_backend();
+        let device = match backend.default_device() {
+            Ok(d) => d,
+            Err(_) => return, // no audio device (CI) — skip
+        };
+
+        let (producer, consumer) = rtrb::RingBuffer::new(4096);
+        let samples_played = Arc::new(AtomicU64::new(0));
+
+        let rate = device.sample_rates.first().copied().unwrap_or(44100.0);
+
+        let engine = backend.create_engine(&device, rate, 2, consumer, samples_played);
+        // Should create without panicking on real hardware.
+        // May fail on CI — that's fine, we're testing the code path not the hardware.
+        if let Ok(engine) = engine {
+            assert!(!engine.is_running());
+            // Don't start — no point playing silence in a test.
+            drop(engine);
+        }
+        drop(producer); // keep producer alive until after engine
+    }
+}
