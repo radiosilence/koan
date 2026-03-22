@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, params};
@@ -573,6 +574,122 @@ pub fn tracks_for_album(conn: &Connection, album_id: i64) -> Result<Vec<TrackRow
     Ok(rows)
 }
 
+/// Build a SQL `IN (?, ?, ...)` clause with the given number of placeholders.
+fn in_clause(n: usize) -> String {
+    let mut s = String::with_capacity(2 + n * 2);
+    s.push('(');
+    for i in 0..n {
+        if i > 0 {
+            s.push(',');
+        }
+        s.push('?');
+    }
+    s.push(')');
+    s
+}
+
+/// Get distinct genres for a batch of artist IDs in a single query.
+/// Returns a map from artist_id → set of lowercased genre strings.
+pub fn genres_by_artist_ids(
+    conn: &Connection,
+    ids: &[i64],
+) -> Result<HashMap<i64, HashSet<String>>, DbError> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let sql = format!(
+        "SELECT t.artist_id, t.genre FROM tracks t
+         WHERE t.artist_id IN {} AND t.genre IS NOT NULL
+         UNION
+         SELECT al.artist_id, t.genre FROM tracks t
+         JOIN albums al ON t.album_id = al.id
+         WHERE al.artist_id IN {} AND t.genre IS NOT NULL",
+        in_clause(ids.len()),
+        in_clause(ids.len()),
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+        .iter()
+        .chain(ids.iter())
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(param_refs.as_slice(), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut map: HashMap<i64, HashSet<String>> = HashMap::new();
+    for row in rows {
+        let (artist_id, genre) = row?;
+        map.entry(artist_id)
+            .or_default()
+            .insert(genre.to_lowercase());
+    }
+    Ok(map)
+}
+
+/// Get distinct genres for a batch of album IDs in a single query.
+/// Returns a map from album_id → set of lowercased genre strings.
+pub fn genres_by_album_ids(
+    conn: &Connection,
+    ids: &[i64],
+) -> Result<HashMap<i64, HashSet<String>>, DbError> {
+    if ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let sql = format!(
+        "SELECT t.album_id, t.genre FROM tracks t
+         WHERE t.album_id IN {} AND t.genre IS NOT NULL",
+        in_clause(ids.len()),
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params: Vec<Box<dyn rusqlite::types::ToSql>> = ids
+        .iter()
+        .map(|id| Box::new(*id) as Box<dyn rusqlite::types::ToSql>)
+        .collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(param_refs.as_slice(), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut map: HashMap<i64, HashSet<String>> = HashMap::new();
+    for row in rows {
+        let (album_id, genre) = row?;
+        map.entry(album_id)
+            .or_default()
+            .insert(genre.to_lowercase());
+    }
+    Ok(map)
+}
+
+/// Get all artist IDs that have at least one favourited track, in a single query.
+pub fn favourite_artist_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT t.artist_id FROM tracks t
+         JOIN favourites f ON (t.path = f.track_path OR t.cached_path = f.track_path)
+         WHERE t.artist_id IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    let mut ids = HashSet::new();
+    for row in rows {
+        ids.insert(row?);
+    }
+    Ok(ids)
+}
+
+/// Get all album IDs that have at least one favourited track, in a single query.
+pub fn favourite_album_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT t.album_id FROM tracks t
+         JOIN favourites f ON (t.path = f.track_path OR t.cached_path = f.track_path)
+         WHERE t.album_id IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    let mut ids = HashSet::new();
+    for row in rows {
+        ids.insert(row?);
+    }
+    Ok(ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -902,5 +1019,142 @@ mod tests {
 
         // Only 1 track — no duplication.
         assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
+    }
+
+    #[test]
+    fn test_genres_by_artist_ids() {
+        let db = test_db();
+        let mut meta1 = sample_meta("Track1", "ArtistA", "Album1");
+        meta1.genre = Some("Rock".into());
+        upsert_track(&db.conn, &meta1).unwrap();
+
+        let mut meta2 = sample_meta("Track2", "ArtistA", "Album1");
+        meta2.genre = Some("Jazz".into());
+        meta2.track_number = Some(2);
+        meta2.path = Some("/music/Album1/Track2.flac".into());
+        upsert_track(&db.conn, &meta2).unwrap();
+
+        let mut meta3 = sample_meta("Track3", "ArtistB", "Album2");
+        meta3.genre = Some("Metal".into());
+        upsert_track(&db.conn, &meta3).unwrap();
+
+        // Look up ArtistA's ID.
+        let artist_a_id: i64 = db
+            .conn
+            .query_row("SELECT id FROM artists WHERE name = 'ArtistA'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let artist_b_id: i64 = db
+            .conn
+            .query_row("SELECT id FROM artists WHERE name = 'ArtistB'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        let genres = genres_by_artist_ids(&db.conn, &[artist_a_id, artist_b_id]).unwrap();
+        let a_genres = genres.get(&artist_a_id).unwrap();
+        assert!(a_genres.contains("rock"));
+        assert!(a_genres.contains("jazz"));
+        let b_genres = genres.get(&artist_b_id).unwrap();
+        assert!(b_genres.contains("metal"));
+    }
+
+    #[test]
+    fn test_genres_by_artist_ids_empty() {
+        let db = test_db();
+        let genres = genres_by_artist_ids(&db.conn, &[]).unwrap();
+        assert!(genres.is_empty());
+    }
+
+    #[test]
+    fn test_genres_by_album_ids() {
+        let db = test_db();
+        let mut meta1 = sample_meta("Track1", "Artist", "AlbumX");
+        meta1.genre = Some("Ambient".into());
+        upsert_track(&db.conn, &meta1).unwrap();
+
+        let mut meta2 = sample_meta("Track2", "Artist", "AlbumX");
+        meta2.genre = Some("IDM".into());
+        meta2.track_number = Some(2);
+        meta2.path = Some("/music/AlbumX/Track2.flac".into());
+        upsert_track(&db.conn, &meta2).unwrap();
+
+        let album_id: i64 = db
+            .conn
+            .query_row("SELECT id FROM albums WHERE title = 'AlbumX'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        let genres = genres_by_album_ids(&db.conn, &[album_id]).unwrap();
+        let album_genres = genres.get(&album_id).unwrap();
+        assert!(album_genres.contains("ambient"));
+        assert!(album_genres.contains("idm"));
+    }
+
+    #[test]
+    fn test_favourite_artist_ids_batch() {
+        let db = test_db();
+        let meta = sample_meta("FavTrack", "FavArtist", "FavAlbum");
+        upsert_track(&db.conn, &meta).unwrap();
+
+        // Add to favourites.
+        crate::db::queries::add_favourite(
+            &db.conn,
+            std::path::Path::new("/music/FavAlbum/FavTrack.flac"),
+        )
+        .unwrap();
+
+        let artist_id: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM artists WHERE name = 'FavArtist'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let fav_ids = favourite_artist_ids_batch(&db.conn).unwrap();
+        assert!(fav_ids.contains(&artist_id));
+    }
+
+    #[test]
+    fn test_favourite_artist_ids_batch_empty() {
+        let db = test_db();
+        let fav_ids = favourite_artist_ids_batch(&db.conn).unwrap();
+        assert!(fav_ids.is_empty());
+    }
+
+    #[test]
+    fn test_favourite_album_ids_batch() {
+        let db = test_db();
+        let meta = sample_meta("FavTrack", "FavArtist", "FavAlbum");
+        upsert_track(&db.conn, &meta).unwrap();
+
+        crate::db::queries::add_favourite(
+            &db.conn,
+            std::path::Path::new("/music/FavAlbum/FavTrack.flac"),
+        )
+        .unwrap();
+
+        let album_id: i64 = db
+            .conn
+            .query_row(
+                "SELECT id FROM albums WHERE title = 'FavAlbum'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let fav_ids = favourite_album_ids_batch(&db.conn).unwrap();
+        assert!(fav_ids.contains(&album_id));
+    }
+
+    #[test]
+    fn test_favourite_album_ids_batch_empty() {
+        let db = test_db();
+        let fav_ids = favourite_album_ids_batch(&db.conn).unwrap();
+        assert!(fav_ids.is_empty());
     }
 }

@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -628,16 +627,20 @@ impl QueryRoot {
 
         if let Some(ref g) = genre {
             let g_lower = g.to_lowercase();
+            let artist_ids: Vec<i64> = artists.iter().map(|a| a.id).collect();
+            let genre_map = queries::genres_by_artist_ids(&db.conn, &artist_ids)
+                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
             artists.retain(|a| {
-                artist_genres(&db, a.id)
-                    .iter()
-                    .any(|ag| ag.contains(&g_lower))
+                genre_map
+                    .get(&a.id)
+                    .is_some_and(|genres| genres.iter().any(|ag| ag.contains(&g_lower)))
             });
         }
 
         if favourites_only {
-            let fav_artist_ids = favourite_artist_ids(&db)?;
-            artists.retain(|a| fav_artist_ids.contains(&a.id));
+            let fav_ids = queries::favourite_artist_ids_batch(&db.conn)
+                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            artists.retain(|a| fav_ids.contains(&a.id));
         }
 
         paginate(
@@ -731,16 +734,20 @@ impl QueryRoot {
 
         if let Some(ref g) = genre {
             let g_lower = g.to_lowercase();
+            let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
+            let genre_map = queries::genres_by_album_ids(&db.conn, &album_ids)
+                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
             albums.retain(|a| {
-                album_genres(&db, a.id)
-                    .iter()
-                    .any(|ag| ag.contains(&g_lower))
+                genre_map
+                    .get(&a.id)
+                    .is_some_and(|genres| genres.iter().any(|ag| ag.contains(&g_lower)))
             });
         }
 
         if favourites_only {
-            let fav_album_ids = favourite_album_ids(&db)?;
-            albums.retain(|a| fav_album_ids.contains(&a.id));
+            let fav_ids = queries::favourite_album_ids_batch(&db.conn)
+                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            albums.retain(|a| fav_ids.contains(&a.id));
         }
 
         paginate(
@@ -1850,26 +1857,6 @@ fn album_year(album: &queries::AlbumRow) -> Option<i32> {
     album.date.as_deref().and_then(extract_year)
 }
 
-/// Get genres for an artist (distinct genres from their tracks).
-fn artist_genres(db: &Database, artist_id: i64) -> HashSet<String> {
-    queries::tracks_for_artist(&db.conn, artist_id)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|t| t.genre)
-        .map(|g| g.to_lowercase())
-        .collect()
-}
-
-/// Get genres for an album (distinct genres from its tracks).
-fn album_genres(db: &Database, album_id: i64) -> HashSet<String> {
-    queries::tracks_for_album(&db.conn, album_id)
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|t| t.genre)
-        .map(|g| g.to_lowercase())
-        .collect()
-}
-
 /// Get the year for a track via its album's date.
 fn track_year(db: &Database, track: &queries::TrackRow) -> Option<i32> {
     track
@@ -1877,44 +1864,6 @@ fn track_year(db: &Database, track: &queries::TrackRow) -> Option<i32> {
         .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten())
         .as_deref()
         .and_then(extract_year)
-}
-
-// ---------------------------------------------------------------------------
-// Helper: favourite ID sets for filtering
-// ---------------------------------------------------------------------------
-
-/// Get the set of artist IDs that have at least one favourited track.
-fn favourite_artist_ids(db: &Database) -> async_graphql::Result<HashSet<i64>> {
-    let fav_paths =
-        queries::load_favourites(&db.conn).map_err(|e| async_graphql::Error::new(e.to_string()))?;
-    let mut ids = HashSet::new();
-    for path in &fav_paths {
-        let path_str = path.to_string_lossy();
-        if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &path_str)
-            && let Ok(Some(row)) = queries::get_track_row(&db.conn, tid)
-            && let Some(aid) = row.artist_id
-        {
-            ids.insert(aid);
-        }
-    }
-    Ok(ids)
-}
-
-/// Get the set of album IDs that have at least one favourited track.
-fn favourite_album_ids(db: &Database) -> async_graphql::Result<HashSet<i64>> {
-    let fav_paths =
-        queries::load_favourites(&db.conn).map_err(|e| async_graphql::Error::new(e.to_string()))?;
-    let mut ids = HashSet::new();
-    for path in &fav_paths {
-        let path_str = path.to_string_lossy();
-        if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &path_str)
-            && let Ok(Some(row)) = queries::get_track_row(&db.conn, tid)
-            && let Some(aid) = row.album_id
-        {
-            ids.insert(aid);
-        }
-    }
-    Ok(ids)
 }
 
 fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
