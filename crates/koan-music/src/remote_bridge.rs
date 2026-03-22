@@ -22,16 +22,28 @@ use koan_core::player::state::{
 /// Spawn the remote bridge with local audio playback.
 ///
 /// Returns the same types as `Player::spawn()` — the TUI works unchanged.
+///
+/// `jukebox`: if true, the server plays audio. No local Player is spawned.
+/// The client is purely a remote control.
 pub fn spawn_remote_bridge(
     server_url: &str,
+    jukebox: bool,
 ) -> (
     Arc<SharedPlayerState>,
     Arc<koan_core::audio::buffer::PlaybackTimeline>,
     Arc<koan_core::audio::viz::VizSnapshot>,
     Sender<PlayerCommand>,
 ) {
-    // Spawn a real local Player for audio output.
-    let (state, timeline, viz, local_tx) = koan_core::player::Player::spawn();
+    // In jukebox mode: no local audio. In client mode: local Player for audio.
+    let (state, timeline, viz, local_tx) = if jukebox {
+        let state = SharedPlayerState::new();
+        let timeline = koan_core::audio::buffer::PlaybackTimeline::new();
+        let viz = koan_core::audio::viz::VizSnapshot::new();
+        let (tx, _rx) = bounded::<PlayerCommand>(16); // dummy — no local player
+        (state, timeline, viz, tx)
+    } else {
+        koan_core::player::Player::spawn()
+    };
 
     // Channel for TUI → bridge commands.
     let (cmd_tx, cmd_rx) = bounded::<PlayerCommand>(16);
@@ -39,7 +51,8 @@ pub fn spawn_remote_bridge(
     let client = GraphQLClient::new(server_url);
     let stream_base = format!("{}/rest/stream", server_url.trim_end_matches('/'));
 
-    // Poller thread: syncs remote state → local SharedPlayerState + triggers downloads.
+    // Poller thread: syncs remote state → local SharedPlayerState.
+    // In client mode also triggers downloads. In jukebox mode, display only.
     {
         let state = state.clone();
         let local_tx = local_tx.clone();
@@ -48,7 +61,7 @@ pub fn spawn_remote_bridge(
         std::thread::Builder::new()
             .name("koan-remote-poll".into())
             .spawn(move || {
-                poll_and_stream_loop(client, state, local_tx, stream_base);
+                poll_and_stream_loop(client, state, local_tx, stream_base, jukebox);
             })
             .expect("failed to spawn remote poller");
     }
@@ -166,6 +179,7 @@ fn poll_and_stream_loop(
     state: Arc<SharedPlayerState>,
     local_tx: Sender<PlayerCommand>,
     stream_base: String,
+    jukebox: bool,
 ) {
     let mut last_track_id: Option<String> = None;
 
@@ -178,7 +192,7 @@ fn poll_and_stream_loop(
                 _ => PlaybackState::Stopped,
             };
 
-            // Detect track change — need to download new track.
+            // Detect track change.
             let current_track_id = np.queue_item_id.clone();
             if current_track_id != last_track_id && current_track_id.is_some() {
                 last_track_id = current_track_id.clone();
@@ -191,6 +205,7 @@ fn poll_and_stream_loop(
                     let cache_dir = koan_core::config::config_dir().join("cache/remote-stream");
                     let dest = cache_dir.join(format!("{}.audio", uuid));
 
+                    // Update track info for TUI display (both modes).
                     state.set_track_info(Some(TrackInfo {
                         id: queue_id,
                         path: dest.clone(),
@@ -201,33 +216,36 @@ fn poll_and_stream_loop(
                         duration_ms: track.duration_ms,
                     }));
 
-                    let item = PlaylistItem {
-                        id: queue_id,
-                        path: dest,
-                        title: track.title.clone(),
-                        artist: track.artist.clone(),
-                        album_artist: track.artist.clone(),
-                        album: track.album.clone(),
-                        year: None,
-                        codec: Some(track.codec.clone()),
-                        track_number: None,
-                        disc: None,
-                        duration_ms: Some(track.duration_ms),
-                        load_state: LoadState::Pending,
-                    };
+                    // Client mode: download and play locally.
+                    if !jukebox {
+                        let item = PlaylistItem {
+                            id: queue_id,
+                            path: dest,
+                            title: track.title.clone(),
+                            artist: track.artist.clone(),
+                            album_artist: track.artist.clone(),
+                            album: track.album.clone(),
+                            year: None,
+                            codec: Some(track.codec.clone()),
+                            track_number: None,
+                            disc: None,
+                            duration_ms: Some(track.duration_ms),
+                            load_state: LoadState::Pending,
+                        };
 
-                    local_tx.send(PlayerCommand::ClearPlaylist).ok();
-                    local_tx.send(PlayerCommand::AddToPlaylist(vec![item])).ok();
+                        local_tx.send(PlayerCommand::ClearPlaylist).ok();
+                        local_tx.send(PlayerCommand::AddToPlaylist(vec![item])).ok();
 
-                    let stream_url = format!("{}?id={}", stream_base, qid_str);
-                    let state_dl = state.clone();
-                    let tx_dl = local_tx.clone();
-                    std::thread::Builder::new()
-                        .name("koan-remote-dl".into())
-                        .spawn(move || {
-                            download_and_play(&stream_url, queue_id, &state_dl, &tx_dl);
-                        })
-                        .ok();
+                        let stream_url = format!("{}?id={}", stream_base, qid_str);
+                        let state_dl = state.clone();
+                        let tx_dl = local_tx.clone();
+                        std::thread::Builder::new()
+                            .name("koan-remote-dl".into())
+                            .spawn(move || {
+                                download_and_play(&stream_url, queue_id, &state_dl, &tx_dl);
+                            })
+                            .ok();
+                    }
                 }
             }
 

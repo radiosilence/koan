@@ -206,7 +206,7 @@ pub fn cmd_play(
     std::thread::sleep(Duration::from_millis(100));
 }
 
-pub fn cmd_play_remote(server_url: &str, _jukebox: bool) {
+pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
     use crate::remote_bridge;
 
     eprintln!("connecting to koan server at {}...", server_url);
@@ -235,7 +235,11 @@ pub fn cmd_play_remote(server_url: &str, _jukebox: bool) {
     }
 
     // Spawn the remote bridge — returns the same types as Player::spawn().
-    let (state, _timeline, viz_snapshot, cmd_tx) = remote_bridge::spawn_remote_bridge(server_url);
+    if jukebox {
+        eprintln!("jukebox mode — server plays audio, client is remote control");
+    }
+    let (state, _timeline, viz_snapshot, cmd_tx) =
+        remote_bridge::spawn_remote_bridge(server_url, jukebox);
 
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
