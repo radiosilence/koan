@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.13.1
+
+### Fixed
+
+- **N+1 query elimination** — genre and favourite filtering now use batch SQL queries instead of per-item DB calls. O(1) instead of O(n*m) on large libraries
+- **Remote bridge hardening** — exhaustive PlayerCommand match (compiler catches new variants), incomplete downloads marked as Failed instead of Ready, 30s HTTP timeouts
+- **GraphQL client injection fix** — all query building converted from format!() string interpolation to proper GraphQL variables
+- **Player device restart dedup** — extracted shared restart logic, config load errors now logged instead of silently swallowed (`Config::load_or_default()`)
+- **SubsonicClient factory** — single `subsonic_client()` helper replaces 9 manual construction sites, 30s timeout on all HTTP clients
+- **serve.rs route dedup** — extracted `register_subsonic_routes()`, test router no longer duplicates prod routes
+- **CI reliability** — arm64 cross-compile no longer silently fails, tags not force-pushed, doc tests added
+
+### Changed
+
+- **graphql.rs split** — 2400-line god file decomposed into `graphql/{mod,types,queries,mutations,helpers,server}.rs`
+
 ## 0.13.0
 
 ### Added
