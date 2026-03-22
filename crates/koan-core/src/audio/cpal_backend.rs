@@ -131,9 +131,7 @@ impl CpalBackend {
 
 impl AudioBackend for CpalBackend {
     fn list_devices(&self) -> Result<Vec<DeviceInfo>, BackendError> {
-        let devices = self
-            .host
-            .output_devices()
+        let devices = suppress_stderr(|| self.host.output_devices())
             .map_err(|e| BackendError::Platform(e.to_string()))?;
 
         let mut result = Vec::new();
@@ -146,11 +144,9 @@ impl AudioBackend for CpalBackend {
     }
 
     fn default_device(&self) -> Result<DeviceInfo, BackendError> {
-        let dev = self
-            .host
-            .default_output_device()
-            .ok_or(BackendError::NoDevices)?;
-        Self::device_info_from_cpal(&dev, 0).ok_or(BackendError::NoDevices)
+        let dev =
+            suppress_stderr(|| self.host.default_output_device()).ok_or(BackendError::NoDevices)?;
+        suppress_stderr(|| Self::device_info_from_cpal(&dev, 0)).ok_or(BackendError::NoDevices)
     }
 
     fn supported_sample_rates(&self, device: &DeviceInfo) -> Result<Vec<f64>, BackendError> {
@@ -158,11 +154,8 @@ impl AudioBackend for CpalBackend {
     }
 
     fn get_device_sample_rate(&self, device: &DeviceInfo) -> Result<f64, BackendError> {
-        // cpal doesn't expose the device's current nominal rate.
-        // Return the first supported rate as a reasonable default.
         let dev = self.resolve_device(device)?;
-        let config = dev
-            .default_output_config()
+        let config = suppress_stderr(|| dev.default_output_config())
             .map_err(|e| BackendError::Platform(e.to_string()))?;
         Ok(config.sample_rate().0 as f64)
     }
