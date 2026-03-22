@@ -8,6 +8,7 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -1038,7 +1039,10 @@ async fn proxy_stream_from_upstream(
     let upstream_url = client.stream_url(remote_id);
 
     // Use reqwest async to proxy the stream.
-    let http = reqwest::Client::new();
+    let http = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .unwrap();
     let mut req = http.get(&upstream_url);
 
     // Forward Range header if present.
@@ -1644,27 +1648,9 @@ async fn delete_playlist(
 // Public router
 // ===========================================================================
 
-/// Build a Subsonic-compatible REST API router.
-///
-/// Auth credentials come from `Config::load()`.  If remote is not configured,
-/// falls back to admin/admin.
-pub fn subsonic_router(db_path: PathBuf) -> axum::Router {
-    let cfg = Config::load().unwrap_or_default();
-
-    let (username, password) = if cfg.remote.username.is_empty() {
-        ("admin".to_string(), "admin".to_string())
-    } else {
-        let pass = super::get_remote_password(&cfg);
-        (cfg.remote.username.clone(), pass)
-    };
-
-    let state = Arc::new(AppState {
-        db_path,
-        username,
-        password,
-    });
-
-    axum::Router::new()
+/// Register all Subsonic REST routes on the given router.
+fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router<Arc<AppState>> {
+    router
         // Browsing
         .route("/rest/ping", get(ping))
         .route("/rest/ping.view", get(ping))
@@ -1715,7 +1701,29 @@ pub fn subsonic_router(db_path: PathBuf) -> axum::Router {
         .route("/rest/createPlaylist.view", get(create_playlist))
         .route("/rest/deletePlaylist", get(delete_playlist))
         .route("/rest/deletePlaylist.view", get(delete_playlist))
-        .with_state(state)
+}
+
+/// Build a Subsonic-compatible REST API router.
+///
+/// Auth credentials come from `Config::load()`.  If remote is not configured,
+/// falls back to admin/admin.
+pub fn subsonic_router(db_path: PathBuf) -> axum::Router {
+    let cfg = Config::load().unwrap_or_default();
+
+    let (username, password) = if cfg.remote.username.is_empty() {
+        ("admin".to_string(), "admin".to_string())
+    } else {
+        let pass = super::get_remote_password(&cfg);
+        (cfg.remote.username.clone(), pass)
+    };
+
+    let state = Arc::new(AppState {
+        db_path,
+        username,
+        password,
+    });
+
+    register_subsonic_routes(axum::Router::new()).with_state(state)
 }
 
 // ===========================================================================
@@ -1745,49 +1753,7 @@ mod tests {
     }
 
     fn build_test_router(state: Arc<AppState>) -> axum::Router {
-        // Re-use the same route set but with our test state.
-        axum::Router::new()
-            .route("/rest/ping", get(ping))
-            .route("/rest/ping.view", get(ping))
-            .route("/rest/getLicense", get(get_license))
-            .route("/rest/getLicense.view", get(get_license))
-            .route("/rest/getArtists", get(get_artists))
-            .route("/rest/getArtists.view", get(get_artists))
-            .route("/rest/getArtist", get(get_artist))
-            .route("/rest/getArtist.view", get(get_artist))
-            .route("/rest/getAlbum", get(get_album))
-            .route("/rest/getAlbum.view", get(get_album))
-            .route("/rest/getAlbumList2", get(get_album_list2))
-            .route("/rest/getAlbumList2.view", get(get_album_list2))
-            .route("/rest/getSong", get(get_song))
-            .route("/rest/getSong.view", get(get_song))
-            .route("/rest/search3", get(search3))
-            .route("/rest/search3.view", get(search3))
-            .route("/rest/star", get(star))
-            .route("/rest/star.view", get(star))
-            .route("/rest/unstar", get(unstar))
-            .route("/rest/unstar.view", get(unstar))
-            .route("/rest/getStarred2", get(get_starred2))
-            .route("/rest/getStarred2.view", get(get_starred2))
-            .route("/rest/scrobble", get(scrobble))
-            .route("/rest/scrobble.view", get(scrobble))
-            .route("/rest/getRandomSongs", get(get_random_songs))
-            .route("/rest/getRandomSongs.view", get(get_random_songs))
-            .route("/rest/getSimilarSongs2", get(get_similar_songs2))
-            .route("/rest/getSimilarSongs2.view", get(get_similar_songs2))
-            .route("/rest/getMusicFolders", get(get_music_folders))
-            .route("/rest/getMusicFolders.view", get(get_music_folders))
-            .route("/rest/getGenres", get(get_genres))
-            .route("/rest/getGenres.view", get(get_genres))
-            .route("/rest/getPlaylists", get(get_playlists))
-            .route("/rest/getPlaylists.view", get(get_playlists))
-            .route("/rest/getPlaylist", get(get_playlist))
-            .route("/rest/getPlaylist.view", get(get_playlist))
-            .route("/rest/createPlaylist", get(create_playlist))
-            .route("/rest/createPlaylist.view", get(create_playlist))
-            .route("/rest/deletePlaylist", get(delete_playlist))
-            .route("/rest/deletePlaylist.view", get(delete_playlist))
-            .with_state(state)
+        register_subsonic_routes(axum::Router::new()).with_state(state)
     }
 
     fn auth_query(extra: &str) -> String {
