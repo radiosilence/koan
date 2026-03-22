@@ -28,7 +28,18 @@ git clone https://github.com/radiosilence/koan.git && cd koan
 cargo install --path crates/koan-music
 ```
 
-Requires macOS (CoreAudio). Single binary, no runtime dependencies.
+Single binary. macOS works out of the box (CoreAudio). Linux needs ALSA dev headers:
+
+```bash
+# Debian/Ubuntu
+sudo apt install libasound2-dev libdbus-1-dev
+
+# Fedora
+sudo dnf install alsa-lib-devel dbus-devel
+
+# Arch
+sudo pacman -S alsa-lib dbus
+```
 
 ### Set up your music
 

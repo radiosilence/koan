@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_graphql::connection::{Connection, Edge, EmptyFields};
 use async_graphql::{Context, EmptySubscription, Enum, Object, Schema, SimpleObject};
 use crossbeam_channel::Sender;
-use koan_core::audio::device;
+use koan_core::audio;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
@@ -1011,7 +1011,7 @@ impl QueryRoot {
     }
 
     async fn devices(&self) -> async_graphql::Result<Vec<GqlDevice>> {
-        let devices = device::list_output_devices()
+        let devices = audio::list_output_devices()
             .map_err(|e| async_graphql::Error::new(format!("device error: {}", e)))?;
         Ok(devices
             .iter()
