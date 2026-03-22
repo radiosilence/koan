@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **iOS app scaffold** — Swift Package in `ios/` targeting iOS 17+. Lightweight URLSession-based GraphQL client (zero deps), Codable models matching the full GQL schema, and basic library browsing views (artists > albums > tracks) with server URL configuration and connection test
+
 ## 0.12.1
 
 ### Changed
