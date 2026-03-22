@@ -190,6 +190,12 @@ enum Commands {
     },
     /// Run as a headless MCP server on stdio (for Claude Desktop / MCP clients)
     Mcp,
+    /// Start a Subsonic-compatible HTTP server (search, stream, cover art)
+    Serve {
+        /// Port to listen on (default: 4040)
+        #[arg(long)]
+        port: Option<u16>,
+    },
     /// Start a GraphQL API server (headless player + HTTP)
     Graphql {
         /// Port to listen on (default: from config or 4000)
@@ -296,6 +302,7 @@ fn main() {
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }
+        Some(Commands::Serve { port }) => commands::cmd_serve(port),
         Some(Commands::Mcp) => commands::cmd_mcp(),
         Some(Commands::Graphql {
             port,

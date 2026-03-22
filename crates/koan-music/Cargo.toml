@@ -40,6 +40,8 @@ uuid = { version = "1.22.0", features = ["v7"] }
 async-graphql = "7"
 async-graphql-axum = "7"
 axum = "0.8"
+md5 = "0.8"
+tokio-util = { version = "0.7", features = ["io"] }
 
 [dev-dependencies]
 tempfile = "3"
