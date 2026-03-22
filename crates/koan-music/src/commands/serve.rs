@@ -1025,16 +1025,10 @@ async fn proxy_stream_from_upstream(
     client_headers: &HeaderMap,
 ) -> Result<Response, SubsonicError> {
     let cfg = Config::load().unwrap_or_default();
-    if !cfg.remote.enabled {
-        return Err(SubsonicError::not_found("Remote server not configured"));
-    }
-
-    let password = super::get_remote_password(&cfg);
-    let client = koan_core::remote::client::SubsonicClient::new(
-        &cfg.remote.url,
-        &cfg.remote.username,
-        &password,
-    );
+    let client = match super::subsonic_client(&cfg) {
+        Some(c) => c,
+        None => return Err(SubsonicError::not_found("Remote server not configured")),
+    };
     let upstream_url = client.stream_url(remote_id);
 
     // Use reqwest async to proxy the stream.

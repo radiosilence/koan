@@ -139,6 +139,22 @@ pub(crate) fn get_remote_password(cfg: &core_config::Config) -> String {
     }
 }
 
+/// Build a `SubsonicClient` from the merged config, returning `None` if remote
+/// is disabled or has no URL configured.
+pub(crate) fn subsonic_client(
+    cfg: &koan_core::config::Config,
+) -> Option<koan_core::remote::client::SubsonicClient> {
+    if !cfg.remote.enabled || cfg.remote.url.is_empty() {
+        return None;
+    }
+    let password = get_remote_password(cfg);
+    Some(koan_core::remote::client::SubsonicClient::new(
+        &cfg.remote.url,
+        &cfg.remote.username,
+        &password,
+    ))
+}
+
 /// Sanitise and truncate a string for use as a path component.
 /// Strips illegal chars and caps at 240 bytes (macOS 255-byte filename limit minus room for ext).
 pub(crate) fn sanitise_filename(s: &str) -> String {

@@ -9,7 +9,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{LoadState, QueueItemId, SharedPlayerState};
 use owo_colors::OwoColorize;
 
-use super::{cache_path_for_track, get_remote_password, open_db, playlist_item_from_track};
+use super::{cache_path_for_track, open_db, playlist_item_from_track};
 use crate::tui::app::PickerAction;
 
 /// Build PlaylistItems from track IDs and enqueue according to the action:
@@ -222,12 +222,16 @@ pub(crate) fn download_track(
         return;
     }
 
-    let password = get_remote_password(cfg);
-    let client = koan_core::remote::client::SubsonicClient::new(
-        &cfg.remote.url,
-        &cfg.remote.username,
-        &password,
-    );
+    let client = match super::subsonic_client(cfg) {
+        Some(c) => c,
+        None => {
+            log::warn!(
+                "remote not configured — skipping download for {}",
+                remote_id
+            );
+            return;
+        }
+    };
 
     // Shared counter: download thread writes, StreamingSource reads.
     let bytes_written: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
