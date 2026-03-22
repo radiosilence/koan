@@ -333,6 +333,7 @@ impl Player {
             info.channels as u32,
             consumer,
             self.timeline.samples_played_counter(),
+            self.shared_state.volume_atomic(),
         )?;
         engine.start()?;
 
@@ -548,6 +549,7 @@ impl Player {
             info.channels as u32,
             consumer,
             self.timeline.samples_played_counter(),
+            self.shared_state.volume_atomic(),
         )?;
         engine.start()?;
 
@@ -953,6 +955,9 @@ impl Player {
                         self.undo_stack.push(UndoEntry::Batch(entries));
                     }
                 }
+            }
+            PlayerCommand::SetVolume(v) => {
+                self.shared_state.set_volume(v);
             }
             PlayerCommand::SetOutputDevice(name) => self.set_output_device(name),
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
@@ -1508,5 +1513,22 @@ mod tests {
         // Undo move: [A, B, C]
         player.process_command(PlayerCommand::Undo);
         assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+    }
+
+    #[test]
+    fn set_volume_command_updates_state() {
+        let mut player = Player::new();
+        player.process_command(PlayerCommand::SetVolume(0.42));
+        let vol = player.shared_state().volume();
+        assert!((vol - 0.42).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn set_volume_command_clamps() {
+        let mut player = Player::new();
+        player.process_command(PlayerCommand::SetVolume(5.0));
+        assert!((player.shared_state().volume() - 1.0).abs() < f32::EPSILON);
+        player.process_command(PlayerCommand::SetVolume(-1.0));
+        assert!(player.shared_state().volume().abs() < f32::EPSILON);
     }
 }

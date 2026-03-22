@@ -339,6 +339,8 @@ struct GqlNowPlaying {
     duration_ms: Option<u64>,
     track: Option<GqlNowPlayingTrack>,
     queue_item_id: Option<String>,
+    /// Software volume level (0.0–1.0).
+    volume: f32,
 }
 
 #[derive(SimpleObject)]
@@ -912,6 +914,7 @@ impl QueryRoot {
             duration_ms,
             track,
             queue_item_id,
+            volume: state.volume(),
         })
     }
 
@@ -1116,6 +1119,13 @@ impl MutationRoot {
     async fn seek(&self, ctx: &Context<'_>, position_ms: i64) -> async_graphql::Result<GqlStatus> {
         send_cmd(ctx, PlayerCommand::Seek(position_ms as u64))?;
         Ok(GqlStatus::success(format!("seeked to {}ms", position_ms)))
+    }
+
+    /// Set software volume (0.0–1.0). Values are clamped.
+    async fn set_volume(&self, ctx: &Context<'_>, level: f64) -> async_graphql::Result<f64> {
+        let clamped = (level as f32).clamp(0.0, 1.0);
+        send_cmd(ctx, PlayerCommand::SetVolume(clamped))?;
+        Ok(clamped as f64)
     }
 
     // -- Queue --
@@ -1948,5 +1958,27 @@ mod tests {
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
         let cmd = rx.try_recv().unwrap();
         assert!(matches!(cmd, PlayerCommand::ClearPlaylist));
+    }
+
+    #[tokio::test]
+    async fn set_volume_mutation() {
+        let (schema, rx, _tmp) = test_schema();
+        let resp = schema.execute("mutation { setVolume(level: 0.75) }").await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let vol = data["setVolume"].as_f64().unwrap();
+        assert!((vol - 0.75).abs() < 0.001);
+        let cmd = rx.try_recv().unwrap();
+        assert!(matches!(cmd, PlayerCommand::SetVolume(v) if (v - 0.75).abs() < f32::EPSILON));
+    }
+
+    #[tokio::test]
+    async fn now_playing_includes_volume() {
+        let (schema, _rx, _tmp) = test_schema();
+        let resp = schema.execute("{ nowPlaying { state volume } }").await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let vol = data["nowPlaying"]["volume"].as_f64().unwrap();
+        assert!((vol - 1.0).abs() < 0.001, "default volume should be 1.0");
     }
 }

@@ -2,7 +2,7 @@ use std::mem;
 use std::os::raw::c_void;
 use std::ptr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use coreaudio_sys::*;
 use thiserror::Error;
@@ -36,6 +36,8 @@ struct CallbackData {
     /// Cumulative samples played — incremented by the render callback,
     /// read by the UI to derive current track + position.
     samples_played: Arc<AtomicU64>,
+    /// Software volume (0.0–1.0) stored as f32 bits. Relaxed atomic — no lock.
+    volume: Arc<AtomicU32>,
 }
 
 // SAFETY: `rtrb::Consumer` is `!Send` due to internal raw pointers, but our usage is
@@ -71,6 +73,7 @@ impl AudioEngine {
         channels: u32,
         consumer: rtrb::Consumer<f32>,
         samples_played: Arc<AtomicU64>,
+        volume: Arc<AtomicU32>,
     ) -> Result<Self> {
         let running = Arc::new(AtomicBool::new(false));
 
@@ -138,6 +141,7 @@ impl AudioEngine {
             consumer,
             running: running.clone(),
             samples_played,
+            volume,
         }));
 
         let render_cb = AURenderCallbackStruct {
@@ -280,6 +284,16 @@ unsafe extern "C" fn render_callback(
             }
         }
         chunk.commit_all();
+
+        // Apply software volume. Relaxed load — no ordering needed on the hot path.
+        let vol = f32::from_bits(data.volume.load(Ordering::Relaxed));
+        if vol < 1.0 {
+            let out = unsafe { std::slice::from_raw_parts_mut(out_ptr, to_read) };
+            for s in out {
+                *s *= vol;
+            }
+        }
+
         data.samples_played
             .fetch_add(to_read as u64, Ordering::Relaxed);
     }

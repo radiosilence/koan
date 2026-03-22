@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
 use uuid::Uuid;
 
@@ -185,6 +185,10 @@ pub struct SharedPlayerState {
     /// Radio mode — automatically queue similar tracks when the queue runs low.
     /// Shared so GQL/MCP can toggle it without going through the TUI.
     radio_mode: AtomicBool,
+
+    /// Software volume (0.0–1.0). Stored as f32 bits in AtomicU32.
+    /// Shared with the audio engine — read in the render callback (Relaxed ordering).
+    volume: Arc<AtomicU32>,
 }
 
 impl SharedPlayerState {
@@ -199,6 +203,7 @@ impl SharedPlayerState {
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             radio_mode: AtomicBool::new(false),
+            volume: Arc::new(AtomicU32::new(1.0_f32.to_bits())),
         })
     }
 
@@ -298,6 +303,24 @@ impl SharedPlayerState {
 
     pub fn set_radio_mode(&self, enabled: bool) {
         self.radio_mode.store(enabled, Ordering::Relaxed);
+    }
+
+    // --- Volume ---
+
+    /// Current software volume (0.0–1.0).
+    pub fn volume(&self) -> f32 {
+        f32::from_bits(self.volume.load(Ordering::Relaxed))
+    }
+
+    /// Set software volume, clamped to 0.0–1.0.
+    pub fn set_volume(&self, v: f32) {
+        self.volume
+            .store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    }
+
+    /// Clone the volume Arc for the audio engine render callback.
+    pub fn volume_atomic(&self) -> Arc<AtomicU32> {
+        self.volume.clone()
     }
 
     // --- Playlist version ---
@@ -1086,5 +1109,43 @@ mod tests {
         assert_eq!(items[1].id, id_d);
         assert_eq!(items[2].id, id_a);
         assert_eq!(items[3].id, id_c);
+    }
+
+    // --- volume ---
+
+    #[test]
+    fn test_volume_default_is_1() {
+        let state = SharedPlayerState::new();
+        assert!((state.volume() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_volume_set_and_get() {
+        let state = SharedPlayerState::new();
+        state.set_volume(0.5);
+        assert!((state.volume() - 0.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_volume_clamped_high() {
+        let state = SharedPlayerState::new();
+        state.set_volume(2.0);
+        assert!((state.volume() - 1.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_volume_clamped_low() {
+        let state = SharedPlayerState::new();
+        state.set_volume(-0.5);
+        assert!(state.volume().abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_volume_atomic_shares_state() {
+        let state = SharedPlayerState::new();
+        let vol = state.volume_atomic();
+        state.set_volume(0.75);
+        let read = f32::from_bits(vol.load(Ordering::Relaxed));
+        assert!((read - 0.75).abs() < f32::EPSILON);
     }
 }

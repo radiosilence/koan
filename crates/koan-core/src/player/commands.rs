@@ -52,6 +52,8 @@ pub enum PlayerCommand {
     BeginUndoBatch,
     /// End the batch — collapse collected entries into one undo step.
     EndUndoBatch,
+    /// Set software volume (0.0–1.0). Clamped by the handler.
+    SetVolume(f32),
     /// Switch output audio device by name. Restarts engine on current track.
     SetOutputDevice(String),
     /// Clear the configured output device, reverting to system default.
