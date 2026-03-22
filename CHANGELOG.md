@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Linux audio support** — `AudioBackend` trait abstraction with `CpalBackend` (ALSA/PipeWire/PulseAudio via cpal) for Linux and `CoreAudioBackend` wrapper for macOS. The decode pipeline, gapless playback, and ring buffer architecture are completely untouched — backends are dumb consumers
+- **Cross-platform credentials** — replaced `security-framework` with `keyring` crate. macOS still uses Keychain; Linux uses secret-service (GNOME Keyring / KDE Wallet)
+- **Platform-gated dependencies** — `coreaudio-sys` and `core-foundation` are now macOS-only; `cpal` is Linux-only. Builds on both platforms without pulling unused deps
+
+### Changed
+
+- `Player` now holds a `Box<dyn AudioBackend>` instead of directly calling CoreAudio FFI. All device enumeration, sample rate control, and engine creation go through the trait
+- `device.rs` and `engine.rs` are now `#[cfg(target_os = "macos")]` — they're implementation details of `CoreAudioBackend`
+- Cross-platform device listing available via `audio::list_output_devices()` facade
+
 ## 0.12.5
 
 ### Fixed

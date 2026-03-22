@@ -1069,7 +1069,7 @@ impl App {
     }
 
     fn open_device_selector(&mut self) {
-        match koan_core::audio::device::list_output_devices() {
+        match koan_core::audio::list_output_devices() {
             Ok(devices) => {
                 // "System Default" as first entry, then real devices.
                 let mut device_names: Vec<String> = Vec::with_capacity(devices.len() + 1);
