@@ -19,69 +19,63 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
 
   clippy:
-    name: Clippy
-    runs-on: macos-latest
+    name: Clippy (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     concurrency:
-      group: clippy-${{ github.ref }}
+      group: clippy-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Lint with Clippy
-        run: cargo clippy --all-targets -- -D warnings
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets -- -D warnings
 
   test:
-    name: Test
-    runs-on: macos-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     concurrency:
-      group: test-${{ github.ref }}
+      group: test-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run tests
-        run: cargo test --all-targets
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --all-targets
 
   build:
-    name: Build
-    runs-on: macos-latest
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     concurrency:
-      group: build-${{ github.ref }}
+      group: build-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build release
-        run: cargo build --release
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release
 
   check-version:
     name: Check Version
@@ -92,32 +86,24 @@ jobs:
       version: ${{ steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v5
-
       - name: Check if release needed
         id: check
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           CURRENT_VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
-          echo "Current version: $CURRENT_VERSION"
-
           LATEST_RELEASE=$(gh release list --limit 1 --json tagName -q '.[0].tagName' 2>/dev/null || echo "")
           LATEST_VERSION=${LATEST_RELEASE#v}
-          echo "Latest release: ${LATEST_RELEASE:-none} (${LATEST_VERSION:-none})"
-
           if [ -z "$LATEST_RELEASE" ] || [ "$CURRENT_VERSION" != "$LATEST_VERSION" ]; then
-            echo "Release needed: ${LATEST_VERSION:-none} -> $CURRENT_VERSION"
             echo "should_release=true" >> $GITHUB_OUTPUT
           else
-            echo "Already released $CURRENT_VERSION"
             echo "should_release=false" >> $GITHUB_OUTPUT
           fi
-
           echo "version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
 
   create-release:
-    name: Release (${{ matrix.target }})
-    runs-on: macos-latest
+    name: Release (${{ matrix.binary_name }})
+    runs-on: ${{ matrix.runner }}
     needs: [check-version]
     if: needs.check-version.outputs.should_release == 'true'
     permissions:
@@ -127,32 +113,40 @@ jobs:
       matrix:
         include:
           - target: aarch64-apple-darwin
+            runner: macos-latest
             binary_name: koan-macos-arm64
           - target: x86_64-apple-darwin
+            runner: macos-latest
             binary_name: koan-macos-x86_64
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-latest
+            binary_name: koan-linux-x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-latest
+            binary_name: koan-linux-arm64
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+      - name: Install cross-compilation deps (Linux arm64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu libasound2-dev:arm64 || true
+          echo "[target.aarch64-unknown-linux-gnu]" >> ~/.cargo/config.toml
+          echo 'linker = "aarch64-linux-gnu-gcc"' >> ~/.cargo/config.toml
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@v2
         with:
           key: release-${{ matrix.target }}
-
-      - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }}
-
-      - name: Package binary
+      - run: cargo build --release --target ${{ matrix.target }}
+      - name: Package
         run: |
           cp target/${{ matrix.target }}/release/koan koan
           tar czf "${{ matrix.binary_name }}.tar.gz" koan
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary_name }}
           path: ${{ matrix.binary_name }}.tar.gz
@@ -166,29 +160,21 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
-      - name: Create git tag
+      - name: Create tag and release
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -fa "v${{ needs.check-version.outputs.version }}" -m "Release v${{ needs.check-version.outputs.version }}"
           git push --force origin "v${{ needs.check-version.outputs.version }}"
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: v${{ needs.check-version.outputs.version }}
-          draft: false
-          prerelease: false
           generate_release_notes: true
-          files: |
-            artifacts/**/*.tar.gz
+          files: artifacts/**/*.tar.gz
 
   publish-crate:
     name: Publish to crates.io
@@ -197,17 +183,13 @@ jobs:
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     steps:
       - uses: actions/checkout@v5
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Publish koan-core
-        run: cargo publish -p koan-core --no-verify
+      - name: Install system deps
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo publish -p koan-core --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-
-      - name: Publish koan-music
-        run: cargo publish -p koan-music --no-verify
+      - run: cargo publish -p koan-music --no-verify
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -217,60 +199,45 @@ jobs:
     needs: [publish-release, check-version]
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     steps:
-      - name: Download release artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           path: artifacts
-
       - name: Update tap formula
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
           if [ -z "$GITHUB_TOKEN" ]; then
-            echo "RELEASE_TOKEN not set, skipping tap update"
+            echo "RELEASE_TOKEN not set, skipping"
             exit 0
           fi
-
           VERSION="${{ needs.check-version.outputs.version }}"
-
-          ARM_TAR=$(find artifacts/ -name 'koan-macos-arm64.tar.gz' -type f)
-          INTEL_TAR=$(find artifacts/ -name 'koan-macos-x86_64.tar.gz' -type f)
-          ARM_SHA=$(sha256sum "$ARM_TAR" | awk '{print $1}')
-          INTEL_SHA=$(sha256sum "$INTEL_TAR" | awk '{print $1}')
-
-          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/radiosilence/homebrew-koan.git" /tmp/homebrew-tap
-          cd /tmp/homebrew-tap
-
+          ARM_SHA=$(sha256sum artifacts/koan-macos-arm64/koan-macos-arm64.tar.gz | awk '{print $1}')
+          INTEL_SHA=$(sha256sum artifacts/koan-macos-x86_64/koan-macos-x86_64.tar.gz | awk '{print $1}')
+          git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/radiosilence/homebrew-koan.git" /tmp/tap
+          cd /tmp/tap
           cat > Formula/koan.rb <<FORMULA
           class Koan < Formula
-            desc "Bit-perfect macOS music player with TUI, gapless playback, and Navidrome/Subsonic support"
+            desc "Bit-perfect music player with TUI, gapless playback, and Subsonic support"
             homepage "https://github.com/radiosilence/koan"
             version "${VERSION}"
             license "MIT"
-
             on_arm do
               url "https://github.com/radiosilence/koan/releases/download/v#{version}/koan-macos-arm64.tar.gz"
               sha256 "${ARM_SHA}"
             end
-
             on_intel do
               url "https://github.com/radiosilence/koan/releases/download/v#{version}/koan-macos-x86_64.tar.gz"
               sha256 "${INTEL_SHA}"
             end
-
             def install
               bin.install "koan"
             end
-
             test do
               assert_match "koan", shell_output("#{bin}/koan --version")
             end
           end
           FORMULA
-
-          # Remove leading whitespace from heredoc indentation
           sed -i 's/^          //' Formula/koan.rb
-
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
