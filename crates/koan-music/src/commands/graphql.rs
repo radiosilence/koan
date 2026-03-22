@@ -1603,10 +1603,30 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
             .ok_or_else(|| async_graphql::Error::new(format!("snapshot '{}' not found", name)))?;
 
-        let items: Vec<koan_core::player::state::PlaylistItem> =
-            snap.items.iter().map(|i| i.to_playlist_item()).collect();
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
 
-        // Clear + add + play the cursor track
+        // Resolve each snapshot item through the same path resolution as
+        // addToQueue — ensures correct cache paths and triggers downloads.
+        let mut items = Vec::new();
+        let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
+        for snap_item in &snap.items {
+            if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &snap_item.path)
+                && let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
+            {
+                let item = track_to_playlist_item(&track, &db);
+                if matches!(
+                    item.load_state,
+                    koan_core::player::state::LoadState::Pending
+                ) {
+                    pending_downloads.push((tid, item.id));
+                }
+                items.push(item);
+            } else {
+                // Track not in DB — use snapshot's stored data.
+                items.push(snap_item.to_playlist_item());
+            }
+        }
+
         tx.send(PlayerCommand::ClearPlaylist)
             .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
 
@@ -1624,6 +1644,10 @@ impl MutationRoot {
             let _ = tx.send(PlayerCommand::Play(first_id));
             if snap.position_ms > 0 {
                 let _ = tx.send(PlayerCommand::Seek(snap.position_ms));
+            }
+
+            if !pending_downloads.is_empty() {
+                spawn_downloads(pending_downloads, tx.clone(), state.clone());
             }
         }
 
