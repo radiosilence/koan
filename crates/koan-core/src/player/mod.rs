@@ -67,7 +67,7 @@ impl Player {
     pub fn new() -> Self {
         let viz_buffer = VizBuffer::new();
         let viz_snapshot = VizSnapshot::new();
-        let cfg = crate::config::Config::load().unwrap_or_default();
+        let cfg = crate::config::Config::load_or_default();
         let viz_analyzer = VizAnalyzer::spawn_with_snapshot(
             Arc::clone(&viz_buffer),
             &cfg.visualizer,
@@ -151,18 +151,7 @@ impl Player {
             }
         }
 
-        // Restart playback on the new device if currently playing/paused.
-        if let Some(info) = self.shared_state.track_info() {
-            let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
-            let position_ms = self.shared_state.position_ms();
-            if let Err(e) = self.start_playback(info.id, &info.path, position_ms) {
-                log::error!("failed to restart playback on new device: {}", e);
-                return;
-            }
-            if was_paused {
-                self.pause();
-            }
-        }
+        self.restart_on_current_track();
     }
 
     /// Clear the configured output device, reverting to system default.
@@ -177,12 +166,17 @@ impl Player {
             }
         }
 
-        // Restart playback on the default device if currently playing/paused.
+        self.restart_on_current_track();
+    }
+
+    /// If a track is currently playing or paused, restart playback at the
+    /// current position (e.g. after switching output devices). Preserves pause state.
+    fn restart_on_current_track(&mut self) {
         if let Some(info) = self.shared_state.track_info() {
             let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
             let position_ms = self.shared_state.position_ms();
             if let Err(e) = self.start_playback(info.id, &info.path, position_ms) {
-                log::error!("failed to restart playback on default device: {}", e);
+                log::error!("failed to restart playback on device switch: {}", e);
                 return;
             }
             if was_paused {
@@ -315,7 +309,7 @@ impl Player {
         };
 
         // Load ReplayGain config for this playback session.
-        let cfg = crate::config::Config::load().unwrap_or_default();
+        let cfg = crate::config::Config::load_or_default();
         let rg_mode = cfg.playback.replaygain;
         let pre_amp_db = cfg.playback.pre_amp_db;
 
@@ -532,7 +526,7 @@ impl Player {
         };
 
         // Load ReplayGain config for this streaming session.
-        let cfg = crate::config::Config::load().unwrap_or_default();
+        let cfg = crate::config::Config::load_or_default();
         let rg_mode = cfg.playback.replaygain;
         let pre_amp_db = cfg.playback.pre_amp_db;
 

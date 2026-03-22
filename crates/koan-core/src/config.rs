@@ -256,6 +256,14 @@ impl Config {
         Ok(config)
     }
 
+    /// Load config, logging and falling back to defaults on error.
+    pub fn load_or_default() -> Self {
+        Self::load().unwrap_or_else(|e| {
+            log::warn!("failed to load config, using defaults: {}", e);
+            Self::default()
+        })
+    }
+
     /// Load from a specific path.
     pub fn load_from(path: &Path) -> Result<Self, ConfigError> {
         let contents = fs::read_to_string(path)?;
