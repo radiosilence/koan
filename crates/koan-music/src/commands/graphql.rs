@@ -515,6 +515,57 @@ impl GqlQueueMutationResult {
 }
 
 // ---------------------------------------------------------------------------
+// Organize types
+// ---------------------------------------------------------------------------
+
+#[derive(SimpleObject)]
+struct GqlFileMove {
+    track_id: i64,
+    from: String,
+    to: String,
+    ancillary_count: i32,
+}
+
+#[derive(SimpleObject)]
+struct GqlOrganizeError {
+    path: String,
+    message: String,
+}
+
+#[derive(SimpleObject)]
+struct GqlOrganizeResult {
+    moves: Vec<GqlFileMove>,
+    errors: Vec<GqlOrganizeError>,
+    skipped: i32,
+}
+
+impl From<koan_core::organize::OrganizeResult> for GqlOrganizeResult {
+    fn from(r: koan_core::organize::OrganizeResult) -> Self {
+        Self {
+            moves: r
+                .moves
+                .into_iter()
+                .map(|m| GqlFileMove {
+                    track_id: m.track_id,
+                    from: m.from.to_string_lossy().into_owned(),
+                    to: m.to.to_string_lossy().into_owned(),
+                    ancillary_count: m.ancillary.len() as i32,
+                })
+                .collect(),
+            errors: r
+                .errors
+                .into_iter()
+                .map(|(p, msg)| GqlOrganizeError {
+                    path: p.to_string_lossy().into_owned(),
+                    message: msg,
+                })
+                .collect(),
+            skipped: r.skipped as i32,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // DB handle wrapper (so we can put it in Context)
 // ---------------------------------------------------------------------------
 
@@ -1054,6 +1105,20 @@ impl QueryRoot {
             })
             .collect())
     }
+
+    // -- Organize --
+
+    async fn organize_preview(
+        &self,
+        ctx: &Context<'_>,
+        pattern: String,
+        track_ids: Vec<i64>,
+    ) -> async_graphql::Result<GqlOrganizeResult> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let result = koan_core::organize::preview_for_tracks(&db, &track_ids, &pattern, None)
+            .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
+        Ok(result.into())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1430,6 +1495,27 @@ impl MutationRoot {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         state.set_radio_mode(false);
         Ok(GqlStatus::success("radio mode disabled"))
+    }
+
+    // -- Organize --
+
+    async fn organize_execute(
+        &self,
+        ctx: &Context<'_>,
+        pattern: String,
+        track_ids: Vec<i64>,
+    ) -> async_graphql::Result<GqlOrganizeResult> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let result = koan_core::organize::execute_for_tracks(&db, &track_ids, &pattern, None)
+            .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
+        Ok(result.into())
+    }
+
+    async fn organize_undo(&self, ctx: &Context<'_>) -> async_graphql::Result<i32> {
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let count = koan_core::organize::undo(&db)
+            .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
+        Ok(count as i32)
     }
 }
 
@@ -1948,5 +2034,73 @@ mod tests {
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
         let cmd = rx.try_recv().unwrap();
         assert!(matches!(cmd, PlayerCommand::ClearPlaylist));
+    }
+
+    #[tokio::test]
+    async fn organize_preview_query() {
+        let (schema, _rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+
+        // Create a real file so organize can resolve it
+        let track_dir = tmp.path().join("music");
+        std::fs::create_dir_all(&track_dir).unwrap();
+        let track_file = track_dir.join("test_track.flac");
+        std::fs::write(&track_file, b"fake").unwrap();
+
+        // Insert track with a real path
+        let db = Database::open(&db_path).unwrap();
+        let meta = queries::TrackMeta {
+            title: "Vordhosbn".to_string(),
+            artist: "Aphex Twin".to_string(),
+            album_artist: Some("Aphex Twin".to_string()),
+            album: "Drukqs".to_string(),
+            track_number: Some(1),
+            disc: Some(1),
+            date: Some("2001".into()),
+            genre: Some("Electronic".into()),
+            duration_ms: Some(300000),
+            path: Some(track_file.to_string_lossy().into_owned()),
+            codec: Some("FLAC".into()),
+            sample_rate: Some(44100),
+            bit_depth: Some(16),
+            channels: Some(2),
+            bitrate: Some(1411),
+            size_bytes: Some(42_000_000),
+            mtime: Some(1700000000),
+            source: "local".into(),
+            remote_id: None,
+            remote_url: None,
+            label: None,
+        };
+        let track_id = queries::upsert_track(&db.conn, &meta).unwrap();
+        drop(db);
+
+        let query = format!(
+            r#"{{ organizePreview(pattern: "%artist%/%album%/%tracknumber% %title%", trackIds: [{}]) {{
+                moves {{ trackId from to ancillaryCount }}
+                errors {{ path message }}
+                skipped
+            }} }}"#,
+            track_id
+        );
+        let resp = schema.execute(&query).await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let preview = &data["organizePreview"];
+        // Should have planned at least one move
+        let moves = preview["moves"].as_array().unwrap();
+        assert_eq!(moves.len(), 1);
+        assert_eq!(moves[0]["trackId"], track_id);
+    }
+
+    #[tokio::test]
+    async fn organize_undo_no_batches() {
+        let (schema, _rx, _tmp) = test_schema();
+        let resp = schema.execute("mutation { organizeUndo }").await;
+        // Should fail — nothing to undo
+        assert!(
+            !resp.errors.is_empty(),
+            "expected error for undo with no batches"
+        );
     }
 }
