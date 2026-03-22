@@ -2033,7 +2033,7 @@ pub fn build_schema(
 // `koan graphql` entry point
 // ---------------------------------------------------------------------------
 
-pub fn cmd_graphql(port: Option<u16>, playground: bool) {
+pub fn cmd_serve(port: Option<u16>, subsonic_port: Option<u16>, playground: bool) {
     use axum::routing::{get, post};
     use koan_core::player::Player;
 
@@ -2046,31 +2046,47 @@ pub fn cmd_graphql(port: Option<u16>, playground: bool) {
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
-    let schema = build_schema(state, cmd_tx, db_path);
+    let schema = build_schema(state, cmd_tx, db_path.clone());
 
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
-        let mut app = axum::Router::new().route("/graphql", post(graphql_handler));
-
+        let mut gql_app = axum::Router::new().route("/graphql", post(graphql_handler));
         if playground_enabled {
-            app = app.route("/graphql", get(graphql_playground));
+            gql_app = gql_app.route("/graphql", get(graphql_playground));
+        }
+        let gql_app = gql_app.with_state(schema);
+
+        let gql_addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
+        eprintln!("koan serve — GraphQL on http://0.0.0.0:{}/graphql", port);
+        if playground_enabled {
+            eprintln!("  Playground: http://localhost:{}/graphql", port);
         }
 
-        let app = app.with_state(schema);
+        let gql_listener = tokio::net::TcpListener::bind(gql_addr)
+            .await
+            .expect("failed to bind GraphQL port");
+        let gql_server =
+            axum::serve(gql_listener, gql_app).with_graceful_shutdown(shutdown_signal());
 
-        let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-        eprintln!("koan graphql server listening on http://0.0.0.0:{}", port);
-        if playground_enabled {
-            eprintln!("  GraphQL Playground: http://localhost:{}/graphql", port);
+        if let Some(sub_port) = subsonic_port {
+            let sub_app = super::serve::subsonic_router(db_path);
+            let sub_addr = std::net::SocketAddr::from(([0, 0, 0, 0], sub_port));
+            eprintln!("  Subsonic REST on http://0.0.0.0:{}/rest/", sub_port);
+
+            let sub_listener = tokio::net::TcpListener::bind(sub_addr)
+                .await
+                .expect("failed to bind Subsonic port");
+            let sub_server =
+                axum::serve(sub_listener, sub_app).with_graceful_shutdown(shutdown_signal());
+
+            // Run both servers concurrently.
+            tokio::select! {
+                r = gql_server => r.expect("GraphQL server error"),
+                r = sub_server => r.expect("Subsonic server error"),
+            }
+        } else {
+            gql_server.await.expect("server error");
         }
-
-        let listener = tokio::net::TcpListener::bind(addr)
-            .await
-            .expect("failed to bind");
-        axum::serve(listener, app)
-            .with_graceful_shutdown(shutdown_signal())
-            .await
-            .expect("server error");
     });
 }
 
@@ -2094,9 +2110,8 @@ async fn graphql_playground() -> axum::response::Html<String> {
     ))
 }
 
-/// Run the GraphQL server as a background daemon.
-/// Forks the process, writes the PID to ~/.config/koan/graphql.pid, and exits.
-pub fn cmd_graphql_daemon(port: Option<u16>, playground: bool) {
+/// Run the server as a background daemon.
+pub fn cmd_serve_daemon(port: Option<u16>, subsonic_port: Option<u16>, playground: bool) {
     use std::fs;
     use std::process::Command;
 
@@ -2105,13 +2120,15 @@ pub fn cmd_graphql_daemon(port: Option<u16>, playground: bool) {
 
     let exe = std::env::current_exe().expect("failed to get current exe path");
     let mut cmd = Command::new(exe);
-    cmd.arg("graphql");
+    cmd.arg("serve");
     cmd.arg("--port").arg(port_val.to_string());
+    if let Some(sp) = subsonic_port {
+        cmd.arg("--subsonic").arg(sp.to_string());
+    }
     if playground || cfg.graphql.playground {
         cmd.arg("--playground");
     }
 
-    // Detach: redirect stdio to /dev/null, start in new session
     cmd.stdin(std::process::Stdio::null());
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::null());
@@ -2119,20 +2136,20 @@ pub fn cmd_graphql_daemon(port: Option<u16>, playground: bool) {
     let mut child = cmd.spawn().expect("failed to spawn daemon process");
     let pid = child.id();
 
-    // Write PID file
-    let pid_path = koan_core::config::config_dir().join("graphql.pid");
+    let pid_path = koan_core::config::config_dir().join("koan-serve.pid");
     fs::write(&pid_path, pid.to_string()).ok();
 
-    // Detach — we don't want to wait, the child is a long-running server.
-    // Spawn a thread to reap it so we don't leave a zombie.
     std::thread::spawn(move || {
         let _ = child.wait();
     });
 
     eprintln!(
-        "koan graphql daemon started (pid {}) on port {}",
+        "koan serve daemon started (pid {}) on port {}",
         pid, port_val
     );
+    if let Some(sp) = subsonic_port {
+        eprintln!("  Subsonic REST on port {}", sp);
+    }
     eprintln!("  PID file: {}", pid_path.display());
 }
 

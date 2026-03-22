@@ -99,6 +99,7 @@ impl log::Log for BufferedLogger {
 
 mod commands;
 mod media_keys;
+mod remote_bridge;
 mod tui;
 
 #[derive(Parser)]
@@ -129,6 +130,12 @@ enum Commands {
         /// Clear persisted queue instead of restoring it
         #[arg(long)]
         clear: bool,
+        /// Connect to a remote koan server (e.g. http://host:4000)
+        #[arg(long)]
+        server: Option<String>,
+        /// Jukebox mode: server plays audio, client is remote control only
+        #[arg(long, requires = "server")]
+        jukebox: bool,
     },
     /// Probe a file and show format info
     Probe {
@@ -190,15 +197,28 @@ enum Commands {
     },
     /// Run as a headless MCP server on stdio (for Claude Desktop / MCP clients)
     Mcp,
-    /// Start a GraphQL API server (headless player + HTTP)
-    Graphql {
-        /// Port to listen on (default: from config or 4000)
-        #[arg(long)]
+    /// Start the koan server (headless player + GraphQL API + optional Subsonic REST)
+    Serve {
+        /// GraphQL API port (default: from config or 4000)
+        #[arg(long, default_value = None)]
         port: Option<u16>,
+        /// Enable Subsonic REST API on this port (e.g. --subsonic 4040)
+        #[arg(long)]
+        subsonic: Option<u16>,
         /// Enable GraphQL Playground web UI
         #[arg(long)]
         playground: bool,
         /// Run as a background daemon (fork and detach)
+        #[arg(short, long)]
+        daemonize: bool,
+    },
+    /// Start a GraphQL API server (alias for `serve`)
+    #[command(hide = true)]
+    Graphql {
+        #[arg(long)]
+        port: Option<u16>,
+        #[arg(long)]
+        playground: bool,
         #[arg(short, long)]
         daemonize: bool,
     },
@@ -269,7 +289,15 @@ fn main() {
             artist,
             library,
             clear,
-        }) => commands::cmd_play(&paths, &ids, album, artist, library, clear),
+            server,
+            jukebox,
+        }) => {
+            if let Some(ref url) = server {
+                commands::cmd_play_remote(url, jukebox);
+            } else {
+                commands::cmd_play(&paths, &ids, album, artist, library, clear);
+            }
+        }
         Some(Commands::Probe { path }) => commands::cmd_probe(&path),
         Some(Commands::Devices) => commands::cmd_devices(),
         Some(Commands::Scan { path, force }) => commands::cmd_scan(path.as_deref(), force),
@@ -297,15 +325,27 @@ fn main() {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
         }
         Some(Commands::Mcp) => commands::cmd_mcp(),
+        Some(Commands::Serve {
+            port,
+            subsonic,
+            playground,
+            daemonize,
+        }) => {
+            if daemonize {
+                commands::cmd_serve_daemon(port, subsonic, playground);
+            } else {
+                commands::cmd_serve(port, subsonic, playground);
+            }
+        }
         Some(Commands::Graphql {
             port,
             playground,
             daemonize,
         }) => {
             if daemonize {
-                commands::cmd_graphql_daemon(port, playground);
+                commands::cmd_serve_daemon(port, None, playground);
             } else {
-                commands::cmd_graphql(port, playground);
+                commands::cmd_serve(port, None, playground);
             }
         }
     }

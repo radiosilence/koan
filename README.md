@@ -288,12 +288,13 @@ koan probe track.flac         # show format/codec info for a file
 # mcp
 koan mcp                      # start headless MCP server on stdio
 
-# graphql api
-koan graphql                  # start GraphQL server on port 4000
-koan graphql --playground     # with GraphQL Playground web UI
-koan graphql --port 8080      # custom port
-koan graphql -d               # run as background daemon
-koan graphql -d --playground  # daemon with playground
+# server
+koan serve                          # GraphQL API on port 4000
+koan serve --playground             # with GraphQL Playground web UI
+koan serve --subsonic 4040          # + Subsonic REST on port 4040
+koan serve --port 8080              # custom GraphQL port
+koan serve -d                       # run as background daemon
+koan serve -d --subsonic 4040       # daemon with Subsonic
 ```
 
 ### MCP server (Claude Desktop integration)

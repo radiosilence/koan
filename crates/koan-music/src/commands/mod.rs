@@ -13,9 +13,10 @@ mod probe;
 mod remote;
 mod scan;
 mod search;
+pub mod serve;
 
 pub use cache::{cmd_cache_clear, cmd_cache_status};
-pub use graphql::{cmd_graphql, cmd_graphql_daemon};
+pub use graphql::{cmd_serve, cmd_serve_daemon};
 pub use mcp::cmd_mcp;
 
 pub use config::{cmd_config, cmd_init};
@@ -25,7 +26,7 @@ pub use pick::cmd_pick;
 pub use picker_items::{
     load_picker_items, make_album_picker_items, make_artist_picker_items, make_track_picker_items,
 };
-pub use play::cmd_play;
+pub use play::{cmd_play, cmd_play_remote};
 pub use probe::{cmd_devices, cmd_probe};
 pub use remote::{cmd_remote_login, cmd_remote_status, cmd_remote_sync};
 pub use scan::cmd_scan;

@@ -4,6 +4,11 @@
 
 ### Added
 
+<<<<<<< HEAD
+- **`koan serve`** — unified server command. Runs GraphQL API (always on) + optional Subsonic REST compatibility layer (`--subsonic <port>`). Replaces `koan graphql` (which remains as a hidden alias). One process, one player, two interfaces
+- **Subsonic REST API** (`--subsonic 4040`) — full compatibility layer for third-party clients (play:Sub, Amperfy, etc.). 22 endpoints including playlists (mapped to snapshots), genres, getMusicFolders. XML + JSON dual format, MD5+salt + legacy plaintext auth
+||||||| 10cf0f0
+=======
 - **Linux audio support** — `AudioBackend` trait abstraction with `CpalBackend` (ALSA/PipeWire/PulseAudio via cpal) for Linux and `CoreAudioBackend` wrapper for macOS. The decode pipeline, gapless playback, and ring buffer architecture are completely untouched — backends are dumb consumers
 - **Cross-platform credentials** — replaced `security-framework` with `keyring` crate. macOS still uses Keychain; Linux uses secret-service (GNOME Keyring / KDE Wallet)
 - **Platform-gated dependencies** — `coreaudio-sys` and `core-foundation` are now macOS-only; `cpal` is Linux-only. Builds on both platforms without pulling unused deps
@@ -13,6 +18,7 @@
 - `Player` now holds a `Box<dyn AudioBackend>` instead of directly calling CoreAudio FFI. All device enumeration, sample rate control, and engine creation go through the trait
 - `device.rs` and `engine.rs` are now `#[cfg(target_os = "macos")]` — they're implementation details of `CoreAudioBackend`
 - Cross-platform device listing available via `audio::list_output_devices()` facade
+>>>>>>> main
 
 ## 0.12.5
 
@@ -20,13 +26,13 @@
 
 - **Remote tracks now play when queued via GQL/MCP** — two-part fix:
   1. GQL mutations now trigger background downloads for remote tracks (0.12.4)
-  2. Remote tracks now get the correct cache path via `resolve_item_path()` — same code path as the TUI. Previously used a dummy `/tmp/koan-pending-{id}` path that didn't match where downloads write, so the player couldn't find the file even after download completed
+  2. Remote tracks now get the correct cache path via `resolve_item_path()` — same code path as the TUI
 
 ## 0.12.4
 
 ### Fixed
 
-- **Remote track download pipeline wired to GQL mutations** — `addToQueue` and `replaceQueue` now spawn background downloads for remote tracks using the same pipeline as the TUI (progressive download with streaming playback after 256KB buffered)
+- **Remote track download pipeline wired to GQL mutations** — `addToQueue` and `replaceQueue` now spawn background downloads for remote tracks using the same pipeline as the TUI
 
 ## 0.12.3
 
