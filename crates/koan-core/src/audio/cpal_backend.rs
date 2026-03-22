@@ -15,6 +15,12 @@ pub struct CpalBackend {
     host: cpal::Host,
 }
 
+impl Default for CpalBackend {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CpalBackend {
     pub fn new() -> Self {
         Self {
@@ -30,10 +36,10 @@ impl CpalBackend {
             .map_err(|e| BackendError::Platform(e.to_string()))?;
 
         for dev in devices {
-            if let Ok(name) = dev.name() {
-                if name == info.name {
-                    return Ok(dev);
-                }
+            if let Ok(name) = dev.name()
+                && name == info.name
+            {
+                return Ok(dev);
             }
         }
 
@@ -157,27 +163,26 @@ impl AudioBackend for CpalBackend {
                     let available = consumer.slots();
                     let to_read = available.min(total_samples);
 
-                    if to_read > 0 {
-                        if let Ok(chunk) = consumer.read_chunk(to_read) {
-                            let (first, second) = chunk.as_slices();
-                            // Copy from ring buffer slices into the output buffer.
-                            unsafe {
+                    if to_read > 0
+                        && let Ok(chunk) = consumer.read_chunk(to_read)
+                    {
+                        let (first, second) = chunk.as_slices();
+                        unsafe {
+                            ptr::copy_nonoverlapping(
+                                first.as_ptr(),
+                                data.as_mut_ptr(),
+                                first.len(),
+                            );
+                            if !second.is_empty() {
                                 ptr::copy_nonoverlapping(
-                                    first.as_ptr(),
-                                    data.as_mut_ptr(),
-                                    first.len(),
+                                    second.as_ptr(),
+                                    data.as_mut_ptr().add(first.len()),
+                                    second.len(),
                                 );
-                                if !second.is_empty() {
-                                    ptr::copy_nonoverlapping(
-                                        second.as_ptr(),
-                                        data.as_mut_ptr().add(first.len()),
-                                        second.len(),
-                                    );
-                                }
                             }
-                            chunk.commit_all();
-                            samples_played.fetch_add(to_read as u64, Ordering::Relaxed);
                         }
+                        chunk.commit_all();
+                        samples_played.fetch_add(to_read as u64, Ordering::Relaxed);
                     }
 
                     // Zero-pad remainder on underrun — silence > glitches.
