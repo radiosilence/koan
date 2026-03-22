@@ -36,6 +36,18 @@ pub fn is_audio_file(path: &Path) -> bool {
 /// If lofty fails to parse tags (e.g. corrupted UTF-16 ID3 frames), falls back
 /// to Symphonia for duration/properties and infers what we can from the path.
 pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
+    // Skip empty/tiny files — avoid confusing error messages from lofty/symphonia.
+    match std::fs::metadata(path) {
+        Ok(m) if m.len() == 0 => {
+            return Err(MetadataError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("empty file: {}", path.display()),
+            )));
+        }
+        Err(e) => return Err(MetadataError::Io(e)),
+        _ => {}
+    }
+
     match lofty::read_from_path(path) {
         Ok(tagged_file) => read_metadata_lofty(path, &tagged_file),
         Err(e) => {
