@@ -41,7 +41,10 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
         Ok(m) if m.len() == 0 => {
             return Err(MetadataError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("empty file: {}", path.display()),
+                format!(
+                    "empty file (0 bytes) — may be a stale mount or incomplete transfer, will retry on next scan: {}",
+                    path.display()
+                ),
             )));
         }
         Err(e) => return Err(MetadataError::Io(e)),

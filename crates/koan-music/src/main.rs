@@ -107,43 +107,72 @@ mod tui;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    // --- Playback args (top-level, previously under `koan play`) ---
+    /// Paths to audio files
+    #[arg(global = false)]
+    paths: Vec<PathBuf>,
+
+    /// Track IDs from the library database
+    #[arg(long = "id", num_args = 1..)]
+    ids: Vec<i64>,
+
+    /// Play an album by ID
+    #[arg(long, add = ArgValueCandidates::new(complete_albums))]
+    album: Option<i64>,
+
+    /// Play all tracks by an artist ID
+    #[arg(long, add = ArgValueCandidates::new(complete_artists))]
+    artist: Option<i64>,
+
+    /// Open the TUI in library browse mode
+    #[arg(long, short = 'l')]
+    library: bool,
+
+    /// Clear persisted queue instead of restoring it
+    #[arg(long)]
+    clear: bool,
+
+    /// Connect to a remote koan server (e.g. http://host:4000)
+    #[arg(long)]
+    server: Option<String>,
+
+    /// Jukebox mode: server plays audio, client is remote control only
+    #[arg(long, requires = "server")]
+    jukebox: bool,
+
+    // --- Server flags (unified process) ---
+    /// Run headless (no TUI) — GraphQL API only
+    #[arg(long)]
+    headless: bool,
+
+    /// Run as a background daemon (fork and detach, implies --headless)
+    #[arg(short, long)]
+    daemonize: bool,
+
+    /// GraphQL API port (default: from config or 4000)
+    #[arg(long)]
+    port: Option<u16>,
+
+    /// Enable Subsonic REST API on this port (e.g. --subsonic 4040)
+    #[arg(long)]
+    subsonic: Option<u16>,
+
+    /// Disable the GraphQL API server (TUI-only mode)
+    #[arg(long)]
+    no_api: bool,
+
+    /// Enable GraphiQL web IDE at GET /graphql
+    #[arg(long)]
+    playground: bool,
+
+    /// Run as an MCP server on stdio (for Claude Desktop / MCP clients)
+    #[arg(long)]
+    mcp: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Play audio file(s), tracks by ID, or an album/artist
-    Play {
-        /// Paths to audio files
-        paths: Vec<PathBuf>,
-        /// Track IDs from the library database
-        #[arg(long = "id", num_args = 1..)]
-        ids: Vec<i64>,
-        /// Play an album by ID (from `koan albums`)
-        #[arg(long, add = ArgValueCandidates::new(complete_albums))]
-        album: Option<i64>,
-        /// Play all tracks by an artist ID (from `koan artists`)
-        #[arg(long, add = ArgValueCandidates::new(complete_artists))]
-        artist: Option<i64>,
-        /// Open the TUI in library browse mode
-        #[arg(long, short = 'l')]
-        library: bool,
-        /// Clear persisted queue instead of restoring it
-        #[arg(long)]
-        clear: bool,
-        /// Connect to a remote koan server (e.g. http://host:4000)
-        #[arg(long)]
-        server: Option<String>,
-        /// Jukebox mode: server plays audio, client is remote control only
-        #[arg(long, requires = "server")]
-        jukebox: bool,
-    },
-    /// Probe a file and show format info
-    Probe {
-        /// Path to audio file
-        path: PathBuf,
-    },
-    /// List available audio output devices
-    Devices,
     /// Scan a folder for audio files and index them
     Scan {
         /// Path to scan (defaults to configured library folders)
@@ -151,6 +180,9 @@ enum Commands {
         /// Force re-scan of all files
         #[arg(long)]
         force: bool,
+        /// Also run acoustic analysis after scanning
+        #[arg(long)]
+        analyze: bool,
     },
     /// Run acoustic analysis on the library for similarity features
     Analyze,
@@ -159,70 +191,29 @@ enum Commands {
         /// Search query
         query: String,
     },
-    /// List artists (optionally filter by name)
-    Artists {
-        /// Filter by name
-        query: Option<String>,
-    },
-    /// List albums (optionally for an artist)
-    Albums {
-        /// Artist name to filter by
-        query: Option<String>,
-    },
     /// Show library statistics
     Library,
+    /// Probe a file and show format info
+    Probe {
+        /// Path to audio file
+        path: PathBuf,
+    },
+    /// List available audio output devices
+    Devices,
     /// Show or manage configuration
     Config,
     /// Manage remote Subsonic/Navidrome server
     #[command(subcommand)]
     Remote(RemoteCommands),
-    /// Interactive fuzzy picker
-    Pick {
-        /// Optional search query to pre-filter
-        query: Option<String>,
-        /// Pick an album to play
-        #[arg(long)]
-        album: bool,
-        /// Pick an artist to play
-        #[arg(long)]
-        artist: bool,
-    },
     /// Initialise config directory with default config
     Init,
     /// Manage the download cache
     #[command(subcommand)]
     Cache(CacheCommands),
-    /// Generate shell completions (legacy static)
+    /// Generate shell completions
     Completions {
         /// Shell to generate for
         shell: clap_complete::Shell,
-    },
-    /// Run as a headless MCP server on stdio (for Claude Desktop / MCP clients)
-    Mcp,
-    /// Start the koan server (headless player + GraphQL API + optional Subsonic REST)
-    Serve {
-        /// GraphQL API port (default: from config or 4000)
-        #[arg(long, default_value = None)]
-        port: Option<u16>,
-        /// Enable Subsonic REST API on this port (e.g. --subsonic 4040)
-        #[arg(long)]
-        subsonic: Option<u16>,
-        /// Enable GraphQL Playground web UI
-        #[arg(long)]
-        playground: bool,
-        /// Run as a background daemon (fork and detach)
-        #[arg(short, long)]
-        daemonize: bool,
-    },
-    /// Start a GraphQL API server (alias for `serve`)
-    #[command(hide = true)]
-    Graphql {
-        #[arg(long)]
-        port: Option<u16>,
-        #[arg(long)]
-        playground: bool,
-        #[arg(short, long)]
-        daemonize: bool,
     },
 }
 
@@ -292,76 +283,86 @@ fn main() {
 
     let cli = Cli::parse();
 
-    match cli.command {
-        // No subcommand — open TUI (use `l` to browse library).
-        None => commands::cmd_play(&[], &[], None, None, false, false),
-        Some(Commands::Play {
-            paths,
-            ids,
-            album,
-            artist,
-            library,
-            clear,
-            server,
-            jukebox,
-        }) => {
-            if let Some(ref url) = server {
-                commands::cmd_play_remote(url, jukebox);
-            } else {
-                commands::cmd_play(&paths, &ids, album, artist, library, clear);
+    // Subcommands take priority — they're standalone operations.
+    if let Some(command) = cli.command {
+        match command {
+            Commands::Scan {
+                path,
+                force,
+                analyze,
+            } => {
+                commands::cmd_scan(path.as_deref(), force);
+                if analyze {
+                    commands::cmd_analyze();
+                }
+            }
+            Commands::Analyze => commands::cmd_analyze(),
+            Commands::Search { query } => commands::cmd_search(&query),
+            Commands::Library => commands::cmd_library(),
+            Commands::Probe { path } => commands::cmd_probe(&path),
+            Commands::Devices => commands::cmd_devices(),
+            Commands::Config => commands::cmd_config(),
+            Commands::Remote(sub) => match sub {
+                RemoteCommands::Login { url, username } => {
+                    commands::cmd_remote_login(&url, &username)
+                }
+                RemoteCommands::Sync { full } => commands::cmd_remote_sync(full),
+                RemoteCommands::Status => commands::cmd_remote_status(),
+            },
+            Commands::Init => commands::cmd_init(),
+            Commands::Cache(sub) => match sub {
+                CacheCommands::Status => commands::cmd_cache_status(),
+                CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
+            },
+            Commands::Completions { shell } => {
+                clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
             }
         }
-        Some(Commands::Probe { path }) => commands::cmd_probe(&path),
-        Some(Commands::Devices) => commands::cmd_devices(),
-        Some(Commands::Scan { path, force }) => commands::cmd_scan(path.as_deref(), force),
-        Some(Commands::Analyze) => commands::cmd_analyze(),
-        Some(Commands::Search { query }) => commands::cmd_search(&query),
-        Some(Commands::Artists { query }) => commands::cmd_artists(query.as_deref()),
-        Some(Commands::Albums { query }) => commands::cmd_albums(query.as_deref()),
-        Some(Commands::Library) => commands::cmd_library(),
-        Some(Commands::Config) => commands::cmd_config(),
-        Some(Commands::Remote(sub)) => match sub {
-            RemoteCommands::Login { url, username } => commands::cmd_remote_login(&url, &username),
-            RemoteCommands::Sync { full } => commands::cmd_remote_sync(full),
-            RemoteCommands::Status => commands::cmd_remote_status(),
-        },
-        Some(Commands::Pick {
-            query,
-            album,
-            artist,
-        }) => commands::cmd_pick(query.as_deref(), album, artist),
-        Some(Commands::Init) => commands::cmd_init(),
-        Some(Commands::Cache(sub)) => match sub {
-            CacheCommands::Status => commands::cmd_cache_status(),
-            CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
-        },
-        Some(Commands::Completions { shell }) => {
-            clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
-        }
-        Some(Commands::Mcp) => commands::cmd_mcp(),
-        Some(Commands::Serve {
-            port,
-            subsonic,
-            playground,
-            daemonize,
-        }) => {
-            if daemonize {
-                commands::cmd_serve_daemon(port, subsonic, playground);
-            } else {
-                commands::cmd_serve(port, subsonic, playground);
-            }
-        }
-        Some(Commands::Graphql {
-            port,
-            playground,
-            daemonize,
-        }) => {
-            if daemonize {
-                commands::cmd_serve_daemon(port, None, playground);
-            } else {
-                commands::cmd_serve(port, None, playground);
-            }
-        }
+        return;
+    }
+
+    // No subcommand — unified player process.
+
+    // MCP mode: headless MCP server on stdio.
+    if cli.mcp {
+        commands::cmd_mcp();
+        return;
+    }
+
+    // Daemon mode: fork a headless child and exit.
+    if cli.daemonize {
+        commands::cmd_serve_daemon(cli.port, cli.subsonic, cli.playground);
+        return;
+    }
+
+    // Headless mode: GraphQL API server, no TUI.
+    if cli.headless {
+        commands::cmd_serve(cli.port, cli.subsonic, cli.playground);
+        return;
+    }
+
+    // Default: TUI mode (with optional API server alongside).
+    if let Some(ref url) = cli.server {
+        commands::cmd_play_remote(url, cli.jukebox);
+    } else {
+        let api_opts = if cli.no_api {
+            None
+        } else {
+            Some(commands::ApiOptions {
+                port: cli.port,
+                subsonic: cli.subsonic,
+                playground: cli.playground,
+            })
+        };
+        commands::cmd_play(
+            &cli.paths,
+            &cli.ids,
+            cli.album,
+            cli.artist,
+            cli.library,
+            cli.clear,
+            api_opts,
+        );
     }
 }
 

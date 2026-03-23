@@ -7,7 +7,6 @@ mod enqueue;
 pub mod graphql;
 mod library;
 pub mod mcp;
-mod pick;
 mod picker_items;
 mod play;
 mod probe;
@@ -23,12 +22,9 @@ pub use mcp::cmd_mcp;
 
 pub use config::{cmd_config, cmd_init};
 pub use enqueue::enqueue_playlist;
-pub use library::{cmd_albums, cmd_artists, cmd_library};
-pub use pick::cmd_pick;
-pub use picker_items::{
-    load_picker_items, make_album_picker_items, make_artist_picker_items, make_track_picker_items,
-};
-pub use play::{cmd_play, cmd_play_remote};
+pub use library::cmd_library;
+pub use picker_items::{load_picker_items, make_album_picker_items};
+pub use play::{ApiOptions, cmd_play, cmd_play_remote};
 pub use probe::{cmd_devices, cmd_probe};
 pub use remote::{cmd_remote_login, cmd_remote_status, cmd_remote_sync};
 pub use scan::cmd_scan;
