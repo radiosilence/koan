@@ -118,9 +118,8 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `commands/enqueue.rs` | `enqueue_playlist` (append/play/replace), download coordination |
 | `commands/scan.rs` | `cmd_scan` |
 | `commands/search.rs` | `cmd_search` (FTS5 with tree output) |
-| `commands/pick.rs` | Standalone fuzzy picker TUI |
 | `commands/remote.rs` | Remote login/sync/status |
-| `commands/graphql.rs` | GraphQL schema (async-graphql), resolvers, axum HTTP server, in-process execution for MCP. Snapshot/radio/favourite mutations with remote sync |
+| `commands/graphql/` | GraphQL schema (async-graphql), resolvers, axum HTTP server, in-process execution for MCP. Snapshot/radio/favourite mutations with remote sync |
 | `commands/mod.rs` | Shared helpers: `open_db`, formatters, cache paths, playlist item builders |
 | `tui/app.rs` | `App` state machine, `Mode` enum, event handlers per mode |
 | `tui/ui.rs` | Render pipeline: layout → transport → content → overlays → hints |
@@ -172,7 +171,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `ebur128` | EBU R128 loudness measurement for ReplayGain |
 | `realfft` | FFT for spectrum analyzer |
 | `async-graphql` | GraphQL schema derivation, execution engine |
-| `axum` | HTTP server for `koan graphql` standalone mode |
+| `axum` | HTTP server for GraphQL/Subsonic API |
 
 ## Roadmap
 

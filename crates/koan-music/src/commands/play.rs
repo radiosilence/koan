@@ -20,6 +20,14 @@ use crate::tui::picker::{
     artist_id_from_sentinel, is_all_tracks_sentinel,
 };
 
+/// Options for running the GraphQL/Subsonic API server alongside the TUI.
+/// `None` means no API server (--no-api).
+pub struct ApiOptions {
+    pub port: Option<u16>,
+    pub subsonic: Option<u16>,
+    pub playground: bool,
+}
+
 /// Save the current queue and playback position to DB.
 fn save_playback_state_from_app(app: &tui::app::App) {
     let (items, cursor) = app.state.snapshot_playlist();
@@ -65,6 +73,7 @@ pub fn cmd_play(
     artist: Option<i64>,
     start_in_library: bool,
     clear_queue: bool,
+    api_opts: Option<ApiOptions>,
 ) {
     // Gather track IDs to resolve, or raw file paths.
     let track_ids: Option<Vec<i64>> = if let Some(album_id) = album {
@@ -100,6 +109,26 @@ pub fn cmd_play(
     BufferedLogger::set_buffer(log_buffer.clone());
 
     let (state, _timeline, viz_snapshot, tx) = Player::spawn();
+
+    // Spawn the API server on a background thread if requested.
+    if let Some(opts) = api_opts {
+        let db_path = config::db_path();
+        let state_api = state.clone();
+        let tx_api = tx.clone();
+        std::thread::Builder::new()
+            .name("koan-api".into())
+            .spawn(move || {
+                super::graphql::start_api_background(
+                    state_api,
+                    tx_api,
+                    db_path,
+                    opts.port,
+                    opts.subsonic,
+                    opts.playground,
+                );
+            })
+            .expect("failed to spawn API server thread");
+    }
 
     // Clear persisted state if requested.
     if clear_queue && let Ok(db) = koan_core::db::connection::Database::open(&config::db_path()) {

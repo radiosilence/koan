@@ -16,7 +16,7 @@ use uuid::Uuid;
 
 use mutations::MutationRoot;
 use queries::QueryRoot;
-pub use server::{cmd_serve, cmd_serve_daemon, execute_in_process};
+pub use server::{cmd_serve, cmd_serve_daemon, execute_in_process, start_api_background};
 
 // ---------------------------------------------------------------------------
 // DB handle wrapper (so we can put it in Context)

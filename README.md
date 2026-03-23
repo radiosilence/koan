@@ -84,17 +84,15 @@ You can use both sources together. Run `koan remote sync` periodically (or after
 ### Play something
 
 ```bash
-# Open the TUI
+# Open the TUI (+ GraphQL API on port 4000)
 koan
 
-# Or play files/directories directly
-koan play ~/Music/Aphex\ Twin/
-koan play ~/Music/album/*.flac
+# Play files/directories directly
+koan ~/Music/Aphex\ Twin/
+koan ~/Music/album/*.flac
 
-# Interactive fuzzy pickers
-koan pick              # search all tracks
-koan pick --album      # browse albums
-koan pick --artist     # browse artists
+# Headless server (no TUI)
+koan --headless
 ```
 
 The TUI launches immediately — no waiting. If tracks need downloading (remote library), they appear in the queue with animated spinners while loading in the background.
@@ -213,8 +211,8 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 - **Track deduplication** — 3-strategy match (path → remote ID → content) merges local and remote into one DB row. No duplicates in search or browse. Playback priority: local file → cached download → remote stream
 - **Lyrics** — toggle a lyrics side panel with `L`. Fetches synced (LRC) or plain lyrics automatically; synced lyrics highlight the current line and scroll with playback. Lyrics are cached in the database per track
 - **Proper artist handling** — track artist stored separately from album artist; compilations/VA albums display correctly
-- **GraphQL API** — `koan graphql` runs a headless player with an HTTP API. Full Relay-style cursor pagination, rich metadata filters (year range, codec, genre, sample rate, bit depth, duration), nested queries (artists→albums→tracks), mutations for all playback/queue/device/favourite control, named queue snapshots, radio mode control. Optional GraphQL Playground at `/graphql`. Daemon mode (`-d`) for background operation
-- **MCP server** — `koan mcp` exposes the player as an MCP server on stdio for Claude Desktop. 40+ tools including a `graphql` tool for in-process queries and a `schema_sdl` tool for schema introspection. Claude gets comprehensive instructions covering all tools, filters, and workflows on connect
+- **GraphQL API** — always-on alongside the TUI (or `koan --headless` for API-only). Full Relay-style cursor pagination, rich metadata filters (year range, codec, genre, sample rate, bit depth, duration), nested queries (artists→albums→tracks), mutations for all playback/queue/device/favourite control, named queue snapshots, radio mode control. Optional GraphiQL at `/graphql`. Daemon mode (`-d`) for background operation
+- **MCP server** — `koan --mcp` exposes the player as an MCP server on stdio for Claude Desktop. 2 tools: `schema_sdl` + `graphql`. Claude reads the schema, drives everything through one tool
 
 ## Architecture
 
@@ -246,7 +244,7 @@ source <(COMPLETE=bash koan)
 COMPLETE=fish koan | source
 ```
 
-Then `koan play --album <TAB>` shows your actual albums with artist names.
+Then `koan --album <TAB>` shows your actual albums with artist names.
 
 ## CLI reference
 
@@ -254,25 +252,35 @@ Then `koan play --album <TAB>` shows your actual albums with artist names.
 # setup
 koan init                     # create config directory with defaults
 koan scan                     # scan configured library folders
+koan scan --analyze           # scan + acoustic analysis in one pass
 
-# play
-koan                          # open TUI (use `l` to browse library)
-koan play --library           # open TUI in library browse mode
-koan play ~/Music/album/      # play a directory (recursive)
-koan play ~/Music/*.flac      # play specific files
-koan play --album 5           # play album by ID (use tab completion)
-koan play --artist 3          # play artist by ID
+# play (all top-level — `koan` IS play)
+koan                          # TUI + GraphQL API on :4000
+koan --library                # TUI in library browse mode
+koan ~/Music/album/           # play a directory (recursive)
+koan ~/Music/*.flac           # play specific files
+koan --album 5                # play album by ID (use tab completion)
+koan --artist 3               # play artist by ID
+koan --no-api                 # TUI only (no GraphQL server)
+koan --clear                  # clear persisted queue
 
-# search & browse
-koan pick                     # fuzzy search all tracks
-koan pick --album             # fuzzy browse albums
-koan pick --artist            # fuzzy browse artists
+# server
+koan --headless                     # GraphQL API on :4000, no TUI
+koan --headless --playground        # with GraphiQL web IDE
+koan --headless --subsonic 4040     # + Subsonic REST on port 4040
+koan --port 8080                    # custom GraphQL port
+koan -d                             # background daemon
+koan -d --subsonic 4040             # daemon with Subsonic
+
+# remote TUI
+koan --server http://host:4000      # TUI connected to remote koan
+koan --server http://host:4000 --jukebox  # remote control only
+
+# search & info
 koan search "radiohead"       # text search (CLI output)
-koan artists                  # list all artists
-koan albums                   # list all albums
 koan library                  # library statistics
 
-# remote
+# remote server
 koan remote login URL user    # authenticate with Subsonic/Navidrome server
 koan remote sync              # incremental sync (only new albums since last sync)
 koan remote sync --full       # full re-sync of entire remote library
@@ -286,20 +294,12 @@ koan cache clear              # clear cached remote downloads
 koan probe track.flac         # show format/codec info for a file
 
 # mcp
-koan mcp                      # start headless MCP server on stdio
-
-# server
-koan serve                          # GraphQL API on port 4000
-koan serve --playground             # with GraphQL Playground web UI
-koan serve --subsonic 4040          # + Subsonic REST on port 4040
-koan serve --port 8080              # custom GraphQL port
-koan serve -d                       # run as background daemon
-koan serve -d --subsonic 4040       # daemon with Subsonic
+koan --mcp                    # MCP server on stdio (Claude Desktop)
 ```
 
 ### MCP server (Claude Desktop integration)
 
-`koan mcp` runs koan as a headless player controllable by Claude Desktop (or any MCP client). No TUI, no terminal — just the audio engine and 21 tools exposed over the Model Context Protocol. The LLM provides the taste; koan provides the controls.
+`koan --mcp` runs koan as a headless player controllable by Claude Desktop (or any MCP client). No TUI, no terminal — just the audio engine and 2 tools (schema_sdl + graphql) exposed over the Model Context Protocol. The LLM reads the schema, drives everything through GraphQL.
 
 **Setup:**
 
@@ -312,7 +312,7 @@ koan serve -d --subsonic 4040       # daemon with Subsonic
   "mcpServers": {
     "koan": {
       "command": "koan",
-      "args": ["mcp"]
+      "args": ["--mcp"]
     }
   }
 }
@@ -325,7 +325,7 @@ If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the f
   "mcpServers": {
     "koan": {
       "command": "/opt/homebrew/bin/koan",
-      "args": ["mcp"]
+      "args": ["--mcp"]
     }
   }
 }
@@ -349,14 +349,14 @@ If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the f
 
 ### GraphQL API
 
-`koan graphql` starts a headless player with an HTTP GraphQL server. Full programmatic control — everything the TUI can do, minus the visualizer.
+The GraphQL API runs alongside the TUI by default (port 4000). For headless operation, use `koan --headless`. Full programmatic control — everything the TUI can do, minus the visualizer.
 
 ```bash
-# Start the server
-koan graphql --playground
+# Headless server with GraphiQL IDE
+koan --headless --playground
 
 # Or as a daemon (for Claude Code / scripts)
-koan graphql -d --playground
+koan -d --playground
 ```
 
 Then query at `http://localhost:4000/graphql`:

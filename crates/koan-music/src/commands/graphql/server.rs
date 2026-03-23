@@ -1,24 +1,48 @@
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use crossbeam_channel::Sender;
 use koan_core::config::Config;
+use koan_core::player::commands::PlayerCommand;
+use koan_core::player::state::SharedPlayerState;
 
 use super::{KoanSchema, build_schema};
 
 // ---------------------------------------------------------------------------
-// `koan graphql` entry point
+// `koan --headless` entry point (standalone headless server)
 // ---------------------------------------------------------------------------
 
 pub fn cmd_serve(port: Option<u16>, subsonic_port: Option<u16>, playground: bool) {
-    use axum::routing::{get, post};
     use koan_core::player::Player;
 
     // Validate DB is accessible before starting the server.
     let _db = super::super::open_db();
     let db_path = koan_core::config::db_path();
 
+    let (state, _timeline, _viz, cmd_tx) = Player::spawn();
+
+    run_api_blocking(state, cmd_tx, db_path, port, subsonic_port, playground);
+}
+
+// ---------------------------------------------------------------------------
+// Shared API server logic — used by both headless and TUI+API modes
+// ---------------------------------------------------------------------------
+
+/// Run the GraphQL (+ optional Subsonic) API server, blocking the current thread.
+/// Called from `cmd_serve` (headless) and `start_api_background` (TUI companion).
+fn run_api_blocking(
+    state: Arc<SharedPlayerState>,
+    cmd_tx: Sender<PlayerCommand>,
+    db_path: PathBuf,
+    port: Option<u16>,
+    subsonic_port: Option<u16>,
+    playground: bool,
+) {
+    use axum::routing::{get, post};
+
     let cfg = Config::load().unwrap_or_default();
     let port = port.unwrap_or(cfg.graphql.port);
     let playground_enabled = playground || cfg.graphql.playground;
-
-    let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
     let schema = build_schema(state, cmd_tx, db_path.clone());
 
@@ -31,9 +55,9 @@ pub fn cmd_serve(port: Option<u16>, subsonic_port: Option<u16>, playground: bool
         let gql_app = gql_app.with_state(schema);
 
         let gql_addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-        eprintln!("koan serve — GraphQL on http://0.0.0.0:{}/graphql", port);
+        log::info!("GraphQL API on http://0.0.0.0:{}/graphql", port);
         if playground_enabled {
-            eprintln!("  GraphiQL: http://localhost:{}/graphql", port);
+            log::info!("GraphiQL: http://localhost:{}/graphql", port);
         }
 
         let gql_listener = tokio::net::TcpListener::bind(gql_addr)
@@ -45,7 +69,7 @@ pub fn cmd_serve(port: Option<u16>, subsonic_port: Option<u16>, playground: bool
         if let Some(sub_port) = subsonic_port {
             let sub_app = super::super::serve::subsonic_router(db_path);
             let sub_addr = std::net::SocketAddr::from(([0, 0, 0, 0], sub_port));
-            eprintln!("  Subsonic REST on http://0.0.0.0:{}/rest/", sub_port);
+            log::info!("Subsonic REST on http://0.0.0.0:{}/rest/", sub_port);
 
             let sub_listener = tokio::net::TcpListener::bind(sub_addr)
                 .await
@@ -64,11 +88,23 @@ pub fn cmd_serve(port: Option<u16>, subsonic_port: Option<u16>, playground: bool
     });
 }
 
+/// Start the API server on the current thread (blocks forever).
+/// Called from a background thread when TUI mode has API enabled.
+pub fn start_api_background(
+    state: Arc<SharedPlayerState>,
+    cmd_tx: Sender<PlayerCommand>,
+    db_path: PathBuf,
+    port: Option<u16>,
+    subsonic_port: Option<u16>,
+    playground: bool,
+) {
+    run_api_blocking(state, cmd_tx, db_path, port, subsonic_port, playground);
+}
+
 async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
         .expect("failed to listen for ctrl+c");
-    eprintln!("\nshutting down...");
 }
 
 async fn graphql_handler(
@@ -86,7 +122,7 @@ async fn graphql_playground() -> axum::response::Html<String> {
     )
 }
 
-/// Run the server as a background daemon.
+/// Run the server as a background daemon (fork + detach).
 pub fn cmd_serve_daemon(port: Option<u16>, subsonic_port: Option<u16>, playground: bool) {
     use std::fs;
     use std::process::Command;
@@ -96,7 +132,8 @@ pub fn cmd_serve_daemon(port: Option<u16>, subsonic_port: Option<u16>, playgroun
 
     let exe = std::env::current_exe().expect("failed to get current exe path");
     let mut cmd = Command::new(exe);
-    cmd.arg("serve");
+    // Use the new unified CLI: `koan --headless --port <port>`
+    cmd.arg("--headless");
     cmd.arg("--port").arg(port_val.to_string());
     if let Some(sp) = subsonic_port {
         cmd.arg("--subsonic").arg(sp.to_string());
@@ -119,10 +156,7 @@ pub fn cmd_serve_daemon(port: Option<u16>, subsonic_port: Option<u16>, playgroun
         let _ = child.wait();
     });
 
-    eprintln!(
-        "koan serve daemon started (pid {}) on port {}",
-        pid, port_val
-    );
+    eprintln!("koan daemon started (pid {}) on port {}", pid, port_val);
     if let Some(sp) = subsonic_port {
         eprintln!("  Subsonic REST on port {}", sp);
     }

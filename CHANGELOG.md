@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Unified daemon mode** — `koan` now runs TUI + GraphQL API in one process by default. No more separate `koan serve`. All interfaces share one player, one state ([#70](https://github.com/radiosilence/koan/issues/70))
+  - `koan --headless` replaces `koan serve` (GraphQL API only, no TUI)
+  - `koan -d` / `koan --daemonize` forks a headless background daemon
+  - `koan --mcp` replaces `koan mcp` (MCP server on stdio)
+  - `koan --no-api` opts out of the API server (TUI-only, old behaviour)
+  - `koan --port`, `--subsonic`, `--playground` configure the API from top-level
+  - Play args (`--album`, `--artist`, `--id`, `--library`, `--clear`, `--server`, `--jukebox`) moved to top-level — `koan play` removed
+  - `koan scan --analyze` combines scan + acoustic analysis in one pass
+
+### Removed
+
+- **`koan play`** — `koan` IS play. All args moved to top-level
+- **`koan serve`** — replaced by `koan --headless`
+- **`koan graphql`** — dead alias, removed
+- **`koan mcp`** — replaced by `koan --mcp` flag
+- **`koan pick`** — standalone picker removed, TUI has built-in pickers (`p`/`a`/`r`)
+- **`koan artists`**, **`koan albums`** — use `koan search` or GraphQL queries
+
 ## 0.16.0
 
 ### Changed
