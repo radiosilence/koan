@@ -24,16 +24,24 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
         std::process::exit(1);
     }
 
+    for folder in &folders {
+        eprintln!(
+            "{} {}",
+            "scanning".cyan().bold(),
+            folder.display().to_string().dimmed()
+        );
+    }
+
     let start = std::time::Instant::now();
     let count = std::cell::Cell::new(0usize);
     let last_draw = std::cell::Cell::new(std::time::Instant::now());
 
-    let on_track = |_ev: koan_core::index::scanner::ScanEvent| {
+    let on_track = |ev: koan_core::index::scanner::ScanEvent| {
         let c = count.get() + 1;
         count.set(c);
-        // Throttle redraws to every 100ms.
+        // Throttle redraws to every 150ms.
         let now = std::time::Instant::now();
-        if now.duration_since(last_draw.get()).as_millis() >= 100 {
+        if now.duration_since(last_draw.get()).as_millis() >= 150 {
             last_draw.set(now);
             let elapsed = start.elapsed().as_secs_f64();
             let rate = if elapsed > 0.1 {
@@ -42,11 +50,15 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
                 0.0
             };
             eprint!(
-                "\r{} {} scanned ({:.0}/s)   ",
-                "\u{2022}".green(),
+                "\r  {} {} {} {} {}   ",
+                "+".green(),
                 c.to_string().cyan(),
-                rate
+                format!("({:.0}/s)", rate).dimmed(),
+                format!("{} — {}", ev.artist, ev.title).white(),
+                ev.album.dimmed(),
             );
+            // Truncate to terminal width to avoid wrapping.
+            eprint!("\x1b[K");
             std::io::stderr().flush().ok();
         }
     };
@@ -55,33 +67,49 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
     let elapsed = start.elapsed();
 
     // Clear the progress line.
-    eprint!("\r{}\r", " ".repeat(60));
+    eprint!("\r\x1b[K");
 
-    println!(
-        "{} {} {} added, {} updated, {} removed, {} skipped",
+    // Summary.
+    eprintln!(
+        "{} {}",
         "scan complete".green().bold(),
         format!("({:.1}s)", elapsed.as_secs_f64()).dimmed(),
-        result.added.to_string().green(),
+    );
+    eprintln!(
+        "  {} added  {} updated  {} removed  {} skipped",
+        result.added.to_string().green().bold(),
         result.updated.to_string().yellow(),
         result.removed.to_string().red(),
         result.skipped.to_string().dimmed(),
     );
 
     if !result.errors.is_empty() {
-        println!("{} {}:", "errors".red().bold(), result.errors.len());
-        for (path, err) in result.errors.iter().take(10) {
-            println!(
+        eprintln!();
+        eprintln!(
+            "{} {}",
+            format!("{} errors", result.errors.len()).red().bold(),
+            "(will retry on next scan)".dimmed()
+        );
+        for (path, err) in result.errors.iter().take(20) {
+            // Show filename prominently, full path dimmed, error in red.
+            let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+            let parent = path
+                .parent()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            eprintln!(
                 "  {} {} {}",
-                "\u{2502}".dimmed(),
-                path.display().to_string().dimmed(),
-                format!("\u{2014} {}", err).red()
+                "✗".red(),
+                filename.white().bold(),
+                format!("in {}", parent).dimmed(),
             );
+            eprintln!("    {}", err.red());
         }
-        if result.errors.len() > 10 {
-            println!(
+        if result.errors.len() > 20 {
+            eprintln!(
                 "  {} {}",
-                "\u{2514}".dimmed(),
-                format!("... and {} more", result.errors.len() - 10).dimmed()
+                "…".dimmed(),
+                format!("and {} more", result.errors.len() - 20).dimmed()
             );
         }
     }
@@ -90,18 +118,18 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
     if cfg.discovery.analysis_on_scan {
         let missing = koan_core::db::queries::tracks_missing_vectors(&db.conn).unwrap_or_default();
         if !missing.is_empty() {
-            println!(
-                "\n{} analyzing {} tracks for acoustic features...",
-                "\u{2022}".green(),
-                missing.len().to_string().cyan()
+            eprintln!();
+            eprintln!(
+                "{} analyzing {} tracks for acoustic similarity...",
+                "♪".cyan(),
+                missing.len().to_string().cyan().bold()
             );
             let analysis_start = std::time::Instant::now();
             let (ok, err) = koan_core::index::scanner::analyze_missing(&db, None);
             let analysis_elapsed = analysis_start.elapsed();
-            println!(
-                "{} {} analyzed, {} errors {}",
-                "analysis".green().bold(),
-                ok.to_string().green(),
+            eprintln!(
+                "  {} analyzed  {} errors  {}",
+                ok.to_string().green().bold(),
                 err.to_string().red(),
                 format!("({:.1}s)", analysis_elapsed.as_secs_f64()).dimmed(),
             );
