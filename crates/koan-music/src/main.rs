@@ -339,17 +339,21 @@ fn main() {
     }
 
     // Default: TUI mode (with optional API server alongside).
+    // CLI flags override config values.
+    let cfg = koan_core::config::Config::load_or_default();
+
     if let Some(ref url) = cli.server {
         commands::cmd_play_remote(url, cli.jukebox);
     } else {
-        let api_opts = if cli.no_api {
-            None
-        } else {
+        let api_enabled = !cli.no_api && cfg.graphql.enabled;
+        let api_opts = if api_enabled {
             Some(commands::ApiOptions {
-                port: cli.port,
-                subsonic: cli.subsonic,
-                playground: cli.playground,
+                port: cli.port.or(Some(cfg.graphql.port)),
+                subsonic: cli.subsonic.or(cfg.graphql.subsonic_port),
+                playground: cli.playground || cfg.graphql.playground,
             })
+        } else {
+            None
         };
         commands::cmd_play(
             &cli.paths,

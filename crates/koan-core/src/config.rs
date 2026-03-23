@@ -185,17 +185,25 @@ impl OrganizeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct GraphqlConfig {
-    /// Port to listen on (default: 4000).
+    /// Enable the GraphQL API server alongside the TUI (default: true).
+    /// Set to false for TUI-only mode (equivalent to --no-api).
+    pub enabled: bool,
+    /// GraphQL API port (default: 4000).
     pub port: u16,
-    /// Enable the GraphQL Playground web UI at GET /graphql.
+    /// Enable GraphiQL web IDE at GET /graphql.
     pub playground: bool,
+    /// Enable Subsonic REST API on this port. Omit or null to disable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subsonic_port: Option<u16>,
 }
 
 impl Default for GraphqlConfig {
     fn default() -> Self {
         Self {
+            enabled: true,
             port: 4000,
             playground: false,
+            subsonic_port: None,
         }
     }
 }
