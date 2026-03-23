@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.16.0
+
+### Changed
+
+- **GraphiQL v2** — replaced deprecated GraphQL Playground with the official GraphQL Foundation IDE. Actively maintained, subscription-ready, better UX. `koan serve --playground` now serves GraphiQL ([#71](https://github.com/radiosilence/koan/issues/71))
+- **Clean schema type names** — stripped `Gql` prefix from all GraphQL types. `GqlArtist` → `Artist`, `GqlTrack` → `Track`, `GqlNowPlaying` → `NowPlaying`, etc. The public schema now has clean, idiomatic names
+
 ## 0.15.0
 
 ### Added
