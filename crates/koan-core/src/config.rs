@@ -240,6 +240,12 @@ pub struct DiscoveryConfig {
     pub analysis_on_scan: bool,
     /// Weight for acoustic similarity signal in radio mode scoring (0.0..1.0).
     pub acoustic_weight: f64,
+    /// Enable neural embeddings even if the model is present (default: true).
+    /// Set to false to disable neural features without deleting the model.
+    pub neural_enabled: bool,
+    /// Path to ONNX model directory. Defaults to `~/.config/koan/models/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub neural_model_path: Option<PathBuf>,
 }
 
 impl Default for DiscoveryConfig {
@@ -247,7 +253,18 @@ impl Default for DiscoveryConfig {
         Self {
             analysis_on_scan: false,
             acoustic_weight: 0.5,
+            neural_enabled: true,
+            neural_model_path: None,
         }
+    }
+}
+
+impl DiscoveryConfig {
+    /// Resolved model directory — uses explicit setting or defaults.
+    pub fn model_dir(&self) -> PathBuf {
+        self.neural_model_path
+            .clone()
+            .unwrap_or_else(|| config_dir().join("models"))
     }
 }
 

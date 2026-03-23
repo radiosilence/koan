@@ -126,7 +126,7 @@ mod tests {
     #[test]
     fn centroid_single() {
         let emb = vec![42.0f32; EMBEDDING_DIMS];
-        let result = centroid(&[emb.clone()]);
+        let result = centroid(std::slice::from_ref(&emb));
         assert_eq!(result, emb);
     }
 

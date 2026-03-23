@@ -150,6 +150,12 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             embedding   BLOB NOT NULL,
             updated_at  TEXT DEFAULT (datetime('now'))
         );
+
+        CREATE TABLE IF NOT EXISTS track_neural_vectors (
+            track_id    INTEGER PRIMARY KEY REFERENCES tracks(id),
+            embedding   BLOB NOT NULL,
+            updated_at  TEXT DEFAULT (datetime('now'))
+        );
         ",
     )?;
     Ok(())
