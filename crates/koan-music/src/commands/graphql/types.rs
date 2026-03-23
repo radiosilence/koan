@@ -69,7 +69,7 @@ pub(super) struct GqlArtist {
     pub row: queries::ArtistRow,
 }
 
-#[Object]
+#[Object(name = "Artist")]
 impl GqlArtist {
     async fn id(&self) -> i64 {
         self.row.id
@@ -130,7 +130,7 @@ pub(super) struct GqlAlbum {
     pub row: queries::AlbumRow,
 }
 
-#[Object]
+#[Object(name = "Album")]
 impl GqlAlbum {
     async fn id(&self) -> i64 {
         self.row.id
@@ -199,7 +199,7 @@ pub(super) struct GqlTrack {
     pub row: queries::TrackRow,
 }
 
-#[Object]
+#[Object(name = "Track")]
 impl GqlTrack {
     async fn id(&self) -> i64 {
         self.row.id
@@ -300,6 +300,7 @@ impl GqlTrack {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "NowPlaying")]
 pub(super) struct GqlNowPlaying {
     pub state: PlaybackStateEnum,
     pub position_ms: u64,
@@ -309,6 +310,7 @@ pub(super) struct GqlNowPlaying {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "NowPlayingTrack")]
 pub(super) struct GqlNowPlayingTrack {
     pub title: String,
     pub artist: String,
@@ -332,7 +334,7 @@ pub(super) struct GqlQueueEntry {
     pub is_current: bool,
 }
 
-#[Object]
+#[Object(name = "QueueEntry")]
 impl GqlQueueEntry {
     async fn queue_item_id(&self) -> &str {
         &self.queue_item_id
@@ -372,6 +374,7 @@ impl GqlQueueEntry {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "LibraryStats")]
 pub(super) struct GqlLibraryStats {
     pub total_tracks: i64,
     pub local_tracks: i64,
@@ -382,12 +385,14 @@ pub(super) struct GqlLibraryStats {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "Device")]
 pub(super) struct GqlDevice {
     pub name: String,
     pub sample_rates: Vec<f64>,
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "SimilarArtist")]
 pub(super) struct GqlSimilarArtist {
     pub artist: GqlSimilarArtistInfo,
     pub score: f64,
@@ -396,12 +401,14 @@ pub(super) struct GqlSimilarArtist {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "SimilarArtistInfo")]
 pub(super) struct GqlSimilarArtistInfo {
     pub id: i64,
     pub name: String,
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "PlayHistoryEntry")]
 pub(super) struct GqlPlayHistoryEntry {
     pub track_id: i64,
     pub played_at: i64,
@@ -410,6 +417,7 @@ pub(super) struct GqlPlayHistoryEntry {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "PlayHistoryTrack")]
 pub(super) struct GqlPlayHistoryTrack {
     pub title: String,
     pub artist: String,
@@ -417,6 +425,7 @@ pub(super) struct GqlPlayHistoryTrack {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "Snapshot")]
 pub(super) struct GqlSnapshot {
     pub name: String,
     pub track_count: i32,
@@ -425,11 +434,13 @@ pub(super) struct GqlSnapshot {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "RadioStatus")]
 pub(super) struct GqlRadioStatus {
     pub enabled: bool,
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "FuzzyMatch")]
 pub(super) struct GqlFuzzyMatch {
     pub id: i64,
     pub name: String,
@@ -438,6 +449,7 @@ pub(super) struct GqlFuzzyMatch {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "Lyrics")]
 pub(super) struct GqlLyrics {
     pub content: String,
     pub synced: bool,
@@ -445,12 +457,14 @@ pub(super) struct GqlLyrics {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "CoverArt")]
 pub(super) struct GqlCoverArt {
     pub data_base64: String,
     pub mime: String,
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "OrganizePreview")]
 pub(super) struct GqlOrganizePreview {
     pub moves: Vec<GqlFileMove>,
     pub errors: Vec<String>,
@@ -458,6 +472,7 @@ pub(super) struct GqlOrganizePreview {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "FileMove")]
 pub(super) struct GqlFileMove {
     pub track_id: i64,
     pub from_path: String,
@@ -465,6 +480,7 @@ pub(super) struct GqlFileMove {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "OrganizeResult")]
 pub(super) struct GqlOrganizeResult {
     pub moved_count: i32,
     pub errors: Vec<String>,
@@ -472,6 +488,7 @@ pub(super) struct GqlOrganizeResult {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "ScanResult")]
 pub(super) struct GqlScanResult {
     pub tracks_added: i64,
     pub tracks_updated: i64,
@@ -479,6 +496,7 @@ pub(super) struct GqlScanResult {
 }
 
 #[derive(SimpleObject)]
+#[graphql(name = "Share")]
 pub(super) struct GqlShare {
     pub url: Option<String>,
     pub id: String,
@@ -489,7 +507,7 @@ pub(super) struct GqlSimilarTrack {
     pub distance: f64,
 }
 
-#[Object]
+#[Object(name = "SimilarTrack")]
 impl GqlSimilarTrack {
     async fn track_id(&self) -> i64 {
         self.row.id
@@ -526,7 +544,7 @@ pub(super) struct GqlStatus {
     pub message: String,
 }
 
-#[Object]
+#[Object(name = "Status")]
 impl GqlStatus {
     async fn ok(&self) -> bool {
         self.success
@@ -553,7 +571,7 @@ pub(super) struct GqlQueueMutationResult {
     pub queue_item_ids: Vec<String>,
 }
 
-#[Object]
+#[Object(name = "QueueMutationResult")]
 impl GqlQueueMutationResult {
     async fn ok(&self) -> bool {
         self.success
