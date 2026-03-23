@@ -1,12 +1,47 @@
 # Changelog
 
-## Unreleased
+## 0.15.0
+
+### Added
+
+- **Linux audio support** — `AudioBackend` trait abstraction with `CpalBackend` (ALSA/PipeWire/PulseAudio via cpal) for Linux and `CoreAudioBackend` for macOS. Bit-perfect gapless on both platforms. Decode pipeline untouched — backends are dumb ring buffer consumers ([#58](https://github.com/radiosilence/koan/pull/58))
+- **`koan serve`** — unified server command. GraphQL API (always on) + optional Subsonic REST (`--subsonic <port>`). Replaces `koan graphql`. One process, one player, two interfaces ([#55](https://github.com/radiosilence/koan/pull/55))
+- **Subsonic REST API** — 22 endpoints for third-party clients (play:Sub, Amperfy). Browsing, search, streaming with Range + proxy, cover art, star/unstar, scrobble, playlists (mapped to snapshots), genres. XML + JSON, MD5+salt auth ([#55](https://github.com/radiosilence/koan/pull/55))
+- **`koan play --server`** — TUI client mode via GQL. Streams audio locally from a remote `koan serve` instance ([#55](https://github.com/radiosilence/koan/pull/55))
+- **`--jukebox` mode** — server plays audio, client is remote control only ([#55](https://github.com/radiosilence/koan/pull/55))
+- **Acoustic similarity** — `koan analyze` generates 23-dim bliss-audio fingerprints. Radio mode gains `SimilarityAxis::Acoustic`. `similarTracks(trackId, limit)` GQL query ([#68](https://github.com/radiosilence/koan/pull/68))
+- **GraphQL API** — full Relay-style cursor pagination, rich metadata filters (year, codec, genre, sample rate, bit depth, duration), fuzzy search, lyrics, cover art, organize, scan, sync, share mutations ([#36](https://github.com/radiosilence/koan/pull/36))
+- **MCP server: GraphQL-first** — 2 tools: `schema_sdl` + `graphql`. Claude reads the schema, drives everything through one tool
+- **Named queue snapshots** — save/restore/list/delete via GQL + MCP. Bank curated mixes and switch between them
+- **Radio mode via API** — `enableRadio`/`disableRadio` mutations. SharedPlayerState atomic keeps TUI and API in sync
+- **Favourites filter + remote sync** — `favouritesOnly` on all queries, `isFavourite` on tracks. Star/unstar auto-syncs to Subsonic/Navidrome
+- **`[discovery]` config** — `analysis_on_scan`, `acoustic_weight` for acoustic similarity tuning
+- **Neural discovery (feature-gated)** — DCLAP ONNX embeddings behind `neural-discovery` cargo feature. `textSearch` GQL query, `koan analyze --neural`. Opt-in, graceful degradation ([#69](https://github.com/radiosilence/koan/pull/69))
+- **Cross-platform credentials** — `keyring` crate replaces `security-framework` (macOS Keychain + Linux secret-service)
+- **CI for Linux** — clippy, test, build on macOS + Ubuntu. Release binaries: macOS arm64/x86_64 + Linux x86_64/arm64 (native runners)
 
 ### Fixed
 
-- **Linux: ALSA/JACK/OSS stderr spam in TUI** — cpal probes all audio backends on init, device listing, and stream creation. JACK/OSS/PipeWire C libraries write errors directly to stderr when unavailable, corrupting the TUI display. Now suppressed via fd redirect during all cpal operations
-- **Linux: second Ctrl+C force-restores terminal** — if the TUI event loop is slow to respond to the first Ctrl+C, a second press immediately restores raw mode and exits. Prevents broken terminal state
-- **Scanner: skip empty files** — 0-byte files now get a clear "empty file" error instead of confusing "probe reach EOF" messages from Symphonia
+- **Remote tracks silently skipped** — GQL mutations now trigger background downloads. Correct cache paths via `resolve_item_path()` (single code path with TUI)
+- **`restoreSnapshot` downloads** — snapshot restore now runs the download pipeline like `addToQueue`
+- **N+1 query elimination** — genre/favourite filtering uses batch SQL instead of per-item calls ([#64](https://github.com/radiosilence/koan/pull/64))
+- **GraphQL injection** — query building converted from `format!()` to proper variables ([#63](https://github.com/radiosilence/koan/pull/63))
+- **Remote bridge hardening** — exhaustive `PlayerCommand` match, incomplete downloads marked Failed, 30s HTTP timeouts ([#60](https://github.com/radiosilence/koan/pull/60))
+- **Linux: ALSA/JACK stderr spam** — cpal backend probe output suppressed via fd redirect during all operations
+- **Linux: Ctrl+C terminal restore** — second Ctrl+C force-restores raw mode and exits immediately
+- **Scanner: empty files** — 0-byte files get clear error instead of confusing Symphonia probe messages
+- **`--playground` flag** — changed from `Option<bool>` to proper flag
+- **`insert_in_queue`** — was silently appending, now uses `InsertInPlaylist`
+- **Ctrl+C on GQL server** — graceful shutdown via `tokio::signal::ctrl_c`
+
+### Changed
+
+- **graphql.rs split** — 2400-line file decomposed into `graphql/{mod,types,queries,mutations,helpers,server}.rs` ([#67](https://github.com/radiosilence/koan/pull/67))
+- **`Player` holds `Box<dyn AudioBackend>`** — all device/engine calls go through trait
+- **SubsonicClient factory** — `subsonic_client()` helper replaces 9 manual creation sites ([#65](https://github.com/radiosilence/koan/pull/65))
+- **Player device restart dedup** — `restart_on_current_track()` + `Config::load_or_default()` ([#62](https://github.com/radiosilence/koan/pull/62))
+- **serve.rs route dedup** — `register_subsonic_routes()` shared between prod and test ([#61](https://github.com/radiosilence/koan/pull/61))
+- **Platform-gated deps** — `coreaudio-sys`/`core-foundation` macOS-only, `cpal` Linux-only
 
 ## 0.14.0
 
