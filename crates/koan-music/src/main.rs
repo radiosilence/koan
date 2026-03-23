@@ -165,14 +165,12 @@ struct Cli {
     /// Enable GraphiQL web IDE at GET /graphql
     #[arg(long)]
     playground: bool,
-
-    /// Run as an MCP server on stdio (for Claude Desktop / MCP clients)
-    #[arg(long)]
-    mcp: bool,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Run as MCP server on stdio (for Claude Desktop / MCP clients)
+    Mcp,
     /// Scan a folder for audio files and index them
     Scan {
         /// Path to scan (defaults to configured library folders)
@@ -296,6 +294,10 @@ fn main() {
                     commands::cmd_analyze();
                 }
             }
+            Commands::Mcp => {
+                commands::cmd_mcp();
+                return;
+            }
             Commands::Analyze => commands::cmd_analyze(),
             Commands::Search { query } => commands::cmd_search(&query),
             Commands::Library => commands::cmd_library(),
@@ -324,11 +326,6 @@ fn main() {
     // No subcommand — unified player process.
 
     // MCP mode: headless MCP server on stdio.
-    if cli.mcp {
-        commands::cmd_mcp();
-        return;
-    }
-
     // Daemon mode: fork a headless child and exit.
     if cli.daemonize {
         commands::cmd_serve_daemon(cli.port, cli.subsonic, cli.playground);
