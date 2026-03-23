@@ -33,7 +33,7 @@ pub fn cmd_serve(port: Option<u16>, subsonic_port: Option<u16>, playground: bool
         let gql_addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
         eprintln!("koan serve — GraphQL on http://0.0.0.0:{}/graphql", port);
         if playground_enabled {
-            eprintln!("  Playground: http://localhost:{}/graphql", port);
+            eprintln!("  GraphiQL: http://localhost:{}/graphql", port);
         }
 
         let gql_listener = tokio::net::TcpListener::bind(gql_addr)
@@ -79,9 +79,11 @@ async fn graphql_handler(
 }
 
 async fn graphql_playground() -> axum::response::Html<String> {
-    axum::response::Html(async_graphql::http::playground_source(
-        async_graphql::http::GraphQLPlaygroundConfig::new("/graphql"),
-    ))
+    axum::response::Html(
+        async_graphql::http::GraphiQLSource::build()
+            .endpoint("/graphql")
+            .finish(),
+    )
 }
 
 /// Run the server as a background daemon.
