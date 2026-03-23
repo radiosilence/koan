@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Linux: ALSA/JACK/OSS stderr spam in TUI** — cpal probes all audio backends on init, device listing, and stream creation. JACK/OSS/PipeWire C libraries write errors directly to stderr when unavailable, corrupting the TUI display. Now suppressed via fd redirect during all cpal operations
+- **Linux: second Ctrl+C force-restores terminal** — if the TUI event loop is slow to respond to the first Ctrl+C, a second press immediately restores raw mode and exits. Prevents broken terminal state
+- **Scanner: skip empty files** — 0-byte files now get a clear "empty file" error instead of confusing "probe reach EOF" messages from Symphonia
+
 ## 0.14.0
 
 ### Added
