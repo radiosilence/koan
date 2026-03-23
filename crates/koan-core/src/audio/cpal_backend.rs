@@ -16,10 +16,10 @@ fn suppress_stderr<F: FnOnce() -> T, T>(f: F) -> T {
     let devnull = std::fs::File::open("/dev/null").ok();
     let saved_fd = unsafe { nix_dup(2) };
 
-    if let Some(ref null) = devnull {
-        if saved_fd >= 0 {
-            unsafe { nix_dup2(null.as_raw_fd(), 2) };
-        }
+    if let Some(ref null) = devnull
+        && saved_fd >= 0
+    {
+        unsafe { nix_dup2(null.as_raw_fd(), 2) };
     }
 
     let result = f();
@@ -75,7 +75,7 @@ impl CpalBackend {
         // These C libraries write directly to fd 2 when probing unavailable backends
         // (JACK not running, OSS /dev/dsp missing, etc.). In TUI mode this bleeds
         // through the alternate screen and corrupts the display.
-        let host = suppress_stderr(|| cpal::default_host());
+        let host = suppress_stderr(cpal::default_host);
         Self { host }
     }
 
