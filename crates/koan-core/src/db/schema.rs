@@ -43,7 +43,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             size_bytes    INTEGER,
             mtime         INTEGER,
             genre         TEXT,
-            source        TEXT NOT NULL DEFAULT 'local',
+            source        TEXT NOT NULL DEFAULT 'local' CHECK (source IN ('local', 'remote', 'cached')),
             remote_id     TEXT,
             remote_url    TEXT,
             cached_path   TEXT,

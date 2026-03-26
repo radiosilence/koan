@@ -89,11 +89,17 @@ pub fn scan_folder(
         .collect();
 
     // Insert into DB sequentially in a single transaction.
-    let _ = db.conn.execute_batch("BEGIN");
+    let tx = match db.conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(e) => {
+            log::error!("failed to begin scan transaction: {}", e);
+            return result;
+        }
+    };
 
     for (file_path, meta_result) in metadata_results {
         match meta_result {
-            Ok(meta) => match queries::upsert_track(&db.conn, &meta) {
+            Ok(meta) => match queries::upsert_track(&tx, &meta) {
                 Ok(track_id) => {
                     result.added += 1;
                     if let Some(cb) = &on_track {
@@ -106,7 +112,7 @@ pub fn scan_folder(
                         });
                     }
                     let _ = queries::update_scan_cache(
-                        &db.conn,
+                        &tx,
                         meta.path.as_deref().unwrap_or(""),
                         meta.mtime.unwrap_or(0),
                         meta.size_bytes.unwrap_or(0),
@@ -124,12 +130,14 @@ pub fn scan_folder(
     }
 
     // Remove tracks for files that no longer exist.
-    match queries::remove_stale_tracks(&db.conn, path) {
+    match queries::remove_stale_tracks(&tx, path) {
         Ok(removed) => result.removed = removed,
         Err(e) => log::error!("failed to remove stale tracks: {}", e),
     }
 
-    let _ = db.conn.execute_batch("COMMIT");
+    if let Err(e) = tx.commit() {
+        log::error!("failed to commit scan transaction: {}", e);
+    }
 
     result
 }
@@ -207,11 +215,17 @@ pub fn analyze_missing(
     // Store sequentially.
     let mut analyzed = 0usize;
     let mut errors = 0usize;
-    let _ = db.conn.execute_batch("BEGIN");
+    let tx = match db.conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(e) => {
+            log::error!("failed to begin analysis transaction: {}", e);
+            return (0, 0);
+        }
+    };
     for (track_id, path, result) in results {
         match result {
             Ok(embedding) => {
-                if let Err(e) = queries::store_vector(&db.conn, track_id, &embedding) {
+                if let Err(e) = queries::store_vector(&tx, track_id, &embedding) {
                     log::warn!("failed to store vector for {}: {}", path, e);
                     errors += 1;
                 } else {
@@ -224,7 +238,9 @@ pub fn analyze_missing(
             }
         }
     }
-    let _ = db.conn.execute_batch("COMMIT");
+    if let Err(e) = tx.commit() {
+        log::error!("failed to commit analysis transaction: {}", e);
+    }
 
     log::info!("analysis complete: {} ok, {} errors", analyzed, errors);
     (analyzed, errors)
