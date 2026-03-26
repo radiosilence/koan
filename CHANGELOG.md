@@ -4,7 +4,47 @@
 
 ### Fixed
 
-- **Replace hand-rolled ISO 8601 parser with chrono** — the manual RFC 3339 parser in `remote/sync.rs` (~70 lines) could panic on malformed input from Subsonic servers. Replaced with `chrono::DateTime::parse_from_rfc3339()` + fallback patterns for common server quirks (missing timezone, fractional seconds, space separators). Added 11 unit tests ([#73](https://github.com/radiosilence/koan/issues/73))
+#### Remote
+
+- **Replace hand-rolled ISO 8601 parser with chrono** — the manual RFC 3339 parser in `remote/sync.rs` (~70 lines) could panic on malformed input from Subsonic servers. Replaced with `chrono::DateTime::parse_from_rfc3339()` + fallback patterns for common server quirks (missing timezone, fractional seconds, space separators). Added 11 unit tests ([#74](https://github.com/radiosilence/koan/pull/74))
+
+#### Audio
+
+- **Atomic ordering hardened** — `samples_played` uses `AcqRel` on fetch_add, `Acquire` on loads. `running` flag uses `Acquire`/`Release`. No more `Relaxed` for cross-thread state ([#76](https://github.com/radiosilence/koan/pull/76))
+- **Timeline lock ordering** — `PlaybackTimeline::current_playback()` now acquires the boundaries read lock first, then reads `samples_played` inside that scope. Dead standalone `channels`/`sample_rate` atomics removed ([#76](https://github.com/radiosilence/koan/pull/76))
+- **Alignment check in CoreAudio callback** — replaced `debug_assert!` with a runtime check that fills silence on misalignment instead of UB ([#76](https://github.com/radiosilence/koan/pull/76))
+- **Buffer bounds validation** — `ptr::copy_nonoverlapping` in `engine.rs` and `cpal_backend.rs` now clamps to available space and fills remainder with silence ([#76](https://github.com/radiosilence/koan/pull/76))
+- **VizBuffer allocation reuse** — added `VizBuffer::snapshot_into(&self, out: &mut Vec<f32>)` to reuse caller's buffer instead of allocating per frame ([#76](https://github.com/radiosilence/koan/pull/76))
+
+#### Player
+
+- **Atomic ordering across player state** — all cross-thread atomics (`playback_state`, `position_ms`, `playback_generation`, `playlist_version`, `bytes_written`, `quit_requested`, `metadata_refresh_pending`, `radio_mode`, `pump_written`) upgraded from `Relaxed` to `Acquire`/`Release`/`AcqRel` ([#78](https://github.com/radiosilence/koan/pull/78))
+- **Undo stack O(1) eviction** — `Vec` replaced with `VecDeque` for O(1) `pop_front()` instead of O(n) `remove(0)`. Batch depth capped at 500 to prevent unbounded nesting ([#78](https://github.com/radiosilence/koan/pull/78))
+- **Seek underflow on short tracks** — guard `max_ms > 5_000` before subtracting safety margin, preventing short/partially-downloaded tracks from clamping seek to 0 ([#78](https://github.com/radiosilence/koan/pull/78))
+- **ClearPlaylist snapshot race** — `stop_playback_and_clear_state()` (engine teardown only) now runs before snapshotting the playlist for undo, then clears. Previously `stop()` cleared the playlist before the undo snapshot was captured ([#78](https://github.com/radiosilence/koan/pull/78))
+
+#### TUI
+
+- **Terminal restoration on any thread panic** — removed main-thread-only guard from panic hook. Terminal is restored (raw mode, alternate screen, mouse capture, bracketed paste, cursor) regardless of which thread panics ([#77](https://github.com/radiosilence/koan/pull/77))
+- **Cursor clamping on queue mutation** — `clamp_queue_cursor()` called after `delete_selected()` and on every playlist version change. Render-time clamp kept as safety net ([#77](https://github.com/radiosilence/koan/pull/77))
+- **Cover art cache bounded** — `CoverArt::clear()` frees the `DynamicImage` when nothing is playing ([#77](https://github.com/radiosilence/koan/pull/77))
+- **Double-click timeout clearing** — stale `last_click_time`/`last_click_idx` cleared after 1 second, preventing misinterpreted double-clicks ([#77](https://github.com/radiosilence/koan/pull/77))
+- **Picker cursor safety** — render loop clamps cursor to `matched_count` range before computing scroll offset, preventing out-of-bounds when results shrink between ticks ([#77](https://github.com/radiosilence/koan/pull/77))
+
+#### Database
+
+- **Transaction boundaries** — `upsert_track()` wraps the entire artist/album/track/FTS5 operation in a savepoint. Scanner and analyzer use proper `unchecked_transaction()` with error propagation instead of silent `let _ =` drops ([#79](https://github.com/radiosilence/koan/pull/79))
+- **Source column validation** — `CHECK (source IN ('local', 'remote', 'cached'))` constraint on tracks table ([#79](https://github.com/radiosilence/koan/pull/79))
+- **WAL checkpoint on connect** — `PRAGMA wal_checkpoint(PASSIVE)` at connection open prevents unbounded WAL growth across sessions ([#79](https://github.com/radiosilence/koan/pull/79))
+- **LIKE wildcard escaping** — `remove_stale_tracks` now escapes `%`, `_`, `\` in path prefixes via `escape_like()` ([#79](https://github.com/radiosilence/koan/pull/79))
+- **Missing index** — added `idx_library_folders_path` on `library_folders(path)` ([#79](https://github.com/radiosilence/koan/pull/79))
+
+#### Misc
+
+- **Batch ID collision** — `chrono_batch_id()` uses `as_nanos()` instead of `as_millis()` to prevent millisecond-resolution collisions ([#75](https://github.com/radiosilence/koan/pull/75))
+- **Unicode-aware string comparison** — `stricmp` format function uses `.to_lowercase()` instead of ASCII-only `eq_ignore_ascii_case()` ([#75](https://github.com/radiosilence/koan/pull/75))
+- **Ancillary file move errors logged** — `execute_single_move_no_db` now logs warnings via `log::warn!` instead of silently swallowing with `.ok()` ([#75](https://github.com/radiosilence/koan/pull/75))
+- **Tokio features scoped** — `"full"` replaced with `["rt-multi-thread", "net", "macros", "signal"]` in koan-music ([#75](https://github.com/radiosilence/koan/pull/75))
 
 ### Changed
 
