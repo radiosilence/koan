@@ -56,77 +56,37 @@ pub fn update_last_sync(
 
 /// Parse an ISO 8601 / RFC 3339 timestamp string into a unix timestamp (seconds).
 /// Returns `None` if the string can't be parsed.
+///
+/// Handles common Subsonic/Navidrome variants:
+/// - Full RFC 3339: `2024-01-15T10:30:00Z`, `2024-01-15T10:30:00+05:30`
+/// - Fractional seconds: `2024-01-15T10:30:00.123Z`
+/// - Missing timezone (assumed UTC): `2024-01-15T10:30:00`
 fn parse_iso8601_to_unix(s: &str) -> Option<i64> {
-    // Try full RFC 3339 first (e.g. "2024-01-15T10:30:00Z" or "2024-01-15T10:30:00+00:00").
-    // Then try common Subsonic variants like "2024-01-15T10:30:00.000Z".
-    // The `chrono`-free approach: parse manually or use a simpler method.
+    use chrono::{DateTime, FixedOffset, NaiveDateTime};
 
-    // Strip fractional seconds for simpler parsing.
-    let normalized = if let Some(dot_pos) = s.find('.') {
-        // Find where fractional seconds end (at 'Z', '+', or '-' after the dot).
-        let rest = &s[dot_pos + 1..];
-        let end = rest.find(['Z', '+', '-']).unwrap_or(rest.len());
-        format!("{}{}", &s[..dot_pos], &s[dot_pos + 1 + end..])
-    } else {
-        s.to_string()
-    };
-
-    // Append Z if no timezone info present.
-    let with_tz = if !normalized.contains('Z')
-        && !normalized.contains('+')
-        && !normalized[10..].contains('-')
-    {
-        format!("{}Z", normalized)
-    } else {
-        normalized
-    };
-
-    // Replace trailing Z with +00:00 for consistent parsing.
-    let rfc3339 = with_tz.replace("Z", "+00:00").replace("z", "+00:00");
-
-    // Parse: "2024-01-15T10:30:00+00:00"
-    parse_rfc3339_manual(&rfc3339)
-}
-
-/// Manual RFC 3339 parser returning unix timestamp.
-fn parse_rfc3339_manual(s: &str) -> Option<i64> {
-    // Expected format: YYYY-MM-DDTHH:MM:SS+HH:MM or YYYY-MM-DDTHH:MM:SS-HH:MM
-    if s.len() < 25 {
-        return None;
+    // Try strict RFC 3339 first (handles Z, offsets, fractional seconds).
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return Some(dt.timestamp());
     }
-    let year: i64 = s[0..4].parse().ok()?;
-    let month: i64 = s[5..7].parse().ok()?;
-    let day: i64 = s[8..10].parse().ok()?;
-    let hour: i64 = s[11..13].parse().ok()?;
-    let min: i64 = s[14..16].parse().ok()?;
-    let sec: i64 = s[17..19].parse().ok()?;
 
-    let tz_sign: i64 = if s.as_bytes()[19] == b'-' { -1 } else { 1 };
-    let tz_hour: i64 = s[20..22].parse().ok()?;
-    let tz_min: i64 = s[23..25].parse().ok()?;
-
-    // Days from year 1970 to the given date (simplified, handles leap years).
-    let days = days_from_epoch(year, month, day)?;
-    let utc_secs = days * 86400 + hour * 3600 + min * 60 + sec;
-    let tz_offset = tz_sign * (tz_hour * 3600 + tz_min * 60);
-
-    Some(utc_secs - tz_offset)
-}
-
-/// Calculate days from Unix epoch (1970-01-01) to a given date.
-fn days_from_epoch(year: i64, month: i64, day: i64) -> Option<i64> {
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
+    // Subsonic sometimes omits timezone — parse as naive and assume UTC.
+    // Try with fractional seconds first, then without.
+    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S%.f") {
+        return Some(naive.and_utc().timestamp());
     }
-    // Algorithm from http://howardhinnant.github.io/date_algorithms.html
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let m = if month > 2 { month - 3 } else { month + 9 };
-    let doy = (153 * m + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146097 + doe - 719468;
-    Some(days)
+    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
+        return Some(naive.and_utc().timestamp());
+    }
+
+    // Some servers use space instead of T.
+    if let Ok(dt) = DateTime::<FixedOffset>::parse_from_str(s, "%Y-%m-%d %H:%M:%S%:z") {
+        return Some(dt.timestamp());
+    }
+    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return Some(naive.and_utc().timestamp());
+    }
+
+    None
 }
 
 /// Pull the Navidrome/Subsonic library into the local DB.
@@ -287,4 +247,96 @@ pub fn sync_library(
     );
 
     Ok(result)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_rfc3339_with_z() {
+        // 2024-01-15T10:30:00Z = 1705314600
+        assert_eq!(
+            parse_iso8601_to_unix("2024-01-15T10:30:00Z"),
+            Some(1705314600)
+        );
+    }
+
+    #[test]
+    fn parse_rfc3339_with_offset() {
+        // 10:30 IST (+05:30) = 05:00 UTC = 1705294800
+        assert_eq!(
+            parse_iso8601_to_unix("2024-01-15T10:30:00+05:30"),
+            Some(1705294800)
+        );
+    }
+
+    #[test]
+    fn parse_rfc3339_negative_offset() {
+        // 10:30 EST (-05:00) = 15:30 UTC = 1705332600
+        assert_eq!(
+            parse_iso8601_to_unix("2024-01-15T10:30:00-05:00"),
+            Some(1705332600)
+        );
+    }
+
+    #[test]
+    fn parse_fractional_seconds_z() {
+        assert_eq!(
+            parse_iso8601_to_unix("2024-01-15T10:30:00.123Z"),
+            Some(1705314600)
+        );
+    }
+
+    #[test]
+    fn parse_fractional_seconds_offset() {
+        assert_eq!(
+            parse_iso8601_to_unix("2024-01-15T10:30:00.999+00:00"),
+            Some(1705314600)
+        );
+    }
+
+    #[test]
+    fn parse_no_timezone_assumes_utc() {
+        assert_eq!(
+            parse_iso8601_to_unix("2024-01-15T10:30:00"),
+            Some(1705314600)
+        );
+    }
+
+    #[test]
+    fn parse_no_timezone_fractional() {
+        assert_eq!(
+            parse_iso8601_to_unix("2024-01-15T10:30:00.500"),
+            Some(1705314600)
+        );
+    }
+
+    #[test]
+    fn parse_space_separator_with_tz() {
+        assert_eq!(
+            parse_iso8601_to_unix("2024-01-15 10:30:00+00:00"),
+            Some(1705314600)
+        );
+    }
+
+    #[test]
+    fn parse_space_separator_no_tz() {
+        assert_eq!(
+            parse_iso8601_to_unix("2024-01-15 10:30:00"),
+            Some(1705314600)
+        );
+    }
+
+    #[test]
+    fn parse_garbage_returns_none() {
+        assert_eq!(parse_iso8601_to_unix("not-a-date"), None);
+        assert_eq!(parse_iso8601_to_unix(""), None);
+        assert_eq!(parse_iso8601_to_unix("2024"), None);
+    }
+
+    #[test]
+    fn parse_epoch() {
+        assert_eq!(parse_iso8601_to_unix("1970-01-01T00:00:00Z"), Some(0));
+    }
 }
