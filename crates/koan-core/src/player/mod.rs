@@ -389,7 +389,7 @@ impl Player {
                 let mut buf = vec![0u8; 65536];
                 let mut offset: u64 = 0;
                 loop {
-                    let available = pump_written.load(Ordering::Relaxed);
+                    let available = pump_written.load(Ordering::Acquire);
                     if offset >= available {
                         if total > 0 && available >= total {
                             break; // Download complete.
@@ -405,7 +405,7 @@ impl Player {
                             if total > 0 && offset >= total {
                                 break;
                             }
-                            let latest = pump_written.load(Ordering::Relaxed);
+                            let latest = pump_written.load(Ordering::Acquire);
                             if total > 0 && latest >= total && offset >= latest {
                                 break;
                             }
@@ -589,7 +589,9 @@ impl Player {
         // data that hasn't arrived yet.
         if let Some(dl_frac) = self.shared_state.current_download_fraction() {
             let max_ms = (dl_frac * duration as f64) as u64;
-            clamped = clamped.min(max_ms.saturating_sub(5_000));
+            if max_ms > 5_000 {
+                clamped = clamped.min(max_ms - 5_000);
+            }
         }
 
         let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
@@ -899,8 +901,11 @@ impl Player {
                 self.push_undo(UndoEntry::Inserted { ids });
             }
             PlayerCommand::ClearPlaylist => {
+                // Stop engine + clear display state WITHOUT touching the playlist,
+                // then snapshot, then clear. This avoids the race where stop()
+                // would clear the playlist before we capture it for undo.
+                self.stop_playback_and_clear_state();
                 let (items, cursor) = self.shared_state.snapshot_playlist();
-                self.stop();
                 self.shared_state.clear_playlist();
                 self.push_undo(UndoEntry::Replaced { items, cursor });
             }

@@ -1,7 +1,12 @@
+use std::collections::VecDeque;
+
 use super::state::{PlaylistItem, QueueItemId};
 
 /// Maximum number of undo entries retained.
 const MAX_UNDO_DEPTH: usize = 100;
+
+/// Maximum number of sub-entries allowed in a single `UndoEntry::Batch`.
+const MAX_BATCH_SIZE: usize = 500;
 
 /// A reversible playlist operation. Stores enough state to undo/redo.
 ///
@@ -46,10 +51,13 @@ pub enum UndoEntry {
 ///
 /// Lives on the Player struct — single-threaded, only the player command loop
 /// touches it. New actions clear the redo stack (standard semantics).
+///
+/// Uses `VecDeque` so evicting the oldest entry (front) is O(1) instead of
+/// the O(n) `Vec::remove(0)`.
 #[derive(Debug, Default)]
 pub struct UndoStack {
-    undo: Vec<UndoEntry>,
-    redo: Vec<UndoEntry>,
+    undo: VecDeque<UndoEntry>,
+    redo: VecDeque<UndoEntry>,
 }
 
 impl UndoStack {
@@ -58,35 +66,47 @@ impl UndoStack {
     }
 
     /// Push an undo entry. Clears the redo stack.
+    /// Batch entries exceeding `MAX_BATCH_SIZE` are truncated.
     pub fn push(&mut self, entry: UndoEntry) {
         self.redo.clear();
-        self.undo.push(entry);
+        self.undo.push_back(Self::clamp_batch(entry));
         if self.undo.len() > MAX_UNDO_DEPTH {
-            self.undo.remove(0);
+            self.undo.pop_front();
         }
     }
 
     /// Pop the most recent undo entry (for Ctrl+Z).
     pub fn pop_undo(&mut self) -> Option<UndoEntry> {
-        self.undo.pop()
+        self.undo.pop_back()
     }
 
     /// Pop the most recent redo entry (for Ctrl+Y / Ctrl+Shift+Z).
     pub fn pop_redo(&mut self) -> Option<UndoEntry> {
-        self.redo.pop()
+        self.redo.pop_back()
     }
 
     /// Push an entry onto the redo stack (called when undoing).
     pub fn push_redo(&mut self, entry: UndoEntry) {
-        self.redo.push(entry);
+        self.redo.push_back(entry);
     }
 
     /// Push an entry onto the undo stack without clearing redo
     /// (called when redoing).
     pub fn push_undo_keep_redo(&mut self, entry: UndoEntry) {
-        self.undo.push(entry);
+        self.undo.push_back(Self::clamp_batch(entry));
         if self.undo.len() > MAX_UNDO_DEPTH {
-            self.undo.remove(0);
+            self.undo.pop_front();
+        }
+    }
+
+    /// Truncate `Batch` entries that exceed `MAX_BATCH_SIZE`.
+    fn clamp_batch(entry: UndoEntry) -> UndoEntry {
+        match entry {
+            UndoEntry::Batch(mut items) => {
+                items.truncate(MAX_BATCH_SIZE);
+                UndoEntry::Batch(items)
+            }
+            other => other,
         }
     }
 

@@ -205,19 +205,19 @@ impl SharedPlayerState {
     // --- Playback state ---
 
     pub fn playback_state(&self) -> PlaybackState {
-        PlaybackState::from_u8(self.state.load(Ordering::Relaxed))
+        PlaybackState::from_u8(self.state.load(Ordering::Acquire))
     }
 
     pub fn set_playback_state(&self, state: PlaybackState) {
-        self.state.store(state as u8, Ordering::Relaxed);
+        self.state.store(state as u8, Ordering::Release);
     }
 
     pub fn position_ms(&self) -> u64 {
-        self.position_ms.load(Ordering::Relaxed)
+        self.position_ms.load(Ordering::Acquire)
     }
 
     pub fn set_position_ms(&self, pos: u64) {
-        self.position_ms.store(pos, Ordering::Relaxed);
+        self.position_ms.store(pos, Ordering::Release);
     }
 
     pub fn track_info(&self) -> Option<TrackInfo> {
@@ -243,7 +243,7 @@ impl SharedPlayerState {
                     total,
                     ..
                 } => {
-                    let written = bytes_written.load(Ordering::Relaxed);
+                    let written = bytes_written.load(Ordering::Acquire);
                     if *total > 0 {
                         Some((written as f64 / *total as f64).min(1.0))
                     } else {
@@ -257,21 +257,21 @@ impl SharedPlayerState {
     // --- Playback generation ---
 
     pub fn bump_generation(&self) -> u64 {
-        self.playback_generation.fetch_add(1, Ordering::Relaxed) + 1
+        self.playback_generation.fetch_add(1, Ordering::AcqRel) + 1
     }
 
     pub fn generation(&self) -> u64 {
-        self.playback_generation.load(Ordering::Relaxed)
+        self.playback_generation.load(Ordering::Acquire)
     }
 
     // --- Quit ---
 
     pub fn request_quit(&self) {
-        self.quit_requested.store(true, Ordering::Relaxed);
+        self.quit_requested.store(true, Ordering::Release);
     }
 
     pub fn quit_requested(&self) -> bool {
-        self.quit_requested.load(Ordering::Relaxed)
+        self.quit_requested.load(Ordering::Acquire)
     }
 
     // --- Metadata refresh (progressive enhancement) ---
@@ -280,34 +280,34 @@ impl SharedPlayerState {
     /// The UI loop calls `take_metadata_refresh()` to consume this flag and
     /// force a souvlaki/cover-art update without waiting for a track change.
     pub fn signal_metadata_refresh(&self) {
-        self.metadata_refresh_pending.store(true, Ordering::Relaxed);
+        self.metadata_refresh_pending.store(true, Ordering::Release);
     }
 
     /// Returns true and clears the flag if a metadata refresh is pending.
     pub fn take_metadata_refresh(&self) -> bool {
         self.metadata_refresh_pending
-            .compare_exchange(true, false, Ordering::Relaxed, Ordering::Relaxed)
+            .compare_exchange(true, false, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
     }
 
     // --- Radio mode ---
 
     pub fn radio_mode(&self) -> bool {
-        self.radio_mode.load(Ordering::Relaxed)
+        self.radio_mode.load(Ordering::Acquire)
     }
 
     pub fn set_radio_mode(&self, enabled: bool) {
-        self.radio_mode.store(enabled, Ordering::Relaxed);
+        self.radio_mode.store(enabled, Ordering::Release);
     }
 
     // --- Playlist version ---
 
     pub fn playlist_version(&self) -> u64 {
-        self.playlist_version.load(Ordering::Relaxed)
+        self.playlist_version.load(Ordering::Acquire)
     }
 
     fn bump_version(&self) {
-        self.playlist_version.fetch_add(1, Ordering::Relaxed);
+        self.playlist_version.fetch_add(1, Ordering::AcqRel);
     }
 
     // --- Playlist mutations (called from player thread via commands) ---
@@ -567,7 +567,7 @@ impl SharedPlayerState {
                     bytes_written,
                     ..
                 } => {
-                    let written = bytes_written.load(Ordering::Relaxed);
+                    let written = bytes_written.load(Ordering::Acquire);
                     if written >= STREAM_THRESHOLD {
                         Some(PlaybackSource::Streaming {
                             path: item.path.clone(),
