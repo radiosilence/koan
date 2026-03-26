@@ -87,8 +87,8 @@ impl CpalBackend {
             .map_err(|e| BackendError::Platform(e.to_string()))?;
 
         for dev in devices {
-            if let Ok(name) = dev.name()
-                && name == info.name
+            if let Ok(desc) = dev.description()
+                && desc.name() == info.name
             {
                 return Ok(dev);
             }
@@ -98,13 +98,13 @@ impl CpalBackend {
     }
 
     fn device_info_from_cpal(dev: &cpal::Device, index: u64) -> Option<DeviceInfo> {
-        let name = dev.name().ok()?;
+        let name = dev.description().ok()?.name().to_owned();
         let configs = dev.supported_output_configs().ok()?;
         let mut rates: Vec<f64> = Vec::new();
         for cfg in configs {
             // Collect min and max sample rates from each config range.
-            let min = cfg.min_sample_rate().0 as f64;
-            let max = cfg.max_sample_rate().0 as f64;
+            let min = cfg.min_sample_rate() as f64;
+            let max = cfg.max_sample_rate() as f64;
             if !rates.contains(&min) {
                 rates.push(min);
             }
@@ -157,7 +157,7 @@ impl AudioBackend for CpalBackend {
         let dev = self.resolve_device(device)?;
         let config = suppress_stderr(|| dev.default_output_config())
             .map_err(|e| BackendError::Platform(e.to_string()))?;
-        Ok(config.sample_rate().0 as f64)
+        Ok(config.sample_rate() as f64)
     }
 
     fn set_device_sample_rate(&self, _device: &DeviceInfo, _rate: f64) -> Result<(), BackendError> {
@@ -178,7 +178,7 @@ impl AudioBackend for CpalBackend {
 
         let config = cpal::StreamConfig {
             channels: channels as u16,
-            sample_rate: cpal::SampleRate(sample_rate as u32),
+            sample_rate: sample_rate as u32,
             buffer_size: cpal::BufferSize::Default,
         };
 
