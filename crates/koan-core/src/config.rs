@@ -341,21 +341,21 @@ impl Config {
     /// Apply `KOAN_REMOTE_*` env var overrides on top of file-based config.
     /// Non-empty env values win; unset or empty vars are ignored.
     fn apply_env_overrides(&mut self) {
-        if let Ok(url) = std::env::var("KOAN_REMOTE_URL") {
-            if !url.is_empty() {
-                self.remote.url = url;
-                self.remote.enabled = true;
-            }
+        if let Ok(url) = std::env::var("KOAN_REMOTE_URL")
+            && !url.is_empty()
+        {
+            self.remote.url = url;
+            self.remote.enabled = true;
         }
-        if let Ok(username) = std::env::var("KOAN_REMOTE_USERNAME") {
-            if !username.is_empty() {
-                self.remote.username = username;
-            }
+        if let Ok(username) = std::env::var("KOAN_REMOTE_USERNAME")
+            && !username.is_empty()
+        {
+            self.remote.username = username;
         }
-        if let Ok(password) = std::env::var("KOAN_REMOTE_PASSWORD") {
-            if !password.is_empty() {
-                self.remote.password = password;
-            }
+        if let Ok(password) = std::env::var("KOAN_REMOTE_PASSWORD")
+            && !password.is_empty()
+        {
+            self.remote.password = password;
         }
     }
 }
