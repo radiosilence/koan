@@ -422,6 +422,15 @@ impl App {
         // Refresh visible queue cache so all tick logic sees current state.
         self.refresh_visible_queue();
 
+        // Clear stale double-click state after 1 second so a slow second click
+        // is never misinterpreted as a double-click.
+        if let Some(t) = self.last_click_time
+            && t.elapsed().as_secs() >= 1
+        {
+            self.last_click_time = None;
+            self.last_click_idx = None;
+        }
+
         self.frame_count = self.frame_count.wrapping_add(1);
 
         // FPS counter: sample every second.
@@ -530,8 +539,11 @@ impl App {
         }
 
         // Update now-playing cover art cache when track changes.
+        // Clear when nothing is playing so the old image gets freed.
         if let Some(ref info) = self.state.track_info() {
             self.art.now_playing_art.get(&info.path);
+        } else {
+            self.art.now_playing_art.clear();
         }
 
         // Update visualizer spectrum at configured FPS.
@@ -2438,10 +2450,7 @@ impl App {
         }
 
         self.queue.selected_ids.clear();
-        let visible_len = self.visible_queue().len();
-        if visible_len > 0 && self.queue.cursor >= visible_len {
-            self.queue.cursor = visible_len - 1;
-        }
+        self.clamp_queue_cursor();
     }
 
     /// Move all selected tracks down by one position.
@@ -2851,6 +2860,17 @@ impl App {
         self.queue.vq_cache.entries.get(idx).map(|e| e.id)
     }
 
+    /// Clamp the queue cursor to valid bounds. Call after any operation that
+    /// may shrink the queue (remove, clear, reorder, external playlist change).
+    fn clamp_queue_cursor(&mut self) {
+        let len = self.queue.vq_cache.entries.len();
+        if len == 0 {
+            self.queue.cursor = 0;
+        } else if self.queue.cursor >= len {
+            self.queue.cursor = len - 1;
+        }
+    }
+
     /// Refresh the cached visible queue snapshot from shared state.
     /// Call once per frame before any queue-related reads.
     pub fn refresh_visible_queue(&mut self) {
@@ -2858,6 +2878,8 @@ impl App {
         if v != self.queue.vq_version {
             self.queue.vq_cache = self.state.derive_visible_queue();
             self.queue.vq_version = v;
+            // Clamp cursor after every external playlist change.
+            self.clamp_queue_cursor();
         }
     }
 
