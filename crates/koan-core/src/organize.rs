@@ -461,7 +461,13 @@ fn execute_single_move_no_db(file_move: &FileMove) -> Result<(), OrganizeError> 
         if let Some(parent) = anc_to.parent() {
             std::fs::create_dir_all(parent).ok();
         }
-        move_file(anc_from, anc_to).ok();
+        if let Err(e) = move_file(anc_from, anc_to) {
+            log::warn!(
+                "failed to move ancillary file {}: {}",
+                anc_from.display(),
+                e
+            );
+        }
     }
 
     if let Some(source_dir) = file_move.from.parent() {
@@ -767,7 +773,7 @@ fn chrono_batch_id() -> String {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    format!("batch-{}", now.as_millis())
+    format!("batch-{}", now.as_nanos())
 }
 
 #[cfg(test)]

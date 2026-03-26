@@ -168,7 +168,7 @@ pub fn call_function(name: &str, args: &[String]) -> Option<String> {
         "stricmp" => {
             let a = args.first()?;
             let b = args.get(1)?;
-            Some(bool_str(a.eq_ignore_ascii_case(b)))
+            Some(bool_str(a.to_lowercase() == b.to_lowercase()))
         }
         "longer" => {
             let a = args.first()?;
