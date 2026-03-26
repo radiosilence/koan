@@ -1973,10 +1973,11 @@ dependencies = [
 
 [[package]]
 name = "koan-core"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "bliss-audio",
  "bliss-audio-aubio-rs",
+ "chrono",
  "core-foundation 0.9.4",
  "coreaudio-sys",
  "cpal",
@@ -2006,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "koan-music"
-version = "0.16.0"
+version = "0.17.0"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
@@ -4065,7 +4066,6 @@ dependencies = [
  "bytes",
  "libc",
  "mio",
- "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
  "socket2",
