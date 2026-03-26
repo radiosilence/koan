@@ -57,7 +57,7 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
     let result = upsert_track_inner(conn, meta);
     match &result {
         Ok(_) => conn.execute_batch("RELEASE upsert_track")?,
-        Err(_) => conn.execute_batch("ROLLBACK TO upsert_track")?,
+        Err(_) => conn.execute_batch("ROLLBACK TO upsert_track; RELEASE upsert_track")?,
     }
     result
 }
