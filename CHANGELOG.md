@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Replace hand-rolled ISO 8601 parser with chrono** — the manual RFC 3339 parser in `remote/sync.rs` (~70 lines) could panic on malformed input from Subsonic servers. Replaced with `chrono::DateTime::parse_from_rfc3339()` + fallback patterns for common server quirks (missing timezone, fractional seconds, space separators). Added 11 unit tests ([#73](https://github.com/radiosilence/koan/issues/73))
+
 ### Changed
 
 - **Unified daemon mode** — `koan` now runs TUI + GraphQL API in one process by default. No more separate `koan serve`. All interfaces share one player, one state ([#70](https://github.com/radiosilence/koan/issues/70))
