@@ -15,6 +15,16 @@ pub enum ConfigError {
     Serialize(#[from] toml::ser::Error),
 }
 
+/// Tracks which config fields were sourced from environment variables
+/// so they can be excluded when saving back to disk.
+#[derive(Debug, Clone, Default)]
+pub struct EnvOverrides {
+    pub remote_url: bool,
+    pub remote_username: bool,
+    pub remote_password: bool,
+    pub remote_enabled: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -27,6 +37,9 @@ pub struct Config {
     pub radio: RadioConfig,
     pub graphql: GraphqlConfig,
     pub discovery: DiscoveryConfig,
+    /// Fields sourced from env vars — excluded from serialization on save.
+    #[serde(skip)]
+    pub env_overrides: EnvOverrides,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -351,24 +364,42 @@ impl Config {
         Ok(config)
     }
 
+    /// Return a clone with env-overridden fields reset to defaults,
+    /// so they are never persisted to disk.
+    fn without_env_overrides(&self) -> Self {
+        let mut clean = self.clone();
+        let ov = &self.env_overrides;
+
+        if ov.remote_url { clean.remote.url = String::new(); }
+        if ov.remote_username { clean.remote.username = String::new(); }
+        if ov.remote_password { clean.remote.password = String::new(); }
+        if ov.remote_enabled { clean.remote.enabled = false; }
+
+        clean
+    }
+
     /// Write config to the base config.toml.
+    /// Fields sourced from env vars are excluded.
     pub fn save(&self) -> Result<(), ConfigError> {
         let path = config_file_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let contents = toml::to_string_pretty(self)?;
+        let clean = self.without_env_overrides();
+        let contents = toml::to_string_pretty(&clean)?;
         fs::write(&path, contents)?;
         Ok(())
     }
 
     /// Write config to config.local.toml (for machine-specific / sensitive values).
+    /// Fields sourced from env vars are excluded.
     pub fn save_local(&self) -> Result<(), ConfigError> {
         let path = config_local_file_path();
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let contents = toml::to_string_pretty(self)?;
+        let clean = self.without_env_overrides();
+        let contents = toml::to_string_pretty(&clean)?;
         fs::write(&path, contents)?;
         #[cfg(unix)]
         {
@@ -396,22 +427,27 @@ impl Config {
 
     /// Apply `KOAN_REMOTE_*` env var overrides on top of file-based config.
     /// Non-empty env values win; unset or empty vars are ignored.
+    /// Tracks which fields were overridden so `save()` can exclude them.
     fn apply_env_overrides(&mut self) {
-        if let Ok(url) = std::env::var("KOAN_REMOTE_URL") {
-            if !url.is_empty() {
-                self.remote.url = url;
-                self.remote.enabled = true;
-            }
+        if let Ok(url) = std::env::var("KOAN_REMOTE_URL")
+            && !url.is_empty()
+        {
+            self.remote.url = url;
+            self.remote.enabled = true;
+            self.env_overrides.remote_url = true;
+            self.env_overrides.remote_enabled = true;
         }
-        if let Ok(username) = std::env::var("KOAN_REMOTE_USERNAME") {
-            if !username.is_empty() {
-                self.remote.username = username;
-            }
+        if let Ok(username) = std::env::var("KOAN_REMOTE_USERNAME")
+            && !username.is_empty()
+        {
+            self.remote.username = username;
+            self.env_overrides.remote_username = true;
         }
-        if let Ok(password) = std::env::var("KOAN_REMOTE_PASSWORD") {
-            if !password.is_empty() {
-                self.remote.password = password;
-            }
+        if let Ok(password) = std::env::var("KOAN_REMOTE_PASSWORD")
+            && !password.is_empty()
+        {
+            self.remote.password = password;
+            self.env_overrides.remote_password = true;
         }
     }
 }
@@ -436,7 +472,9 @@ fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
 
 /// Config directory — `KOAN_CONFIG_DIR` env var, or `~/.config/koan/`.
 pub fn config_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("KOAN_CONFIG_DIR") {
+    if let Ok(dir) = std::env::var("KOAN_CONFIG_DIR")
+        && !dir.is_empty()
+    {
         return PathBuf::from(dir);
     }
     dirs::home_dir()
@@ -787,59 +825,140 @@ port = 4000
 
     #[test]
     fn test_parse_size_bytes() {
-        assert_eq!(parse_size_bytes("50GB"), Some(50 * 1024 * 1024 * 1024));
-        assert_eq!(parse_size_bytes("500MB"), Some(500 * 1024 * 1024));
-        assert_eq!(parse_size_bytes("1TB"), Some(1024 * 1024 * 1024 * 1024));
-        assert_eq!(parse_size_bytes("100KB"), Some(100 * 1024));
-        assert_eq!(parse_size_bytes("1024B"), Some(1024));
-        assert_eq!(parse_size_bytes("1024"), Some(1024));
++        assert_eq!(parse_size_bytes("50GB"), Some(50 * 1024 * 1024 * 1024));
++        assert_eq!(parse_size_bytes("500MB"), Some(500 * 1024 * 1024));
++        assert_eq!(parse_size_bytes("1TB"), Some(1024 * 1024 * 1024 * 1024));
++        assert_eq!(parse_size_bytes("100KB"), Some(100 * 1024));
++        assert_eq!(parse_size_bytes("1024B"), Some(1024));
++        assert_eq!(parse_size_bytes("1024"), Some(1024));
++
++        // Case insensitive.
++        assert_eq!(parse_size_bytes("50gb"), Some(50 * 1024 * 1024 * 1024));
++        assert_eq!(parse_size_bytes("50Gb"), Some(50 * 1024 * 1024 * 1024));
++
++        // Short suffixes.
++        assert_eq!(parse_size_bytes("50G"), Some(50 * 1024 * 1024 * 1024));
++        assert_eq!(parse_size_bytes("500M"), Some(500 * 1024 * 1024));
++
++        // Spaces.
++        assert_eq!(parse_size_bytes("50 GB"), Some(50 * 1024 * 1024 * 1024));
++        assert_eq!(parse_size_bytes(" 50GB "), Some(50 * 1024 * 1024 * 1024));
++
++        // Decimal.
++        assert_eq!(
++            parse_size_bytes("1.5GB"),
++            Some((1.5 * 1024.0 * 1024.0 * 1024.0) as u64)
++        );
++
++        // Invalid.
++        assert_eq!(parse_size_bytes(""), None);
++        assert_eq!(parse_size_bytes("abc"), None);
++        assert_eq!(parse_size_bytes("50XB"), None);
++    }
++
++    #[test]
++    fn test_cache_limit_config_from_toml() {
++        let toml_str = r#"
++[remote]
++cache_limit = "50GB"
++"#;
++        let cfg: Config = toml::from_str(toml_str).unwrap();
++        assert_eq!(cfg.remote.cache_limit.as_deref(), Some("50GB"));
++        assert_eq!(cfg.cache_limit_bytes(), Some(50 * 1024 * 1024 * 1024));
++    }
++
++    #[test]
++    fn test_cache_limit_none_by_default() {
++        let cfg = Config::default();
++        assert!(cfg.remote.cache_limit.is_none());
++        assert!(cfg.cache_limit_bytes().is_none());
++    }
++
++    #[test]
++    fn test_cache_limit_not_serialized_when_none() {
++        let cfg = Config::default();
++        let serialized = toml::to_string_pretty(&cfg).unwrap();
++        assert!(!serialized.contains("cache_limit"));
++    }
 
-        // Case insensitive.
-        assert_eq!(parse_size_bytes("50gb"), Some(50 * 1024 * 1024 * 1024));
-        assert_eq!(parse_size_bytes("50Gb"), Some(50 * 1024 * 1024 * 1024));
+    #[test]
+    fn test_env_overrides_sets_tracking_flags() {
+        let mut cfg = Config::default();
+        cfg.remote.url = "https://env.example.com".into();
+        cfg.remote.username = "envuser".into();
+        cfg.remote.password = "envpass".into();
+        cfg.remote.enabled = true;
+        cfg.env_overrides = EnvOverrides {
+            remote_url: true,
+            remote_username: true,
+            remote_password: true,
+            remote_enabled: true,
+        };
 
-        // Short suffixes.
-        assert_eq!(parse_size_bytes("50G"), Some(50 * 1024 * 1024 * 1024));
-        assert_eq!(parse_size_bytes("500M"), Some(500 * 1024 * 1024));
-
-        // Spaces.
-        assert_eq!(parse_size_bytes("50 GB"), Some(50 * 1024 * 1024 * 1024));
-        assert_eq!(parse_size_bytes(" 50GB "), Some(50 * 1024 * 1024 * 1024));
-
-        // Decimal.
-        assert_eq!(
-            parse_size_bytes("1.5GB"),
-            Some((1.5 * 1024.0 * 1024.0 * 1024.0) as u64)
-        );
-
-        // Invalid.
-        assert_eq!(parse_size_bytes(""), None);
-        assert_eq!(parse_size_bytes("abc"), None);
-        assert_eq!(parse_size_bytes("50XB"), None);
+        assert!(cfg.env_overrides.remote_url);
+        assert!(cfg.env_overrides.remote_username);
+        assert!(cfg.env_overrides.remote_password);
+        assert!(cfg.env_overrides.remote_enabled);
     }
 
     #[test]
-    fn test_cache_limit_config_from_toml() {
-        let toml_str = r#"
-[remote]
-cache_limit = "50GB"
-"#;
-        let cfg: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(cfg.remote.cache_limit.as_deref(), Some("50GB"));
-        assert_eq!(cfg.cache_limit_bytes(), Some(50 * 1024 * 1024 * 1024));
+    fn test_env_overrides_excluded_from_save() {
+        let mut cfg = Config::default();
+        cfg.remote.url = "https://env.example.com".into();
+        cfg.remote.username = "envuser".into();
+        cfg.remote.password = "envpass".into();
+        cfg.remote.enabled = true;
+        cfg.env_overrides = EnvOverrides {
+            remote_url: true,
+            remote_username: true,
+            remote_password: true,
+            remote_enabled: true,
+        };
+
+        let clean = cfg.without_env_overrides();
+        let serialized = toml::to_string_pretty(&clean).unwrap();
+
+        assert!(!serialized.contains("env.example.com"));
+        assert!(!serialized.contains("envuser"));
+        assert!(!serialized.contains("envpass"));
     }
 
     #[test]
-    fn test_cache_limit_none_by_default() {
-        let cfg = Config::default();
-        assert!(cfg.remote.cache_limit.is_none());
-        assert!(cfg.cache_limit_bytes().is_none());
+    fn test_env_overrides_preserve_file_sourced_fields() {
+        let mut cfg = Config::default();
+        cfg.remote.url = "https://file.example.com".into();
+        cfg.remote.username = "fileuser".into();
+        cfg.remote.password = "envpass".into();
+        cfg.remote.enabled = true;
+        // Only password came from env — url, username, enabled are file-sourced.
+        cfg.env_overrides = EnvOverrides {
+            remote_password: true,
+            ..EnvOverrides::default()
+        };
+
+        let clean = cfg.without_env_overrides();
+
+        assert_eq!(clean.remote.url, "https://file.example.com");
+        assert_eq!(clean.remote.username, "fileuser");
+        assert!(clean.remote.password.is_empty());
+        assert!(clean.remote.enabled);
     }
 
     #[test]
-    fn test_cache_limit_not_serialized_when_none() {
-        let cfg = Config::default();
+    fn test_env_overrides_not_serialized() {
+        // env_overrides field itself should never appear in TOML output.
+        let mut cfg = Config::default();
+        cfg.env_overrides.remote_url = true;
         let serialized = toml::to_string_pretty(&cfg).unwrap();
-        assert!(!serialized.contains("cache_limit"));
+        assert!(!serialized.contains("env_overrides"));
+    }
+
+    #[test]
+    fn test_config_dir_empty_env_ignored() {
+        // SAFETY: single-threaded test, no concurrent env access.
+        unsafe { std::env::set_var("KOAN_CONFIG_DIR", "") };
+        let dir = config_dir();
+        assert!(dir.ends_with("koan"));
+        unsafe { std::env::remove_var("KOAN_CONFIG_DIR") };
     }
 }
