@@ -207,7 +207,7 @@ impl VizBuffer {
         let buf_len = inner.buf.len();
         let pos = inner.write_pos;
         out.clear();
-        out.reserve(buf_len.saturating_sub(out.capacity()));
+        out.reserve(buf_len);
         // Write position is where the *next* sample goes, so the oldest
         // sample is at write_pos and the newest is at write_pos - 1.
         out.extend_from_slice(&inner.buf[pos..]);
