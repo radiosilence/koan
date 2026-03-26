@@ -6,7 +6,7 @@ use rusqlite::{Connection, params};
 use crate::db::connection::DbError;
 
 use super::albums::get_or_create_album;
-use super::artists::get_or_create_artist;
+use super::artists::{escape_like, get_or_create_artist};
 use super::{PlaybackSource, TrackMeta, TrackRow};
 
 /// Map a rusqlite Row to a TrackRow. Expects the standard column order:
@@ -50,6 +50,19 @@ fn row_to_track_row(row: &rusqlite::Row) -> rusqlite::Result<TrackRow> {
 /// When merging, local metadata (codec, sample_rate, etc.) wins over remote.
 /// The `source` field reflects what's available: "local" if path exists, "remote" if remote-only.
 pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError> {
+    // Use a savepoint so this works both standalone and inside an existing
+    // transaction (e.g. the batch transaction in scan_folder).
+    conn.execute_batch("SAVEPOINT upsert_track")?;
+
+    let result = upsert_track_inner(conn, meta);
+    match &result {
+        Ok(_) => conn.execute_batch("RELEASE upsert_track")?,
+        Err(_) => conn.execute_batch("ROLLBACK TO upsert_track")?,
+    }
+    result
+}
+
+fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError> {
     let album_artist_name = meta.album_artist.as_deref().unwrap_or(&meta.artist);
     let album_artist_id = get_or_create_artist(conn, album_artist_name, None)?;
     // Track artist — may differ from album artist (e.g. compilations, VA albums).
@@ -266,14 +279,14 @@ pub fn remove_tracks_by_source(conn: &Connection, source: &str) -> Result<usize,
 /// Pure-local tracks (no `remote_id`) are deleted as before.
 pub fn remove_stale_tracks(conn: &Connection, folder: &Path) -> Result<usize, DbError> {
     let folder_str = folder.to_string_lossy();
-    let prefix = format!("{}%", folder_str);
+    let prefix = format!("{}%", escape_like(&folder_str));
 
     // Find tracks in this folder that no longer exist on disk.
     // Use `path IS NOT NULL` instead of `source = 'local'` to catch all tracks
     // with local paths regardless of source flag (e.g. merged local+remote rows).
     let mut stmt = conn.prepare(
         "SELECT t.id, t.path, t.remote_id FROM tracks t
-         WHERE t.path LIKE ?1 AND t.path IS NOT NULL",
+         WHERE t.path LIKE ?1 ESCAPE '\\' AND t.path IS NOT NULL",
     )?;
 
     let stale: Vec<(i64, String, Option<String>)> = stmt

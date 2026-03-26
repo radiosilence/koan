@@ -5,7 +5,7 @@ use crate::db::connection::DbError;
 use super::ArtistRow;
 
 /// Escape SQL LIKE wildcard characters in user input.
-fn escape_like(s: &str) -> String {
+pub(super) fn escape_like(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('%', "\\%")
         .replace('_', "\\_")

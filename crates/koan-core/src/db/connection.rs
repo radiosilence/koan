@@ -41,6 +41,11 @@ impl Database {
         // Slightly faster at the cost of durability on power loss (acceptable for a media DB).
         conn.pragma_update(None, "synchronous", "normal")?;
 
+        // Attempt a passive WAL checkpoint on open. This is non-blocking — it
+        // moves WAL pages back to the main DB file only if no readers/writers
+        // are active, preventing unbounded WAL growth across sessions.
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE)");
+
         schema::create_tables(&conn)?;
 
         Ok(Self { conn })
