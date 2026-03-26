@@ -78,17 +78,18 @@ pub(crate) fn confirm(prompt: &str) -> bool {
 
 /// Install a panic hook that logs the panic to the log file and restores the terminal.
 ///
-/// Terminal restoration only happens when the *main thread* panics. Background
-/// thread panics (decode, download, etc.) are logged but must NOT touch the
-/// terminal — doing so corrupts the TUI and causes escape sequence leaks.
+/// Terminal restoration runs on ANY thread panic — raw mode + alternate screen
+/// must always be disabled so the user gets a usable terminal back. The
+/// restoration sequence is idempotent (safe to call multiple times or from a
+/// thread that never entered raw mode).
 pub(crate) fn install_terminal_panic_hook() {
     use crossterm::{
-        event::DisableMouseCapture,
+        cursor::Show,
+        event::{DisableBracketedPaste, DisableMouseCapture},
         execute,
         terminal::{LeaveAlternateScreen, disable_raw_mode},
     };
     use std::io;
-    let main_thread_id = std::thread::current().id();
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
         // Log the panic to the log file before restoring the terminal.
@@ -109,11 +110,17 @@ pub(crate) fn install_terminal_panic_hook() {
         log::error!("backtrace:\n{}", bt);
         log::logger().flush();
 
-        // Only restore the terminal if this is the main (TUI) thread.
-        if std::thread::current().id() == main_thread_id {
-            let _ = disable_raw_mode();
-            let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
-        }
+        // Always restore the terminal regardless of which thread panicked.
+        // All of these are idempotent — harmless if the terminal was never
+        // set up or already restored.
+        let _ = disable_raw_mode();
+        let _ = execute!(
+            io::stdout(),
+            LeaveAlternateScreen,
+            DisableMouseCapture,
+            DisableBracketedPaste,
+            Show
+        );
         original_hook(panic);
     }));
 }

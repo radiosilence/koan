@@ -23,8 +23,9 @@ struct RenderedArt {
 }
 
 /// Transparent single-entry cache for cover art images.
-/// Caches both the decoded image AND the rendered halfblock output
-/// so frames that don't change size are a cheap blit.
+/// Holds at most ONE decoded image + its rendered halfblock output.
+/// When a new path is loaded the old image and all rendered buffers are dropped,
+/// keeping memory bounded (no multi-entry accumulation).
 pub struct CoverArtCache {
     path: Option<PathBuf>,
     image: Option<DynamicImage>,

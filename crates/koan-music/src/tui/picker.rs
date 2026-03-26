@@ -297,8 +297,15 @@ impl Widget for PickerOverlay<'_> {
         // Results.
         let snap = self.state.nucleo.snapshot();
         let visible_height = chunks[1].height as usize;
-        let start = if self.state.cursor >= visible_height {
-            self.state.cursor - visible_height + 1
+        // Clamp cursor to matched range — matched_count can shrink between
+        // ticks (e.g. background reparse) leaving cursor out of bounds.
+        let cursor = if matched == 0 {
+            0
+        } else {
+            self.state.cursor.min(matched - 1)
+        };
+        let start = if cursor >= visible_height {
+            cursor - visible_height + 1
         } else {
             0
         };
@@ -307,7 +314,7 @@ impl Widget for PickerOverlay<'_> {
         for (row, i) in (start..end).enumerate() {
             if let Some(item) = snap.get_matched_item(i as u32) {
                 let idx = *item.data as usize;
-                let is_cursor = i == self.state.cursor;
+                let is_cursor = i == cursor;
                 let is_selected = self.state.selected.contains(&idx);
 
                 let row_style = if is_cursor {
