@@ -188,16 +188,30 @@ impl VizBuffer {
     /// Take a snapshot of the current buffer contents, ordered oldest to newest.
     ///
     /// Returns a contiguous `Vec<f32>` with the most recent samples in chronological order.
+    ///
+    /// Allocates a new Vec on every call. For hot paths (e.g. 60fps analysis),
+    /// prefer `snapshot_into` to reuse an existing buffer.
     pub fn snapshot(&self) -> Vec<f32> {
+        let mut out = Vec::new();
+        self.snapshot_into(&mut out);
+        out
+    }
+
+    /// Take a snapshot into a caller-provided buffer, avoiding allocation when
+    /// the buffer already has sufficient capacity.
+    ///
+    /// The buffer is cleared and filled with the most recent samples in
+    /// chronological order (oldest to newest).
+    pub fn snapshot_into(&self, out: &mut Vec<f32>) {
         let inner = self.samples.lock();
         let buf_len = inner.buf.len();
         let pos = inner.write_pos;
-        let mut out = Vec::with_capacity(buf_len);
+        out.clear();
+        out.reserve(buf_len);
         // Write position is where the *next* sample goes, so the oldest
         // sample is at write_pos and the newest is at write_pos - 1.
         out.extend_from_slice(&inner.buf[pos..]);
         out.extend_from_slice(&inner.buf[..pos]);
-        out
     }
 
     /// Take a snapshot bundled with metadata (channels, sample_rate).

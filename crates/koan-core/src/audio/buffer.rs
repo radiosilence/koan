@@ -107,10 +107,6 @@ pub struct PlaybackTimeline {
     /// Total interleaved samples consumed (played) by the audio engine.
     /// Written by CoreAudio render callback, read by UI.
     pub samples_played: Arc<AtomicU64>,
-    /// Channel count — needed to convert samples → frames for position calc.
-    channels: AtomicU64,
-    /// Sample rate — needed for position calc.
-    sample_rate: AtomicU64,
 }
 
 impl PlaybackTimeline {
@@ -119,17 +115,11 @@ impl PlaybackTimeline {
             boundaries: parking_lot::RwLock::new(Vec::new()),
             samples_written: AtomicU64::new(0),
             samples_played: Arc::new(AtomicU64::new(0)),
-            channels: AtomicU64::new(2),
-            sample_rate: AtomicU64::new(44100),
         })
     }
 
     /// Called by decode thread when starting a new track.
     fn push_boundary(&self, boundary: TrackBoundary) {
-        self.channels
-            .store(boundary.info.channels as u64, Ordering::Relaxed);
-        self.sample_rate
-            .store(boundary.info.sample_rate as u64, Ordering::Relaxed);
         self.boundaries.write().push(boundary);
     }
 
@@ -158,13 +148,23 @@ impl PlaybackTimeline {
     /// Derive current track info and position from the playback head.
     /// Called by the UI on every tick.
     /// Returns (id, path, stream_info, position_ms).
+    ///
+    /// Acquires the boundaries read lock BEFORE reading `samples_played` so
+    /// channels/sample_rate/boundaries are all from a consistent snapshot.
+    /// Without this ordering, a track transition could update the atomics
+    /// after we read `samples_played` but before we read the boundary list.
     pub fn current_playback(&self) -> Option<(QueueItemId, PathBuf, StreamInfo, u64)> {
-        let played = self.samples_played.load(Ordering::Relaxed);
+        // Lock first — ensures we see boundaries consistent with the atomic read.
         let bounds = self.boundaries.read();
 
         if bounds.is_empty() {
             return None;
         }
+
+        // Read samples_played while holding the lock. This guarantees we
+        // never observe a stale boundary list with a newer samples_played
+        // (or vice versa).
+        let played = self.samples_played.load(Ordering::Acquire);
 
         // Find which track the playback head is in via binary search.
         // partition_point returns first index where offset > played;
