@@ -328,15 +328,19 @@ impl Config {
             deep_merge(&mut base_val, local_val);
         }
 
-        let config: Config = base_val.try_into()?;
+        let mut config: Config = base_val.try_into()?;
+        config.apply_env_overrides();
         Ok(config)
     }
 
     /// Load config, logging and falling back to defaults on error.
+    /// Env overrides are always applied (via `load()`, or on the default fallback).
     pub fn load_or_default() -> Self {
         Self::load().unwrap_or_else(|e| {
             log::warn!("failed to load config, using defaults: {}", e);
-            Self::default()
+            let mut cfg = Self::default();
+            cfg.apply_env_overrides();
+            cfg
         })
     }
 
@@ -389,6 +393,27 @@ impl Config {
             .as_deref()
             .and_then(parse_size_bytes)
     }
+
+    /// Apply `KOAN_REMOTE_*` env var overrides on top of file-based config.
+    /// Non-empty env values win; unset or empty vars are ignored.
+    fn apply_env_overrides(&mut self) {
+        if let Ok(url) = std::env::var("KOAN_REMOTE_URL") {
+            if !url.is_empty() {
+                self.remote.url = url;
+                self.remote.enabled = true;
+            }
+        }
+        if let Ok(username) = std::env::var("KOAN_REMOTE_USERNAME") {
+            if !username.is_empty() {
+                self.remote.username = username;
+            }
+        }
+        if let Ok(password) = std::env::var("KOAN_REMOTE_PASSWORD") {
+            if !password.is_empty() {
+                self.remote.password = password;
+            }
+        }
+    }
 }
 
 /// Recursively merge `overlay` into `base`. Only keys present in `overlay`
@@ -409,8 +434,11 @@ fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
     }
 }
 
-/// `~/.config/koan/`
+/// Config directory — `KOAN_CONFIG_DIR` env var, or `~/.config/koan/`.
 pub fn config_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("KOAN_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
