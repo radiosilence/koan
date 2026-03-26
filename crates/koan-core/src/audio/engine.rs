@@ -166,17 +166,17 @@ impl AudioEngine {
     }
 
     pub fn start(&self) -> Result<()> {
-        self.running.store(true, Ordering::Relaxed);
+        self.running.store(true, Ordering::Release);
         check(unsafe { AudioOutputUnitStart(self.audio_unit) })
     }
 
     pub fn stop(&self) -> Result<()> {
-        self.running.store(false, Ordering::Relaxed);
+        self.running.store(false, Ordering::Release);
         check(unsafe { AudioOutputUnitStop(self.audio_unit) })
     }
 
     pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::Relaxed)
+        self.running.load(Ordering::Acquire)
     }
 }
 
@@ -243,7 +243,7 @@ unsafe extern "C" fn render_callback(
     // SAFETY: `io_data` is provided by CoreAudio and is valid for the callback's duration.
     let buffer_list = unsafe { &mut *io_data };
 
-    if !data.running.load(Ordering::Relaxed) {
+    if !data.running.load(Ordering::Acquire) {
         for i in 0..buffer_list.mNumberBuffers as usize {
             let buf = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr().add(i) };
             if !buf.mData.is_null() {
@@ -260,10 +260,19 @@ unsafe extern "C" fn render_callback(
     let buf = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
     let channels = buf.mNumberChannels;
     let total_samples = (in_number_frames * channels) as usize;
-    debug_assert!(
-        (buf.mData as usize).is_multiple_of(mem::align_of::<f32>()),
-        "CoreAudio buffer not aligned for f32"
-    );
+    if !(buf.mData as usize).is_multiple_of(mem::align_of::<f32>()) {
+        log::error!("CoreAudio buffer not aligned for f32");
+        // Fill silence rather than risking UB from an unaligned cast.
+        for i in 0..buffer_list.mNumberBuffers as usize {
+            let b = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr().add(i) };
+            if !b.mData.is_null() {
+                unsafe {
+                    ptr::write_bytes(b.mData as *mut u8, 0, b.mDataByteSize as usize);
+                }
+            }
+        }
+        return 0;
+    }
     let out_ptr = buf.mData as *mut f32;
 
     let available = data.consumer.slots();
@@ -273,15 +282,19 @@ unsafe extern "C" fn render_callback(
         && let Ok(chunk) = data.consumer.read_chunk(to_read)
     {
         let (first, second) = chunk.as_slices();
+        let ring_total = first.len() + second.len();
+        let copy_total = ring_total.min(total_samples);
+        let first_copy = first.len().min(copy_total);
+        let second_copy = copy_total.saturating_sub(first_copy).min(second.len());
         unsafe {
-            ptr::copy_nonoverlapping(first.as_ptr(), out_ptr, first.len());
-            if !second.is_empty() {
-                ptr::copy_nonoverlapping(second.as_ptr(), out_ptr.add(first.len()), second.len());
+            ptr::copy_nonoverlapping(first.as_ptr(), out_ptr, first_copy);
+            if second_copy > 0 {
+                ptr::copy_nonoverlapping(second.as_ptr(), out_ptr.add(first_copy), second_copy);
             }
         }
         chunk.commit_all();
         data.samples_played
-            .fetch_add(to_read as u64, Ordering::Relaxed);
+            .fetch_add(copy_total as u64, Ordering::AcqRel);
     }
 
     // Zero remaining frames on underrun — silence > glitches.

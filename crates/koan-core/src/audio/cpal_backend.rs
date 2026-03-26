@@ -193,7 +193,7 @@ impl AudioBackend for CpalBackend {
             dev.build_output_stream(
                 &config,
                 move |data: &mut [f32], _info: &cpal::OutputCallbackInfo| {
-                    if !running_cb.load(Ordering::Relaxed) {
+                    if !running_cb.load(Ordering::Acquire) {
                         data.fill(0.0);
                         return;
                     }
@@ -211,22 +211,22 @@ impl AudioBackend for CpalBackend {
                         && let Ok(chunk) = consumer.read_chunk(to_read)
                     {
                         let (first, second) = chunk.as_slices();
+                        let ring_total = first.len() + second.len();
+                        let copy_total = ring_total.min(total_samples);
+                        let first_copy = first.len().min(copy_total);
+                        let second_copy = copy_total.saturating_sub(first_copy).min(second.len());
                         unsafe {
-                            ptr::copy_nonoverlapping(
-                                first.as_ptr(),
-                                data.as_mut_ptr(),
-                                first.len(),
-                            );
-                            if !second.is_empty() {
+                            ptr::copy_nonoverlapping(first.as_ptr(), data.as_mut_ptr(), first_copy);
+                            if second_copy > 0 {
                                 ptr::copy_nonoverlapping(
                                     second.as_ptr(),
-                                    data.as_mut_ptr().add(first.len()),
-                                    second.len(),
+                                    data.as_mut_ptr().add(first_copy),
+                                    second_copy,
                                 );
                             }
                         }
                         chunk.commit_all();
-                        samples_played.fetch_add(to_read as u64, Ordering::Relaxed);
+                        samples_played.fetch_add(copy_total as u64, Ordering::AcqRel);
                     }
 
                     // Zero-pad remainder on underrun — silence > glitches.
@@ -258,21 +258,21 @@ unsafe impl Send for CpalEngineHandle {}
 
 impl AudioEngineHandle for CpalEngineHandle {
     fn start(&self) -> Result<(), BackendError> {
-        self.running.store(true, Ordering::Relaxed);
+        self.running.store(true, Ordering::Release);
         self.stream
             .play()
             .map_err(|e| BackendError::Platform(e.to_string()))
     }
 
     fn stop(&self) -> Result<(), BackendError> {
-        self.running.store(false, Ordering::Relaxed);
+        self.running.store(false, Ordering::Release);
         self.stream
             .pause()
             .map_err(|e| BackendError::Platform(e.to_string()))
     }
 
     fn is_running(&self) -> bool {
-        self.running.load(Ordering::Relaxed)
+        self.running.load(Ordering::Acquire)
     }
 }
 
