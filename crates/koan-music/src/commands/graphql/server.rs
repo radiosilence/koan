@@ -67,7 +67,11 @@ fn run_api_blocking(
         if playground_enabled {
             gql_app = gql_app.route("/graphql", get(graphql_playground));
         }
-        let gql_app = gql_app.with_state(schema);
+        // Concurrency limit: prevent mutation spam DoS (e.g. trigger_scan flooding).
+        // Allows max 10 concurrent requests; excess requests get 503 back-pressure.
+        let gql_app = gql_app
+            .layer(tower::limit::ConcurrencyLimitLayer::new(10))
+            .with_state(schema);
 
         let gql_addr = std::net::SocketAddr::new(bind, port);
 

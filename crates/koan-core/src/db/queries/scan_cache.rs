@@ -17,6 +17,27 @@ pub fn update_scan_cache(
     Ok(())
 }
 
+/// Load the entire scan cache into a HashMap for batch lookups.
+/// Returns path → (mtime, size) for all cached entries.
+pub fn load_scan_cache(
+    conn: &Connection,
+) -> Result<std::collections::HashMap<String, (i64, i64)>, DbError> {
+    let mut stmt = conn.prepare("SELECT path, mtime, size FROM scan_cache")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?),
+        ))
+    })?;
+
+    let mut map = std::collections::HashMap::new();
+    for row in rows {
+        let (path, data) = row?;
+        map.insert(path, data);
+    }
+    Ok(map)
+}
+
 /// Check if a file needs re-scanning (mtime or size changed).
 pub fn needs_rescan(conn: &Connection, path: &str, mtime: i64, size: i64) -> Result<bool, DbError> {
     let cached = conn.query_row(
@@ -61,5 +82,23 @@ mod tests {
 
         // Unknown file → rescan.
         assert!(needs_rescan(&db.conn, "/music/Al/New.flac", 1700000000, 30000000).unwrap());
+    }
+
+    #[test]
+    fn test_load_scan_cache() {
+        let db = test_db();
+        let meta = sample_meta("T1", "A", "Al");
+        let id1 = upsert_track(&db.conn, &meta).unwrap();
+        let meta2 = sample_meta("T2", "A", "Al");
+        let id2 = upsert_track(&db.conn, &meta2).unwrap();
+
+        update_scan_cache(&db.conn, "/music/Al/T1.flac", 100, 200, id1).unwrap();
+        update_scan_cache(&db.conn, "/music/Al/T2.flac", 300, 400, id2).unwrap();
+
+        let cache = load_scan_cache(&db.conn).unwrap();
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get("/music/Al/T1.flac"), Some(&(100, 200)));
+        assert_eq!(cache.get("/music/Al/T2.flac"), Some(&(300, 400)));
+        assert_eq!(cache.get("/music/Al/T3.flac"), None);
     }
 }

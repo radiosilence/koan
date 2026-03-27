@@ -344,6 +344,9 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
 
 /// Load all tracks that have a local path into a HashMap keyed by path.
 /// Used by the playlist builder to skip expensive lofty reads for known files.
+///
+/// For large libraries, prefer `tracks_by_paths()` which only fetches the
+/// tracks you actually need.
 pub fn all_tracks_by_path(
     conn: &Connection,
 ) -> Result<std::collections::HashMap<String, TrackRow>, DbError> {
@@ -369,6 +372,60 @@ pub fn all_tracks_by_path(
             map.insert(path.clone(), row);
         }
     }
+    Ok(map)
+}
+
+/// Load tracks matching a specific set of paths into a HashMap.
+/// Processes in batches of 500 to stay within SQLite variable limits.
+/// For small path sets this is dramatically cheaper than `all_tracks_by_path`.
+pub fn tracks_by_paths(
+    conn: &Connection,
+    paths: &[String],
+) -> Result<std::collections::HashMap<String, TrackRow>, DbError> {
+    const BATCH_SIZE: usize = 500;
+    let mut map = std::collections::HashMap::with_capacity(paths.len());
+
+    for chunk in paths.chunks(BATCH_SIZE) {
+        let placeholders: String = chunk
+            .iter()
+            .enumerate()
+            .map(|(i, _)| {
+                if i == 0 {
+                    "?".to_string()
+                } else {
+                    ",?".to_string()
+                }
+            })
+            .collect();
+
+        let sql = format!(
+            "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                    t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                    t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                    t.genre, t.source, t.remote_id, t.cached_path
+             FROM tracks t
+             LEFT JOIN artists a ON t.artist_id = a.id
+             LEFT JOIN albums al ON t.album_id = al.id
+             LEFT JOIN artists aa ON al.artist_id = aa.id
+             WHERE t.path IN ({placeholders})"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+        let params: Vec<&dyn rusqlite::types::ToSql> = chunk
+            .iter()
+            .map(|s| s as &dyn rusqlite::types::ToSql)
+            .collect();
+        let rows = stmt
+            .query_map(params.as_slice(), row_to_track_row)?
+            .collect::<Result<Vec<_>, _>>()?;
+
+        for row in rows {
+            if let Some(ref path) = row.path {
+                map.insert(path.clone(), row);
+            }
+        }
+    }
+
     Ok(map)
 }
 
@@ -546,10 +603,11 @@ pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbEr
     // Get all cached tracks with their last played timestamp.
     // A track is "protected" if it appears in the favourites table.
     // We exclude any album that has ANY favourited cached track.
+    // Uses LEFT JOIN with pre-aggregated play_history to avoid O(N) correlated subquery.
     let mut stmt = conn.prepare(
         "SELECT t.id, t.album_id, COALESCE(al.title, 'Unknown'), COALESCE(a.name, 'Unknown'),
                 t.cached_path, COALESCE(t.cache_size_bytes, 0),
-                (SELECT MAX(ph.played_at) FROM play_history ph WHERE ph.track_id = t.id) as last_play,
+                ph_max.last_play,
                 EXISTS(SELECT 1 FROM favourites f
                        WHERE f.track_path = t.cached_path
                           OR f.track_path = t.path
@@ -557,6 +615,9 @@ pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbEr
          FROM tracks t
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists a ON al.artist_id = a.id
+         LEFT JOIN (SELECT track_id, MAX(played_at) as last_play
+                    FROM play_history GROUP BY track_id) ph_max
+                ON ph_max.track_id = t.id
          WHERE t.cached_path IS NOT NULL
          ORDER BY t.album_id, t.disc, t.track_number",
     )?;

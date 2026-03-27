@@ -53,10 +53,13 @@ pub fn scan_folder(
         path.display()
     );
 
-    // Filter to files that need scanning (check scan_cache on the main thread).
+    // Filter to files that need scanning.
+    // Batch-load the entire scan_cache into a HashMap to avoid O(N) individual
+    // DB lookups (one per file). For 100k+ file libraries this is dramatically faster.
     let files_to_scan: Vec<PathBuf> = if force {
         audio_files.clone()
     } else {
+        let scan_cache = queries::load_scan_cache(&db.conn).unwrap_or_default();
         audio_files
             .iter()
             .filter(|file_path| {
@@ -71,7 +74,12 @@ pub fn scan_folder(
                     .unwrap_or(0);
                 let size = file_meta.len() as i64;
                 let path_str = file_path.to_string_lossy();
-                queries::needs_rescan(&db.conn, &path_str, mtime, size).unwrap_or(true)
+                match scan_cache.get(path_str.as_ref()) {
+                    Some(&(cached_mtime, cached_size)) => {
+                        mtime != cached_mtime || size != cached_size
+                    }
+                    None => true,
+                }
             })
             .cloned()
             .collect()

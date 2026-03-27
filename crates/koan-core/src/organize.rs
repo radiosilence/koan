@@ -136,6 +136,8 @@ fn sanitize_path_component(s: &str) -> String {
 }
 
 /// Sanitize each component of a relative path independently.
+/// Rejects `..` and `.` components to prevent path traversal attacks
+/// (e.g. malicious metadata containing `../../../../etc/passwd`).
 fn sanitize_relative_path(rel: &str) -> PathBuf {
     let parts: Vec<&str> = if rel.contains('/') {
         rel.split('/')
@@ -147,9 +149,10 @@ fn sanitize_relative_path(rel: &str) -> PathBuf {
     let mut result = PathBuf::new();
     for part in parts {
         let sanitized = sanitize_path_component(part);
-        if !sanitized.is_empty() {
-            result.push(sanitized);
+        if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
+            continue;
         }
+        result.push(sanitized);
     }
     result
 }
@@ -226,6 +229,10 @@ fn plan_single_move(
 
     let sanitized = sanitize_relative_path(&relative);
 
+    if sanitized.as_os_str().is_empty() {
+        return Err("format string produced empty path after sanitization".into());
+    }
+
     // Preserve the original file extension.
     // Don't use with_extension() — it replaces after the LAST dot, which
     // destroys titles containing dots (e.g. "0111. Bicep - TANGZ II" → "0111.flac").
@@ -236,6 +243,15 @@ fn plan_single_move(
     let mut dest = base_dir.join(sanitized);
     let stem = dest.as_os_str().to_os_string();
     dest = PathBuf::from(format!("{}.{}", stem.to_string_lossy(), ext));
+
+    // Safety: verify dest stays under base_dir (defense-in-depth against path traversal).
+    if !dest.starts_with(base_dir) {
+        return Err(format!(
+            "path traversal blocked: destination {} escapes base dir {}",
+            dest.display(),
+            base_dir.display()
+        ));
+    }
 
     if paths_equal(source, &dest) {
         return Ok(None);
@@ -875,6 +891,24 @@ mod tests {
             result,
             PathBuf::from("Radiohead/(1997) OK Computer/01. Airbag")
         );
+    }
+
+    #[test]
+    fn sanitize_relative_path_rejects_traversal() {
+        // ".." components should be stripped to prevent path traversal.
+        let result = sanitize_relative_path("../../../../etc/passwd");
+        assert_eq!(result, PathBuf::from("etc/passwd"));
+
+        let result = sanitize_relative_path("Artist/../../../outside");
+        assert_eq!(result, PathBuf::from("Artist/outside"));
+
+        // "." components should also be stripped.
+        let result = sanitize_relative_path("./Artist/./Album");
+        assert_eq!(result, PathBuf::from("Artist/Album"));
+
+        // Normal paths remain unchanged.
+        let result = sanitize_relative_path("Artist/Album/Track");
+        assert_eq!(result, PathBuf::from("Artist/Album/Track"));
     }
 
     #[test]

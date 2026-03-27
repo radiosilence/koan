@@ -55,6 +55,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_tracks_source ON tracks(source);
         CREATE INDEX IF NOT EXISTS idx_tracks_remote_id ON tracks(remote_id);
         CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id);
+        CREATE INDEX IF NOT EXISTS idx_tracks_album_order ON tracks(album_id, disc, track_number);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
             title,

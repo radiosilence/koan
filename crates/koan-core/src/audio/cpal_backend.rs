@@ -186,7 +186,9 @@ impl AudioBackend for CpalBackend {
         let running_cb = running.clone();
 
         // Wrap consumer in a Mutex so we can move it into the FnMut callback.
-        // The callback runs on a single audio thread so contention is zero.
+        // RT safety: use try_lock() only — never block the audio thread.
+        // Contention is effectively zero (only this callback touches it),
+        // but try_lock guarantees we never block even if the OS preempts us.
         let consumer = std::sync::Mutex::new(consumer);
 
         let stream = suppress_stderr(|| {
@@ -198,7 +200,9 @@ impl AudioBackend for CpalBackend {
                         return;
                     }
 
-                    let Ok(mut consumer) = consumer.lock() else {
+                    let Ok(mut consumer) = consumer.try_lock() else {
+                        // Lock contested — output silence rather than blocking
+                        // the real-time audio thread.
                         data.fill(0.0);
                         return;
                     };
