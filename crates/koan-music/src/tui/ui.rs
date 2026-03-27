@@ -21,6 +21,9 @@ use super::visualizer::SpectrumWidget;
 const TRANSPORT_HEIGHT_DEFAULT: u16 = 3;
 /// Desired art width in columns. Art is square-ish so height ~ width/2 cells.
 const ART_WIDTH: u16 = 24;
+/// Default art height (cell rows) assuming square artwork: ART_WIDTH / 2.
+/// Used as placeholder so the layout doesn't jump when art loads.
+const ART_HEIGHT_PLACEHOLDER: u16 = ART_WIDTH / 2;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     // Refresh the visible queue cache once per frame so all reads
@@ -37,10 +40,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if art_h > 0 {
         app.art.last_art_height = art_h;
     }
+    // Always reserve placeholder space for art so the layout never jumps
+    // when art loads or when switching between tracks with/without art.
     let transport_height = if app.art.last_art_height > 0 {
         app.art.last_art_height.max(TRANSPORT_HEIGHT_DEFAULT)
     } else {
-        TRANSPORT_HEIGHT_DEFAULT
+        ART_HEIGHT_PLACEHOLDER.max(TRANSPORT_HEIGHT_DEFAULT)
     };
 
     // Main layout: transport | content (flex) | hints (1)
@@ -66,9 +71,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .find(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing)
         .cloned();
 
-    // Determine art area and text area based on art presence.
-    let reserve_art_space = has_art || app.art.last_art_height > 0;
-    let text_area = if reserve_art_space {
+    // Always reserve art space — placeholder keeps layout stable.
+    let art_area = Rect::new(chunks[0].x, chunks[0].y, ART_WIDTH, transport_height);
+    let text_area = {
         // Bottom-align the transport text (3 lines) within the full height.
         let text_height = 3u16.min(transport_height);
         let text_y = chunks[0].y + transport_height - text_height;
@@ -78,18 +83,16 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             chunks[0].width.saturating_sub(ART_WIDTH + 1),
             text_height,
         )
-    } else {
-        chunks[0]
     };
 
     if has_art {
-        let art_area = Rect::new(chunks[0].x, chunks[0].y, ART_WIDTH, transport_height);
         app.layout.now_playing_art_area = art_area;
         app.art
             .now_playing_art
             .render_to(art_area, frame.buffer_mut());
     } else {
-        app.layout.now_playing_art_area = Rect::default();
+        // No art — area is reserved but empty (placeholder space).
+        app.layout.now_playing_art_area = art_area;
     }
     app.layout.transport_text_area = text_area;
 
@@ -122,16 +125,12 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Spectrum visualizer — renders in the space above the transport text.
     if transport_height > TRANSPORT_HEIGHT_DEFAULT {
         let spectrum_height = transport_height - TRANSPORT_HEIGHT_DEFAULT;
-        let spectrum_area = if reserve_art_space {
-            Rect::new(
-                chunks[0].x + ART_WIDTH + 1,
-                chunks[0].y,
-                chunks[0].width.saturating_sub(ART_WIDTH + 1),
-                spectrum_height,
-            )
-        } else {
-            Rect::new(chunks[0].x, chunks[0].y, chunks[0].width, spectrum_height)
-        };
+        let spectrum_area = Rect::new(
+            chunks[0].x + ART_WIDTH + 1,
+            chunks[0].y,
+            chunks[0].width.saturating_sub(ART_WIDTH + 1),
+            spectrum_height,
+        );
         let spectrum = SpectrumWidget::new(&app.visualizer, &app.theme);
         frame.render_widget(spectrum, spectrum_area);
     }
