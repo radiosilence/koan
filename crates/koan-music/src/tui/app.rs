@@ -983,11 +983,11 @@ impl App {
                     },
                     std::time::Instant::now(),
                 ));
-                // Persist to config
-                if let Ok(mut cfg) = koan_core::config::Config::load() {
-                    cfg.visualizer.enabled = self.viz_config.enabled;
-                    let _ = cfg.save();
-                }
+                // Persist to config.toml (not the merged config — avoids leaking secrets).
+                let viz_enabled = self.viz_config.enabled;
+                let _ = koan_core::config::Config::update_base(|cfg| {
+                    cfg.visualizer.enabled = viz_enabled;
+                });
             }
             KeyCode::Up => {
                 let visible = self.visible_queue();

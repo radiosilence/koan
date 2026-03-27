@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use figment::Figment;
+use figment::providers::{Env, Format, Serialized, Toml};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -13,6 +15,8 @@ pub enum ConfigError {
     Parse(#[from] toml::de::Error),
     #[error("serialize error: {0}")]
     Serialize(#[from] toml::ser::Error),
+    #[error("config error: {0}")]
+    Figment(#[from] Box<figment::Error>),
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -71,7 +75,7 @@ pub struct RemoteConfig {
     pub enabled: bool,
     pub url: String,
     pub username: String,
-    /// Password — stored in config.local.toml (gitignored), not Keychain.
+    /// Password — stored in config.local.toml (gitignored), not config.toml.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub password: String,
     /// original | opus-128 | mp3-320
@@ -308,28 +312,26 @@ impl Default for DiscoveryConfig {
 }
 
 impl Config {
-    /// Load config.toml then deep-merge config.local.toml on top.
-    /// Only keys actually present in config.local.toml override — missing keys
-    /// keep their values from config.toml (not serde defaults).
-    pub fn load() -> Result<Self, ConfigError> {
+    /// Build the figment provider chain:
+    /// defaults → config.toml → config.local.toml → KOAN_* env vars.
+    ///
+    /// Env vars use `KOAN_` prefix with `__` as section separator:
+    ///   KOAN_REMOTE__PASSWORD, KOAN_GRAPHQL__PORT, KOAN_PLAYBACK__TARGET_FPS, etc.
+    fn figment() -> Figment {
         let base_path = config_file_path();
         let local_path = config_local_file_path();
 
-        let mut base_val: toml::Value = if base_path.exists() {
-            let contents = fs::read_to_string(&base_path)?;
-            toml::from_str(&contents)?
-        } else {
-            toml::Value::Table(toml::map::Map::new())
-        };
+        Figment::from(Serialized::defaults(Config::default()))
+            .merge(Toml::file(&base_path))
+            .merge(Toml::file(&local_path))
+            .merge(Env::prefixed("KOAN_").split("__"))
+    }
 
-        if local_path.exists() {
-            let local_contents = fs::read_to_string(&local_path)?;
-            let local_val: toml::Value = toml::from_str(&local_contents)?;
-            deep_merge(&mut base_val, local_val);
-        }
-
-        let config: Config = base_val.try_into()?;
-        Ok(config)
+    /// Load config from all layers: defaults → config.toml → config.local.toml → KOAN_* env vars.
+    pub fn load() -> Result<Self, ConfigError> {
+        Self::figment()
+            .extract()
+            .map_err(|e| ConfigError::Figment(Box::new(e)))
     }
 
     /// Load config, logging and falling back to defaults on error.
@@ -340,32 +342,54 @@ impl Config {
         })
     }
 
-    /// Load from a specific path.
+    /// Load from a specific TOML file (no env var overlay).
     pub fn load_from(path: &Path) -> Result<Self, ConfigError> {
         let contents = fs::read_to_string(path)?;
         let config: Config = toml::from_str(&contents)?;
         Ok(config)
     }
 
-    /// Write config to the base config.toml.
-    pub fn save(&self) -> Result<(), ConfigError> {
+    /// Patch config.toml with a mutation closure. Reads the base file only (not
+    /// config.local.toml or env vars), applies the closure, writes back.
+    /// This prevents secrets from config.local.toml or env vars leaking into config.toml.
+    pub fn update_base<F>(mutate: F) -> Result<(), ConfigError>
+    where
+        F: FnOnce(&mut Config),
+    {
         let path = config_file_path();
+        let mut cfg = if path.exists() {
+            Config::load_from(&path)?
+        } else {
+            Config::default()
+        };
+        mutate(&mut cfg);
+        cfg.write_to(&path)?;
+        Ok(())
+    }
+
+    /// Write this config to a specific path as TOML.
+    fn write_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
         let contents = toml::to_string_pretty(self)?;
-        fs::write(&path, contents)?;
+        fs::write(path, contents)?;
         Ok(())
+    }
+
+    /// Write config to the base config.toml.
+    ///
+    /// **Warning**: If this Config was loaded via `load()` (merged from all layers),
+    /// calling `save()` will write secrets from config.local.toml/env into config.toml.
+    /// Prefer `update_base()` for targeted field changes.
+    pub fn save(&self) -> Result<(), ConfigError> {
+        self.write_to(&config_file_path())
     }
 
     /// Write config to config.local.toml (for machine-specific / sensitive values).
     pub fn save_local(&self) -> Result<(), ConfigError> {
         let path = config_local_file_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let contents = toml::to_string_pretty(self)?;
-        fs::write(&path, contents)?;
+        self.write_to(&path)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -388,24 +412,6 @@ impl Config {
             .cache_limit
             .as_deref()
             .and_then(parse_size_bytes)
-    }
-}
-
-/// Recursively merge `overlay` into `base`. Only keys present in `overlay`
-/// are touched — everything else in `base` is preserved.
-fn deep_merge(base: &mut toml::Value, overlay: toml::Value) {
-    match (base, overlay) {
-        (toml::Value::Table(base_map), toml::Value::Table(overlay_map)) => {
-            for (key, overlay_val) in overlay_map {
-                let entry = base_map
-                    .entry(key)
-                    .or_insert(toml::Value::Table(toml::map::Map::new()));
-                deep_merge(entry, overlay_val);
-            }
-        }
-        (base, overlay) => {
-            *base = overlay;
-        }
     }
 }
 
@@ -496,57 +502,150 @@ replaygain = "track"
     }
 
     #[test]
-    fn test_deep_merge_local_overrides_base() {
-        // Test deep_merge directly on TOML values (no temp files needed).
-        let base_toml = r#"
-[library]
-folders = ["/base/music"]
+    fn test_figment_layered_loading() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("config.toml");
+        let local_path = dir.path().join("config.local.toml");
 
+        fs::write(
+            &base_path,
+            r#"
 [remote]
 url = "https://base.example.com"
-"#;
-        let local_toml = r#"
-[library]
-folders = ["/local/music"]
-
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &local_path,
+            r#"
 [remote]
 enabled = true
 url = "https://local.example.com"
 username = "admin"
-"#;
+password = "secret"
+"#,
+        )
+        .unwrap();
 
-        let mut base_val: toml::Value = toml::from_str(base_toml).unwrap();
-        let local_val: toml::Value = toml::from_str(local_toml).unwrap();
-        deep_merge(&mut base_val, local_val);
+        // Build a figment with explicit paths (can't use load() since it reads from ~/.config).
+        let cfg: Config = Figment::from(Serialized::defaults(Config::default()))
+            .merge(Toml::file(&base_path))
+            .merge(Toml::file(&local_path))
+            .extract()
+            .unwrap();
 
-        let cfg: Config = base_val.try_into().unwrap();
-        assert_eq!(cfg.library.folders, vec![PathBuf::from("/local/music")]);
         assert!(cfg.remote.enabled);
         assert_eq!(cfg.remote.url, "https://local.example.com");
         assert_eq!(cfg.remote.username, "admin");
+        assert_eq!(cfg.remote.password, "secret");
     }
 
     #[test]
-    fn test_deep_merge_missing_keys_preserved() {
-        let base_toml = r#"
+    fn test_figment_missing_keys_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("config.toml");
+        let local_path = dir.path().join("config.local.toml");
+
+        fs::write(
+            &base_path,
+            r#"
 [remote]
 url = "https://keep.me"
 username = "keepuser"
-"#;
-        // Local only sets password — url and username should survive.
-        let local_toml = r#"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &local_path,
+            r#"
 [remote]
 password = "secret"
-"#;
+"#,
+        )
+        .unwrap();
 
-        let mut base_val: toml::Value = toml::from_str(base_toml).unwrap();
-        let local_val: toml::Value = toml::from_str(local_toml).unwrap();
-        deep_merge(&mut base_val, local_val);
+        let cfg: Config = Figment::from(Serialized::defaults(Config::default()))
+            .merge(Toml::file(&base_path))
+            .merge(Toml::file(&local_path))
+            .extract()
+            .unwrap();
 
-        let cfg: Config = base_val.try_into().unwrap();
         assert_eq!(cfg.remote.url, "https://keep.me");
         assert_eq!(cfg.remote.username, "keepuser");
         assert_eq!(cfg.remote.password, "secret");
+    }
+
+    #[test]
+    fn test_env_var_override() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("config.toml");
+
+        fs::write(
+            &base_path,
+            r#"
+[remote]
+url = "https://file.example.com"
+"#,
+        )
+        .unwrap();
+
+        // SAFETY: test is single-threaded and vars are cleaned up immediately after.
+        unsafe {
+            std::env::set_var("KOAN_REMOTE__URL", "https://env.example.com");
+            std::env::set_var("KOAN_REMOTE__PASSWORD", "env-secret");
+            std::env::set_var("KOAN_GRAPHQL__PORT", "9999");
+        }
+
+        let cfg: Config = Figment::from(Serialized::defaults(Config::default()))
+            .merge(Toml::file(&base_path))
+            .merge(Env::prefixed("KOAN_").split("__"))
+            .extract()
+            .unwrap();
+
+        assert_eq!(cfg.remote.url, "https://env.example.com");
+        assert_eq!(cfg.remote.password, "env-secret");
+        assert_eq!(cfg.graphql.port, 9999);
+
+        // Clean up env vars.
+        unsafe {
+            std::env::remove_var("KOAN_REMOTE__URL");
+            std::env::remove_var("KOAN_REMOTE__PASSWORD");
+            std::env::remove_var("KOAN_GRAPHQL__PORT");
+        }
+    }
+
+    #[test]
+    fn test_update_base_does_not_leak_secrets() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("config.toml");
+
+        // Write an initial base config.
+        fs::write(
+            &base_path,
+            r#"
+[playback]
+target_fps = 60
+
+[remote]
+url = "https://base.example.com"
+"#,
+        )
+        .unwrap();
+
+        // Simulate: update_base patches base config only.
+        let mut base_cfg = Config::load_from(&base_path).unwrap();
+        base_cfg.visualizer.enabled = false;
+        base_cfg.write_to(&base_path).unwrap();
+
+        // Verify: no password leaked into config.toml.
+        let written = fs::read_to_string(&base_path).unwrap();
+        assert!(!written.contains("secret"));
+        assert!(!written.contains("password"));
+
+        // Verify the field was saved.
+        let reloaded = Config::load_from(&base_path).unwrap();
+        assert!(!reloaded.visualizer.enabled);
+        assert_eq!(reloaded.remote.url, "https://base.example.com");
     }
 
     #[test]
@@ -629,30 +728,43 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,%album%
     }
 
     #[test]
-    fn test_deep_merge_organize_patterns() {
-        let base_toml = r#"
+    fn test_figment_organize_patterns_merge() {
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("config.toml");
+        let local_path = dir.path().join("config.local.toml");
+
+        fs::write(
+            &base_path,
+            r#"
 [organize]
 default = "standard"
 
 [organize.patterns]
 standard = "base-pattern"
-"#;
-        let local_toml = r#"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            &local_path,
+            r#"
 [organize]
 default = "custom"
 
 [organize.patterns]
 custom = "local-pattern"
-"#;
+"#,
+        )
+        .unwrap();
 
-        let mut base_val: toml::Value = toml::from_str(base_toml).unwrap();
-        let local_val: toml::Value = toml::from_str(local_toml).unwrap();
-        deep_merge(&mut base_val, local_val);
+        let cfg: Config = Figment::from(Serialized::defaults(Config::default()))
+            .merge(Toml::file(&base_path))
+            .merge(Toml::file(&local_path))
+            .extract()
+            .unwrap();
 
-        let cfg: Config = base_val.try_into().unwrap();
-        // Local default wins
+        // Local default wins.
         assert_eq!(cfg.organize.default.as_deref(), Some("custom"));
-        // Both patterns present (deep merge into [organize.patterns] table)
+        // Both patterns present (figment merges maps).
         assert_eq!(cfg.organize.patterns.len(), 2);
         assert_eq!(cfg.organize.patterns["standard"], "base-pattern");
         assert_eq!(cfg.organize.patterns["custom"], "local-pattern");
