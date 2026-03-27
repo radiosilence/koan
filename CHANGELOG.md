@@ -1,22 +1,25 @@
 # Changelog
 
+## v0.18.0 (2026-03-27)
+
+### Fixed
+
+- **CoreAudio crash during sample rate switch** — `stop_engine()` was dropping the `AudioEngine` on a background cleanup thread while the player thread immediately changed the device sample rate. The engine is now dropped synchronously before any sample rate changes; only the decode handle cleanup runs in the background ([#89](https://github.com/radiosilence/koan/issues/89))
+
+### Added
+
+- **Cache management with LRU eviction** — cached remote downloads are now tracked in the DB (path, size, download date). Set `cache_limit` in `[remote]` config (e.g. `"50GB"`) to enable automatic LRU eviction on startup. Evicts whole albums, oldest last-played first. Favourited tracks are never evicted. New `koan cache evict` subcommand for manual eviction ([#88](https://github.com/radiosilence/koan/issues/88))
+
 ## v0.17.1 (2026-03-27)
 
 ### Fixed
 
-#### Audio
-
-- **Fix CoreAudio crash during sample rate switch** — `stop_engine()` was dropping the `AudioEngine` on a background cleanup thread while the player thread immediately changed the device sample rate. This race caused `AudioUnitUninitialize` to hit a freed `ExtendedAudioBufferList`, crashing in CoreAudio's internal allocator (`caulk::alloc::tiered_allocator::deallocate`). The engine is now dropped synchronously before any sample rate changes; only the decode handle cleanup (thread join) runs in the background ([#89](https://github.com/radiosilence/koan/issues/89))
-
-#### Security
-
-- **GraphQL/Subsonic servers now bind to 127.0.0.1 by default** — previously bound to `0.0.0.0` with no authentication, exposing library enumeration, file moves, and queue clearing to anyone on the network. Added `bind` field to `[graphql]` config and `--bind` CLI flag. Set `bind = "0.0.0.0"` to restore the old behaviour (not recommended without auth) ([#85](https://github.com/radiosilence/koan/issues/85))
+- **GraphQL/Subsonic servers now bind to 127.0.0.1 by default** — previously bound to `0.0.0.0` with no authentication, exposing library enumeration, file moves, and queue clearing to anyone on the network. Added `bind` field to `[graphql]` config and `--bind` CLI flag ([#85](https://github.com/radiosilence/koan/issues/85))
 
 ### Added
 
-- **Album-aware download priority** — when a track starts playing, remaining tracks from the same album are bumped to the front of the download queue, ensuring gapless album playback over remote sources ([#87](https://github.com/radiosilence/koan/issues/87))
-- **CONTRIBUTING.md** — contribution guidelines: PR workflow, code quality expectations, architecture pointers ([#82](https://github.com/radiosilence/koan/issues/82))
-- **Cache management with LRU eviction** — cached remote downloads are now tracked in the DB (path, size, download date). Set `cache_limit` in `[remote]` config (e.g. `"50GB"`) to enable automatic LRU eviction on startup. Evicts whole albums, oldest last-played first. Favourited tracks are never evicted. New `koan cache evict` subcommand for manual eviction ([#88](https://github.com/radiosilence/koan/issues/88))
+- **Album-aware download priority** — when a track starts playing, remaining tracks from the same album are bumped to the front of the download queue, ensuring gapless album playback ([#87](https://github.com/radiosilence/koan/issues/87))
+- **CONTRIBUTING.md** — contribution guidelines ([#82](https://github.com/radiosilence/koan/issues/82))
 
 ## v0.17.0 (2026-03-26)
 
