@@ -4,16 +4,11 @@
 
 ### Fixed
 
-- **TUI layout jump when album art loads** — the transport bar now always reserves a 24×12 cell placeholder for album art, preventing layout reflow when art loads or when switching between tracks with/without embedded art ([#96](https://github.com/radiosilence/koan/issues/96))
-
-## v0.18.0 (2026-03-27)
-
-### Fixed
-
 - **CoreAudio crash during sample rate switch** — `stop_engine()` was dropping the `AudioEngine` on a background cleanup thread while the player thread immediately changed the device sample rate. The engine is now dropped synchronously before any sample rate changes; only the decode handle cleanup runs in the background ([#89](https://github.com/radiosilence/koan/issues/89))
 - **Render callback drain on AudioEngine drop** — `AudioOutputUnitStop` can return before the render callback finishes during sample rate switches. Added `in_callback` atomic flag and spin-wait in `Drop` to ensure the callback has fully exited before tearing down buffers ([#89](https://github.com/radiosilence/koan/issues/89))
 - **Stale cache paths on session restore** — restored queue items were unconditionally marked `Ready` even if their cached files had been deleted (e.g. by cache eviction). Now verifies paths exist on disk; missing files are marked `Pending` to re-trigger download ([#94](https://github.com/radiosilence/koan/issues/94))
 - **GraphQL/Subsonic port bind panic** — `run_api_blocking` called `.expect()` on port bind, crashing the entire app on `AddrInUse`. Now logs a warning and gracefully disables the API server ([#95](https://github.com/radiosilence/koan/issues/95))
+- **TUI layout jump when album art loads** — the transport bar now always reserves a 24×12 cell placeholder for album art, preventing layout reflow when art loads or when switching between tracks with/without embedded art ([#96](https://github.com/radiosilence/koan/issues/96))
 
 ### Added
 
