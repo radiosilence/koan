@@ -264,11 +264,12 @@ koan --artist 3               # play artist by ID
 koan --no-api                 # TUI only (no GraphQL server)
 koan --clear                  # clear persisted queue
 
-# server
-koan --headless                     # GraphQL API on :4000, no TUI
+# server (binds to 127.0.0.1 by default)
+koan --headless                     # GraphQL API on 127.0.0.1:4000, no TUI
 koan --headless --playground        # with GraphiQL web IDE
 koan --headless --subsonic 4040     # + Subsonic REST on port 4040
 koan --port 8080                    # custom GraphQL port
+koan --bind 0.0.0.0                 # listen on all interfaces (⚠️ no auth)
 koan -d                             # background daemon
 koan -d --subsonic 4040             # daemon with Subsonic
 
@@ -349,7 +350,7 @@ If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the f
 
 ### GraphQL API
 
-The GraphQL API runs alongside the TUI by default (port 4000). For headless operation, use `koan --headless`. Full programmatic control — everything the TUI can do, minus the visualizer.
+The GraphQL API runs alongside the TUI by default (port 4000, bound to localhost). For headless operation, use `koan --headless`. Full programmatic control — everything the TUI can do, minus the visualizer. The server binds to `127.0.0.1` by default — use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in `[graphql]` config to expose on all interfaces (not recommended without auth).
 
 ```bash
 # Headless server with GraphiQL IDE

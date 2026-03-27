@@ -2,6 +2,12 @@
 
 ## v0.17.0 (2026-03-26)
 
+### Fixed
+
+#### Security
+
+- **GraphQL/Subsonic servers now bind to 127.0.0.1 by default** — previously bound to `0.0.0.0` with no authentication, exposing library enumeration, file moves, and queue clearing to anyone on the network. Added `bind` field to `[graphql]` config and `--bind` CLI flag. Set `bind = "0.0.0.0"` to restore the old behaviour (not recommended without auth) ([#85](https://github.com/radiosilence/koan/issues/85))
+
 ### Added
 
 - **Album-aware download priority** — when a track starts playing, remaining tracks from the same album are bumped to the front of the download queue, ensuring gapless album playback over remote sources ([#87](https://github.com/radiosilence/koan/issues/87))

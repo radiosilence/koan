@@ -12,7 +12,12 @@ use super::{KoanSchema, build_schema};
 // `koan --headless` entry point (standalone headless server)
 // ---------------------------------------------------------------------------
 
-pub fn cmd_serve(port: Option<u16>, subsonic_port: Option<u16>, playground: bool) {
+pub fn cmd_serve(
+    port: Option<u16>,
+    bind: Option<std::net::IpAddr>,
+    subsonic_port: Option<u16>,
+    playground: bool,
+) {
     use koan_core::player::Player;
 
     // Validate DB is accessible before starting the server.
@@ -21,7 +26,15 @@ pub fn cmd_serve(port: Option<u16>, subsonic_port: Option<u16>, playground: bool
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
-    run_api_blocking(state, cmd_tx, db_path, port, subsonic_port, playground);
+    run_api_blocking(
+        state,
+        cmd_tx,
+        db_path,
+        port,
+        bind,
+        subsonic_port,
+        playground,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -35,6 +48,7 @@ fn run_api_blocking(
     cmd_tx: Sender<PlayerCommand>,
     db_path: PathBuf,
     port: Option<u16>,
+    bind: Option<std::net::IpAddr>,
     subsonic_port: Option<u16>,
     playground: bool,
 ) {
@@ -42,6 +56,7 @@ fn run_api_blocking(
 
     let cfg = Config::load().unwrap_or_default();
     let port = port.unwrap_or(cfg.graphql.port);
+    let bind = bind.unwrap_or(cfg.graphql.bind);
     let playground_enabled = playground || cfg.graphql.playground;
 
     let schema = build_schema(state, cmd_tx, db_path.clone());
@@ -54,10 +69,10 @@ fn run_api_blocking(
         }
         let gql_app = gql_app.with_state(schema);
 
-        let gql_addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
-        log::info!("GraphQL API on http://0.0.0.0:{}/graphql", port);
+        let gql_addr = std::net::SocketAddr::new(bind, port);
+        log::info!("GraphQL API on http://{}:{}/graphql", bind, port);
         if playground_enabled {
-            log::info!("GraphiQL: http://localhost:{}/graphql", port);
+            log::info!("GraphiQL: http://{}:{}/graphql", bind, port);
         }
 
         let gql_listener = tokio::net::TcpListener::bind(gql_addr)
@@ -68,8 +83,8 @@ fn run_api_blocking(
 
         if let Some(sub_port) = subsonic_port {
             let sub_app = super::super::serve::subsonic_router(db_path);
-            let sub_addr = std::net::SocketAddr::from(([0, 0, 0, 0], sub_port));
-            log::info!("Subsonic REST on http://0.0.0.0:{}/rest/", sub_port);
+            let sub_addr = std::net::SocketAddr::new(bind, sub_port);
+            log::info!("Subsonic REST on http://{}:{}/rest/", bind, sub_port);
 
             let sub_listener = tokio::net::TcpListener::bind(sub_addr)
                 .await
@@ -95,10 +110,19 @@ pub fn start_api_background(
     cmd_tx: Sender<PlayerCommand>,
     db_path: PathBuf,
     port: Option<u16>,
+    bind: Option<std::net::IpAddr>,
     subsonic_port: Option<u16>,
     playground: bool,
 ) {
-    run_api_blocking(state, cmd_tx, db_path, port, subsonic_port, playground);
+    run_api_blocking(
+        state,
+        cmd_tx,
+        db_path,
+        port,
+        bind,
+        subsonic_port,
+        playground,
+    );
 }
 
 async fn shutdown_signal() {
@@ -123,18 +147,25 @@ async fn graphql_playground() -> axum::response::Html<String> {
 }
 
 /// Run the server as a background daemon (fork + detach).
-pub fn cmd_serve_daemon(port: Option<u16>, subsonic_port: Option<u16>, playground: bool) {
+pub fn cmd_serve_daemon(
+    port: Option<u16>,
+    bind: Option<std::net::IpAddr>,
+    subsonic_port: Option<u16>,
+    playground: bool,
+) {
     use std::fs;
     use std::process::Command;
 
     let cfg = Config::load().unwrap_or_default();
     let port_val = port.unwrap_or(cfg.graphql.port);
+    let bind_val = bind.unwrap_or(cfg.graphql.bind);
 
     let exe = std::env::current_exe().expect("failed to get current exe path");
     let mut cmd = Command::new(exe);
     // Use the new unified CLI: `koan --headless --port <port>`
     cmd.arg("--headless");
     cmd.arg("--port").arg(port_val.to_string());
+    cmd.arg("--bind").arg(bind_val.to_string());
     if let Some(sp) = subsonic_port {
         cmd.arg("--subsonic").arg(sp.to_string());
     }

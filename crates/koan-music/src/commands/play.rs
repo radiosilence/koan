@@ -24,6 +24,7 @@ use crate::tui::picker::{
 /// `None` means no API server (--no-api).
 pub struct ApiOptions {
     pub port: Option<u16>,
+    pub bind: Option<std::net::IpAddr>,
     pub subsonic: Option<u16>,
     pub playground: bool,
 }
@@ -123,6 +124,7 @@ pub fn cmd_play(
                     tx_api,
                     db_path,
                     opts.port,
+                    opts.bind,
                     opts.subsonic,
                     opts.playground,
                 );
