@@ -16,6 +16,7 @@
 
 - **Album-aware download priority** — when a track starts playing, remaining tracks from the same album are bumped to the front of the download queue, ensuring gapless album playback over remote sources ([#87](https://github.com/radiosilence/koan/issues/87))
 - **CONTRIBUTING.md** — contribution guidelines: PR workflow, code quality expectations, architecture pointers ([#82](https://github.com/radiosilence/koan/issues/82))
+- **Cache management with LRU eviction** — cached remote downloads are now tracked in the DB (path, size, download date). Set `cache_limit` in `[remote]` config (e.g. `"50GB"`) to enable automatic LRU eviction on startup. Evicts whole albums, oldest last-played first. Favourited tracks are never evicted. New `koan cache evict` subcommand for manual eviction ([#88](https://github.com/radiosilence/koan/issues/88))
 
 ## v0.17.0 (2026-03-26)
 

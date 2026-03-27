@@ -248,6 +248,8 @@ enum CacheCommands {
         #[arg(long, short = 'y')]
         yes: bool,
     },
+    /// Evict least-recently-played albums until cache is within limit
+    Evict,
 }
 
 /// Global flag set by SIGINT handler for graceful Ctrl+C shutdown.
@@ -319,6 +321,13 @@ fn main() {
             Commands::Cache(sub) => match sub {
                 CacheCommands::Status => commands::cmd_cache_status(),
                 CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
+                CacheCommands::Evict => {
+                    let cfg = config::Config::load().unwrap_or_default();
+                    let freed = commands::evict_cache(&cfg, true);
+                    if freed == 0 {
+                        println!("cache within limit, nothing to evict");
+                    }
+                }
             },
             Commands::Completions { shell } => {
                 clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
@@ -345,6 +354,9 @@ fn main() {
     // Default: TUI mode (with optional API server alongside).
     // CLI flags override config values.
     let cfg = koan_core::config::Config::load_or_default();
+
+    // Run LRU cache eviction on startup if a limit is configured.
+    commands::evict_cache(&cfg, false);
 
     if let Some(ref url) = cli.server {
         commands::cmd_play_remote(url, cli.jukebox);

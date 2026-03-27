@@ -80,6 +80,10 @@ pub struct RemoteConfig {
     pub cache_dir: Option<PathBuf>,
     /// Parallel download workers for remote tracks (default: 5).
     pub download_workers: usize,
+    /// Maximum cache size on disk. Human-readable: "50GB", "500MB", etc.
+    /// None or empty = unlimited. LRU eviction runs on startup when exceeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_limit: Option<String>,
 }
 
 impl Default for LibraryConfig {
@@ -147,8 +151,43 @@ impl Default for RemoteConfig {
             transcode_quality: "original".into(),
             cache_dir: None,
             download_workers: 5,
+            cache_limit: None,
         }
     }
+}
+
+/// Parse a human-readable size string like "50GB", "500 MB", "1.5TB" into bytes.
+/// Supports B, KB, MB, GB, TB (case-insensitive). Returns None for invalid input.
+pub fn parse_size_bytes(s: &str) -> Option<u64> {
+    let s = s.trim();
+    if s.is_empty() {
+        return None;
+    }
+
+    // Split into numeric part and suffix.
+    let mut num_end = 0;
+    for (i, c) in s.char_indices() {
+        if c.is_ascii_digit() || c == '.' {
+            num_end = i + c.len_utf8();
+        } else if !c.is_whitespace() {
+            break;
+        }
+    }
+
+    let num_str = s[..num_end].trim();
+    let suffix = s[num_end..].trim().to_ascii_uppercase();
+
+    let value: f64 = num_str.parse().ok()?;
+    let multiplier: u64 = match suffix.as_str() {
+        "" | "B" => 1,
+        "KB" | "K" => 1024,
+        "MB" | "M" => 1024 * 1024,
+        "GB" | "G" => 1024 * 1024 * 1024,
+        "TB" | "T" => 1024 * 1024 * 1024 * 1024,
+        _ => return None,
+    };
+
+    Some((value * multiplier as f64) as u64)
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -341,6 +380,14 @@ impl Config {
             .cache_dir
             .clone()
             .unwrap_or_else(|| config_dir().join("cache"))
+    }
+
+    /// Parsed cache limit in bytes, or None if unlimited.
+    pub fn cache_limit_bytes(&self) -> Option<u64> {
+        self.remote
+            .cache_limit
+            .as_deref()
+            .and_then(parse_size_bytes)
     }
 }
 
@@ -708,5 +755,63 @@ port = 4000
             deserialized.organize.patterns["standard"],
             "%artist%/%title%"
         );
+    }
+
+    #[test]
+    fn test_parse_size_bytes() {
+        assert_eq!(parse_size_bytes("50GB"), Some(50 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("500MB"), Some(500 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("1TB"), Some(1024 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("100KB"), Some(100 * 1024));
+        assert_eq!(parse_size_bytes("1024B"), Some(1024));
+        assert_eq!(parse_size_bytes("1024"), Some(1024));
+
+        // Case insensitive.
+        assert_eq!(parse_size_bytes("50gb"), Some(50 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("50Gb"), Some(50 * 1024 * 1024 * 1024));
+
+        // Short suffixes.
+        assert_eq!(parse_size_bytes("50G"), Some(50 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("500M"), Some(500 * 1024 * 1024));
+
+        // Spaces.
+        assert_eq!(parse_size_bytes("50 GB"), Some(50 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes(" 50GB "), Some(50 * 1024 * 1024 * 1024));
+
+        // Decimal.
+        assert_eq!(
+            parse_size_bytes("1.5GB"),
+            Some((1.5 * 1024.0 * 1024.0 * 1024.0) as u64)
+        );
+
+        // Invalid.
+        assert_eq!(parse_size_bytes(""), None);
+        assert_eq!(parse_size_bytes("abc"), None);
+        assert_eq!(parse_size_bytes("50XB"), None);
+    }
+
+    #[test]
+    fn test_cache_limit_config_from_toml() {
+        let toml_str = r#"
+[remote]
+cache_limit = "50GB"
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.remote.cache_limit.as_deref(), Some("50GB"));
+        assert_eq!(cfg.cache_limit_bytes(), Some(50 * 1024 * 1024 * 1024));
+    }
+
+    #[test]
+    fn test_cache_limit_none_by_default() {
+        let cfg = Config::default();
+        assert!(cfg.remote.cache_limit.is_none());
+        assert!(cfg.cache_limit_bytes().is_none());
+    }
+
+    #[test]
+    fn test_cache_limit_not_serialized_when_none() {
+        let cfg = Config::default();
+        let serialized = toml::to_string_pretty(&cfg).unwrap();
+        assert!(!serialized.contains("cache_limit"));
     }
 }
