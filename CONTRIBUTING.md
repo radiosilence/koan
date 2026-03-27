@@ -35,6 +35,8 @@ Two crates: `koan-core` (library — audio engine, player, database, indexer) an
 
 If you're touching the audio path: the render callback must never allocate or lock. Read the threading model docs before changing anything in `audio/`.
 
+If you're modifying config programmatically (e.g. a new CLI command that writes settings): use `Config::update_base()`, not `save()`. `update_base()` reads only `config.toml`, applies your change, and writes back — safe. Calling `save()` on a `Config::load()` result would leak secrets from `config.local.toml` and env vars into `config.toml`. Use `save_local()` for sensitive values like passwords.
+
 ## License
 
 By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).

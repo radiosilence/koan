@@ -477,12 +477,102 @@ Define organize patterns in your config — see [Configuration](#configuration) 
 
 ## Configuration
 
-Two-layer config at `~/.config/koan/`:
+kōan uses [figment](https://docs.rs/figment) for layered configuration. Four sources are merged in order — each layer overrides the one before it:
 
-- **`config.toml`** — shareable defaults, safe to commit to dotfiles
-- **`config.local.toml`** — machine-specific paths, credentials, overrides (gitignored)
+```
+Defaults → config.toml → config.local.toml → KOAN_* env vars
+(lowest)                                      (highest priority)
+```
 
-Local values override base. Run `koan config` to see both layers and the resolved result.
+| Layer | Path | Purpose |
+|-------|------|---------|
+| Defaults | (built-in) | Hardcoded sane defaults for every field |
+| `config.toml` | `~/.config/koan/config.toml` | Shareable base config — safe to commit to dotfiles |
+| `config.local.toml` | `~/.config/koan/config.local.toml` | Machine-specific paths, credentials (gitignored) |
+| Environment | `KOAN_*` vars | 12-factor overrides — highest priority, ideal for Docker/CI |
+
+Run `koan config` to see all layers and the fully resolved result (including which `KOAN_*` env vars are active).
+
+### Environment variable overrides
+
+Any config field can be overridden via environment variables using `KOAN_` prefix with `__` (double underscore) as the section separator:
+
+```
+KOAN_<SECTION>__<FIELD>=<value>
+```
+
+Examples:
+
+```bash
+# Remote server password (avoids writing secrets to files)
+export KOAN_REMOTE__PASSWORD="hunter2"
+
+# Change GraphQL API port
+export KOAN_GRAPHQL__PORT=8080
+
+# Bind API to all interfaces
+export KOAN_GRAPHQL__BIND="0.0.0.0"
+
+# Override playback FPS
+export KOAN_PLAYBACK__TARGET_FPS=30
+
+# Enable the GraphiQL playground
+export KOAN_GRAPHQL__PLAYGROUND=true
+
+# Set ReplayGain mode
+export KOAN_PLAYBACK__REPLAYGAIN=track
+```
+
+Field names match the TOML key in SCREAMING_SNAKE_CASE. Nested sections use `__`:
+- `[remote] password` → `KOAN_REMOTE__PASSWORD`
+- `[graphql] subsonic_port` → `KOAN_GRAPHQL__SUBSONIC_PORT`
+- `[playback] pre_amp_db` → `KOAN_PLAYBACK__PRE_AMP_DB`
+
+### Docker / CI usage
+
+Env vars make kōan easy to configure in containers and CI without config files:
+
+```bash
+# Docker example — headless server with remote backend
+docker run -e KOAN_REMOTE__ENABLED=true \
+           -e KOAN_REMOTE__URL=https://music.example.com \
+           -e KOAN_REMOTE__USERNAME=admin \
+           -e KOAN_REMOTE__PASSWORD="$NAVIDROME_PASSWORD" \
+           -e KOAN_GRAPHQL__BIND=0.0.0.0 \
+           -e KOAN_GRAPHQL__PORT=4000 \
+           -p 4000:4000 \
+           koan --headless
+```
+
+```yaml
+# CI — run tests against a specific config
+env:
+  KOAN_REMOTE__URL: ${{ secrets.NAVIDROME_URL }}
+  KOAN_REMOTE__PASSWORD: ${{ secrets.NAVIDROME_PASSWORD }}
+  KOAN_GRAPHQL__PORT: 4001
+```
+
+### `koan init`
+
+Creates the config directory at `~/.config/koan/` with everything kōan needs to run:
+
+```bash
+koan init
+```
+
+What it creates:
+
+| File | Purpose |
+|------|---------|
+| `config.toml` | Base config with all defaults (new fields are merged in without overwriting your customizations) |
+| `config.local.toml` | Template for machine-specific settings (library folders, remote server) |
+| `.gitignore` | Ignores `*.log`, `*.db`, `config.local.toml`, `cache/` |
+| `koan.db` | SQLite database (created if missing) |
+| `cache/` | Download cache directory |
+
+Running `koan init` on an existing setup is safe — it merges new default fields into your `config.toml` without touching values you've already changed, and skips `config.local.toml` if it exists.
+
+`library.folders` is deliberately excluded from `config.toml` (it's machine-specific and belongs in `config.local.toml`). This means you can commit `~/.config/koan/` to your dotfiles repo and share playback/visualizer/organize settings across machines while keeping library paths and credentials local.
 
 ### Playback
 
@@ -523,6 +613,15 @@ username = "admin"
 ```
 
 Password is prompted by `koan remote login` and saved to `config.local.toml` (gitignored).
+
+```toml
+# config.local.toml or config.toml
+[remote]
+transcode_quality = "original"   # original | opus-128 | mp3-320 (default: original)
+download_workers = 5             # parallel download threads (default: 5)
+cache_limit = "50GB"             # max cache size — LRU eviction on startup (default: unlimited)
+cache_dir = "/custom/path"       # explicit cache dir (default: ~/.config/koan/cache)
+```
 
 ### Visualizer
 
@@ -576,7 +675,57 @@ flat = "%artist% - %title%"
 
 The `va-aware` pattern handles compilations: if the album artist is "Various Artists", it includes the per-track artist in the filename and omits the redundant year prefix. The `$stricmp`, `$if`, `$left`, `$num` functions work the same as in foobar2000.
 
-Database, download cache, and log file all live at `~/.config/koan/`.
+### GraphQL API
+
+```toml
+# config.toml
+[graphql]
+enabled = true                # run API alongside TUI (default: true, false = --no-api)
+port = 4000                   # API port (default: 4000)
+bind = "127.0.0.1"           # bind address (default: 127.0.0.1)
+playground = false            # enable GraphiQL IDE at GET /graphql (default: false)
+subsonic_port = 4040          # optional Subsonic REST API port (default: disabled)
+```
+
+Set `bind = "0.0.0.0"` to listen on all interfaces — there's no auth, so only do this on trusted networks.
+
+### Radio
+
+Radio mode (`R` in the TUI) queues similar tracks automatically. Scoring uses Subsonic getSimilarSongs2, cached artist relationships, and local genre/artist matching.
+
+```toml
+# config.toml
+[radio]
+lookahead = 5                 # tracks to keep queued ahead (default: 5)
+batch_size = 5                # tracks added per refill (default: 5)
+use_subsonic = true           # use Subsonic similarity when available (default: true)
+history_window = 200          # don't repeat last N tracks (default: 200)
+seed_window = 5               # recent tracks used as seed for similarity (default: 5)
+discovery_weight = 0.3        # 0.0 = familiar only, 1.0 = maximise discovery (default: 0.3)
+```
+
+### Discovery
+
+Acoustic analysis settings for radio mode's similarity scoring.
+
+```toml
+# config.toml
+[discovery]
+analysis_on_scan = false      # run acoustic analysis during library scan (default: false)
+acoustic_weight = 0.5         # weight of acoustic similarity in radio scoring 0.0..1.0 (default: 0.5)
+```
+
+Run `koan scan --analyze` to compute acoustic features for your library. Higher `acoustic_weight` gives radio mode more "sounds like" awareness vs. metadata-based matching.
+
+### All paths
+
+| File | Location |
+|------|----------|
+| Config (base) | `~/.config/koan/config.toml` |
+| Config (local) | `~/.config/koan/config.local.toml` |
+| Database | `~/.config/koan/koan.db` |
+| Download cache | `~/.config/koan/cache/` |
+| Log file | `~/.config/koan/koan.log` |
 
 ## Dev
 

@@ -55,7 +55,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - **Decode cursor ≠ UI cursor** — decode thread peeks ahead for gapless without moving the playlist cursor.
 - **One `derive_visible_queue()` per frame** — cached snapshot, all render/mouse ops see consistent state.
 - **Track dedup across sources** — local file + remote entry = one DB row. 3-strategy match: path → remote_id → content.
-- **Two-layer config** — `config.toml` (base, committable) + `config.local.toml` (machine-specific override).
+- **Figment-layered config** — defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Use `Config::update_base()` for safe writes (never `save()` on a `load()`-ed config — leaks secrets).
 
 ## Git
 
@@ -104,7 +104,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 55 built-in functions |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/sync.rs` | Parallel library sync: paginate → rayon fetch → batch DB write |
-| `config.rs` | Two-layer TOML config loader |
+| `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
 | `organize.rs` | File rename using format strings. Preview/execute/undo. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
