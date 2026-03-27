@@ -36,6 +36,9 @@ struct CallbackData {
     /// Cumulative samples played — incremented by the render callback,
     /// read by the UI to derive current track + position.
     samples_played: Arc<AtomicU64>,
+    /// Set true while the render callback is executing.
+    /// Drop spins on this to avoid tearing down while a callback is in flight.
+    in_callback: Arc<AtomicBool>,
 }
 
 // SAFETY: `rtrb::Consumer` is `!Send` due to internal raw pointers, but our usage is
@@ -53,6 +56,7 @@ pub struct AudioEngine {
     audio_unit: AudioUnit,
     callback_data: *mut CallbackData,
     running: Arc<AtomicBool>,
+    in_callback: Arc<AtomicBool>,
 }
 
 // SAFETY: AudioEngine contains an AudioUnit (opaque C pointer) and a *mut CallbackData.
@@ -73,6 +77,7 @@ impl AudioEngine {
         samples_played: Arc<AtomicU64>,
     ) -> Result<Self> {
         let running = Arc::new(AtomicBool::new(false));
+        let in_callback = Arc::new(AtomicBool::new(false));
 
         let desc = AudioComponentDescription {
             componentType: kAudioUnitType_Output,
@@ -138,6 +143,7 @@ impl AudioEngine {
             consumer,
             running: running.clone(),
             samples_played,
+            in_callback: in_callback.clone(),
         }));
 
         let render_cb = AURenderCallbackStruct {
@@ -162,6 +168,7 @@ impl AudioEngine {
             audio_unit,
             callback_data,
             running,
+            in_callback,
         })
     }
 
@@ -184,8 +191,24 @@ impl Drop for AudioEngine {
     fn drop(&mut self) {
         let _ = self.stop();
 
+        // Wait for any in-flight render callback to finish. AudioOutputUnitStop
+        // is documented as synchronous, but during sample rate switches the
+        // callback can still be executing when stop() returns. Spin on the
+        // in_callback flag with a hard timeout to avoid hanging forever.
+        let mut spins = 0u32;
+        while self.in_callback.load(Ordering::Acquire) {
+            std::hint::spin_loop();
+            spins += 1;
+            if spins > 1_000_000 {
+                // ~10ms of spinning on a modern CPU. Give up — better to risk
+                // a crash than deadlock the player thread during shutdown.
+                log::warn!("AudioEngine drop: timed out waiting for render callback to drain");
+                break;
+            }
+        }
+
         // Remove the render callback before tearing down. This ensures no
-        // in-flight callback can race with AudioUnitUninitialize, which
+        // future callback can race with AudioUnitUninitialize, which
         // otherwise crashes in CoreAudio's internal allocator (caulk) —
         // especially during sample rate changes.
         let silent_cb = AURenderCallbackStruct {
@@ -205,16 +228,10 @@ impl Drop for AudioEngine {
             );
         }
 
-        // No explicit wait needed here: AudioOutputUnitStop (called by stop()
-        // above) is synchronous — CoreAudio guarantees the render callback has
-        // fully returned before it hands control back. The callback removal
-        // above is belt-and-suspenders for the (extremely rare) case where
-        // stop() returns an error and the unit is in a degraded state.
-
         // SAFETY: AudioUnit was successfully created in new(). Uninitialize and
         // Dispose are the documented teardown sequence. callback_data was created
         // via Box::into_raw in new() and is not aliased — the render callback
-        // has been removed and AudioOutputUnitStop guarantees it's not in flight.
+        // has been removed and the spin-wait above ensures it's not in flight.
         unsafe {
             AudioUnitUninitialize(self.audio_unit);
             AudioComponentInstanceDispose(self.audio_unit);
@@ -238,8 +255,10 @@ unsafe extern "C" fn render_callback(
     // SAFETY: `in_ref_con` points to a heap-allocated CallbackData created via
     // Box::into_raw in AudioEngine::new. It remains valid for the lifetime of the
     // engine — the callback is removed and the pointer freed only in Drop, after
-    // AudioOutputUnitStop guarantees no callbacks are in flight.
+    // the spin-wait on in_callback ensures no callbacks are in flight.
     let data = unsafe { &mut *(in_ref_con as *mut CallbackData) };
+    data.in_callback.store(true, Ordering::Release);
+
     // SAFETY: `io_data` is provided by CoreAudio and is valid for the callback's duration.
     let buffer_list = unsafe { &mut *io_data };
 
@@ -252,6 +271,7 @@ unsafe extern "C" fn render_callback(
                 }
             }
         }
+        data.in_callback.store(false, Ordering::Release);
         return 0;
     }
 
@@ -271,6 +291,7 @@ unsafe extern "C" fn render_callback(
                 }
             }
         }
+        data.in_callback.store(false, Ordering::Release);
         return 0;
     }
     let out_ptr = buf.mData as *mut f32;
@@ -308,5 +329,6 @@ unsafe extern "C" fn render_callback(
         }
     }
 
+    data.in_callback.store(false, Ordering::Release);
     0
 }

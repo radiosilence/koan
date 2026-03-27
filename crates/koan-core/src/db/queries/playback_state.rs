@@ -98,11 +98,23 @@ impl PersistedQueueItem {
         }
     }
 
-    /// Convert back to a PlaylistItem with fresh ID and Pending load state.
+    /// Convert back to a PlaylistItem with fresh ID.
+    /// Verifies the file path still exists on disk — missing cache files
+    /// get `LoadState::Pending` so the player re-triggers their download.
     pub fn to_playlist_item(&self) -> crate::player::state::PlaylistItem {
+        let path = PathBuf::from(&self.path);
+        let load_state = if path.exists() {
+            crate::player::state::LoadState::Ready
+        } else {
+            log::debug!(
+                "session restore: path missing, marking pending: {}",
+                self.path,
+            );
+            crate::player::state::LoadState::Pending
+        };
         crate::player::state::PlaylistItem {
             id: crate::player::state::QueueItemId::new(),
-            path: PathBuf::from(&self.path),
+            path,
             title: self.title.clone(),
             artist: self.artist.clone(),
             album_artist: self.album_artist.clone(),
@@ -112,7 +124,7 @@ impl PersistedQueueItem {
             track_number: self.track_number,
             disc: self.disc,
             duration_ms: self.duration_ms,
-            load_state: crate::player::state::LoadState::Ready,
+            load_state,
         }
     }
 }
@@ -195,6 +207,59 @@ mod tests {
 
         clear_playback_state(&conn).unwrap();
         assert!(load_playback_state(&conn).unwrap().is_none());
+    }
+
+    #[test]
+    fn test_to_playlist_item_marks_missing_path_as_pending() {
+        let item = PersistedQueueItem {
+            path: "/nonexistent/path/track.flac".into(),
+            title: "Ghost".into(),
+            artist: "Nobody".into(),
+            album_artist: "Nobody".into(),
+            album: "Void".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+        };
+        let playlist_item = item.to_playlist_item();
+        assert!(
+            matches!(
+                playlist_item.load_state,
+                crate::player::state::LoadState::Pending
+            ),
+            "missing file should be Pending, got {:?}",
+            playlist_item.load_state,
+        );
+    }
+
+    #[test]
+    fn test_to_playlist_item_marks_existing_path_as_ready() {
+        // Use cargo's own manifest as a file that definitely exists.
+        let manifest = env!("CARGO_MANIFEST_DIR");
+        let existing_path = format!("{}/Cargo.toml", manifest);
+        let item = PersistedQueueItem {
+            path: existing_path,
+            title: "Real".into(),
+            artist: "Someone".into(),
+            album_artist: "Someone".into(),
+            album: "Exists".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+        };
+        let playlist_item = item.to_playlist_item();
+        assert!(
+            matches!(
+                playlist_item.load_state,
+                crate::player::state::LoadState::Ready
+            ),
+            "existing file should be Ready, got {:?}",
+            playlist_item.load_state,
+        );
     }
 
     #[test]

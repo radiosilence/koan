@@ -70,35 +70,58 @@ fn run_api_blocking(
         let gql_app = gql_app.with_state(schema);
 
         let gql_addr = std::net::SocketAddr::new(bind, port);
-        log::info!("GraphQL API on http://{}:{}/graphql", bind, port);
-        if playground_enabled {
-            log::info!("GraphiQL: http://{}:{}/graphql", bind, port);
-        }
 
-        let gql_listener = tokio::net::TcpListener::bind(gql_addr)
-            .await
-            .expect("failed to bind GraphQL port");
+        let gql_listener = match tokio::net::TcpListener::bind(gql_addr).await {
+            Ok(l) => {
+                log::info!("GraphQL API on http://{}:{}/graphql", bind, port);
+                if playground_enabled {
+                    log::info!("GraphiQL: http://{}:{}/graphql", bind, port);
+                }
+                l
+            }
+            Err(e) => {
+                log::warn!(
+                    "API disabled: failed to bind GraphQL port {} — {} (another instance running?)",
+                    port,
+                    e,
+                );
+                return;
+            }
+        };
         let gql_server =
             axum::serve(gql_listener, gql_app).with_graceful_shutdown(shutdown_signal());
 
         if let Some(sub_port) = subsonic_port {
             let sub_app = super::super::serve::subsonic_router(db_path);
             let sub_addr = std::net::SocketAddr::new(bind, sub_port);
-            log::info!("Subsonic REST on http://{}:{}/rest/", bind, sub_port);
 
-            let sub_listener = tokio::net::TcpListener::bind(sub_addr)
-                .await
-                .expect("failed to bind Subsonic port");
-            let sub_server =
-                axum::serve(sub_listener, sub_app).with_graceful_shutdown(shutdown_signal());
+            match tokio::net::TcpListener::bind(sub_addr).await {
+                Ok(sub_listener) => {
+                    log::info!("Subsonic REST on http://{}:{}/rest/", bind, sub_port);
+                    let sub_server = axum::serve(sub_listener, sub_app)
+                        .with_graceful_shutdown(shutdown_signal());
 
-            // Run both servers concurrently.
-            tokio::select! {
-                r = gql_server => r.expect("GraphQL server error"),
-                r = sub_server => r.expect("Subsonic server error"),
+                    tokio::select! {
+                        r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
+                        r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Subsonic API disabled: failed to bind port {} — {}",
+                        sub_port,
+                        e,
+                    );
+                    // Run GraphQL-only.
+                    if let Err(e) = gql_server.await {
+                        log::error!("GraphQL server error: {e}");
+                    }
+                }
             }
         } else {
-            gql_server.await.expect("server error");
+            if let Err(e) = gql_server.await {
+                log::error!("GraphQL server error: {e}");
+            }
         }
     });
 }
