@@ -177,7 +177,6 @@ pub struct App {
 
     // Log messages from background threads.
     pub log_buffer: Arc<Mutex<Vec<String>>>,
-    pub log_messages: Vec<String>,
 
     // Track whether we've ever been in Playing state.
     pub has_played: bool,
@@ -327,7 +326,6 @@ impl App {
             last_click_time: None,
             last_click_idx: None,
             log_buffer,
-            log_messages: Vec::new(),
             has_played: false,
             theme: Theme::default(),
             layout: LayoutRects::default(),
@@ -479,9 +477,9 @@ impl App {
             self.ticker_offset = self.ticker_offset.wrapping_add(1);
         }
 
-        // Drain log buffer.
+        // Drain and discard log buffer (logs are already written to the file by BufferedLogger).
         if let Ok(mut logs) = self.log_buffer.lock() {
-            self.log_messages.extend(logs.drain(..));
+            logs.clear();
         }
 
         // Poll pending share result.
