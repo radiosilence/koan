@@ -599,6 +599,25 @@ impl SharedPlayerState {
         self.playlist.read().cursor == Some(id)
     }
 
+    /// Get QueueItemIds of all playlist items sharing the same album as the given item.
+    /// Matches on both album name and album artist to avoid false positives
+    /// (e.g. two different "Greatest Hits" by different artists).
+    pub fn same_album_item_ids(&self, id: QueueItemId) -> Vec<QueueItemId> {
+        let pl = self.playlist.read();
+        let Some(cursor) = pl.items.iter().find(|item| item.id == id) else {
+            return vec![];
+        };
+        let album = cursor.album.clone();
+        let album_artist = cursor.album_artist.clone();
+        pl.items
+            .iter()
+            .filter(|item| {
+                item.id != id && item.album == album && item.album_artist == album_artist
+            })
+            .map(|item| item.id)
+            .collect()
+    }
+
     // --- Snapshot helpers for undo ---
 
     /// Get the full playlist snapshot (items + cursor) for undo of ClearPlaylist.
@@ -1018,6 +1037,70 @@ mod tests {
         assert!(!snap.has_playing);
         assert_eq!(snap.finished_count, 0);
         assert_eq!(snap.queue_count, 3);
+    }
+
+    // --- same_album_item_ids ---
+
+    fn make_album_item(title: &str, album: &str, album_artist: &str) -> PlaylistItem {
+        PlaylistItem {
+            id: QueueItemId::new(),
+            path: PathBuf::from(format!("/music/{title}.flac")),
+            title: title.to_string(),
+            artist: "Artist".to_string(),
+            album_artist: album_artist.to_string(),
+            album: album.to_string(),
+            year: None,
+            codec: Some("FLAC".to_string()),
+            track_number: None,
+            disc: None,
+            duration_ms: Some(200_000),
+            load_state: LoadState::Ready,
+        }
+    }
+
+    #[test]
+    fn test_same_album_item_ids_returns_album_mates() {
+        let state = SharedPlayerState::new();
+        let a1 = make_album_item("A1", "Album A", "Artist A");
+        let a2 = make_album_item("A2", "Album A", "Artist A");
+        let b1 = make_album_item("B1", "Album B", "Artist B");
+        let a3 = make_album_item("A3", "Album A", "Artist A");
+
+        let id_a1 = a1.id;
+        let id_a2 = a2.id;
+        let id_a3 = a3.id;
+
+        state.add_items(vec![a1, a2, b1, a3]);
+
+        let mates = state.same_album_item_ids(id_a1);
+        assert_eq!(mates.len(), 2);
+        assert!(mates.contains(&id_a2));
+        assert!(mates.contains(&id_a3));
+    }
+
+    #[test]
+    fn test_same_album_item_ids_distinguishes_album_artists() {
+        // Two albums named the same but by different artists — should NOT match.
+        let state = SharedPlayerState::new();
+        let a1 = make_album_item("A1", "Greatest Hits", "Artist A");
+        let b1 = make_album_item("B1", "Greatest Hits", "Artist B");
+
+        let id_a1 = a1.id;
+
+        state.add_items(vec![a1, b1]);
+
+        let mates = state.same_album_item_ids(id_a1);
+        assert!(mates.is_empty(), "different album_artist should not match");
+    }
+
+    #[test]
+    fn test_same_album_item_ids_unknown_id_returns_empty() {
+        let state = SharedPlayerState::new();
+        state.add_items(vec![ready_item("track-0")]);
+
+        let bogus = QueueItemId::new();
+        let mates = state.same_album_item_ids(bogus);
+        assert!(mates.is_empty());
     }
 
     // --- move_item_to ---

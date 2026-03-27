@@ -82,7 +82,8 @@ pub fn enqueue_playlist(
         Arc::new(Mutex::new(pending_downloads.into()));
 
     std::thread::scope(|s| {
-        // Watcher: detect cursor changes -> spawn priority download threads.
+        // Watcher: detect cursor changes -> spawn priority download threads
+        // and bump same-album tracks to front of work queue for gapless playback.
         let wq = work_queue.clone();
         let state_ref = &state;
         let tx_ref = &tx;
@@ -108,17 +109,41 @@ pub fn enqueue_playlist(
                     continue;
                 };
 
-                // Pull cursor track (and the one after it) from the queue
-                // so workers don't also download them.
+                // Build set of same-album QueueItemIds so we can bump them
+                // to the front of the work queue (gapless album continuity).
+                let album_mate_ids: std::collections::HashSet<QueueItemId> = state_ref
+                    .same_album_item_ids(cursor_id)
+                    .into_iter()
+                    .collect();
+
+                // Pull cursor track from the queue so workers don't also
+                // download it, then reorder remaining items.
                 let mut priority_items = Vec::new();
                 {
                     let mut q = wq.lock().unwrap();
                     if let Some(pos) = q.iter().position(|(_, qid)| *qid == cursor_id) {
                         priority_items.push(q.remove(pos).unwrap());
-                        // Also grab the next track (for gapless lookahead).
-                        if let Some(next) = q.front().copied() {
+
+                        // Bump same-album tracks to front of work queue
+                        // (preserving their relative order).
+                        if !album_mate_ids.is_empty() {
+                            let mut album_items = std::collections::VecDeque::new();
+                            let mut other_items = std::collections::VecDeque::new();
+                            for item in q.drain(..) {
+                                if album_mate_ids.contains(&item.1) {
+                                    album_items.push_back(item);
+                                } else {
+                                    other_items.push_back(item);
+                                }
+                            }
+                            album_items.extend(other_items);
+                            *q = album_items;
+                        }
+
+                        // Also grab the next track for gapless lookahead — after
+                        // reordering, the front is a same-album track if one exists.
+                        if q.front().is_some() {
                             priority_items.push(q.pop_front().unwrap());
-                            let _ = next; // suppress unused warning
                         }
                     }
                 }
