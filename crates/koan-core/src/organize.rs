@@ -759,8 +759,9 @@ fn resolve_base_dir(base_dir: Option<&Path>) -> Result<PathBuf, OrganizeError> {
     }
 
     // Use first configured library folder.
-    let config = crate::config::Config::load()
-        .map_err(|e| OrganizeError::Io(std::io::Error::other(e.to_string())))?;
+    let config = crate::config::Config::load().map_err(|e: crate::config::ConfigError| {
+        OrganizeError::Io(std::io::Error::other(e.to_string()))
+    })?;
 
     config.library.folders.into_iter().next().ok_or_else(|| {
         OrganizeError::Io(std::io::Error::other(

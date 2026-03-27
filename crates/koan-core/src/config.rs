@@ -370,37 +370,57 @@ impl Config {
         let mut clean = self.clone();
         let ov = &self.env_overrides;
 
-        if ov.remote_url { clean.remote.url = String::new(); }
-        if ov.remote_username { clean.remote.username = String::new(); }
-        if ov.remote_password { clean.remote.password = String::new(); }
-        if ov.remote_enabled { clean.remote.enabled = false; }
+        if ov.remote_url {
+            clean.remote.url = String::new();
+        }
+        if ov.remote_username {
+            clean.remote.username = String::new();
+        }
+        if ov.remote_password {
+            clean.remote.password = String::new();
+        }
+        if ov.remote_enabled {
+            clean.remote.enabled = false;
+        }
 
         clean
     }
 
-    /// Write config to the base config.toml.
-    /// Fields sourced from env vars are excluded.
-    pub fn save(&self) -> Result<(), ConfigError> {
-        let path = config_file_path();
+    /// Merge the in-memory config (with env-overridden fields stripped) into
+    /// the existing on-disk file, preserving file-sourced values we didn't touch.
+    fn save_to(&self, path: &Path) -> Result<(), ConfigError> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+
+        // Read existing file as TOML tree (preserves values we didn't change).
+        let mut on_disk: toml::Value = if path.exists() {
+            let contents = fs::read_to_string(path)?;
+            toml::from_str(&contents)?
+        } else {
+            toml::Value::Table(toml::map::Map::new())
+        };
+
+        // Serialize cleaned config (env-sourced fields cleared) and merge on top.
         let clean = self.without_env_overrides();
-        let contents = toml::to_string_pretty(&clean)?;
-        fs::write(&path, contents)?;
+        let overlay: toml::Value = toml::Value::try_from(&clean)?;
+        deep_merge(&mut on_disk, overlay);
+
+        fs::write(path, toml::to_string_pretty(&on_disk)?)?;
         Ok(())
     }
 
+    /// Write config to the base config.toml.
+    /// Env-sourced fields are excluded; file-sourced values are preserved.
+    pub fn save(&self) -> Result<(), ConfigError> {
+        self.save_to(&config_file_path())
+    }
+
     /// Write config to config.local.toml (for machine-specific / sensitive values).
-    /// Fields sourced from env vars are excluded.
+    /// Env-sourced fields are excluded; file-sourced values are preserved.
     pub fn save_local(&self) -> Result<(), ConfigError> {
         let path = config_local_file_path();
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let clean = self.without_env_overrides();
-        let contents = toml::to_string_pretty(&clean)?;
-        fs::write(&path, contents)?;
+        self.save_to(&path)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -825,61 +845,61 @@ port = 4000
 
     #[test]
     fn test_parse_size_bytes() {
-+        assert_eq!(parse_size_bytes("50GB"), Some(50 * 1024 * 1024 * 1024));
-+        assert_eq!(parse_size_bytes("500MB"), Some(500 * 1024 * 1024));
-+        assert_eq!(parse_size_bytes("1TB"), Some(1024 * 1024 * 1024 * 1024));
-+        assert_eq!(parse_size_bytes("100KB"), Some(100 * 1024));
-+        assert_eq!(parse_size_bytes("1024B"), Some(1024));
-+        assert_eq!(parse_size_bytes("1024"), Some(1024));
-+
-+        // Case insensitive.
-+        assert_eq!(parse_size_bytes("50gb"), Some(50 * 1024 * 1024 * 1024));
-+        assert_eq!(parse_size_bytes("50Gb"), Some(50 * 1024 * 1024 * 1024));
-+
-+        // Short suffixes.
-+        assert_eq!(parse_size_bytes("50G"), Some(50 * 1024 * 1024 * 1024));
-+        assert_eq!(parse_size_bytes("500M"), Some(500 * 1024 * 1024));
-+
-+        // Spaces.
-+        assert_eq!(parse_size_bytes("50 GB"), Some(50 * 1024 * 1024 * 1024));
-+        assert_eq!(parse_size_bytes(" 50GB "), Some(50 * 1024 * 1024 * 1024));
-+
-+        // Decimal.
-+        assert_eq!(
-+            parse_size_bytes("1.5GB"),
-+            Some((1.5 * 1024.0 * 1024.0 * 1024.0) as u64)
-+        );
-+
-+        // Invalid.
-+        assert_eq!(parse_size_bytes(""), None);
-+        assert_eq!(parse_size_bytes("abc"), None);
-+        assert_eq!(parse_size_bytes("50XB"), None);
-+    }
-+
-+    #[test]
-+    fn test_cache_limit_config_from_toml() {
-+        let toml_str = r#"
-+[remote]
-+cache_limit = "50GB"
-+"#;
-+        let cfg: Config = toml::from_str(toml_str).unwrap();
-+        assert_eq!(cfg.remote.cache_limit.as_deref(), Some("50GB"));
-+        assert_eq!(cfg.cache_limit_bytes(), Some(50 * 1024 * 1024 * 1024));
-+    }
-+
-+    #[test]
-+    fn test_cache_limit_none_by_default() {
-+        let cfg = Config::default();
-+        assert!(cfg.remote.cache_limit.is_none());
-+        assert!(cfg.cache_limit_bytes().is_none());
-+    }
-+
-+    #[test]
-+    fn test_cache_limit_not_serialized_when_none() {
-+        let cfg = Config::default();
-+        let serialized = toml::to_string_pretty(&cfg).unwrap();
-+        assert!(!serialized.contains("cache_limit"));
-+    }
+        assert_eq!(parse_size_bytes("50GB"), Some(50 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("500MB"), Some(500 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("1TB"), Some(1024 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("100KB"), Some(100 * 1024));
+        assert_eq!(parse_size_bytes("1024B"), Some(1024));
+        assert_eq!(parse_size_bytes("1024"), Some(1024));
+
+        // Case insensitive.
+        assert_eq!(parse_size_bytes("50gb"), Some(50 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("50Gb"), Some(50 * 1024 * 1024 * 1024));
+
+        // Short suffixes.
+        assert_eq!(parse_size_bytes("50G"), Some(50 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes("500M"), Some(500 * 1024 * 1024));
+
+        // Spaces.
+        assert_eq!(parse_size_bytes("50 GB"), Some(50 * 1024 * 1024 * 1024));
+        assert_eq!(parse_size_bytes(" 50GB "), Some(50 * 1024 * 1024 * 1024));
+
+        // Decimal.
+        assert_eq!(
+            parse_size_bytes("1.5GB"),
+            Some((1.5 * 1024.0 * 1024.0 * 1024.0) as u64)
+        );
+
+        // Invalid.
+        assert_eq!(parse_size_bytes(""), None);
+        assert_eq!(parse_size_bytes("abc"), None);
+        assert_eq!(parse_size_bytes("50XB"), None);
+    }
+
+    #[test]
+    fn test_cache_limit_config_from_toml() {
+        let toml_str = r#"
+[remote]
+cache_limit = "50GB"
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(cfg.remote.cache_limit.as_deref(), Some("50GB"));
+        assert_eq!(cfg.cache_limit_bytes(), Some(50 * 1024 * 1024 * 1024));
+    }
+
+    #[test]
+    fn test_cache_limit_none_by_default() {
+        let cfg = Config::default();
+        assert!(cfg.remote.cache_limit.is_none());
+        assert!(cfg.cache_limit_bytes().is_none());
+    }
+
+    #[test]
+    fn test_cache_limit_not_serialized_when_none() {
+        let cfg = Config::default();
+        let serialized = toml::to_string_pretty(&cfg).unwrap();
+        assert!(!serialized.contains("cache_limit"));
+    }
 
     #[test]
     fn test_env_overrides_sets_tracking_flags() {
@@ -960,5 +980,43 @@ port = 4000
         let dir = config_dir();
         assert!(dir.ends_with("koan"));
         unsafe { std::env::remove_var("KOAN_CONFIG_DIR") };
+    }
+
+    #[test]
+    fn test_save_preserves_file_sourced_values_when_env_overrides_active() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+
+        // Write a config file with a password.
+        fs::write(
+            &path,
+            r#"
+[remote]
+url = "https://file.example.com"
+username = "fileuser"
+password = "file_secret"
+"#,
+        )
+        .unwrap();
+
+        // Load it, simulate env override on password, then save back.
+        let mut cfg = Config::load_from(&path).unwrap();
+        cfg.remote.password = "env_secret".into();
+        cfg.env_overrides.remote_password = true;
+
+        // Modify an unrelated field (simulates toggling visualizer).
+        cfg.visualizer.enabled = true;
+
+        cfg.save_to(&path).unwrap();
+
+        // Re-read: file-sourced password must survive, not be cleared.
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(
+            saved.contains("file_secret"),
+            "file-sourced password was lost"
+        );
+        assert!(!saved.contains("env_secret"), "env password leaked to disk");
+        assert!(saved.contains("fileuser"));
+        assert!(saved.contains("file.example.com"));
     }
 }
