@@ -152,5 +152,20 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         );
         ",
     )?;
+    // --- Migrations: add columns that didn't exist in earlier versions ---
+    // SQLite has no ADD COLUMN IF NOT EXISTS, so we catch the "duplicate column" error.
+    let migrations = [
+        "ALTER TABLE tracks ADD COLUMN cache_size_bytes INTEGER",
+        "ALTER TABLE tracks ADD COLUMN cache_download_date INTEGER",
+    ];
+    for sql in &migrations {
+        match conn.execute(sql, []) {
+            Ok(_) => {}
+            Err(rusqlite::Error::ExecuteReturnedResults) => {}
+            Err(e) if e.to_string().contains("duplicate column") => {}
+            Err(e) => return Err(e),
+        }
+    }
+
     Ok(())
 }

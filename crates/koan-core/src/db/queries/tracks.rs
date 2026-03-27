@@ -507,16 +507,150 @@ pub fn track_id_by_path(conn: &Connection, path: &str) -> Result<Option<i64>, Db
 
 /// Clear all cached_path values (used when purging the download cache).
 pub fn clear_cached_paths(conn: &Connection) -> Result<(), DbError> {
-    conn.execute("UPDATE tracks SET cached_path = NULL", params![])?;
+    conn.execute(
+        "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, cache_download_date = NULL",
+        params![],
+    )?;
     Ok(())
 }
 
-/// Update the cached_path for a track after downloading.
+/// Update the cached_path for a track after downloading, recording size and timestamp.
 pub fn set_cached_path(conn: &Connection, track_id: i64, path: &str) -> Result<(), DbError> {
+    let size_bytes: Option<i64> = std::fs::metadata(path).ok().map(|m| m.len() as i64);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
     conn.execute(
-        "UPDATE tracks SET cached_path = ?1 WHERE id = ?2",
-        params![path, track_id],
+        "UPDATE tracks SET cached_path = ?1, cache_size_bytes = ?2, cache_download_date = ?3
+         WHERE id = ?4",
+        params![path, size_bytes, now, track_id],
     )?;
+    Ok(())
+}
+
+/// Row returned by the cache eviction query.
+#[derive(Debug, Clone)]
+pub struct CachedAlbumInfo {
+    pub album_id: i64,
+    pub album_title: String,
+    pub artist_name: String,
+    pub total_size: i64,
+    pub track_ids: Vec<i64>,
+    pub cached_paths: Vec<String>,
+}
+
+/// Get cached albums ordered by LRU (oldest last-played first), excluding favourited tracks.
+/// Returns albums with their total cache size and file paths for eviction.
+pub fn cached_albums_lru(conn: &Connection) -> Result<Vec<CachedAlbumInfo>, DbError> {
+    // Get all cached tracks with their last played timestamp.
+    // A track is "protected" if it appears in the favourites table.
+    // We exclude any album that has ANY favourited cached track.
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.album_id, COALESCE(al.title, 'Unknown'), COALESCE(a.name, 'Unknown'),
+                t.cached_path, COALESCE(t.cache_size_bytes, 0),
+                (SELECT MAX(ph.played_at) FROM play_history ph WHERE ph.track_id = t.id) as last_play,
+                EXISTS(SELECT 1 FROM favourites f
+                       WHERE f.track_path = t.cached_path
+                          OR f.track_path = t.path
+                          OR f.track_path = t.remote_url) as is_fav
+         FROM tracks t
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists a ON al.artist_id = a.id
+         WHERE t.cached_path IS NOT NULL
+         ORDER BY t.album_id, t.disc, t.track_number",
+    )?;
+
+    struct CachedTrackRow {
+        track_id: i64,
+        album_id: Option<i64>,
+        album_title: String,
+        artist_name: String,
+        cached_path: String,
+        size: i64,
+        last_play: Option<i64>,
+        is_fav: bool,
+    }
+
+    let rows: Vec<CachedTrackRow> = stmt
+        .query_map([], |row| {
+            Ok(CachedTrackRow {
+                track_id: row.get(0)?,
+                album_id: row.get(1)?,
+                album_title: row.get(2)?,
+                artist_name: row.get(3)?,
+                cached_path: row.get(4)?,
+                size: row.get(5)?,
+                last_play: row.get(6)?,
+                is_fav: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // Group by album_id. Use -1 for tracks without an album.
+    let mut albums: std::collections::BTreeMap<i64, CachedAlbumInfo> =
+        std::collections::BTreeMap::new();
+    // Track max last_play per album, and whether album has any favourites.
+    let mut album_last_play: HashMap<i64, Option<i64>> = HashMap::new();
+    let mut album_has_fav: HashSet<i64> = HashSet::new();
+
+    for r in &rows {
+        let aid = r.album_id.unwrap_or(-r.track_id); // unique key for albumless tracks
+        if r.is_fav {
+            album_has_fav.insert(aid);
+        }
+        let entry = albums.entry(aid).or_insert_with(|| CachedAlbumInfo {
+            album_id: aid,
+            album_title: r.album_title.clone(),
+            artist_name: r.artist_name.clone(),
+            total_size: 0,
+            track_ids: Vec::new(),
+            cached_paths: Vec::new(),
+        });
+        entry.total_size += r.size;
+        entry.track_ids.push(r.track_id);
+        entry.cached_paths.push(r.cached_path.clone());
+
+        let current_max = album_last_play.entry(aid).or_insert(None);
+        *current_max = match (*current_max, r.last_play) {
+            (Some(a), Some(b)) => Some(a.max(b)),
+            (Some(a), None) => Some(a),
+            (None, Some(b)) => Some(b),
+            (None, None) => None,
+        };
+    }
+
+    // Filter out albums with any favourited tracks, then sort by last_play ascending (oldest first).
+    // Never-played albums sort before everything (None < Some).
+    let mut result: Vec<CachedAlbumInfo> = albums
+        .into_values()
+        .filter(|a| !album_has_fav.contains(&a.album_id))
+        .collect();
+
+    result.sort_by_key(|a| album_last_play.get(&a.album_id).copied().unwrap_or(None));
+
+    Ok(result)
+}
+
+/// Get total cache size from DB tracking (sum of cache_size_bytes for all cached tracks).
+pub fn total_cache_size(conn: &Connection) -> Result<i64, DbError> {
+    let size: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(cache_size_bytes), 0) FROM tracks WHERE cached_path IS NOT NULL",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(size)
+}
+
+/// Clear cache tracking for specific tracks (after eviction deletes files).
+pub fn clear_cache_for_tracks(conn: &Connection, track_ids: &[i64]) -> Result<(), DbError> {
+    for &id in track_ids {
+        conn.execute(
+            "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, cache_download_date = NULL
+             WHERE id = ?1",
+            params![id],
+        )?;
+    }
     Ok(())
 }
 
@@ -1169,5 +1303,199 @@ mod tests {
         let db = test_db();
         let fav_ids = favourite_album_ids_batch(&db.conn).unwrap();
         assert!(fav_ids.is_empty());
+    }
+
+    #[test]
+    fn test_set_cached_path_records_size_and_date() {
+        let db = test_db();
+        let mut meta = sample_meta("Song", "Artist", "Album");
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("r1".into());
+        meta.remote_url = Some("https://example.com/r1".into());
+        let id = upsert_track(&db.conn, &meta).unwrap();
+
+        // Create a temp file to simulate a cached download.
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut tmp.as_file().try_clone().unwrap(), &[0u8; 1024]).unwrap();
+        let path = tmp.path().to_string_lossy().to_string();
+
+        set_cached_path(&db.conn, id, &path).unwrap();
+
+        let (cached_path, size, download_date): (Option<String>, Option<i64>, Option<i64>) = db
+            .conn
+            .query_row(
+                "SELECT cached_path, cache_size_bytes, cache_download_date FROM tracks WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        assert_eq!(cached_path.as_deref(), Some(path.as_str()));
+        assert!(size.unwrap() > 0, "cache_size_bytes should be positive");
+        assert!(
+            download_date.unwrap() > 0,
+            "cache_download_date should be set"
+        );
+    }
+
+    #[test]
+    fn test_total_cache_size() {
+        let db = test_db();
+
+        // Start with zero.
+        assert_eq!(total_cache_size(&db.conn).unwrap(), 0);
+
+        // Insert a cached track with known size.
+        let mut meta = sample_meta("Song", "Artist", "Album");
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("r1".into());
+        let id = upsert_track(&db.conn, &meta).unwrap();
+
+        db.conn
+            .execute(
+                "UPDATE tracks SET cached_path = '/cache/song.flac', cache_size_bytes = 50000000 WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+
+        assert_eq!(total_cache_size(&db.conn).unwrap(), 50_000_000);
+    }
+
+    #[test]
+    fn test_clear_cache_for_tracks() {
+        let db = test_db();
+        let mut meta = sample_meta("Song", "Artist", "Album");
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("r1".into());
+        let id = upsert_track(&db.conn, &meta).unwrap();
+
+        db.conn
+            .execute(
+                "UPDATE tracks SET cached_path = '/cache/song.flac', cache_size_bytes = 1000, cache_download_date = 12345 WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+
+        clear_cache_for_tracks(&db.conn, &[id]).unwrap();
+
+        let (path, size, date): (Option<String>, Option<i64>, Option<i64>) = db
+            .conn
+            .query_row(
+                "SELECT cached_path, cache_size_bytes, cache_download_date FROM tracks WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        assert!(path.is_none());
+        assert!(size.is_none());
+        assert!(date.is_none());
+    }
+
+    #[test]
+    fn test_cached_albums_lru_excludes_favourites() {
+        let db = test_db();
+
+        // Create two remote-cached albums.
+        for (album, tracks) in &[("AlbumA", vec!["T1", "T2"]), ("AlbumB", vec!["T3", "T4"])] {
+            for (i, title) in tracks.iter().enumerate() {
+                let mut meta = sample_meta(title, "Artist", album);
+                meta.source = "remote".into();
+                meta.path = None;
+                meta.remote_id = Some(format!("r-{}", title));
+                meta.track_number = Some((i + 1) as i32);
+                let id = upsert_track(&db.conn, &meta).unwrap();
+                let cached = format!("/cache/{}/{}.flac", album, title);
+                db.conn
+                    .execute(
+                        "UPDATE tracks SET cached_path = ?1, cache_size_bytes = 10000000 WHERE id = ?2",
+                        params![cached, id],
+                    )
+                    .unwrap();
+            }
+        }
+
+        // Favourite a track from AlbumB.
+        crate::db::queries::add_favourite(&db.conn, std::path::Path::new("/cache/AlbumB/T3.flac"))
+            .unwrap();
+
+        let albums = cached_albums_lru(&db.conn).unwrap();
+
+        // AlbumB should be excluded (has a favourite), only AlbumA returned.
+        assert_eq!(albums.len(), 1);
+        assert_eq!(albums[0].album_title, "AlbumA");
+    }
+
+    #[test]
+    fn test_cached_albums_lru_sorted_by_last_play() {
+        let db = test_db();
+
+        // Create two cached albums.
+        let mut album_ids = Vec::new();
+        for (album, played_at) in &[("OldAlbum", 1000), ("NewAlbum", 9000)] {
+            let mut meta = sample_meta("Track", "Artist", album);
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(format!("r-{}", album));
+            let id = upsert_track(&db.conn, &meta).unwrap();
+            let cached = format!("/cache/{}/Track.flac", album);
+            db.conn
+                .execute(
+                    "UPDATE tracks SET cached_path = ?1, cache_size_bytes = 10000000 WHERE id = ?2",
+                    params![cached, id],
+                )
+                .unwrap();
+
+            // Record play history.
+            db.conn
+                .execute(
+                    "INSERT INTO play_history (track_id, played_at) VALUES (?1, ?2)",
+                    params![id, played_at],
+                )
+                .unwrap();
+
+            album_ids.push(id);
+        }
+
+        let albums = cached_albums_lru(&db.conn).unwrap();
+        assert_eq!(albums.len(), 2);
+        // OldAlbum (played_at=1000) should come first (evicted first).
+        assert_eq!(albums[0].album_title, "OldAlbum");
+        assert_eq!(albums[1].album_title, "NewAlbum");
+    }
+
+    #[test]
+    fn test_clear_cached_paths_clears_all_tracking() {
+        let db = test_db();
+        let mut meta = sample_meta("Song", "Artist", "Album");
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("r1".into());
+        let id = upsert_track(&db.conn, &meta).unwrap();
+
+        db.conn
+            .execute(
+                "UPDATE tracks SET cached_path = '/x', cache_size_bytes = 100, cache_download_date = 999 WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+
+        clear_cached_paths(&db.conn).unwrap();
+
+        let (path, size, date): (Option<String>, Option<i64>, Option<i64>) = db
+            .conn
+            .query_row(
+                "SELECT cached_path, cache_size_bytes, cache_download_date FROM tracks WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+
+        assert!(path.is_none());
+        assert!(size.is_none());
+        assert!(date.is_none());
     }
 }

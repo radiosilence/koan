@@ -16,7 +16,7 @@ mod search;
 pub mod serve;
 
 pub use analyze::cmd_analyze;
-pub use cache::{cmd_cache_clear, cmd_cache_status};
+pub use cache::{cmd_cache_clear, cmd_cache_status, evict_cache};
 pub use graphql::{cmd_serve, cmd_serve_daemon};
 pub use mcp::cmd_mcp;
 
