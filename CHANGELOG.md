@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- **Config loading uses figment** — replaced hand-rolled TOML deep-merge with [figment](https://docs.rs/figment) for layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Any config field is now overridable via environment variables using `KOAN_SECTION__FIELD` naming (e.g. `KOAN_REMOTE__PASSWORD`, `KOAN_GRAPHQL__PORT`, `KOAN_PLAYBACK__TARGET_FPS`)
+
 ### Fixed
+
+- **Secret round-trip leak in config save** — `save()` on a merged Config would serialize secrets from `config.local.toml` and env vars back into `config.toml`. Callers now use `Config::update_base()` which reads only `config.toml`, applies the mutation, and writes back without leaking sensitive fields
 
 - **Path traversal in organize** — `sanitize_relative_path` now strips `..` and `.` components, and `plan_single_move` validates the destination stays under the base directory. Prevents malicious metadata from writing files outside the library ([#99](https://github.com/radiosilence/koan/issues/99))
 - **RT safety in CPAL audio callback** — changed `Mutex::lock()` to `try_lock()` in the audio render callback so the real-time thread never blocks; outputs silence on contention instead ([#99](https://github.com/radiosilence/koan/issues/99))

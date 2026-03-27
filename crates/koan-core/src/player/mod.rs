@@ -143,12 +143,11 @@ impl Player {
         log::info!("switching output device to: {}", name);
         self.output_device_name = Some(name.clone());
 
-        // Persist to config.
-        if let Ok(mut cfg) = crate::config::Config::load() {
+        // Persist to config.toml (not the merged config — avoids leaking secrets).
+        if let Err(e) = crate::config::Config::update_base(|cfg| {
             cfg.playback.output_device = Some(name);
-            if let Err(e) = cfg.save() {
-                log::error!("failed to save output device config: {}", e);
-            }
+        }) {
+            log::error!("failed to save output device config: {}", e);
         }
 
         self.restart_on_current_track();
@@ -159,11 +158,10 @@ impl Player {
         log::info!("reverting to system default output device");
         self.output_device_name = None;
 
-        if let Ok(mut cfg) = crate::config::Config::load() {
+        if let Err(e) = crate::config::Config::update_base(|cfg| {
             cfg.playback.output_device = None;
-            if let Err(e) = cfg.save() {
-                log::error!("failed to save output device config: {}", e);
-            }
+        }) {
+            log::error!("failed to save output device config: {}", e);
         }
 
         self.restart_on_current_track();

@@ -16,6 +16,7 @@ crossbeam-channel = "0.5"
 chrono = "0.4"
 # Config
 dirs = "6"
+figment = { version = "0.10", features = ["toml", "env"] }
 ebur128 = "0.1"
 # Credentials (cross-platform: macOS Keychain, Linux secret-service)
 keyring = { version = "3", features = ["apple-native", "sync-secret-service"] }
