@@ -4,6 +4,10 @@
 
 ### Fixed
 
+#### Audio
+
+- **Fix CoreAudio crash during sample rate switch** — `stop_engine()` was dropping the `AudioEngine` on a background cleanup thread while the player thread immediately changed the device sample rate. This race caused `AudioUnitUninitialize` to hit a freed `ExtendedAudioBufferList`, crashing in CoreAudio's internal allocator (`caulk::alloc::tiered_allocator::deallocate`). The engine is now dropped synchronously before any sample rate changes; only the decode handle cleanup (thread join) runs in the background ([#89](https://github.com/radiosilence/koan/issues/89))
+
 #### Security
 
 - **GraphQL/Subsonic servers now bind to 127.0.0.1 by default** — previously bound to `0.0.0.0` with no authentication, exposing library enumeration, file moves, and queue clearing to anyone on the network. Added `bind` field to `[graphql]` config and `--bind` CLI flag. Set `bind = "0.0.0.0"` to restore the old behaviour (not recommended without auth) ([#85](https://github.com/radiosilence/koan/issues/85))
