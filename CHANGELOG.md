@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **TUI layout jump when album art loads** — the transport bar now always reserves a 24×12 cell placeholder for album art, preventing layout reflow when art loads or when switching between tracks with/without embedded art ([#96](https://github.com/radiosilence/koan/issues/96))
+
 ## v0.18.0 (2026-03-27)
 
 ### Fixed
