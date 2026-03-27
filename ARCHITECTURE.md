@@ -226,7 +226,7 @@ fb2k-compatible template engine.
 
 | File | Purpose |
 |---|---|
-| `config.rs` | Two-layer TOML config: `config.toml` (base) + `config.local.toml` (override). Playback, library, remote settings. |
+| `config.rs` | Figment-based layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Playback, library, remote, graphql, radio, visualizer, organize, discovery settings. See `Config::update_base()` for safe writes. |
 | `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
 | `organize.rs` | File renaming using format strings. Preview/execute/undo. Scoped operations via `preview_for_tracks()`/`execute_for_tracks()` (used by TUI modal). Moves ancillary files (cover art, cue sheets). Logs moves for undo. |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
@@ -334,7 +334,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **Atomic visible queue snapshot:** One `derive_visible_queue()` call per frame, cached in `vq_cache`. All render/mouse operations see consistent state within a frame.
 
-**Two-layer config:** `config.toml` for defaults (committable to dotfiles), `config.local.toml` for machine-specific overrides (passwords, paths).
+**Figment-layered config:** Four layers (defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars) merged by [figment](https://docs.rs/figment). Env vars use `KOAN_SECTION__FIELD` naming (double underscore splits into nested keys). `Config::load()` returns the fully merged result. **`Config::update_base()`** is the safe way to programmatically modify `config.toml` — it reads only the base file, applies a mutation closure, and writes back. Never call `save()` on a `load()`-ed Config — it would serialize secrets from `config.local.toml` and env vars into the base file. `save_local()` writes to `config.local.toml` with `0o600` permissions for sensitive values.
 
 **Track dedup across sources:** Local file + Subsonic remote entry for the same song = one DB row. Local path always wins for playback.
 
