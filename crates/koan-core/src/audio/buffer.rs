@@ -115,6 +115,11 @@ pub struct PlaybackTimeline {
     pub samples_played: Arc<AtomicU64>,
 }
 
+/// Number of old track boundaries to keep in the timeline history before pruning.
+const BOUNDARY_HISTORY_KEEP: usize = 10;
+
+// ... (skipping to impl PlaybackTimeline)
+
 impl PlaybackTimeline {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
@@ -126,7 +131,20 @@ impl PlaybackTimeline {
 
     /// Called by decode thread when starting a new track.
     fn push_boundary(&self, boundary: TrackBoundary) {
-        self.boundaries.write().push(boundary);
+        let mut bounds = self.boundaries.write();
+
+        // Prune old boundaries to prevent unbounded memory growth during continuous playback.
+        // We keep the current (or earlier) boundary and a small history of tracks.
+        let played = self.samples_played.load(Ordering::Acquire);
+        let idx = bounds.partition_point(|b| b.sample_offset <= played);
+        let current_idx = if idx > 0 { idx - 1 } else { 0 };
+
+        if current_idx > BOUNDARY_HISTORY_KEEP {
+            let remove_count = current_idx - BOUNDARY_HISTORY_KEEP;
+            bounds.drain(0..remove_count);
+        }
+
+        bounds.push(boundary);
     }
 
     /// Called by decode thread after pushing samples.
@@ -900,5 +918,21 @@ mod tests {
             0,
             "samples_written should be 0 after reset"
         );
+    }
+
+    #[test]
+    fn test_timeline_prunes_old_boundaries() {
+        let timeline = PlaybackTimeline::new();
+        
+        for i in 0..20 {
+            let offset = i as u64 * 44100;
+            timeline.samples_played.store(offset, std::sync::atomic::Ordering::Release);
+            timeline.push_boundary(make_boundary(QueueItemId::new(), offset, 0, 2, 44100));
+        }
+
+        let bounds = timeline.boundaries.read();
+        assert_eq!(bounds.len(), 12);
+        assert_eq!(bounds.first().unwrap().sample_offset, 8 * 44100);
+        assert_eq!(bounds.last().unwrap().sample_offset, 19 * 44100);
     }
 }
