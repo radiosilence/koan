@@ -320,6 +320,29 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
+    /// Prune played items from the playlist to prevent unbounded memory growth.
+    /// Keeps `keep_played` items before the cursor, plus the cursor and everything after.
+    /// Returns true if items were actually removed.
+    pub(crate) fn cull_played_items(&self, keep_played: usize) -> bool {
+        let mut pl = self.playlist.write();
+        let cursor_pos = match pl.cursor {
+            Some(cid) => pl.items.iter().position(|item| item.id == cid),
+            None => None,
+        };
+
+        if let Some(pos) = cursor_pos
+            && pos > keep_played
+        {
+            let remove_count = pos - keep_played;
+            pl.items.drain(0..remove_count);
+            drop(pl);
+            self.bump_version();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Insert items after a specific queue item.
     pub fn insert_items_after(&self, items: Vec<PlaylistItem>, after: QueueItemId) {
         let mut pl = self.playlist.write();
@@ -1169,5 +1192,35 @@ mod tests {
         assert_eq!(items[1].id, id_d);
         assert_eq!(items[2].id, id_a);
         assert_eq!(items[3].id, id_c);
+    }
+
+    #[test]
+    fn test_cull_played_items() {
+        let state = SharedPlayerState::new();
+        state.add_items(vec![
+            ready_item("track-0"),
+            ready_item("track-1"),
+            ready_item("track-2"),
+            ready_item("track-3"),
+            ready_item("track-4"),
+        ]);
+        let items = state.playlist.read().items.clone();
+        
+        state.set_cursor(Some(items[0].id));
+        assert!(!state.cull_played_items(1));
+        assert_eq!(state.playlist.read().items.len(), 5);
+
+        state.set_cursor(Some(items[2].id));
+        assert!(state.cull_played_items(1));
+        assert_eq!(state.playlist.read().items.len(), 4);
+        assert_eq!(state.playlist.read().items[0].title, "track-1");
+        
+        state.set_cursor(Some(items[4].id));
+        assert!(state.cull_played_items(0));
+        assert_eq!(state.playlist.read().items.len(), 1);
+        assert_eq!(state.playlist.read().items[0].title, "track-4");
+        
+        state.clear_playlist();
+        assert!(!state.cull_played_items(0));
     }
 }

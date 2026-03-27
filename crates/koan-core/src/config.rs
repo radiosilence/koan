@@ -256,6 +256,9 @@ impl Default for GraphqlConfig {
     }
 }
 
+/// Default number of played tracks to retain in radio mode before culling.
+pub const RADIO_CULL_KEEP_COUNT: usize = 50;
+
 /// Radio / infinite play mode configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]

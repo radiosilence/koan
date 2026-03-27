@@ -763,6 +763,10 @@ impl App {
             };
 
             if remaining <= self.radio_config.lookahead {
+                // Prevent unbounded memory growth by culling played tracks in radio mode.
+                self.tx
+                    .send(PlayerCommand::CullPlayed(koan_core::config::RADIO_CULL_KEEP_COUNT))
+                    .ok();
                 self.trigger_radio_pick();
             }
         }

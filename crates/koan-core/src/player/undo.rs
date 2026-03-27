@@ -65,6 +65,12 @@ impl UndoStack {
         Self::default()
     }
 
+    /// Clear all undo and redo history.
+    pub fn clear(&mut self) {
+        self.undo.clear();
+        self.redo.clear();
+    }
+
     /// Push an undo entry. Clears the redo stack.
     /// Batch entries exceeding `MAX_BATCH_SIZE` are truncated.
     pub fn push(&mut self, entry: UndoEntry) {

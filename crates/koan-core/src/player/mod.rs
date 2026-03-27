@@ -913,6 +913,14 @@ impl Player {
                 self.shared_state.insert_items_after(items, after);
                 self.push_undo(UndoEntry::Inserted { ids });
             }
+            PlayerCommand::CullPlayed(keep) => {
+                let culled = self.shared_state.cull_played_items(keep);
+                if culled {
+                    // Culling from the front breaks predecessor ID references in the
+                    // undo stack. We must clear undo history to prevent corruption.
+                    self.undo_stack.clear();
+                }
+            }
             PlayerCommand::ClearPlaylist => {
                 // Stop engine + clear display state WITHOUT touching the playlist,
                 // then snapshot, then clear. This avoids the race where stop()
