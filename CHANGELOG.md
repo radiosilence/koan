@@ -11,6 +11,7 @@
 ### Added
 
 - **Album-aware download priority** — when a track starts playing, remaining tracks from the same album are bumped to the front of the download queue, ensuring gapless album playback over remote sources ([#87](https://github.com/radiosilence/koan/issues/87))
+- **CONTRIBUTING.md** — contribution guidelines: PR workflow, code quality expectations, architecture pointers ([#82](https://github.com/radiosilence/koan/issues/82))
 
 ## v0.17.0 (2026-03-26)
 
