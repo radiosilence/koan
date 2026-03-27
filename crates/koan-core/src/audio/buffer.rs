@@ -55,6 +55,12 @@ impl DecodeHandle {
         self.stop.store(true, Ordering::Relaxed);
     }
 
+    /// Create a DecodeHandle with no real thread (for tests only).
+    #[cfg(test)]
+    pub fn new_for_test(stop: Arc<AtomicBool>) -> Self {
+        Self { stop, thread: None }
+    }
+
     /// Signal the decode thread to stop and wait for it.
     pub fn stop(&mut self) {
         self.signal_stop();

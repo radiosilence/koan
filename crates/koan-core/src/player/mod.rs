@@ -679,10 +679,23 @@ impl Player {
             let _ = playback.engine.stop();
             // Signal decode thread to exit (non-blocking).
             playback.decode_handle.signal_stop();
-            // Heavy cleanup on a background thread.
+
+            // Drop the audio engine synchronously. AudioUnitUninitialize must
+            // complete before any device sample rate change, otherwise CoreAudio's
+            // internal ExtendedAudioBufferList can be freed mid-teardown (crash
+            // in caulk::alloc::tiered_allocator::deallocate — GitHub #89).
+            let ActivePlayback {
+                engine,
+                decode_handle,
+            } = playback;
+            drop(engine);
+
+            // The decode handle join is the heavy part (waits for the decode
+            // thread to exit) — run it on a background thread so we don't block
+            // the player command loop.
             thread::Builder::new()
                 .name("koan-cleanup".into())
-                .spawn(move || drop(playback))
+                .spawn(move || drop(decode_handle))
                 .ok();
         }
     }
@@ -1519,5 +1532,58 @@ mod tests {
         // Undo move: [A, B, C]
         player.process_command(PlayerCommand::Undo);
         assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+    }
+
+    /// Regression test for GitHub #89: AudioEngine must be dropped synchronously
+    /// in stop_engine() before the caller changes sample rates. If the engine is
+    /// dropped on a background thread, CoreAudio's internal buffer list can be
+    /// freed while AudioUnitUninitialize is still tearing it down → crash.
+    #[test]
+    fn stop_engine_drops_engine_synchronously() {
+        use std::sync::atomic::AtomicBool;
+
+        struct MockEngine {
+            dropped: Arc<AtomicBool>,
+        }
+        impl AudioEngineHandle for MockEngine {
+            fn start(&self) -> Result<(), BackendError> {
+                Ok(())
+            }
+            fn stop(&self) -> Result<(), BackendError> {
+                Ok(())
+            }
+            fn is_running(&self) -> bool {
+                false
+            }
+        }
+        impl Drop for MockEngine {
+            fn drop(&mut self) {
+                self.dropped.store(true, Ordering::SeqCst);
+            }
+        }
+
+        let dropped = Arc::new(AtomicBool::new(false));
+
+        // Build a minimal decode handle that won't block.
+        let stop_flag = Arc::new(AtomicBool::new(false));
+        let decode_handle = buffer::DecodeHandle::new_for_test(stop_flag);
+
+        let mut player = Player::new();
+        player.active_playback = Some(ActivePlayback {
+            engine: Box::new(MockEngine {
+                dropped: dropped.clone(),
+            }),
+            decode_handle,
+        });
+
+        player.stop_engine();
+
+        // The engine must already be dropped when stop_engine returns.
+        // If this fails, the engine was moved to a background thread — the
+        // exact race condition that causes the #89 crash.
+        assert!(
+            dropped.load(Ordering::SeqCst),
+            "AudioEngine must be dropped synchronously in stop_engine (GitHub #89)"
+        );
     }
 }
