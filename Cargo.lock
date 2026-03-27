@@ -1973,7 +1973,7 @@ dependencies = [
 
 [[package]]
 name = "koan-core"
-version = "0.18.0"
+version = "0.17.1"
 dependencies = [
  "bliss-audio",
  "bliss-audio-aubio-rs",
@@ -2007,7 +2007,7 @@ dependencies = [
 
 [[package]]
 name = "koan-music"
-version = "0.18.0"
+version = "0.17.1"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
