@@ -28,6 +28,21 @@ pub fn cmd_config() {
         );
     }
     println!("  {} {}", "db:".cyan(), config::db_path().display());
+
+    // Show any active KOAN_* env var overrides.
+    let env_overrides: Vec<_> = std::env::vars()
+        .filter(|(k, _)| k.starts_with("KOAN_"))
+        .collect();
+    if !env_overrides.is_empty() {
+        println!(
+            "  {} {} active",
+            "env:".cyan(),
+            format!("{} KOAN_* vars", env_overrides.len()).green()
+        );
+        for (k, _) in &env_overrides {
+            println!("    {}", k.dimmed());
+        }
+    }
     println!();
 
     println!("{}", "resolved".bold());
