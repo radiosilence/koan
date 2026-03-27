@@ -95,6 +95,8 @@ pub enum PlaybackSource {
 #[derive(Debug, Clone)]
 pub struct PlaylistItem {
     pub id: QueueItemId,
+    /// Database track ID — set for tracks loaded from DB, used for downloads.
+    pub db_id: Option<i64>,
     pub path: PathBuf,
     pub title: String,
     pub artist: String,
@@ -133,6 +135,8 @@ pub enum QueueEntryStatus {
 #[derive(Debug, Clone)]
 pub struct QueueEntry {
     pub id: QueueItemId,
+    /// Database track ID — set for tracks loaded from DB, used for downloads.
+    pub db_id: Option<i64>,
     pub path: PathBuf,
     pub title: String,
     pub artist: String,
@@ -618,6 +622,35 @@ impl SharedPlayerState {
             .collect()
     }
 
+    /// Get all playlist items that are Pending and have a db_id.
+    /// Returns `(db_id, QueueItemId)` pairs suitable for the download queue.
+    pub fn pending_downloads(&self) -> Vec<(i64, QueueItemId)> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .filter(|item| matches!(item.load_state, LoadState::Pending))
+            .filter_map(|item| item.db_id.map(|db_id| (db_id, item.id)))
+            .collect()
+    }
+
+    /// Get the db_id for a specific playlist item.
+    pub fn item_db_id(&self, id: QueueItemId) -> Option<i64> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .find(|item| item.id == id)
+            .and_then(|item| item.db_id)
+    }
+
+    /// Get the load state of a specific playlist item.
+    pub fn item_load_state(&self, id: QueueItemId) -> Option<LoadState> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .find(|item| item.id == id)
+            .map(|item| item.load_state.clone())
+    }
+
     // --- Snapshot helpers for undo ---
 
     /// Get the full playlist snapshot (items + cursor) for undo of ClearPlaylist.
@@ -795,6 +828,7 @@ impl SharedPlayerState {
 
             entries.push(QueueEntry {
                 id: item.id,
+                db_id: item.db_id,
                 path: item.path.clone(),
                 title: item.title.clone(),
                 artist: item.artist.clone(),
@@ -828,6 +862,7 @@ mod tests {
     fn make_item(title: &str, load_state: LoadState) -> PlaylistItem {
         PlaylistItem {
             id: QueueItemId::new(),
+            db_id: None,
             path: PathBuf::from(format!("/music/{title}.flac")),
             title: title.to_string(),
             artist: "Artist".to_string(),
@@ -1044,6 +1079,7 @@ mod tests {
     fn make_album_item(title: &str, album: &str, album_artist: &str) -> PlaylistItem {
         PlaylistItem {
             id: QueueItemId::new(),
+            db_id: None,
             path: PathBuf::from(format!("/music/{title}.flac")),
             title: title.to_string(),
             artist: "Artist".to_string(),
@@ -1169,5 +1205,53 @@ mod tests {
         assert_eq!(items[1].id, id_d);
         assert_eq!(items[2].id, id_a);
         assert_eq!(items[3].id, id_c);
+    }
+
+    // --- pending_downloads ---
+
+    #[test]
+    fn test_pending_downloads_collects_pending_with_db_id() {
+        let state = SharedPlayerState::new();
+        let mut item_a = ready_item("local");
+        item_a.db_id = None;
+
+        let mut item_b = pending_item("remote-1");
+        item_b.db_id = Some(10);
+        let id_b = item_b.id;
+
+        let mut item_c = ready_item("cached");
+        item_c.db_id = Some(20);
+
+        let mut item_d = pending_item("remote-2");
+        item_d.db_id = Some(30);
+        let id_d = item_d.id;
+
+        // Pending without db_id — should NOT appear (no way to download).
+        let item_e = pending_item("orphan");
+
+        state.add_items(vec![item_a, item_b, item_c, item_d, item_e]);
+
+        let pending = state.pending_downloads();
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending[0], (10, id_b));
+        assert_eq!(pending[1], (30, id_d));
+    }
+
+    #[test]
+    fn test_item_db_id_and_load_state() {
+        let state = SharedPlayerState::new();
+        let mut item = pending_item("track");
+        item.db_id = Some(42);
+        let id = item.id;
+        state.add_items(vec![item]);
+
+        assert_eq!(state.item_db_id(id), Some(42));
+        assert!(matches!(
+            state.item_load_state(id),
+            Some(LoadState::Pending)
+        ));
+
+        state.update_load_state(id, LoadState::Ready);
+        assert!(matches!(state.item_load_state(id), Some(LoadState::Ready)));
     }
 }

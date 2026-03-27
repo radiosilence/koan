@@ -3,6 +3,7 @@ use rayon::prelude::*;
 mod analyze;
 mod cache;
 mod config;
+pub(crate) mod download_queue;
 mod enqueue;
 pub mod graphql;
 mod library;
@@ -383,6 +384,7 @@ fn open_db_optional() -> Option<koan_core::db::connection::Database> {
 fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> PlaylistItem {
     PlaylistItem {
         id: QueueItemId::new(),
+        db_id: Some(track.id),
         path: path.to_path_buf(),
         title: track.title.clone(),
         artist: track.artist_name.clone(),
@@ -402,6 +404,7 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
     match koan_core::index::metadata::read_metadata(p) {
         Ok(meta) => PlaylistItem {
             id: QueueItemId::new(),
+            db_id: None,
             path: p.to_path_buf(),
             title: meta.title,
             artist: meta.artist,
@@ -428,6 +431,7 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
                 .into_owned();
             PlaylistItem {
                 id: QueueItemId::new(),
+                db_id: None,
                 path: p.to_path_buf(),
                 title,
                 artist: String::new(),
@@ -460,6 +464,7 @@ pub(crate) fn playlist_item_from_track(
     });
     PlaylistItem {
         id: QueueItemId::new(),
+        db_id: Some(track.id),
         path: dest,
         title: track.title.clone(),
         artist: track.artist_name.clone(),

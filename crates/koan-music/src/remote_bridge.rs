@@ -240,6 +240,7 @@ fn poll_and_stream_loop(
                     if !jukebox {
                         let item = PlaylistItem {
                             id: queue_id,
+                            db_id: None,
                             path: dest,
                             title: track.title.clone(),
                             artist: track.artist.clone(),
@@ -291,6 +292,7 @@ fn poll_and_stream_loop(
                         .unwrap_or_else(|_| QueueItemId::new());
                     PlaylistItem {
                         id: qid,
+                        db_id: None,
                         path: PathBuf::from(format!("/remote/{}", e.queue_item_id)),
                         title: e.title.clone(),
                         artist: e.artist.clone(),

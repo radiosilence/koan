@@ -1132,6 +1132,7 @@ mod tests {
     fn make_item(title: &str) -> PlaylistItem {
         PlaylistItem {
             id: QueueItemId::new(),
+            db_id: None,
             path: PathBuf::from(format!("/music/{title}.flac")),
             title: title.to_string(),
             artist: String::new(),

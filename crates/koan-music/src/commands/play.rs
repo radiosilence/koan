@@ -6,8 +6,10 @@ use koan_core::config;
 use koan_core::db::queries;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
+use koan_core::player::state::LoadState;
 use owo_colors::OwoColorize;
 
+use super::download_queue::DownloadQueue;
 use super::{
     enqueue_playlist, install_terminal_panic_hook, load_picker_items, make_album_picker_items,
     open_db, parse_dropped_paths, playlist_items_from_paths,
@@ -111,6 +113,9 @@ pub fn cmd_play(
 
     let (state, _timeline, viz_snapshot, tx) = Player::spawn();
 
+    // Spawn the persistent download queue — lives for the app's lifetime.
+    let download_queue = DownloadQueue::spawn(tx.clone(), state.clone(), log_buffer.clone());
+
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {
         let db_path = config::db_path();
@@ -144,13 +149,12 @@ pub fn cmd_play(
         // Resolve ALL tracks in the background — the TUI starts immediately
         // with a loading overlay. No more blank terminal during downloads.
         let tx_bg = tx.clone();
-        let log_bg = log_buffer.clone();
-        let state_bg = state.clone();
+        let dq_bg = download_queue.clone();
         std::thread::Builder::new()
             .name("koan-resolve".into())
             .spawn(move || {
                 // CLI play: always append and start playing.
-                enqueue_playlist(ids, PickerAction::AppendAndPlay, tx_bg, log_bg, state_bg);
+                enqueue_playlist(ids, PickerAction::AppendAndPlay, tx_bg, dq_bg);
             })
             .expect("failed to spawn resolve thread");
     } else if !paths.is_empty() {
@@ -197,6 +201,13 @@ pub fn cmd_play(
             .map(|i| i.to_playlist_item())
             .collect();
         if !items.is_empty() {
+            // Collect pending items that need re-downloading.
+            let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = items
+                .iter()
+                .filter(|i| matches!(i.load_state, LoadState::Pending))
+                .filter_map(|i| i.db_id.map(|db_id| (db_id, i.id)))
+                .collect();
+
             // Find the cursor item by path match.
             let cursor_id = persisted.cursor_path.as_ref().and_then(|cp| {
                 items
@@ -214,6 +225,16 @@ pub fn cmd_play(
                 restored_position_ms = Some(persisted.position_ms);
             }
             expects_playback = true;
+
+            // Feed pending items into the download queue — the persistent
+            // workers + cursor watcher handle the rest.
+            if !pending.is_empty() {
+                log::info!(
+                    "session restore: {} pending downloads submitted to queue",
+                    pending.len()
+                );
+                download_queue.enqueue(pending);
+            }
         }
     }
     // No paths/ids and no library — just open the TUI empty.
@@ -229,6 +250,7 @@ pub fn cmd_play(
         start_in_library,
         expects_playback,
         restored_position_ms,
+        download_queue,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
@@ -275,6 +297,8 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
 
+    let download_queue = DownloadQueue::spawn(cmd_tx.clone(), state.clone(), log_buffer.clone());
+
     // Give the poller a moment to populate state.
     std::thread::sleep(Duration::from_millis(300));
 
@@ -286,6 +310,7 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         true, // start in library mode for remote
         false,
         None,
+        download_queue,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
@@ -293,6 +318,7 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
     BufferedLogger::clear_buffer();
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_tui(
     state: Arc<koan_core::player::state::SharedPlayerState>,
     viz_snapshot: Arc<koan_core::audio::viz::VizSnapshot>,
@@ -301,6 +327,7 @@ fn run_tui(
     start_in_library: bool,
     expects_playback: bool,
     restored_position_ms: Option<u64>,
+    download_queue: DownloadQueue,
 ) -> std::io::Result<()> {
     use crossterm::{
         event::{
@@ -343,6 +370,7 @@ fn run_tui(
         log_buffer,
         db_path,
         target_fps,
+        download_queue.clone(),
     );
 
     if expects_playback {
@@ -554,8 +582,7 @@ fn run_tui(
         // Handle picker result — enqueue in background.
         if let Some((kind, ids, action)) = app.picker_result.take() {
             let tx_bg = tx.clone();
-            let log_bg = app.log_buffer.clone();
-            let state_bg = app.state.clone();
+            let dq_bg = download_queue.clone();
 
             app.loading_message = Some("loading...".into());
 
@@ -586,7 +613,7 @@ fn run_tui(
                     };
 
                     if !track_ids.is_empty() {
-                        enqueue_playlist(track_ids, action, tx_bg, log_bg, state_bg);
+                        enqueue_playlist(track_ids, action, tx_bg, dq_bg);
                     }
                 })
                 .ok();

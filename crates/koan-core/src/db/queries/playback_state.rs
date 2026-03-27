@@ -16,6 +16,10 @@ pub struct PersistedQueueItem {
     pub track_number: Option<i64>,
     pub disc: Option<i64>,
     pub duration_ms: Option<u64>,
+    /// Database track ID — enables re-downloading on session restore.
+    /// Absent in pre-v0.18.2 persisted state; serde default covers migration.
+    #[serde(default)]
+    pub db_id: Option<i64>,
 }
 
 /// Full persisted playback state.
@@ -95,6 +99,7 @@ impl PersistedQueueItem {
             track_number: item.track_number,
             disc: item.disc,
             duration_ms: item.duration_ms,
+            db_id: item.db_id,
         }
     }
 
@@ -114,6 +119,7 @@ impl PersistedQueueItem {
         };
         crate::player::state::PlaylistItem {
             id: crate::player::state::QueueItemId::new(),
+            db_id: self.db_id,
             path,
             title: self.title.clone(),
             artist: self.artist.clone(),
@@ -155,6 +161,7 @@ mod tests {
                 track_number: Some(1),
                 disc: Some(1),
                 duration_ms: Some(240_000),
+                db_id: None,
             },
             PersistedQueueItem {
                 path: "/music/track2.flac".into(),
@@ -167,6 +174,7 @@ mod tests {
                 track_number: Some(2),
                 disc: Some(1),
                 duration_ms: Some(180_000),
+                db_id: None,
             },
         ];
 
@@ -201,6 +209,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
+            db_id: None,
         }];
         save_playback_state(&conn, &items, None, 0).unwrap();
         assert!(load_playback_state(&conn).unwrap().is_some());
@@ -222,6 +231,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
+            db_id: Some(42),
         };
         let playlist_item = item.to_playlist_item();
         assert!(
@@ -232,6 +242,7 @@ mod tests {
             "missing file should be Pending, got {:?}",
             playlist_item.load_state,
         );
+        assert_eq!(playlist_item.db_id, Some(42), "db_id should be preserved");
     }
 
     #[test]
@@ -250,6 +261,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
+            db_id: None,
         };
         let playlist_item = item.to_playlist_item();
         assert!(
@@ -276,6 +288,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
+            db_id: None,
         }];
         save_playback_state(&conn, &items1, None, 100).unwrap();
 
@@ -290,6 +303,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
+            db_id: None,
         }];
         save_playback_state(&conn, &items2, Some("/music/new.flac"), 999).unwrap();
 
@@ -297,5 +311,70 @@ mod tests {
         assert_eq!(loaded.items.len(), 1);
         assert_eq!(loaded.items[0].title, "New");
         assert_eq!(loaded.position_ms, 999);
+    }
+
+    #[test]
+    fn test_db_id_round_trip() {
+        let conn = test_conn();
+        let items = vec![
+            PersistedQueueItem {
+                path: "/music/local.flac".into(),
+                title: "Local".into(),
+                artist: "A".into(),
+                album_artist: "A".into(),
+                album: "B".into(),
+                year: None,
+                codec: None,
+                track_number: None,
+                disc: None,
+                duration_ms: None,
+                db_id: None,
+            },
+            PersistedQueueItem {
+                path: "/cache/remote.flac".into(),
+                title: "Remote".into(),
+                artist: "C".into(),
+                album_artist: "C".into(),
+                album: "D".into(),
+                year: None,
+                codec: None,
+                track_number: None,
+                disc: None,
+                duration_ms: None,
+                db_id: Some(99),
+            },
+        ];
+        save_playback_state(&conn, &items, None, 0).unwrap();
+
+        let loaded = load_playback_state(&conn).unwrap().unwrap();
+        assert_eq!(
+            loaded.items[0].db_id, None,
+            "local track should have no db_id"
+        );
+        assert_eq!(
+            loaded.items[1].db_id,
+            Some(99),
+            "remote track db_id should persist"
+        );
+    }
+
+    #[test]
+    fn test_db_id_migration_from_old_format() {
+        // Simulate old-format JSON that lacks the db_id field.
+        let conn = test_conn();
+        let old_json = r#"[{"path":"/music/track.flac","title":"T","artist":"A","album_artist":"A","album":"B","year":null,"codec":null,"track_number":null,"disc":null,"duration_ms":null}]"#;
+        conn.execute(
+            "INSERT INTO playback_state (id, queue_json, cursor_id, position_ms, updated_at)
+             VALUES (1, ?1, NULL, 0, datetime('now'))",
+            rusqlite::params![old_json],
+        )
+        .unwrap();
+
+        let loaded = load_playback_state(&conn).unwrap().unwrap();
+        assert_eq!(loaded.items.len(), 1);
+        assert_eq!(
+            loaded.items[0].db_id, None,
+            "missing field should default to None"
+        );
     }
 }

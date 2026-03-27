@@ -10,9 +10,11 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use koan_core::audio::viz::VizSnapshot;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
-    PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState,
+    LoadState, PlaybackState, QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState,
     VisibleQueueSnapshot,
 };
+
+use crate::commands::download_queue::DownloadQueue;
 
 use super::library::LibraryState;
 use super::lyrics::LyricsState;
@@ -291,6 +293,9 @@ pub struct App {
     pub radio_rx: Option<crossbeam_channel::Receiver<Vec<i64>>>,
     /// Radio config.
     pub radio_config: koan_core::config::RadioConfig,
+
+    /// Persistent download queue — used to trigger downloads for pending items.
+    pub download_queue: DownloadQueue,
 }
 
 impl App {
@@ -301,6 +306,7 @@ impl App {
         log_buffer: Arc<Mutex<Vec<String>>>,
         db_path: PathBuf,
         ticks_per_sec: u8,
+        download_queue: DownloadQueue,
     ) -> Self {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
         let ticker_divisor = {
@@ -364,6 +370,7 @@ impl App {
             radio_pending: false,
             radio_rx: None,
             radio_config: cfg.radio,
+            download_queue,
         }
     }
 
@@ -2419,13 +2426,27 @@ impl App {
     }
 
     /// Play the track at the current cursor position (Enter / double-click).
+    /// If the track is Pending (needs download), triggers a priority download
+    /// so playback starts via stream-when-ready.
     fn play_at_cursor(&mut self) {
         let idx = self.queue.cursor;
         let visible = self.visible_queue();
         if let Some(entry) = visible.get(idx)
             && entry.status != QueueEntryStatus::Playing
         {
-            self.tx.send(PlayerCommand::Play(entry.id)).ok();
+            let queue_id = entry.id;
+            let db_id = entry.db_id;
+            let is_pending = self
+                .state
+                .item_load_state(queue_id)
+                .is_some_and(|s| matches!(s, LoadState::Pending));
+
+            self.tx.send(PlayerCommand::Play(queue_id)).ok();
+
+            // Trigger priority download if the item needs it.
+            if is_pending && let Some(db_id) = db_id {
+                self.download_queue.prioritize(db_id, queue_id);
+            }
         }
     }
 

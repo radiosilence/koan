@@ -135,6 +135,7 @@ mod tests {
                 track_number: Some(1),
                 disc: Some(1),
                 duration_ms: Some(240_000),
+                db_id: None,
             },
             PersistedQueueItem {
                 path: "/music/track2.flac".into(),
@@ -147,6 +148,7 @@ mod tests {
                 track_number: Some(2),
                 disc: Some(1),
                 duration_ms: Some(180_000),
+                db_id: None,
             },
         ]
     }

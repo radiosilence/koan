@@ -145,6 +145,7 @@ pub fn track_to_playlist_item(
 
     PlaylistItem {
         id: QueueItemId::new(),
+        db_id: Some(track.id),
         path,
         title: track.title.clone(),
         artist: track.artist_name.clone(),

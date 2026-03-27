@@ -9,6 +9,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{LoadState, QueueItemId, SharedPlayerState};
 use owo_colors::OwoColorize;
 
+use super::download_queue::DownloadQueue;
 use super::{cache_path_for_track, open_db, playlist_item_from_track};
 use crate::tui::app::PickerAction;
 
@@ -16,17 +17,18 @@ use crate::tui::app::PickerAction;
 /// - Append: add to end of queue, don't play.
 /// - AppendAndPlay: add to end, play the first added track.
 /// - ReplaceQueue: clear queue, add tracks, play from top.
+///
+/// Pending remote tracks are submitted to the persistent `DownloadQueue`.
 pub fn enqueue_playlist(
     ids: Vec<i64>,
     action: PickerAction,
     tx: crossbeam_channel::Sender<PlayerCommand>,
-    log_buf: Arc<Mutex<Vec<String>>>,
-    state: Arc<SharedPlayerState>,
+    download_queue: DownloadQueue,
 ) {
     let db = open_db();
     let cfg = config::Config::load().unwrap_or_default();
 
-    // Phase 1: Build all PlaylistItems from DB (fast, no downloads).
+    // Build all PlaylistItems from DB (fast, no downloads).
     let mut items: Vec<koan_core::player::state::PlaylistItem> = Vec::new();
     let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
 
@@ -71,111 +73,9 @@ pub fn enqueue_playlist(
         return;
     }
 
-    // Phase 2: Download pending items.
-    //
-    // N worker threads drain the shared queue in order. When the cursor changes
-    // to a pending track, we yank it (+ the next track) OUT of the queue and
-    // spin up extra threads immediately — no waiting for a worker to free up.
-    let num_workers = cfg.remote.download_workers.max(1);
-
-    let work_queue: Arc<Mutex<std::collections::VecDeque<(i64, QueueItemId)>>> =
-        Arc::new(Mutex::new(pending_downloads.into()));
-
-    std::thread::scope(|s| {
-        // Watcher: detect cursor changes -> spawn priority download threads
-        // and bump same-album tracks to front of work queue for gapless playback.
-        let wq = work_queue.clone();
-        let state_ref = &state;
-        let tx_ref = &tx;
-        let log_ref = &log_buf;
-        let cfg_ref = &cfg;
-        s.spawn(move || {
-            let mut last_cursor: Option<QueueItemId> = None;
-            loop {
-                std::thread::sleep(std::time::Duration::from_millis(30));
-
-                // Exit when queue is fully drained.
-                if wq.lock().unwrap().is_empty() {
-                    break;
-                }
-
-                let current = state_ref.cursor();
-                if current == last_cursor {
-                    continue;
-                }
-                last_cursor = current;
-
-                let Some(cursor_id) = current else {
-                    continue;
-                };
-
-                // Build set of same-album QueueItemIds so we can bump them
-                // to the front of the work queue (gapless album continuity).
-                let album_mate_ids: std::collections::HashSet<QueueItemId> = state_ref
-                    .same_album_item_ids(cursor_id)
-                    .into_iter()
-                    .collect();
-
-                // Pull cursor track from the queue so workers don't also
-                // download it, then reorder remaining items.
-                let mut priority_items = Vec::new();
-                {
-                    let mut q = wq.lock().unwrap();
-                    if let Some(pos) = q.iter().position(|(_, qid)| *qid == cursor_id) {
-                        priority_items.push(q.remove(pos).unwrap());
-
-                        // Bump same-album tracks to front of work queue
-                        // (preserving their relative order).
-                        if !album_mate_ids.is_empty() {
-                            let mut album_items = std::collections::VecDeque::new();
-                            let mut other_items = std::collections::VecDeque::new();
-                            for item in q.drain(..) {
-                                if album_mate_ids.contains(&item.1) {
-                                    album_items.push_back(item);
-                                } else {
-                                    other_items.push_back(item);
-                                }
-                            }
-                            album_items.extend(other_items);
-                            *q = album_items;
-                        }
-
-                        // Also grab the next track for gapless lookahead — after
-                        // reordering, the front is a same-album track if one exists.
-                        if q.front().is_some() {
-                            priority_items.push(q.pop_front().unwrap());
-                        }
-                    }
-                }
-
-                // Fire off immediate download threads for priority items.
-                for (db_id, queue_id) in priority_items {
-                    log::info!("priority: spawning immediate download for {:?}", queue_id);
-                    s.spawn(move || {
-                        download_track(db_id, queue_id, tx_ref, log_ref, state_ref, cfg_ref);
-                    });
-                }
-            }
-        });
-
-        // Worker pool: drain the queue in order.
-        for _ in 0..num_workers {
-            let wq = work_queue.clone();
-            let tx_ref = &tx;
-            let log_ref = &log_buf;
-            let state_ref = &state;
-            let cfg_ref = &cfg;
-            s.spawn(move || {
-                loop {
-                    let item = wq.lock().unwrap().pop_front();
-                    let Some((db_id, queue_id)) = item else {
-                        break;
-                    };
-                    download_track(db_id, queue_id, tx_ref, log_ref, state_ref, cfg_ref);
-                }
-            });
-        }
-    });
+    // Submit pending downloads to the persistent queue.
+    // Workers + cursor watcher handle prioritization automatically.
+    download_queue.enqueue(pending_downloads);
 }
 
 /// Resolve a track to its path + load state (without downloading).

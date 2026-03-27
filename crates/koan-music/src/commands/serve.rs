@@ -1600,6 +1600,7 @@ async fn create_playlist(
                     track_number: track.track_number.map(|n| n as i64),
                     disc: track.disc.map(|n| n as i64),
                     duration_ms: track.duration_ms.map(|d| d as u64),
+                    db_id: Some(tid),
                 });
             }
         }
