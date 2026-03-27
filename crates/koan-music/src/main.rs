@@ -154,6 +154,10 @@ struct Cli {
     #[arg(long)]
     port: Option<u16>,
 
+    /// Bind address for the API server (default: 127.0.0.1)
+    #[arg(long)]
+    bind: Option<std::net::IpAddr>,
+
     /// Enable Subsonic REST API on this port (e.g. --subsonic 4040)
     #[arg(long)]
     subsonic: Option<u16>,
@@ -328,13 +332,13 @@ fn main() {
     // MCP mode: headless MCP server on stdio.
     // Daemon mode: fork a headless child and exit.
     if cli.daemonize {
-        commands::cmd_serve_daemon(cli.port, cli.subsonic, cli.playground);
+        commands::cmd_serve_daemon(cli.port, cli.bind, cli.subsonic, cli.playground);
         return;
     }
 
     // Headless mode: GraphQL API server, no TUI.
     if cli.headless {
-        commands::cmd_serve(cli.port, cli.subsonic, cli.playground);
+        commands::cmd_serve(cli.port, cli.bind, cli.subsonic, cli.playground);
         return;
     }
 
@@ -349,6 +353,7 @@ fn main() {
         let api_opts = if api_enabled {
             Some(commands::ApiOptions {
                 port: cli.port.or(Some(cfg.graphql.port)),
+                bind: cli.bind.or(Some(cfg.graphql.bind)),
                 subsonic: cli.subsonic.or(cfg.graphql.subsonic_port),
                 playground: cli.playground || cfg.graphql.playground,
             })

@@ -190,6 +190,10 @@ pub struct GraphqlConfig {
     pub enabled: bool,
     /// GraphQL API port (default: 4000).
     pub port: u16,
+    /// Bind address for the API server (default: 127.0.0.1).
+    /// Use "0.0.0.0" to listen on all interfaces (NOT RECOMMENDED without auth).
+    #[serde(default = "default_bind")]
+    pub bind: std::net::IpAddr,
     /// Enable GraphiQL web IDE at GET /graphql.
     pub playground: bool,
     /// Enable Subsonic REST API on this port. Omit or null to disable.
@@ -197,11 +201,16 @@ pub struct GraphqlConfig {
     pub subsonic_port: Option<u16>,
 }
 
+fn default_bind() -> std::net::IpAddr {
+    std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+}
+
 impl Default for GraphqlConfig {
     fn default() -> Self {
         Self {
             enabled: true,
             port: 4000,
+            bind: default_bind(),
             playground: false,
             subsonic_port: None,
         }
@@ -644,6 +653,43 @@ output_device = "External Speakers"
         assert_eq!(
             cfg.playback.output_device.as_deref(),
             Some("External Speakers")
+        );
+    }
+
+    #[test]
+    fn test_graphql_bind_defaults_to_localhost() {
+        let cfg = GraphqlConfig::default();
+        assert_eq!(
+            cfg.bind,
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
+        );
+    }
+
+    #[test]
+    fn test_graphql_bind_from_toml() {
+        let toml_str = r#"
+[graphql]
+bind = "0.0.0.0"
+port = 5000
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            cfg.graphql.bind,
+            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        );
+        assert_eq!(cfg.graphql.port, 5000);
+    }
+
+    #[test]
+    fn test_graphql_bind_omitted_defaults_to_localhost() {
+        let toml_str = r#"
+[graphql]
+port = 4000
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            cfg.graphql.bind,
+            std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)
         );
     }
 
