@@ -20,6 +20,7 @@
 
 - **Album-aware download priority** — when a track starts playing, remaining tracks from the same album are bumped to the front of the download queue, ensuring gapless album playback ([#87](https://github.com/radiosilence/koan/issues/87))
 - **CONTRIBUTING.md** — contribution guidelines ([#82](https://github.com/radiosilence/koan/issues/82))
+- **Environment variable config overrides** — `KOAN_CONFIG_DIR`, `KOAN_REMOTE_URL`, `KOAN_REMOTE_USERNAME`, `KOAN_REMOTE_PASSWORD` override file-based config at runtime. Env-sourced values are tracked and excluded from `save()`/`save_local()` to prevent secrets leaking to disk ([#83](https://github.com/radiosilence/koan/pull/83))
 
 ## v0.17.0 (2026-03-26)
 
