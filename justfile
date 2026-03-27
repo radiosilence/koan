@@ -17,6 +17,13 @@ check:
 fmt:
     cargo fmt
 
+# Install dev build to ~/.local/bin/koan-dev
+install-dev:
+    cargo build --release
+    mkdir -p ~/.local/bin
+    cp target/release/koan ~/.local/bin/koan-dev
+    @echo "Installed to ~/.local/bin/koan-dev"
+
 # Clean build artifacts
 clean:
     cargo clean
