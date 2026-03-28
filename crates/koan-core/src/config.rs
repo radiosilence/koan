@@ -59,6 +59,9 @@ pub struct PlaybackConfig {
     /// Persisted by name (not ID) since IDs can change across reboots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_device: Option<String>,
+    /// Album art width in terminal columns (default: 24).
+    /// Height is always width/2 (square via halfblock rendering).
+    pub art_size: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -113,6 +116,7 @@ impl Default for PlaybackConfig {
             show_fps: false,
             pre_amp_db: 0.0,
             output_device: None,
+            art_size: 24,
         }
     }
 }

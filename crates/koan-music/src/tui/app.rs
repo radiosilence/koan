@@ -152,8 +152,6 @@ pub struct ArtState {
     pub cover_art: super::cover_art::CoverArtCache,
     /// Cached cover art for now-playing transport display.
     pub now_playing_art: super::cover_art::CoverArtCache,
-    /// Last computed art height so layout stays stable when art disappears.
-    pub last_art_height: u16,
 }
 
 pub struct App {
@@ -292,6 +290,8 @@ pub struct App {
     pub radio_rx: Option<crossbeam_channel::Receiver<Vec<i64>>>,
     /// Radio config.
     pub radio_config: koan_core::config::RadioConfig,
+    /// Album art width in terminal columns. Height = width/2 (square via halfblocks).
+    pub art_size: u16,
 
     /// Persistent download queue — used to trigger downloads for pending items.
     pub download_queue: DownloadQueue,
@@ -368,6 +368,7 @@ impl App {
             radio_pending: false,
             radio_rx: None,
             radio_config: cfg.radio,
+            art_size: cfg.playback.art_size,
             download_queue,
         }
     }

@@ -19,11 +19,6 @@ use super::visualizer::SpectrumWidget;
 
 /// Height of the transport bar without album art.
 const TRANSPORT_HEIGHT_DEFAULT: u16 = 3;
-/// Desired art width in columns. Art is square-ish so height ~ width/2 cells.
-const ART_WIDTH: u16 = 24;
-/// Default art height (cell rows) assuming square artwork: ART_WIDTH / 2.
-/// Used as placeholder so the layout doesn't jump when art loads.
-const ART_HEIGHT_PLACEHOLDER: u16 = ART_WIDTH / 2;
 
 pub fn render(frame: &mut Frame, app: &mut App) {
     // Refresh the visible queue cache once per frame so all reads
@@ -33,20 +28,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     let area = frame.area();
 
     let has_art = app.art.now_playing_art.cached().is_some();
-    // Derive height from actual image aspect ratio at desired width.
-    // Always reserve art-sized space once we've had art, so the UI
-    // doesn't jump when switching between tracks with/without art.
-    let art_h = app.art.now_playing_art.cell_height_for_width(ART_WIDTH);
-    if art_h > 0 {
-        app.art.last_art_height = art_h;
-    }
-    // Always reserve placeholder space for art so the layout never jumps
-    // when art loads or when switching between tracks with/without art.
-    let transport_height = if app.art.last_art_height > 0 {
-        app.art.last_art_height.max(TRANSPORT_HEIGHT_DEFAULT)
-    } else {
-        ART_HEIGHT_PLACEHOLDER.max(TRANSPORT_HEIGHT_DEFAULT)
-    };
+    let art_width = app.art_size;
+    let art_height = art_width / 2; // square via halfblock rendering
+    let transport_height = art_height.max(TRANSPORT_HEIGHT_DEFAULT);
 
     // Main layout: transport | content (flex) | hints (1)
     let chunks = Layout::vertical([
@@ -72,15 +56,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .cloned();
 
     // Always reserve art space — placeholder keeps layout stable.
-    let art_area = Rect::new(chunks[0].x, chunks[0].y, ART_WIDTH, transport_height);
+    let art_area = Rect::new(chunks[0].x, chunks[0].y, art_width, transport_height);
     let text_area = {
         // Bottom-align the transport text (3 lines) within the full height.
         let text_height = 3u16.min(transport_height);
         let text_y = chunks[0].y + transport_height - text_height;
         Rect::new(
-            chunks[0].x + ART_WIDTH + 1,
+            chunks[0].x + art_width + 1,
             text_y,
-            chunks[0].width.saturating_sub(ART_WIDTH + 1),
+            chunks[0].width.saturating_sub(art_width + 1),
             text_height,
         )
     };
@@ -126,9 +110,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     if transport_height > TRANSPORT_HEIGHT_DEFAULT {
         let spectrum_height = transport_height - TRANSPORT_HEIGHT_DEFAULT;
         let spectrum_area = Rect::new(
-            chunks[0].x + ART_WIDTH + 1,
+            chunks[0].x + art_width + 1,
             chunks[0].y,
-            chunks[0].width.saturating_sub(ART_WIDTH + 1),
+            chunks[0].width.saturating_sub(art_width + 1),
             spectrum_height,
         );
         let spectrum = SpectrumWidget::new(&app.visualizer, &app.theme);
