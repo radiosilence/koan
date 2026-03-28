@@ -1,6 +1,6 @@
 # MCP Integration
 
-`koan --mcp` runs koan as a headless player controllable by Claude Desktop (or any MCP client). No TUI, no terminal -- just the audio engine and 2 tools exposed over the Model Context Protocol on stdio. The LLM reads the GraphQL schema, then drives everything through one `graphql` tool.
+`koan mcp` runs koan as a headless player controllable by Claude Desktop (or any MCP client). No TUI, no terminal -- just the audio engine and 2 tools exposed over the Model Context Protocol on stdio. The LLM reads the GraphQL schema, then drives everything through one `graphql` tool.
 
 ## Setup
 
@@ -13,7 +13,7 @@
   "mcpServers": {
     "koan": {
       "command": "koan",
-      "args": ["--mcp"]
+      "args": ["mcp"]
     }
   }
 }
@@ -26,7 +26,7 @@ If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the f
   "mcpServers": {
     "koan": {
       "command": "/opt/homebrew/bin/koan",
-      "args": ["--mcp"]
+      "args": ["mcp"]
     }
   }
 }
