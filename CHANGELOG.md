@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.18.2 (2026-03-28)
+
+### Changed
+
+- **Documentation rewrite** — slimmed README from 740 lines to a focused hook + install + quickstart + feature list + doc links. All detailed content moved to dedicated guides and references under `docs/`:
+  - `docs/getting-started.md` — progressive first-time setup tutorial
+  - `docs/guide/` — radio mode, remote servers, file organization, GraphQL API, MCP integration, headless server
+  - `docs/reference/` — configuration (all fields including previously undocumented `ticker_fps`, `target_fps`, `show_fps`, `art_size`, `output_device`), keybindings (every key in every mode), CLI reference
+  - `docs/recipes/` — troubleshooting, cache management
+
 ## v0.18.1 (2026-03-28)
 
 ### Changed

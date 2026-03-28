@@ -1,17 +1,14 @@
-# kōan
+# koan
 
 A music player for people who give a shit about audio quality.
 
 <img width="874" height="942" alt="Screenshot 2026-03-04 at 18 30 07" src="https://github.com/user-attachments/assets/99782de3-5683-4dd9-97b6-10782e8e4099" />
 
-
 Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library indexing, Subsonic/Navidrome integration, fb2k-style format strings. No Electron. No subscriptions. No bullshit.
 
 <img width="406" height="182" alt="Screenshot 2026-03-04 at 18 30 32" src="https://github.com/user-attachments/assets/d4fff1f7-7c1f-4aaa-87aa-41bd2b9c22f7" />
 
-## Getting started
-
-### Install
+## Install
 
 ```bash
 # homebrew (recommended)
@@ -41,85 +38,57 @@ sudo dnf install alsa-lib-devel dbus-devel
 sudo pacman -S alsa-lib dbus
 ```
 
-### Set up your music
+## 30-second quickstart
 
 ```bash
-# Create config directory with sensible defaults
-koan init
+koan init                                   # create config dir
+# edit ~/.config/koan/config.local.toml:
+#   [library]
+#   folders = ["/path/to/your/music"]
+koan scan                                   # index your library
+koan                                        # launch the TUI
 ```
 
-This creates `~/.config/koan/` with two config files. kōan needs at least one music source — local files, a remote server, or both.
+`space` to pause, `<`/`>` to skip, `p` to pick tracks, `a` for albums, `q` to quit. That's it.
 
-**Local files** — point kōan at your music directory:
-
-```toml
-# ~/.config/koan/config.local.toml
-[library]
-folders = ["/Volumes/Music/library"]
-```
-
-Then scan:
-
-```bash
-koan scan
-```
-
-Indexing runs in parallel — fast even for large collections.
-
-**Remote server (Navidrome/Subsonic):**
-
-If you run Navidrome, Subsonic, or anything with a Subsonic-compatible API:
+**Remote server?** If you run Navidrome or Subsonic:
 
 ```bash
 koan remote login https://music.example.com admin
 koan remote sync
-```
-
-Remote and local tracks merge seamlessly into one library — if the same track exists in both sources (matched by artist + album + title + track number), it becomes a single entry. Local files always take playback priority; remote is only used as a fallback if the local file is missing. Remote-only tracks download on first play and cache locally — subsequent plays are instant.
-
-Syncs are **incremental by default** — after the first full sync, subsequent runs only fetch albums added since the last sync. Use `--full` to force a complete re-sync. If a local drive is unplugged, tracks with remote backing are demoted to remote-only (streaming fallback) instead of deleted; when the drive comes back, the next scan re-merges them automatically.
-
-You can use both sources together. Run `koan remote sync` periodically (or after adding music to your server) to pull new tracks.
-
-### Play something
-
-```bash
-# Open the TUI (+ GraphQL API on port 4000)
 koan
-
-# Play files/directories directly
-koan ~/Music/Aphex\ Twin/
-koan ~/Music/album/*.flac
-
-# Headless server (no TUI)
-koan --headless
 ```
 
-The TUI launches immediately — no waiting. If tracks need downloading (remote library), they appear in the queue with animated spinners while loading in the background.
+Local and remote tracks merge into one library. Local files take playback priority; remote tracks stream with progressive download.
 
-### The TUI
+## What it does
 
-kōan is built around a full-screen terminal interface. The transport bar shows what's playing with album art (halfblock rendering) and a real-time spectrum analyzer, the queue groups tracks by album, and a hint bar at the bottom shows available keys for the current mode.
-
-**The basics:** `space` to pause, `<`/`>` to skip tracks, `,`/`.` or arrow keys to seek. `p` opens a fuzzy track picker, `a` for albums, `r` for artists. `l` opens the library browser for tree-style browsing. `L` opens a lyrics panel. `i` shows track info with cover art. `q` to quit.
-
-**Building a queue:** Use the pickers (`p`/`a`/`r`) or library browser (`l`) to find music. `Enter` appends to the queue, `Ctrl+Enter` appends and starts playing, `Ctrl+R` replaces the entire queue. You can also drag files from Finder straight into the terminal.
-
-**Editing the queue:** Press `e` to enter edit mode. Select tracks with shift-arrows or ctrl-click, `d` to delete, `j`/`k` to reorder. `Ctrl+Z` undoes any queue change, `Ctrl+Y` or `Ctrl+Shift+Z` to redo. Everything is mouse-friendly too — click, drag, scroll wheel all work.
-
-**Your DAC matters:** kōan sends bit-perfect audio to CoreAudio with automatic sample rate switching. No resampling, no mixing — the bits that left the encoder are the bits that hit your DAC. Run `koan devices` to see your audio outputs.
-
----
-
-## How it compares
+- **Bit-perfect playback** -- CoreAudio AUHAL / ALSA via cpal, automatic sample rate switching, no resampling
+- **Gapless transitions** -- decode thread keeps the ring buffer alive across track boundaries
+- **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
+- **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, spectrum analyzer, lyrics panel, mouse support
+- **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, favourite sync
+- **Radio mode** -- infinite play using Subsonic similarity, cached artist relationships, and genre matching
+- **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
+- **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for display and file organization
+- **File organization** -- rename/reorganize your library from inside the TUI using format string patterns
+- **GraphQL API** -- full programmatic control alongside the TUI, or headless. Relay pagination, rich filters, mutations for everything
+- **MCP server** -- `koan --mcp` exposes the player to Claude Desktop via Model Context Protocol
+- **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
+- **SQLite FTS5 search** -- full-text search across your entire library
+- **Media keys** -- macOS Control Center integration (play/pause, next/prev, now playing info)
+- **Lyrics** -- synced (LRC) and plain lyrics from LRCLIB, current line highlighting
+- **Spectrum analyzer** -- 48-band FFT on a dedicated thread, configurable frequency/amplitude scales
 
 <img width="815" height="598" alt="Screenshot 2026-03-04 at 18 30 43" src="https://github.com/user-attachments/assets/9dab1d13-5d48-4e60-8625-7d72dd2e7957" />
+
+## How it compares
 
 No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-style format strings, and file organization in one binary. Most either need a daemon, lack remote support, or skip the audiophile bits.
 
 ### TUI / terminal players
 
-| | kōan | ncmpcpp | cmus | musikcube | termusic | rmpc | stmp |
+| | koan | ncmpcpp | cmus | musikcube | termusic | rmpc | stmp |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **Language** | Rust | C++ | C | C++ | Rust | Rust | Go |
 | **Standalone** | **Yes** | No (MPD) | Yes | Yes | Yes | No (MPD) | No (Subsonic) |
@@ -127,31 +96,29 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Gapless** | **Yes** | Yes | Yes | Yes | Yes | Yes | No |
 | **Subsonic/Navidrome** | **Yes** | No | No | No | No | No | **Yes** |
 | **Local library** | **Yes** | Via MPD | Yes | Yes | Yes | Via MPD | No |
-| **Local + remote unified** | **Yes** | — | — | — | — | — | — |
-| **Album art** | **Halfblock** | Kitty¹ | No | No | Kitty/Sixel | Kitty/Sixel | No |
+| **Local + remote unified** | **Yes** | -- | -- | -- | -- | -- | -- |
+| **Album art** | **Halfblock** | Kitty | No | No | Kitty/Sixel | Kitty/Sixel | No |
 | **ReplayGain** | **Yes** | Via MPD | Yes | Yes | No | Via MPD | No |
 | **fb2k format strings** | **55+ functions** | Column fmt | Basic | No | No | Basic | No |
 | **File organization** | **Yes** | No | No | No | No | No | No |
 | **FTS search** | **SQLite FTS5** | MPD search | Filter | Text | Filter | MPD search | Basic |
 | **Queue undo/redo** | **100-deep** | No | No | No | No | No | No |
-| **Mouse support** | **Full** | Yes | Yes² | Basic | Yes | Yes | No |
-| **Media keys** | **macOS CC** | Via MPRIS | Via MPRIS | — | Via MPRIS | Via MPRIS | — |
-| **Drag & drop** | **Finder → TUI** | No | No | No | No | No | No |
+| **Mouse support** | **Full** | Yes | Yes | Basic | Yes | Yes | No |
+| **Media keys** | **macOS CC** | Via MPRIS | Via MPRIS | -- | Via MPRIS | Via MPRIS | -- |
+| **Drag & drop** | **Finder -> TUI** | No | No | No | No | No | No |
 | **Lyrics** | **Synced + plain** | Via MPD | No | Plugin | No | Via MPD | No |
 | **Spectrum analyzer** | **48-band FFT** | No | No | No | No | No | No |
 | **Favourites** | **Yes (syncs)** | Via MPD | No | Yes | No | Via MPD | **Yes** |
 | **Streaming playback** | **Yes (256KB)** | Via MPD | No | No | No | Via MPD | **Yes** |
 | **API / MCP** | **GraphQL + MCP** | MPD protocol | No | No | No | MPD protocol | No |
-| **Tag editing** | Soon³ | Via MPD | No | Yes | Yes | Via MPD | No |
-| **DSP / EQ** | Soon³ | Via MPD | Yes | Yes | No | Via MPD | No |
-| **Platforms** | macOS³ | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
+| **Tag editing** | Soon | Via MPD | No | Yes | Yes | Via MPD | No |
+| **DSP / EQ** | Soon | Via MPD | Yes | Yes | No | Via MPD | No |
+| **Platforms** | macOS | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
 | **Maintained** | Yes | Yes | Yes (2.12.0) | Slowing | Yes | Very active | Stale |
-
-¹ PR pending, not merged. ² Added in 2.12.0. ³ Planned — see [roadmap](/.claude/plans/).
 
 ### Desktop players (GUI)
 
-| | kōan | foobar2000 | Strawberry | DeaDBeeF |
+| | koan | foobar2000 | Strawberry | DeaDBeeF |
 |---|:---:|:---:|:---:|:---:|
 | **Type** | TUI | GUI | GUI (Qt) | GUI (GTK) |
 | **Bit-perfect** | **Yes** | Yes (WASAPI/ASIO) | Yes (Linux) | Yes (ALSA) |
@@ -165,567 +132,42 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Spectrum analyzer** | **48-band FFT** | Plugin | No | Plugin |
 | **Tag editing** | Soon | **Yes** | Yes | **Yes** |
 | **DSP / EQ** | Soon | **Yes (VST)** | Yes | Yes |
-| **Platforms** | macOS¹ | Windows/macOS | All | All |
-
-¹ Linux planned — see [roadmap](/.claude/plans/).
-
-### The gap kōan fills
-
-- **Only standalone TUI with Subsonic + bit-perfect.** stmp does Subsonic but has no gapless, no art, no local library. MPD clients need a separate daemon.
-- **Only TUI with fb2k-compatible format strings.** ncmpcpp has column formatting, but nothing close to `$if($stricmp(%album artist%,Various Artists),...)`.
-- **Only TUI with file organization.** No other terminal player can rename/reorganize your library from inside the player.
-- **Only TUI with queue undo/redo.** 100-deep stack. DeaDBeeF added this in v1.10.0 (2025) — no TUI has it.
-- **Only TUI with Finder drag & drop.** Drop files from macOS Finder directly into the terminal to enqueue.
-- **Only standalone TUI with synced lyrics.** Auto-fetches synced (LRC) or plain lyrics from LRCLIB — no API key needed. Current line highlights and scrolls with playback.
-- **Only TUI with a real-time spectrum analyzer.** 48-band FFT on a dedicated thread, A-weighted amplitude, peak hold markers — runs at 60fps without blocking the UI.
-- **Only TUI with a GraphQL API.** Full programmatic control with rich metadata filtering, nested queries, and named queue snapshots. MPD has a protocol; kōan has a modern API.
-
-### Coming soon
-
-- **Linux support** — ALSA/PipeWire backends via trait-based audio abstraction ([plan](/.claude/plans/01-linux-and-audio-backends.md))
-- **DSP pipeline** — EQ, headphone correction profiles, crossfeed ([plan](/.claude/plans/02-dsp-and-profiles.md))
-- **Tag editing** — inline editing, bulk operations, vimv-style external editor, MusicBrainz lookups ([plan](/.claude/plans/04-tagging.md))
-- **Artist metadata** — artist bios, images, similar artists, discography from MusicBrainz/Last.fm ([plan](/.claude/plans/09-artist-metadata.md))
+| **Platforms** | macOS | Windows/macOS | All | All |
 
 <img width="768" height="612" alt="Screenshot 2026-03-04 at 18 31 01" src="https://github.com/user-attachments/assets/0ad4879e-815f-42f3-8ebe-f6d01616bc96" />
 
----
+## Documentation
 
-## What works
-
-- **Bit-perfect playback** — CoreAudio AUHAL, no resampling, automatic device sample rate switching
-- **Gapless** — decode thread keeps the ring buffer alive across track boundaries, AudioUnit never stops
-- **Format support** — FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
-- **Ratatui TUI** — full-screen terminal UI with transport bar, album-grouped queue, fuzzy picker overlay, library browser, track info modal with embedded album art (halfblock rendering), real-time spectrum analyzer, scrollbar, mouse support (click-to-seek, click-to-play, drag-to-reorder, scrollbar drag, scroll wheel)
-- **Spectrum visualizer** — 80s hi-fi LED-segment spectrum analyzer rendered in the transport area. 48-band FFT on a dedicated analysis thread (never blocks the UI), configurable frequency scale (Bark/Mel/Log/Linear), sub-cell resolution using Unicode block characters, amplitude-based coloring (green/yellow/red near clipping), peak hold markers, and smooth exponential decay. Configurable via `[visualizer]` in config
-- **Media keys** — macOS Control Center integration via souvlaki (play/pause, next/prev, seek, now playing info with album art)
-- **Library indexing** — parallel metadata scanning with rayon, SQLite FTS5 full-text search
-- **Radio mode** — press `R` to toggle infinite play. Automatically queues similar tracks using Subsonic getSimilarSongs2, cached similar-artist relationships, and local genre/artist matching. Configurable via `[radio]` in config
-- **ReplayGain** — track and album modes with peak limiting. Reads ReplayGain tags via lofty at decode time, applies gain with a configurable pre-amp. Zero overhead when disabled
-- **Streaming playback** — remote tracks start playing after just 256KB is buffered instead of waiting for the full download. The seek bar dims the not-yet-downloaded portion and prevents seeking past it. Duration always shows the full track length. When the download finishes, full metadata and cover art are re-read
-- **Favourites** — press `f` to star/unstar tracks (persisted to SQLite). Favourites sync bidirectionally with Navidrome — starring in kōan stars on the server and vice versa
-- **Subsonic/Navidrome** — incremental remote library sync (only fetches new albums after first full sync), unified local+remote browsing, streaming playback with progressive download. Resilient deduplication — unplugging a local drive demotes tracks to remote-only streaming instead of deleting them; re-scanning re-merges automatically
-- **Format string engine** — fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for library views and file organization
-- **File organization** — in-TUI organize modal: select tracks → context menu → pick a named pattern → preview moves → execute. Playlist paths update live, playback continues uninterrupted
-- **Queue management** — playlist-style display (played tracks stay visible dimmed), album-grouped headers, edit mode with Finder-style multi-selection (shift/option-click, shift-arrows), reorder/delete, multi-drag, undo/redo (Ctrl+Z/Y, 100-deep stack covering all playlist operations). Mouse editing (select, drag-reorder) works in any mode; double-click to skip to any track (forward or backward). Drag/drop files from Finder into the terminal to add them to the queue. Queue and playback position persist across sessions — reopen koan to pick up where you left off (`--clear` to start fresh)
-- **Track deduplication** — 3-strategy match (path → remote ID → content) merges local and remote into one DB row. No duplicates in search or browse. Playback priority: local file → cached download → remote stream
-- **Lyrics** — toggle a lyrics side panel with `L`. Fetches synced (LRC) or plain lyrics automatically; synced lyrics highlight the current line and scroll with playback. Lyrics are cached in the database per track
-- **Proper artist handling** — track artist stored separately from album artist; compilations/VA albums display correctly
-- **GraphQL API** — always-on alongside the TUI (or `koan --headless` for API-only). Full Relay-style cursor pagination, rich metadata filters (year range, codec, genre, sample rate, bit depth, duration), nested queries (artists→albums→tracks), mutations for all playback/queue/device/favourite control, named queue snapshots, radio mode control. Optional GraphiQL at `/graphql`. Daemon mode (`-d`) for background operation
-- **MCP server** — `koan --mcp` exposes the player as an MCP server on stdio for Claude Desktop. 2 tools: `schema_sdl` + `graphql`. Claude reads the schema, drives everything through one tool
+| Guide | What it covers |
+|-------|---------------|
+| **[Getting Started](docs/getting-started.md)** | First-time setup, local and remote libraries, your first session |
+| **[Radio Mode](docs/guide/radio-mode.md)** | Infinite play, similarity scoring, tuning discovery |
+| **[Remote Servers](docs/guide/remote-servers.md)** | Navidrome/Subsonic setup, sync, streaming, cache management |
+| **[File Organization](docs/guide/file-organization.md)** | Rename and reorganize your library from the TUI |
+| **[GraphQL API](docs/guide/graphql-api.md)** | Headless operation, queries, mutations, daemon mode |
+| **[MCP Integration](docs/guide/mcp-integration.md)** | Claude Desktop setup, example prompts |
+| **[Headless Server](docs/guide/headless-server.md)** | Running koan as a background music server |
+| **[Configuration](docs/reference/configuration.md)** | All config fields, layered config, env var overrides |
+| **[Keybindings](docs/reference/keybindings.md)** | Every key in every mode |
+| **[CLI Reference](docs/reference/cli.md)** | All commands, flags, and shell completions |
+| **[Format Strings](docs/format-strings.md)** | fb2k-compatible template syntax and all 55+ functions |
+| **[Troubleshooting](docs/recipes/troubleshooting.md)** | Common issues and fixes |
+| **[Cache Management](docs/recipes/cache-management.md)** | Download cache, eviction, disk usage |
 
 ## Architecture
 
 ```
-Pure Rust.
-
-File → Symphonia → f32 samples → rtrb ring buffer → CoreAudio render callback → DAC
-
-Lock-free audio thread. See ARCHITECTURE.md for the full technical manual.
+File -> Symphonia -> f32 samples -> rtrb ring buffer -> CoreAudio/cpal callback -> DAC
 ```
 
-Two crates:
+Two crates: `koan-core` (audio engine, player, database, indexer) and `koan-music` (`koan` binary, TUI). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
-- `koan-core` — audio engine, player, database, indexer, format strings, file organization, remote client
-- `koan-music` — `koan` binary (Ratatui TUI)
+## Coming soon
 
-## Shell completions
-
-Dynamic completions that know your library — artist/album IDs tab-complete from the DB.
-
-```bash
-# zsh (add to .zshrc)
-source <(COMPLETE=zsh koan)
-
-# bash
-source <(COMPLETE=bash koan)
-
-# fish
-COMPLETE=fish koan | source
-```
-
-Then `koan --album <TAB>` shows your actual albums with artist names.
-
-## CLI reference
-
-```bash
-# setup
-koan init                     # create config directory with defaults
-koan scan                     # scan configured library folders
-koan scan --analyze           # scan + acoustic analysis in one pass
-
-# play (all top-level — `koan` IS play)
-koan                          # TUI + GraphQL API on :4000
-koan --library                # TUI in library browse mode
-koan ~/Music/album/           # play a directory (recursive)
-koan ~/Music/*.flac           # play specific files
-koan --album 5                # play album by ID (use tab completion)
-koan --artist 3               # play artist by ID
-koan --no-api                 # TUI only (no GraphQL server)
-koan --clear                  # clear persisted queue
-
-# server (binds to 127.0.0.1 by default)
-koan --headless                     # GraphQL API on 127.0.0.1:4000, no TUI
-koan --headless --playground        # with GraphiQL web IDE
-koan --headless --subsonic 4040     # + Subsonic REST on port 4040
-koan --port 8080                    # custom GraphQL port
-koan --bind 0.0.0.0                 # listen on all interfaces (⚠️ no auth)
-koan -d                             # background daemon
-koan -d --subsonic 4040             # daemon with Subsonic
-
-# remote TUI
-koan --server http://host:4000      # TUI connected to remote koan
-koan --server http://host:4000 --jukebox  # remote control only
-
-# search & info
-koan search "radiohead"       # text search (CLI output)
-koan library                  # library statistics
-
-# remote server
-koan remote login URL user    # authenticate with Subsonic/Navidrome server
-koan remote sync              # incremental sync (only new albums since last sync)
-koan remote sync --full       # full re-sync of entire remote library
-koan remote status            # show remote server info
-
-# utilities
-koan config                   # show resolved config from both layers
-koan devices                  # list audio output devices
-koan cache status             # show download cache size
-koan cache clear              # clear cached remote downloads
-koan probe track.flac         # show format/codec info for a file
-
-# mcp
-koan --mcp                    # MCP server on stdio (Claude Desktop)
-```
-
-### MCP server (Claude Desktop integration)
-
-`koan --mcp` runs koan as a headless player controllable by Claude Desktop (or any MCP client). No TUI, no terminal — just the audio engine and 2 tools (schema_sdl + graphql) exposed over the Model Context Protocol. The LLM reads the schema, drives everything through GraphQL.
-
-**Setup:**
-
-1. Make sure `koan` is on your PATH (or note the full path from `which koan`)
-
-2. Add to your Claude Desktop config (`~/Library/Application Support/Claude/claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "koan": {
-      "command": "koan",
-      "args": ["--mcp"]
-    }
-  }
-}
-```
-
-If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the full path:
-
-```json
-{
-  "mcpServers": {
-    "koan": {
-      "command": "/opt/homebrew/bin/koan",
-      "args": ["--mcp"]
-    }
-  }
-}
-```
-
-3. Restart Claude Desktop. You should see koan in the MCP server list (🔌 icon).
-
-4. Make sure you've run `koan scan` at least once so your library is indexed.
-
-**What you can ask Claude:**
-
-- "Play me some ambient music"
-- "What albums do I have by Aphex Twin?"
-- "Queue up Tri Repetae but skip the interludes"
-- "Pause" / "Skip this" / "What's playing?"
-- "Play something like what's on now but more upbeat"
-- "Search my library for anything with 'rain' in the title"
-- "Switch audio output to my DAC"
-- "Save this queue as 'techno friday'" / "Restore my chill mix"
-- "Turn on radio mode" / "Star this track"
-
-### GraphQL API
-
-The GraphQL API runs alongside the TUI by default (port 4000, bound to localhost). For headless operation, use `koan --headless`. Full programmatic control — everything the TUI can do, minus the visualizer. The server binds to `127.0.0.1` by default — use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in `[graphql]` config to expose on all interfaces (not recommended without auth).
-
-```bash
-# Headless server with GraphiQL IDE
-koan --headless --playground
-
-# Or as a daemon (for Claude Code / scripts)
-koan -d --playground
-```
-
-Then query at `http://localhost:4000/graphql`:
-
-```graphql
-# Find early FLAC albums
-{ albums(yearEnd: 1995, codec: "FLAC") { edges { node { title, artistName, date } } } }
-
-# Hi-res techno tracks
-{ tracks(genre: "techno", minSampleRate: 96000, minBitDepth: 24) { edges { node { title, artist, codec, sampleRate } } } }
-
-# Nested: artist → albums → tracks in one query
-{ artists(search: "Aphex") { edges { node { name, albums { edges { node { title, tracks { edges { node { title } } } } } } } } } }
-
-# What's playing?
-{ nowPlaying { state, positionMs, track { title, artist, codec, sampleRate, bitDepth } } }
-
-# Queue management
-mutation { replaceQueue(trackIds: [42, 43, 44]) { ok, addedCount } }
-mutation { saveSnapshot(name: "techno friday") { ok } }
-mutation { enableRadio { ok } }
-```
-
-Every query supports rich filtering — albums by year/codec/label/genre, tracks by genre/codec/sample rate/bit depth/duration, artists by genre. All string filters are case-insensitive substrings. The MCP server's `graphql` tool uses the same schema in-process (no HTTP round-trip)
-
-**Available tools:**
-
-| Category | Tools |
-|----------|-------|
-| Playback | `play`, `pause`, `resume`, `stop`, `next`, `previous`, `seek` |
-| Queue | `add_to_queue`, `insert_in_queue`, `remove_from_queue`, `clear_queue`, `replace_queue`, `get_queue`, `reorder_queue` |
-| Library | `search`, `list_artists`, `list_albums`, `list_tracks`, `get_track`, `library_stats` |
-| State | `now_playing`, `list_devices`, `set_device` |
-| Favourites | `favourite`, `unfavourite`, `list_favourites` |
-
-The LLM can chain these together for complex operations — "find all my 90s electronic albums, pick one at random, and queue it up" becomes a search → filter → add_to_queue → play sequence that Claude handles naturally.
-
-### Playback TUI
-
-During playback, a full-screen Ratatui TUI shows the transport bar, queue, and key hints. The queue never goes blank during downloads — pending tracks appear immediately with animated spinners.
-
-| Key     | Action                 |
-| ------- | ---------------------- |
-| `space` | pause / resume         |
-| `< >`   | previous / next track  |
-| `, .`   | seek ±10s              |
-| `←` `→` | seek ±10s              |
-| `/`     | search queue (jump to track) |
-| `p`     | pick tracks            |
-| `a`     | pick album             |
-| `r`     | pick artist            |
-| `i`     | track info             |
-| `z`     | zoom album art         |
-| `f`     | favourite / unfavourite |
-| `Ctrl+Z` | undo last queue change |
-| `Ctrl+Y` / `Ctrl+Shift+Z` | redo last undone change |
-| `l`     | library browser        |
-| `L`     | lyrics panel           |
-| `f`     | filter library (in library mode) |
-| `e`     | edit queue             |
-| `g`     | jump to start          |
-| `G`     | jump to end            |
-| `PgUp` / `Ctrl+U` | page up     |
-| `PgDn` / `Ctrl+D` | page down   |
-| `q`     | quit                   |
-
-**Drag/drop:** Drag files or folders from Finder into the terminal window to add them to the queue.
-
-**Picker confirm actions** (track/album/artist picker):
-
-| Key          | Action                                 |
-| ------------ | -------------------------------------- |
-| `Enter`      | Append to queue (don't start playing)  |
-| `Ctrl+Enter` | Append and play first added track      |
-| `Ctrl+R`     | Replace entire queue and play          |
-
-**Mouse** (works in any mode — modality is keyboard-only): double-click a queue track to skip to it (forward or backward); double-click a downloading track to prioritize and play it as soon as it finishes. Click the seek bar to jump, scroll wheel in queue. Single-click selects, drag to reorder. Ctrl-click for range selection, Option-click to toggle individual tracks, drag selected group to move all together. Scrollbar is clickable and draggable. In the fuzzy picker, click items to select, double-click to confirm, click outside to dismiss. In the library browser, click to select, double-click to expand/enter/enqueue; click queue pane to switch focus.
-
-**Queue edit mode** (`e`):
-
-| Key           | Action                   |
-| ------------- | ------------------------ |
-| `↑` `↓`       | navigate                 |
-| `Shift+↑` `↓` | extend selection         |
-| `d`           | remove selected track(s) |
-| `j` / `k`     | move selected down/up    |
-| `Ctrl+Z` / `Ctrl+Y` | undo / redo      |
-| `Space`        | context menu (organize)  |
-| `g`           | jump to start            |
-| `G`           | jump to end (shift-extends) |
-| `PgUp` / `PgDn` | page up/down           |
-| `⌥-click`     | toggle select            |
-| `Ctrl-click`  | range select             |
-| `Esc`         | exit edit mode           |
-
-### Queue display
-
-Tracks are grouped by album with headers showing album artist, year, album title, and codec. Track artist is shown inline only when it differs from the album artist (compilations, VA albums). Downloading tracks show progress percentage, waiting tracks show braille spinners. Double-clicked priority tracks show `>` with progress.
-
-```
- Limewax — (2007) Therapy Session 4 [FLAC]
-   > 01 Agent Orange                              4:56
-     02 Pigeons and Marshmellows feat. The Panacea 2:53
-     03 SPL — Fade                                 1:52
-     04 Icicle                                     2:27
-```
-
-### File organization
-
-Rename and reorganize your music library using fb2k-compatible format strings, directly from the TUI.
-
-Select tracks in edit mode (`e`) → `Space` to open the context menu → Organize → pick a named pattern from your config → preview the file moves → execute. Playlist paths update automatically, playback continues uninterrupted (Unix rename preserves open file descriptors). Ancillary files (cover.jpg, .cue, .log) move with the music. Empty directories are cleaned up.
-
-Files are organized into the **first configured library folder** (from `[library] folders` in your config). If you have multiple library folders, the first one is always the destination. The format pattern generates the relative path within that folder — e.g. with the `standard` pattern, a track becomes `<library>/Artist/(Year) Album/01. Title.flac`.
-
-Define organize patterns in your config — see [Configuration](#configuration) below and [docs/format-strings.md](docs/format-strings.md) for the full syntax reference.
-
-## Configuration
-
-kōan uses [figment](https://docs.rs/figment) for layered configuration. Four sources are merged in order — each layer overrides the one before it:
-
-```
-Defaults → config.toml → config.local.toml → KOAN_* env vars
-(lowest)                                      (highest priority)
-```
-
-| Layer | Path | Purpose |
-|-------|------|---------|
-| Defaults | (built-in) | Hardcoded sane defaults for every field |
-| `config.toml` | `~/.config/koan/config.toml` | Shareable base config — safe to commit to dotfiles |
-| `config.local.toml` | `~/.config/koan/config.local.toml` | Machine-specific paths, credentials (gitignored) |
-| Environment | `KOAN_*` vars | 12-factor overrides — highest priority, ideal for Docker/CI |
-
-Run `koan config` to see all layers and the fully resolved result (including which `KOAN_*` env vars are active).
-
-### Environment variable overrides
-
-Any config field can be overridden via environment variables using `KOAN_` prefix with `__` (double underscore) as the section separator:
-
-```
-KOAN_<SECTION>__<FIELD>=<value>
-```
-
-Examples:
-
-```bash
-# Remote server password (avoids writing secrets to files)
-export KOAN_REMOTE__PASSWORD="hunter2"
-
-# Change GraphQL API port
-export KOAN_GRAPHQL__PORT=8080
-
-# Bind API to all interfaces
-export KOAN_GRAPHQL__BIND="0.0.0.0"
-
-# Override playback FPS
-export KOAN_PLAYBACK__TARGET_FPS=30
-
-# Enable the GraphiQL playground
-export KOAN_GRAPHQL__PLAYGROUND=true
-
-# Set ReplayGain mode
-export KOAN_PLAYBACK__REPLAYGAIN=track
-```
-
-Field names match the TOML key in SCREAMING_SNAKE_CASE. Nested sections use `__`:
-- `[remote] password` → `KOAN_REMOTE__PASSWORD`
-- `[graphql] subsonic_port` → `KOAN_GRAPHQL__SUBSONIC_PORT`
-- `[playback] pre_amp_db` → `KOAN_PLAYBACK__PRE_AMP_DB`
-
-### Docker / CI usage
-
-Env vars make kōan easy to configure in containers and CI without config files:
-
-```bash
-# Docker example — headless server with remote backend
-docker run -e KOAN_REMOTE__ENABLED=true \
-           -e KOAN_REMOTE__URL=https://music.example.com \
-           -e KOAN_REMOTE__USERNAME=admin \
-           -e KOAN_REMOTE__PASSWORD="$NAVIDROME_PASSWORD" \
-           -e KOAN_GRAPHQL__BIND=0.0.0.0 \
-           -e KOAN_GRAPHQL__PORT=4000 \
-           -p 4000:4000 \
-           koan --headless
-```
-
-```yaml
-# CI — run tests against a specific config
-env:
-  KOAN_REMOTE__URL: ${{ secrets.NAVIDROME_URL }}
-  KOAN_REMOTE__PASSWORD: ${{ secrets.NAVIDROME_PASSWORD }}
-  KOAN_GRAPHQL__PORT: 4001
-```
-
-### `koan init`
-
-Creates the config directory at `~/.config/koan/` with everything kōan needs to run:
-
-```bash
-koan init
-```
-
-What it creates:
-
-| File | Purpose |
-|------|---------|
-| `config.toml` | Base config with all defaults (new fields are merged in without overwriting your customizations) |
-| `config.local.toml` | Template for machine-specific settings (library folders, remote server) |
-| `.gitignore` | Ignores `*.log`, `*.db`, `config.local.toml`, `cache/` |
-| `koan.db` | SQLite database (created if missing) |
-| `cache/` | Download cache directory |
-
-Running `koan init` on an existing setup is safe — it merges new default fields into your `config.toml` without touching values you've already changed, and skips `config.local.toml` if it exists.
-
-`library.folders` is deliberately excluded from `config.toml` (it's machine-specific and belongs in `config.local.toml`). This means you can commit `~/.config/koan/` to your dotfiles repo and share playback/visualizer/organize settings across machines while keeping library paths and credentials local.
-
-### Playback
-
-```toml
-# config.toml
-[playback]
-software_volume = false   # volume control in software (vs hardware/DAC) — not yet wired in
-replaygain = "album"      # off | track | album — applies gain from ReplayGain tags with peak limiting
-pre_amp_db = 0.0          # pre-amp gain in dB applied on top of ReplayGain (default: 0.0)
-```
-
-ReplayGain normalizes volume levels across tracks so you don't reach for the volume knob between a whisper-quiet jazz track and a wall-of-sound metal album. kōan reads standard ReplayGain tags (embedded by tools like `loudgain`, `r128gain`, foobar2000, etc.) at decode time and applies gain with peak limiting to prevent clipping.
-
-| Mode | Description |
-|------|-------------|
-| `off` | No gain adjustment. Original signal untouched. |
-| `track` | Per-track normalization. Every track plays at the same perceived loudness. Best for shuffled playlists. |
-| `album` | Per-album normalization. Preserves the dynamic range and intentional volume differences within an album (quiet intros, loud climaxes) while normalizing between albums. **(recommended)** |
-
-`pre_amp_db` adds a fixed gain on top of the ReplayGain adjustment. Positive values make everything louder (risk of clipping on hot tracks), negative values quieter. Useful if your ReplayGain-tagged library feels too quiet at the target level.
-
-### Library
-
-```toml
-# config.local.toml
-[library]
-folders = ["/Volumes/Music/library"]
-```
-
-### Remote server
-
-```toml
-# config.local.toml
-[remote]
-enabled = true
-url = "https://music.example.com"
-username = "admin"
-```
-
-Password is prompted by `koan remote login` and saved to `config.local.toml` (gitignored).
-
-```toml
-# config.local.toml or config.toml
-[remote]
-transcode_quality = "original"   # original | opus-128 | mp3-320 (default: original)
-download_workers = 5             # parallel download threads (default: 5)
-cache_limit = "50GB"             # max cache size — LRU eviction on startup (default: unlimited)
-cache_dir = "/custom/path"       # explicit cache dir (default: ~/.config/koan/cache)
-```
-
-### Visualizer
-
-```toml
-# config.toml
-[visualizer]
-enabled = true                # show spectrum analyzer in transport area (default: true)
-fps = 60                      # analysis thread update rate in Hz (default: 60)
-scale = "bark"                # frequency scale (default: bark)
-amplitude_scale = "aweight"     # amplitude scale (default: aweight)
-bar_decay_ms = 50             # how fast bars drop — half-life in ms (default: 50)
-peak_decay_ms = 180           # how long peak markers linger — half-life in ms (default: 180)
-```
-
-The spectrum analyzer renders above the transport text when album art is present. 48-band FFT with sub-cell resolution using Unicode block characters (`▁▂▃▄▅▆▇█`), peak hold markers (`▔`), and smooth exponential decay. Bars are colored by signal level — green at safe headroom, yellow when getting hot, red only near clipping (0dBFS). FFT runs on a dedicated analysis thread so the 60fps UI is never blocked.
-
-**Frequency scales** (`scale`) — controls how FFT bins map to bars (the X axis):
-
-| Scale | Description |
-|-------|-------------|
-| `bark` | Bark psychoacoustic scale — 24 critical bands, matches how your ears group frequencies. Best for music. **(default)** |
-| `mel` | Mel perceptual pitch scale — similar to Bark, widely used in speech/music analysis |
-| `log` | Logarithmic — equal spacing per octave. Familiar if you read spectrograms |
-| `linear` | Linear — equal Hz per bar. Bass is cramped, treble dominates. Analytical use |
-
-**Amplitude scales** (`amplitude_scale`) — controls how magnitudes map to bar height (the Y axis):
-
-| Scale | Description |
-|-------|-------------|
-| `aweight` | A-weighted (IEC 61672). Bars reflect perceived loudness — bass and extreme treble are attenuated to match human hearing sensitivity (Fletcher-Munson). **(default)** |
-| `perceptual` | A-weighting + gentle gamma curve. Same frequency correction with a boost to quiet signals so more of the display stays active |
-| `sqrt` | Square root curve — gentle boost to quiet bands, no frequency correction |
-| `linear` | Raw dB-normalized magnitude. No correction. Quiet stuff barely visible, technically accurate |
-
-Set `enabled = false` to hide the visualizer entirely.
-
-### Organize patterns
-
-The TUI organize modal picks from named patterns defined in your config. Format strings use fb2k syntax — `%field%` for metadata, `$function()` for transforms, `[conditionals]` to omit blocks when fields are missing. See [docs/format-strings.md](docs/format-strings.md) for the full reference.
-
-```toml
-# config.toml
-[organize]
-default = "standard"      # which pattern the modal selects by default
-
-[organize.patterns]
-standard = "%album artist%/(%date%) %album%/%tracknumber%. %title%"
-va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$left(%date%,4)')' ])%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%"
-flat = "%artist% - %title%"
-```
-
-The `va-aware` pattern handles compilations: if the album artist is "Various Artists", it includes the per-track artist in the filename and omits the redundant year prefix. The `$stricmp`, `$if`, `$left`, `$num` functions work the same as in foobar2000.
-
-### GraphQL API
-
-```toml
-# config.toml
-[graphql]
-enabled = true                # run API alongside TUI (default: true, false = --no-api)
-port = 4000                   # API port (default: 4000)
-bind = "127.0.0.1"           # bind address (default: 127.0.0.1)
-playground = false            # enable GraphiQL IDE at GET /graphql (default: false)
-subsonic_port = 4040          # optional Subsonic REST API port (default: disabled)
-```
-
-Set `bind = "0.0.0.0"` to listen on all interfaces — there's no auth, so only do this on trusted networks.
-
-### Radio
-
-Radio mode (`R` in the TUI) queues similar tracks automatically. Scoring uses Subsonic getSimilarSongs2, cached artist relationships, and local genre/artist matching.
-
-```toml
-# config.toml
-[radio]
-lookahead = 5                 # tracks to keep queued ahead (default: 5)
-batch_size = 5                # tracks added per refill (default: 5)
-use_subsonic = true           # use Subsonic similarity when available (default: true)
-history_window = 200          # don't repeat last N tracks (default: 200)
-seed_window = 5               # recent tracks used as seed for similarity (default: 5)
-discovery_weight = 0.3        # 0.0 = familiar only, 1.0 = maximise discovery (default: 0.3)
-```
-
-### Discovery
-
-Acoustic analysis settings for radio mode's similarity scoring.
-
-```toml
-# config.toml
-[discovery]
-analysis_on_scan = false      # run acoustic analysis during library scan (default: false)
-acoustic_weight = 0.5         # weight of acoustic similarity in radio scoring 0.0..1.0 (default: 0.5)
-```
-
-Run `koan scan --analyze` to compute acoustic features for your library. Higher `acoustic_weight` gives radio mode more "sounds like" awareness vs. metadata-based matching.
-
-### All paths
-
-| File | Location |
-|------|----------|
-| Config (base) | `~/.config/koan/config.toml` |
-| Config (local) | `~/.config/koan/config.local.toml` |
-| Database | `~/.config/koan/koan.db` |
-| Download cache | `~/.config/koan/cache/` |
-| Log file | `~/.config/koan/koan.log` |
+- **Linux support** -- ALSA/PipeWire backends via trait-based audio abstraction ([plan](/.claude/plans/01-linux-and-audio-backends.md))
+- **DSP pipeline** -- EQ, headphone correction profiles, crossfeed ([plan](/.claude/plans/02-dsp-and-profiles.md))
+- **Tag editing** -- inline editing, bulk operations, vimv-style external editor ([plan](/.claude/plans/04-tagging.md))
+- **Artist metadata** -- bios, images, similar artists from MusicBrainz/Last.fm ([plan](/.claude/plans/09-artist-metadata.md))
 
 ## Dev
 
@@ -734,6 +176,8 @@ just check    # test + clippy
 just fmt      # cargo fmt
 just cli      # cargo run -p koan-music -- <args>
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
 
