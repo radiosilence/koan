@@ -68,7 +68,6 @@ impl CoverArtCache {
         self.image.as_ref()
     }
 
-
     /// Clear the cache.
     pub fn clear(&mut self) {
         self.path = None;
