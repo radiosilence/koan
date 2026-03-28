@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.18.3 (2026-03-28)
+
+### Fixed
+
+- **Docs: `koan --mcp` → `koan mcp`** — MCP is a subcommand, not a flag. Fixed in CLI reference, GraphQL API, MCP integration guide, and README
+- **Docs: removed hallucinated Docker sections** — no Docker image exists. Removed from headless server guide and configuration reference
+- **Docs: GraphQL operations table** — fixed snake_case names to match actual camelCase schema, added missing queries (track, randomTracks, fuzzySearch, lyrics, similarTracks, coverArt, radioStatus, similarArtists, playHistory) and mutations (organizePreview/Execute/Undo, triggerScan, triggerRemoteSync, createShare, toggleFavourite, undo/redo, moveInQueue, clearDevice)
+- **Docs: radio mode scoring signals** — replaced inaccurate "cached Subsonic artist relationships" with the actual implementation: live ListenBrainz ML similarity + MusicBrainz relationship lookups (both with local caching), plus Subsonic, genre/era, acoustic, and random fallback signals
+- **Docs: missing CLI commands** — added `koan analyze`, `koan completions`, `scan --force`, `scan [PATH]`
+- **Docs: missing V keybinding** — added visualizer toggle (`V`) to keybindings reference
+
 ## v0.18.2 (2026-03-28)
 
 ### Changed

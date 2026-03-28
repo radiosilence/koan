@@ -37,6 +37,7 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `i` | Track info modal (codec, sample rate, cover art) |
 | `z` | Zoom album art |
 | `L` | Toggle lyrics panel |
+| `V` | Toggle visualizer |
 | `R` | Toggle radio mode |
 | `f` | Favourite / unfavourite current track |
 | `q` | Quit |

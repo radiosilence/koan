@@ -55,21 +55,6 @@ export KOAN_GRAPHQL__BIND=0.0.0.0
 export KOAN_GRAPHQL__PLAYGROUND=true
 ```
 
-## Docker
-
-```bash
-docker run -e KOAN_REMOTE__ENABLED=true \
-           -e KOAN_REMOTE__URL=https://music.example.com \
-           -e KOAN_REMOTE__USERNAME=admin \
-           -e KOAN_REMOTE__PASSWORD="$NAVIDROME_PASSWORD" \
-           -e KOAN_GRAPHQL__BIND=0.0.0.0 \
-           -e KOAN_GRAPHQL__PORT=4000 \
-           -p 4000:4000 \
-           koan --headless
-```
-
-All config fields are overridable via `KOAN_*` environment variables. See [Configuration](../reference/configuration.md) for the full list.
-
 ## Remote TUI
 
 Connect a TUI from another machine to a running headless koan:

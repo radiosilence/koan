@@ -105,15 +105,31 @@ All string filters are case-insensitive substrings. Relay-style cursor paginatio
 
 ## Available operations
 
+### Queries
+
+| Category | Operations |
+|----------|-----------|
+| **Library** | `artists`, `albums`, `tracks`, `track`, `randomTracks`, `fuzzySearch`, `libraryStats` |
+| **Playback** | `nowPlaying`, `queue`, `devices`, `lyrics`, `coverArt` |
+| **Favourites** | `favourites` |
+| **Snapshots** | `snapshots` |
+| **Radio** | `radioStatus`, `similarTracks`, `similarArtists` |
+| **History** | `playHistory` |
+
+### Mutations
+
 | Category | Operations |
 |----------|-----------|
 | **Playback** | `play`, `pause`, `resume`, `stop`, `next`, `previous`, `seek` |
-| **Queue** | `add_to_queue`, `insert_in_queue`, `remove_from_queue`, `clear_queue`, `replace_queue`, `get_queue`, `reorder_queue` |
-| **Library** | `search`, `list_artists`, `list_albums`, `list_tracks`, `get_track`, `library_stats` |
-| **State** | `now_playing`, `list_devices`, `set_device` |
-| **Favourites** | `favourite`, `unfavourite`, `list_favourites` |
-| **Snapshots** | `save_snapshot`, `restore_snapshot`, `list_snapshots`, `delete_snapshot` |
-| **Radio** | `enable_radio`, `disable_radio` |
+| **Queue** | `addToQueue`, `replaceQueue`, `removeFromQueue`, `moveInQueue`, `clearQueue` |
+| **Device** | `setDevice`, `clearDevice` |
+| **Favourites** | `favourite`, `unfavourite`, `toggleFavourite` |
+| **Snapshots** | `saveSnapshot`, `restoreSnapshot`, `deleteSnapshot` |
+| **Radio** | `enableRadio`, `disableRadio` |
+| **Organize** | `organizePreview`, `organizeExecute`, `organizeUndo` |
+| **Library** | `triggerScan`, `triggerRemoteSync` |
+| **Sharing** | `createShare` |
+| **Undo** | `undo`, `redo` |
 
 ## Subsonic REST API
 
@@ -127,4 +143,4 @@ This runs on a separate port from the GraphQL API. Useful for connecting Subsoni
 
 ## MCP server
 
-The MCP server (`koan --mcp`) uses the same GraphQL schema in-process (no HTTP round-trip). See [MCP Integration](mcp-integration.md) for Claude Desktop setup.
+The MCP server (`koan mcp`) uses the same GraphQL schema in-process (no HTTP round-trip). See [MCP Integration](mcp-integration.md) for Claude Desktop setup.

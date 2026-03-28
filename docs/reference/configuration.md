@@ -51,21 +51,9 @@ Field names match the TOML key in SCREAMING_SNAKE_CASE. Nested sections use `__`
 - `[graphql] subsonic_port` -> `KOAN_GRAPHQL__SUBSONIC_PORT`
 - `[playback] pre_amp_db` -> `KOAN_PLAYBACK__PRE_AMP_DB`
 
-## Docker / CI usage
+## CI usage
 
-Env vars make koan easy to configure in containers and CI without config files:
-
-```bash
-# Docker -- headless server with remote backend
-docker run -e KOAN_REMOTE__ENABLED=true \
-           -e KOAN_REMOTE__URL=https://music.example.com \
-           -e KOAN_REMOTE__USERNAME=admin \
-           -e KOAN_REMOTE__PASSWORD="$NAVIDROME_PASSWORD" \
-           -e KOAN_GRAPHQL__BIND=0.0.0.0 \
-           -e KOAN_GRAPHQL__PORT=4000 \
-           -p 4000:4000 \
-           koan --headless
-```
+Env vars make koan easy to configure in CI without config files:
 
 ```yaml
 # CI -- run tests against a specific config
