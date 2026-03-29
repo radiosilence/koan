@@ -10,19 +10,15 @@ Press `R` in the TUI to toggle radio mode. That's it. koan starts adding tracks 
 
 Radio mode uses a multi-signal scoring system to find tracks similar to what you're currently listening to:
 
-1. **ListenBrainz similar artists** -- ML-based artist similarity fetched live from the ListenBrainz API. Results are cached locally so subsequent lookups are instant.
+1. **Subsonic similarity** (`use_subsonic`) -- if you have a remote server configured, koan queries `getSimilarSongs2` for server-side recommendations. This is the strongest signal when available.
 
-2. **MusicBrainz relationships** -- fetches artist relationships (collaborators, band members, associated acts) from the MusicBrainz API via MBID lookups. Also cached locally. Rate-limited per MusicBrainz terms of service.
+2. **Cached artist relationships** -- koan builds a local cache of "similar artist" relationships from your Subsonic server. Even when offline, these cached relationships inform radio selections.
 
-3. **Subsonic similarity** (`use_subsonic`) -- if you have a remote server configured, koan queries `getSimilarSongs2` for server-side recommendations and caches the results.
+3. **Genre matching** -- tracks sharing genres with the current seed tracks get a relevance boost.
 
-4. **Genre and era matching** -- tracks sharing genres and release era with the current seed tracks get a relevance boost.
+4. **Artist matching** -- other tracks by the same artist (or similar artists) score higher.
 
-5. **Same-artist tracks** -- other tracks by the same artist or related artists score higher. Local library fallback when external APIs aren't available.
-
-6. **Acoustic similarity** -- if you've run `koan scan --analyze`, radio mode factors in acoustic features (spectral centroid, energy, tempo) via vector KNN. Control the weight with `[discovery] acoustic_weight`.
-
-7. **Random library tracks** -- final fallback when other signals don't produce enough candidates.
+5. **Acoustic similarity** -- if you've run `koan scan --analyze`, radio mode factors in acoustic features (tempo, energy, spectral characteristics). Control the weight with `[discovery] acoustic_weight`.
 
 The scoring system blends these signals and avoids repeating recently-played tracks (controlled by `history_window`).
 
@@ -65,7 +61,7 @@ For the best radio experience, run acoustic analysis on your library:
 koan scan --analyze
 ```
 
-This computes acoustic features (spectral centroid, energy, tempo estimates) for each track. With acoustic analysis data available, radio mode can find tracks that genuinely *sound* similar, not just tracks that share metadata.
+This computes acoustic features (tempo, timbre, chroma, and spectral features — a 23-dimensional vector) for each track using bliss-audio. With acoustic analysis data available, radio mode can find tracks that genuinely *sound* similar, not just tracks that share metadata.
 
 Control how much weight acoustic similarity gets:
 

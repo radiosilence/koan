@@ -68,7 +68,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, spectrum analyzer, lyrics panel, mouse support
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, favourite sync
-- **Radio mode** -- infinite play using ListenBrainz/MusicBrainz similarity, Subsonic recommendations, genre matching, and acoustic analysis
+- **Radio mode** -- infinite play using Subsonic similarity, cached artist relationships, and genre matching
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for display and file organization
 - **File organization** -- rename/reorganize your library from inside the TUI using format string patterns

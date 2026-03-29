@@ -60,7 +60,6 @@ This removes all cached files. Remote tracks will need to re-download on next pl
 - Remote tracks start playing after **256KB** is buffered (progressive download)
 - Once fully downloaded, the file is cached and metadata/cover art are re-read
 - The seek bar dims the not-yet-downloaded portion during progressive playback
-- Double-clicking a downloading track in the queue prioritizes its download
 
 ## Drive unplugged scenario
 

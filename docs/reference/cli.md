@@ -39,7 +39,7 @@ koan --server http://host:4000 --jukebox  # remote control only
 ### MCP server
 
 ```bash
-koan mcp                          # MCP server on stdio (Claude Desktop)
+koan mcp                        # MCP server on stdio (Claude Desktop)
 ```
 
 See [MCP Integration](../guide/mcp-integration.md) for setup instructions.
@@ -66,12 +66,10 @@ Scan configured library folders and index metadata.
 
 ```bash
 koan scan                         # standard metadata scan
-koan scan /path/to/music          # scan a specific directory
-koan scan --force                 # force re-scan of all files (ignore cache)
 koan scan --analyze               # scan + acoustic analysis in one pass
 ```
 
-Scanning runs in parallel using rayon. Subsequent scans are incremental -- only new or modified files are re-indexed (based on mtime + size from the scan cache). Use `--force` to bypass the cache and re-index everything.
+Scanning runs in parallel using rayon. Subsequent scans are incremental -- only new or modified files are re-indexed (based on mtime + size from the scan cache).
 
 The `--analyze` flag computes acoustic features for radio mode similarity scoring. This is slower than a plain scan.
 
@@ -86,7 +84,7 @@ koan search "radiohead"
 koan search "kind of blue"
 ```
 
-Uses SQLite FTS5 for fast, typo-tolerant search. Results display as a tree: artist -> album -> track.
+Uses SQLite FTS5 for fast prefix and stemming search. Results display as a tree: artist -> album -> track.
 
 ---
 
@@ -145,7 +143,7 @@ Manage the download cache for remote tracks.
 
 ```bash
 koan cache status                 # show cache size and track count
-koan cache clear                  # clear all cached downloads
+koan cache clear                  # clear all cached downloads (--yes/-y to skip confirmation)
 koan cache evict                  # run LRU eviction based on cache_limit
 ```
 
@@ -165,39 +163,19 @@ Displays codec, sample rate, bit depth, channels, duration, and tag summary.
 
 ---
 
-## `koan analyze`
+## Shell completions
 
-Run acoustic analysis on the library for similarity features (used by radio mode).
-
-```bash
-koan analyze
-```
-
-This computes spectral centroid, energy, and tempo estimates for each track. Equivalent to running `koan scan --analyze` but without re-scanning metadata -- useful when your library is already indexed and you just want to add acoustic data.
-
----
-
-## `koan completions`
-
-Generate static shell completion scripts for the CLI structure.
-
-```bash
-koan completions zsh              # zsh completions
-koan completions bash             # bash completions
-koan completions fish             # fish completions
-```
-
-Add to your shell config:
+Dynamic completions that know your library -- artist/album IDs tab-complete from the database.
 
 ```bash
 # zsh (add to .zshrc)
-source <(koan completions zsh)
+source <(COMPLETE=zsh koan)
 
 # bash
-source <(koan completions bash)
+source <(COMPLETE=bash koan)
 
 # fish
-koan completions fish | source
+COMPLETE=fish koan | source
 ```
 
-koan also supports dynamic completions that know your library -- artist/album IDs tab-complete from the database. These are activated automatically via the `COMPLETE` env var when using a compatible shell.
+Then `koan --album <TAB>` shows your actual albums with artist names.

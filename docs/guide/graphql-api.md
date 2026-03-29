@@ -31,7 +31,7 @@ enabled = true                # run alongside TUI (default: true, --no-api disab
 port = 4000                   # API port (default: 4000)
 bind = "127.0.0.1"            # bind address (default: 127.0.0.1)
 playground = false             # GraphiQL IDE at GET /graphql (default: false)
-subsonic_port = 4040           # optional Subsonic REST API port (default: disabled)
+# subsonic_port = 4040         # optional Subsonic REST API port (default: disabled, set to enable)
 ```
 
 The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in config to expose on all interfaces. There's no authentication, so only do this on trusted networks.
@@ -105,31 +105,15 @@ All string filters are case-insensitive substrings. Relay-style cursor paginatio
 
 ## Available operations
 
-### Queries
-
-| Category | Operations |
-|----------|-----------|
-| **Library** | `artists`, `albums`, `tracks`, `track`, `randomTracks`, `fuzzySearch`, `libraryStats` |
-| **Playback** | `nowPlaying`, `queue`, `devices`, `lyrics`, `coverArt` |
-| **Favourites** | `favourites` |
-| **Snapshots** | `snapshots` |
-| **Radio** | `radioStatus`, `similarTracks`, `similarArtists` |
-| **History** | `playHistory` |
-
-### Mutations
-
 | Category | Operations |
 |----------|-----------|
 | **Playback** | `play`, `pause`, `resume`, `stop`, `next`, `previous`, `seek` |
-| **Queue** | `addToQueue`, `replaceQueue`, `removeFromQueue`, `moveInQueue`, `clearQueue` |
-| **Device** | `setDevice`, `clearDevice` |
-| **Favourites** | `favourite`, `unfavourite`, `toggleFavourite` |
-| **Snapshots** | `saveSnapshot`, `restoreSnapshot`, `deleteSnapshot` |
-| **Radio** | `enableRadio`, `disableRadio` |
-| **Organize** | `organizePreview`, `organizeExecute`, `organizeUndo` |
-| **Library** | `triggerScan`, `triggerRemoteSync` |
-| **Sharing** | `createShare` |
-| **Undo** | `undo`, `redo` |
+| **Queue** | `add_to_queue`, `insert_in_queue`, `remove_from_queue`, `clear_queue`, `replace_queue`, `get_queue`, `reorder_queue` |
+| **Library** | `search`, `list_artists`, `list_albums`, `list_tracks`, `get_track`, `library_stats` |
+| **State** | `now_playing`, `list_devices`, `set_device` |
+| **Favourites** | `favourite`, `unfavourite`, `list_favourites` |
+| **Snapshots** | `save_snapshot`, `restore_snapshot`, `list_snapshots`, `delete_snapshot` |
+| **Radio** | `enable_radio`, `disable_radio` |
 
 ## Subsonic REST API
 

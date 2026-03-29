@@ -43,7 +43,7 @@ Another koan instance (or another process) is using port 4000. Either:
 
 - Check that `[library] folders` in `config.local.toml` points to the right directory
 - koan scans recursively -- you only need the top-level directory
-- Supported formats: FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV, AIFF
+- Supported formats: FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV, AIFF, APE, M4A
 - Run `koan config` to verify the resolved config
 
 ### Duplicate tracks after remote sync
