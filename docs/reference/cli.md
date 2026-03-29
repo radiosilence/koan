@@ -2,22 +2,25 @@
 
 koan is a single binary with subcommands. Running `koan` with no subcommand launches the TUI player.
 
-## Play (default)
+## `koan play`
 
-`koan` is the play command. All top-level flags are play flags.
+Play audio files or open the TUI player. Running `koan` with no subcommand is equivalent to `koan play`.
 
 ```bash
-koan                              # TUI + GraphQL API on :4000
-koan ~/Music/album/               # play a directory (recursive)
-koan ~/Music/*.flac               # play specific files
-koan --album 5                    # play album by ID (use tab completion)
-koan --artist 3                   # play artist by ID
-koan --library                    # TUI in library browse mode
-koan --clear                      # clear persisted queue
-koan --no-api                     # TUI only (no GraphQL server)
+koan                                    # TUI + GraphQL API on :4000
+koan play                               # same as above
+koan play ~/Music/album/                # play a directory (recursive)
+koan play ~/Music/*.flac                # play specific files
+koan play --album 5                     # play album by ID (use tab completion)
+koan play --artist 3                    # play artist by ID
+koan play --library                     # TUI in library browse mode
+koan play --clear                       # clear persisted queue
+koan --no-api                           # TUI only (no GraphQL server)
 ```
 
 ### Server flags
+
+These are root-level flags (not under `play`).
 
 ```bash
 koan --headless                   # GraphQL API on 127.0.0.1:4000, no TUI
@@ -32,8 +35,8 @@ koan -d --subsonic 4040           # daemon with Subsonic
 ### Remote TUI
 
 ```bash
-koan --server http://host:4000          # TUI connected to remote koan
-koan --server http://host:4000 --jukebox  # remote control only
+koan play --server http://host:4000          # TUI connected to remote koan
+koan play --server http://host:4000 --jukebox  # remote control only
 ```
 
 ### MCP server
@@ -178,4 +181,4 @@ source <(COMPLETE=bash koan)
 COMPLETE=fish koan | source
 ```
 
-Then `koan --album <TAB>` shows your actual albums with artist names.
+Then `koan play --album <TAB>` shows your actual albums with artist names.

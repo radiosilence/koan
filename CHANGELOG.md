@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **CLI: `koan play` subcommand** — play-related args (`paths`, `--album`, `--artist`, `--id`, `--library`, `--clear`, `--server`, `--jukebox`) moved from the root command to `koan play`. Running bare `koan` still launches the TUI. This fixes zsh tab completions which broke when positional paths were on the root struct alongside subcommands ([#116](https://github.com/radiosilence/koan/issues/116))
+
 ## v0.18.3 (2026-03-28)
 
 ### Fixed
