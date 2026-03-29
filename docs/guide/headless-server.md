@@ -44,7 +44,7 @@ enabled = true            # redundant in headless mode, but controls TUI+API mod
 port = 4000               # GraphQL API port
 bind = "127.0.0.1"        # bind address
 playground = false         # GraphiQL IDE
-subsonic_port = 4040       # Subsonic REST API port (0 = disabled)
+subsonic_port = 4040       # Subsonic REST API port (default: disabled, set port to enable)
 ```
 
 Or via environment variables:
@@ -54,6 +54,21 @@ export KOAN_GRAPHQL__PORT=8080
 export KOAN_GRAPHQL__BIND=0.0.0.0
 export KOAN_GRAPHQL__PLAYGROUND=true
 ```
+
+## Docker
+
+```bash
+docker run -e KOAN_REMOTE__ENABLED=true \
+           -e KOAN_REMOTE__URL=https://music.example.com \
+           -e KOAN_REMOTE__USERNAME=admin \
+           -e KOAN_REMOTE__PASSWORD="$NAVIDROME_PASSWORD" \
+           -e KOAN_GRAPHQL__BIND=0.0.0.0 \
+           -e KOAN_GRAPHQL__PORT=4000 \
+           -p 4000:4000 \
+           koan --headless
+```
+
+All config fields are overridable via `KOAN_*` environment variables. See [Configuration](../reference/configuration.md) for the full list.
 
 ## Remote TUI
 
