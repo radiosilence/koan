@@ -27,6 +27,7 @@ If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the f
     "koan": {
       "command": "/opt/homebrew/bin/koan",
       "args": ["--mcp"]
+||||||| f4afd4f
     }
   }
 }
