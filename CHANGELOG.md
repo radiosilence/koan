@@ -1,25 +1,20 @@
 # Changelog
 
-## Unreleased
+## v0.18.2 (2026-03-29)
 
 ### Changed
 
 - **CLI: `koan play` subcommand** — play-related args (`paths`, `--album`, `--artist`, `--id`, `--library`, `--clear`, `--server`, `--jukebox`) moved from the root command to `koan play`. Running bare `koan` still launches the TUI. This fixes zsh tab completions which broke when positional paths were on the root struct alongside subcommands ([#116](https://github.com/radiosilence/koan/issues/116))
 
-## v0.18.3 (2026-03-28)
-
 ### Fixed
 
-- **Docs: `koan --mcp` → `koan mcp`** — MCP is a subcommand, not a flag. Fixed in CLI reference, GraphQL API, MCP integration guide, and README
-- **Docs: removed hallucinated Docker sections** — no Docker image exists. Removed from headless server guide and configuration reference
-- **Docs: GraphQL operations table** — fixed snake_case names to match actual camelCase schema, added missing queries (track, randomTracks, fuzzySearch, lyrics, similarTracks, coverArt, radioStatus, similarArtists, playHistory) and mutations (organizePreview/Execute/Undo, triggerScan, triggerRemoteSync, createShare, toggleFavourite, undo/redo, moveInQueue, clearDevice)
-- **Docs: radio mode scoring signals** — replaced inaccurate "cached Subsonic artist relationships" with the actual implementation: live ListenBrainz ML similarity + MusicBrainz relationship lookups (both with local caching), plus Subsonic, genre/era, acoustic, and random fallback signals
-- **Docs: missing CLI commands** — added `koan analyze`, `koan completions`, `scan --force`, `scan [PATH]`
-- **Docs: missing V keybinding** — added visualizer toggle (`V`) to keybindings reference
-
-## v0.18.2 (2026-03-28)
-
-### Changed
+- **Tab completions** — zsh/bash/fish completions now correctly suggest subcommands instead of filesystem paths ([#116](https://github.com/radiosilence/koan/issues/116))
+- **Docs: `koan mcp`** — corrected all references from `--mcp` flag to `mcp` subcommand
+- **Docs: removed fabricated Docker content** — no Docker image exists
+- **Docs: GraphQL operations table** — fixed naming convention, added missing operations
+- **Docs: radio mode scoring** — corrected signal descriptions to match actual implementation
+- **Docs: added missing CLI commands** — `koan analyze`, `koan completions`, `scan --force`
+- **Docs: added missing `V` keybinding** for visualizer toggle
 
 - **Documentation rewrite** — slimmed README from 740 lines to a focused hook + install + quickstart + feature list + doc links. All detailed content moved to dedicated guides and references under `docs/`:
   - `docs/getting-started.md` — progressive first-time setup tutorial
