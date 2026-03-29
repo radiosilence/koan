@@ -109,12 +109,12 @@ Run `koan remote sync` periodically (or after adding music to your server) to pu
 koan
 
 # Play files or directories directly
-koan ~/Music/Aphex\ Twin/
-koan ~/Music/album/*.flac
+koan play ~/Music/Aphex\ Twin/
+koan play ~/Music/album/*.flac
 
 # Play by album or artist ID (use tab completion)
-koan --album 5
-koan --artist 3
+koan play --album 5
+koan play --artist 3
 ```
 
 The TUI launches immediately. If tracks need downloading (remote library), they appear in the queue with animated spinners while loading in the background.
@@ -169,7 +169,7 @@ source <(COMPLETE=bash koan)
 COMPLETE=fish koan | source
 ```
 
-Then `koan --album <TAB>` shows your actual albums with artist names.
+Then `koan play --album <TAB>` shows your actual albums with artist names.
 
 ## What's next?
 
