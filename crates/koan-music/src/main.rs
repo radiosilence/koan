@@ -108,39 +108,6 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    // --- Playback args (top-level, previously under `koan play`) ---
-    /// Paths to audio files
-    #[arg(global = false)]
-    paths: Vec<PathBuf>,
-
-    /// Track IDs from the library database
-    #[arg(long = "id", num_args = 1..)]
-    ids: Vec<i64>,
-
-    /// Play an album by ID
-    #[arg(long, add = ArgValueCandidates::new(complete_albums))]
-    album: Option<i64>,
-
-    /// Play all tracks by an artist ID
-    #[arg(long, add = ArgValueCandidates::new(complete_artists))]
-    artist: Option<i64>,
-
-    /// Open the TUI in library browse mode
-    #[arg(long, short = 'l')]
-    library: bool,
-
-    /// Clear persisted queue instead of restoring it
-    #[arg(long)]
-    clear: bool,
-
-    /// Connect to a remote koan server (e.g. http://host:4000)
-    #[arg(long)]
-    server: Option<String>,
-
-    /// Jukebox mode: server plays audio, client is remote control only
-    #[arg(long, requires = "server")]
-    jukebox: bool,
-
     // --- Server flags (unified process) ---
     /// Run headless (no TUI) — GraphQL API only
     #[arg(long)]
@@ -173,6 +140,39 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Play audio files or open the TUI player
+    Play {
+        /// Paths to audio files
+        paths: Vec<PathBuf>,
+
+        /// Track IDs from the library database
+        #[arg(long = "id", num_args = 1..)]
+        ids: Vec<i64>,
+
+        /// Play an album by ID
+        #[arg(long, add = ArgValueCandidates::new(complete_albums))]
+        album: Option<i64>,
+
+        /// Play all tracks by an artist ID
+        #[arg(long, add = ArgValueCandidates::new(complete_artists))]
+        artist: Option<i64>,
+
+        /// Open the TUI in library browse mode
+        #[arg(long, short = 'l')]
+        library: bool,
+
+        /// Clear persisted queue instead of restoring it
+        #[arg(long)]
+        clear: bool,
+
+        /// Connect to a remote koan server (e.g. http://host:4000)
+        #[arg(long)]
+        server: Option<String>,
+
+        /// Jukebox mode: server plays audio, client is remote control only
+        #[arg(long, requires = "server")]
+        jukebox: bool,
+    },
     /// Run as MCP server on stdio (for Claude Desktop / MCP clients)
     Mcp,
     /// Scan a folder for audio files and index them
@@ -285,81 +285,96 @@ fn main() {
 
     BufferedLogger::init();
 
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    let command = cli.command.take();
 
-    // Subcommands take priority — they're standalone operations.
-    if let Some(command) = cli.command {
-        match command {
-            Commands::Scan {
-                path,
-                force,
-                analyze,
-            } => {
-                commands::cmd_scan(path.as_deref(), force);
-                if analyze {
-                    commands::cmd_analyze();
-                }
-            }
-            Commands::Mcp => {
-                commands::cmd_mcp();
-                return;
-            }
-            Commands::Analyze => commands::cmd_analyze(),
-            Commands::Search { query } => commands::cmd_search(&query),
-            Commands::Library => commands::cmd_library(),
-            Commands::Probe { path } => commands::cmd_probe(&path),
-            Commands::Devices => commands::cmd_devices(),
-            Commands::Config => commands::cmd_config(),
-            Commands::Remote(sub) => match sub {
-                RemoteCommands::Login { url, username } => {
-                    commands::cmd_remote_login(&url, &username)
-                }
-                RemoteCommands::Sync { full } => commands::cmd_remote_sync(full),
-                RemoteCommands::Status => commands::cmd_remote_status(),
-            },
-            Commands::Init => commands::cmd_init(),
-            Commands::Cache(sub) => match sub {
-                CacheCommands::Status => commands::cmd_cache_status(),
-                CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
-                CacheCommands::Evict => {
-                    let cfg = config::Config::load().unwrap_or_default();
-                    let freed = commands::evict_cache(&cfg, true);
-                    if freed == 0 {
-                        println!("cache within limit, nothing to evict");
-                    }
-                }
-            },
-            Commands::Completions { shell } => {
-                clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
-            }
-        }
-        return;
-    }
-
-    // No subcommand — unified player process.
-
-    // MCP mode: headless MCP server on stdio.
-    // Daemon mode: fork a headless child and exit.
+    // Daemon/headless are root-level server modes — handle before subcommands.
     if cli.daemonize {
         commands::cmd_serve_daemon(cli.port, cli.bind, cli.subsonic, cli.playground);
         return;
     }
-
-    // Headless mode: GraphQL API server, no TUI.
     if cli.headless {
         commands::cmd_serve(cli.port, cli.bind, cli.subsonic, cli.playground);
         return;
     }
 
-    // Default: TUI mode (with optional API server alongside).
-    // CLI flags override config values.
-    let cfg = koan_core::config::Config::load_or_default();
+    match command {
+        Some(Commands::Play {
+            paths,
+            ids,
+            album,
+            artist,
+            library,
+            clear,
+            server,
+            jukebox,
+        }) => {
+            start_player(
+                &cli, &paths, &ids, album, artist, library, clear, server, jukebox,
+            );
+        }
+        Some(Commands::Scan {
+            path,
+            force,
+            analyze,
+        }) => {
+            commands::cmd_scan(path.as_deref(), force);
+            if analyze {
+                commands::cmd_analyze();
+            }
+        }
+        Some(Commands::Mcp) => commands::cmd_mcp(),
+        Some(Commands::Analyze) => commands::cmd_analyze(),
+        Some(Commands::Search { query }) => commands::cmd_search(&query),
+        Some(Commands::Library) => commands::cmd_library(),
+        Some(Commands::Probe { path }) => commands::cmd_probe(&path),
+        Some(Commands::Devices) => commands::cmd_devices(),
+        Some(Commands::Config) => commands::cmd_config(),
+        Some(Commands::Remote(sub)) => match sub {
+            RemoteCommands::Login { url, username } => commands::cmd_remote_login(&url, &username),
+            RemoteCommands::Sync { full } => commands::cmd_remote_sync(full),
+            RemoteCommands::Status => commands::cmd_remote_status(),
+        },
+        Some(Commands::Init) => commands::cmd_init(),
+        Some(Commands::Cache(sub)) => match sub {
+            CacheCommands::Status => commands::cmd_cache_status(),
+            CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),
+            CacheCommands::Evict => {
+                let cfg = config::Config::load().unwrap_or_default();
+                let freed = commands::evict_cache(&cfg, true);
+                if freed == 0 {
+                    println!("cache within limit, nothing to evict");
+                }
+            }
+        },
+        Some(Commands::Completions { shell }) => {
+            clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
+        }
+        // No subcommand — default to TUI player (equivalent to `koan play`).
+        None => {
+            start_player(&cli, &[], &[], None, None, false, false, None, false);
+        }
+    }
+}
 
-    // Run LRU cache eviction on startup if a limit is configured.
+/// Launch the player/TUI. Shared by `koan play` and bare `koan` (no subcommand).
+#[allow(clippy::too_many_arguments)]
+fn start_player(
+    cli: &Cli,
+    paths: &[PathBuf],
+    ids: &[i64],
+    album: Option<i64>,
+    artist: Option<i64>,
+    start_in_library: bool,
+    clear: bool,
+    server: Option<String>,
+    jukebox: bool,
+) {
+    let cfg = koan_core::config::Config::load_or_default();
     commands::evict_cache(&cfg, false);
 
-    if let Some(ref url) = cli.server {
-        commands::cmd_play_remote(url, cli.jukebox);
+    if let Some(ref url) = server {
+        commands::cmd_play_remote(url, jukebox);
     } else {
         let api_enabled = !cli.no_api && cfg.graphql.enabled;
         let api_opts = if api_enabled {
@@ -372,15 +387,7 @@ fn main() {
         } else {
             None
         };
-        commands::cmd_play(
-            &cli.paths,
-            &cli.ids,
-            cli.album,
-            cli.artist,
-            cli.library,
-            cli.clear,
-            api_opts,
-        );
+        commands::cmd_play(paths, ids, album, artist, start_in_library, clear, api_opts);
     }
 }
 
@@ -413,4 +420,89 @@ fn complete_albums() -> Vec<CompletionCandidate> {
             CompletionCandidate::new(a.id.to_string()).help(Some(label.into()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn cli_no_args_parses() {
+        let cli = Cli::try_parse_from(["koan"]).unwrap();
+        assert!(cli.command.is_none());
+        assert!(!cli.headless);
+    }
+
+    #[test]
+    fn cli_play_subcommand_parses() {
+        let cli = Cli::try_parse_from(["koan", "play", "/tmp/test.flac"]).unwrap();
+        match cli.command {
+            Some(Commands::Play { ref paths, .. }) => {
+                assert_eq!(paths.len(), 1);
+                assert_eq!(paths[0].to_str().unwrap(), "/tmp/test.flac");
+            }
+            _ => panic!("expected Play subcommand"),
+        }
+    }
+
+    #[test]
+    fn cli_play_with_flags_parses() {
+        let cli =
+            Cli::try_parse_from(["koan", "play", "--library", "--clear", "--id", "42"]).unwrap();
+        match cli.command {
+            Some(Commands::Play {
+                library,
+                clear,
+                ref ids,
+                ..
+            }) => {
+                assert!(library);
+                assert!(clear);
+                assert_eq!(ids, &[42]);
+            }
+            _ => panic!("expected Play subcommand"),
+        }
+    }
+
+    #[test]
+    fn cli_headless_flag_on_root() {
+        let cli = Cli::try_parse_from(["koan", "--headless"]).unwrap();
+        assert!(cli.headless);
+        assert!(cli.command.is_none());
+    }
+
+    #[test]
+    fn cli_paths_on_root_rejected() {
+        // Positional paths should NOT parse on the root command — they live under `play`.
+        let result = Cli::try_parse_from(["koan", "/tmp/test.flac"]);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn cli_scan_still_works() {
+        let cli = Cli::try_parse_from(["koan", "scan", "--force"]).unwrap();
+        match cli.command {
+            Some(Commands::Scan { force, .. }) => assert!(force),
+            _ => panic!("expected Scan subcommand"),
+        }
+    }
+
+    #[test]
+    fn cli_play_server_requires_url() {
+        let cli =
+            Cli::try_parse_from(["koan", "play", "--server", "http://localhost:4000"]).unwrap();
+        match cli.command {
+            Some(Commands::Play { ref server, .. }) => {
+                assert_eq!(server.as_deref(), Some("http://localhost:4000"));
+            }
+            _ => panic!("expected Play subcommand"),
+        }
+    }
+
+    #[test]
+    fn cli_play_jukebox_requires_server() {
+        let result = Cli::try_parse_from(["koan", "play", "--jukebox"]);
+        assert!(result.is_err());
+    }
 }
