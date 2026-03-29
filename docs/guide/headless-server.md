@@ -44,7 +44,7 @@ enabled = true            # redundant in headless mode, but controls TUI+API mod
 port = 4000               # GraphQL API port
 bind = "127.0.0.1"        # bind address
 playground = false         # GraphiQL IDE
-subsonic_port = 4040       # Subsonic REST API port (0 = disabled)
+subsonic_port = 4040       # Subsonic REST API port (default: disabled, set port to enable)
 ```
 
 Or via environment variables:

@@ -84,7 +84,7 @@ koan search "radiohead"
 koan search "kind of blue"
 ```
 
-Uses SQLite FTS5 for fast, typo-tolerant search. Results display as a tree: artist -> album -> track.
+Uses SQLite FTS5 for fast prefix and stemming search. Results display as a tree: artist -> album -> track.
 
 ---
 
@@ -143,7 +143,7 @@ Manage the download cache for remote tracks.
 
 ```bash
 koan cache status                 # show cache size and track count
-koan cache clear                  # clear all cached downloads
+koan cache clear                  # clear all cached downloads (--yes/-y to skip confirmation)
 koan cache evict                  # run LRU eviction based on cache_limit
 ```
 

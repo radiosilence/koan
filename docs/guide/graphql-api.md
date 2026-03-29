@@ -31,7 +31,7 @@ enabled = true                # run alongside TUI (default: true, --no-api disab
 port = 4000                   # API port (default: 4000)
 bind = "127.0.0.1"            # bind address (default: 127.0.0.1)
 playground = false             # GraphiQL IDE at GET /graphql (default: false)
-subsonic_port = 4040           # optional Subsonic REST API port (default: disabled)
+# subsonic_port = 4040         # optional Subsonic REST API port (default: disabled, set to enable)
 ```
 
 The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in config to expose on all interfaces. There's no authentication, so only do this on trusted networks.

@@ -39,6 +39,8 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `L` | Toggle lyrics panel |
 | `R` | Toggle radio mode |
 | `f` | Favourite / unfavourite current track |
+| `?` | Open help modal |
+| `n` | Next track |
 | `q` | Quit |
 
 ### Queue changes
@@ -46,7 +48,7 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | Key | Action |
 |-----|--------|
 | `Ctrl+Z` | Undo last queue change |
-| `Ctrl+Y` or `Ctrl+Shift+Z` | Redo last undone change |
+| `Ctrl+Shift+Z` | Redo last undone change |
 
 ---
 
@@ -78,7 +80,7 @@ Tree view: artist -> album -> track.
 | Key | Action |
 |-----|--------|
 | `Up` / `Down` | Navigate |
-| `Enter` | Expand/collapse node, or enqueue track |
+| `Enter` | Expand node or enqueue track |
 | `f` | Filter library (type to search) |
 | `Esc` | Exit library browser |
 
@@ -89,7 +91,7 @@ Tree view: artist -> album -> track.
 | Key | Action |
 |-----|--------|
 | `Up` / `Down` | Navigate |
-| `Shift+Up` / `Shift+Down` | Extend selection |
+| `Shift+Up` / `Shift+Down` or `J` / `K` | Extend selection |
 | `d` | Remove selected track(s) |
 | `j` | Move selected down |
 | `k` | Move selected up |
