@@ -39,7 +39,7 @@ koan --server http://host:4000 --jukebox  # remote control only
 ### MCP server
 
 ```bash
-koan --mcp                        # MCP server on stdio (Claude Desktop)
+koan mcp                        # MCP server on stdio (Claude Desktop)
 ```
 
 See [MCP Integration](../guide/mcp-integration.md) for setup instructions.

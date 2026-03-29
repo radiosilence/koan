@@ -73,7 +73,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for display and file organization
 - **File organization** -- rename/reorganize your library from inside the TUI using format string patterns
 - **GraphQL API** -- full programmatic control alongside the TUI, or headless. Relay pagination, rich filters, mutations for everything
-- **MCP server** -- `koan --mcp` exposes the player to Claude Desktop via Model Context Protocol
+- **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol
 - **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
 - **SQLite FTS5 search** -- full-text search across your entire library
 - **Media keys** -- macOS Control Center integration (play/pause, next/prev, now playing info)

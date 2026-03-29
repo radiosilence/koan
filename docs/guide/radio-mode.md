@@ -62,7 +62,6 @@ koan scan --analyze
 ```
 
 This computes acoustic features (tempo, timbre, chroma, and spectral features — a 23-dimensional vector) for each track using bliss-audio. With acoustic analysis data available, radio mode can find tracks that genuinely *sound* similar, not just tracks that share metadata.
-||||||| f4afd4f
 
 Control how much weight acoustic similarity gets:
 

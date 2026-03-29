@@ -127,5 +127,4 @@ This runs on a separate port from the GraphQL API. Useful for connecting Subsoni
 
 ## MCP server
 
-The MCP server (`koan --mcp`) uses the same GraphQL schema in-process (no HTTP round-trip). See [MCP Integration](mcp-integration.md) for Claude Desktop setup.
-||||||| f4afd4f
+The MCP server (`koan mcp`) uses the same GraphQL schema in-process (no HTTP round-trip). See [MCP Integration](mcp-integration.md) for Claude Desktop setup.

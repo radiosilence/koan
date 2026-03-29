@@ -69,7 +69,6 @@ docker run -e KOAN_REMOTE__ENABLED=true \
 ```
 
 All config fields are overridable via `KOAN_*` environment variables. See [Configuration](../reference/configuration.md) for the full list.
-||||||| f4afd4f
 
 ## Remote TUI
 
