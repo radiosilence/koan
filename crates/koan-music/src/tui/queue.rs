@@ -374,7 +374,7 @@ fn render_track_line<'a>(
 
     let status_icon = match entry.status {
         QueueEntryStatus::Queued => Span::raw(" "),
-        QueueEntryStatus::Playing => Span::styled(">", theme.track_playing),
+        QueueEntryStatus::Playing => Span::styled("\u{25b6}", theme.track_playing),
         QueueEntryStatus::Played => {
             if is_selected {
                 Span::styled(" ", theme.track_selected)
@@ -458,12 +458,17 @@ fn render_track_line<'a>(
         Span::raw(" ")
     };
 
+    let is_playing = matches!(entry.status, QueueEntryStatus::Playing);
     let title_style = if is_cursor {
         theme.track_cursor
     } else if is_selected {
         theme.track_selected
     } else if is_hovered {
         theme.track_hover
+    } else if is_playing {
+        theme
+            .track_playing
+            .add_modifier(ratatui::style::Modifier::BOLD)
     } else {
         theme.track_normal
     };

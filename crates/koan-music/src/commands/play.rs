@@ -217,11 +217,12 @@ pub fn cmd_play(
             });
             tx.send(PlayerCommand::AddToPlaylist(items))
                 .expect("player thread died");
-            // Set cursor without starting playback (paused restore).
+            // Set cursor without starting playback — the TUI's deferred seek
+            // will start the engine at the saved position. This avoids the
+            // double-start bug where Play+Pause+Seek caused three engine
+            // restarts at startup.
             if let Some(cid) = cursor_id {
-                tx.send(PlayerCommand::Play(cid))
-                    .expect("player thread died");
-                tx.send(PlayerCommand::Pause).expect("player thread died");
+                state.set_cursor(Some(cid));
                 restored_position_ms = Some(persisted.position_ms);
             }
             expects_playback = true;
@@ -499,12 +500,20 @@ fn run_tui(
         // 4. Always tick.
         app.handle_tick();
 
-        // Deferred seek: once the player has track_info (i.e. audio is loaded), seek to
-        // the persisted position. This must wait for the decode thread to start.
+        // Deferred restore: once the cursor item is Ready (file exists or downloaded),
+        // start playback at the saved position then immediately pause.
+        // This is a single Play+Seek+Pause instead of the old Play+Pause+Seek
+        // which caused a double-start bug (three engine restarts at startup).
         if let Some(pos) = pending_seek
-            && app.state.track_info().is_some()
+            && let Some(cid) = app.state.cursor()
+            && app
+                .state
+                .item_load_state(cid)
+                .is_some_and(|s| matches!(s, LoadState::Ready))
         {
+            tx.send(PlayerCommand::Play(cid)).ok();
             tx.send(PlayerCommand::Seek(pos)).ok();
+            tx.send(PlayerCommand::Pause).ok();
             pending_seek = None;
         }
 

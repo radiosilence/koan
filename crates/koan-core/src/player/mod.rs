@@ -49,6 +49,8 @@ pub struct Player {
     output_device_name: Option<String>,
     /// Platform audio backend (CoreAudio on macOS, cpal on Linux).
     backend: Box<dyn AudioBackend>,
+    /// Debounce: timestamp of last NextTrack/PrevTrack to suppress key repeat.
+    last_skip: std::time::Instant,
 }
 
 /// Holds the resources for an active playback session.
@@ -86,6 +88,7 @@ impl Player {
             batch_buffer: None,
             output_device_name: cfg.playback.output_device.clone(),
             backend: crate::audio::platform_backend(),
+            last_skip: std::time::Instant::now(),
         }
     }
 
@@ -311,6 +314,7 @@ impl Player {
         let rg_mode = cfg.playback.replaygain;
         let pre_amp_db = cfg.playback.pre_amp_db;
 
+        let finish_tx = self.commands.tx.clone();
         let (_stream_info, decode_handle) = buffer::start_decode_file(
             id,
             path,
@@ -321,6 +325,9 @@ impl Player {
             Some(self.viz_buffer.clone()),
             rg_mode,
             pre_amp_db,
+            move || {
+                finish_tx.send(PlayerCommand::DecodeFinished).ok();
+            },
         )?;
 
         // Create and start audio engine with the timeline's sample counter.
@@ -528,6 +535,7 @@ impl Player {
         let rg_mode = cfg.playback.replaygain;
         let pre_amp_db = cfg.playback.pre_amp_db;
 
+        let finish_tx = self.commands.tx.clone();
         let (_stream_info, decode_handle) = buffer::start_decode(
             first,
             producer,
@@ -540,6 +548,9 @@ impl Player {
             Some(self.viz_buffer.clone()),
             rg_mode,
             pre_amp_db,
+            move || {
+                finish_tx.send(PlayerCommand::DecodeFinished).ok();
+            },
         )?;
 
         let actual_rate = self
@@ -871,6 +882,24 @@ impl Player {
         }
     }
 
+    /// Decode thread naturally finished (playlist exhausted or error).
+    /// Try to advance to the next Ready track; otherwise stop cleanly.
+    fn on_decode_finished(&mut self) {
+        log::info!("decode finished, checking for next track");
+        match self.shared_state.advance_cursor() {
+            Some((id, path)) => {
+                if let Err(e) = self.start_playback(id, &path, 0) {
+                    log::error!("auto-advance after decode finished failed: {}", e);
+                    self.stop_playback_and_clear_state();
+                }
+            }
+            None => {
+                log::info!("no more tracks — stopping");
+                self.stop_playback_and_clear_state();
+            }
+        }
+    }
+
     /// Route an undo entry to the batch buffer (if batching) or the undo stack.
     fn push_undo(&mut self, entry: UndoEntry) {
         if let Some(ref mut batch) = self.batch_buffer {
@@ -888,8 +917,21 @@ impl Player {
             PlayerCommand::Resume => self.resume(),
             PlayerCommand::Stop => self.stop(),
             PlayerCommand::Seek(pos) => self.seek(pos),
-            PlayerCommand::NextTrack => self.next_track(),
-            PlayerCommand::PrevTrack => self.prev_track(),
+            PlayerCommand::NextTrack => {
+                // Debounce: suppress key repeat from terminal (150ms window).
+                let now = std::time::Instant::now();
+                if now.duration_since(self.last_skip).as_millis() >= 150 {
+                    self.last_skip = now;
+                    self.next_track();
+                }
+            }
+            PlayerCommand::PrevTrack => {
+                let now = std::time::Instant::now();
+                if now.duration_since(self.last_skip).as_millis() >= 150 {
+                    self.last_skip = now;
+                    self.prev_track();
+                }
+            }
             PlayerCommand::AddToPlaylist(items) => {
                 let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
                 self.shared_state.add_items(items);
@@ -960,6 +1002,7 @@ impl Player {
                 self.push_undo(UndoEntry::MovedBatch { entries });
             }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
+            PlayerCommand::DecodeFinished => self.on_decode_finished(),
             PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
