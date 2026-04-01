@@ -203,12 +203,14 @@ enum Commands {
     /// List available audio output devices
     Devices,
     /// Show or manage configuration
-    Config,
+    #[command(args_conflicts_with_subcommands = true, subcommand_negates_reqs = true)]
+    Config {
+        #[command(subcommand)]
+        command: Option<ConfigCommands>,
+    },
     /// Manage remote Subsonic/Navidrome server
     #[command(subcommand)]
     Remote(RemoteCommands),
-    /// Initialise config directory with default config
-    Init,
     /// Manage the download cache
     #[command(subcommand)]
     Cache(CacheCommands),
@@ -217,6 +219,12 @@ enum Commands {
         /// Shell to generate for
         shell: clap_complete::Shell,
     },
+}
+
+#[derive(Subcommand)]
+enum ConfigCommands {
+    /// Initialise or sync config directory with default config
+    Init,
 }
 
 #[derive(Subcommand)]
@@ -329,13 +337,15 @@ fn main() {
         Some(Commands::Library) => commands::cmd_library(),
         Some(Commands::Probe { path }) => commands::cmd_probe(&path),
         Some(Commands::Devices) => commands::cmd_devices(),
-        Some(Commands::Config) => commands::cmd_config(),
+        Some(Commands::Config { command }) => match command {
+            Some(ConfigCommands::Init) => commands::cmd_init(),
+            None => commands::cmd_config(),
+        },
         Some(Commands::Remote(sub)) => match sub {
             RemoteCommands::Login { url, username } => commands::cmd_remote_login(&url, &username),
             RemoteCommands::Sync { full } => commands::cmd_remote_sync(full),
             RemoteCommands::Status => commands::cmd_remote_status(),
         },
-        Some(Commands::Init) => commands::cmd_init(),
         Some(Commands::Cache(sub)) => match sub {
             CacheCommands::Status => commands::cmd_cache_status(),
             CacheCommands::Clear { yes } => commands::cmd_cache_clear(yes),

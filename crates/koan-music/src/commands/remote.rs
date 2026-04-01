@@ -22,18 +22,13 @@ pub fn cmd_remote_login(url: &str, username: &str) {
         }
     }
 
-    // Load existing local config (preserve folders etc), update remote fields.
-    let local_path = config::config_local_file_path();
-    let mut local_cfg = if local_path.exists() {
-        config::Config::load_from(&local_path).unwrap_or_default()
-    } else {
-        config::Config::default()
-    };
-    local_cfg.remote.enabled = true;
-    local_cfg.remote.url = url.to_string();
-    local_cfg.remote.username = username.to_string();
-    local_cfg.remote.password = password;
-    if let Err(e) = local_cfg.save_local() {
+    // Patch only the [remote] section in config.local.toml — don't touch other sections.
+    let mut remote_vals = toml::map::Map::new();
+    remote_vals.insert("enabled".into(), toml::Value::Boolean(true));
+    remote_vals.insert("url".into(), toml::Value::String(url.to_string()));
+    remote_vals.insert("username".into(), toml::Value::String(username.to_string()));
+    remote_vals.insert("password".into(), toml::Value::String(password));
+    if let Err(e) = config::Config::patch_local("remote", &remote_vals) {
         eprintln!("{} {}", "config error:".red().bold(), e);
         std::process::exit(1);
     }

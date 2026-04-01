@@ -49,15 +49,15 @@ See [MCP Integration](../guide/mcp-integration.md) for setup instructions.
 
 ---
 
-## `koan init`
+## `koan config init`
 
-Create the config directory with sensible defaults.
+Create the config directory with a commented template.
 
 ```bash
-koan init
+koan config init
 ```
 
-Safe to re-run -- merges new default fields without overwriting your customizations.
+Generates `config.toml` with all defaults commented out as reference -- uncomment what you want to customize. Safe to re-run; merges new defaults without overwriting your changes.
 
 See [Configuration](configuration.md) for details on what gets created.
 

@@ -62,27 +62,27 @@ env:
   KOAN_GRAPHQL__PORT: 4001
 ```
 
-## `koan init`
+## `koan config init`
 
 Creates the config directory at `~/.config/koan/` with everything koan needs to run:
 
 ```bash
-koan init
+koan config init
 ```
 
 What it creates:
 
 | File | Purpose |
 |------|---------|
-| `config.toml` | Base config with all defaults (new fields are merged in without overwriting your customizations) |
+| `config.toml` | Commented template -- all defaults shown as comments for reference, uncomment to customize |
 | `config.local.toml` | Template for machine-specific settings (library folders, remote server) |
 | `.gitignore` | Ignores `*.log`, `*.db`, `config.local.toml`, `cache/` |
 | `koan.db` | SQLite database (created if missing) |
 | `cache/` | Download cache directory |
 
-Running `koan init` on an existing setup is safe -- it merges new defaults without touching values you've changed, and skips `config.local.toml` if it exists.
+Running `koan config init` on an existing setup is safe -- it merges new defaults without touching values you've changed, and skips `config.local.toml` if it exists.
 
-`library.folders` is deliberately excluded from `config.toml` (it's machine-specific and belongs in `config.local.toml`). This means you can commit `~/.config/koan/` to your dotfiles repo and share playback/visualizer/organize settings across machines while keeping library paths and credentials local.
+`[library]` and `[remote]` sections are excluded from `config.toml` -- they contain machine-specific paths and credentials that belong in `config.local.toml`. This means you can commit `~/.config/koan/` to your dotfiles repo and share playback/visualizer/organize settings across machines while keeping library paths and secrets local.
 
 ---
 
@@ -91,7 +91,7 @@ Running `koan init` on an existing setup is safe -- it merges new defaults witho
 ```toml
 [playback]
 software_volume = false     # volume control in software (vs hardware/DAC)
-replaygain = "album"        # off | track | album
+replaygain = "off"          # off | track | album
 pre_amp_db = 0.0            # dB gain on top of ReplayGain (default: 0.0)
 target_fps = 60             # TUI render rate in Hz (default: 60)
 ticker_fps = 8              # title scroll speed in Hz (default: 8)
