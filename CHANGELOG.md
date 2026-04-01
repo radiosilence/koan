@@ -1,16 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.18.4 (2026-04-01)
 
 ### Fixed
 
-- **Audio seize-up at album transitions** — when the gapless decode loop exhausted the playlist, the Player had no way to know playback finished. Audio engine kept running, outputting silence. Now the decode thread signals `DecodeFinished` and the Player auto-advances or stops cleanly
-- **Double engine restart at session restore** — startup sent Play+Pause+Seek, causing three engine teardown/rebuild cycles. Now sets cursor without playback; the deferred seek is the single start point
-- **Key repeat rapid-skipping** — terminal key repeat on `>`/`<` could fire dozens of NextTrack/PrevTrack commands. Added 150ms debounce in the Player command loop
+- **Audio seize-up at album transitions** — when the gapless decode loop exhausted the playlist, the Player had no way to know playback finished. Audio engine kept running, outputting silence. Now the decode thread signals `DecodeFinished` and the Player auto-advances or stops cleanly ([#122](https://github.com/radiosilence/koan/pull/122))
+- **Double engine restart at session restore** — startup sent Play+Pause+Seek, causing three engine teardown/rebuild cycles. Now sets cursor without playback; the deferred seek is the single start point ([#122](https://github.com/radiosilence/koan/pull/122))
+- **Key repeat rapid-skipping** — terminal key repeat on `>`/`<` could fire dozens of NextTrack/PrevTrack commands. Added 150ms debounce in the Player command loop ([#122](https://github.com/radiosilence/koan/pull/122))
 
 ### Changed
 
-- **Now-playing queue indicator** — playing track now shows ▶ instead of `>`, with bold title text for visibility
+- **Now-playing queue indicator** — playing track now shows ▶ instead of `>`, with bold title text for visibility ([#122](https://github.com/radiosilence/koan/pull/122))
 
 ## v0.18.3 (2026-04-01)
 
