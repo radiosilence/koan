@@ -41,7 +41,7 @@ sudo pacman -S alsa-lib dbus
 ## 30-second quickstart
 
 ```bash
-koan init                                   # create config dir
+koan config init                            # create config dir + commented template
 # edit ~/.config/koan/config.local.toml:
 #   [library]
 #   folders = ["/path/to/your/music"]

@@ -47,20 +47,20 @@ sudo pacman -S alsa-lib dbus
 ## Create your config
 
 ```bash
-koan init
+koan config init
 ```
 
 This creates `~/.config/koan/` with:
 
 | File | Purpose |
 |------|---------|
-| `config.toml` | Base config with sane defaults -- safe to commit to dotfiles |
+| `config.toml` | Commented template -- all defaults shown as comments, uncomment to customize. Safe to commit to dotfiles |
 | `config.local.toml` | Machine-specific settings (library paths, credentials) -- gitignored |
 | `.gitignore` | Ignores logs, database, local config, cache |
 | `koan.db` | SQLite database (created on first use) |
 | `cache/` | Download cache for remote tracks |
 
-Running `koan init` on an existing setup is safe -- it merges new default fields into `config.toml` without overwriting your customizations, and skips `config.local.toml` if it already exists.
+Running `koan config init` on an existing setup is safe -- it merges new defaults without overwriting your customizations, and skips `config.local.toml` if it already exists. `[library]` and `[remote]` sections are excluded from `config.toml` (they belong in `config.local.toml`).
 
 ## Add your music
 

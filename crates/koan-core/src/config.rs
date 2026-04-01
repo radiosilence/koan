@@ -110,7 +110,7 @@ impl Default for PlaybackConfig {
     fn default() -> Self {
         Self {
             software_volume: false,
-            replaygain: ReplayGainMode::Album,
+            replaygain: ReplayGainMode::Off,
             ticker_fps: 8,
             target_fps: 60,
             show_fps: false,
@@ -381,19 +381,38 @@ impl Config {
         Ok(())
     }
 
-    /// Write config to the base config.toml.
-    ///
-    /// **Warning**: If this Config was loaded via `load()` (merged from all layers),
-    /// calling `save()` will write secrets from config.local.toml/env into config.toml.
-    /// Prefer `update_base()` for targeted field changes.
-    pub fn save(&self) -> Result<(), ConfigError> {
-        self.write_to(&config_file_path())
-    }
-
-    /// Write config to config.local.toml (for machine-specific / sensitive values).
-    pub fn save_local(&self) -> Result<(), ConfigError> {
+    /// Patch a single section in config.local.toml, preserving all other content.
+    /// Creates the file if it doesn't exist. Sets 0o600 permissions on Unix.
+    pub fn patch_local(
+        section: &str,
+        values: &toml::map::Map<String, toml::Value>,
+    ) -> Result<(), ConfigError> {
         let path = config_local_file_path();
-        self.write_to(&path)?;
+        let mut doc: toml::Value = if path.exists() {
+            let contents = fs::read_to_string(&path)?;
+            toml::from_str(&contents).unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
+        } else {
+            toml::Value::Table(toml::map::Map::new())
+        };
+
+        let table = doc.as_table_mut().expect("root is always a table");
+        let section_table = table
+            .entry(section)
+            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+            .as_table_mut()
+            .ok_or_else(|| {
+                ConfigError::Io(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    format!("[{}] is not a table", section),
+                ))
+            })?;
+
+        for (key, value) in values {
+            section_table.insert(key.clone(), value.clone());
+        }
+
+        let contents = toml::to_string_pretty(&doc)?;
+        fs::write(&path, contents)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -456,7 +475,7 @@ mod tests {
     #[test]
     fn test_defaults() {
         let cfg = Config::default();
-        assert_eq!(cfg.playback.replaygain, ReplayGainMode::Album);
+        assert_eq!(cfg.playback.replaygain, ReplayGainMode::Off);
         assert!(!cfg.remote.enabled);
         assert_eq!(cfg.remote.transcode_quality, "original");
     }

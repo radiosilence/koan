@@ -71,71 +71,31 @@ pub fn cmd_init() {
 
     println!("{} {}", "dir".cyan(), dir.display());
 
-    // Write or augment config.toml — merge defaults under existing keys so new
-    // config options appear without overwriting user customizations.
+    // Generate config.toml as a commented reference with user overrides uncommented.
     {
-        let defaults = config::Config::default();
-        let default_val: toml::Value =
-            toml::Value::try_from(&defaults).expect("default config serializes");
-
         let already_exists = config_path.exists();
-        let mut base_val: toml::Value = if already_exists {
+
+        let existing_base: toml::map::Map<String, toml::Value> = if already_exists {
             let contents = std::fs::read_to_string(&config_path).unwrap_or_default();
-            toml::from_str(&contents).unwrap_or_else(|_| default_val.clone())
+            toml::from_str::<toml::Value>(&contents)
+                .ok()
+                .and_then(|v| v.as_table().cloned())
+                .unwrap_or_default()
         } else {
-            toml::Value::Table(toml::map::Map::new())
+            toml::map::Map::new()
         };
 
-        // deep_merge(base, overlay) puts overlay keys INTO base.
-        // We want existing keys to win, so merge defaults first then overlay existing.
-        // Easier: swap — merge existing into defaults so defaults fill gaps.
-        fn deep_merge_defaults(defaults: &mut toml::Value, existing: toml::Value) {
-            match (defaults, existing) {
-                (toml::Value::Table(def_map), toml::Value::Table(exist_map)) => {
-                    for (key, exist_val) in exist_map {
-                        if let Some(def_entry) = def_map.get_mut(&key) {
-                            deep_merge_defaults(def_entry, exist_val);
-                        } else {
-                            def_map.insert(key, exist_val);
-                        }
-                    }
-                }
-                (slot, existing) => {
-                    // Existing value wins over default.
-                    *slot = existing;
-                }
-            }
-        }
-
-        let existing = base_val.clone();
-        base_val = default_val;
-        deep_merge_defaults(&mut base_val, existing);
-
-        // library.folders is machine-specific — belongs in config.local.toml.
-        if let Some(lib) = base_val
-            .as_table_mut()
-            .and_then(|root| root.get_mut("library"))
-            .and_then(|v| v.as_table_mut())
-        {
-            lib.remove("folders");
-        }
-
-        match toml::to_string_pretty(&base_val) {
-            Ok(s) => {
-                let header = "# koan — shareable defaults (safe to commit to dotfiles)\n\n";
-                if let Err(e) = std::fs::write(&config_path, format!("{header}{s}")) {
-                    eprintln!("{} {}", "error:".red().bold(), e);
-                } else {
-                    let action = if already_exists { "updated" } else { "created" };
-                    println!(
-                        "  {} {} {}",
-                        "config:".cyan(),
-                        config_path.display(),
-                        action.green()
-                    );
-                }
-            }
-            Err(e) => eprintln!("{} {}", "error:".red().bold(), e),
+        let output = generate_config_template(&existing_base);
+        if let Err(e) = std::fs::write(&config_path, output) {
+            eprintln!("{} {}", "error:".red().bold(), e);
+        } else {
+            let action = if already_exists { "updated" } else { "created" };
+            println!(
+                "  {} {} {}",
+                "config:".cyan(),
+                config_path.display(),
+                action.green()
+            );
         }
     }
 
@@ -186,7 +146,7 @@ folders = [{folders_str}]
     // Write .gitignore if it doesn't exist (keeps logs, db, and local config out of dotfile repos).
     let gitignore_path = dir.join(".gitignore");
     if !gitignore_path.exists() {
-        let gitignore_content = "*.log\n*.db\nconfig.local.toml\ncache/\n";
+        let gitignore_content = "*.log\n*.db\n*.db-wal\n*.db-shm\nconfig.local.toml\ncache/\n";
         if let Err(e) = std::fs::write(&gitignore_path, gitignore_content) {
             eprintln!("{} {}", "error:".red().bold(), e);
         } else {
@@ -227,4 +187,129 @@ folders = [{folders_str}]
         "ready".green()
     );
     println!("  {} {}", "log:".cyan(), dir.join("koan.log").display());
+}
+
+/// Generate config.toml content with all defaults commented out.
+/// User's existing values stay uncommented. Keys already in config.local.toml are skipped.
+/// Sections that belong in config.local.toml (library, remote) are excluded entirely.
+fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>) -> String {
+    let defaults = config::Config::default();
+    let default_toml = toml::to_string_pretty(&defaults).expect("default config serializes");
+
+    // Sections that should never appear in config.toml (machine-specific / sensitive).
+    let skip_sections = ["library", "remote"];
+
+    let mut output = String::from(
+        "# koan — shareable defaults (safe to commit to dotfiles)\n\
+         # Uncomment to customise. Run `koan config` to see resolved values.\n\n",
+    );
+
+    let mut current_section = String::new();
+    let mut skip = false;
+    let mut section_buf = String::new();
+    let mut section_has_content = false;
+
+    for line in default_toml.lines() {
+        let trimmed = line.trim();
+
+        // Section header: [section] or [section.sub]
+        if trimmed.starts_with('[') {
+            // Flush previous section if it had content.
+            if section_has_content {
+                output.push_str(&section_buf);
+                output.push('\n');
+            }
+            section_buf.clear();
+            section_has_content = false;
+
+            let section = trimmed.trim_start_matches('[').trim_end_matches(']');
+            let top_level = section.split('.').next().unwrap_or(section);
+            skip = skip_sections.contains(&top_level);
+
+            if !skip {
+                current_section = section.to_string();
+                section_buf.push_str(line);
+                section_buf.push('\n');
+            }
+            continue;
+        }
+
+        if skip {
+            continue;
+        }
+
+        // Empty line — skip (we control spacing ourselves).
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        // key = value line.
+        if let Some((key, default_val_str)) = trimmed.split_once(" = ") {
+            let key = key.trim();
+
+            let base_section = existing_base
+                .get(&current_section)
+                .and_then(|v| v.as_table());
+
+            if let Some(user_val) = base_section.and_then(|t| t.get(key)) {
+                // User has explicitly set this in config.toml — keep uncommented.
+                section_buf.push_str(&format!("{} = {}\n", key, format_toml_value(user_val)));
+            } else {
+                // Default — commented out as reference.
+                section_buf.push_str(&format!("# {} = {}\n", key, default_val_str));
+            }
+            section_has_content = true;
+        }
+    }
+
+    // Flush last section.
+    if section_has_content {
+        output.push_str(&section_buf);
+        output.push('\n');
+    }
+
+    // Preserve any user sections in config.toml that aren't in defaults.
+    let default_val = toml::Value::try_from(&defaults).expect("default config serializes");
+    let default_table = default_val.as_table().unwrap();
+    for (section_name, section_val) in existing_base {
+        if default_table.contains_key(section_name)
+            || skip_sections.contains(&section_name.as_str())
+        {
+            continue;
+        }
+        if let Some(table) = section_val.as_table() {
+            output.push_str(&format!("[{}]\n", section_name));
+            for (key, value) in table {
+                output.push_str(&format!("{} = {}\n", key, format_toml_value(value)));
+            }
+            output.push('\n');
+        }
+    }
+
+    output
+}
+
+/// Format a TOML value for inline display in a config template.
+fn format_toml_value(val: &toml::Value) -> String {
+    match val {
+        toml::Value::String(s) => format!("\"{}\"", s),
+        toml::Value::Integer(i) => i.to_string(),
+        toml::Value::Float(f) => {
+            if f.fract() == 0.0 {
+                format!("{:.1}", f)
+            } else {
+                f.to_string()
+            }
+        }
+        toml::Value::Boolean(b) => b.to_string(),
+        toml::Value::Array(a) => {
+            let items: Vec<String> = a.iter().map(format_toml_value).collect();
+            format!("[{}]", items.join(", "))
+        }
+        toml::Value::Table(_) => {
+            // Inline tables — fallback to toml serialization.
+            toml::to_string(val).unwrap_or_else(|_| "{}".into())
+        }
+        toml::Value::Datetime(d) => d.to_string(),
+    }
 }
