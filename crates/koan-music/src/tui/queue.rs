@@ -419,16 +419,22 @@ fn render_track_line<'a>(
 
     let dur = entry.duration_ms.map(format_time).unwrap_or_default();
 
+    let is_playing = matches!(entry.status, QueueEntryStatus::Playing);
+    let bold = ratatui::style::Modifier::BOLD;
     let artist_part = if !entry.artist.is_empty() && entry.artist != entry.album_artist {
         let artist_style = if is_selected {
             theme.track_selected
         } else if is_hovered {
             theme.track_hover
+        } else if is_playing {
+            theme.track_playing.add_modifier(bold)
         } else {
             theme.track_playing
         };
         let sep_style = if is_selected {
             theme.track_selected
+        } else if is_playing {
+            theme.hint_desc.add_modifier(bold)
         } else {
             theme.hint_desc
         };
@@ -458,7 +464,6 @@ fn render_track_line<'a>(
         Span::raw(" ")
     };
 
-    let is_playing = matches!(entry.status, QueueEntryStatus::Playing);
     let title_style = if is_cursor {
         theme.track_cursor
     } else if is_selected {
@@ -475,12 +480,16 @@ fn render_track_line<'a>(
 
     let num_style = if is_selected {
         theme.track_selected
+    } else if is_playing {
+        theme.track_number.add_modifier(bold)
     } else {
         theme.track_number
     };
 
     let dur_style = if is_selected {
         theme.track_selected
+    } else if is_playing {
+        theme.hint_desc.add_modifier(bold)
     } else {
         theme.hint_desc
     };
