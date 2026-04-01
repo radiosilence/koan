@@ -1,19 +1,19 @@
 # Changelog
 
-## Unreleased
+## v0.18.3 (2026-04-01)
 
 ### Changed
 
-- **CLI: `koan init` → `koan config init`** — config initialization is now a subcommand of `koan config`. `koan config` with no subcommand still shows resolved config
-- **Config init generates commented template** — `config.toml` now contains all defaults as commented lines for reference. Uncomment what you want to customize. No more silent duplication of values across config files
-- **`[library]` and `[remote]` excluded from `config.toml`** — machine-specific paths and credentials belong in `config.local.toml` only. Prevents accidental credential leaks into dotfile repos
-- **ReplayGain default changed to `off`** — was `album`. Users who want loudness normalization can opt in via `replaygain = "album"` or `"track"`
+- **CLI: `koan init` → `koan config init`** — config initialization is now a subcommand of `koan config`. `koan config` with no subcommand still shows resolved config ([#120](https://github.com/radiosilence/koan/pull/120))
+- **Config init generates commented template** — `config.toml` now contains all defaults as commented lines for reference. Uncomment what you want to customize. No more silent duplication of values across config files ([#120](https://github.com/radiosilence/koan/pull/120))
+- **`[library]` and `[remote]` excluded from `config.toml`** — machine-specific paths and credentials belong in `config.local.toml` only. Prevents accidental credential leaks into dotfile repos ([#120](https://github.com/radiosilence/koan/pull/120))
+- **ReplayGain default changed to `off`** — was `album`. Users who want loudness normalization can opt in via `replaygain = "album"` or `"track"` ([#120](https://github.com/radiosilence/koan/pull/120))
 
 ### Fixed
 
-- **`koan remote login` no longer bloats `config.local.toml`** — previously wrote all default config sections; now patches only the `[remote]` section, preserving the rest of the file as-is
-- **Removed `Config::save()` footgun** — method could leak secrets from merged config into `config.toml`. Replaced with `Config::patch_local(section, values)` for targeted local config updates
-- **`.gitignore` now covers `*.db-wal` and `*.db-shm`** — SQLite WAL files were previously not gitignored
+- **`koan remote login` no longer bloats `config.local.toml`** — previously wrote all default config sections; now patches only the `[remote]` section, preserving the rest of the file as-is ([#120](https://github.com/radiosilence/koan/pull/120))
+- **Removed `Config::save()` footgun** — method could leak secrets from merged config into `config.toml`. Replaced with `Config::patch_local(section, values)` for targeted local config updates ([#120](https://github.com/radiosilence/koan/pull/120))
+- **`.gitignore` now covers `*.db-wal` and `*.db-shm`** — SQLite WAL files were previously not gitignored ([#120](https://github.com/radiosilence/koan/pull/120))
 
 ## v0.18.2 (2026-03-29)
 
