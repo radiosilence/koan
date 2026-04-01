@@ -402,7 +402,8 @@ fn command_loop(
             | PlayerCommand::MoveInPlaylist { .. }
             | PlayerCommand::MoveItemsInPlaylist { .. }
             | PlayerCommand::InsertInPlaylist { .. }
-            | PlayerCommand::AddToPlaylist(_) => {
+            | PlayerCommand::AddToPlaylist(_)
+            | PlayerCommand::DecodeFinished => {
                 log::debug!("ignoring {:?} in remote mode", cmd);
             }
         }

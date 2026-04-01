@@ -44,6 +44,8 @@ pub enum PlayerCommand {
     TrackReady(QueueItemId),
     /// Enough data buffered for streaming playback — check if cursor is waiting.
     TrackStreamReady(QueueItemId),
+    /// Decode thread exhausted the playlist — auto-advance or stop.
+    DecodeFinished,
     /// Undo the last reversible playlist operation.
     Undo,
     /// Redo the last undone operation.

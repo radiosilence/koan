@@ -310,7 +310,7 @@ fn probe_mss(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, DecodeEr
 /// `next_track` — closure returning the next `SourceEntry` for gapless playback.
 ///                Called on EOF. Returns None when the playlist is exhausted.
 #[allow(clippy::too_many_arguments)]
-pub fn start_decode<N>(
+pub fn start_decode<N, F>(
     first: SourceEntry,
     producer: rtrb::Producer<f32>,
     seek_ms: u64,
@@ -319,9 +319,11 @@ pub fn start_decode<N>(
     viz_buffer: Option<Arc<VizBuffer>>,
     rg_mode: ReplayGainMode,
     pre_amp_db: f64,
+    on_finished: F,
 ) -> Result<(StreamInfo, DecodeHandle), DecodeError>
 where
     N: Fn() -> Option<SourceEntry> + Send + 'static,
+    F: FnOnce() + Send + 'static,
 {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
@@ -340,6 +342,12 @@ where
                 rg_mode,
                 pre_amp_db,
             );
+            // Notify the player that the decode loop finished (playlist
+            // exhausted or error). Only fire if we weren't explicitly stopped
+            // (i.e. this is a natural end, not a seek/skip teardown).
+            if !stop_clone.load(Ordering::Relaxed) {
+                on_finished();
+            }
         })
         .map_err(DecodeError::Io)?;
 
@@ -372,7 +380,7 @@ where
 /// `seek_ms` — if > 0, seek to this position before decoding the first track.
 /// `next_track` — closure returning the next (id, path) for gapless playback.
 #[allow(clippy::too_many_arguments)]
-pub fn start_decode_file<N>(
+pub fn start_decode_file<N, F>(
     initial_id: QueueItemId,
     path: &Path,
     producer: rtrb::Producer<f32>,
@@ -382,9 +390,11 @@ pub fn start_decode_file<N>(
     viz_buffer: Option<Arc<VizBuffer>>,
     rg_mode: ReplayGainMode,
     pre_amp_db: f64,
+    on_finished: F,
 ) -> Result<(StreamInfo, DecodeHandle), DecodeError>
 where
     N: Fn() -> Option<(QueueItemId, PathBuf)> + Send + 'static,
+    F: FnOnce() + Send + 'static,
 {
     let info = probe_file(path)?;
     let first = SourceEntry::from_file(initial_id, path.to_path_buf());
@@ -400,6 +410,7 @@ where
         viz_buffer,
         rg_mode,
         pre_amp_db,
+        on_finished,
     )?;
     Ok((info, handle))
 }
