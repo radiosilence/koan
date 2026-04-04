@@ -255,7 +255,11 @@ pub fn find_output_device_by_name(name: &str) -> Result<AudioDeviceID> {
 }
 
 /// Set the nominal sample rate of a device (for bit-perfect matching).
-pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<()> {
+///
+/// CoreAudio rate changes are asynchronous — the device needs time to physically
+/// reclock. This function polls until the device confirms the new rate or a
+/// timeout expires. Returns the actual device rate after the attempt.
+pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<f64> {
     let property = AudioObjectPropertyAddress {
         mSelector: kAudioDevicePropertyNominalSampleRate,
         mScope: kAudioObjectPropertyScopeGlobal,
@@ -272,5 +276,25 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<()>
             mem::size_of::<f64>() as u32,
             &rate as *const _ as *const _,
         )
-    })
+    })?;
+
+    // Poll until the device confirms the rate switch or we time out.
+    // Most DACs complete the switch in 10–50ms; USB devices can take longer.
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+    let start = std::time::Instant::now();
+
+    loop {
+        let actual = get_device_sample_rate(device_id)?;
+        if (actual - rate).abs() < 0.1 {
+            return Ok(actual);
+        }
+        if start.elapsed() >= TIMEOUT {
+            log::warn!(
+                "device sample rate switch timed out: requested {rate}Hz, device reports {actual}Hz"
+            );
+            return Ok(actual);
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
 }
