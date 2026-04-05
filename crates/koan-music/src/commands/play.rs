@@ -158,38 +158,48 @@ pub fn cmd_play(
             })
             .expect("failed to spawn resolve thread");
     } else if !paths.is_empty() {
-        // Raw file paths — expand directories recursively and filter to audio files.
-        let mut audio_paths: Vec<PathBuf> = Vec::new();
+        // Validate paths exist before spawning background thread.
         for path in paths {
             if !path.exists() {
                 eprintln!("{} {}", "not found:".red().bold(), path.display());
                 std::process::exit(1);
             }
-            if path.is_dir() {
-                let mut dir_files: Vec<PathBuf> = jwalk::WalkDir::new(path)
-                    .follow_links(true)
-                    .into_iter()
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.file_type().is_file())
-                    .filter(|e| koan_core::index::metadata::is_audio_file(&e.path()))
-                    .map(|e| e.path())
-                    .collect();
-                dir_files.sort();
-                audio_paths.extend(dir_files);
-            } else {
-                audio_paths.push(path.clone());
-            }
         }
-        if audio_paths.is_empty() {
-            eprintln!("no audio files found");
-            std::process::exit(1);
-        }
-        let items = playlist_items_from_paths(&audio_paths, None);
-        let first_id = items[0].id;
-        tx.send(PlayerCommand::AddToPlaylist(items))
-            .expect("player thread died");
-        tx.send(PlayerCommand::Play(first_id))
-            .expect("player thread died");
+        // Resolve file paths in the background — the TUI starts immediately.
+        // Directory expansion, DB lookup, and metadata reads happen off the main thread.
+        let owned_paths: Vec<PathBuf> = paths.to_vec();
+        let tx_bg = tx.clone();
+        std::thread::Builder::new()
+            .name("koan-resolve".into())
+            .spawn(move || {
+                let mut audio_paths: Vec<PathBuf> = Vec::new();
+                for path in &owned_paths {
+                    if path.is_dir() {
+                        let mut dir_files: Vec<PathBuf> = jwalk::WalkDir::new(path)
+                            .follow_links(true)
+                            .into_iter()
+                            .filter_map(|e| e.ok())
+                            .filter(|e| e.file_type().is_file())
+                            .filter(|e| koan_core::index::metadata::is_audio_file(&e.path()))
+                            .map(|e| e.path())
+                            .collect();
+                        dir_files.sort();
+                        audio_paths.extend(dir_files);
+                    } else {
+                        audio_paths.push(path.clone());
+                    }
+                }
+                if audio_paths.is_empty() {
+                    return;
+                }
+                let items = playlist_items_from_paths(&audio_paths, None);
+                if let Some(first) = items.first() {
+                    let first_id = first.id;
+                    tx_bg.send(PlayerCommand::AddToPlaylist(items)).ok();
+                    tx_bg.send(PlayerCommand::Play(first_id)).ok();
+                }
+            })
+            .expect("failed to spawn resolve thread");
     } else if !clear_queue
         && let Ok(db) = koan_core::db::connection::Database::open(&config::db_path())
         && let Ok(Some(persisted)) = queries::load_playback_state(&db.conn)

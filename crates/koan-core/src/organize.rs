@@ -353,37 +353,47 @@ fn plan_moves(
 }
 
 /// Build the list of moves from file paths directly (no DB required).
-/// Reads metadata from tags. Uses track_id=0 for all entries (no DB identity).
+/// Reads metadata from tags in parallel (rayon), then plans moves serially
+/// (ancillary dedup requires ordered processing).
 fn plan_moves_from_paths(
     paths: &[PathBuf],
     pattern: &str,
     base_dir: &Path,
 ) -> Result<OrganizeResult, OrganizeError> {
+    use rayon::prelude::*;
+
+    // Phase 1: Read metadata in parallel — this is the expensive part (disk I/O + tag parsing).
+    let meta_results: Vec<_> = paths
+        .par_iter()
+        .map(|source| {
+            if !source.exists() {
+                return (source.clone(), Err("file not found".to_string()));
+            }
+            match crate::index::metadata::read_metadata(source) {
+                Ok(m) => (source.clone(), Ok(TrackMetadata::from_file_meta(&m))),
+                Err(e) => (source.clone(), Err(format!("metadata error: {e}"))),
+            }
+        })
+        .collect();
+
+    // Phase 2: Plan moves serially (ancillary dedup needs ordered HashSet access).
     let mut moves = Vec::new();
     let mut errors = Vec::new();
     let mut skipped = 0;
-
     let mut planned_ancillary: std::collections::HashSet<PathBuf> =
         std::collections::HashSet::new();
 
-    for source in paths {
-        if !source.exists() {
-            errors.push((source.clone(), "file not found".into()));
-            continue;
-        }
-
-        let meta = match crate::index::metadata::read_metadata(source) {
+    for (source, meta_result) in meta_results {
+        let metadata = match meta_result {
             Ok(m) => m,
-            Err(e) => {
-                errors.push((source.clone(), format!("metadata error: {e}")));
+            Err(msg) => {
+                errors.push((source, msg));
                 continue;
             }
         };
 
-        let metadata = TrackMetadata::from_file_meta(&meta);
-
         match plan_single_move(
-            source,
+            &source,
             0,
             &metadata,
             pattern,
@@ -392,7 +402,7 @@ fn plan_moves_from_paths(
         ) {
             Ok(Some(file_move)) => moves.push(file_move),
             Ok(None) => skipped += 1,
-            Err(msg) => errors.push((source.clone(), msg)),
+            Err(msg) => errors.push((source, msg)),
         }
     }
 
@@ -403,14 +413,106 @@ fn plan_moves_from_paths(
     })
 }
 
-/// Preview organize for file paths (no DB required — reads tags directly).
+/// Preview organize for file paths. Uses the DB for metadata when available
+/// (instant), falls back to parallel disk reads for files not in the DB.
 pub fn preview_for_paths(
     paths: &[PathBuf],
     pattern: &str,
     base_dir: Option<&Path>,
 ) -> Result<OrganizeResult, OrganizeError> {
+    use rayon::prelude::*;
+
     let base = resolve_base_dir(base_dir)?;
-    plan_moves_from_paths(paths, pattern, &base)
+
+    // Try to load metadata from the DB (single query, instant for 50k+ tracks).
+    let db_cache: std::collections::HashMap<String, TrackRow> = Database::open_default()
+        .ok()
+        .and_then(|db| queries::all_tracks_by_path(&db.conn).ok())
+        .unwrap_or_default();
+
+    // Build album date cache from DB to avoid per-track queries.
+    let album_dates: std::collections::HashMap<i64, Option<String>> = if !db_cache.is_empty() {
+        let db = Database::open_default().ok();
+        db.map(|db| {
+            let mut dates = std::collections::HashMap::new();
+            for track in db_cache.values() {
+                if let Some(album_id) = track.album_id {
+                    dates
+                        .entry(album_id)
+                        .or_insert_with(|| queries::album_date(&db.conn, album_id).ok().flatten());
+                }
+            }
+            dates
+        })
+        .unwrap_or_default()
+    } else {
+        std::collections::HashMap::new()
+    };
+
+    // Phase 1: Resolve metadata — DB hits are instant, misses go to disk in parallel.
+    let meta_results: Vec<_> = paths
+        .par_iter()
+        .map(|source| {
+            let path_str = source.to_string_lossy();
+
+            // Try DB first.
+            if let Some(track) = db_cache.get(path_str.as_ref()) {
+                let album_date = track
+                    .album_id
+                    .and_then(|aid| album_dates.get(&aid).and_then(|d| d.as_deref()));
+                return (
+                    source.clone(),
+                    track.id,
+                    Ok(TrackMetadata::from_track_row(track, album_date)),
+                );
+            }
+
+            // Fallback: read from disk.
+            if !source.exists() {
+                return (source.clone(), 0, Err("file not found".to_string()));
+            }
+            match crate::index::metadata::read_metadata(source) {
+                Ok(m) => (source.clone(), 0, Ok(TrackMetadata::from_file_meta(&m))),
+                Err(e) => (source.clone(), 0, Err(format!("metadata error: {e}"))),
+            }
+        })
+        .collect();
+
+    // Phase 2: Plan moves serially (ancillary dedup needs ordered HashSet access).
+    let mut moves = Vec::new();
+    let mut errors = Vec::new();
+    let mut skipped = 0;
+    let mut planned_ancillary: std::collections::HashSet<PathBuf> =
+        std::collections::HashSet::new();
+
+    for (source, track_id, meta_result) in meta_results {
+        let metadata = match meta_result {
+            Ok(m) => m,
+            Err(msg) => {
+                errors.push((source, msg));
+                continue;
+            }
+        };
+
+        match plan_single_move(
+            &source,
+            track_id,
+            &metadata,
+            pattern,
+            &base,
+            &mut planned_ancillary,
+        ) {
+            Ok(Some(file_move)) => moves.push(file_move),
+            Ok(None) => skipped += 1,
+            Err(msg) => errors.push((source, msg)),
+        }
+    }
+
+    Ok(OrganizeResult {
+        moves,
+        errors,
+        skipped,
+    })
 }
 
 /// Execute organize for file paths (no DB required — reads tags, moves files).

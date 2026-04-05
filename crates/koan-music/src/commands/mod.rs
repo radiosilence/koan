@@ -333,15 +333,24 @@ pub(crate) fn playlist_items_from_paths(
     paths: &[PathBuf],
     progress: Option<&std::sync::atomic::AtomicUsize>,
 ) -> Vec<PlaylistItem> {
-    // Load only the tracks we need from DB (batch lookup by path).
-    // Avoids loading the entire library into memory for large collections.
-    let path_strings: Vec<String> = paths
-        .iter()
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect();
-    let db_cache = open_db_optional()
-        .and_then(|db| queries::tracks_by_paths(&db.conn, &path_strings).ok())
-        .unwrap_or_default();
+    // For large path sets (whole-library plays), load all DB tracks in a single
+    // query instead of batching hundreds of WHERE IN queries. The threshold is
+    // where one full-table scan beats N batched indexed lookups.
+    const BULK_THRESHOLD: usize = 1000;
+    let db_cache: std::collections::HashMap<String, queries::TrackRow> =
+        if paths.len() >= BULK_THRESHOLD {
+            open_db_optional()
+                .and_then(|db| queries::all_tracks_by_path(&db.conn).ok())
+                .unwrap_or_default()
+        } else {
+            let path_strings: Vec<String> = paths
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect();
+            open_db_optional()
+                .and_then(|db| queries::tracks_by_paths(&db.conn, &path_strings).ok())
+                .unwrap_or_default()
+        };
 
     let db_hits = std::sync::atomic::AtomicUsize::new(0);
 
