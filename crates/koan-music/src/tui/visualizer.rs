@@ -132,6 +132,10 @@ pub struct VisualizerState {
     pub vu_levels: [f32; 2],
     /// Beat energy from the analyzer (0.0..1.0), used for color shifts.
     pub beat_energy: f32,
+    /// Accumulated hue offset from beats (wraps 0.0..1.0). Jumps on beat, decays back.
+    pub beat_hue_offset: f32,
+    /// Creation time — used for the slow dreamy color drift.
+    created_at: Instant,
     /// Last update timestamp for time-based decay.
     pub(crate) last_update: Instant,
     /// Bar decay half-life in seconds (configurable).
@@ -161,6 +165,8 @@ impl VisualizerState {
             peaks: [0.0; NUM_BARS],
             vu_levels: [0.0; 2],
             beat_energy: 0.0,
+            beat_hue_offset: 0.0,
+            created_at: Instant::now(),
             last_update: Instant::now(),
             bar_half_life,
             peak_half_life,
@@ -213,7 +219,18 @@ impl VisualizerState {
         self.vu_levels = frame.vu_levels;
 
         // Beat energy: rise instantly from analyzer, decay locally for smooth falloff.
+        let prev_beat = self.beat_energy;
         self.beat_energy = frame.beat_energy.max(self.beat_energy * bar_decay);
+
+        // Beat hue shift: on a fresh beat (energy rising), jump the hue offset forward.
+        // Decays back toward 0 between beats for a "snap then relax" feel.
+        if self.beat_energy > prev_beat + 0.05 {
+            // Jump: 15-30% hue rotation proportional to beat strength.
+            self.beat_hue_offset = (self.beat_hue_offset + self.beat_energy * 0.3) % 1.0;
+        } else {
+            // Decay back toward 0 — slower than bar decay for lingering color shift.
+            self.beat_hue_offset *= 0.95;
+        }
     }
 
     /// Apply decay smoothing without new analysis input (called when paused/stopped).
@@ -229,6 +246,7 @@ impl VisualizerState {
             *v *= bar_decay;
         }
         self.beat_energy *= bar_decay;
+        self.beat_hue_offset *= 0.95;
     }
 }
 
@@ -250,6 +268,26 @@ impl<'a> SpectrumWidget<'a> {
     ///
     /// For `Mono` palette: height-based green/yellow/red (classic LED meter).
     /// For all other palettes: frequency-mapped gradient with beat-reactive brightening.
+    /// Warp the frequency position with dreamy drift + beat hue shift.
+    /// Returns a new freq_t in 0.0..1.0 with both effects applied.
+    fn warped_freq_t(&self, freq_t: f32) -> f32 {
+        // Dreamy drift: slow sine wave (~8 second period) that shifts the
+        // color mapping ±15% back and forth across the spectrum.
+        let elapsed = self.state.created_at.elapsed().as_secs_f32();
+        let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
+
+        // Beat hue shift: jarring jump on transients, decays back.
+        let beat_offset = self.state.beat_hue_offset;
+
+        // Combine and wrap to 0.0..1.0.
+        (freq_t + drift + beat_offset).rem_euclid(1.0)
+    }
+
+    /// Compute the bar fill color for a given display bar.
+    ///
+    /// For `Mono` palette: height-based green/yellow/red (classic LED meter).
+    /// For all other palettes: frequency-mapped gradient with dreamy drift,
+    /// beat-reactive hue shifts, and brightness pulses.
     fn bar_color(&self, freq_t: f32, height_ratio: f32) -> Style {
         let palette = self.state.palette;
         let beat = self.state.beat_energy;
@@ -266,9 +304,9 @@ impl<'a> SpectrumWidget<'a> {
                 }
             }
             _ => {
-                // Frequency-mapped color from the palette.
-                let base_color = palette.freq_color(freq_t);
-                // Beat-reactive: brighten toward white proportional to beat energy.
+                let warped = self.warped_freq_t(freq_t);
+                let base_color = palette.freq_color(warped);
+                // Beat-reactive brightness pulse on top of the hue shift.
                 let color = brighten(base_color, beat * 0.7);
                 Style::new().fg(color)
             }
@@ -278,15 +316,15 @@ impl<'a> SpectrumWidget<'a> {
     /// Compute the peak marker color for a given display bar.
     ///
     /// For `Mono`: white (theme default).
-    /// For other palettes: brightened version of the frequency color.
+    /// For other palettes: brightened version of the warped frequency color.
     fn peak_color(&self, freq_t: f32) -> Style {
         let palette = self.state.palette;
 
         match palette {
             VisualizerPalette::Mono => self.theme.spectrum_peak,
             _ => {
-                let base = palette.freq_color(freq_t);
-                // Peaks glow brighter than bars — 60% toward white.
+                let warped = self.warped_freq_t(freq_t);
+                let base = palette.freq_color(warped);
                 let color = brighten(base, 0.6);
                 Style::new().fg(color)
             }
