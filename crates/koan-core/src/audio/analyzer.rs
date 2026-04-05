@@ -424,8 +424,8 @@ impl AnalysisState {
         self.beat_avg = self.beat_avg * (1.0 - BEAT_AVG_ALPHA) + low_energy * BEAT_AVG_ALPHA;
 
         // Beat = how much current energy exceeds the rolling average.
-        // Threshold of 1.4x prevents noise from triggering false beats.
-        const BEAT_THRESHOLD: f32 = 1.4;
+        // Threshold of 1.2x — sensitive enough to catch most kicks/snares.
+        const BEAT_THRESHOLD: f32 = 1.2;
         let beat_spike = if self.beat_avg > 0.01 && low_energy > self.beat_avg * BEAT_THRESHOLD {
             ((low_energy - self.beat_avg) / self.beat_avg).clamp(0.0, 1.0)
         } else {

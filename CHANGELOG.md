@@ -8,6 +8,12 @@
 - **Beat-reactive color shifts** — low-frequency transient detection drives a brightness pulse across the entire palette on beats. Zero overhead on the audio thread (detection runs in the existing analyzer thread, color math in the render path)
 - **Peak hold glow** — peak markers now render in a brightened version of the palette color instead of flat white, fading as they decay
 
+## v0.18.7 (2026-04-05)
+
+### Changed
+
+- **Sample rate switching uses CoreAudio property listener instead of polling** — `set_device_sample_rate` now registers an `AudioObjectAddPropertyListener` on `kAudioDevicePropertyNominalSampleRate` and blocks on a oneshot channel instead of spinning every 10ms. Eliminates up to 10ms unnecessary latency per rate switch. Timeout bumped from 2s to 5s to cover USB Class 1 DACs doing PLL relock. Early-out when rate already matches, spurious callback verification, RAII listener cleanup. ([#130](https://github.com/radiosilence/koan/issues/130))
+
 ## v0.18.6 (2026-04-05)
 
 ### Fixed

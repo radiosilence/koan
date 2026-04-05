@@ -1,5 +1,8 @@
 use std::mem;
+use std::os::raw::c_void;
 use std::ptr;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use core_foundation::base::TCFType;
 use core_foundation::string::CFString;
@@ -254,11 +257,58 @@ pub fn find_output_device_by_name(name: &str) -> Result<AudioDeviceID> {
         .ok_or_else(|| DeviceError::NotFoundByName(name.to_string()))
 }
 
+/// RAII guard that removes a CoreAudio property listener on drop.
+/// Prevents listener registration leaks even on early returns or panics.
+struct ListenerGuard {
+    device_id: AudioDeviceID,
+    property: AudioObjectPropertyAddress,
+    callback: AudioObjectPropertyListenerProc,
+    client_data: *mut c_void,
+}
+
+impl Drop for ListenerGuard {
+    fn drop(&mut self) {
+        // SAFETY: Removing the same listener+client_data pair that was registered.
+        // Must happen exactly once — guaranteed by the Drop trait.
+        unsafe {
+            AudioObjectRemovePropertyListener(
+                self.device_id,
+                &self.property,
+                self.callback,
+                self.client_data,
+            );
+        }
+    }
+}
+
+/// CoreAudio property listener callback. Fires on the HAL I/O thread when the
+/// nominal sample rate changes. Zero work — just signals the waiting thread.
+///
+/// # Safety
+/// `in_client_data` must point to a valid `mpsc::SyncSender<()>`. The pointer
+/// is valid for the lifetime of the `ListenerGuard` in `set_device_sample_rate`.
+unsafe extern "C" fn rate_change_callback(
+    _in_object_id: AudioObjectID,
+    _in_number_addresses: UInt32,
+    _in_addresses: *const AudioObjectPropertyAddress,
+    in_client_data: *mut c_void,
+) -> OSStatus {
+    // SAFETY: `in_client_data` points to a valid `SyncSender<()>` on the calling
+    // thread's stack, kept alive by the `ListenerGuard` which removes this listener
+    // before the sender is dropped.
+    let tx = unsafe { &*(in_client_data as *const mpsc::SyncSender<()>) };
+    // Ignore send errors — receiver may have already been dropped (timeout).
+    let _ = tx.try_send(());
+    0
+}
+
 /// Set the nominal sample rate of a device (for bit-perfect matching).
 ///
 /// CoreAudio rate changes are asynchronous — the device needs time to physically
-/// reclock. This function polls until the device confirms the new rate or a
-/// timeout expires. Returns the actual device rate after the attempt.
+/// reclock. This function registers a property listener on
+/// `kAudioDevicePropertyNominalSampleRate` and waits for the callback instead of
+/// polling. Falls back on timeout (5s, covers slow USB Class 1 DACs doing PLL
+/// relock). Returns the actual device rate after the attempt.
 pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<f64> {
     let property = AudioObjectPropertyAddress {
         mSelector: kAudioDevicePropertyNominalSampleRate,
@@ -266,6 +316,38 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<f64
         mElement: kAudioObjectPropertyElementMain,
     };
 
+    // Early-out: if the device already reports the target rate, skip the switch.
+    let current = get_device_sample_rate(device_id)?;
+    if (current - rate).abs() < 0.1 {
+        return Ok(current);
+    }
+
+    // Set up a oneshot channel for the property listener callback.
+    let (tx, rx) = mpsc::sync_channel::<()>(1);
+
+    // SAFETY: `tx` lives on the stack for the duration of this function.
+    // The ListenerGuard removes the listener before `tx` is dropped, so the
+    // callback never sees a dangling pointer.
+    let client_data = &tx as *const mpsc::SyncSender<()> as *mut c_void;
+
+    check(unsafe {
+        AudioObjectAddPropertyListener(
+            device_id,
+            &property,
+            Some(rate_change_callback),
+            client_data,
+        )
+    })?;
+
+    // RAII: ensures RemovePropertyListener runs even on early return/panic.
+    let _guard = ListenerGuard {
+        device_id,
+        property,
+        callback: Some(rate_change_callback),
+        client_data,
+    };
+
+    // Request the rate change.
     // SAFETY: `rate` is a stack-allocated f64 with correct size for the property.
     check(unsafe {
         AudioObjectSetPropertyData(
@@ -278,23 +360,30 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<f64
         )
     })?;
 
-    // Poll until the device confirms the rate switch or we time out.
-    // Most DACs complete the switch in 10–50ms; USB devices can take longer.
-    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
-    const TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
-    let start = std::time::Instant::now();
+    // Wait for the listener callback or timeout.
+    // 5s covers USB Class 1 DACs that need PLL relock (3-5s typical).
+    const TIMEOUT: Duration = Duration::from_secs(5);
 
-    loop {
-        let actual = get_device_sample_rate(device_id)?;
-        if (actual - rate).abs() < 0.1 {
-            return Ok(actual);
-        }
-        if start.elapsed() >= TIMEOUT {
+    match rx.recv_timeout(TIMEOUT) {
+        Ok(()) => {
+            // Callback fired — verify the rate actually matches (spurious callbacks
+            // can fire for reasons other than our change).
+            let actual = get_device_sample_rate(device_id)?;
+            if (actual - rate).abs() < 0.1 {
+                return Ok(actual);
+            }
             log::warn!(
-                "device sample rate switch timed out: requested {rate}Hz, device reports {actual}Hz"
+                "sample rate listener fired but rate mismatch: requested {rate}Hz, device reports {actual}Hz"
             );
-            return Ok(actual);
+            Ok(actual)
         }
-        std::thread::sleep(POLL_INTERVAL);
+        Err(_) => {
+            let actual = get_device_sample_rate(device_id)?;
+            log::warn!(
+                "device sample rate switch timed out after {TIMEOUT:?}: requested {rate}Hz, device reports {actual}Hz"
+            );
+            Ok(actual)
+        }
     }
+    // _guard drops here → AudioObjectRemovePropertyListener called before tx is dropped
 }

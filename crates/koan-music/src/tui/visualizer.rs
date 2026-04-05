@@ -269,7 +269,7 @@ impl<'a> SpectrumWidget<'a> {
                 // Frequency-mapped color from the palette.
                 let base_color = palette.freq_color(freq_t);
                 // Beat-reactive: brighten toward white proportional to beat energy.
-                let color = brighten(base_color, beat * 0.4);
+                let color = brighten(base_color, beat * 0.7);
                 Style::new().fg(color)
             }
         }
