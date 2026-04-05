@@ -415,25 +415,28 @@ impl AnalysisState {
         }
 
         // ── Beat detection (low-band transient) ─────────────────────────────
-        // Average the bottom ~4 bars (sub-bass + bass) as the beat signal.
-        let beat_bands = NUM_BARS.min(4);
+        // Sum the bottom ~6 bars (sub-bass through upper bass) as the beat signal.
+        let beat_bands = NUM_BARS.min(6);
         let low_energy: f32 = self.spectrum[..beat_bands].iter().sum::<f32>() / beat_bands as f32;
 
-        // Exponential moving average — alpha ~0.15 gives ~6 frame memory at 60fps.
-        const BEAT_AVG_ALPHA: f32 = 0.15;
+        // Slow EMA — alpha 0.02 gives ~50 frame memory at 60fps (~0.8s).
+        // This tracks the ambient bass level, not individual beats.
+        const BEAT_AVG_ALPHA: f32 = 0.02;
         self.beat_avg = self.beat_avg * (1.0 - BEAT_AVG_ALPHA) + low_energy * BEAT_AVG_ALPHA;
 
-        // Beat = how much current energy exceeds the rolling average.
-        // Threshold of 1.2x — sensitive enough to catch most kicks/snares.
-        const BEAT_THRESHOLD: f32 = 1.2;
-        let beat_spike = if self.beat_avg > 0.01 && low_energy > self.beat_avg * BEAT_THRESHOLD {
-            ((low_energy - self.beat_avg) / self.beat_avg).clamp(0.0, 1.0)
+        // Beat = how far current energy exceeds the rolling average, normalized.
+        // The spike is scaled so that a 2x surge = 1.0 output.
+        let beat_spike = if self.beat_avg > 0.005 {
+            let excess = (low_energy - self.beat_avg).max(0.0);
+            (excess / self.beat_avg.max(0.05)).clamp(0.0, 1.0)
         } else {
-            0.0
+            // No meaningful baseline yet — use raw energy as bootstrap.
+            (low_energy * 3.0).clamp(0.0, 1.0)
         };
 
-        // Beat energy: rise instantly, decay with bar_decay for a quick pulse.
-        self.beat_energy = beat_spike.max(self.beat_energy * bar_decay);
+        // Beat energy: rise instantly, decay slower than bars for a visible pulse.
+        // Using sqrt of bar_decay gives roughly double the half-life.
+        self.beat_energy = beat_spike.max(self.beat_energy * bar_decay.sqrt());
     }
 
     /// Apply decay-to-silence (called when paused or no audio).
