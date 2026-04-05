@@ -1,12 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.19.0 (2026-04-06)
 
 ### Added
 
-- **Colorful spectrum analyzer palettes** — frequency-mapped color gradients replace the old monochrome green. Four palettes available via `[visualizer] palette = "..."`: `spectrum` (default, bass red/orange through cyan mids to purple highs), `fire` (deep red to white-hot), `neon` (synthwave pink through electric blue), `mono` (classic LED green/yellow/red). ([#134](https://github.com/radiosilence/koan/issues/134))
-- **Beat-reactive color shifts** — low-frequency transient detection drives a brightness pulse across the entire palette on beats. Zero overhead on the audio thread (detection runs in the existing analyzer thread, color math in the render path)
-- **Peak hold glow** — peak markers now render in a brightened version of the palette color instead of flat white, fading as they decay
+- **Colorful spectrum analyzer** — frequency-mapped rainbow replaces monochrome green. Four palettes via `[visualizer] palette`: `spectrum` (default), `fire`, `neon`, `mono`. Dreamy 8-second color drift breathes the rainbow back and forth across the bars. Beat-reactive hue shifts snap the palette forward on kicks/transients. Brightness pulses on top. Peak markers glow in brightened palette colors. All color math in the render path — zero impact on audio threads. ([#134](https://github.com/radiosilence/koan/issues/134), [#135](https://github.com/radiosilence/koan/pull/135))
 
 ## v0.18.7 (2026-04-05)
 
