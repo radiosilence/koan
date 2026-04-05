@@ -45,8 +45,9 @@ pub trait AudioBackend: Send + Sync {
     fn get_device_sample_rate(&self, device: &DeviceInfo) -> Result<f64, BackendError>;
 
     /// Set the nominal sample rate of a device (for bit-perfect matching).
+    /// Returns the actual device rate after the switch (may differ if unsupported).
     /// On Linux/cpal this is a no-op — the rate is set at stream creation.
-    fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<(), BackendError>;
+    fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<f64, BackendError>;
 
     /// Create an audio engine targeting a device at a specific format.
     /// Takes ownership of the rtrb consumer.

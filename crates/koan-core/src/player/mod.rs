@@ -272,19 +272,34 @@ impl Player {
         let device_rate = self.backend.get_device_sample_rate(&device)?;
         let source_rate = info.sample_rate as f64;
 
-        if (device_rate - source_rate).abs() > 0.1 {
+        let actual_rate = if (device_rate - source_rate).abs() > 0.1 {
             log::info!(
                 "switching device sample rate: {}Hz → {}Hz",
                 device_rate,
                 source_rate
             );
-            if let Err(e) = self.backend.set_device_sample_rate(&device, source_rate) {
-                log::warn!(
-                    "failed to set sample rate (continuing at device rate): {}",
-                    e
-                );
+            match self.backend.set_device_sample_rate(&device, source_rate) {
+                Ok(confirmed_rate) => {
+                    if (confirmed_rate - source_rate).abs() > 0.1 {
+                        log::warn!(
+                            "device stayed at {}Hz (wanted {}Hz) — playback will use device rate",
+                            confirmed_rate,
+                            source_rate
+                        );
+                    }
+                    confirmed_rate
+                }
+                Err(e) => {
+                    log::warn!(
+                        "failed to set sample rate (continuing at device rate): {}",
+                        e
+                    );
+                    device_rate
+                }
             }
-        }
+        } else {
+            device_rate
+        };
 
         let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
 
@@ -330,11 +345,7 @@ impl Player {
             },
         )?;
 
-        // Create and start audio engine with the timeline's sample counter.
-        let actual_rate = self
-            .backend
-            .get_device_sample_rate(&device)
-            .unwrap_or(source_rate);
+        // Create and start audio engine with the confirmed device rate.
         let engine = self.backend.create_engine(
             &device,
             actual_rate,
@@ -470,19 +481,34 @@ impl Player {
         let device_rate = self.backend.get_device_sample_rate(&device)?;
         let source_rate = info.sample_rate as f64;
 
-        if (device_rate - source_rate).abs() > 0.1 {
+        let actual_rate = if (device_rate - source_rate).abs() > 0.1 {
             log::info!(
                 "switching device sample rate: {}Hz → {}Hz",
                 device_rate,
                 source_rate
             );
-            if let Err(e) = self.backend.set_device_sample_rate(&device, source_rate) {
-                log::warn!(
-                    "failed to set sample rate (continuing at device rate): {}",
-                    e
-                );
+            match self.backend.set_device_sample_rate(&device, source_rate) {
+                Ok(confirmed_rate) => {
+                    if (confirmed_rate - source_rate).abs() > 0.1 {
+                        log::warn!(
+                            "device stayed at {}Hz (wanted {}Hz) — playback will use device rate",
+                            confirmed_rate,
+                            source_rate
+                        );
+                    }
+                    confirmed_rate
+                }
+                Err(e) => {
+                    log::warn!(
+                        "failed to set sample rate (continuing at device rate): {}",
+                        e
+                    );
+                    device_rate
+                }
             }
-        }
+        } else {
+            device_rate
+        };
 
         let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
 
@@ -553,10 +579,7 @@ impl Player {
             },
         )?;
 
-        let actual_rate = self
-            .backend
-            .get_device_sample_rate(&device)
-            .unwrap_or(source_rate);
+        // Create and start audio engine with the confirmed device rate.
         let engine = self.backend.create_engine(
             &device,
             actual_rate,

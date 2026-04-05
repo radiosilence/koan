@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.18.5 (2026-04-05)
+
+### Fixed
+
+- **Hi-res audio playing at wrong speed** — CoreAudio sample rate switches are asynchronous, but the player read back the device rate immediately after requesting the change and got the *old* rate. A fallback (`unwrap_or(source_rate)`) then masked the mismatch by lying to the ASBD. Result: 96kHz files played at quarter speed (device still clocked at the old rate, draining the ring buffer too slowly). `set_device_sample_rate` now polls until CoreAudio confirms the switch (10ms intervals, 2s timeout) and returns the verified rate. Both file and streaming playback paths fixed. ([#124](https://github.com/radiosilence/koan/pull/124))
+
 ## v0.18.4 (2026-04-01)
 
 ### Fixed

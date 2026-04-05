@@ -50,7 +50,7 @@ impl AudioBackend for CoreAudioBackend {
         device::get_device_sample_rate(id).map_err(|e| BackendError::Platform(e.to_string()))
     }
 
-    fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<(), BackendError> {
+    fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<f64, BackendError> {
         let id = device.platform_id as u32;
         device::set_device_sample_rate(id, rate).map_err(|e| BackendError::Platform(e.to_string()))
     }

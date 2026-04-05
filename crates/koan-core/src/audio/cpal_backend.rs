@@ -160,10 +160,12 @@ impl AudioBackend for CpalBackend {
         Ok(config.sample_rate().0 as f64)
     }
 
-    fn set_device_sample_rate(&self, _device: &DeviceInfo, _rate: f64) -> Result<(), BackendError> {
+    fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<f64, BackendError> {
         // On Linux, sample rate is set at stream creation time.
         // This is a no-op — the rate will be applied in `create_engine`.
-        Ok(())
+        // Return the requested rate since cpal handles it at stream creation.
+        let _ = device;
+        Ok(rate)
     }
 
     fn create_engine(
@@ -304,7 +306,9 @@ mod tests {
             sample_rates: vec![44100.0],
             platform_id: 0,
         };
-        assert!(backend.set_device_sample_rate(&dummy, 96000.0).is_ok());
+        let result = backend.set_device_sample_rate(&dummy, 96000.0);
+        assert!(result.is_ok());
+        assert!((result.unwrap() - 96000.0).abs() < 0.1);
     }
 
     #[test]
