@@ -166,7 +166,7 @@ struct Playlist {
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
 | `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread) |
-| `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold. Configurable fps. Writes to `VizSnapshot`. |
+| `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold, beat detection (low-band transient). Configurable fps. Writes to `VizSnapshot`. |
 | `streaming.rs` | Progressive download with `Condvar`-based ready signaling for streaming playback |
 
 ### `player/`
@@ -272,7 +272,7 @@ Subcommand handlers split into focused modules:
 | `theme.rs` | Color palette. Cyan for active/cursor, green for albums, DarkGray for hints. |
 | `context_menu.rs` | `ContextMenuOverlay` widget: action list popup (currently: Organize) |
 | `organize.rs` | `OrganizeModalState` + `OrganizeOverlay`: pattern picker, scoped preview table, background execute with path update propagation to player |
-| `visualizer.rs` | Spectrum analyzer widget: reads `VizSnapshot`, renders 48-band bars with Unicode block chars, peak markers, amplitude coloring |
+| `visualizer.rs` | Spectrum analyzer widget: reads `VizSnapshot`, renders 48-band bars with Unicode block chars, peak markers. Configurable palettes (`mono`/`spectrum`/`fire`/`neon`) with frequency-mapped gradients, beat-reactive brightness, and peak glow |
 | `lyrics.rs` | Lyrics side panel: synced (LRC) line highlighting with auto-scroll, plain text fallback |
 | `device_selector.rs` | Audio output device selection modal |
 | `help_modal.rs` | Help overlay with key binding reference |

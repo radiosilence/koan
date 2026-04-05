@@ -354,7 +354,9 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // FPS counter overlay (top-right corner).
     if app.show_fps && area.width >= 8 {
-        let fps_text = format!(" {}fps ", app.display_fps);
+        let beat = app.visualizer.beat_energy;
+        let beat_tag = if beat > 0.3 { " BEAT" } else { "" };
+        let fps_text = format!(" {}fps b:{:.2}{} ", app.display_fps, beat, beat_tag);
         let w = fps_text.len() as u16;
         let fps_area = Rect::new(area.x + area.width - w, area.y, w, 1);
         let fps_line = Line::from(Span::styled(fps_text, app.theme.hint_desc));

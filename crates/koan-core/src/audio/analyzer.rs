@@ -246,6 +246,11 @@ struct AnalysisState {
     amplitude_scale: AmplitudeScale,
     /// Pre-computed A-weighting correction per FFT bin (dB).
     a_weight_table: Vec<f32>,
+    /// Rolling average of low-band energy for beat detection.
+    /// Tracks the mean of the bottom ~4 bars over recent frames.
+    beat_avg: f32,
+    /// Current beat energy output (0.0..1.0), decays each frame.
+    beat_energy: f32,
 }
 
 impl AnalysisState {
@@ -277,6 +282,8 @@ impl AnalysisState {
             peak_half_life,
             amplitude_scale,
             a_weight_table: Vec::new(),
+            beat_avg: 0.0,
+            beat_energy: 0.0,
         }
     }
 
@@ -406,6 +413,30 @@ impl AnalysisState {
                 self.peaks[i] *= peak_decay;
             }
         }
+
+        // ── Beat detection (low-band transient) ─────────────────────────────
+        // Sum the bottom ~6 bars (sub-bass through upper bass) as the beat signal.
+        let beat_bands = NUM_BARS.min(6);
+        let low_energy: f32 = self.spectrum[..beat_bands].iter().sum::<f32>() / beat_bands as f32;
+
+        // Slow EMA — alpha 0.02 gives ~50 frame memory at 60fps (~0.8s).
+        // This tracks the ambient bass level, not individual beats.
+        const BEAT_AVG_ALPHA: f32 = 0.02;
+        self.beat_avg = self.beat_avg * (1.0 - BEAT_AVG_ALPHA) + low_energy * BEAT_AVG_ALPHA;
+
+        // Beat = how far current energy exceeds the rolling average, normalized.
+        // The spike is scaled so that a 2x surge = 1.0 output.
+        let beat_spike = if self.beat_avg > 0.005 {
+            let excess = (low_energy - self.beat_avg).max(0.0);
+            (excess / self.beat_avg.max(0.05)).clamp(0.0, 1.0)
+        } else {
+            // No meaningful baseline yet — use raw energy as bootstrap.
+            (low_energy * 3.0).clamp(0.0, 1.0)
+        };
+
+        // Beat energy: rise instantly, decay slower than bars for a visible pulse.
+        // Using sqrt of bar_decay gives roughly double the half-life.
+        self.beat_energy = beat_spike.max(self.beat_energy * bar_decay.sqrt());
     }
 
     /// Apply decay-to-silence (called when paused or no audio).
@@ -418,6 +449,7 @@ impl AnalysisState {
         for v in self.vu_levels.iter_mut() {
             *v *= bar_decay;
         }
+        self.beat_energy *= bar_decay;
     }
 
     /// Compute RMS VU levels per channel from the snapshot.
@@ -604,6 +636,7 @@ fn analysis_loop(
             snap_out.write(VizFrame {
                 spectrum: state.spectrum,
                 vu_levels: state.vu_levels,
+                beat_energy: state.beat_energy,
                 timestamp: Instant::now(),
             });
         }
