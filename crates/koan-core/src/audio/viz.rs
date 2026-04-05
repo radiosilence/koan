@@ -42,13 +42,16 @@ pub type SharedAnalysisOutput = Arc<Mutex<AnalysisOutput>>;
 /// A single frame of analysis output, ready for the UI thread.
 ///
 /// Held inside `VizSnapshot` under an RwLock. The UI thread clones this in
-/// <1us (memcpy of 48 floats + 2 floats + Instant) while holding the read lock.
+/// <1us (memcpy of 48 floats + 2 floats + 1 float + Instant) while holding the read lock.
 #[derive(Clone)]
 pub struct VizFrame {
     /// Spectrum bar heights (0.0..1.0), one per bar.
     pub spectrum: [f32; NUM_BARS],
     /// RMS VU levels: [left, right], each 0.0..1.0.
     pub vu_levels: [f32; 2],
+    /// Beat energy (0.0..1.0). Spikes on transients in the low bands,
+    /// decays quickly. Used by the TUI for beat-reactive color shifts.
+    pub beat_energy: f32,
     /// When this frame was computed.
     pub timestamp: std::time::Instant,
 }
@@ -58,6 +61,7 @@ impl Default for VizFrame {
         Self {
             spectrum: [0.0; NUM_BARS],
             vu_levels: [0.0; 2],
+            beat_energy: 0.0,
             timestamp: std::time::Instant::now(),
         }
     }
@@ -336,6 +340,7 @@ mod tests {
         snap.write(VizFrame {
             spectrum: new_spectrum,
             vu_levels: [0.5, 0.5],
+            beat_energy: 0.0,
             timestamp: std::time::Instant::now(),
         });
 

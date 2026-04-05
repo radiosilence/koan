@@ -134,6 +134,9 @@ pub struct VisualizerConfig {
     pub bar_decay_ms: u32,
     /// Peak decay half-life in milliseconds (how long peaks linger).
     pub peak_decay_ms: u32,
+    /// Color palette: "spectrum" (default), "mono", "fire", "neon".
+    /// Controls the frequency-mapped color gradient on spectrum bars.
+    pub palette: String,
 }
 
 impl Default for VisualizerConfig {
@@ -145,6 +148,7 @@ impl Default for VisualizerConfig {
             amplitude_scale: "aweight".into(),
             bar_decay_ms: 50,
             peak_decay_ms: 180,
+            palette: "spectrum".into(),
         }
     }
 }
