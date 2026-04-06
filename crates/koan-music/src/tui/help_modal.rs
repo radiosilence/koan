@@ -75,7 +75,8 @@ const SECTIONS: &[Section] = &[
         bindings: &[
             ("L", "Lyrics panel"),
             ("R", "Radio mode (auto-queue)"),
-            ("V", "Visualiser"),
+            ("V", "Visualiser on/off"),
+            ("M", "Visualiser mode cycle"),
             ("f", "Favourite track"),
         ],
     },

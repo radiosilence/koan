@@ -39,10 +39,14 @@ pub type SharedAnalysisOutput = Arc<Mutex<AnalysisOutput>>;
 
 // ── VizFrame / VizSnapshot (high-level UI-facing snapshot API) ────────────────
 
+/// Number of waveform samples carried in each VizFrame for oscilloscope/lissajous modes.
+/// 2048 samples (~46ms at 44.1kHz) matches the FFT window size — enough for smooth waveform display.
+pub const WAVEFORM_SAMPLES: usize = 2048;
+
 /// A single frame of analysis output, ready for the UI thread.
 ///
 /// Held inside `VizSnapshot` under an RwLock. The UI thread clones this in
-/// <1us (memcpy of 48 floats + 2 floats + 1 float + Instant) while holding the read lock.
+/// <1us (memcpy of 48 floats + 2 floats + 1 float + waveform + Instant) while holding the read lock.
 #[derive(Clone)]
 pub struct VizFrame {
     /// Spectrum bar heights (0.0..1.0), one per bar.
@@ -54,6 +58,10 @@ pub struct VizFrame {
     pub beat_energy: f32,
     /// When this frame was computed.
     pub timestamp: std::time::Instant,
+    /// Raw waveform samples for oscilloscope/lissajous rendering.
+    /// Interleaved stereo (L, R, L, R...) — `WAVEFORM_SAMPLES` frames = `WAVEFORM_SAMPLES * 2` values.
+    /// Empty when no audio is playing.
+    pub waveform: Vec<f32>,
 }
 
 impl Default for VizFrame {
@@ -63,6 +71,7 @@ impl Default for VizFrame {
             vu_levels: [0.0; 2],
             beat_energy: 0.0,
             timestamp: std::time::Instant::now(),
+            waveform: Vec::new(),
         }
     }
 }
@@ -342,6 +351,7 @@ mod tests {
             vu_levels: [0.5, 0.5],
             beat_energy: 0.0,
             timestamp: std::time::Instant::now(),
+            waveform: Vec::new(),
         });
 
         let frame2 = snap.read();

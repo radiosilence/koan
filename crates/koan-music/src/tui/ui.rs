@@ -15,7 +15,7 @@ use super::picker::{PickerOverlay, picker_popup_rect};
 use super::queue::QueueView;
 use super::track_info::TrackInfoOverlay;
 use super::transport::TransportBar;
-use super::visualizer::SpectrumWidget;
+use super::visualizer::VisualizerWidget;
 
 /// Height of the transport bar without album art.
 const TRANSPORT_HEIGHT_DEFAULT: u16 = 3;
@@ -106,7 +106,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     .with_download_fraction(dl_fraction);
     frame.render_widget(transport, text_area);
 
-    // Spectrum visualizer — renders in the space above the transport text.
+    // Visualizer — renders in the space above the transport text.
+    // Dispatches to the active mode (bars, oscilloscope, radial, particles, lissajous).
     if transport_height > TRANSPORT_HEIGHT_DEFAULT {
         let spectrum_height = transport_height - TRANSPORT_HEIGHT_DEFAULT;
         let spectrum_area = Rect::new(
@@ -115,8 +116,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             chunks[0].width.saturating_sub(art_width + 1),
             spectrum_height,
         );
-        let spectrum = SpectrumWidget::new(&app.visualizer, &app.theme);
-        frame.render_widget(spectrum, spectrum_area);
+        let viz = VisualizerWidget::new(&mut app.visualizer, &app.theme);
+        viz.render(spectrum_area, frame.buffer_mut());
     }
 
     // Content area: library + queue side-by-side, or just queue, with optional lyrics panel.

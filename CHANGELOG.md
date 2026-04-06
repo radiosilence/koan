@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Braille visualizer modes** — five rendering modes for the visualizer, switchable with `M` key: `bars` (existing LED spectrum), `oscilloscope` (raw PCM waveform as braille line), `radial` (polar-coordinate spectrum starburst), `particles` (frequency-driven particle system with physics), `lissajous` (stereo phase scope with afterglow trail). All modes use a braille character grid (U+2800..U+28FF) for 2x4 subpixel resolution per terminal cell. Beat-reactive, palette-colored, existing color palettes and drift effects apply to all modes. Config: `[visualizer] mode = "bars"` (default). ([#137](https://github.com/radiosilence/koan/issues/137))
+
 ## v0.19.0 (2026-04-06)
 
 ### Added

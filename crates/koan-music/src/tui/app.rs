@@ -990,6 +990,20 @@ impl App {
                     cfg.visualizer.enabled = viz_enabled;
                 });
             }
+            KeyCode::Char('M') => {
+                let next_mode = self.visualizer.mode.next();
+                self.visualizer.mode = next_mode;
+                self.viz_config.mode = next_mode.as_str().to_string();
+                self.status_message = Some((
+                    format!("visualiser: {}", next_mode.label()),
+                    std::time::Instant::now(),
+                ));
+                // Persist to config.toml.
+                let mode_str = next_mode.as_str().to_string();
+                let _ = koan_core::config::Config::update_base(|cfg| {
+                    cfg.visualizer.mode = mode_str.clone();
+                });
+            }
             KeyCode::Up => {
                 let visible = self.visible_queue();
                 if !visible.is_empty() {

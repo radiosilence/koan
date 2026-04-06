@@ -633,11 +633,22 @@ fn analysis_loop(
 
         // ── Phase 3b: publish to VizSnapshot (RwLock write, <1us) ────────────
         if let Some(ref snap_out) = snapshot {
+            // Stash the most recent waveform samples for oscilloscope/lissajous.
+            // Take the tail of the raw snapshot (already in chronological order).
+            use super::viz::WAVEFORM_SAMPLES;
+            let waveform = if snap.channels >= 1 && !snap.samples.is_empty() {
+                let interleaved_len = WAVEFORM_SAMPLES * snap.channels.max(1) as usize;
+                let start = snap.samples.len().saturating_sub(interleaved_len);
+                snap.samples[start..].to_vec()
+            } else {
+                Vec::new()
+            };
             snap_out.write(VizFrame {
                 spectrum: state.spectrum,
                 vu_levels: state.vu_levels,
                 beat_energy: state.beat_energy,
                 timestamp: Instant::now(),
+                waveform,
             });
         }
 
