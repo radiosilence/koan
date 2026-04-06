@@ -126,6 +126,8 @@ impl Default for PlaybackConfig {
 pub struct VisualizerConfig {
     pub enabled: bool,
     pub fps: u8,
+    /// Visualizer mode: "bars" (default), "oscilloscope", "radial", "particles", "lissajous".
+    pub mode: String,
     /// Frequency scale: "bark" (default), "mel", "log", "linear".
     pub scale: String,
     /// Amplitude scale: "aweight" (default, A-weighted), "perceptual" (A-weighted + gamma), "sqrt", "linear".
@@ -144,6 +146,7 @@ impl Default for VisualizerConfig {
         Self {
             enabled: true,
             fps: 60,
+            mode: "bars".into(),
             scale: "bark".into(),
             amplitude_scale: "aweight".into(),
             bar_decay_ms: 50,
