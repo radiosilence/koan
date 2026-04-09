@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.19.3 (2026-04-09)
+
+### Fixed
+
+- **Incomplete downloads can't corrupt the cache** — downloads now write to a `.part` file and atomically rename on completion. Interrupted downloads are cleaned up, never mistaken for complete files. Size verification against Content-Length catches server-side truncation. Streaming playback reads from RAM (StreamBuffer) so the rename is invisible to the decoder. ([#143](https://github.com/radiosilence/koan/pull/143))
+
 ## v0.19.2 (2026-04-09)
 
 ### Fixed
