@@ -106,7 +106,16 @@ pub(crate) fn resolve_item_path(
     }
 }
 
-/// Download a single track and update playlist state.
+/// Resolve a track to a playable file, downloading from remote if needed.
+///
+/// Resolution order:
+/// 1. Local library path (DB `path` field) — use directly if file exists
+/// 2. Cache path — use if already downloaded
+/// 3. Download from remote to cache — stream while downloading
+///
+/// The playlist item's path is updated to the resolved location before any
+/// download starts, so streaming playback uses the correct (cache) path
+/// instead of a stale local path that may no longer exist.
 pub(crate) fn download_track(
     db_id: i64,
     queue_id: QueueItemId,
@@ -127,10 +136,36 @@ pub(crate) fn download_track(
     let remote_id = match &track.remote_id {
         Some(rid) => rid.clone(),
         None => {
+            // No remote_id — check if the local file exists (maybe it was just unmounted earlier).
+            if let Some(ref path) = track.path {
+                let p = std::path::PathBuf::from(path);
+                if p.exists() {
+                    state.update_paths(&[(queue_id, p)]);
+                    state.update_load_state(queue_id, LoadState::Ready);
+                    if state.is_cursor(queue_id) {
+                        tx.send(PlayerCommand::TrackReady(queue_id)).ok();
+                    }
+                    return;
+                }
+            }
             state.update_load_state(queue_id, LoadState::Failed("no remote_id".into()));
             return;
         }
     };
+
+    // 1. Check if the local library file exists (e.g. volume remounted since restore).
+    if let Some(ref local_path) = track.path {
+        let p = std::path::PathBuf::from(local_path);
+        if p.exists() {
+            log::info!("download_track: local file exists, using {}", p.display());
+            state.update_paths(&[(queue_id, p)]);
+            state.update_load_state(queue_id, LoadState::Ready);
+            if state.is_cursor(queue_id) {
+                tx.send(PlayerCommand::TrackReady(queue_id)).ok();
+            }
+            return;
+        }
+    }
 
     let album_date: Option<String> = track
         .album_id
@@ -138,14 +173,19 @@ pub(crate) fn download_track(
 
     let dest = cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
 
-    // Already downloaded (race with another batch).
+    // 2. Already cached (race with another batch, or previous download).
     if dest.exists() {
+        state.update_paths(&[(queue_id, dest)]);
         state.update_load_state(queue_id, LoadState::Ready);
         if state.is_cursor(queue_id) {
             tx.send(PlayerCommand::TrackReady(queue_id)).ok();
         }
         return;
     }
+
+    // 3. Download from remote. Update the item path to the cache destination
+    //    BEFORE starting, so streaming playback opens the correct file.
+    state.update_paths(&[(queue_id, dest.clone())]);
 
     let client = match super::subsonic_client(cfg) {
         Some(c) => c,
