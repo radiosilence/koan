@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.19.2 (2026-04-09)
+
+### Fixed
+
+- **Streaming playback fails on restored sessions with unmounted volumes** — when a track's original local path no longer exists (e.g. volume unmounted), the streaming system tried to open the stale path instead of the cache download destination. Now updates the item path to the cache dest before downloading starts. Also checks if the local file came back (volume remounted) before re-downloading. ([#140](https://github.com/radiosilence/koan/pull/140))
+
 ## v0.19.1 (2026-04-06)
 
 ### Added
