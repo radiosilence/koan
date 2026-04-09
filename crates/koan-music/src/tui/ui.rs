@@ -27,6 +27,24 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let area = frame.area();
 
+    // Fullscreen visualizer — take the entire frame, skip everything else.
+    if app.viz_fullscreen && app.viz_config.enabled {
+        let viz = VisualizerWidget::new(&mut app.visualizer, &app.theme);
+        viz.render(area, frame.buffer_mut());
+
+        // FPS overlay in fullscreen too.
+        if app.show_fps && area.width >= 8 {
+            let beat = app.visualizer.beat_energy;
+            let beat_tag = if beat > 0.3 { " BEAT" } else { "" };
+            let fps_text = format!(" {}fps b:{:.2}{} ", app.display_fps, beat, beat_tag);
+            let w = fps_text.len() as u16;
+            let fps_area = Rect::new(area.x + area.width - w, area.y, w, 1);
+            let fps_line = Line::from(Span::styled(fps_text, app.theme.hint_desc));
+            frame.render_widget(Paragraph::new(fps_line), fps_area);
+        }
+        return;
+    }
+
     let has_art = app.art.now_playing_art.cached().is_some();
     let art_width = app.art_size;
     let art_height = art_width / 2; // square via halfblock rendering

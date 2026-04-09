@@ -183,9 +183,11 @@ pub(crate) fn download_track(
         return;
     }
 
-    // 3. Download from remote. Update the item path to the cache destination
-    //    BEFORE starting, so streaming playback opens the correct file.
-    state.update_paths(&[(queue_id, dest.clone())]);
+    // 3. Download from remote. Set item path to the .part file so the
+    //    streaming pump opens the right file during progressive playback.
+    //    Updated to final dest after download completes + rename.
+    let part_path = dest.with_extension("part");
+    state.update_paths(&[(queue_id, part_path)]);
 
     let client = match super::subsonic_client(cfg) {
         Some(c) => c,
@@ -235,7 +237,10 @@ pub(crate) fn download_track(
         return;
     }
 
-    // Download succeeded — mark ready.
+    // Download succeeded — update path to the final (renamed) file and mark ready.
+    // Streaming playback continues uninterrupted from the in-memory StreamBuffer;
+    // the path update only matters for future plays from cache.
+    state.update_paths(&[(queue_id, dest.clone())]);
     state.update_load_state(queue_id, LoadState::Ready);
     let _ = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy());
 
