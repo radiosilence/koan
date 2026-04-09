@@ -277,6 +277,8 @@ pub struct App {
 
     /// Whether to show FPS overlay (from config).
     pub show_fps: bool,
+    /// Fullscreen visualizer mode — hides transport, queue, hints.
+    pub viz_fullscreen: bool,
     /// Timestamp of last FPS sample for computing display FPS.
     fps_sample_time: std::time::Instant,
     /// Frame counter since last FPS sample.
@@ -361,6 +363,7 @@ impl App {
             status_message: None,
             pending_share_status: None,
             show_fps: cfg.playback.show_fps,
+            viz_fullscreen: false,
             viz_config,
             fps_sample_time: std::time::Instant::now(),
             fps_sample_count: 0,
@@ -989,6 +992,13 @@ impl App {
                 let _ = koan_core::config::Config::update_base(|cfg| {
                     cfg.visualizer.enabled = viz_enabled;
                 });
+            }
+            KeyCode::Char('F') => {
+                self.viz_fullscreen = !self.viz_fullscreen;
+                // Enable visualizer if it wasn't already.
+                if self.viz_fullscreen {
+                    self.viz_config.enabled = true;
+                }
             }
             KeyCode::Char('M') => {
                 let next_mode = self.visualizer.mode.next();
