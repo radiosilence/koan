@@ -386,6 +386,10 @@ impl Player {
         // Spawn a pump thread: reads bytes from the on-disk partial file as they
         // become available (per bytes_written) and pushes them into StreamBuffer.
         // This bridges the disk-based download with StreamingSource's in-memory design.
+        // The playlist item's path points to the .part file during download, so the
+        // pump opens the correct file. After download completes, the .part is renamed
+        // to the final path and the item path is updated — but the pump's open FD
+        // remains valid (Unix rename semantics).
         let pump_path = path.to_path_buf();
         let pump_buf = stream_buf.clone();
         let pump_written = bytes_written.clone();

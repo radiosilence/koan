@@ -175,19 +175,41 @@ impl SubsonicClient {
             std::fs::create_dir_all(parent)?;
         }
 
-        let mut file = std::fs::File::create(dest)?;
+        // Write to a temp file first — only rename to dest on success.
+        // This prevents incomplete downloads from being treated as cached.
+        let tmp = dest.with_extension("part");
+        let mut file = std::fs::File::create(&tmp)?;
         let mut downloaded: u64 = 0;
         let mut buf = [0u8; 64 * 1024]; // 64KB chunks
-        loop {
-            let n = std::io::Read::read(&mut resp, &mut buf).map_err(SubsonicError::Io)?;
-            if n == 0 {
-                break;
-            }
+        let result = loop {
+            let n = match std::io::Read::read(&mut resp, &mut buf) {
+                Ok(0) => break Ok(()),
+                Ok(n) => n,
+                Err(e) => break Err(SubsonicError::Io(e)),
+            };
             file.write_all(&buf[..n])?;
             downloaded += n as u64;
             on_progress(downloaded, total);
-        }
+        };
         file.flush()?;
+        drop(file);
+
+        if let Err(e) = result {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e);
+        }
+
+        // Verify size if server reported Content-Length.
+        if total > 0 && downloaded != total {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(SubsonicError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                format!("incomplete download: got {} of {} bytes", downloaded, total),
+            )));
+        }
+
+        // Atomic rename — dest only appears when the file is complete.
+        std::fs::rename(&tmp, dest)?;
         Ok(())
     }
 
