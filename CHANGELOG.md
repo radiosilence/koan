@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.19.5 (2026-04-11)
+
+### Added
+
+- **Four new visualizer modes** — cycle with `M` key through nine total modes. New additions: `spectrogram` (time×frequency heatmap scrolling vertically, block characters for density), `stereo` (L and R waveforms stacked top/bottom with warm/cool palette split), `vu` (dual analog needle meters with arc scale, tick marks, and ballistic needle physics — fast attack, slow decay), `flame` (filled area under the spectrum curve with 8 stacked decay trails creating a layered mountain/fire effect). All modes use the existing palette system, beat-reactive color shifts, and dreamy drift. Config: `[visualizer] mode = "spectrogram"` (or `waterfall`, `stereo`, `vu`, `meter`, `flame`, `mountain`). ([#146](https://github.com/radiosilence/koan/pull/146))
+
 ## v0.19.4 (2026-04-11)
 
 ### Fixed
