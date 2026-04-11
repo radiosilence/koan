@@ -657,12 +657,12 @@ fn decode_single(
             sbuf.samples()
         };
 
-        // Copy decoded samples to the visualization buffer (if attached).
-        if let Some(viz) = viz_buffer {
-            viz.push_samples(samples, channels, sample_rate);
-        }
-
         // Push samples into ring buffer, blocking if full.
+        // VizBuffer is updated incrementally inside this loop so it receives
+        // samples at the real-time audio consumption rate (paced by the audio
+        // callback draining the rtrb consumer), not in packet-sized bursts.
+        // Without this, FLAC packets (~93ms each at 44.1kHz) would update the
+        // viz buffer only ~11 times/sec, making waveform modes visibly choppy.
         let mut offset = 0;
         while offset < samples.len() {
             if stop.load(Ordering::Relaxed) {
@@ -692,6 +692,12 @@ fn decode_single(
                 // two loops above — first.len() + second.len() == chunk_size,
                 // and every slot is written via MaybeUninit::write().
                 unsafe { chunk.commit_all() };
+
+                // Feed viz buffer at the same rate as rtrb consumption.
+                if let Some(viz) = viz_buffer {
+                    viz.push_samples(to_write, channels, sample_rate);
+                }
+
                 offset += chunk_size;
             }
         }
