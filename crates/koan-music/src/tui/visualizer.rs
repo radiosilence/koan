@@ -408,22 +408,59 @@ impl BrailleGrid {
 
 /// Fill an area with a beat-reactive pulsating background color.
 /// Intensity is low (subtle wash), color shifts with beat_hue_offset.
+/// Fill an area with a beat-reactive background color.
+/// Cycles through bold colors on beat hits, fades to black between.
 fn fill_reactive_bg(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let r = state.reactivity;
-    // Base intensity from beat energy — pulses on hits, fades between.
-    let intensity = (state.beat_energy * 0.4 * r).clamp(0.0, 1.0);
-    if intensity < 0.01 {
+    let intensity = (state.beat_energy * r).clamp(0.0, 1.0);
+    if intensity < 0.02 {
         return;
     }
-    let hue_t = (state.plasma_time * 0.1 + state.beat_hue_offset).rem_euclid(1.0);
+
+    // Pick a background color from the palette, cycling with beat hue offset.
+    let hue_t = state.beat_hue_offset.rem_euclid(1.0);
     let base = state.palette.freq_color(hue_t);
-    let bg = dim(base, 1.0 - intensity * 0.15); // Very dark tint.
+    // Scale brightness by beat intensity — strong beats get vivid bg, quiet = black.
+    let bg = dim(base, 1.0 - intensity * 0.35);
     let style = Style::new().bg(bg);
 
     for row in 0..area.height {
         for col in 0..area.width {
             buf[(area.x + col, area.y + row)].set_style(style);
         }
+    }
+}
+
+/// Compute a centered sub-area with a target aspect ratio, cropping overflow.
+/// Like CSS `object-fit: cover` — fills the viewport, clips the excess.
+/// Returns the render area (may be larger than `area`) and the visible clip rect.
+/// Renderers should render to `render_area` dimensions but only the `area` portion is visible.
+/// For simplicity, returns a centered sub-rect of `area` that has the target aspect.
+fn cover_rect(area: Rect, target_ratio: f32) -> Rect {
+    let area_ratio = area.width as f32 / area.height.max(1) as f32;
+    if (area_ratio - target_ratio).abs() < 0.1 {
+        return area; // Close enough.
+    }
+    if area_ratio > target_ratio {
+        // Too wide — crop width.
+        let new_w = (area.height as f32 * target_ratio) as u16;
+        let x_offset = (area.width.saturating_sub(new_w)) / 2;
+        Rect::new(
+            area.x + x_offset,
+            area.y,
+            new_w.min(area.width),
+            area.height,
+        )
+    } else {
+        // Too tall — crop height.
+        let new_h = (area.width as f32 / target_ratio) as u16;
+        let y_offset = (area.height.saturating_sub(new_h)) / 2;
+        Rect::new(
+            area.x,
+            area.y + y_offset,
+            area.width,
+            new_h.min(area.height),
+        )
     }
 }
 
@@ -1207,27 +1244,27 @@ fn render_spectrogram(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 continue;
             }
 
-            // Heat map: energy → color. High contrast, no palette — readability first.
+            // Heat map: blue → yellow → red → white.
             let color = if energy > 0.85 {
                 // White-hot.
                 let t = (energy - 0.85) / 0.15;
-                lerp_rgb((0, 220, 255), (255, 255, 255), t)
+                lerp_rgb((255, 40, 0), (255, 255, 255), t)
             } else if energy > 0.6 {
-                // Cyan.
+                // Red.
                 let t = (energy - 0.6) / 0.25;
-                lerp_rgb((0, 80, 255), (0, 220, 255), t)
+                lerp_rgb((255, 200, 0), (255, 40, 0), t)
             } else if energy > 0.35 {
-                // Blue.
+                // Yellow.
                 let t = (energy - 0.35) / 0.25;
-                lerp_rgb((20, 0, 140), (0, 80, 255), t)
-            } else if energy > 0.15 {
-                // Dark blue.
-                let t = (energy - 0.15) / 0.2;
-                lerp_rgb((5, 0, 40), (20, 0, 140), t)
+                lerp_rgb((0, 80, 255), (255, 200, 0), t)
+            } else if energy > 0.12 {
+                // Blue.
+                let t = (energy - 0.12) / 0.23;
+                lerp_rgb((0, 0, 60), (0, 80, 255), t)
             } else {
-                // Near-black.
-                let t = energy / 0.15;
-                lerp_rgb((0, 0, 0), (5, 0, 40), t)
+                // Near-black blue.
+                let t = energy / 0.12;
+                lerp_rgb((0, 0, 0), (0, 0, 60), t)
             };
 
             let x = area.x + col as u16;
@@ -1911,6 +1948,7 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Moiré Renderer ────────────────────────────────────────────────────────
 
 fn render_moire(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let area = cover_rect(area, 2.0); // ~2:1 for terminal chars (chars are ~2x tall as wide).
     let w = area.width as usize;
     let h = area.height as usize;
     if w == 0 || h == 0 {
@@ -2177,6 +2215,7 @@ fn render_spiral(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Interference Renderer ─────────────────────────────────────────────────
 
 fn render_interference(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let area = cover_rect(area, 2.0); // ~2:1 for terminal chars (chars are ~2x tall as wide).
     let w = area.width as usize;
     let h = area.height as usize;
     if w == 0 || h == 0 {
