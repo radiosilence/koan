@@ -1926,7 +1926,7 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let album = state.now_album.to_uppercase();
 
     let artist_y = area.y + 1;
-    let album_y = area.y + area.height.saturating_sub(2);
+    let album_y = area.y + area.height.saturating_sub(1);
 
     // Center-render text helper.
     let render_centered = |text: &str, y: u16, buf: &mut Buffer| {
@@ -1979,7 +1979,8 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     for (depth_idx, frame) in frames.iter().enumerate().rev() {
         let t = depth_idx as f32 / num_rows as f32;
         // Newest (idx 0) at bottom, oldest (idx N) at top.
-        let row_y = px_h as f32 * (0.05 + (1.0 - t) * 0.9);
+        // Larger top margin, near-zero bottom margin.
+        let row_y = px_h as f32 * (0.08 + (1.0 - t) * 0.90);
         // Height scale: uniform, ~30% of box height.
         let height_scale = px_h as f32 * 0.25;
 

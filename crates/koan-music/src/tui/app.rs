@@ -250,6 +250,9 @@ pub struct App {
     /// Receiver for background lyrics fetch results.
     pub lyrics_rx: Option<crossbeam_channel::Receiver<Option<koan_core::lyrics::Lyrics>>>,
 
+    /// Transport bar resize drag state — Some(start_y) when dragging.
+    pub transport_drag: Option<(u16, u16)>, // (start_row, original_art_size)
+
     /// Mouse hover state — updated on MouseEventKind::Moved.
     pub hover: HoverState,
 
@@ -349,6 +352,7 @@ impl App {
             viz_picker: None,
             mode_stack: Vec::new(),
             last_mouse_row: None,
+            transport_drag: None,
             scrollbar_grab_offset: None,
             drag_undo_active: false,
             drop_progress: None,
@@ -1796,6 +1800,47 @@ impl App {
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent) {
+        // Transport bar resize: drag the bottom edge to resize album art / header.
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Start drag if clicking near the bottom edge of transport area.
+                let transport_bottom =
+                    self.layout.transport_area.y + self.layout.transport_area.height;
+                if event.row >= transport_bottom.saturating_sub(1)
+                    && event.row <= transport_bottom
+                    && event.column >= self.layout.transport_area.x
+                    && event.column
+                        < self.layout.transport_area.x + self.layout.transport_area.width
+                {
+                    self.transport_drag = Some((event.row, self.art_size));
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.transport_drag.is_some() => {
+                let (start_row, original_size) = self.transport_drag.unwrap();
+                let delta = event.row as i32 - start_row as i32;
+                // Each row of drag = 2 units of art_size (since art_height = art_size / 2).
+                let new_size = (original_size as i32 + delta * 2).clamp(4, 80) as u16;
+                self.art_size = new_size;
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.transport_drag.is_some() => {
+                // Persist the new size.
+                let size = self.art_size;
+                let _ = koan_core::config::Config::update_base(|cfg| {
+                    cfg.playback.art_size = size;
+                });
+                self.transport_drag = None;
+                return;
+            }
+            _ => {
+                if self.transport_drag.is_some()
+                    && !matches!(event.kind, MouseEventKind::Drag(MouseButton::Left))
+                {
+                    self.transport_drag = None;
+                }
+            }
+        }
+
         // Track mouse row for drop insertion indicator.
         if self.is_in_rect(event.column, event.row, self.layout.queue_area) {
             self.last_mouse_row = Some(event.row);
