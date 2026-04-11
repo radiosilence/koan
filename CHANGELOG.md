@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.20.0 (2026-04-11)
+
+### Added
+
+- **22 visualizer modes** — massively expanded from 5 to 22 modes, cycle with `M` key or use the new picker (`v`). Press `F` for fullscreen. All modes use the palette system, beat-reactive color/hue shifts, and dreamy drift.
+
+  **Analytical:** `spectrogram` (time×frequency heatmap with blue→yellow→red→white heat map, sqrt amplitude scaling), `stereo` (L/R waveforms stacked top/bottom), `vu` (dual analog needle meters with ballistic physics), `flame` (filled spectrum curve with 8 stacked decay trails).
+
+  **Demoscene:** `plasma` (overlapping sine waves, audio-reactive parameters), `tunnel` (polar fly-through with ring/stripe texturing), `wireframe` (3D torus mesh with spectrum-modulated vertices, Euler rotation, perspective projection), `metaballs` (6 implicit surface blobs driven by spectrum bands), `starfield` (1500 3D stars with perspective projection, bass-driven speed, motion trails), `terrain`/`pleasures` (Unknown Pleasures homage — pure white ridgelines from spectrum history with raised cosine window, artist/album labels).
+
+  **Psychedelic:** `moire` (three rotating line grids, interference patterns), `kaleidoscope` (8-fold symmetry mirror of spectrum-driven radial patterns), `julia` (Julia fractal with audio-driven complex constant, smooth escape coloring), `spiral` (Archimedean spiral arms modulated by spectrum), `interference` (concentric wave sources, ripple moiré), `wormhole` (3D wireframe tunnel fly-through with procedural ring geometry, background stars).
+
+  **Special:** `matrix` (authentic cmatrix-style digital rain with katakana characters, per-column spectrum-mapped fall speed, beat-spawned clusters).
+
+- **Visualizer picker modal** — press `v` to open a fullscreen picker. Arrow keys scroll with live preview in the background. Enter confirms, Esc reverts. `M` still cycles directly. ([#147](https://github.com/radiosilence/koan/pull/147))
+
+- **Matrix overlay** — press `X` to toggle. Post-processing pass that replaces all rendered characters with random matrix glyphs in green, preserving the spatial structure. Works on any visualizer mode. Config: `[visualizer] matrix_overlay`. ([#147](https://github.com/radiosilence/koan/pull/147))
+
+- **Bass shake** — camera jitter + scale pulse on bass hits. Applied to braille-rendered modes (oscilloscope, radial, wireframe, starfield, lissajous, wormhole, kaleidoscope, spiral). Press `S` to toggle. Config: `[visualizer] bass_shake = true`. ([#147](https://github.com/radiosilence/koan/pull/147))
+
+- **Reactivity config** — `[visualizer] reactivity` (0.0–2.0, default 1.0). Scales all beat/spectrum-driven animation coefficients. Crank to 2.0 for DnB, dial to 0.3 for ambient. ([#147](https://github.com/radiosilence/koan/pull/147))
+
+- **Beat-reactive backgrounds** — starfield, wormhole, kaleidoscope, lissajous, wireframe, spiral get a subtle pulsing background color that shifts with beat hue offset. ([#147](https://github.com/radiosilence/koan/pull/147))
+
+- **Drag-to-resize transport bar** — click and drag the bottom edge of the transport/album art area to resize it. Makes more room for the visualizer or enlarges album art. Persisted to config. ([#147](https://github.com/radiosilence/koan/pull/147))
+
+### Changed
+
+- **Braille rendering** — all braille cells now rendered bold with +25% brightness boost to compensate for dot sparsity. ([#147](https://github.com/radiosilence/koan/pull/147))
+- **Spectrogram** — dedicated heat map colorscale (blue→yellow→red→white) with sqrt amplitude scaling for full dynamic range. No longer uses the palette system. ([#147](https://github.com/radiosilence/koan/pull/147))
+
 ## v0.19.5 (2026-04-11)
 
 ### Added
