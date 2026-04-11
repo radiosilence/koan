@@ -728,7 +728,7 @@ impl VisualizerState {
             radial_angle: 0.0,
             spectrum_history: SpectrumHistory::new(),
             vu_needle_angle: [0.0; 2],
-            stars: (0..500)
+            stars: (0..1500)
                 .map(|i| {
                     // Deterministic pseudo-random spread.
                     let hash = ((i * 2654435761u64) >> 16) as f32;
@@ -858,8 +858,11 @@ impl VisualizerState {
         let star_speed = 30.0 + bass * 200.0 * r + self.beat_energy * 300.0 * r;
         for star in &mut self.stars {
             star.2 -= dt * star_speed;
+            // Lateral drift: stars wobble on X/Y based on spectrum, not just fly forward.
+            let lateral = self.beat_energy * 20.0 * r;
+            star.0 += (star.2 * 0.1 + self.plasma_time).sin() * lateral * dt;
+            star.1 += (star.2 * 0.13 + self.plasma_time * 1.3).cos() * lateral * dt;
             if star.2 <= 0.5 {
-                // Respawn at far distance with wider spread.
                 let hash = ((star.0.to_bits() ^ star.1.to_bits()) as f32).abs();
                 star.2 = 60.0 + (hash % 40.0);
                 star.0 = (hash * 1.3 % 300.0) - 150.0;
@@ -1122,8 +1125,8 @@ fn render_lissajous(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 
     let cx = px_w as f32 / 2.0;
     let cy = px_h as f32 / 2.0;
-    let scale_x = cx * 0.85;
-    let scale_y = cy * 0.85;
+    let scale_x = cx * 0.95;
+    let scale_y = cy * 0.95;
 
     let mut points = Vec::with_capacity(num_frames.min(1024));
 
@@ -1786,10 +1789,10 @@ fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         grid.set_dot(proj_x as usize, proj_y as usize, color);
 
         // Motion trails — most stars streak, length scales with proximity and beat.
-        let trail_threshold = 50.0 + (1.0 - state.beat_energy) * 30.0;
+        let trail_threshold = 70.0 + (1.0 - state.beat_energy) * 20.0;
         if sz < trail_threshold {
             let base_len = (trail_threshold - sz) * 0.4;
-            let trail_len = (base_len + state.beat_energy * 15.0 * r).min(30.0);
+            let trail_len = (base_len + state.beat_energy * 20.0 * r).min(40.0);
             let dx = proj_x - cx;
             let dy = proj_y - cy;
             let dist = (dx * dx + dy * dy).sqrt().max(1.0);
@@ -2268,9 +2271,9 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     }
 
     // ── Wireframe tunnel rings ──────────────────────────────────────────────
-    let num_rings = 40;
-    let ring_spacing = 3.0;
-    let ring_verts = 16; // Vertices per ring.
+    let num_rings = 60;
+    let ring_spacing = 2.0;
+    let ring_verts = 24; // Vertices per ring.
     let fov = 80.0 + state.beat_energy * 40.0 * r;
 
     // Camera Z determines which ring indices are visible.
@@ -2293,16 +2296,16 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         // Each ring has a procedural center offset that snakes around.
         // Low-frequency wander + spectrum modulation.
         let wander_x = (hash_f32(seed) - 0.5) * 2.0
-            + (ring_z_world * 0.07 + t * 0.3).sin() * 0.8
+            + (ring_z_world * 0.07 + t * 0.3).sin() * 1.2
             + bass * (hash_f32(seed.wrapping_add(100)) - 0.5) * 3.0 * r;
         let wander_y = (hash_f32(seed.wrapping_add(1)) - 0.5) * 2.0
-            + (ring_z_world * 0.09 + t * 0.2).cos() * 0.8
+            + (ring_z_world * 0.09 + t * 0.2).cos() * 1.2
             + bass * (hash_f32(seed.wrapping_add(200)) - 0.5) * 3.0 * r;
 
         // Ring radius: base + spectrum modulation + beat pulse.
         let bar_idx = (ring_offset as usize * NUM_BARS / num_rings as usize).min(NUM_BARS - 1);
         let energy = state.spectrum[bar_idx];
-        let base_radius = 1.5 + hash_f32(seed.wrapping_add(2)) * 1.0;
+        let base_radius = 2.0 + hash_f32(seed.wrapping_add(2)) * 1.5;
         let radius = base_radius + energy * 2.0 * r + state.beat_energy * 1.0 * r;
 
         // Project ring vertices.
@@ -2348,18 +2351,18 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             if next_rel_z > 0.5 {
                 let next_seed = next_ring_idx as u32;
                 let next_wander_x = (hash_f32(next_seed) - 0.5) * 2.0
-                    + (next_ring_idx as f32 * ring_spacing * 0.07 + t * 0.3).sin() * 0.8
+                    + (next_ring_idx as f32 * ring_spacing * 0.07 + t * 0.3).sin() * 1.2
                     + bass * (hash_f32(next_seed.wrapping_add(100)) - 0.5) * 3.0 * r;
                 let next_wander_y = (hash_f32(next_seed.wrapping_add(1)) - 0.5) * 2.0
-                    + (next_ring_idx as f32 * ring_spacing * 0.09 + t * 0.2).cos() * 0.8
+                    + (next_ring_idx as f32 * ring_spacing * 0.09 + t * 0.2).cos() * 1.2
                     + bass * (hash_f32(next_seed.wrapping_add(200)) - 0.5) * 3.0 * r;
                 let next_bar_idx =
                     ((ring_offset as usize + 1) * NUM_BARS / num_rings as usize).min(NUM_BARS - 1);
                 let next_energy = state.spectrum[next_bar_idx];
-                let next_base_r = 1.5 + hash_f32(next_seed.wrapping_add(2)) * 1.0;
+                let next_base_r = 2.0 + hash_f32(next_seed.wrapping_add(2)) * 1.5;
                 let next_radius = next_base_r + next_energy * 2.0 * r + state.beat_energy * 1.0 * r;
 
-                for v in (0..ring_verts).step_by(4) {
+                for v in (0..ring_verts).step_by(3) {
                     let angle = v as f32 / ring_verts as f32 * std::f32::consts::TAU;
                     let nvx = next_wander_x + next_radius * angle.cos();
                     let nvy = next_wander_y + next_radius * angle.sin();
@@ -2443,7 +2446,7 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let band_energy = state.spectrum[bar_idx];
 
         // Speed: scales with energy. Quiet = gentle drift, beat = proper surge.
-        let speed_mult = 1.0 + band_energy * 2.5 * r + state.beat_energy * 5.0 * r + bass * 3.0 * r;
+        let speed_mult = 0.3 + band_energy * 3.0 * r + state.beat_energy * 6.0 * r + bass * 4.0 * r;
         column.head_y += column.speed * speed_mult;
 
         // Respawn when fully off-screen.
