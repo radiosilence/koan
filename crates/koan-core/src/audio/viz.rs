@@ -49,8 +49,10 @@ pub const WAVEFORM_SAMPLES: usize = 2048;
 /// <1us (memcpy of 48 floats + 2 floats + 1 float + waveform + Instant) while holding the read lock.
 #[derive(Clone)]
 pub struct VizFrame {
-    /// Spectrum bar heights (0.0..1.0), one per bar.
+    /// Spectrum bar heights (0.0..1.0), one per bar. Already smoothed by the analyzer.
     pub spectrum: [f32; NUM_BARS],
+    /// Peak hold values (slowly decaying maxima), one per bar. Managed by the analyzer.
+    pub peaks: [f32; NUM_BARS],
     /// RMS VU levels: [left, right], each 0.0..1.0.
     pub vu_levels: [f32; 2],
     /// Beat energy (0.0..1.0). Spikes on transients in the low bands,
@@ -68,6 +70,7 @@ impl Default for VizFrame {
     fn default() -> Self {
         Self {
             spectrum: [0.0; NUM_BARS],
+            peaks: [0.0; NUM_BARS],
             vu_levels: [0.0; 2],
             beat_energy: 0.0,
             timestamp: std::time::Instant::now(),
@@ -348,6 +351,7 @@ mod tests {
         new_spectrum[5] = 0.9;
         snap.write(VizFrame {
             spectrum: new_spectrum,
+            peaks: [0.0; NUM_BARS],
             vu_levels: [0.5, 0.5],
             beat_energy: 0.0,
             timestamp: std::time::Instant::now(),

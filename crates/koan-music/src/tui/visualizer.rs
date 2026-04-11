@@ -461,15 +461,15 @@ impl LissajousTrail {
 /// Processed visualizer data, ready for rendering.
 ///
 /// All FFT/analysis work is done on a dedicated thread in koan-core (VizAnalyzer).
-/// This struct handles only decay smoothing, peak hold, and rendering on the UI thread.
+/// Spectrum, peaks, and VU levels are passed through directly from the analyzer
+/// (single layer of smoothing). Only beat energy has local decay for the hue-shift effect.
+/// `decay_to_zero` provides graceful falloff when paused/stopped.
 ///
 /// Lock discipline: `update_from_snapshot` acquires the VizSnapshot RwLock for <1us
-/// (clone of ~200 bytes), then does all decay/smoothing on local copies with no locks held.
+/// (clone of ~200 bytes). No further computation on spectrum/peaks.
 pub struct VisualizerState {
     /// Current spectrum bar values (0.0..1.0), one per bar.
     pub spectrum: [f32; NUM_BARS],
-    /// Previous frame's spectrum for decay smoothing.
-    prev_spectrum: [f32; NUM_BARS],
     /// Peak hold values (slowly decaying maxima).
     pub peaks: [f32; NUM_BARS],
     /// RMS levels for VU meters: [left, right].
@@ -517,7 +517,6 @@ impl VisualizerState {
     ) -> Self {
         Self {
             spectrum: [0.0; NUM_BARS],
-            prev_spectrum: [0.0; NUM_BARS],
             peaks: [0.0; NUM_BARS],
             vu_levels: [0.0; 2],
             beat_energy: 0.0,
@@ -546,50 +545,33 @@ impl VisualizerState {
         (bar_decay, peak_decay)
     }
 
-    /// Read the latest analysis frame from VizSnapshot and apply decay/smoothing.
+    /// Read the latest analysis frame from VizSnapshot.
+    ///
+    /// Spectrum, peaks, and VU levels come directly from the analyzer thread
+    /// (which already applies decay smoothing and peak hold). No double-smoothing.
+    /// Only beat energy gets local decay for the hue-shift effect.
     ///
     /// The snapshot read is <1us (RwLock clone of ~200 bytes + waveform vec).
-    /// All decay/smoothing runs on local copies — no locks held during computation.
     /// Called once per frame (~60fps) from `handle_tick()`.
     pub fn update_from_snapshot(&mut self, snapshot: &VizSnapshot) {
-        // Acquire RwLock read, clone frame, release — total <1us.
         let frame = snapshot.read();
 
-        // Save current spectrum as previous for smoothing.
-        std::mem::swap(&mut self.spectrum, &mut self.prev_spectrum);
-
-        // Compute time-based decay factors (no lock held).
-        let (bar_decay, peak_decay) = self.decay_factors();
-
-        let bars = self.spectrum.len().min(frame.spectrum.len());
-        for i in 0..bars {
-            let new_val = frame.spectrum[i];
-            let decayed = self.prev_spectrum[i] * bar_decay;
-            // Take the max of the fresh analysis value and the decayed previous value.
-            self.spectrum[i] = new_val.max(decayed);
-
-            // Peak hold: rise instantly, fall slowly with peak_decay.
-            if self.spectrum[i] > self.peaks[i] {
-                self.peaks[i] = self.spectrum[i];
-            } else {
-                self.peaks[i] *= peak_decay;
-            }
-        }
-
-        // VU levels come directly from the analysis thread — copy as-is.
+        // Spectrum + peaks: pass through directly from analyzer (already smoothed).
+        self.spectrum = frame.spectrum;
+        self.peaks = frame.peaks;
         self.vu_levels = frame.vu_levels;
 
         // Beat energy: rise instantly from analyzer, decay locally for smooth falloff.
+        // Local decay gives the hue-shift a longer tail than the analyzer's own decay.
+        let (bar_decay, _) = self.decay_factors();
         let prev_beat = self.beat_energy;
         self.beat_energy = frame.beat_energy.max(self.beat_energy * bar_decay);
 
         // Beat hue shift: on a fresh beat (energy rising), jump the hue offset forward.
         // Decays back toward 0 between beats for a "snap then relax" feel.
         if self.beat_energy > prev_beat + 0.05 {
-            // Jump: 15-30% hue rotation proportional to beat strength.
             self.beat_hue_offset = (self.beat_hue_offset + self.beat_energy * 0.3) % 1.0;
         } else {
-            // Decay back toward 0 — slower than bar decay for lingering color shift.
             self.beat_hue_offset *= 0.95;
         }
 
@@ -597,7 +579,7 @@ impl VisualizerState {
         self.waveform = frame.waveform;
 
         // Advance radial rotation — slow drift + beat burst.
-        let dt = 1.0 / 60.0; // Approximate frame time.
+        let dt = 1.0 / 60.0;
         self.radial_angle += dt * 0.3 + self.beat_energy * 0.1;
         if self.radial_angle > std::f32::consts::TAU {
             self.radial_angle -= std::f32::consts::TAU;
@@ -1071,6 +1053,7 @@ mod tests {
         spectrum[20] = 0.5;
         snapshot.write(VizFrame {
             spectrum,
+            peaks: [0.0; NUM_BARS],
             vu_levels: [0.6, 0.6],
             beat_energy: 0.3,
             timestamp: Instant::now(),
@@ -1098,6 +1081,7 @@ mod tests {
         let spectrum = [1.0f32; NUM_BARS];
         snapshot.write(VizFrame {
             spectrum,
+            peaks: [1.0; NUM_BARS],
             vu_levels: [1.0, 1.0],
             beat_energy: 0.8,
             timestamp: Instant::now(),
@@ -1137,37 +1121,37 @@ mod tests {
         );
         let snapshot = VizSnapshot::new();
 
-        // Push a loud frame.
+        // Push a loud frame — peaks come from the analyzer via VizFrame.
         let mut spectrum = [0.0f32; NUM_BARS];
         spectrum[5] = 0.9;
+        let mut peaks = [0.0f32; NUM_BARS];
+        peaks[5] = 0.9;
         snapshot.write(VizFrame {
             spectrum,
+            peaks,
             vu_levels: [0.0; 2],
             beat_energy: 0.0,
             timestamp: Instant::now(),
             waveform: Vec::new(),
         });
         state.update_from_snapshot(&snapshot);
-        let peak_after_signal = state.peaks[5];
-        assert!(peak_after_signal > 0.5, "peak should rise with signal");
+        assert!(state.peaks[5] > 0.5, "peak should match analyzer value");
 
-        // Push silence — peak should hold or slowly decay, not jump to zero.
+        // Push silence with decayed peak — simulates analyzer's own peak decay.
+        let mut decayed_peaks = [0.0f32; NUM_BARS];
+        decayed_peaks[5] = 0.7; // Analyzer decayed it a bit.
         snapshot.write(VizFrame {
             spectrum: [0.0; NUM_BARS],
+            peaks: decayed_peaks,
             vu_levels: [0.0; 2],
             beat_energy: 0.0,
             timestamp: Instant::now(),
             waveform: Vec::new(),
         });
-        state.last_update = Instant::now() - std::time::Duration::from_millis(16);
         state.update_from_snapshot(&snapshot);
         assert!(
-            state.peaks[5] <= peak_after_signal,
-            "peak should not grow after silence"
-        );
-        assert!(
             state.peaks[5] > 0.0,
-            "peak should not instantly zero after one frame"
+            "peak should not instantly zero — analyzer provides gradual decay"
         );
     }
 

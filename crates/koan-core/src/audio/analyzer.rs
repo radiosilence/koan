@@ -645,6 +645,7 @@ fn analysis_loop(
             };
             snap_out.write(VizFrame {
                 spectrum: state.spectrum,
+                peaks: state.peaks,
                 vu_levels: state.vu_levels,
                 beat_energy: state.beat_energy,
                 timestamp: Instant::now(),
