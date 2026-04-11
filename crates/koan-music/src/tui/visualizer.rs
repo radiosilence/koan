@@ -610,6 +610,9 @@ pub struct VisualizerState {
     pub tunnel_z: f32,
     /// Elapsed time accumulator for plasma phase.
     pub plasma_time: f32,
+    /// Reactivity multiplier — scales all beat/spectrum-driven coefficients.
+    /// 0.0 = static, 1.0 = normal, 2.0 = hypersensitive.
+    pub reactivity: f32,
 }
 
 impl VisualizerState {
@@ -618,7 +621,8 @@ impl VisualizerState {
         let peak_half_life = cfg.peak_decay_ms as f32 / 1000.0;
         let palette = VisualizerPalette::parse(&cfg.palette);
         let mode = VisualizerMode::parse(&cfg.mode);
-        Self::with_config(bar_half_life, peak_half_life, palette, mode)
+        let reactivity = cfg.reactivity.clamp(0.0, 2.0);
+        Self::with_config(bar_half_life, peak_half_life, palette, mode, reactivity)
     }
 
     pub fn with_config(
@@ -626,6 +630,7 @@ impl VisualizerState {
         peak_half_life: f32,
         palette: VisualizerPalette,
         mode: VisualizerMode,
+        reactivity: f32,
     ) -> Self {
         Self {
             spectrum: [0.0; NUM_BARS],
@@ -658,6 +663,7 @@ impl VisualizerState {
             wire_rotation: [0.0; 3],
             tunnel_z: 0.0,
             plasma_time: 0.0,
+            reactivity,
         }
     }
 
@@ -695,9 +701,10 @@ impl VisualizerState {
         self.beat_energy = frame.beat_energy.max(self.beat_energy * bar_decay);
 
         // Beat hue shift: on a fresh beat (energy rising), jump the hue offset forward.
-        // Decays back toward 0 between beats for a "snap then relax" feel.
+        // Reactivity scales the hue jump size.
+        let r = self.reactivity;
         if self.beat_energy > prev_beat + 0.05 {
-            self.beat_hue_offset = (self.beat_hue_offset + self.beat_energy * 0.3) % 1.0;
+            self.beat_hue_offset = (self.beat_hue_offset + self.beat_energy * 0.3 * r) % 1.0;
         } else {
             self.beat_hue_offset *= 0.95;
         }
@@ -725,23 +732,22 @@ impl VisualizerState {
             }
         }
 
-        // Advance demoscene state.
-        self.plasma_time += dt * (1.0 + self.beat_energy * 2.0);
-        self.tunnel_z += dt * (2.0 + self.beat_energy * 8.0);
+        // Advance demoscene state. `r` = reactivity multiplier.
+        let r = self.reactivity;
+        self.plasma_time += dt * (1.0 + self.beat_energy * 2.0 * r);
+        self.tunnel_z += dt * (2.0 + self.beat_energy * 8.0 * r);
 
         // Wireframe rotation: bass drives X, mids drive Y, treble drives Z.
-        // Aggressive multipliers — DnB should make this thing spin hard.
         let bass = self.spectrum[..8].iter().sum::<f32>() / 8.0;
         let mids = self.spectrum[16..32].iter().sum::<f32>() / 16.0;
         let treble = self.spectrum[32..].iter().sum::<f32>() / 16.0;
-        let beat_mult = 1.0 + self.beat_energy * 4.0;
-        self.wire_rotation[0] += dt * (0.8 + bass * 12.0) * beat_mult;
-        self.wire_rotation[1] += dt * (0.5 + mids * 8.0) * beat_mult;
-        self.wire_rotation[2] += dt * (0.3 + treble * 6.0) * beat_mult;
+        let beat_mult = 1.0 + self.beat_energy * 4.0 * r;
+        self.wire_rotation[0] += dt * (0.8 + bass * 12.0 * r) * beat_mult;
+        self.wire_rotation[1] += dt * (0.5 + mids * 8.0 * r) * beat_mult;
+        self.wire_rotation[2] += dt * (0.3 + treble * 6.0 * r) * beat_mult;
 
-        // Starfield: advance Z, respawn stars that pass the camera.
-        // Beat slams the throttle — stars should streak like hyperspace on drops.
-        let star_speed = 30.0 + bass * 200.0 + self.beat_energy * 300.0;
+        // Starfield: beat slams the throttle.
+        let star_speed = 30.0 + bass * 200.0 * r + self.beat_energy * 300.0 * r;
         for star in &mut self.stars {
             star.2 -= dt * star_speed;
             if star.2 <= 0.5 {
@@ -909,7 +915,7 @@ fn render_radial(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let max_radius = cx.min(cy) * 0.9;
     let inner_radius = max_radius * 0.15;
     let rotation = state.radial_angle;
-    let beat_pulse = 1.0 + state.beat_energy * 0.3;
+    let beat_pulse = 1.0 + state.beat_energy * 0.3 * state.reactivity;
 
     let elapsed = state.created_at.elapsed().as_secs_f32();
     let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
@@ -1312,10 +1318,11 @@ fn render_plasma(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     }
 
     let t = state.plasma_time;
+    let r = state.reactivity;
     // Pull audio-reactive parameters from spectrum bands.
-    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
-    let mids = state.spectrum[16..32].iter().sum::<f32>() / 16.0;
-    let treble = state.spectrum[36..].iter().sum::<f32>() / 12.0;
+    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0 * r;
+    let mids = state.spectrum[16..32].iter().sum::<f32>() / 16.0 * r;
+    let treble = state.spectrum[36..].iter().sum::<f32>() / 12.0 * r;
 
     for row in 0..h {
         let y = area.y + row as u16;
@@ -1367,8 +1374,9 @@ fn render_tunnel(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let z_offset = state.tunnel_z;
 
     // Audio-driven tunnel wobble from low bands.
-    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
-    let mids = state.spectrum[16..32].iter().sum::<f32>() / 16.0;
+    let r = state.reactivity;
+    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0 * r;
+    let mids = state.spectrum[16..32].iter().sum::<f32>() / 16.0 * r;
 
     for row in 0..h {
         let y = area.y + row as u16;
@@ -1439,9 +1447,10 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let [rx, ry, rz] = state.wire_rotation;
 
     // Build a torus mesh: major radius R, minor radius r.
-    // Beat smashes the whole shape outward — DnB drops should be visible.
-    let r_major = 1.0 + state.beat_energy * 0.4;
-    let r_minor = 0.35 + state.beat_energy * 0.5;
+    // Beat smashes the whole shape outward.
+    let r = state.reactivity;
+    let r_major = 1.0 + state.beat_energy * 0.4 * r;
+    let r_minor = 0.35 + state.beat_energy * 0.5 * r;
     let segments_major = 24;
     let segments_minor = 12;
 
@@ -1450,7 +1459,7 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     for i in 0..segments_major {
         let theta = (i as f32 / segments_major as f32) * std::f32::consts::TAU;
         let bar_idx = (i * NUM_BARS / segments_major).min(NUM_BARS - 1);
-        let modulation = 1.0 + state.spectrum[bar_idx] * 2.5;
+        let modulation = 1.0 + state.spectrum[bar_idx] * 2.5 * r;
 
         for j in 0..segments_minor {
             let phi = (j as f32 / segments_minor as f32) * std::f32::consts::TAU;
@@ -1542,6 +1551,8 @@ fn render_metaballs(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let t = state.plasma_time;
     let num_balls = 6;
 
+    let r = state.reactivity;
+
     // Position each metaball driven by a spectrum band + time.
     let balls: Vec<(f32, f32, f32)> = (0..num_balls)
         .map(|i| {
@@ -1549,9 +1560,9 @@ fn render_metaballs(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             let bar_idx = (i * 8).min(NUM_BARS - 1);
             let energy = state.spectrum[bar_idx];
 
-            let x = 0.5 + (t * 0.7 + phase).sin() * 0.35;
-            let y = 0.5 + (t * 0.5 + phase * 1.3).cos() * 0.35;
-            let radius = 0.08 + energy * 0.15 + state.beat_energy * 0.05;
+            let x = 0.5 + (t * 0.7 + phase).sin() * (0.35 + state.beat_energy * 0.15 * r);
+            let y = 0.5 + (t * 0.5 + phase * 1.3).cos() * (0.35 + state.beat_energy * 0.15 * r);
+            let radius = 0.08 + energy * 0.2 * r + state.beat_energy * 0.1 * r;
             (x, y, radius)
         })
         .collect();
@@ -1623,7 +1634,8 @@ fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let cy = px_h / 2.0;
 
     // Beat-reactive FOV zoom — pulls stars outward on hits.
-    let fov_mult = 50.0 + state.beat_energy * 40.0;
+    let r = state.reactivity;
+    let fov_mult = 50.0 + state.beat_energy * 40.0 * r;
 
     for &(sx, sy, sz) in &state.stars {
         // Perspective projection: closer stars = farther from center.
@@ -1646,11 +1658,10 @@ fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         grid.set_dot(proj_x as usize, proj_y as usize, color);
 
         // Motion trails — most stars streak, length scales with proximity and beat.
-        // At high beat energy, even distant stars get short trails.
         let trail_threshold = 50.0 + (1.0 - state.beat_energy) * 30.0;
         if sz < trail_threshold {
             let base_len = (trail_threshold - sz) * 0.4;
-            let trail_len = (base_len + state.beat_energy * 15.0).min(30.0);
+            let trail_len = (base_len + state.beat_energy * 15.0 * r).min(30.0);
             let dx = proj_x - cx;
             let dy = proj_y - cy;
             let dist = (dx * dx + dy * dy).sqrt().max(1.0);
@@ -1930,6 +1941,7 @@ mod tests {
             0.18,
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
+            1.0,
         );
         assert_eq!(state.spectrum.len(), NUM_BARS);
         assert_eq!(state.peaks.len(), NUM_BARS);
@@ -1944,6 +1956,7 @@ mod tests {
             0.18,
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
+            1.0,
         );
         let snapshot = VizSnapshot::new();
 
@@ -1962,6 +1975,7 @@ mod tests {
             0.18,
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
+            1.0,
         );
         let snapshot = VizSnapshot::new();
 
@@ -1992,6 +2006,7 @@ mod tests {
             0.18,
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
+            1.0,
         );
         let snapshot = VizSnapshot::new();
 
@@ -2036,6 +2051,7 @@ mod tests {
             0.18,
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
+            1.0,
         );
         let snapshot = VizSnapshot::new();
 

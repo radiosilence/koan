@@ -139,6 +139,10 @@ pub struct VisualizerConfig {
     /// Color palette: "spectrum" (default), "mono", "fire", "neon".
     /// Controls the frequency-mapped color gradient on spectrum bars.
     pub palette: String,
+    /// Reactivity multiplier (0.0..2.0, default 1.0).
+    /// Scales all beat/spectrum-driven animation coefficients.
+    /// 0.0 = static, 1.0 = normal, 2.0 = hypersensitive.
+    pub reactivity: f32,
 }
 
 impl Default for VisualizerConfig {
@@ -152,6 +156,7 @@ impl Default for VisualizerConfig {
             bar_decay_ms: 50,
             peak_decay_ms: 180,
             palette: "spectrum".into(),
+            reactivity: 1.0,
         }
     }
 }
