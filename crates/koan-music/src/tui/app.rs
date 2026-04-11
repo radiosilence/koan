@@ -1010,6 +1010,21 @@ impl App {
                 let next_mode = self.visualizer.mode.next();
                 self.apply_viz_mode(next_mode);
             }
+            KeyCode::Char('S') => {
+                self.visualizer.bass_shake = !self.visualizer.bass_shake;
+                self.status_message = Some((
+                    if self.visualizer.bass_shake {
+                        "bass shake on".into()
+                    } else {
+                        "bass shake off".into()
+                    },
+                    std::time::Instant::now(),
+                ));
+                let shake = self.visualizer.bass_shake;
+                let _ = koan_core::config::Config::update_base(|cfg| {
+                    cfg.visualizer.bass_shake = shake;
+                });
+            }
             KeyCode::Char('v') => {
                 self.viz_picker =
                     Some(super::viz_picker::VizPickerState::new(self.visualizer.mode));

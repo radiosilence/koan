@@ -143,6 +143,9 @@ pub struct VisualizerConfig {
     /// Scales all beat/spectrum-driven animation coefficients.
     /// 0.0 = static, 1.0 = normal, 2.0 = hypersensitive.
     pub reactivity: f32,
+    /// Bass shake: camera jitter + scale pulse on bass hits.
+    /// Applies to braille-rendered modes (oscilloscope, radial, wireframe, starfield, etc.).
+    pub bass_shake: bool,
 }
 
 impl Default for VisualizerConfig {
@@ -157,6 +160,7 @@ impl Default for VisualizerConfig {
             peak_decay_ms: 180,
             palette: "spectrum".into(),
             reactivity: 1.0,
+            bass_shake: true,
         }
     }
 }

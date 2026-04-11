@@ -613,6 +613,12 @@ pub struct VisualizerState {
     /// Reactivity multiplier — scales all beat/spectrum-driven coefficients.
     /// 0.0 = static, 1.0 = normal, 2.0 = hypersensitive.
     pub reactivity: f32,
+    /// Camera shake offset in subpixels [x, y]. Spikes on bass, decays fast.
+    pub shake: [f32; 2],
+    /// Scale pulse factor (1.0 = normal). Spikes >1.0 on bass hits.
+    pub scale_pulse: f32,
+    /// Whether bass shake is enabled.
+    pub bass_shake: bool,
 }
 
 impl VisualizerState {
@@ -622,7 +628,15 @@ impl VisualizerState {
         let palette = VisualizerPalette::parse(&cfg.palette);
         let mode = VisualizerMode::parse(&cfg.mode);
         let reactivity = cfg.reactivity.clamp(0.0, 2.0);
-        Self::with_config(bar_half_life, peak_half_life, palette, mode, reactivity)
+        let bass_shake = cfg.bass_shake;
+        Self::with_config(
+            bar_half_life,
+            peak_half_life,
+            palette,
+            mode,
+            reactivity,
+            bass_shake,
+        )
     }
 
     pub fn with_config(
@@ -631,6 +645,7 @@ impl VisualizerState {
         palette: VisualizerPalette,
         mode: VisualizerMode,
         reactivity: f32,
+        bass_shake: bool,
     ) -> Self {
         Self {
             spectrum: [0.0; NUM_BARS],
@@ -664,7 +679,22 @@ impl VisualizerState {
             tunnel_z: 0.0,
             plasma_time: 0.0,
             reactivity,
+            shake: [0.0; 2],
+            scale_pulse: 1.0,
+            bass_shake,
         }
+    }
+
+    /// Apply camera shake + scale pulse to a subpixel coordinate.
+    /// No-op when bass_shake is disabled. `cx`, `cy` = center of the grid.
+    #[inline]
+    pub fn shaken(&self, x: f32, y: f32, cx: f32, cy: f32) -> (f32, f32) {
+        if !self.bass_shake {
+            return (x, y);
+        }
+        let dx = (x - cx) * self.scale_pulse + cx + self.shake[0];
+        let dy = (y - cy) * self.scale_pulse + cy + self.shake[1];
+        (dx, dy)
     }
 
     /// Compute decay factors from elapsed time since last update.
@@ -732,8 +762,22 @@ impl VisualizerState {
             }
         }
 
-        // Advance demoscene state. `r` = reactivity multiplier.
+        // Camera shake + scale pulse (gated by config).
         let r = self.reactivity;
+        if self.bass_shake {
+            let bass_now = self.spectrum[..6].iter().sum::<f32>() / 6.0;
+            let shake_intensity = (self.beat_energy * bass_now * 8.0 * r).min(6.0);
+            let shake_angle = self.plasma_time * 137.5;
+            self.shake[0] = shake_angle.cos() * shake_intensity;
+            self.shake[1] = shake_angle.sin() * shake_intensity;
+            let pulse_target = 1.0 + self.beat_energy * 0.15 * r;
+            self.scale_pulse = pulse_target.max(self.scale_pulse * 0.92);
+        } else {
+            self.shake = [0.0; 2];
+            self.scale_pulse = 1.0;
+        }
+
+        // Advance demoscene state.
         self.plasma_time += dt * (1.0 + self.beat_energy * 2.0 * r);
         self.tunnel_z += dt * (2.0 + self.beat_energy * 8.0 * r);
 
@@ -865,14 +909,14 @@ fn render_oscilloscope(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         return;
     }
 
-    let center_y = px_h as f32 / 2.0;
-    let amplitude = px_h as f32 * 0.4; // ±40% of height.
+    let cx = px_w as f32 / 2.0;
+    let cy = px_h as f32 / 2.0;
+    let amplitude = px_h as f32 * 0.4;
 
     let mut prev_x = 0.0f32;
-    let mut prev_y = center_y;
+    let mut prev_y = cy;
 
     for i in 0..px_w {
-        // Map pixel X to waveform frame index.
         let frame_idx = i * num_frames / px_w;
         let sample = if channels == 2 {
             (state.waveform[frame_idx * 2] + state.waveform[frame_idx * 2 + 1]) * 0.5
@@ -880,12 +924,11 @@ fn render_oscilloscope(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             state.waveform[frame_idx]
         };
 
-        let x = i as f32;
-        let y = center_y - sample * amplitude;
-        let y = y.clamp(0.0, (px_h - 1) as f32);
+        let raw_x = i as f32;
+        let raw_y = (cy - sample * amplitude).clamp(0.0, (px_h - 1) as f32);
+        let (x, y) = state.shaken(raw_x, raw_y, cx, cy);
 
         if i > 0 {
-            // Color by amplitude — palette mapped.
             let amp_t = sample.abs().clamp(0.0, 1.0);
             let base = state.palette.freq_color(amp_t);
             let color = brighten(base, state.beat_energy * 0.5);
@@ -933,10 +976,13 @@ fn render_radial(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         let cos_a = angle.cos();
         let sin_a = angle.sin();
 
-        let x0 = cx + inner_radius * cos_a;
-        let y0 = cy + inner_radius * sin_a;
-        let x1 = cx + (inner_radius + bar_len) * cos_a;
-        let y1 = cy + (inner_radius + bar_len) * sin_a;
+        let (x0, y0) = state.shaken(cx + inner_radius * cos_a, cy + inner_radius * sin_a, cx, cy);
+        let (x1, y1) = state.shaken(
+            cx + (inner_radius + bar_len) * cos_a,
+            cy + (inner_radius + bar_len) * sin_a,
+            cx,
+            cy,
+        );
 
         let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
         let base = state.palette.freq_color(warped);
@@ -1482,7 +1528,7 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         (x3, y3, z2)
     };
 
-    // Perspective projection.
+    // Perspective projection with shake + scale pulse.
     let fov = 3.0;
     let project = |x: f32, y: f32, z: f32| -> Option<(f32, f32)> {
         let depth = z + fov;
@@ -1491,7 +1537,7 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         }
         let px = cx + x * scale * fov / depth;
         let py = cy - y * scale * fov / depth;
-        Some((px, py))
+        Some(state.shaken(px, py, cx, cy))
     };
 
     // Draw edges.
@@ -1638,9 +1684,10 @@ fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let fov_mult = 50.0 + state.beat_energy * 40.0 * r;
 
     for &(sx, sy, sz) in &state.stars {
-        // Perspective projection: closer stars = farther from center.
-        let proj_x = cx + sx * fov_mult / sz;
-        let proj_y = cy + sy * fov_mult / sz;
+        // Perspective projection with shake + scale pulse.
+        let raw_x = cx + sx * fov_mult / sz;
+        let raw_y = cy + sy * fov_mult / sz;
+        let (proj_x, proj_y) = state.shaken(raw_x, raw_y, cx, cy);
 
         if proj_x < 0.0 || proj_x >= px_w || proj_y < 0.0 || proj_y >= px_h {
             continue;
@@ -1942,6 +1989,7 @@ mod tests {
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
             1.0,
+            true,
         );
         assert_eq!(state.spectrum.len(), NUM_BARS);
         assert_eq!(state.peaks.len(), NUM_BARS);
@@ -1957,6 +2005,7 @@ mod tests {
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
             1.0,
+            true,
         );
         let snapshot = VizSnapshot::new();
 
@@ -1976,6 +2025,7 @@ mod tests {
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
             1.0,
+            true,
         );
         let snapshot = VizSnapshot::new();
 
@@ -2007,6 +2057,7 @@ mod tests {
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
             1.0,
+            true,
         );
         let snapshot = VizSnapshot::new();
 
@@ -2052,6 +2103,7 @@ mod tests {
             VisualizerPalette::Spectrum,
             VisualizerMode::Bars,
             1.0,
+            true,
         );
         let snapshot = VizSnapshot::new();
 
