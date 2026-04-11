@@ -1992,7 +1992,13 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             let bar_lo = (bar_f as usize).min(NUM_BARS - 1);
             let bar_hi = (bar_lo + 1).min(NUM_BARS - 1);
             let frac = bar_f - bar_lo as f32;
-            let energy = frame[bar_lo] * (1.0 - frac) + frame[bar_hi] * frac;
+            let raw_energy = frame[bar_lo] * (1.0 - frac) + frame[bar_hi] * frac;
+
+            // Horizontal window: raised cosine tapers to zero at edges,
+            // giving the "hills rising from flat baseline" look.
+            let nx = px_x as f32 / (px_w - 1).max(1) as f32; // 0..1
+            let window = (nx * std::f32::consts::PI).sin().powi(2);
+            let energy = raw_energy * window;
 
             let y = (row_y - energy * height_scale).clamp(0.0, (px_h - 1) as f32);
 
