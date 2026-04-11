@@ -1926,7 +1926,7 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let album = state.now_album.to_uppercase();
 
     let artist_y = area.y + 2;
-    let album_y = area.y + area.height.saturating_sub(1);
+    let album_y = area.y + area.height.saturating_sub(3);
 
     // Center-render text helper.
     let render_centered = |text: &str, y: u16, buf: &mut Buffer| {
@@ -1947,7 +1947,7 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 
     // ── Waveform box: centered square-ish region ────────────────────────────
     // Leave space for labels + padding.
-    let box_top = (artist_y + 1).min(area.y + area.height);
+    let box_top = (artist_y + 2).min(area.y + area.height);
     let box_bottom = album_y;
     if box_bottom <= box_top {
         return;
