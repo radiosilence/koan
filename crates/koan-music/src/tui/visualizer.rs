@@ -678,6 +678,10 @@ pub struct VisualizerState {
     pub mode: VisualizerMode,
     /// Latest raw waveform samples (interleaved stereo) from VizFrame.
     pub waveform: Vec<f32>,
+    /// Now-playing artist name (for pleasures mode overlay).
+    pub now_artist: String,
+    /// Now-playing album name (for pleasures mode overlay).
+    pub now_album: String,
     /// Particle system state (persists across frames).
     pub particles: ParticleSystem,
     /// Lissajous afterglow trail.
@@ -748,6 +752,8 @@ impl VisualizerState {
             palette,
             mode,
             waveform: Vec::new(),
+            now_artist: String::new(),
+            now_album: String::new(),
             particles: ParticleSystem::new(),
             lissajous_trail: LissajousTrail::new(),
             radial_angle: 0.0,
@@ -1205,11 +1211,16 @@ fn render_spectrogram(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             let bar_lo = (bar_f as usize).min(NUM_BARS - 1);
             let bar_hi = (bar_lo + 1).min(NUM_BARS - 1);
             let frac = bar_f - bar_lo as f32;
-            let energy = frame[bar_lo] * (1.0 - frac) + frame[bar_hi] * frac;
+            let raw_energy = frame[bar_lo] * (1.0 - frac) + frame[bar_hi] * frac;
 
-            if energy < 0.01 {
+            if raw_energy < 0.01 {
                 continue;
             }
+
+            // Non-linear mapping: sqrt pushes more values into the visible range.
+            // Raw spectrum rarely exceeds 0.5 even on loud music, so sqrt(0.5)=0.7
+            // puts loud content solidly into the red zone.
+            let energy = raw_energy.sqrt();
 
             // Heat map: blue → yellow → red → white.
             let color = if energy > 0.85 {
@@ -1840,19 +1851,64 @@ fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Terrain Renderer ──────────────────────────────────────────────────────
 
 fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w < 10 || h < 6 {
+        return;
+    }
+
+    // ── Unknown Pleasures layout ────────────────────────────────────────────
+    // Artist name above, album below, waveform box centered between.
+    // Pure white on black, no palette colors.
+    let white = Color::Rgb(255, 255, 255);
+    let white_style = Style::new().fg(white).add_modifier(Modifier::BOLD);
+
+    // Artist label: centered, 2 rows from top of area.
+    let artist = state.now_artist.to_uppercase();
+    let album = state.now_album.to_uppercase();
+
+    let artist_y = area.y + 1;
+    let album_y = area.y + area.height.saturating_sub(2);
+
+    // Center-render text helper.
+    let render_centered = |text: &str, y: u16, buf: &mut Buffer| {
+        if text.is_empty() || y >= area.y + area.height {
+            return;
+        }
+        let text_w = text.len().min(w);
+        let x_start = area.x + (area.width.saturating_sub(text_w as u16)) / 2;
+        for (i, ch) in text.chars().take(w).enumerate() {
+            buf[(x_start + i as u16, y)]
+                .set_char(ch)
+                .set_style(white_style);
+        }
+    };
+
+    render_centered(&artist, artist_y, buf);
+    render_centered(&album, album_y, buf);
+
+    // ── Waveform box: centered square-ish region ────────────────────────────
+    // Leave space for labels + padding.
+    let box_top = (artist_y + 2).min(area.y + area.height);
+    let box_bottom = album_y.saturating_sub(1);
+    if box_bottom <= box_top {
+        return;
+    }
+    let box_h = (box_bottom - box_top) as usize;
+    // Square aspect: width = height * 2 (terminal chars ~2:1).
+    let box_w_chars = (box_h * 2).min(w);
+    let box_x = area.x + (area.width.saturating_sub(box_w_chars as u16)) / 2;
+    let box_area = Rect::new(box_x, box_top, box_w_chars as u16, box_h as u16);
+
+    // Render waveform ridgelines into the box.
+    let mut grid = BrailleGrid::new(box_area.width as usize, box_area.height as usize);
     let px_w = grid.px_width();
     let px_h = grid.px_height();
     if px_w < 4 || px_h < 4 {
         return;
     }
 
-    let elapsed = state.created_at.elapsed().as_secs_f32();
-    let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
-
-    // Terrain: spectrum history as a heightmap, rendered with pseudo-3D perspective.
-    // Each row of the grid maps to a depth level. Far rows (top) are compressed.
-    let num_rows = 32.min(state.spectrum_history.len);
+    let num_rows = 40.min(state.spectrum_history.len);
     if num_rows < 2 {
         return;
     }
@@ -1861,47 +1917,26 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         state.spectrum_history.iter_newest_first(num_rows).collect();
 
     for (depth_idx, frame) in frames.iter().enumerate() {
-        let depth = depth_idx as f32 / num_rows as f32; // 0 = nearest, 1 = farthest.
-
-        // Perspective: far rows are vertically compressed toward the horizon.
-        let horizon_y = px_h as f32 * 0.3;
-        let base_y = px_h as f32 * 0.95;
-        let row_y = base_y - (base_y - horizon_y) * depth;
-
-        // Horizontal compression: far rows are narrower.
-        let width_scale = 1.0 - depth * 0.5;
-        let row_left = (px_w as f32 * (1.0 - width_scale) * 0.5) as usize;
-        let row_right = (px_w as f32 * (1.0 + width_scale) * 0.5) as usize;
-        let row_width = row_right.saturating_sub(row_left).max(1);
-
-        // Height scale: near rows have taller peaks.
-        let height_scale = (1.0 - depth * 0.7) * px_h as f32 * 0.4;
-
-        // Fog: farther rows are dimmer.
-        let fog = 1.0 - depth * 0.6;
+        let t = depth_idx as f32 / num_rows as f32;
+        // Even vertical spacing — no perspective, like the album art.
+        let row_y = px_h as f32 * (0.05 + t * 0.9);
+        // Height scale: uniform, ~30% of box height.
+        let height_scale = px_h as f32 * 0.25;
 
         let mut prev_x = None;
         let mut prev_y = None;
 
-        for px_x in row_left..row_right {
-            // Map pixel X to spectrum bar.
-            let local_x = px_x - row_left;
-            let bar_f = local_x as f32 * (NUM_BARS - 1) as f32 / (row_width - 1).max(1) as f32;
+        for px_x in 0..px_w {
+            let bar_f = px_x as f32 * (NUM_BARS - 1) as f32 / (px_w - 1).max(1) as f32;
             let bar_lo = (bar_f as usize).min(NUM_BARS - 1);
             let bar_hi = (bar_lo + 1).min(NUM_BARS - 1);
             let frac = bar_f - bar_lo as f32;
             let energy = frame[bar_lo] * (1.0 - frac) + frame[bar_hi] * frac;
 
-            let peak_y = row_y - energy * height_scale;
-            let y = peak_y.clamp(0.0, (px_h - 1) as f32);
-
-            let freq_t = bar_f / (NUM_BARS - 1) as f32;
-            let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
-            let base = state.palette.freq_color(warped);
-            let color = dim(brighten(base, state.beat_energy * 0.3), 1.0 - fog);
+            let y = (row_y - energy * height_scale).clamp(0.0, (px_h - 1) as f32);
 
             if let (Some(px), Some(py)) = (prev_x, prev_y) {
-                grid.draw_line(px, py, px_x as f32, y, color);
+                grid.draw_line(px, py, px_x as f32, y, white);
             }
 
             prev_x = Some(px_x as f32);
@@ -1909,7 +1944,21 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         }
     }
 
-    grid.render_to(area, buf);
+    // Override the braille render — we want pure white, no brightness boost
+    // (it's already white). Render directly instead of through render_to.
+    for cy in 0..grid.height.min(box_area.height as usize) {
+        for cx in 0..grid.width.min(box_area.width as usize) {
+            let idx = cy * grid.width + cx;
+            let pattern = grid.dots[idx];
+            if pattern == 0 {
+                continue;
+            }
+            let ch = char::from_u32(0x2800 + pattern as u32).unwrap_or(' ');
+            let x = box_area.x + cx as u16;
+            let y = box_area.y + cy as u16;
+            buf[(x, y)].set_char(ch).set_style(white_style);
+        }
+    }
 }
 
 // ── Moiré Renderer ────────────────────────────────────────────────────────

@@ -570,6 +570,17 @@ impl App {
                 // When paused/stopped, decay bars to zero naturally.
                 self.visualizer.decay_to_zero();
             }
+            // Feed now-playing metadata for pleasures mode overlay.
+            if let Some(entry) = self
+                .queue
+                .vq_cache
+                .entries
+                .iter()
+                .find(|e| e.status == QueueEntryStatus::Playing)
+            {
+                self.visualizer.now_artist.clone_from(&entry.artist);
+                self.visualizer.now_album.clone_from(&entry.album);
+            }
         }
 
         // Check for background lyrics fetch results.
