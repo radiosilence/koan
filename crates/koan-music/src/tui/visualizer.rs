@@ -854,6 +854,11 @@ impl VisualizerState {
         }
 
         // BPM detection: track rising edges of beat_energy.
+        // Reset on silence (track change) — stale onsets produce garbage BPM.
+        if self.beat_energy < 0.01 && self.spectrum.iter().all(|&v| v < 0.02) {
+            self.beat_onsets.clear();
+            self.bpm = 0.0;
+        }
         let beat_is_high = self.beat_energy > 0.3;
         if beat_is_high && !self.beat_was_high {
             // Rising edge — new beat onset.
@@ -2644,13 +2649,15 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
         let band_energy = state.spectrum[bar_idx];
 
-        // Density: cubed overall energy — sparse when quiet, full when loud.
+        // Density: cubed overall energy + beat pulse.
+        // Beat temporarily boosts density so more columns appear on hits.
         let density_threshold = hash_f32(column.char_seed.wrapping_add(99)) * 0.8;
-        let density = overall_energy * overall_energy * overall_energy;
-        let is_active = density > density_threshold * 0.05 || beat > 0.5;
+        let density = overall_energy * overall_energy * overall_energy + beat * 0.15;
+        let is_active = density > density_threshold * 0.05;
 
         // Speed: BPM-driven base (faster songs = faster rain), beat for surges.
-        let bpm_factor = (state.bpm / 120.0).clamp(0.3, 3.0); // Normalize around 120bpm.
+        let effective_bpm = if state.bpm > 1.0 { state.bpm } else { 120.0 };
+        let bpm_factor = (effective_bpm / 120.0).clamp(0.3, 3.0);
         let speed_mult = 3.0 * bpm_factor + (beat * beat) * 800.0 * r;
         column.head_y += column.speed * speed_mult * dt;
 
