@@ -139,6 +139,16 @@ pub struct VisualizerConfig {
     /// Color palette: "spectrum" (default), "mono", "fire", "neon".
     /// Controls the frequency-mapped color gradient on spectrum bars.
     pub palette: String,
+    /// Reactivity multiplier (0.0..2.0, default 1.0).
+    /// Scales all beat/spectrum-driven animation coefficients.
+    /// 0.0 = static, 1.0 = normal, 2.0 = hypersensitive.
+    pub reactivity: f32,
+    /// Bass shake: camera jitter + scale pulse on bass hits.
+    /// Applies to braille-rendered modes (oscilloscope, radial, wireframe, starfield, etc.).
+    pub bass_shake: bool,
+    /// Matrix overlay: replace all rendered characters with random matrix glyphs in green.
+    /// Applies to any visualizer mode as a post-processing pass.
+    pub matrix_overlay: bool,
 }
 
 impl Default for VisualizerConfig {
@@ -152,6 +162,9 @@ impl Default for VisualizerConfig {
             bar_decay_ms: 50,
             peak_decay_ms: 180,
             palette: "spectrum".into(),
+            reactivity: 1.0,
+            bass_shake: true,
+            matrix_overlay: false,
         }
     }
 }

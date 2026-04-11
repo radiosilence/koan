@@ -36,6 +36,7 @@ pub enum Mode {
     Organize,
     DeviceSelector,
     HelpModal,
+    VizPicker,
 }
 
 /// State for the output device selector modal.
@@ -215,6 +216,9 @@ pub struct App {
     /// Device selector modal state (when in DeviceSelector mode).
     pub device_selector: Option<DeviceSelectorState>,
 
+    /// Visualizer picker modal state (when in VizPicker mode).
+    pub viz_picker: Option<super::viz_picker::VizPickerState>,
+
     /// Stack of previous modes — push before entering a modal, pop when leaving.
     pub mode_stack: Vec<Mode>,
 
@@ -245,6 +249,9 @@ pub struct App {
 
     /// Receiver for background lyrics fetch results.
     pub lyrics_rx: Option<crossbeam_channel::Receiver<Option<koan_core::lyrics::Lyrics>>>,
+
+    /// Transport bar resize drag state — Some(start_y) when dragging.
+    pub transport_drag: Option<(u16, u16)>, // (start_row, original_art_size)
 
     /// Mouse hover state — updated on MouseEventKind::Moved.
     pub hover: HoverState,
@@ -342,8 +349,10 @@ impl App {
             context_menu: None,
             organize: None,
             device_selector: None,
+            viz_picker: None,
             mode_stack: Vec::new(),
             last_mouse_row: None,
+            transport_drag: None,
             scrollbar_grab_offset: None,
             drag_undo_active: false,
             drop_progress: None,
@@ -564,6 +573,17 @@ impl App {
             } else {
                 // When paused/stopped, decay bars to zero naturally.
                 self.visualizer.decay_to_zero();
+            }
+            // Feed now-playing metadata for pleasures mode overlay.
+            if let Some(entry) = self
+                .queue
+                .vq_cache
+                .entries
+                .iter()
+                .find(|e| e.status == QueueEntryStatus::Playing)
+            {
+                self.visualizer.now_artist.clone_from(&entry.artist);
+                self.visualizer.now_album.clone_from(&entry.album);
             }
         }
 
@@ -888,6 +908,7 @@ impl App {
             Mode::Organize => self.handle_organize_key(key),
             Mode::DeviceSelector => self.handle_device_selector_key(key),
             Mode::HelpModal => self.handle_help_modal_key(key),
+            Mode::VizPicker => self.handle_viz_picker_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -1002,17 +1023,44 @@ impl App {
             }
             KeyCode::Char('M') => {
                 let next_mode = self.visualizer.mode.next();
-                self.visualizer.mode = next_mode;
-                self.viz_config.mode = next_mode.as_str().to_string();
+                self.apply_viz_mode(next_mode);
+            }
+            KeyCode::Char('X') => {
+                self.visualizer.matrix_overlay = !self.visualizer.matrix_overlay;
                 self.status_message = Some((
-                    format!("visualiser: {}", next_mode.label()),
+                    if self.visualizer.matrix_overlay {
+                        "matrix overlay on".into()
+                    } else {
+                        "matrix overlay off".into()
+                    },
                     std::time::Instant::now(),
                 ));
-                // Persist to config.toml.
-                let mode_str = next_mode.as_str().to_string();
+                let overlay = self.visualizer.matrix_overlay;
                 let _ = koan_core::config::Config::update_base(|cfg| {
-                    cfg.visualizer.mode = mode_str.clone();
+                    cfg.visualizer.matrix_overlay = overlay;
                 });
+            }
+            KeyCode::Char('S') => {
+                self.visualizer.bass_shake = !self.visualizer.bass_shake;
+                self.status_message = Some((
+                    if self.visualizer.bass_shake {
+                        "bass shake on".into()
+                    } else {
+                        "bass shake off".into()
+                    },
+                    std::time::Instant::now(),
+                ));
+                let shake = self.visualizer.bass_shake;
+                let _ = koan_core::config::Config::update_base(|cfg| {
+                    cfg.visualizer.bass_shake = shake;
+                });
+            }
+            KeyCode::Char('v') => {
+                self.viz_picker =
+                    Some(super::viz_picker::VizPickerState::new(self.visualizer.mode));
+                self.viz_config.enabled = true;
+                self.viz_fullscreen = true;
+                self.push_mode(Mode::VizPicker);
             }
             KeyCode::Up => {
                 let visible = self.visible_queue();
@@ -1185,6 +1233,67 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn handle_viz_picker_key(&mut self, key: KeyEvent) {
+        let Some(ref mut picker) = self.viz_picker else {
+            return;
+        };
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('v') => {
+                // Restore the original mode (revert preview).
+                let original = picker.current_mode;
+                self.viz_picker = None;
+                self.viz_fullscreen = false;
+                self.pop_mode();
+                self.apply_viz_mode(original);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let len = super::viz_picker::ALL_MODES.len();
+                picker.cursor = if picker.cursor == 0 {
+                    len - 1
+                } else {
+                    picker.cursor - 1
+                };
+                // Live preview.
+                let mode = picker.selected_mode();
+                self.visualizer.mode = mode;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let len = super::viz_picker::ALL_MODES.len();
+                picker.cursor = if picker.cursor + 1 >= len {
+                    0
+                } else {
+                    picker.cursor + 1
+                };
+                let mode = picker.selected_mode();
+                self.visualizer.mode = mode;
+            }
+            KeyCode::Enter => {
+                let selected = picker.selected_mode();
+                self.viz_picker = None;
+                self.viz_fullscreen = false;
+                self.pop_mode();
+                self.apply_viz_mode(selected);
+            }
+            _ => {}
+        }
+    }
+
+    /// Apply a visualizer mode: update state, persist to config, show status.
+    fn apply_viz_mode(&mut self, mode: super::visualizer::VisualizerMode) {
+        self.visualizer.mode = mode;
+        self.viz_config.mode = mode.as_str().to_string();
+        self.viz_config.enabled = true;
+        self.status_message = Some((
+            format!("visualiser: {}", mode.label()),
+            std::time::Instant::now(),
+        ));
+        let mode_str = mode.as_str().to_string();
+        let _ = koan_core::config::Config::update_base(|cfg| {
+            cfg.visualizer.mode = mode_str.clone();
+        });
     }
 
     fn handle_edit_key(&mut self, key: KeyEvent) {
@@ -1691,6 +1800,47 @@ impl App {
     }
 
     pub fn handle_mouse(&mut self, event: MouseEvent) {
+        // Transport bar resize: drag the bottom edge to resize album art / header.
+        match event.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                // Start drag if clicking near the bottom edge of transport area.
+                let transport_bottom =
+                    self.layout.transport_area.y + self.layout.transport_area.height;
+                if event.row >= transport_bottom.saturating_sub(1)
+                    && event.row <= transport_bottom
+                    && event.column >= self.layout.transport_area.x
+                    && event.column
+                        < self.layout.transport_area.x + self.layout.transport_area.width
+                {
+                    self.transport_drag = Some((event.row, self.art_size));
+                }
+            }
+            MouseEventKind::Drag(MouseButton::Left) if self.transport_drag.is_some() => {
+                let (start_row, original_size) = self.transport_drag.unwrap();
+                let delta = event.row as i32 - start_row as i32;
+                // Each row of drag = 2 units of art_size (since art_height = art_size / 2).
+                let new_size = (original_size as i32 + delta * 2).clamp(4, 80) as u16;
+                self.art_size = new_size;
+                return;
+            }
+            MouseEventKind::Up(MouseButton::Left) if self.transport_drag.is_some() => {
+                // Persist the new size.
+                let size = self.art_size;
+                let _ = koan_core::config::Config::update_base(|cfg| {
+                    cfg.playback.art_size = size;
+                });
+                self.transport_drag = None;
+                return;
+            }
+            _ => {
+                if self.transport_drag.is_some()
+                    && !matches!(event.kind, MouseEventKind::Drag(MouseButton::Left))
+                {
+                    self.transport_drag = None;
+                }
+            }
+        }
+
         // Track mouse row for drop insertion indicator.
         if self.is_in_rect(event.column, event.row, self.layout.queue_area) {
             self.last_mouse_row = Some(event.row);
