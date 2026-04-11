@@ -43,6 +43,15 @@ pub fn render(frame: &mut Frame, app: &mut App) {
             let fps_line = Line::from(Span::styled(fps_text, app.theme.hint_desc));
             frame.render_widget(Paragraph::new(fps_line), fps_area);
         }
+
+        // Visualizer picker overlay renders on top of fullscreen viz.
+        if app.mode == Mode::VizPicker
+            && let Some(ref picker) = app.viz_picker
+        {
+            let overlay = VizPickerOverlay::new(picker, &app.theme);
+            frame.render_widget(overlay, area);
+        }
+
         return;
     }
 
