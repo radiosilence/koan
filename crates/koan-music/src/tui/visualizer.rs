@@ -29,6 +29,14 @@ pub enum VisualizerMode {
     Particles,
     /// Stereo phase scope — L channel vs R channel as X/Y coordinates.
     Lissajous,
+    /// Time×frequency heatmap — scrolls vertically, newest at bottom.
+    Spectrogram,
+    /// L and R waveforms drawn separately, stacked top/bottom.
+    StereoWaveform,
+    /// Analog-style needle VU meters.
+    VuMeter,
+    /// Filled spectrum curve with stacked decay trails.
+    Flame,
 }
 
 impl VisualizerMode {
@@ -39,6 +47,10 @@ impl VisualizerMode {
             "radial" => Self::Radial,
             "particles" | "particle" => Self::Particles,
             "lissajous" | "phase" => Self::Lissajous,
+            "spectrogram" | "waterfall" => Self::Spectrogram,
+            "stereo" | "stereo_waveform" | "stereo-waveform" => Self::StereoWaveform,
+            "vu" | "vu_meter" | "vu-meter" | "meter" => Self::VuMeter,
+            "flame" | "mountain" => Self::Flame,
             _ => Self::Bars,
         }
     }
@@ -50,7 +62,11 @@ impl VisualizerMode {
             Self::Oscilloscope => Self::Radial,
             Self::Radial => Self::Particles,
             Self::Particles => Self::Lissajous,
-            Self::Lissajous => Self::Bars,
+            Self::Lissajous => Self::Spectrogram,
+            Self::Spectrogram => Self::StereoWaveform,
+            Self::StereoWaveform => Self::VuMeter,
+            Self::VuMeter => Self::Flame,
+            Self::Flame => Self::Bars,
         }
     }
 
@@ -62,6 +78,10 @@ impl VisualizerMode {
             Self::Radial => "radial",
             Self::Particles => "particles",
             Self::Lissajous => "lissajous",
+            Self::Spectrogram => "spectrogram",
+            Self::StereoWaveform => "stereo_waveform",
+            Self::VuMeter => "vu_meter",
+            Self::Flame => "flame",
         }
     }
 
@@ -73,6 +93,10 @@ impl VisualizerMode {
             Self::Radial => "radial",
             Self::Particles => "particles",
             Self::Lissajous => "lissajous",
+            Self::Spectrogram => "spectrogram",
+            Self::StereoWaveform => "stereo waveform",
+            Self::VuMeter => "vu meter",
+            Self::Flame => "flame",
         }
     }
 }
@@ -456,6 +480,46 @@ impl LissajousTrail {
     }
 }
 
+// ── Spectrum History ────────────────────────────────────────────────────────
+
+/// Maximum spectrum history frames (enough for tall terminals).
+const SPECTRUM_HISTORY_CAP: usize = 256;
+
+/// Ring buffer of past spectrum frames for spectrogram and flame modes.
+pub struct SpectrumHistory {
+    frames: Vec<[f32; NUM_BARS]>,
+    write_idx: usize,
+    len: usize,
+}
+
+impl SpectrumHistory {
+    pub fn new() -> Self {
+        Self {
+            frames: vec![[0.0; NUM_BARS]; SPECTRUM_HISTORY_CAP],
+            write_idx: 0,
+            len: 0,
+        }
+    }
+
+    /// Push the current spectrum into the history ring.
+    pub fn push(&mut self, spectrum: &[f32; NUM_BARS]) {
+        self.frames[self.write_idx] = *spectrum;
+        self.write_idx = (self.write_idx + 1) % SPECTRUM_HISTORY_CAP;
+        if self.len < SPECTRUM_HISTORY_CAP {
+            self.len += 1;
+        }
+    }
+
+    /// Iterate frames from newest to oldest (up to `count`).
+    pub fn iter_newest_first(&self, count: usize) -> impl Iterator<Item = &[f32; NUM_BARS]> {
+        let count = count.min(self.len);
+        (0..count).map(move |age| {
+            let idx = (self.write_idx + SPECTRUM_HISTORY_CAP - 1 - age) % SPECTRUM_HISTORY_CAP;
+            &self.frames[idx]
+        })
+    }
+}
+
 // ── VisualizerState ─────────────────────────────────────────────────────────
 
 /// Processed visualizer data, ready for rendering.
@@ -498,6 +562,10 @@ pub struct VisualizerState {
     pub lissajous_trail: LissajousTrail,
     /// Radial rotation angle (radians), slowly drifts.
     pub radial_angle: f32,
+    /// Spectrum history for spectrogram and flame modes.
+    pub spectrum_history: SpectrumHistory,
+    /// VU needle angle (smoothed), [left, right] in radians.
+    pub vu_needle_angle: [f32; 2],
 }
 
 impl VisualizerState {
@@ -531,6 +599,8 @@ impl VisualizerState {
             particles: ParticleSystem::new(),
             lissajous_trail: LissajousTrail::new(),
             radial_angle: 0.0,
+            spectrum_history: SpectrumHistory::new(),
+            vu_needle_angle: [0.0; 2],
         }
     }
 
@@ -583,6 +653,21 @@ impl VisualizerState {
         self.radial_angle += dt * 0.3 + self.beat_energy * 0.1;
         if self.radial_angle > std::f32::consts::TAU {
             self.radial_angle -= std::f32::consts::TAU;
+        }
+
+        // Push spectrum snapshot for spectrogram/flame history.
+        self.spectrum_history.push(&self.spectrum);
+
+        // Smooth VU needle angles (ballistic: fast rise, slow fall).
+        for ch in 0..2 {
+            let target = self.vu_levels[ch];
+            if target > self.vu_needle_angle[ch] {
+                // Rise: fast attack (~3 frames to peak).
+                self.vu_needle_angle[ch] += (target - self.vu_needle_angle[ch]) * 0.5;
+            } else {
+                // Fall: slow decay matching bar_decay.
+                self.vu_needle_angle[ch] *= bar_decay;
+            }
         }
     }
 
@@ -638,6 +723,18 @@ impl<'a> VisualizerWidget<'a> {
             }
             VisualizerMode::Lissajous => {
                 render_lissajous(self.state, area, buf);
+            }
+            VisualizerMode::Spectrogram => {
+                render_spectrogram(self.state, area, buf);
+            }
+            VisualizerMode::StereoWaveform => {
+                render_stereo_waveform(self.state, area, buf);
+            }
+            VisualizerMode::VuMeter => {
+                render_vu_meter(self.state, area, buf);
+            }
+            VisualizerMode::Flame => {
+                render_flame(self.state, area, buf);
             }
         }
     }
@@ -817,6 +914,289 @@ fn render_lissajous(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
     state
         .lissajous_trail
         .render(&mut grid, state.palette, state.beat_energy);
+
+    grid.render_to(area, buf);
+}
+
+// ── Spectrogram Renderer ──────────────────────────────────────────────────
+
+fn render_spectrogram(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let elapsed = state.created_at.elapsed().as_secs_f32();
+    let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
+
+    // Each terminal row = one spectrum frame in time.
+    // Newest at bottom, oldest at top.
+    for (row, frame) in state.spectrum_history.iter_newest_first(h).enumerate() {
+        let y = area.y + (h - 1 - row) as u16;
+        // Age factor: newest row = full brightness, oldest = dimmer.
+        let age_brightness = 1.0 - (row as f32 / h as f32) * 0.4;
+
+        for col in 0..w {
+            // Map column to spectrum bar.
+            let bar_idx = col * NUM_BARS / w;
+            let bar_idx = bar_idx.min(NUM_BARS - 1);
+            let energy = frame[bar_idx];
+
+            if energy < 0.02 {
+                continue;
+            }
+
+            // Color by frequency position, brightness by energy.
+            let freq_t = bar_idx as f32 / (NUM_BARS - 1) as f32;
+            let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
+            let base = state.palette.freq_color(warped);
+            let color = dim(
+                brighten(base, state.beat_energy * 0.3),
+                1.0 - energy * age_brightness,
+            );
+
+            // Use block characters for density — full block at high energy,
+            // lighter shades for lower.
+            let ch = if energy > 0.7 {
+                '█'
+            } else if energy > 0.4 {
+                '▓'
+            } else if energy > 0.2 {
+                '▒'
+            } else {
+                '░'
+            };
+
+            let x = area.x + col as u16;
+            buf[(x, y)].set_char(ch).set_style(Style::new().fg(color));
+        }
+    }
+}
+
+// ── Stereo Waveform Renderer ──────────────────────────────────────────────
+
+fn render_stereo_waveform(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h < 2 || state.waveform.is_empty() {
+        return;
+    }
+
+    let channels = if state.waveform.len() > 2 { 2 } else { 1 };
+    let num_frames = state.waveform.len() / channels;
+    if num_frames < 2 {
+        return;
+    }
+
+    // Split area: top half = left channel, bottom half = right channel.
+    let half_h = h / 2;
+    let top_area = Rect::new(area.x, area.y, area.width, half_h as u16);
+    let bottom_area = Rect::new(
+        area.x,
+        area.y + half_h as u16,
+        area.width,
+        (h - half_h) as u16,
+    );
+
+    // Render each channel.
+    for (ch, ch_area) in [(0, top_area), (1, bottom_area)] {
+        let mut grid = BrailleGrid::new(ch_area.width as usize, ch_area.height as usize);
+        let px_w = grid.px_width();
+        let px_h = grid.px_height();
+        if px_w == 0 || px_h == 0 {
+            continue;
+        }
+
+        let center_y = px_h as f32 / 2.0;
+        let amplitude = px_h as f32 * 0.4;
+
+        let mut prev_x = 0.0f32;
+        let mut prev_y = center_y;
+
+        for i in 0..px_w {
+            let frame_idx = i * num_frames / px_w;
+            let sample = if channels == 2 {
+                state.waveform[frame_idx * 2 + ch]
+            } else {
+                state.waveform[frame_idx]
+            };
+
+            let x = i as f32;
+            let y = (center_y - sample * amplitude).clamp(0.0, (px_h - 1) as f32);
+
+            if i > 0 {
+                // Left = warm colors, right = cool colors.
+                let color_t = if ch == 0 { 0.15 } else { 0.75 };
+                let base = state.palette.freq_color(color_t);
+                let color = brighten(base, state.beat_energy * 0.4);
+                grid.draw_line(prev_x, prev_y, x, y, color);
+            }
+
+            prev_x = x;
+            prev_y = y;
+        }
+
+        grid.render_to(ch_area, buf);
+    }
+
+    // Draw separator line between channels.
+    let sep_y = area.y + half_h as u16;
+    if sep_y < area.y + area.height {
+        let sep_color = dim(state.palette.freq_color(0.5), 0.6);
+        for x in 0..area.width {
+            buf[(area.x + x, sep_y)]
+                .set_char('─')
+                .set_style(Style::new().fg(sep_color));
+        }
+    }
+}
+
+// ── VU Meter Renderer ─────────────────────────────────────────────────────
+
+fn render_vu_meter(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w < 8 || h < 4 {
+        return;
+    }
+
+    // Split into left and right meter areas.
+    let meter_w = w / 2;
+    let left_area = Rect::new(area.x, area.y, meter_w as u16, area.height);
+    let right_area = Rect::new(
+        area.x + meter_w as u16,
+        area.y,
+        (w - meter_w) as u16,
+        area.height,
+    );
+
+    for (ch, meter_area) in [(0, left_area), (1, right_area)] {
+        let mut grid = BrailleGrid::new(meter_area.width as usize, meter_area.height as usize);
+        let px_w = grid.px_width();
+        let px_h = grid.px_height();
+        if px_w < 4 || px_h < 4 {
+            continue;
+        }
+
+        let cx = px_w as f32 / 2.0;
+        let cy = px_h as f32 * 0.95; // Pivot near bottom.
+        let radius = (px_w as f32 * 0.45).min(px_h as f32 * 0.85);
+
+        // Arc from -135° to -45° (sweep of 90°, opening upward).
+        let arc_start = std::f32::consts::PI * 0.75; // 135° from positive x
+        let arc_end = std::f32::consts::PI * 0.25; // 45° from positive x
+        let arc_sweep = arc_start - arc_end;
+
+        // Draw the arc scale (tick marks).
+        let num_ticks = 21;
+        for tick in 0..num_ticks {
+            let t = tick as f32 / (num_ticks - 1) as f32;
+            let angle = arc_start - t * arc_sweep;
+            let cos_a = angle.cos();
+            let sin_a = angle.sin();
+
+            // Tick mark: short line at the outer edge.
+            let major = tick % 5 == 0;
+            let tick_inner = if major { radius * 0.85 } else { radius * 0.92 };
+            let tick_outer = radius;
+
+            let x0 = cx + tick_inner * cos_a;
+            let y0 = cy - tick_inner * sin_a;
+            let x1 = cx + tick_outer * cos_a;
+            let y1 = cy - tick_outer * sin_a;
+
+            // Color: green for low, yellow for mid, red for high (>80%).
+            let color = if t < 0.6 {
+                state.palette.freq_color(0.3)
+            } else if t < 0.8 {
+                state.palette.freq_color(0.6)
+            } else {
+                state.palette.freq_color(0.9)
+            };
+            let color = dim(color, 0.3);
+            grid.draw_line(x0, y0, x1, y1, color);
+        }
+
+        // Draw the needle.
+        let level = state.vu_needle_angle[ch].clamp(0.0, 1.0);
+        let needle_angle = arc_start - level * arc_sweep;
+        let needle_len = radius * 0.82;
+
+        let nx = cx + needle_len * needle_angle.cos();
+        let ny = cy - needle_len * needle_angle.sin();
+
+        let needle_color = if level > 0.8 {
+            brighten(state.palette.freq_color(0.95), state.beat_energy * 0.5)
+        } else {
+            brighten(state.palette.freq_color(0.4), state.beat_energy * 0.3)
+        };
+        grid.draw_line(cx, cy, nx, ny, needle_color);
+
+        // Draw pivot dot.
+        grid.set_dot(cx as usize, cy as usize, needle_color);
+
+        grid.render_to(meter_area, buf);
+    }
+}
+
+// ── Flame Renderer ────────────────────────────────────────────────────────
+
+fn render_flame(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
+    let px_w = grid.px_width();
+    let px_h = grid.px_height();
+    if px_w == 0 || px_h == 0 {
+        return;
+    }
+
+    let elapsed = state.created_at.elapsed().as_secs_f32();
+    let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
+
+    // Draw stacked layers: oldest (back) first, newest (front) last.
+    // Each layer is a filled area under the spectrum curve, dimmer with age.
+    let num_layers = 8.min(state.spectrum_history.len);
+    let layer_offset_px = (px_h as f32 * 0.06).max(1.0); // Vertical shift per layer.
+
+    for (age, frame) in state
+        .spectrum_history
+        .iter_newest_first(num_layers)
+        .enumerate()
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+    {
+        let brightness = 1.0 - (age as f32 / num_layers as f32) * 0.7;
+        let y_offset = age as f32 * layer_offset_px;
+
+        for px_x in 0..px_w {
+            // Map pixel X to spectrum bar with interpolation.
+            let bar_f = px_x as f32 * (NUM_BARS - 1) as f32 / (px_w - 1).max(1) as f32;
+            let bar_lo = (bar_f as usize).min(NUM_BARS - 1);
+            let bar_hi = (bar_lo + 1).min(NUM_BARS - 1);
+            let frac = bar_f - bar_lo as f32;
+            let energy = frame[bar_lo] * (1.0 - frac) + frame[bar_hi] * frac;
+
+            if energy < 0.02 {
+                continue;
+            }
+
+            // Fill from bottom up to the energy height.
+            let peak_y = px_h as f32 * (1.0 - energy * 0.9) + y_offset;
+            let bottom_y = px_h as f32;
+
+            let freq_t = bar_f / (NUM_BARS - 1) as f32;
+            let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
+            let base = state.palette.freq_color(warped);
+            let color = dim(brighten(base, state.beat_energy * 0.3), 1.0 - brightness);
+
+            let y_start = (peak_y as usize).max(0);
+            let y_end = (bottom_y as usize).min(px_h);
+            for py in y_start..y_end {
+                grid.set_dot(px_x, py, color);
+            }
+        }
+    }
 
     grid.render_to(area, buf);
 }
@@ -1226,6 +1606,22 @@ mod tests {
             VisualizerMode::Lissajous
         );
         assert_eq!(VisualizerMode::parse("phase"), VisualizerMode::Lissajous);
+        assert_eq!(
+            VisualizerMode::parse("spectrogram"),
+            VisualizerMode::Spectrogram
+        );
+        assert_eq!(
+            VisualizerMode::parse("waterfall"),
+            VisualizerMode::Spectrogram
+        );
+        assert_eq!(
+            VisualizerMode::parse("stereo"),
+            VisualizerMode::StereoWaveform
+        );
+        assert_eq!(VisualizerMode::parse("vu"), VisualizerMode::VuMeter);
+        assert_eq!(VisualizerMode::parse("meter"), VisualizerMode::VuMeter);
+        assert_eq!(VisualizerMode::parse("flame"), VisualizerMode::Flame);
+        assert_eq!(VisualizerMode::parse("mountain"), VisualizerMode::Flame);
         assert_eq!(VisualizerMode::parse("garbage"), VisualizerMode::Bars);
     }
 
@@ -1240,6 +1636,14 @@ mod tests {
         assert_eq!(mode, VisualizerMode::Particles);
         let mode = mode.next();
         assert_eq!(mode, VisualizerMode::Lissajous);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::Spectrogram);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::StereoWaveform);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::VuMeter);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::Flame);
         let mode = mode.next();
         assert_eq!(mode, VisualizerMode::Bars);
     }
