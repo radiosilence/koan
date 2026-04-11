@@ -2591,8 +2591,9 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         }
     }
 
-    // Overall amplitude for density control.
+    // Overall amplitude for density, peak drums for speed.
     let overall_energy: f32 = state.spectrum.iter().sum::<f32>() / NUM_BARS as f32;
+    let drums = state.spectrum[4..16].iter().cloned().fold(0.0f32, f32::max);
 
     // Update and render each column.
     for (col_idx, column) in state.matrix_cols.iter_mut().enumerate() {
@@ -2603,13 +2604,10 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         // Density: quiet music = fewer active columns.
         // Each column has a threshold from its hash — only renders if energy exceeds it.
         let density_threshold = hash_f32(column.char_seed.wrapping_add(99)) * 0.6;
-        let is_active = overall_energy > density_threshold || state.beat_energy > 0.3;
+        let is_active = overall_energy > density_threshold || drums > 0.2;
 
-        // Speed: driven by peak mid-low energy (drums ~80-500Hz).
-        // Exponential curve: quiet barely moves, only loud drums slam it.
-        let drums = state.spectrum[4..16].iter().cloned().fold(0.0f32, f32::max);
-        let speed_mult =
-            0.05 + (drums * drums) * 20.0 * r + (state.beat_energy * state.beat_energy) * 8.0 * r;
+        // Speed: purely drum-driven, exponential curve.
+        let speed_mult = 0.05 + (drums * drums) * 25.0 * r;
         column.head_y += column.speed * speed_mult;
 
         // Respawn when fully off-screen.
