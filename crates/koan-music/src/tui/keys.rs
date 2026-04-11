@@ -71,6 +71,11 @@ impl Widget for HintBar<'_> {
                 ("esc", "cancel"),
             ],
             Mode::HelpModal => vec![("esc", "close"), ("?", "close")],
+            Mode::VizPicker => vec![
+                ("\u{2191}\u{2193}", "preview"),
+                ("ret", "select"),
+                ("esc", "cancel"),
+            ],
             Mode::DeviceSelector => vec![
                 ("\u{2191}\u{2193}", "navigate"),
                 ("ret", "select"),

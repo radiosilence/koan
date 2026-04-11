@@ -76,6 +76,7 @@ const SECTIONS: &[Section] = &[
             ("L", "Lyrics panel"),
             ("R", "Radio mode (auto-queue)"),
             ("V", "Visualiser on/off"),
+            ("v", "Visualiser picker"),
             ("M", "Visualiser mode cycle"),
             ("F", "Visualiser fullscreen"),
             ("f", "Favourite track"),

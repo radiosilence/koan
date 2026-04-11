@@ -16,6 +16,7 @@ use super::queue::QueueView;
 use super::track_info::TrackInfoOverlay;
 use super::transport::TransportBar;
 use super::visualizer::VisualizerWidget;
+use super::viz_picker::VizPickerOverlay;
 
 /// Height of the transport bar without album art.
 const TRANSPORT_HEIGHT_DEFAULT: u16 = 3;
@@ -285,6 +286,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     // Help modal overlay.
     if app.mode == Mode::HelpModal {
         let overlay = HelpModalOverlay::new(&app.theme);
+        frame.render_widget(overlay, area);
+    }
+
+    // Visualizer picker overlay.
+    if app.mode == Mode::VizPicker
+        && let Some(ref picker) = app.viz_picker
+    {
+        let overlay = VizPickerOverlay::new(picker, &app.theme);
         frame.render_widget(overlay, area);
     }
 

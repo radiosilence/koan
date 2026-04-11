@@ -36,6 +36,7 @@ pub enum Mode {
     Organize,
     DeviceSelector,
     HelpModal,
+    VizPicker,
 }
 
 /// State for the output device selector modal.
@@ -215,6 +216,9 @@ pub struct App {
     /// Device selector modal state (when in DeviceSelector mode).
     pub device_selector: Option<DeviceSelectorState>,
 
+    /// Visualizer picker modal state (when in VizPicker mode).
+    pub viz_picker: Option<super::viz_picker::VizPickerState>,
+
     /// Stack of previous modes — push before entering a modal, pop when leaving.
     pub mode_stack: Vec<Mode>,
 
@@ -342,6 +346,7 @@ impl App {
             context_menu: None,
             organize: None,
             device_selector: None,
+            viz_picker: None,
             mode_stack: Vec::new(),
             last_mouse_row: None,
             scrollbar_grab_offset: None,
@@ -888,6 +893,7 @@ impl App {
             Mode::Organize => self.handle_organize_key(key),
             Mode::DeviceSelector => self.handle_device_selector_key(key),
             Mode::HelpModal => self.handle_help_modal_key(key),
+            Mode::VizPicker => self.handle_viz_picker_key(key),
             Mode::Normal => self.handle_normal_key(key),
         }
     }
@@ -1002,17 +1008,14 @@ impl App {
             }
             KeyCode::Char('M') => {
                 let next_mode = self.visualizer.mode.next();
-                self.visualizer.mode = next_mode;
-                self.viz_config.mode = next_mode.as_str().to_string();
-                self.status_message = Some((
-                    format!("visualiser: {}", next_mode.label()),
-                    std::time::Instant::now(),
-                ));
-                // Persist to config.toml.
-                let mode_str = next_mode.as_str().to_string();
-                let _ = koan_core::config::Config::update_base(|cfg| {
-                    cfg.visualizer.mode = mode_str.clone();
-                });
+                self.apply_viz_mode(next_mode);
+            }
+            KeyCode::Char('v') => {
+                self.viz_picker =
+                    Some(super::viz_picker::VizPickerState::new(self.visualizer.mode));
+                self.viz_config.enabled = true;
+                self.viz_fullscreen = true;
+                self.push_mode(Mode::VizPicker);
             }
             KeyCode::Up => {
                 let visible = self.visible_queue();
@@ -1185,6 +1188,67 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    fn handle_viz_picker_key(&mut self, key: KeyEvent) {
+        let Some(ref mut picker) = self.viz_picker else {
+            return;
+        };
+
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('v') => {
+                // Restore the original mode (revert preview).
+                let original = picker.current_mode;
+                self.viz_picker = None;
+                self.viz_fullscreen = false;
+                self.pop_mode();
+                self.apply_viz_mode(original);
+            }
+            KeyCode::Up | KeyCode::Char('k') => {
+                let len = super::viz_picker::ALL_MODES.len();
+                picker.cursor = if picker.cursor == 0 {
+                    len - 1
+                } else {
+                    picker.cursor - 1
+                };
+                // Live preview.
+                let mode = picker.selected_mode();
+                self.visualizer.mode = mode;
+            }
+            KeyCode::Down | KeyCode::Char('j') => {
+                let len = super::viz_picker::ALL_MODES.len();
+                picker.cursor = if picker.cursor + 1 >= len {
+                    0
+                } else {
+                    picker.cursor + 1
+                };
+                let mode = picker.selected_mode();
+                self.visualizer.mode = mode;
+            }
+            KeyCode::Enter => {
+                let selected = picker.selected_mode();
+                self.viz_picker = None;
+                self.viz_fullscreen = false;
+                self.pop_mode();
+                self.apply_viz_mode(selected);
+            }
+            _ => {}
+        }
+    }
+
+    /// Apply a visualizer mode: update state, persist to config, show status.
+    fn apply_viz_mode(&mut self, mode: super::visualizer::VisualizerMode) {
+        self.visualizer.mode = mode;
+        self.viz_config.mode = mode.as_str().to_string();
+        self.viz_config.enabled = true;
+        self.status_message = Some((
+            format!("visualiser: {}", mode.label()),
+            std::time::Instant::now(),
+        ));
+        let mode_str = mode.as_str().to_string();
+        let _ = koan_core::config::Config::update_base(|cfg| {
+            cfg.visualizer.mode = mode_str.clone();
+        });
     }
 
     fn handle_edit_key(&mut self, key: KeyEvent) {
