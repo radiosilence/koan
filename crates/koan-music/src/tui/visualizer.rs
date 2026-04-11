@@ -2414,7 +2414,7 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
             let seed = col as u32 * 2654435761;
             state.matrix_cols.push(MatrixColumn {
                 head_y: -(hash_f32(seed) * h as f32 * 2.0), // Stagger widely.
-                speed: 0.08 + hash_f32(seed.wrapping_add(1)) * 0.15, // Slow base.
+                speed: 0.15 + hash_f32(seed.wrapping_add(1)) * 0.25,
                 trail_len: 8.0 + hash_f32(seed.wrapping_add(2)) * 12.0,
                 char_seed: seed,
             });
@@ -2446,8 +2446,8 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
         let band_energy = state.spectrum[bar_idx];
 
-        // Speed: scales with energy. Quiet = drifting, loud = flowing, beat = surging.
-        let speed_mult = 1.0 + band_energy * 2.0 * r + state.beat_energy * 3.0 * r;
+        // Speed: scales with energy. Quiet = gentle drift, beat = proper surge.
+        let speed_mult = 1.0 + band_energy * 2.5 * r + state.beat_energy * 5.0 * r + bass * 3.0 * r;
         column.head_y += column.speed * speed_mult;
 
         // Respawn when fully off-screen.
@@ -2455,7 +2455,7 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
             column.head_y = -(hash_f32(column.char_seed.wrapping_add(state.plasma_time as u32))
                 * h as f32
                 * 0.5);
-            column.speed = 0.08 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.15;
+            column.speed = 0.15 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.25;
             column.trail_len = 8.0 + band_energy * 6.0 * r + hash_f32(column.char_seed) * 8.0;
         }
 
