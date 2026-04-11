@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.19.4 (2026-04-11)
+
+### Fixed
+
+- **Braille visualizer modes running at ~11fps instead of 60fps** — the decode thread pushed entire packets to the visualization buffer in one shot, then blocked waiting for the audio ring buffer to drain. For FLAC (4096 frames/packet at 44.1kHz), VizBuffer only got fresh data every ~93ms (~11fps). Spectrum bars hid this with decay smoothing, but waveform-based modes (oscilloscope, lissajous, radial, particles) rendered the same frozen samples 5-6 frames in a row before jumping. VizBuffer writes now happen incrementally inside the ring buffer push loop, paced by the audio callback's real-time consumption rate. All visualizer modes now update at true 60fps.
+
 ## v0.19.3 (2026-04-09)
 
 ### Fixed
