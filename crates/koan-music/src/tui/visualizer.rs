@@ -3,7 +3,7 @@ use std::time::Instant;
 use koan_core::audio::viz::VizSnapshot;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::Widget;
 
 use super::theme::Theme;
@@ -340,6 +340,9 @@ impl BrailleGrid {
     }
 
     /// Render the braille grid into a ratatui Buffer at the given area.
+    ///
+    /// All braille cells are rendered bold with boosted brightness to compensate
+    /// for the inherent sparsity of braille dots (each cell is mostly empty space).
     pub fn render_to(&self, area: Rect, buf: &mut Buffer) {
         for cy in 0..self.height.min(area.height as usize) {
             for cx in 0..self.width.min(area.width as usize) {
@@ -351,9 +354,11 @@ impl BrailleGrid {
                 let ch = char::from_u32(0x2800 + pattern as u32).unwrap_or(' ');
                 let x = area.x + cx as u16;
                 let y = area.y + cy as u16;
+                // Boost brightness: braille dots are sparse so colors look dim.
+                let color = brighten(self.colors[idx], 0.25);
                 buf[(x, y)]
                     .set_char(ch)
-                    .set_style(Style::new().fg(self.colors[idx]));
+                    .set_style(Style::new().fg(color).add_modifier(Modifier::BOLD));
             }
         }
     }
