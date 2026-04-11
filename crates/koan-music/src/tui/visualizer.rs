@@ -730,23 +730,26 @@ impl VisualizerState {
         self.tunnel_z += dt * (2.0 + self.beat_energy * 8.0);
 
         // Wireframe rotation: bass drives X, mids drive Y, treble drives Z.
+        // Aggressive multipliers — DnB should make this thing spin hard.
         let bass = self.spectrum[..8].iter().sum::<f32>() / 8.0;
         let mids = self.spectrum[16..32].iter().sum::<f32>() / 16.0;
         let treble = self.spectrum[32..].iter().sum::<f32>() / 16.0;
-        self.wire_rotation[0] += dt * (0.5 + bass * 3.0);
-        self.wire_rotation[1] += dt * (0.3 + mids * 2.0);
-        self.wire_rotation[2] += dt * (0.2 + treble * 1.5);
+        let beat_mult = 1.0 + self.beat_energy * 4.0;
+        self.wire_rotation[0] += dt * (0.8 + bass * 12.0) * beat_mult;
+        self.wire_rotation[1] += dt * (0.5 + mids * 8.0) * beat_mult;
+        self.wire_rotation[2] += dt * (0.3 + treble * 6.0) * beat_mult;
 
         // Starfield: advance Z, respawn stars that pass the camera.
-        let star_speed = 20.0 + self.beat_energy * 80.0;
+        // Beat slams the throttle — stars should streak like hyperspace on drops.
+        let star_speed = 30.0 + bass * 200.0 + self.beat_energy * 300.0;
         for star in &mut self.stars {
             star.2 -= dt * star_speed;
             if star.2 <= 0.5 {
-                // Respawn at far distance.
+                // Respawn at far distance with wider spread.
                 let hash = ((star.0.to_bits() ^ star.1.to_bits()) as f32).abs();
-                star.2 = 80.0 + (hash % 20.0);
-                star.0 = (hash * 1.3 % 200.0) - 100.0;
-                star.1 = (hash * 0.7 % 200.0) - 100.0;
+                star.2 = 60.0 + (hash % 40.0);
+                star.0 = (hash * 1.3 % 300.0) - 150.0;
+                star.1 = (hash * 0.7 % 300.0) - 150.0;
             }
         }
     }
@@ -1436,17 +1439,18 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let [rx, ry, rz] = state.wire_rotation;
 
     // Build a torus mesh: major radius R, minor radius r.
-    let r_major = 1.0;
-    let r_minor = 0.4 + state.beat_energy * 0.2;
+    // Beat smashes the whole shape outward — DnB drops should be visible.
+    let r_major = 1.0 + state.beat_energy * 0.4;
+    let r_minor = 0.35 + state.beat_energy * 0.5;
     let segments_major = 24;
     let segments_minor = 12;
 
-    // Audio-modulate the minor radius per segment.
+    // Audio-modulate the minor radius per segment — aggressive deformation.
     let mut verts: Vec<(f32, f32, f32)> = Vec::with_capacity(segments_major * segments_minor);
     for i in 0..segments_major {
         let theta = (i as f32 / segments_major as f32) * std::f32::consts::TAU;
         let bar_idx = (i * NUM_BARS / segments_major).min(NUM_BARS - 1);
-        let modulation = 1.0 + state.spectrum[bar_idx] * 0.8;
+        let modulation = 1.0 + state.spectrum[bar_idx] * 2.5;
 
         for j in 0..segments_minor {
             let phi = (j as f32 / segments_minor as f32) * std::f32::consts::TAU;
@@ -1618,34 +1622,41 @@ fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let cx = px_w / 2.0;
     let cy = px_h / 2.0;
 
+    // Beat-reactive FOV zoom — pulls stars outward on hits.
+    let fov_mult = 50.0 + state.beat_energy * 40.0;
+
     for &(sx, sy, sz) in &state.stars {
         // Perspective projection: closer stars = farther from center.
-        let proj_x = cx + sx * 50.0 / sz;
-        let proj_y = cy + sy * 50.0 / sz;
+        let proj_x = cx + sx * fov_mult / sz;
+        let proj_y = cy + sy * fov_mult / sz;
 
         if proj_x < 0.0 || proj_x >= px_w || proj_y < 0.0 || proj_y >= px_h {
             continue;
         }
 
-        // Brightness by proximity (closer = brighter).
+        // Brightness by proximity (closer = brighter). Beat pushes all stars brighter.
         let depth_t = (1.0 - sz / 100.0).clamp(0.0, 1.0);
+        let warped = (depth_t + state.beat_hue_offset).rem_euclid(1.0);
         let color = brighten(
-            state.palette.freq_color(depth_t),
-            state.beat_energy * 0.5 + depth_t * 0.3,
+            state.palette.freq_color(warped),
+            state.beat_energy * 0.6 + depth_t * 0.4,
         );
 
         // Draw the star dot.
         grid.set_dot(proj_x as usize, proj_y as usize, color);
 
-        // Close stars get a motion trail (streak toward center).
-        if sz < 20.0 {
-            let trail_len = ((20.0 - sz) * 0.5).min(8.0);
+        // Motion trails — most stars streak, length scales with proximity and beat.
+        // At high beat energy, even distant stars get short trails.
+        let trail_threshold = 50.0 + (1.0 - state.beat_energy) * 30.0;
+        if sz < trail_threshold {
+            let base_len = (trail_threshold - sz) * 0.4;
+            let trail_len = (base_len + state.beat_energy * 15.0).min(30.0);
             let dx = proj_x - cx;
             let dy = proj_y - cy;
             let dist = (dx * dx + dy * dy).sqrt().max(1.0);
             let tx = proj_x - dx / dist * trail_len;
             let ty = proj_y - dy / dist * trail_len;
-            let trail_color = dim(color, 0.5);
+            let trail_color = dim(color, 0.4);
             grid.draw_line(proj_x, proj_y, tx, ty, trail_color);
         }
     }
