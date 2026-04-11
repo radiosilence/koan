@@ -2655,10 +2655,8 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let density = overall_energy * overall_energy * overall_energy + beat * 0.15;
         let is_active = density > density_threshold * 0.05;
 
-        // Speed: BPM-driven base (faster songs = faster rain), beat for surges.
-        let effective_bpm = if state.bpm > 1.0 { state.bpm } else { 120.0 };
-        let bpm_factor = (effective_bpm / 120.0).clamp(0.3, 3.0);
-        let speed_mult = 3.0 * bpm_factor + (beat * beat) * 800.0 * r;
+        // Speed: simple linear beat energy. No BPM, no squaring, just works.
+        let speed_mult = 2.0 + beat * 30.0 * r;
         column.head_y += column.speed * speed_mult * dt;
 
         // Respawn when fully off-screen.
