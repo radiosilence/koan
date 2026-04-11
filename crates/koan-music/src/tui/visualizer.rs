@@ -354,21 +354,6 @@ impl BrailleGrid {
         true
     }
 
-    /// Draw a thick line (3px wide) by drawing the base line plus two parallel offsets
-    /// perpendicular to the line direction.
-    pub fn draw_thick_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: Color) {
-        let dx = x1 - x0;
-        let dy = y1 - y0;
-        let len = (dx * dx + dy * dy).sqrt().max(0.001);
-        // Perpendicular unit vector.
-        let nx = -dy / len;
-        let ny = dx / len;
-        // Draw the center line and two offset lines.
-        self.draw_line(x0, y0, x1, y1, color);
-        self.draw_line(x0 + nx, y0 + ny, x1 + nx, y1 + ny, color);
-        self.draw_line(x0 - nx, y0 - ny, x1 - nx, y1 - ny, color);
-    }
-
     /// Draw a line between two subpixel points using Bresenham's algorithm.
     pub fn draw_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: Color) {
         let mut x = x0;
@@ -1088,7 +1073,7 @@ fn render_radial(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         let base = state.palette.freq_color(warped);
         let color = brighten(base, state.beat_energy * 0.5);
 
-        grid.draw_thick_line(x0, y0, x1, y1, color);
+        grid.draw_line(x0, y0, x1, y1, color);
     }
 
     grid.render_to(area, buf);
@@ -1662,7 +1647,7 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 let freq_t = i as f32 / segments_major as f32;
                 let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
                 let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.4);
-                grid.draw_thick_line(px0, py0, px1, py1, color);
+                grid.draw_line(px0, py0, px1, py1, color);
             }
 
             // Edge along major circle.
@@ -1677,7 +1662,7 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 let freq_t = i as f32 / segments_major as f32;
                 let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
                 let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.3);
-                grid.draw_thick_line(px0, py0, px1, py1, color);
+                grid.draw_line(px0, py0, px1, py1, color);
             }
         }
     }
@@ -1886,7 +1871,7 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             let color = dim(brighten(base, state.beat_energy * 0.3), 1.0 - fog);
 
             if let (Some(px), Some(py)) = (prev_x, prev_y) {
-                grid.draw_thick_line(px, py, px_x as f32, y, color);
+                grid.draw_line(px, py, px_x as f32, y, color);
             }
 
             prev_x = Some(px_x as f32);
@@ -1912,14 +1897,15 @@ fn render_moire(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let mids = state.spectrum[16..32].iter().sum::<f32>() / 16.0;
 
     // Three rotating line grids at different angles/spacings.
-    // Interference between them creates the moiré pattern.
-    let angle1 = t * (0.4 + bass * 2.0 * r);
-    let angle2 = t * (0.3 + mids * 1.5 * r) + std::f32::consts::TAU / 3.0;
-    let angle3 = t * (0.2 + state.beat_energy * 3.0 * r) + std::f32::consts::TAU * 2.0 / 3.0;
+    // Slow rotation — moiré is already visually intense, keep it dreamy.
+    let angle1 = t * (0.08 + bass * 0.3 * r);
+    let angle2 = t * (0.06 + mids * 0.2 * r) + std::f32::consts::TAU / 3.0;
+    let angle3 = t * (0.04 + state.beat_energy * 0.5 * r) + std::f32::consts::TAU * 2.0 / 3.0;
 
-    let spacing1 = 4.0 + bass * 6.0 * r;
-    let spacing2 = 5.0 + mids * 5.0 * r;
-    let spacing3 = 6.0 + state.beat_energy * 8.0 * r;
+    // Tighter spacing range — wide spacings cause seizure-inducing flicker.
+    let spacing1 = 6.0 + bass * 2.0 * r;
+    let spacing2 = 7.0 + mids * 1.5 * r;
+    let spacing3 = 8.0 + state.beat_energy * 2.0 * r;
 
     for row in 0..h {
         let y = area.y + row as u16;
@@ -2355,7 +2341,7 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         for v in 0..ring_verts {
             let next_v = (v + 1) % ring_verts;
             if let (Some((x0, y0)), Some((x1, y1))) = (projected[v], projected[next_v]) {
-                grid.draw_thick_line(x0, y0, x1, y1, color);
+                grid.draw_line(x0, y0, x1, y1, color);
             }
         }
 
@@ -2392,7 +2378,7 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                         && nsy < px_h
                     {
                         let strut_color = dim(color, 0.3);
-                        grid.draw_thick_line(x0, y0, nsx, nsy, strut_color);
+                        grid.draw_line(x0, y0, nsx, nsy, strut_color);
                     }
                 }
             }
@@ -2427,11 +2413,30 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         for col in 0..w {
             let seed = col as u32 * 2654435761;
             state.matrix_cols.push(MatrixColumn {
-                head_y: -(hash_f32(seed) * h as f32), // Stagger start positions.
-                speed: 0.3 + hash_f32(seed.wrapping_add(1)) * 0.7,
-                trail_len: 5.0 + hash_f32(seed.wrapping_add(2)) * 15.0,
+                head_y: -(hash_f32(seed) * h as f32 * 2.0), // Stagger widely.
+                speed: 0.08 + hash_f32(seed.wrapping_add(1)) * 0.15, // Slow base.
+                trail_len: 8.0 + hash_f32(seed.wrapping_add(2)) * 12.0,
                 char_seed: seed,
             });
+        }
+    }
+
+    // Beat cluster spawn: on a beat, pick a cluster of ~8-15 adjacent columns
+    // and reset them to the top together — creates a visible group.
+    if state.beat_energy > 0.4 && bass > 0.2 {
+        let cluster_seed = (state.plasma_time * 100.0) as u32;
+        let center = (hash_f32(cluster_seed) * w as f32) as usize;
+        let width = 6 + (hash_f32(cluster_seed.wrapping_add(1)) * 10.0) as usize;
+        let start = center.saturating_sub(width / 2);
+        let end = (center + width / 2).min(w);
+        for col_idx in start..end {
+            let col = &mut state.matrix_cols[col_idx];
+            // Only respawn if this column has already fallen past the top.
+            if col.head_y > 0.0 {
+                col.head_y = -(hash_f32(col.char_seed.wrapping_add(cluster_seed)) * 3.0);
+                col.speed = 0.15 + state.beat_energy * 0.2 * r;
+                col.trail_len = 10.0 + bass * 10.0 * r;
+            }
         }
     }
 
@@ -2441,20 +2446,21 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
         let band_energy = state.spectrum[bar_idx];
 
-        // Speed: base + band energy + bass boost. DnB makes it rain hard.
-        let speed_mult = 1.0 + band_energy * 3.0 * r + state.beat_energy * 5.0 * r;
+        // Speed: scales with overall energy. Quiet = drifting, loud = flowing.
+        let speed_mult = 1.0 + band_energy * 1.5 * r + state.beat_energy * 2.0 * r;
         column.head_y += column.speed * speed_mult;
 
-        // Beat can spawn "bursts" — reset columns that have finished to the top.
+        // Respawn when fully off-screen.
         if column.head_y > (h as f32 + column.trail_len + 5.0) {
-            column.head_y =
-                -(hash_f32(column.char_seed.wrapping_add(state.plasma_time as u32)) * 10.0);
-            column.speed = 0.3 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.7;
-            column.trail_len = 5.0 + band_energy * 15.0 * r + hash_f32(column.char_seed) * 10.0;
+            column.head_y = -(hash_f32(column.char_seed.wrapping_add(state.plasma_time as u32))
+                * h as f32
+                * 0.5);
+            column.speed = 0.08 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.15;
+            column.trail_len = 8.0 + band_energy * 6.0 * r + hash_f32(column.char_seed) * 8.0;
         }
 
-        // Trail length pulses with band energy.
-        let effective_trail = column.trail_len + band_energy * 8.0 * r;
+        // Trail length: gentle pulse with energy.
+        let effective_trail = column.trail_len + band_energy * 3.0 * r;
 
         // Render the trail.
         let head = column.head_y as i32;
