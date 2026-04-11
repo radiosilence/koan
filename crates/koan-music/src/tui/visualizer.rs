@@ -2446,8 +2446,8 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
         let band_energy = state.spectrum[bar_idx];
 
-        // Speed: scales with overall energy. Quiet = drifting, loud = flowing.
-        let speed_mult = 1.0 + band_energy * 1.5 * r + state.beat_energy * 2.0 * r;
+        // Speed: scales with energy. Quiet = drifting, loud = flowing, beat = surging.
+        let speed_mult = 1.0 + band_energy * 2.0 * r + state.beat_energy * 3.0 * r;
         column.head_y += column.speed * speed_mult;
 
         // Respawn when fully off-screen.
@@ -2477,11 +2477,12 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 
             let trail_frac = dist_from_head as f32 / effective_trail;
 
-            // Character: pseudo-random, changes occasionally for that flicker.
-            let char_hash = column
-                .char_seed
-                .wrapping_add(row as u32 * 31)
-                .wrapping_add((state.plasma_time * 4.0) as u32);
+            // Character: pseudo-random per position, flickers at staggered intervals.
+            // Each row has its own phase so they don't all flip simultaneously.
+            let row_phase = column.char_seed.wrapping_add(row as u32 * 137);
+            let flicker_rate = 2.0; // Changes per second.
+            let flicker_tick = ((state.plasma_time * flicker_rate) as u32).wrapping_add(row_phase);
+            let char_hash = row_phase.wrapping_mul(31).wrapping_add(flicker_tick);
             let ch = MATRIX_CHARS[char_hash as usize % MATRIX_CHARS.len()];
 
             // Color: head is bright white/green, trail fades to dark green.
