@@ -406,6 +406,27 @@ impl BrailleGrid {
     }
 }
 
+/// Fill an area with a beat-reactive pulsating background color.
+/// Intensity is low (subtle wash), color shifts with beat_hue_offset.
+fn fill_reactive_bg(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let r = state.reactivity;
+    // Base intensity from beat energy — pulses on hits, fades between.
+    let intensity = (state.beat_energy * 0.4 * r).clamp(0.0, 1.0);
+    if intensity < 0.01 {
+        return;
+    }
+    let hue_t = (state.plasma_time * 0.1 + state.beat_hue_offset).rem_euclid(1.0);
+    let base = state.palette.freq_color(hue_t);
+    let bg = dim(base, 1.0 - intensity * 0.15); // Very dark tint.
+    let style = Style::new().bg(bg);
+
+    for row in 0..area.height {
+        for col in 0..area.width {
+            buf[(area.x + col, area.y + row)].set_style(style);
+        }
+    }
+}
+
 /// Map subpixel position within a cell to the braille bit index.
 /// Layout: col 0 = bits 0,1,2,6 (top to bottom), col 1 = bits 3,4,5,7.
 fn braille_bit(sub_x: usize, sub_y: usize) -> u8 {
@@ -1106,6 +1127,7 @@ fn render_particles(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Lissajous Renderer ─────────────────────────────────────────────────────
 
 fn render_lissajous(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width();
     let px_h = grid.px_height();
@@ -1162,53 +1184,56 @@ fn render_lissajous(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Spectrogram Renderer ──────────────────────────────────────────────────
 
 fn render_spectrogram(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
-    let px_w = grid.px_width();
-    let px_h = grid.px_height();
-    if px_w == 0 || px_h == 0 {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h == 0 {
         return;
     }
 
-    let elapsed = state.created_at.elapsed().as_secs_f32();
-    let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
+    // Each terminal row = one spectrum frame. Full block chars with intensity coloring.
+    // Heat map: black → dark blue → blue → cyan → white for maximum contrast.
+    for (row_age, frame) in state.spectrum_history.iter_newest_first(h).enumerate() {
+        let y = area.y + (h - 1 - row_age) as u16;
 
-    // Each braille row = one spectrum frame in time (4× resolution vs block chars).
-    // Newest at bottom, oldest at top.
-    let num_rows = px_h;
-    for (row_age, frame) in state
-        .spectrum_history
-        .iter_newest_first(num_rows)
-        .enumerate()
-    {
-        let py = px_h - 1 - row_age;
-        let age_brightness = 1.0 - (row_age as f32 / num_rows as f32) * 0.5;
-
-        for px in 0..px_w {
-            // Interpolate between spectrum bars for smooth frequency mapping.
-            let bar_f = px as f32 * (NUM_BARS - 1) as f32 / (px_w - 1).max(1) as f32;
+        for col in 0..w {
+            // Interpolate between spectrum bars.
+            let bar_f = col as f32 * (NUM_BARS - 1) as f32 / (w - 1).max(1) as f32;
             let bar_lo = (bar_f as usize).min(NUM_BARS - 1);
             let bar_hi = (bar_lo + 1).min(NUM_BARS - 1);
             let frac = bar_f - bar_lo as f32;
             let energy = frame[bar_lo] * (1.0 - frac) + frame[bar_hi] * frac;
 
-            // Threshold: only light up dots above a minimum energy.
-            if energy < 0.05 {
+            if energy < 0.01 {
                 continue;
             }
 
-            let freq_t = bar_f / (NUM_BARS - 1) as f32;
-            let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
-            let base = state.palette.freq_color(warped);
-            let color = dim(
-                brighten(base, state.beat_energy * 0.3 + energy * 0.2),
-                1.0 - energy * age_brightness,
-            );
+            // Heat map: energy → color. High contrast, no palette — readability first.
+            let color = if energy > 0.85 {
+                // White-hot.
+                let t = (energy - 0.85) / 0.15;
+                lerp_rgb((0, 220, 255), (255, 255, 255), t)
+            } else if energy > 0.6 {
+                // Cyan.
+                let t = (energy - 0.6) / 0.25;
+                lerp_rgb((0, 80, 255), (0, 220, 255), t)
+            } else if energy > 0.35 {
+                // Blue.
+                let t = (energy - 0.35) / 0.25;
+                lerp_rgb((20, 0, 140), (0, 80, 255), t)
+            } else if energy > 0.15 {
+                // Dark blue.
+                let t = (energy - 0.15) / 0.2;
+                lerp_rgb((5, 0, 40), (20, 0, 140), t)
+            } else {
+                // Near-black.
+                let t = energy / 0.15;
+                lerp_rgb((0, 0, 0), (5, 0, 40), t)
+            };
 
-            grid.set_dot(px, py, color);
+            let x = area.x + col as u16;
+            buf[(x, y)].set_char('█').set_style(Style::new().fg(color));
         }
     }
-
-    grid.render_to(area, buf);
 }
 
 // ── Stereo Waveform Renderer ──────────────────────────────────────────────
@@ -1564,6 +1589,7 @@ fn render_tunnel(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Wireframe Renderer ────────────────────────────────────────────────────
 
 fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -1753,6 +1779,7 @@ fn render_metaballs(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Starfield Renderer ────────────────────────────────────────────────────
 
 fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -1952,6 +1979,7 @@ fn render_moire(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Kaleidoscope Renderer ─────────────────────────────────────────────────
 
 fn render_kaleidoscope(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2083,6 +2111,7 @@ fn render_julia(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Spiral Renderer ───────────────────────────────────────────────────────
 
 fn render_spiral(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2232,6 +2261,7 @@ fn hash_f32(seed: u32) -> f32 {
 }
 
 fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
