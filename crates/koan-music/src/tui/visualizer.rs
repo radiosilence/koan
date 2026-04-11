@@ -2600,7 +2600,7 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         // Speed: driven by peak mid-low energy (drums ~80-500Hz).
         // Use max not mean — a single kick spike should slam it.
         let drums = state.spectrum[4..16].iter().cloned().fold(0.0f32, f32::max);
-        let speed_mult = 0.15 + drums * 12.0 * r + state.beat_energy * 5.0 * r;
+        let speed_mult = 0.05 + drums * 14.0 * r + state.beat_energy * 6.0 * r;
         column.head_y += column.speed * speed_mult;
 
         // Respawn when fully off-screen.
