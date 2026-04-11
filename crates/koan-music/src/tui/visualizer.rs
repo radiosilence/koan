@@ -566,7 +566,7 @@ impl LissajousTrail {
 // ── Spectrum History ────────────────────────────────────────────────────────
 
 /// Maximum spectrum history frames (enough for tall terminals).
-const SPECTRUM_HISTORY_CAP: usize = 256;
+const SPECTRUM_HISTORY_CAP: usize = 512;
 
 /// Ring buffer of past spectrum frames for spectrogram and flame modes.
 pub struct SpectrumHistory {
@@ -1159,57 +1159,53 @@ fn render_lissajous(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Spectrogram Renderer ──────────────────────────────────────────────────
 
 fn render_spectrogram(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    let w = area.width as usize;
-    let h = area.height as usize;
-    if w == 0 || h == 0 {
+    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
+    let px_w = grid.px_width();
+    let px_h = grid.px_height();
+    if px_w == 0 || px_h == 0 {
         return;
     }
 
     let elapsed = state.created_at.elapsed().as_secs_f32();
     let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
 
-    // Each terminal row = one spectrum frame in time.
+    // Each braille row = one spectrum frame in time (4× resolution vs block chars).
     // Newest at bottom, oldest at top.
-    for (row, frame) in state.spectrum_history.iter_newest_first(h).enumerate() {
-        let y = area.y + (h - 1 - row) as u16;
-        // Age factor: newest row = full brightness, oldest = dimmer.
-        let age_brightness = 1.0 - (row as f32 / h as f32) * 0.4;
+    let num_rows = px_h;
+    for (row_age, frame) in state
+        .spectrum_history
+        .iter_newest_first(num_rows)
+        .enumerate()
+    {
+        let py = px_h - 1 - row_age;
+        let age_brightness = 1.0 - (row_age as f32 / num_rows as f32) * 0.5;
 
-        for col in 0..w {
-            // Map column to spectrum bar.
-            let bar_idx = col * NUM_BARS / w;
-            let bar_idx = bar_idx.min(NUM_BARS - 1);
-            let energy = frame[bar_idx];
+        for px in 0..px_w {
+            // Interpolate between spectrum bars for smooth frequency mapping.
+            let bar_f = px as f32 * (NUM_BARS - 1) as f32 / (px_w - 1).max(1) as f32;
+            let bar_lo = (bar_f as usize).min(NUM_BARS - 1);
+            let bar_hi = (bar_lo + 1).min(NUM_BARS - 1);
+            let frac = bar_f - bar_lo as f32;
+            let energy = frame[bar_lo] * (1.0 - frac) + frame[bar_hi] * frac;
 
-            if energy < 0.02 {
+            // Threshold: only light up dots above a minimum energy.
+            if energy < 0.05 {
                 continue;
             }
 
-            // Color by frequency position, brightness by energy.
-            let freq_t = bar_idx as f32 / (NUM_BARS - 1) as f32;
+            let freq_t = bar_f / (NUM_BARS - 1) as f32;
             let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
             let base = state.palette.freq_color(warped);
             let color = dim(
-                brighten(base, state.beat_energy * 0.3),
+                brighten(base, state.beat_energy * 0.3 + energy * 0.2),
                 1.0 - energy * age_brightness,
             );
 
-            // Use block characters for density — full block at high energy,
-            // lighter shades for lower.
-            let ch = if energy > 0.7 {
-                '█'
-            } else if energy > 0.4 {
-                '▓'
-            } else if energy > 0.2 {
-                '▒'
-            } else {
-                '░'
-            };
-
-            let x = area.x + col as u16;
-            buf[(x, y)].set_char(ch).set_style(Style::new().fg(color));
+            grid.set_dot(px, py, color);
         }
     }
+
+    grid.render_to(area, buf);
 }
 
 // ── Stereo Waveform Renderer ──────────────────────────────────────────────
