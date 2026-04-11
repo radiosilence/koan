@@ -2591,16 +2591,25 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         }
     }
 
+    // Overall amplitude for density control.
+    let overall_energy: f32 = state.spectrum.iter().sum::<f32>() / NUM_BARS as f32;
+
     // Update and render each column.
     for (col_idx, column) in state.matrix_cols.iter_mut().enumerate() {
         // Map column to a spectrum band for per-column reactivity.
         let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
         let band_energy = state.spectrum[bar_idx];
 
+        // Density: quiet music = fewer active columns.
+        // Each column has a threshold from its hash — only renders if energy exceeds it.
+        let density_threshold = hash_f32(column.char_seed.wrapping_add(99)) * 0.6;
+        let is_active = overall_energy > density_threshold || state.beat_energy > 0.3;
+
         // Speed: driven by peak mid-low energy (drums ~80-500Hz).
-        // Use max not mean — a single kick spike should slam it.
+        // Exponential curve: quiet barely moves, only loud drums slam it.
         let drums = state.spectrum[4..16].iter().cloned().fold(0.0f32, f32::max);
-        let speed_mult = 0.05 + drums * 14.0 * r + state.beat_energy * 6.0 * r;
+        let speed_mult =
+            0.05 + (drums * drums) * 20.0 * r + (state.beat_energy * state.beat_energy) * 8.0 * r;
         column.head_y += column.speed * speed_mult;
 
         // Respawn when fully off-screen.
@@ -2610,6 +2619,11 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
                 * 0.5);
             column.speed = 0.15 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.25;
             column.trail_len = 8.0 + band_energy * 6.0 * r + hash_f32(column.char_seed) * 8.0;
+        }
+
+        // Skip rendering inactive columns (still advance position above).
+        if !is_active {
+            continue;
         }
 
         // Trail length: gentle pulse with energy.
@@ -2662,22 +2676,6 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
                 style = style.add_modifier(Modifier::BOLD);
             }
             buf[(x, y)].set_char(ch).set_style(style);
-        }
-    }
-
-    // Beat flash: briefly brighten the entire background on hard hits.
-    if state.beat_energy > 0.6 && bass > 0.3 {
-        let flash = ((state.beat_energy - 0.6) * 2.5 * r).min(1.0);
-        let flash_g = (15.0 * flash) as u8;
-        for row in 0..h {
-            for col in 0..w {
-                let x = area.x + col as u16;
-                let y = area.y + row as u16;
-                let cell = &mut buf[(x, y)];
-                if cell.symbol() == " " {
-                    cell.set_style(Style::new().bg(Color::Rgb(0, flash_g, 0)));
-                }
-            }
         }
     }
 }
