@@ -1982,8 +1982,9 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         // Newest (idx 0) at bottom, oldest (idx N) at top.
         // Top margin for breathing room, zero bottom margin.
         let row_y = px_h as f32 * (0.08 + (1.0 - t) * 0.92);
-        // Height scale: uniform, ~30% of box height.
-        let height_scale = px_h as f32 * 0.25;
+        // Height scale: capped so a 100% peak exactly touches the top of the box.
+        // This prevents clipping on the upper ridgelines.
+        let height_scale = (px_h as f32 * 0.25).min(row_y);
 
         let mut prev_x = None;
         let mut prev_y = None;
