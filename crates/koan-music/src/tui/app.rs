@@ -1021,6 +1021,21 @@ impl App {
                 let next_mode = self.visualizer.mode.next();
                 self.apply_viz_mode(next_mode);
             }
+            KeyCode::Char('X') => {
+                self.visualizer.matrix_overlay = !self.visualizer.matrix_overlay;
+                self.status_message = Some((
+                    if self.visualizer.matrix_overlay {
+                        "matrix overlay on".into()
+                    } else {
+                        "matrix overlay off".into()
+                    },
+                    std::time::Instant::now(),
+                ));
+                let overlay = self.visualizer.matrix_overlay;
+                let _ = koan_core::config::Config::update_base(|cfg| {
+                    cfg.visualizer.matrix_overlay = overlay;
+                });
+            }
             KeyCode::Char('S') => {
                 self.visualizer.bass_shake = !self.visualizer.bass_shake;
                 self.status_message = Some((

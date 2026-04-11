@@ -711,6 +711,8 @@ pub struct VisualizerState {
     pub scale_pulse: f32,
     /// Whether bass shake is enabled.
     pub bass_shake: bool,
+    /// Matrix overlay: replace all rendered chars with matrix glyphs in green.
+    pub matrix_overlay: bool,
 }
 
 impl VisualizerState {
@@ -721,6 +723,7 @@ impl VisualizerState {
         let mode = VisualizerMode::parse(&cfg.mode);
         let reactivity = cfg.reactivity.clamp(0.0, 2.0);
         let bass_shake = cfg.bass_shake;
+        let matrix_overlay = cfg.matrix_overlay;
         Self::with_config(
             bar_half_life,
             peak_half_life,
@@ -728,6 +731,7 @@ impl VisualizerState {
             mode,
             reactivity,
             bass_shake,
+            matrix_overlay,
         )
     }
 
@@ -738,6 +742,7 @@ impl VisualizerState {
         mode: VisualizerMode,
         reactivity: f32,
         bass_shake: bool,
+        matrix_overlay: bool,
     ) -> Self {
         Self {
             spectrum: [0.0; NUM_BARS],
@@ -777,6 +782,7 @@ impl VisualizerState {
             shake: [0.0; 2],
             scale_pulse: 1.0,
             bass_shake,
+            matrix_overlay,
         }
     }
 
@@ -1006,6 +1012,58 @@ impl<'a> VisualizerWidget<'a> {
             VisualizerMode::Matrix => {
                 render_matrix(self.state, area, buf);
             }
+        }
+
+        // Matrix overlay post-process: replace all non-empty cells with
+        // random matrix characters in green. Applies to any mode.
+        if self.state.matrix_overlay {
+            apply_matrix_overlay(self.state, area, buf);
+        }
+    }
+}
+
+/// Post-processing pass: replace every non-empty cell with a random matrix
+/// character in green, preserving the spatial structure of the underlying
+/// visualizer. Brightness derived from the original cell's foreground color.
+fn apply_matrix_overlay(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let t = state.plasma_time;
+    for row in 0..area.height {
+        for col in 0..area.width {
+            let x = area.x + col;
+            let y = area.y + row;
+            let cell = &buf[(x, y)];
+
+            // Skip empty/space cells — preserve the void.
+            let sym = cell.symbol().chars().next().unwrap_or(' ');
+            if sym == ' ' {
+                continue;
+            }
+
+            // Extract brightness from original foreground color.
+            let brightness = match cell.fg {
+                Color::Rgb(r, g, b) => {
+                    (r as f32 * 0.299 + g as f32 * 0.587 + b as f32 * 0.114) / 255.0
+                }
+                _ => 0.5,
+            };
+
+            // Pick a matrix character — changes slowly per position.
+            let hash = (col as u32)
+                .wrapping_mul(31)
+                .wrapping_add(row as u32 * 137)
+                .wrapping_add((t * 2.0) as u32);
+            let ch = MATRIX_CHARS[hash as usize % MATRIX_CHARS.len()];
+
+            // Green palette: brightness maps to green intensity.
+            let g = (80.0 + brightness * 175.0) as u8;
+            let rb = (brightness * 40.0) as u8;
+            let fg = Color::Rgb(rb, g, rb);
+
+            let mut style = Style::new().fg(fg);
+            if brightness > 0.6 {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            buf[(x, y)].set_char(ch).set_style(style);
         }
     }
 }
@@ -1889,8 +1947,8 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 
     // ── Waveform box: centered square-ish region ────────────────────────────
     // Leave space for labels + padding.
-    let box_top = (artist_y + 2).min(area.y + area.height);
-    let box_bottom = album_y.saturating_sub(1);
+    let box_top = (artist_y + 1).min(area.y + area.height);
+    let box_bottom = album_y;
     if box_bottom <= box_top {
         return;
     }
@@ -1916,10 +1974,12 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let frames: Vec<&[f32; NUM_BARS]> =
         state.spectrum_history.iter_newest_first(num_rows).collect();
 
-    for (depth_idx, frame) in frames.iter().enumerate() {
+    // Draw oldest first (top) → newest last (bottom), so newest ridgelines
+    // overlay older ones — matches the Unknown Pleasures stacking.
+    for (depth_idx, frame) in frames.iter().enumerate().rev() {
         let t = depth_idx as f32 / num_rows as f32;
-        // Even vertical spacing — no perspective, like the album art.
-        let row_y = px_h as f32 * (0.05 + t * 0.9);
+        // Newest (idx 0) at bottom, oldest (idx N) at top.
+        let row_y = px_h as f32 * (0.05 + (1.0 - t) * 0.9);
         // Height scale: uniform, ~30% of box height.
         let height_scale = px_h as f32 * 0.25;
 
@@ -2804,6 +2864,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
         );
         assert_eq!(state.spectrum.len(), NUM_BARS);
         assert_eq!(state.peaks.len(), NUM_BARS);
@@ -2820,6 +2881,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
         );
         let snapshot = VizSnapshot::new();
 
@@ -2840,6 +2902,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
         );
         let snapshot = VizSnapshot::new();
 
@@ -2872,6 +2935,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
         );
         let snapshot = VizSnapshot::new();
 
@@ -2918,6 +2982,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
         );
         let snapshot = VizSnapshot::new();
 

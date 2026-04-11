@@ -80,6 +80,7 @@ const SECTIONS: &[Section] = &[
             ("M", "Visualiser mode cycle"),
             ("F", "Visualiser fullscreen"),
             ("S", "Bass shake on/off"),
+            ("X", "Matrix overlay on/off"),
             ("f", "Favourite track"),
         ],
     },

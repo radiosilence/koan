@@ -146,6 +146,9 @@ pub struct VisualizerConfig {
     /// Bass shake: camera jitter + scale pulse on bass hits.
     /// Applies to braille-rendered modes (oscilloscope, radial, wireframe, starfield, etc.).
     pub bass_shake: bool,
+    /// Matrix overlay: replace all rendered characters with random matrix glyphs in green.
+    /// Applies to any visualizer mode as a post-processing pass.
+    pub matrix_overlay: bool,
 }
 
 impl Default for VisualizerConfig {
@@ -161,6 +164,7 @@ impl Default for VisualizerConfig {
             palette: "spectrum".into(),
             reactivity: 1.0,
             bass_shake: true,
+            matrix_overlay: false,
         }
     }
 }
