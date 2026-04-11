@@ -2597,8 +2597,9 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
         let band_energy = state.spectrum[bar_idx];
 
-        // Speed: scales with energy. Quiet = gentle drift, beat = proper surge.
-        let speed_mult = 0.3 + band_energy * 3.0 * r + state.beat_energy * 6.0 * r + bass * 4.0 * r;
+        // Speed: driven by mid-lows (drums/kicks ~80-500Hz) not overall amplitude.
+        let drums = state.spectrum[4..16].iter().sum::<f32>() / 12.0;
+        let speed_mult = 0.3 + drums * 8.0 * r + state.beat_energy * 4.0 * r;
         column.head_y += column.speed * speed_mult;
 
         // Respawn when fully off-screen.
