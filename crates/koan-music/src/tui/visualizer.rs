@@ -2595,9 +2595,10 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         }
     }
 
-    // Overall amplitude for density, peak drums for speed.
+    // Overall amplitude for density (cubed — only loud fills the screen).
     let overall_energy: f32 = state.spectrum.iter().sum::<f32>() / NUM_BARS as f32;
-    let drums = state.spectrum[4..16].iter().cloned().fold(0.0f32, f32::max);
+    let beat = state.beat_energy;
+    let dt = state.frame_dt;
 
     // Update and render each column.
     for (col_idx, column) in state.matrix_cols.iter_mut().enumerate() {
@@ -2605,14 +2606,13 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
         let band_energy = state.spectrum[bar_idx];
 
-        // Density: quiet music = fewer active columns.
-        // Each column has a threshold from its hash — only renders if energy exceeds it.
-        let density_threshold = hash_f32(column.char_seed.wrapping_add(99)) * 0.6;
-        let is_active = overall_energy > density_threshold || drums > 0.2;
+        // Density: cubed overall energy — sparse when quiet, full when loud.
+        let density_threshold = hash_f32(column.char_seed.wrapping_add(99)) * 0.8;
+        let density = overall_energy * overall_energy * overall_energy;
+        let is_active = density > density_threshold * 0.05 || beat > 0.5;
 
-        // Speed: purely drum-driven, exponential curve, time-based.
-        let dt = state.frame_dt;
-        let speed_mult = 3.0 + (drums * drums) * 1500.0 * r;
+        // Speed: beat-driven, exponential curve, time-based.
+        let speed_mult = 3.0 + (beat * beat) * 1500.0 * r;
         column.head_y += column.speed * speed_mult * dt;
 
         // Respawn when fully off-screen.
