@@ -715,6 +715,12 @@ pub struct VisualizerState {
     pub matrix_overlay: bool,
     /// Actual frame delta time in seconds (set each tick from last_update).
     pub frame_dt: f32,
+    /// Estimated BPM from beat onset intervals. 0.0 = unknown.
+    pub bpm: f32,
+    /// Recent beat onset timestamps for BPM estimation.
+    beat_onsets: Vec<Instant>,
+    /// Whether the previous frame was above the beat threshold (for edge detection).
+    beat_was_high: bool,
 }
 
 impl VisualizerState {
@@ -786,6 +792,9 @@ impl VisualizerState {
             bass_shake,
             matrix_overlay,
             frame_dt: 1.0 / 60.0,
+            bpm: 0.0,
+            beat_onsets: Vec::new(),
+            beat_was_high: false,
         }
     }
 
@@ -843,6 +852,35 @@ impl VisualizerState {
         } else {
             self.beat_hue_offset *= 0.95;
         }
+
+        // BPM detection: track rising edges of beat_energy.
+        let beat_is_high = self.beat_energy > 0.3;
+        if beat_is_high && !self.beat_was_high {
+            // Rising edge — new beat onset.
+            let now = Instant::now();
+            self.beat_onsets.push(now);
+            // Keep last 16 onsets, discard old ones (>5 seconds).
+            self.beat_onsets
+                .retain(|t| now.duration_since(*t).as_secs_f32() < 5.0);
+            if self.beat_onsets.len() > 16 {
+                self.beat_onsets.drain(..self.beat_onsets.len() - 16);
+            }
+            // Compute BPM from median interval between consecutive onsets.
+            if self.beat_onsets.len() >= 4 {
+                let mut intervals: Vec<f32> = self
+                    .beat_onsets
+                    .windows(2)
+                    .map(|w| w[1].duration_since(w[0]).as_secs_f32())
+                    .filter(|&i| i > 0.15 && i < 2.0) // 30-400 BPM range.
+                    .collect();
+                if intervals.len() >= 3 {
+                    intervals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let median = intervals[intervals.len() / 2];
+                    self.bpm = 60.0 / median;
+                }
+            }
+        }
+        self.beat_was_high = beat_is_high;
 
         // Stash waveform for oscilloscope/lissajous modes.
         self.waveform = frame.waveform;
@@ -2611,8 +2649,9 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let density = overall_energy * overall_energy * overall_energy;
         let is_active = density > density_threshold * 0.05 || beat > 0.5;
 
-        // Speed: beat-driven, exponential curve, time-based.
-        let speed_mult = 3.0 + (beat * beat) * 1500.0 * r;
+        // Speed: BPM-driven base (faster songs = faster rain), beat for surges.
+        let bpm_factor = (state.bpm / 120.0).clamp(0.3, 3.0); // Normalize around 120bpm.
+        let speed_mult = 3.0 * bpm_factor + (beat * beat) * 800.0 * r;
         column.head_y += column.speed * speed_mult * dt;
 
         // Respawn when fully off-screen.
