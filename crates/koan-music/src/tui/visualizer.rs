@@ -1926,7 +1926,7 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     let album = state.now_album.to_uppercase();
 
     let artist_y = area.y + 2;
-    let album_y = area.y + area.height.saturating_sub(3);
+    let album_y = area.y + area.height.saturating_sub(2);
 
     // Center-render text helper.
     let render_centered = |text: &str, y: u16, buf: &mut Buffer| {
