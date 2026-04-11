@@ -49,6 +49,18 @@ pub enum VisualizerMode {
     Starfield,
     /// 3D heightmap terrain from spectrum history, perspective projected.
     Terrain,
+    /// Overlapping rotating line grids — interference moiré patterns.
+    Moire,
+    /// Waveform mirrored 6-8 ways around center — kaleidoscope.
+    Kaleidoscope,
+    /// Julia fractal with audio-driven complex constant.
+    Julia,
+    /// Archimedean spiral that breathes and rotates with music.
+    Spiral,
+    /// Concentric wave sources — ripple interference patterns.
+    Interference,
+    /// 3D wireframe tunnel fly-through with reactive stars.
+    Wormhole,
 }
 
 impl VisualizerMode {
@@ -69,6 +81,12 @@ impl VisualizerMode {
             "metaballs" | "blobs" => Self::Metaballs,
             "starfield" | "stars" => Self::Starfield,
             "terrain" | "landscape" => Self::Terrain,
+            "moire" | "moiré" => Self::Moire,
+            "kaleidoscope" | "kaleid" | "kaleido" => Self::Kaleidoscope,
+            "julia" | "fractal" => Self::Julia,
+            "spiral" | "hypno" => Self::Spiral,
+            "interference" | "ripple" | "ripples" => Self::Interference,
+            "wormhole" | "wormholes" => Self::Wormhole,
             _ => Self::Bars,
         }
     }
@@ -90,7 +108,13 @@ impl VisualizerMode {
             Self::Wireframe => Self::Metaballs,
             Self::Metaballs => Self::Starfield,
             Self::Starfield => Self::Terrain,
-            Self::Terrain => Self::Bars,
+            Self::Terrain => Self::Moire,
+            Self::Moire => Self::Kaleidoscope,
+            Self::Kaleidoscope => Self::Julia,
+            Self::Julia => Self::Spiral,
+            Self::Spiral => Self::Interference,
+            Self::Interference => Self::Wormhole,
+            Self::Wormhole => Self::Bars,
         }
     }
 
@@ -112,6 +136,12 @@ impl VisualizerMode {
             Self::Metaballs => "metaballs",
             Self::Starfield => "starfield",
             Self::Terrain => "terrain",
+            Self::Moire => "moire",
+            Self::Kaleidoscope => "kaleidoscope",
+            Self::Julia => "julia",
+            Self::Spiral => "spiral",
+            Self::Interference => "interference",
+            Self::Wormhole => "wormhole",
         }
     }
 
@@ -133,6 +163,12 @@ impl VisualizerMode {
             Self::Metaballs => "metaballs",
             Self::Starfield => "starfield",
             Self::Terrain => "terrain",
+            Self::Moire => "moiré",
+            Self::Kaleidoscope => "kaleidoscope",
+            Self::Julia => "julia fractal",
+            Self::Spiral => "spiral",
+            Self::Interference => "interference",
+            Self::Wormhole => "wormhole",
         }
     }
 }
@@ -891,6 +927,24 @@ impl<'a> VisualizerWidget<'a> {
             }
             VisualizerMode::Terrain => {
                 render_terrain(self.state, area, buf);
+            }
+            VisualizerMode::Moire => {
+                render_moire(self.state, area, buf);
+            }
+            VisualizerMode::Kaleidoscope => {
+                render_kaleidoscope(self.state, area, buf);
+            }
+            VisualizerMode::Julia => {
+                render_julia(self.state, area, buf);
+            }
+            VisualizerMode::Spiral => {
+                render_spiral(self.state, area, buf);
+            }
+            VisualizerMode::Interference => {
+                render_interference(self.state, area, buf);
+            }
+            VisualizerMode::Wormhole => {
+                render_wormhole(self.state, area, buf);
             }
         }
     }
@@ -1802,6 +1856,511 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     grid.render_to(area, buf);
 }
 
+// ── Moiré Renderer ────────────────────────────────────────────────────────
+
+fn render_moire(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let t = state.plasma_time;
+    let r = state.reactivity;
+    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
+    let mids = state.spectrum[16..32].iter().sum::<f32>() / 16.0;
+
+    // Three rotating line grids at different angles/spacings.
+    // Interference between them creates the moiré pattern.
+    let angle1 = t * (0.4 + bass * 2.0 * r);
+    let angle2 = t * (0.3 + mids * 1.5 * r) + std::f32::consts::TAU / 3.0;
+    let angle3 = t * (0.2 + state.beat_energy * 3.0 * r) + std::f32::consts::TAU * 2.0 / 3.0;
+
+    let spacing1 = 4.0 + bass * 6.0 * r;
+    let spacing2 = 5.0 + mids * 5.0 * r;
+    let spacing3 = 6.0 + state.beat_energy * 8.0 * r;
+
+    for row in 0..h {
+        let y = area.y + row as u16;
+        let ny = (row as f32 / h as f32 - 0.5) * 2.0;
+        for col in 0..w {
+            let x = area.x + col as u16;
+            let nx = (col as f32 / w as f32 - 0.5) * 2.0 * 0.5; // Aspect correct.
+
+            // Project each pixel onto each grid's perpendicular axis.
+            let d1 = (nx * angle1.cos() + ny * angle1.sin()) * spacing1;
+            let d2 = (nx * angle2.cos() + ny * angle2.sin()) * spacing2;
+            let d3 = (nx * angle3.cos() + ny * angle3.sin()) * spacing3;
+
+            // Line pattern: sin² gives smooth stripes.
+            let v1 = d1.sin().powi(2);
+            let v2 = d2.sin().powi(2);
+            let v3 = d3.sin().powi(2);
+
+            // Interference: multiply the patterns.
+            let v = (v1 * v2 * v3).sqrt();
+
+            if v < 0.05 {
+                continue;
+            }
+
+            let color_t = (v + state.beat_hue_offset).rem_euclid(1.0);
+            let base = state.palette.freq_color(color_t);
+            let color = brighten(base, state.beat_energy * 0.4 * r);
+
+            let ch = if v > 0.7 {
+                '█'
+            } else if v > 0.45 {
+                '▓'
+            } else if v > 0.2 {
+                '▒'
+            } else {
+                '░'
+            };
+
+            buf[(x, y)].set_char(ch).set_style(Style::new().fg(color));
+        }
+    }
+}
+
+// ── Kaleidoscope Renderer ─────────────────────────────────────────────────
+
+fn render_kaleidoscope(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
+    let px_w = grid.px_width() as f32;
+    let px_h = grid.px_height() as f32;
+    if px_w < 4.0 || px_h < 4.0 {
+        return;
+    }
+
+    let cx = px_w / 2.0;
+    let cy = px_h / 2.0;
+    let r = state.reactivity;
+    let t = state.plasma_time;
+    let segments = 8; // 8-fold symmetry.
+    let segment_angle = std::f32::consts::TAU / segments as f32;
+    let rotation = t * (0.3 + state.beat_energy * 1.5 * r);
+
+    // Source pattern: use spectrum as a radial function + waveform for texture.
+    let max_radius = cx.min(cy) * 0.95;
+
+    for py in 0..px_h as usize {
+        for px in 0..px_w as usize {
+            let dx = px as f32 - cx;
+            let dy = py as f32 - cy;
+            let dist = (dx * dx + dy * dy).sqrt();
+            if dist > max_radius || dist < 1.0 {
+                continue;
+            }
+
+            // Convert to polar, fold into first segment.
+            let angle = (dy.atan2(dx) + rotation).rem_euclid(std::f32::consts::TAU);
+            let mut seg_angle = angle % segment_angle;
+            // Mirror alternate segments for kaleidoscope symmetry.
+            let seg_idx = (angle / segment_angle) as usize;
+            if seg_idx % 2 == 1 {
+                seg_angle = segment_angle - seg_angle;
+            }
+
+            // Map the folded polar coords to a pattern.
+            let norm_r = dist / max_radius;
+            let bar_idx =
+                ((seg_angle / segment_angle * NUM_BARS as f32) as usize).min(NUM_BARS - 1);
+            let energy = state.spectrum[bar_idx];
+
+            // Radial rings modulated by spectrum.
+            let ring = (norm_r * 12.0 + t * 2.0 + energy * 6.0 * r).sin() * 0.5 + 0.5;
+            let angular = (seg_angle * 20.0 + t * 3.0).cos() * 0.3 + 0.7;
+            let intensity = (ring * angular * (0.5 + energy * r)).clamp(0.0, 1.0);
+
+            if intensity < 0.1 {
+                continue;
+            }
+
+            let freq_t = (norm_r + state.beat_hue_offset).rem_euclid(1.0);
+            let base = state.palette.freq_color(freq_t);
+            let color = brighten(base, state.beat_energy * 0.4 * r + intensity * 0.2);
+
+            let (sx, sy) = state.shaken(px as f32, py as f32, cx, cy);
+            grid.set_dot(sx as usize, sy as usize, color);
+        }
+    }
+
+    grid.render_to(area, buf);
+}
+
+// ── Julia Fractal Renderer ────────────────────────────────────────────────
+
+fn render_julia(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let r = state.reactivity;
+    let t = state.plasma_time;
+    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
+    let mids = state.spectrum[16..32].iter().sum::<f32>() / 16.0;
+
+    // Julia constant: orbits slowly, bass/mids perturb it.
+    let c_re = (t * 0.15).sin() * 0.7885 + bass * 0.3 * r;
+    let c_im = (t * 0.13).cos() * 0.7885 + mids * 0.2 * r;
+
+    // Zoom drifts in slowly, beat punches in.
+    let zoom = 1.5 + (t * 0.05).sin() * 0.3 - state.beat_energy * 0.4 * r;
+    let max_iter = 40;
+
+    for row in 0..h {
+        let y = area.y + row as u16;
+        for col in 0..w {
+            let x = area.x + col as u16;
+
+            // Map pixel to complex plane. Aspect correct.
+            let mut zr = (col as f32 / w as f32 - 0.5) * 2.0 * zoom * 0.5; // Aspect.
+            let mut zi = (row as f32 / h as f32 - 0.5) * 2.0 * zoom;
+
+            let mut iter = 0u32;
+            while iter < max_iter && zr * zr + zi * zi < 4.0 {
+                let tmp = zr * zr - zi * zi + c_re;
+                zi = 2.0 * zr * zi + c_im;
+                zr = tmp;
+                iter += 1;
+            }
+
+            if iter == max_iter {
+                continue; // Inside the set — black.
+            }
+
+            // Smooth coloring: fractional escape count.
+            let smooth = iter as f32 + 1.0 - (zr * zr + zi * zi).ln().ln() / 2.0f32.ln();
+            let t_color = (smooth / max_iter as f32 + state.beat_hue_offset).rem_euclid(1.0);
+            let base = state.palette.freq_color(t_color);
+            let brightness = (smooth / max_iter as f32).clamp(0.0, 1.0);
+            let color = brighten(base, state.beat_energy * 0.3 * r + brightness * 0.2);
+
+            let ch = if brightness > 0.6 {
+                '█'
+            } else if brightness > 0.35 {
+                '▓'
+            } else if brightness > 0.15 {
+                '▒'
+            } else {
+                '░'
+            };
+
+            buf[(x, y)].set_char(ch).set_style(Style::new().fg(color));
+        }
+    }
+}
+
+// ── Spiral Renderer ───────────────────────────────────────────────────────
+
+fn render_spiral(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
+    let px_w = grid.px_width() as f32;
+    let px_h = grid.px_height() as f32;
+    if px_w < 4.0 || px_h < 4.0 {
+        return;
+    }
+
+    let cx = px_w / 2.0;
+    let cy = px_h / 2.0;
+    let r = state.reactivity;
+    let t = state.plasma_time;
+    let max_radius = cx.min(cy) * 0.95;
+
+    // Draw multiple interleaved spirals.
+    let num_arms = 3 + (state.beat_energy * 4.0 * r) as usize; // 3-7 arms.
+    let rotation = t * (0.8 + state.beat_energy * 3.0 * r);
+    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
+
+    for arm in 0..num_arms {
+        let arm_offset = arm as f32 * std::f32::consts::TAU / num_arms as f32;
+
+        // Archimedean spiral: r = a + b*θ. Draw ~500 points along it.
+        let num_points = 600;
+        let max_theta = std::f32::consts::TAU * 4.0; // 4 full turns.
+
+        let mut prev_x = None;
+        let mut prev_y = None;
+
+        for i in 0..num_points {
+            let frac = i as f32 / num_points as f32;
+            let theta = frac * max_theta + rotation + arm_offset;
+
+            // Radius: linear growth + spectrum modulation.
+            let bar_idx = ((frac * (NUM_BARS - 1) as f32) as usize).min(NUM_BARS - 1);
+            let energy = state.spectrum[bar_idx];
+            let base_r = frac * max_radius;
+            let modulated_r = base_r * (1.0 + energy * 0.5 * r + bass * 0.3 * r);
+
+            // Breathe: scale pulse.
+            let breath = 1.0 + (t * 1.5).sin() * 0.1 * r + state.beat_energy * 0.15 * r;
+            let final_r = modulated_r * breath;
+
+            let px = cx + final_r * theta.cos();
+            let py = cy + final_r * theta.sin();
+
+            let (sx, sy) = state.shaken(px, py, cx, cy);
+
+            if let (Some(prev_px), Some(prev_py)) = (prev_x, prev_y) {
+                let freq_t = (frac + state.beat_hue_offset + arm as f32 * 0.15).rem_euclid(1.0);
+                let base = state.palette.freq_color(freq_t);
+                let color = brighten(base, state.beat_energy * 0.4 * r + energy * 0.3);
+                grid.draw_line(prev_px, prev_py, sx, sy, color);
+            }
+
+            prev_x = Some(sx);
+            prev_y = Some(sy);
+        }
+    }
+
+    grid.render_to(area, buf);
+}
+
+// ── Interference Renderer ─────────────────────────────────────────────────
+
+fn render_interference(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let t = state.plasma_time;
+    let r = state.reactivity;
+    let num_sources = 5;
+
+    // Position each wave source driven by spectrum bands.
+    let sources: Vec<(f32, f32, f32)> = (0..num_sources)
+        .map(|i| {
+            let phase = i as f32 * std::f32::consts::TAU / num_sources as f32;
+            let bar_idx = (i * 10).min(NUM_BARS - 1);
+            let energy = state.spectrum[bar_idx];
+
+            let x = 0.5 + (t * 0.5 + phase).sin() * (0.3 + state.beat_energy * 0.15 * r);
+            let y = 0.5 + (t * 0.4 + phase * 1.3).cos() * (0.3 + state.beat_energy * 0.15 * r);
+            // Wavelength: shorter when band is energetic.
+            let wavelength = 8.0 + (1.0 - energy) * 12.0;
+            (x, y, wavelength)
+        })
+        .collect();
+
+    for row in 0..h {
+        let y_pos = area.y + row as u16;
+        let ny = row as f32 / h as f32;
+        for col in 0..w {
+            let x_pos = area.x + col as u16;
+            let nx = col as f32 / w as f32;
+
+            // Sum wave contributions from all sources.
+            let mut wave_sum = 0.0f32;
+            for &(sx, sy, wl) in &sources {
+                let dx = (nx - sx) * 2.0; // Aspect correct.
+                let dy = ny - sy;
+                let dist = (dx * dx + dy * dy).sqrt();
+                // Concentric waves: sin(dist * freq - time).
+                let freq = std::f32::consts::TAU / wl;
+                wave_sum += (dist * freq * 20.0 - t * 3.0).sin();
+            }
+
+            // Normalize to 0..1.
+            let v = (wave_sum / num_sources as f32 + 1.0) * 0.5;
+
+            if !(0.05..=0.95).contains(&v) {
+                continue;
+            }
+
+            let color_t = (v + state.beat_hue_offset).rem_euclid(1.0);
+            let base = state.palette.freq_color(color_t);
+            let color = brighten(base, state.beat_energy * 0.4 * r);
+
+            let ch = if !(0.3..=0.7).contains(&v) {
+                '█'
+            } else if !(0.4..=0.6).contains(&v) {
+                '▓'
+            } else {
+                '▒'
+            };
+
+            buf[(x_pos, y_pos)]
+                .set_char(ch)
+                .set_style(Style::new().fg(color));
+        }
+    }
+}
+
+// ── Wormhole Renderer ─────────────────────────────────────────────────────
+
+/// Deterministic pseudo-random from an integer seed. Returns 0.0..1.0.
+#[inline]
+fn hash_f32(seed: u32) -> f32 {
+    // Fast integer hash (Wang hash variant).
+    let mut x = seed;
+    x = x.wrapping_mul(0x85ebca6b);
+    x ^= x >> 13;
+    x = x.wrapping_mul(0xc2b2ae35);
+    x ^= x >> 16;
+    (x & 0xFFFF) as f32 / 65535.0
+}
+
+fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
+    let px_w = grid.px_width() as f32;
+    let px_h = grid.px_height() as f32;
+    if px_w < 4.0 || px_h < 4.0 {
+        return;
+    }
+
+    let cx = px_w / 2.0;
+    let cy = px_h / 2.0;
+    let r = state.reactivity;
+    let t = state.plasma_time;
+    let cam_z = state.tunnel_z;
+    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
+
+    // ── Background stars ────────────────────────────────────────────────────
+    // Reuse the persistent star array but project relative to camera Z.
+    let star_fov = 60.0 + state.beat_energy * 30.0 * r;
+    for &(sx, sy, sz) in &state.stars {
+        // Stars at fixed world positions — camera moves through them.
+        let rel_z = ((sz * 3.0 - cam_z * 5.0) % 300.0 + 300.0) % 300.0;
+        if rel_z < 1.0 {
+            continue;
+        }
+        let proj_x = cx + sx * star_fov / rel_z;
+        let proj_y = cy + sy * star_fov / rel_z;
+        if proj_x < 0.0 || proj_x >= px_w || proj_y < 0.0 || proj_y >= px_h {
+            continue;
+        }
+        let depth_t = (1.0 - rel_z / 300.0).clamp(0.0, 1.0);
+        let color = dim(
+            state
+                .palette
+                .freq_color((depth_t + state.beat_hue_offset).rem_euclid(1.0)),
+            0.4 + depth_t * 0.3,
+        );
+        grid.set_dot(proj_x as usize, proj_y as usize, color);
+    }
+
+    // ── Wireframe tunnel rings ──────────────────────────────────────────────
+    let num_rings = 40;
+    let ring_spacing = 3.0;
+    let ring_verts = 16; // Vertices per ring.
+    let fov = 80.0 + state.beat_energy * 40.0 * r;
+
+    // Camera Z determines which ring indices are visible.
+    // Ring i is at world Z = i * ring_spacing.
+    let first_ring = (cam_z / ring_spacing) as i32;
+
+    for ring_offset in 0..num_rings {
+        let ring_idx = first_ring + ring_offset;
+        let ring_z_world = ring_idx as f32 * ring_spacing;
+        let rel_z = ring_z_world - cam_z;
+
+        // Only render rings ahead of the camera.
+        if rel_z < 0.5 || rel_z > ring_spacing * num_rings as f32 {
+            continue;
+        }
+
+        let depth = rel_z;
+        let seed = ring_idx as u32;
+
+        // Each ring has a procedural center offset that snakes around.
+        // Low-frequency wander + spectrum modulation.
+        let wander_x = (hash_f32(seed) - 0.5) * 2.0
+            + (ring_z_world * 0.07 + t * 0.3).sin() * 0.8
+            + bass * (hash_f32(seed.wrapping_add(100)) - 0.5) * 3.0 * r;
+        let wander_y = (hash_f32(seed.wrapping_add(1)) - 0.5) * 2.0
+            + (ring_z_world * 0.09 + t * 0.2).cos() * 0.8
+            + bass * (hash_f32(seed.wrapping_add(200)) - 0.5) * 3.0 * r;
+
+        // Ring radius: base + spectrum modulation + beat pulse.
+        let bar_idx = (ring_offset as usize * NUM_BARS / num_rings as usize).min(NUM_BARS - 1);
+        let energy = state.spectrum[bar_idx];
+        let base_radius = 1.5 + hash_f32(seed.wrapping_add(2)) * 1.0;
+        let radius = base_radius + energy * 2.0 * r + state.beat_energy * 1.0 * r;
+
+        // Project ring vertices.
+        let mut projected: Vec<Option<(f32, f32)>> = Vec::with_capacity(ring_verts);
+        for v in 0..ring_verts {
+            let angle = v as f32 / ring_verts as f32 * std::f32::consts::TAU;
+            // Wobble each vertex for organic feel.
+            let wobble = 1.0
+                + (angle * 3.0 + ring_z_world * 0.5 + t).sin() * 0.15 * r
+                + energy * (angle * 5.0 + t * 2.0).sin().abs() * 0.3 * r;
+            let vx = wander_x + radius * wobble * angle.cos();
+            let vy = wander_y + radius * wobble * angle.sin();
+
+            let px = cx + vx * fov / depth;
+            let py = cy + vy * fov / depth;
+            let (sx, sy) = state.shaken(px, py, cx, cy);
+
+            if sx >= 0.0 && sx < px_w && sy >= 0.0 && sy < px_h {
+                projected.push(Some((sx, sy)));
+            } else {
+                projected.push(None);
+            }
+        }
+
+        // Draw wireframe edges around the ring.
+        let depth_t = (1.0 - rel_z / (ring_spacing * num_rings as f32)).clamp(0.0, 1.0);
+        let freq_t = (depth_t + state.beat_hue_offset).rem_euclid(1.0);
+        let base_color = state.palette.freq_color(freq_t);
+        let color = brighten(base_color, state.beat_energy * 0.4 * r + depth_t * 0.3);
+        let color = dim(color, 1.0 - depth_t * 0.7); // Far rings dimmer.
+
+        for v in 0..ring_verts {
+            let next_v = (v + 1) % ring_verts;
+            if let (Some((x0, y0)), Some((x1, y1))) = (projected[v], projected[next_v]) {
+                grid.draw_line(x0, y0, x1, y1, color);
+            }
+        }
+
+        // Connect to next ring with longitudinal struts (every 4th vertex).
+        if ring_offset + 1 < num_rings {
+            let next_ring_idx = ring_idx + 1;
+            let next_rel_z = (next_ring_idx as f32 * ring_spacing) - cam_z;
+            if next_rel_z > 0.5 {
+                let next_seed = next_ring_idx as u32;
+                let next_wander_x = (hash_f32(next_seed) - 0.5) * 2.0
+                    + (next_ring_idx as f32 * ring_spacing * 0.07 + t * 0.3).sin() * 0.8
+                    + bass * (hash_f32(next_seed.wrapping_add(100)) - 0.5) * 3.0 * r;
+                let next_wander_y = (hash_f32(next_seed.wrapping_add(1)) - 0.5) * 2.0
+                    + (next_ring_idx as f32 * ring_spacing * 0.09 + t * 0.2).cos() * 0.8
+                    + bass * (hash_f32(next_seed.wrapping_add(200)) - 0.5) * 3.0 * r;
+                let next_bar_idx =
+                    ((ring_offset as usize + 1) * NUM_BARS / num_rings as usize).min(NUM_BARS - 1);
+                let next_energy = state.spectrum[next_bar_idx];
+                let next_base_r = 1.5 + hash_f32(next_seed.wrapping_add(2)) * 1.0;
+                let next_radius = next_base_r + next_energy * 2.0 * r + state.beat_energy * 1.0 * r;
+
+                for v in (0..ring_verts).step_by(4) {
+                    let angle = v as f32 / ring_verts as f32 * std::f32::consts::TAU;
+                    let nvx = next_wander_x + next_radius * angle.cos();
+                    let nvy = next_wander_y + next_radius * angle.sin();
+                    let npx = cx + nvx * fov / next_rel_z;
+                    let npy = cy + nvy * fov / next_rel_z;
+                    let (nsx, nsy) = state.shaken(npx, npy, cx, cy);
+
+                    if let Some((x0, y0)) = projected[v]
+                        && nsx >= 0.0
+                        && nsx < px_w
+                        && nsy >= 0.0
+                        && nsy < px_h
+                    {
+                        let strut_color = dim(color, 0.3);
+                        grid.draw_line(x0, y0, nsx, nsy, strut_color);
+                    }
+                }
+            }
+        }
+    }
+
+    grid.render_to(area, buf);
+}
+
 // ── SpectrumWidget (original bars mode) ─────────────────────────────────────
 
 /// 80s hi-fi LED-segment spectrum analyzer widget.
@@ -2253,42 +2812,56 @@ mod tests {
         assert_eq!(VisualizerMode::parse("stars"), VisualizerMode::Starfield);
         assert_eq!(VisualizerMode::parse("terrain"), VisualizerMode::Terrain);
         assert_eq!(VisualizerMode::parse("landscape"), VisualizerMode::Terrain);
+        assert_eq!(VisualizerMode::parse("moire"), VisualizerMode::Moire);
+        assert_eq!(
+            VisualizerMode::parse("kaleidoscope"),
+            VisualizerMode::Kaleidoscope
+        );
+        assert_eq!(VisualizerMode::parse("julia"), VisualizerMode::Julia);
+        assert_eq!(VisualizerMode::parse("fractal"), VisualizerMode::Julia);
+        assert_eq!(VisualizerMode::parse("spiral"), VisualizerMode::Spiral);
+        assert_eq!(
+            VisualizerMode::parse("interference"),
+            VisualizerMode::Interference
+        );
+        assert_eq!(
+            VisualizerMode::parse("ripples"),
+            VisualizerMode::Interference
+        );
+        assert_eq!(VisualizerMode::parse("wormhole"), VisualizerMode::Wormhole);
         assert_eq!(VisualizerMode::parse("garbage"), VisualizerMode::Bars);
     }
 
     #[test]
     fn mode_cycles_through_all() {
-        let mode = VisualizerMode::Bars;
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Oscilloscope);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Radial);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Particles);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Lissajous);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Spectrogram);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::StereoWaveform);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::VuMeter);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Flame);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Plasma);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Tunnel);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Wireframe);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Metaballs);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Starfield);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Terrain);
-        let mode = mode.next();
-        assert_eq!(mode, VisualizerMode::Bars);
+        let mut mode = VisualizerMode::Bars;
+        let expected = [
+            VisualizerMode::Oscilloscope,
+            VisualizerMode::Radial,
+            VisualizerMode::Particles,
+            VisualizerMode::Lissajous,
+            VisualizerMode::Spectrogram,
+            VisualizerMode::StereoWaveform,
+            VisualizerMode::VuMeter,
+            VisualizerMode::Flame,
+            VisualizerMode::Plasma,
+            VisualizerMode::Tunnel,
+            VisualizerMode::Wireframe,
+            VisualizerMode::Metaballs,
+            VisualizerMode::Starfield,
+            VisualizerMode::Terrain,
+            VisualizerMode::Moire,
+            VisualizerMode::Kaleidoscope,
+            VisualizerMode::Julia,
+            VisualizerMode::Spiral,
+            VisualizerMode::Interference,
+            VisualizerMode::Wormhole,
+            VisualizerMode::Bars,
+        ];
+        for exp in expected {
+            mode = mode.next();
+            assert_eq!(mode, exp);
+        }
     }
 
     #[test]

@@ -24,6 +24,12 @@ pub const ALL_MODES: &[VisualizerMode] = &[
     VisualizerMode::Metaballs,
     VisualizerMode::Starfield,
     VisualizerMode::Terrain,
+    VisualizerMode::Moire,
+    VisualizerMode::Kaleidoscope,
+    VisualizerMode::Julia,
+    VisualizerMode::Spiral,
+    VisualizerMode::Interference,
+    VisualizerMode::Wormhole,
 ];
 
 /// State for the visualizer picker modal.
