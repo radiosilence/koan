@@ -37,6 +37,18 @@ pub enum VisualizerMode {
     VuMeter,
     /// Filled spectrum curve with stacked decay trails.
     Flame,
+    /// Classic demoscene plasma — overlapping sine waves, audio-reactive.
+    Plasma,
+    /// Fly-through tunnel with spectrum-driven radius wobble.
+    Tunnel,
+    /// Rotating 3D wireframe mesh with spectrum-modulated vertices.
+    Wireframe,
+    /// Implicit surface blobs driven by frequency bands.
+    Metaballs,
+    /// 3D starfield with beat-driven acceleration.
+    Starfield,
+    /// 3D heightmap terrain from spectrum history, perspective projected.
+    Terrain,
 }
 
 impl VisualizerMode {
@@ -51,6 +63,12 @@ impl VisualizerMode {
             "stereo" | "stereo_waveform" | "stereo-waveform" => Self::StereoWaveform,
             "vu" | "vu_meter" | "vu-meter" | "meter" => Self::VuMeter,
             "flame" | "mountain" => Self::Flame,
+            "plasma" => Self::Plasma,
+            "tunnel" => Self::Tunnel,
+            "wireframe" | "wire" | "3d" => Self::Wireframe,
+            "metaballs" | "blobs" => Self::Metaballs,
+            "starfield" | "stars" => Self::Starfield,
+            "terrain" | "landscape" => Self::Terrain,
             _ => Self::Bars,
         }
     }
@@ -66,7 +84,13 @@ impl VisualizerMode {
             Self::Spectrogram => Self::StereoWaveform,
             Self::StereoWaveform => Self::VuMeter,
             Self::VuMeter => Self::Flame,
-            Self::Flame => Self::Bars,
+            Self::Flame => Self::Plasma,
+            Self::Plasma => Self::Tunnel,
+            Self::Tunnel => Self::Wireframe,
+            Self::Wireframe => Self::Metaballs,
+            Self::Metaballs => Self::Starfield,
+            Self::Starfield => Self::Terrain,
+            Self::Terrain => Self::Bars,
         }
     }
 
@@ -82,6 +106,12 @@ impl VisualizerMode {
             Self::StereoWaveform => "stereo_waveform",
             Self::VuMeter => "vu_meter",
             Self::Flame => "flame",
+            Self::Plasma => "plasma",
+            Self::Tunnel => "tunnel",
+            Self::Wireframe => "wireframe",
+            Self::Metaballs => "metaballs",
+            Self::Starfield => "starfield",
+            Self::Terrain => "terrain",
         }
     }
 
@@ -97,6 +127,12 @@ impl VisualizerMode {
             Self::StereoWaveform => "stereo waveform",
             Self::VuMeter => "vu meter",
             Self::Flame => "flame",
+            Self::Plasma => "plasma",
+            Self::Tunnel => "tunnel",
+            Self::Wireframe => "wireframe",
+            Self::Metaballs => "metaballs",
+            Self::Starfield => "starfield",
+            Self::Terrain => "terrain",
         }
     }
 }
@@ -566,6 +602,14 @@ pub struct VisualizerState {
     pub spectrum_history: SpectrumHistory,
     /// VU needle angle (smoothed), [left, right] in radians.
     pub vu_needle_angle: [f32; 2],
+    /// Starfield: persistent star positions [(x, y, z)].
+    pub stars: Vec<(f32, f32, f32)>,
+    /// Wireframe rotation angles [x, y, z] in radians.
+    pub wire_rotation: [f32; 3],
+    /// Tunnel depth offset — advances with time/beat.
+    pub tunnel_z: f32,
+    /// Elapsed time accumulator for plasma phase.
+    pub plasma_time: f32,
 }
 
 impl VisualizerState {
@@ -601,6 +645,19 @@ impl VisualizerState {
             radial_angle: 0.0,
             spectrum_history: SpectrumHistory::new(),
             vu_needle_angle: [0.0; 2],
+            stars: (0..500)
+                .map(|i| {
+                    // Deterministic pseudo-random spread.
+                    let hash = ((i * 2654435761u64) >> 16) as f32;
+                    let x = (hash % 200.0) - 100.0;
+                    let y = ((hash * 1.7) % 200.0) - 100.0;
+                    let z = (hash * 0.3) % 100.0 + 1.0;
+                    (x, y, z)
+                })
+                .collect(),
+            wire_rotation: [0.0; 3],
+            tunnel_z: 0.0,
+            plasma_time: 0.0,
         }
     }
 
@@ -662,11 +719,34 @@ impl VisualizerState {
         for ch in 0..2 {
             let target = self.vu_levels[ch];
             if target > self.vu_needle_angle[ch] {
-                // Rise: fast attack (~3 frames to peak).
                 self.vu_needle_angle[ch] += (target - self.vu_needle_angle[ch]) * 0.5;
             } else {
-                // Fall: slow decay matching bar_decay.
                 self.vu_needle_angle[ch] *= bar_decay;
+            }
+        }
+
+        // Advance demoscene state.
+        self.plasma_time += dt * (1.0 + self.beat_energy * 2.0);
+        self.tunnel_z += dt * (2.0 + self.beat_energy * 8.0);
+
+        // Wireframe rotation: bass drives X, mids drive Y, treble drives Z.
+        let bass = self.spectrum[..8].iter().sum::<f32>() / 8.0;
+        let mids = self.spectrum[16..32].iter().sum::<f32>() / 16.0;
+        let treble = self.spectrum[32..].iter().sum::<f32>() / 16.0;
+        self.wire_rotation[0] += dt * (0.5 + bass * 3.0);
+        self.wire_rotation[1] += dt * (0.3 + mids * 2.0);
+        self.wire_rotation[2] += dt * (0.2 + treble * 1.5);
+
+        // Starfield: advance Z, respawn stars that pass the camera.
+        let star_speed = 20.0 + self.beat_energy * 80.0;
+        for star in &mut self.stars {
+            star.2 -= dt * star_speed;
+            if star.2 <= 0.5 {
+                // Respawn at far distance.
+                let hash = ((star.0.to_bits() ^ star.1.to_bits()) as f32).abs();
+                star.2 = 80.0 + (hash % 20.0);
+                star.0 = (hash * 1.3 % 200.0) - 100.0;
+                star.1 = (hash * 0.7 % 200.0) - 100.0;
             }
         }
     }
@@ -735,6 +815,24 @@ impl<'a> VisualizerWidget<'a> {
             }
             VisualizerMode::Flame => {
                 render_flame(self.state, area, buf);
+            }
+            VisualizerMode::Plasma => {
+                render_plasma(self.state, area, buf);
+            }
+            VisualizerMode::Tunnel => {
+                render_tunnel(self.state, area, buf);
+            }
+            VisualizerMode::Wireframe => {
+                render_wireframe(self.state, area, buf);
+            }
+            VisualizerMode::Metaballs => {
+                render_metaballs(self.state, area, buf);
+            }
+            VisualizerMode::Starfield => {
+                render_starfield(self.state, area, buf);
+            }
+            VisualizerMode::Terrain => {
+                render_terrain(self.state, area, buf);
             }
         }
     }
@@ -1201,6 +1299,435 @@ fn render_flame(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     grid.render_to(area, buf);
 }
 
+// ── Plasma Renderer ───────────────────────────────────────────────────────
+
+fn render_plasma(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let t = state.plasma_time;
+    // Pull audio-reactive parameters from spectrum bands.
+    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
+    let mids = state.spectrum[16..32].iter().sum::<f32>() / 16.0;
+    let treble = state.spectrum[36..].iter().sum::<f32>() / 12.0;
+
+    for row in 0..h {
+        let y = area.y + row as u16;
+        let ny = row as f32 / h as f32;
+        for col in 0..w {
+            let x = area.x + col as u16;
+            let nx = col as f32 / w as f32;
+
+            // Classic plasma: sum of sine waves at different frequencies/phases.
+            let v1 = (nx * 6.0 + t * 1.3 + bass * 4.0).sin();
+            let v2 = (ny * 8.0 - t * 0.9 + mids * 3.0).sin();
+            let v3 = ((nx * 4.0 + ny * 4.0 + t * 0.7).sin() + treble * 2.0).sin();
+            let v4 = ((nx * nx + ny * ny).sqrt() * 8.0 - t * 1.5 + bass * 5.0).sin();
+
+            let v = (v1 + v2 + v3 + v4) / 4.0; // -1..1
+            let n = (v + 1.0) * 0.5; // 0..1
+
+            let warped = (n + state.beat_hue_offset).rem_euclid(1.0);
+            let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.3);
+
+            // Block character by intensity.
+            let intensity = (n * 1.2).clamp(0.0, 1.0);
+            let ch = if intensity > 0.8 {
+                '█'
+            } else if intensity > 0.6 {
+                '▓'
+            } else if intensity > 0.35 {
+                '▒'
+            } else {
+                '░'
+            };
+
+            buf[(x, y)].set_char(ch).set_style(Style::new().fg(color));
+        }
+    }
+}
+
+// ── Tunnel Renderer ───────────────────────────────────────────────────────
+
+fn render_tunnel(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let cx = w as f32 / 2.0;
+    let cy = h as f32 / 2.0;
+    let z_offset = state.tunnel_z;
+
+    // Audio-driven tunnel wobble from low bands.
+    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
+    let mids = state.spectrum[16..32].iter().sum::<f32>() / 16.0;
+
+    for row in 0..h {
+        let y = area.y + row as u16;
+        let dy = row as f32 - cy;
+        for col in 0..w {
+            let x = area.x + col as u16;
+            // Correct for terminal aspect ratio (~2:1 char width:height).
+            let dx = (col as f32 - cx) * 0.5;
+
+            let dist = (dx * dx + dy * dy).sqrt().max(0.1);
+            let angle = dy.atan2(dx);
+
+            // Tunnel mapping: distance from center → depth, angle → texture U.
+            let depth = 40.0 / dist + z_offset;
+            let tex_u = angle / std::f32::consts::TAU + 0.5; // 0..1
+
+            // Wobble the tunnel walls with bass.
+            let wobble = (angle * 3.0 + z_offset * 0.5).sin() * bass * 0.3;
+            let adjusted_depth = depth + wobble;
+
+            // Ring pattern from depth.
+            let ring = ((adjusted_depth * 0.8).fract() * 2.0 - 1.0).abs();
+            // Stripe pattern from angle.
+            let stripe = ((tex_u * 8.0 + mids * 2.0).fract() * 2.0 - 1.0).abs();
+
+            let pattern = (ring * 0.6 + stripe * 0.4).clamp(0.0, 1.0);
+
+            // Depth fog: farther = dimmer.
+            let fog = (1.0 - dist / cx.max(cy)).clamp(0.0, 1.0);
+            let brightness = pattern * fog;
+
+            if brightness < 0.05 {
+                continue;
+            }
+
+            let color_t = (tex_u + state.beat_hue_offset).rem_euclid(1.0);
+            let base = state.palette.freq_color(color_t);
+            let color = dim(brighten(base, state.beat_energy * 0.4), 1.0 - brightness);
+
+            let ch = if brightness > 0.7 {
+                '█'
+            } else if brightness > 0.45 {
+                '▓'
+            } else if brightness > 0.25 {
+                '▒'
+            } else {
+                '░'
+            };
+
+            buf[(x, y)].set_char(ch).set_style(Style::new().fg(color));
+        }
+    }
+}
+
+// ── Wireframe Renderer ────────────────────────────────────────────────────
+
+fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
+    let px_w = grid.px_width() as f32;
+    let px_h = grid.px_height() as f32;
+    if px_w < 4.0 || px_h < 4.0 {
+        return;
+    }
+
+    let cx = px_w / 2.0;
+    let cy = px_h / 2.0;
+    let scale = cx.min(cy) * 0.6;
+    let [rx, ry, rz] = state.wire_rotation;
+
+    // Build a torus mesh: major radius R, minor radius r.
+    let r_major = 1.0;
+    let r_minor = 0.4 + state.beat_energy * 0.2;
+    let segments_major = 24;
+    let segments_minor = 12;
+
+    // Audio-modulate the minor radius per segment.
+    let mut verts: Vec<(f32, f32, f32)> = Vec::with_capacity(segments_major * segments_minor);
+    for i in 0..segments_major {
+        let theta = (i as f32 / segments_major as f32) * std::f32::consts::TAU;
+        let bar_idx = (i * NUM_BARS / segments_major).min(NUM_BARS - 1);
+        let modulation = 1.0 + state.spectrum[bar_idx] * 0.8;
+
+        for j in 0..segments_minor {
+            let phi = (j as f32 / segments_minor as f32) * std::f32::consts::TAU;
+            let r = r_minor * modulation;
+            let x = (r_major + r * phi.cos()) * theta.cos();
+            let y = (r_major + r * phi.cos()) * theta.sin();
+            let z = r * phi.sin();
+            verts.push((x, y, z));
+        }
+    }
+
+    // 3D rotation (Euler angles).
+    let rotate = |x: f32, y: f32, z: f32| -> (f32, f32, f32) {
+        // Rotate X.
+        let (y1, z1) = (y * rx.cos() - z * rx.sin(), y * rx.sin() + z * rx.cos());
+        // Rotate Y.
+        let (x2, z2) = (x * ry.cos() + z1 * ry.sin(), -x * ry.sin() + z1 * ry.cos());
+        // Rotate Z.
+        let (x3, y3) = (x2 * rz.cos() - y1 * rz.sin(), x2 * rz.sin() + y1 * rz.cos());
+        (x3, y3, z2)
+    };
+
+    // Perspective projection.
+    let fov = 3.0;
+    let project = |x: f32, y: f32, z: f32| -> Option<(f32, f32)> {
+        let depth = z + fov;
+        if depth < 0.3 {
+            return None;
+        }
+        let px = cx + x * scale * fov / depth;
+        let py = cy - y * scale * fov / depth;
+        Some((px, py))
+    };
+
+    // Draw edges.
+    let elapsed = state.created_at.elapsed().as_secs_f32();
+    let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
+
+    for i in 0..segments_major {
+        for j in 0..segments_minor {
+            let idx = i * segments_minor + j;
+            let (x, y, z) = verts[idx];
+            let (rx0, ry0, rz0) = rotate(x, y, z);
+
+            // Edge along minor circle.
+            let next_j = (j + 1) % segments_minor;
+            let idx2 = i * segments_minor + next_j;
+            let (x2, y2, z2) = verts[idx2];
+            let (rx1, ry1, rz1) = rotate(x2, y2, z2);
+
+            if let (Some((px0, py0)), Some((px1, py1))) =
+                (project(rx0, ry0, rz0), project(rx1, ry1, rz1))
+            {
+                let freq_t = i as f32 / segments_major as f32;
+                let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
+                let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.4);
+                grid.draw_line(px0, py0, px1, py1, color);
+            }
+
+            // Edge along major circle.
+            let next_i = (i + 1) % segments_major;
+            let idx3 = next_i * segments_minor + j;
+            let (x3, y3, z3) = verts[idx3];
+            let (rx2, ry2, rz2) = rotate(x3, y3, z3);
+
+            if let (Some((px0, py0)), Some((px1, py1))) =
+                (project(rx0, ry0, rz0), project(rx2, ry2, rz2))
+            {
+                let freq_t = i as f32 / segments_major as f32;
+                let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
+                let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.3);
+                grid.draw_line(px0, py0, px1, py1, color);
+            }
+        }
+    }
+
+    grid.render_to(area, buf);
+}
+
+// ── Metaballs Renderer ────────────────────────────────────────────────────
+
+fn render_metaballs(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let t = state.plasma_time;
+    let num_balls = 6;
+
+    // Position each metaball driven by a spectrum band + time.
+    let balls: Vec<(f32, f32, f32)> = (0..num_balls)
+        .map(|i| {
+            let phase = i as f32 * std::f32::consts::TAU / num_balls as f32;
+            let bar_idx = (i * 8).min(NUM_BARS - 1);
+            let energy = state.spectrum[bar_idx];
+
+            let x = 0.5 + (t * 0.7 + phase).sin() * 0.35;
+            let y = 0.5 + (t * 0.5 + phase * 1.3).cos() * 0.35;
+            let radius = 0.08 + energy * 0.15 + state.beat_energy * 0.05;
+            (x, y, radius)
+        })
+        .collect();
+
+    for row in 0..h {
+        let y = area.y + row as u16;
+        let ny = row as f32 / h as f32;
+        for col in 0..w {
+            let x = area.x + col as u16;
+            // Correct for terminal aspect ratio.
+            let nx = col as f32 / w as f32;
+
+            // Sum metaball field: f(p) = Σ r² / |p - c|²
+            let mut field = 0.0f32;
+            let mut dominant_ball = 0usize;
+            let mut max_contrib = 0.0f32;
+            for (i, &(bx, by, br)) in balls.iter().enumerate() {
+                let dx = (nx - bx) * 2.0; // Aspect correction.
+                let dy = ny - by;
+                let dist_sq = dx * dx + dy * dy;
+                let contrib = br * br / (dist_sq + 0.001);
+                field += contrib;
+                if contrib > max_contrib {
+                    max_contrib = contrib;
+                    dominant_ball = i;
+                }
+            }
+
+            // Threshold: inside the surface.
+            if field < 1.0 {
+                continue;
+            }
+
+            // Color by dominant ball's spectrum position.
+            let freq_t = dominant_ball as f32 / (num_balls - 1) as f32;
+            let warped = (freq_t + state.beat_hue_offset).rem_euclid(1.0);
+            let base = state.palette.freq_color(warped);
+
+            // Brightness by how far above threshold.
+            let edge = ((field - 1.0) * 3.0).clamp(0.0, 1.0);
+            let color = brighten(dim(base, 1.0 - edge), state.beat_energy * 0.3);
+
+            let ch = if edge > 0.7 {
+                '█'
+            } else if edge > 0.4 {
+                '▓'
+            } else if edge > 0.15 {
+                '▒'
+            } else {
+                '░'
+            };
+
+            buf[(x, y)].set_char(ch).set_style(Style::new().fg(color));
+        }
+    }
+}
+
+// ── Starfield Renderer ────────────────────────────────────────────────────
+
+fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
+    let px_w = grid.px_width() as f32;
+    let px_h = grid.px_height() as f32;
+    if px_w < 4.0 || px_h < 4.0 {
+        return;
+    }
+
+    let cx = px_w / 2.0;
+    let cy = px_h / 2.0;
+
+    for &(sx, sy, sz) in &state.stars {
+        // Perspective projection: closer stars = farther from center.
+        let proj_x = cx + sx * 50.0 / sz;
+        let proj_y = cy + sy * 50.0 / sz;
+
+        if proj_x < 0.0 || proj_x >= px_w || proj_y < 0.0 || proj_y >= px_h {
+            continue;
+        }
+
+        // Brightness by proximity (closer = brighter).
+        let depth_t = (1.0 - sz / 100.0).clamp(0.0, 1.0);
+        let color = brighten(
+            state.palette.freq_color(depth_t),
+            state.beat_energy * 0.5 + depth_t * 0.3,
+        );
+
+        // Draw the star dot.
+        grid.set_dot(proj_x as usize, proj_y as usize, color);
+
+        // Close stars get a motion trail (streak toward center).
+        if sz < 20.0 {
+            let trail_len = ((20.0 - sz) * 0.5).min(8.0);
+            let dx = proj_x - cx;
+            let dy = proj_y - cy;
+            let dist = (dx * dx + dy * dy).sqrt().max(1.0);
+            let tx = proj_x - dx / dist * trail_len;
+            let ty = proj_y - dy / dist * trail_len;
+            let trail_color = dim(color, 0.5);
+            grid.draw_line(proj_x, proj_y, tx, ty, trail_color);
+        }
+    }
+
+    grid.render_to(area, buf);
+}
+
+// ── Terrain Renderer ──────────────────────────────────────────────────────
+
+fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
+    let px_w = grid.px_width();
+    let px_h = grid.px_height();
+    if px_w < 4 || px_h < 4 {
+        return;
+    }
+
+    let elapsed = state.created_at.elapsed().as_secs_f32();
+    let drift = (elapsed * std::f32::consts::TAU / 8.0).sin() * 0.15;
+
+    // Terrain: spectrum history as a heightmap, rendered with pseudo-3D perspective.
+    // Each row of the grid maps to a depth level. Far rows (top) are compressed.
+    let num_rows = 32.min(state.spectrum_history.len);
+    if num_rows < 2 {
+        return;
+    }
+
+    let frames: Vec<&[f32; NUM_BARS]> =
+        state.spectrum_history.iter_newest_first(num_rows).collect();
+
+    for (depth_idx, frame) in frames.iter().enumerate() {
+        let depth = depth_idx as f32 / num_rows as f32; // 0 = nearest, 1 = farthest.
+
+        // Perspective: far rows are vertically compressed toward the horizon.
+        let horizon_y = px_h as f32 * 0.3;
+        let base_y = px_h as f32 * 0.95;
+        let row_y = base_y - (base_y - horizon_y) * depth;
+
+        // Horizontal compression: far rows are narrower.
+        let width_scale = 1.0 - depth * 0.5;
+        let row_left = (px_w as f32 * (1.0 - width_scale) * 0.5) as usize;
+        let row_right = (px_w as f32 * (1.0 + width_scale) * 0.5) as usize;
+        let row_width = row_right.saturating_sub(row_left).max(1);
+
+        // Height scale: near rows have taller peaks.
+        let height_scale = (1.0 - depth * 0.7) * px_h as f32 * 0.4;
+
+        // Fog: farther rows are dimmer.
+        let fog = 1.0 - depth * 0.6;
+
+        let mut prev_x = None;
+        let mut prev_y = None;
+
+        for px_x in row_left..row_right {
+            // Map pixel X to spectrum bar.
+            let local_x = px_x - row_left;
+            let bar_f = local_x as f32 * (NUM_BARS - 1) as f32 / (row_width - 1).max(1) as f32;
+            let bar_lo = (bar_f as usize).min(NUM_BARS - 1);
+            let bar_hi = (bar_lo + 1).min(NUM_BARS - 1);
+            let frac = bar_f - bar_lo as f32;
+            let energy = frame[bar_lo] * (1.0 - frac) + frame[bar_hi] * frac;
+
+            let peak_y = row_y - energy * height_scale;
+            let y = peak_y.clamp(0.0, (px_h - 1) as f32);
+
+            let freq_t = bar_f / (NUM_BARS - 1) as f32;
+            let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
+            let base = state.palette.freq_color(warped);
+            let color = dim(brighten(base, state.beat_energy * 0.3), 1.0 - fog);
+
+            if let (Some(px), Some(py)) = (prev_x, prev_y) {
+                grid.draw_line(px, py, px_x as f32, y, color);
+            }
+
+            prev_x = Some(px_x as f32);
+            prev_y = Some(y);
+        }
+    }
+
+    grid.render_to(area, buf);
+}
+
 // ── SpectrumWidget (original bars mode) ─────────────────────────────────────
 
 /// 80s hi-fi LED-segment spectrum analyzer widget.
@@ -1622,6 +2149,26 @@ mod tests {
         assert_eq!(VisualizerMode::parse("meter"), VisualizerMode::VuMeter);
         assert_eq!(VisualizerMode::parse("flame"), VisualizerMode::Flame);
         assert_eq!(VisualizerMode::parse("mountain"), VisualizerMode::Flame);
+        assert_eq!(VisualizerMode::parse("plasma"), VisualizerMode::Plasma);
+        assert_eq!(VisualizerMode::parse("tunnel"), VisualizerMode::Tunnel);
+        assert_eq!(
+            VisualizerMode::parse("wireframe"),
+            VisualizerMode::Wireframe
+        );
+        assert_eq!(VisualizerMode::parse("wire"), VisualizerMode::Wireframe);
+        assert_eq!(VisualizerMode::parse("3d"), VisualizerMode::Wireframe);
+        assert_eq!(
+            VisualizerMode::parse("metaballs"),
+            VisualizerMode::Metaballs
+        );
+        assert_eq!(VisualizerMode::parse("blobs"), VisualizerMode::Metaballs);
+        assert_eq!(
+            VisualizerMode::parse("starfield"),
+            VisualizerMode::Starfield
+        );
+        assert_eq!(VisualizerMode::parse("stars"), VisualizerMode::Starfield);
+        assert_eq!(VisualizerMode::parse("terrain"), VisualizerMode::Terrain);
+        assert_eq!(VisualizerMode::parse("landscape"), VisualizerMode::Terrain);
         assert_eq!(VisualizerMode::parse("garbage"), VisualizerMode::Bars);
     }
 
@@ -1644,6 +2191,18 @@ mod tests {
         assert_eq!(mode, VisualizerMode::VuMeter);
         let mode = mode.next();
         assert_eq!(mode, VisualizerMode::Flame);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::Plasma);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::Tunnel);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::Wireframe);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::Metaballs);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::Starfield);
+        let mode = mode.next();
+        assert_eq!(mode, VisualizerMode::Terrain);
         let mode = mode.next();
         assert_eq!(mode, VisualizerMode::Bars);
     }
