@@ -713,6 +713,8 @@ pub struct VisualizerState {
     pub bass_shake: bool,
     /// Matrix overlay: replace all rendered chars with matrix glyphs in green.
     pub matrix_overlay: bool,
+    /// Actual frame delta time in seconds (set each tick from last_update).
+    pub frame_dt: f32,
 }
 
 impl VisualizerState {
@@ -783,6 +785,7 @@ impl VisualizerState {
             scale_pulse: 1.0,
             bass_shake,
             matrix_overlay,
+            frame_dt: 1.0 / 60.0,
         }
     }
 
@@ -803,6 +806,7 @@ impl VisualizerState {
         let now = Instant::now();
         let dt = now.duration_since(self.last_update).as_secs_f32();
         self.last_update = now;
+        self.frame_dt = dt.clamp(0.001, 0.1); // Store for renderers.
         // decay = 0.5^(dt / half_life)
         let bar_decay = 0.5f32.powf(dt / self.bar_half_life);
         let peak_decay = 0.5f32.powf(dt / self.peak_half_life);
@@ -844,7 +848,7 @@ impl VisualizerState {
         self.waveform = frame.waveform;
 
         // Advance radial rotation — slow drift + beat burst.
-        let dt = 1.0 / 60.0;
+        let dt = self.frame_dt;
         self.radial_angle += dt * 0.3 + self.beat_energy * 0.1;
         if self.radial_angle > std::f32::consts::TAU {
             self.radial_angle -= std::f32::consts::TAU;
@@ -1179,7 +1183,7 @@ fn render_particles(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
     let px_h = grid.px_height() as f32;
 
     // Step physics and emit new particles.
-    let dt = 1.0 / 60.0;
+    let dt = state.frame_dt;
     state
         .particles
         .update(&state.spectrum, state.beat_energy, px_w, px_h, dt);
@@ -2565,7 +2569,7 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
             let seed = col as u32 * 2654435761;
             state.matrix_cols.push(MatrixColumn {
                 head_y: -(hash_f32(seed) * h as f32 * 2.0), // Stagger widely.
-                speed: 0.15 + hash_f32(seed.wrapping_add(1)) * 0.25,
+                speed: 0.05 + hash_f32(seed.wrapping_add(1)) * 0.1,
                 trail_len: 8.0 + hash_f32(seed.wrapping_add(2)) * 12.0,
                 char_seed: seed,
             });
@@ -2606,16 +2610,17 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let density_threshold = hash_f32(column.char_seed.wrapping_add(99)) * 0.6;
         let is_active = overall_energy > density_threshold || drums > 0.2;
 
-        // Speed: purely drum-driven, exponential curve.
-        let speed_mult = 0.05 + (drums * drums) * 25.0 * r;
-        column.head_y += column.speed * speed_mult;
+        // Speed: purely drum-driven, exponential curve, time-based.
+        let dt = state.frame_dt;
+        let speed_mult = 3.0 + (drums * drums) * 1500.0 * r;
+        column.head_y += column.speed * speed_mult * dt;
 
         // Respawn when fully off-screen.
         if column.head_y > (h as f32 + column.trail_len + 5.0) {
             column.head_y = -(hash_f32(column.char_seed.wrapping_add(state.plasma_time as u32))
                 * h as f32
                 * 0.5);
-            column.speed = 0.15 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.25;
+            column.speed = 0.05 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.1;
             column.trail_len = 8.0 + band_energy * 6.0 * r + hash_f32(column.char_seed) * 8.0;
         }
 
