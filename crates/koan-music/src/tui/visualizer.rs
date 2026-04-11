@@ -431,39 +431,6 @@ fn fill_reactive_bg(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     }
 }
 
-/// Compute a centered sub-area with a target aspect ratio, cropping overflow.
-/// Like CSS `object-fit: cover` — fills the viewport, clips the excess.
-/// Returns the render area (may be larger than `area`) and the visible clip rect.
-/// Renderers should render to `render_area` dimensions but only the `area` portion is visible.
-/// For simplicity, returns a centered sub-rect of `area` that has the target aspect.
-fn cover_rect(area: Rect, target_ratio: f32) -> Rect {
-    let area_ratio = area.width as f32 / area.height.max(1) as f32;
-    if (area_ratio - target_ratio).abs() < 0.1 {
-        return area; // Close enough.
-    }
-    if area_ratio > target_ratio {
-        // Too wide — crop width.
-        let new_w = (area.height as f32 * target_ratio) as u16;
-        let x_offset = (area.width.saturating_sub(new_w)) / 2;
-        Rect::new(
-            area.x + x_offset,
-            area.y,
-            new_w.min(area.width),
-            area.height,
-        )
-    } else {
-        // Too tall — crop height.
-        let new_h = (area.width as f32 / target_ratio) as u16;
-        let y_offset = (area.height.saturating_sub(new_h)) / 2;
-        Rect::new(
-            area.x,
-            area.y + y_offset,
-            area.width,
-            new_h.min(area.height),
-        )
-    }
-}
-
 /// Map subpixel position within a cell to the braille bit index.
 /// Layout: col 0 = bits 0,1,2,6 (top to bottom), col 1 = bits 3,4,5,7.
 fn braille_bit(sub_x: usize, sub_y: usize) -> u8 {
@@ -1948,7 +1915,6 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Moiré Renderer ────────────────────────────────────────────────────────
 
 fn render_moire(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    let area = cover_rect(area, 2.0); // ~2:1 for terminal chars (chars are ~2x tall as wide).
     let w = area.width as usize;
     let h = area.height as usize;
     if w == 0 || h == 0 {
@@ -2215,7 +2181,6 @@ fn render_spiral(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Interference Renderer ─────────────────────────────────────────────────
 
 fn render_interference(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    let area = cover_rect(area, 2.0); // ~2:1 for terminal chars (chars are ~2x tall as wide).
     let w = area.width as usize;
     let h = area.height as usize;
     if w == 0 || h == 0 {
