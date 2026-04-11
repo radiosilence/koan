@@ -30,6 +30,7 @@ pub const ALL_MODES: &[VisualizerMode] = &[
     VisualizerMode::Spiral,
     VisualizerMode::Interference,
     VisualizerMode::Wormhole,
+    VisualizerMode::Matrix,
 ];
 
 /// State for the visualizer picker modal.

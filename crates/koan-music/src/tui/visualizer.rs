@@ -61,6 +61,8 @@ pub enum VisualizerMode {
     Interference,
     /// 3D wireframe tunnel fly-through with reactive stars.
     Wormhole,
+    /// Matrix digital rain — audio-reactive falling characters.
+    Matrix,
 }
 
 impl VisualizerMode {
@@ -80,13 +82,14 @@ impl VisualizerMode {
             "wireframe" | "wire" | "3d" => Self::Wireframe,
             "metaballs" | "blobs" => Self::Metaballs,
             "starfield" | "stars" => Self::Starfield,
-            "terrain" | "landscape" => Self::Terrain,
+            "terrain" | "landscape" | "pleasures" => Self::Terrain,
             "moire" | "moiré" => Self::Moire,
             "kaleidoscope" | "kaleid" | "kaleido" => Self::Kaleidoscope,
             "julia" | "fractal" => Self::Julia,
             "spiral" | "hypno" => Self::Spiral,
             "interference" | "ripple" | "ripples" => Self::Interference,
             "wormhole" | "wormholes" => Self::Wormhole,
+            "matrix" | "rain" | "cmatrix" => Self::Matrix,
             _ => Self::Bars,
         }
     }
@@ -114,7 +117,8 @@ impl VisualizerMode {
             Self::Julia => Self::Spiral,
             Self::Spiral => Self::Interference,
             Self::Interference => Self::Wormhole,
-            Self::Wormhole => Self::Bars,
+            Self::Wormhole => Self::Matrix,
+            Self::Matrix => Self::Bars,
         }
     }
 
@@ -142,6 +146,7 @@ impl VisualizerMode {
             Self::Spiral => "spiral",
             Self::Interference => "interference",
             Self::Wormhole => "wormhole",
+            Self::Matrix => "matrix",
         }
     }
 
@@ -162,13 +167,14 @@ impl VisualizerMode {
             Self::Wireframe => "wireframe",
             Self::Metaballs => "metaballs",
             Self::Starfield => "starfield",
-            Self::Terrain => "terrain",
+            Self::Terrain => "pleasures",
             Self::Moire => "moiré",
             Self::Kaleidoscope => "kaleidoscope",
             Self::Julia => "julia fractal",
             Self::Spiral => "spiral",
             Self::Interference => "interference",
             Self::Wormhole => "wormhole",
+            Self::Matrix => "matrix",
         }
     }
 }
@@ -346,6 +352,21 @@ impl BrailleGrid {
         self.dots[idx] |= bit;
         self.colors[idx] = color;
         true
+    }
+
+    /// Draw a thick line (3px wide) by drawing the base line plus two parallel offsets
+    /// perpendicular to the line direction.
+    pub fn draw_thick_line(&mut self, x0: f32, y0: f32, x1: f32, y1: f32, color: Color) {
+        let dx = x1 - x0;
+        let dy = y1 - y0;
+        let len = (dx * dx + dy * dy).sqrt().max(0.001);
+        // Perpendicular unit vector.
+        let nx = -dy / len;
+        let ny = dx / len;
+        // Draw the center line and two offset lines.
+        self.draw_line(x0, y0, x1, y1, color);
+        self.draw_line(x0 + nx, y0 + ny, x1 + nx, y1 + ny, color);
+        self.draw_line(x0 - nx, y0 - ny, x1 - nx, y1 - ny, color);
     }
 
     /// Draw a line between two subpixel points using Bresenham's algorithm.
@@ -597,6 +618,20 @@ impl SpectrumHistory {
     }
 }
 
+// ── Matrix Column State ────────────────────────────────────────────────────
+
+/// A single column of falling matrix characters.
+pub struct MatrixColumn {
+    /// Current head position (fractional row).
+    pub head_y: f32,
+    /// Fall speed (rows per frame).
+    pub speed: f32,
+    /// Trail length in rows.
+    pub trail_len: f32,
+    /// Character cycle seed — determines which chars appear.
+    pub char_seed: u32,
+}
+
 // ── VisualizerState ─────────────────────────────────────────────────────────
 
 /// Processed visualizer data, ready for rendering.
@@ -654,6 +689,8 @@ pub struct VisualizerState {
     /// Reactivity multiplier — scales all beat/spectrum-driven coefficients.
     /// 0.0 = static, 1.0 = normal, 2.0 = hypersensitive.
     pub reactivity: f32,
+    /// Matrix rain: per-column state [(head_y, speed, trail_len)].
+    pub matrix_cols: Vec<MatrixColumn>,
     /// Camera shake offset in subpixels [x, y]. Spikes on bass, decays fast.
     pub shake: [f32; 2],
     /// Scale pulse factor (1.0 = normal). Spikes >1.0 on bass hits.
@@ -719,6 +756,7 @@ impl VisualizerState {
             wire_rotation: [0.0; 3],
             tunnel_z: 0.0,
             plasma_time: 0.0,
+            matrix_cols: Vec::new(), // Initialized lazily on first render.
             reactivity,
             shake: [0.0; 2],
             scale_pulse: 1.0,
@@ -946,6 +984,9 @@ impl<'a> VisualizerWidget<'a> {
             VisualizerMode::Wormhole => {
                 render_wormhole(self.state, area, buf);
             }
+            VisualizerMode::Matrix => {
+                render_matrix(self.state, area, buf);
+            }
         }
     }
 }
@@ -1047,7 +1088,7 @@ fn render_radial(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         let base = state.palette.freq_color(warped);
         let color = brighten(base, state.beat_energy * 0.5);
 
-        grid.draw_line(x0, y0, x1, y1, color);
+        grid.draw_thick_line(x0, y0, x1, y1, color);
     }
 
     grid.render_to(area, buf);
@@ -1621,7 +1662,7 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 let freq_t = i as f32 / segments_major as f32;
                 let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
                 let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.4);
-                grid.draw_line(px0, py0, px1, py1, color);
+                grid.draw_thick_line(px0, py0, px1, py1, color);
             }
 
             // Edge along major circle.
@@ -1636,7 +1677,7 @@ fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                 let freq_t = i as f32 / segments_major as f32;
                 let warped = (freq_t + drift + state.beat_hue_offset).rem_euclid(1.0);
                 let color = brighten(state.palette.freq_color(warped), state.beat_energy * 0.3);
-                grid.draw_line(px0, py0, px1, py1, color);
+                grid.draw_thick_line(px0, py0, px1, py1, color);
             }
         }
     }
@@ -1845,7 +1886,7 @@ fn render_terrain(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             let color = dim(brighten(base, state.beat_energy * 0.3), 1.0 - fog);
 
             if let (Some(px), Some(py)) = (prev_x, prev_y) {
-                grid.draw_line(px, py, px_x as f32, y, color);
+                grid.draw_thick_line(px, py, px_x as f32, y, color);
             }
 
             prev_x = Some(px_x as f32);
@@ -2314,7 +2355,7 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
         for v in 0..ring_verts {
             let next_v = (v + 1) % ring_verts;
             if let (Some((x0, y0)), Some((x1, y1))) = (projected[v], projected[next_v]) {
-                grid.draw_line(x0, y0, x1, y1, color);
+                grid.draw_thick_line(x0, y0, x1, y1, color);
             }
         }
 
@@ -2351,7 +2392,7 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
                         && nsy < px_h
                     {
                         let strut_color = dim(color, 0.3);
-                        grid.draw_line(x0, y0, nsx, nsy, strut_color);
+                        grid.draw_thick_line(x0, y0, nsx, nsy, strut_color);
                     }
                 }
             }
@@ -2359,6 +2400,126 @@ fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
     }
 
     grid.render_to(area, buf);
+}
+
+// ── Matrix Rain Renderer ──────────────────────────────────────────────────
+
+/// Half-width katakana + digits + symbols for that authentic matrix look.
+const MATRIX_CHARS: &[char] = &[
+    'ﾊ', 'ﾐ', 'ﾋ', 'ｰ', 'ｳ', 'ｼ', 'ﾅ', 'ﾓ', 'ﾆ', 'ｻ', 'ﾜ', 'ﾂ', 'ｵ', 'ﾘ', 'ｱ', 'ﾎ', 'ﾃ', 'ﾏ', 'ｹ',
+    'ﾒ', 'ｴ', 'ｶ', 'ｷ', 'ﾑ', 'ﾕ', 'ﾗ', 'ｾ', 'ﾈ', 'ｽ', 'ﾀ', 'ﾇ', 'ﾍ', '0', '1', '2', '3', '4', '5',
+    '7', '8', '9', 'Z', ':', '.', '=', '*', '+', '-', '<', '>', '¦', '|',
+];
+
+fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
+    let w = area.width as usize;
+    let h = area.height as usize;
+    if w == 0 || h == 0 {
+        return;
+    }
+
+    let r = state.reactivity;
+    let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
+
+    // Lazy init: create columns on first render or if terminal resized.
+    if state.matrix_cols.len() != w {
+        state.matrix_cols.clear();
+        for col in 0..w {
+            let seed = col as u32 * 2654435761;
+            state.matrix_cols.push(MatrixColumn {
+                head_y: -(hash_f32(seed) * h as f32), // Stagger start positions.
+                speed: 0.3 + hash_f32(seed.wrapping_add(1)) * 0.7,
+                trail_len: 5.0 + hash_f32(seed.wrapping_add(2)) * 15.0,
+                char_seed: seed,
+            });
+        }
+    }
+
+    // Update and render each column.
+    for (col_idx, column) in state.matrix_cols.iter_mut().enumerate() {
+        // Map column to a spectrum band for per-column reactivity.
+        let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
+        let band_energy = state.spectrum[bar_idx];
+
+        // Speed: base + band energy + bass boost. DnB makes it rain hard.
+        let speed_mult = 1.0 + band_energy * 3.0 * r + state.beat_energy * 5.0 * r;
+        column.head_y += column.speed * speed_mult;
+
+        // Beat can spawn "bursts" — reset columns that have finished to the top.
+        if column.head_y > (h as f32 + column.trail_len + 5.0) {
+            column.head_y =
+                -(hash_f32(column.char_seed.wrapping_add(state.plasma_time as u32)) * 10.0);
+            column.speed = 0.3 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.7;
+            column.trail_len = 5.0 + band_energy * 15.0 * r + hash_f32(column.char_seed) * 10.0;
+        }
+
+        // Trail length pulses with band energy.
+        let effective_trail = column.trail_len + band_energy * 8.0 * r;
+
+        // Render the trail.
+        let head = column.head_y as i32;
+        let x = area.x + col_idx as u16;
+
+        for row in 0..h {
+            let y = area.y + row as u16;
+            let dist_from_head = head - row as i32;
+
+            // Only render if within the trail.
+            if dist_from_head < 0 || dist_from_head as f32 > effective_trail {
+                continue;
+            }
+
+            let trail_frac = dist_from_head as f32 / effective_trail;
+
+            // Character: pseudo-random, changes occasionally for that flicker.
+            let char_hash = column
+                .char_seed
+                .wrapping_add(row as u32 * 31)
+                .wrapping_add((state.plasma_time * 4.0) as u32);
+            let ch = MATRIX_CHARS[char_hash as usize % MATRIX_CHARS.len()];
+
+            // Color: head is bright white/green, trail fades to dark green.
+            let (fg, bold) = if dist_from_head == 0 {
+                // Head: bright white, pulsing with beat.
+                let brightness = 0.8 + state.beat_energy * 0.2 * r;
+                (
+                    Color::Rgb((200.0 * brightness) as u8, 255, (200.0 * brightness) as u8),
+                    true,
+                )
+            } else if dist_from_head <= 2 {
+                // Near head: bright green.
+                (Color::Rgb(50, (220.0 + band_energy * 35.0) as u8, 50), true)
+            } else {
+                // Trail: fade from green to dark, intensity from band energy.
+                let fade = (1.0 - trail_frac).max(0.0);
+                let g = (180.0 * fade + band_energy * 60.0 * r) as u8;
+                let rb = (30.0 * fade) as u8;
+                (Color::Rgb(rb, g.max(rb), rb), false)
+            };
+
+            let mut style = Style::new().fg(fg);
+            if bold {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            buf[(x, y)].set_char(ch).set_style(style);
+        }
+    }
+
+    // Beat flash: briefly brighten the entire background on hard hits.
+    if state.beat_energy > 0.6 && bass > 0.3 {
+        let flash = ((state.beat_energy - 0.6) * 2.5 * r).min(1.0);
+        let flash_g = (15.0 * flash) as u8;
+        for row in 0..h {
+            for col in 0..w {
+                let x = area.x + col as u16;
+                let y = area.y + row as u16;
+                let cell = &mut buf[(x, y)];
+                if cell.symbol() == " " {
+                    cell.set_style(Style::new().bg(Color::Rgb(0, flash_g, 0)));
+                }
+            }
+        }
+    }
 }
 
 // ── SpectrumWidget (original bars mode) ─────────────────────────────────────
@@ -2829,6 +2990,9 @@ mod tests {
             VisualizerMode::Interference
         );
         assert_eq!(VisualizerMode::parse("wormhole"), VisualizerMode::Wormhole);
+        assert_eq!(VisualizerMode::parse("matrix"), VisualizerMode::Matrix);
+        assert_eq!(VisualizerMode::parse("cmatrix"), VisualizerMode::Matrix);
+        assert_eq!(VisualizerMode::parse("pleasures"), VisualizerMode::Terrain);
         assert_eq!(VisualizerMode::parse("garbage"), VisualizerMode::Bars);
     }
 
@@ -2856,6 +3020,7 @@ mod tests {
             VisualizerMode::Spiral,
             VisualizerMode::Interference,
             VisualizerMode::Wormhole,
+            VisualizerMode::Matrix,
             VisualizerMode::Bars,
         ];
         for exp in expected {
