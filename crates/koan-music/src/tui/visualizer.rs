@@ -407,30 +407,6 @@ impl BrailleGrid {
 }
 
 /// Fill an area with a beat-reactive pulsating background color.
-/// Intensity is low (subtle wash), color shifts with beat_hue_offset.
-/// Fill an area with a beat-reactive background color.
-/// Cycles through bold colors on beat hits, fades to black between.
-fn fill_reactive_bg(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    let r = state.reactivity;
-    let intensity = (state.beat_energy * r).clamp(0.0, 1.0);
-    if intensity < 0.02 {
-        return;
-    }
-
-    // Pick a background color from the palette, cycling with beat hue offset.
-    let hue_t = state.beat_hue_offset.rem_euclid(1.0);
-    let base = state.palette.freq_color(hue_t);
-    // Scale brightness by beat intensity — strong beats get vivid bg, quiet = black.
-    let bg = dim(base, 1.0 - intensity * 0.35);
-    let style = Style::new().bg(bg);
-
-    for row in 0..area.height {
-        for col in 0..area.width {
-            buf[(area.x + col, area.y + row)].set_style(style);
-        }
-    }
-}
-
 /// Map subpixel position within a cell to the braille bit index.
 /// Layout: col 0 = bits 0,1,2,6 (top to bottom), col 1 = bits 3,4,5,7.
 fn braille_bit(sub_x: usize, sub_y: usize) -> u8 {
@@ -1242,7 +1218,6 @@ fn render_particles(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Lissajous Renderer ─────────────────────────────────────────────────────
 
 fn render_lissajous(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
-    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width();
     let px_h = grid.px_height();
@@ -1709,7 +1684,6 @@ fn render_tunnel(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Wireframe Renderer ────────────────────────────────────────────────────
 
 fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -1899,7 +1873,6 @@ fn render_metaballs(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Starfield Renderer ────────────────────────────────────────────────────
 
 fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2148,7 +2121,6 @@ fn render_moire(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Kaleidoscope Renderer ─────────────────────────────────────────────────
 
 fn render_kaleidoscope(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2280,7 +2252,6 @@ fn render_julia(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Spiral Renderer ───────────────────────────────────────────────────────
 
 fn render_spiral(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2430,7 +2401,6 @@ fn hash_f32(seed: u32) -> f32 {
 }
 
 fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
-    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2604,6 +2574,7 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 
     let r = state.reactivity;
     let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
+    let dt = state.frame_dt;
 
     // Lazy init: create columns on first render or if terminal resized.
     if state.matrix_cols.len() != w {
@@ -2611,8 +2582,8 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         for col in 0..w {
             let seed = col as u32 * 2654435761;
             state.matrix_cols.push(MatrixColumn {
-                head_y: -(hash_f32(seed) * h as f32 * 2.0), // Stagger widely.
-                speed: 0.05 + hash_f32(seed.wrapping_add(1)) * 0.1,
+                head_y: -(hash_f32(seed) * h as f32 * 2.0),
+                speed: 0.15 + hash_f32(seed.wrapping_add(1)) * 0.25,
                 trail_len: 8.0 + hash_f32(seed.wrapping_add(2)) * 12.0,
                 char_seed: seed,
             });
@@ -2629,7 +2600,6 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let end = (center + width / 2).min(w);
         for col_idx in start..end {
             let col = &mut state.matrix_cols[col_idx];
-            // Only respawn if this column has already fallen past the top.
             if col.head_y > 0.0 {
                 col.head_y = -(hash_f32(col.char_seed.wrapping_add(cluster_seed)) * 3.0);
                 col.speed = 0.15 + state.beat_energy * 0.2 * r;
@@ -2638,39 +2608,22 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         }
     }
 
-    // Overall amplitude for density (cubed — only loud fills the screen).
-    let overall_energy: f32 = state.spectrum.iter().sum::<f32>() / NUM_BARS as f32;
-    let beat = state.beat_energy;
-    let dt = state.frame_dt;
-
     // Update and render each column.
     for (col_idx, column) in state.matrix_cols.iter_mut().enumerate() {
-        // Map column to a spectrum band for per-column reactivity.
         let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
         let band_energy = state.spectrum[bar_idx];
 
-        // Density: cubed overall energy + beat pulse.
-        // Beat temporarily boosts density so more columns appear on hits.
-        let density_threshold = hash_f32(column.char_seed.wrapping_add(99)) * 0.8;
-        let density = overall_energy * overall_energy * overall_energy + beat * 0.15;
-        let is_active = density > density_threshold * 0.05;
-
-        // Speed: simple linear beat energy. No BPM, no squaring, just works.
-        let speed_mult = 2.0 + beat * 30.0 * r;
-        column.head_y += column.speed * speed_mult * dt;
+        // Speed: time-based, reacts to per-band energy + beat + bass.
+        let speed_mult = 0.3 + band_energy * 3.0 * r + state.beat_energy * 6.0 * r + bass * 4.0 * r;
+        column.head_y += column.speed * speed_mult * dt * 60.0;
 
         // Respawn when fully off-screen.
         if column.head_y > (h as f32 + column.trail_len + 5.0) {
             column.head_y = -(hash_f32(column.char_seed.wrapping_add(state.plasma_time as u32))
                 * h as f32
                 * 0.5);
-            column.speed = 0.05 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.1;
+            column.speed = 0.15 + hash_f32(column.char_seed.wrapping_mul(7)) * 0.25;
             column.trail_len = 8.0 + band_energy * 6.0 * r + hash_f32(column.char_seed) * 8.0;
-        }
-
-        // Skip rendering inactive columns (still advance position above).
-        if !is_active {
-            continue;
         }
 
         // Trail length: gentle pulse with energy.
