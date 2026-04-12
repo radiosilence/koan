@@ -1,4 +1,4 @@
-use async_graphql::{Context, Enum, Object, SimpleObject};
+use async_graphql::{Context, Enum, InputObject, Object, SimpleObject};
 
 use async_graphql::connection::{Connection, EmptyFields};
 use koan_core::db::queries;
@@ -59,6 +59,24 @@ pub(super) enum FuzzySearchKind {
     Track,
     Album,
     Artist,
+}
+
+/// Queue entry status — mirrors `QueueEntryStatus` from koan-core.
+/// Derived from cursor position + load state.
+#[derive(Enum, Copy, Clone, Eq, PartialEq)]
+pub(super) enum GqlQueueEntryStatus {
+    /// After the cursor — waiting to play.
+    Queued,
+    /// At the cursor and loaded — currently playing.
+    Playing,
+    /// Before the cursor — already played.
+    Played,
+    /// Downloading (not at cursor).
+    Downloading,
+    /// At the cursor but not yet loaded — priority pending.
+    PriorityPending,
+    /// Download or load failed.
+    Failed,
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +351,8 @@ pub(super) struct GqlQueueEntry {
     pub disc: Option<i64>,
     pub duration_ms: Option<u64>,
     pub is_current: bool,
+    pub status: GqlQueueEntryStatus,
+    pub download_progress: Option<GqlDownloadProgress>,
 }
 
 #[Object(name = "QueueEntry")]
@@ -371,6 +391,16 @@ impl GqlQueueEntry {
 
     async fn is_current(&self) -> bool {
         self.is_current
+    }
+
+    /// Derived status: Queued, Playing, Played, Downloading, PriorityPending, Failed.
+    async fn status(&self) -> GqlQueueEntryStatus {
+        self.status
+    }
+
+    /// Download progress — present only when the track is being downloaded.
+    async fn download_progress(&self) -> Option<&GqlDownloadProgress> {
+        self.download_progress.as_ref()
     }
 }
 
@@ -563,6 +593,90 @@ impl GqlStatus {
             message: msg.into(),
         }
     }
+}
+
+/// Download progress for a queue entry.
+#[derive(SimpleObject, Clone)]
+#[graphql(name = "DownloadProgress")]
+pub(super) struct GqlDownloadProgress {
+    /// Bytes downloaded so far.
+    pub downloaded: u64,
+    /// Total bytes expected (0 if unknown).
+    pub total: u64,
+}
+
+/// Queue snapshot with version for change detection.
+#[derive(SimpleObject)]
+#[graphql(name = "QueueSnapshot")]
+pub(super) struct GqlQueueSnapshot {
+    /// Monotonically increasing version — changes on every playlist mutation.
+    pub version: u64,
+    /// Queue entries with derived status.
+    pub entries: Vec<GqlQueueEntry>,
+    /// Number of entries before the cursor (already played).
+    pub finished_count: i32,
+    /// Whether any entry is currently playing.
+    pub has_playing: bool,
+    /// Number of entries after the cursor (queued).
+    pub queue_count: i32,
+}
+
+/// A single frame of visualizer data.
+#[derive(SimpleObject, Clone)]
+#[graphql(name = "VizFrame")]
+pub(super) struct GqlVizFrame {
+    /// Spectrum bar heights (0.0..1.0), 48 bars.
+    pub spectrum: Vec<f32>,
+    /// Peak hold values (slowly decaying maxima), 48 bars.
+    pub peaks: Vec<f32>,
+    /// RMS VU levels: [left, right], each 0.0..1.0.
+    pub vu_levels: Vec<f32>,
+    /// Beat energy (0.0..1.0). Spikes on transients.
+    pub beat_energy: f32,
+    /// Raw waveform samples (interleaved stereo). Empty when disabled or no audio playing.
+    /// Opt-in: only populated when the client requests it.
+    pub waveform: Vec<f32>,
+}
+
+/// Top-level config as exposed via GraphQL.
+#[derive(SimpleObject)]
+#[graphql(name = "Config")]
+pub(super) struct GqlConfig {
+    pub library_folders: Vec<String>,
+    pub replaygain_mode: String,
+    pub pre_amp_db: f64,
+    pub output_device: Option<String>,
+    pub target_fps: i32,
+    pub art_size: i32,
+    pub remote_enabled: bool,
+    pub remote_url: String,
+    pub remote_username: String,
+    pub transcode_quality: String,
+    pub cache_limit: Option<String>,
+    pub visualizer_fps: i32,
+    pub radio_enabled: bool,
+    pub graphql_port: i32,
+    pub graphql_playground: bool,
+}
+
+/// Input for updating config fields. All optional — only provided fields are written.
+#[derive(InputObject)]
+#[graphql(name = "ConfigInput")]
+pub(super) struct GqlConfigInput {
+    pub library_folders: Option<Vec<String>>,
+    pub replaygain_mode: Option<String>,
+    pub pre_amp_db: Option<f64>,
+    pub output_device: Option<String>,
+    pub target_fps: Option<i32>,
+    pub art_size: Option<i32>,
+    pub remote_enabled: Option<bool>,
+    pub remote_url: Option<String>,
+    pub remote_username: Option<String>,
+    pub transcode_quality: Option<String>,
+    pub cache_limit: Option<String>,
+    pub visualizer_fps: Option<i32>,
+    pub graphql_port: Option<i32>,
+    pub graphql_playground: Option<bool>,
 }
 
 pub(super) struct GqlQueueMutationResult {

@@ -57,7 +57,7 @@ impl KoanMcpServer {
         db_path: PathBuf,
     ) -> Self {
         let graphql_schema =
-            crate::graphql::build_schema(state.clone(), cmd_tx.clone(), db_path.clone());
+            crate::graphql::build_schema(state.clone(), cmd_tx.clone(), db_path.clone(), None);
         Self {
             tool_router: Self::tool_router(),
             graphql_schema,

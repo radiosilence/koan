@@ -492,6 +492,73 @@ impl MutationRoot {
         Ok(GqlStatus::success(format!("undone {} moves", count)))
     }
 
+    // -- Config --
+
+    /// Update configuration fields. Only provided fields are written to config.toml.
+    async fn update_config(&self, input: GqlConfigInput) -> async_graphql::Result<GqlStatus> {
+        use koan_core::config::ReplayGainMode;
+
+        Config::update_base(|cfg| {
+            if let Some(ref folders) = input.library_folders {
+                cfg.library.folders = folders.iter().map(std::path::PathBuf::from).collect();
+            }
+            if let Some(ref mode) = input.replaygain_mode {
+                cfg.playback.replaygain = match mode.to_lowercase().as_str() {
+                    "track" => ReplayGainMode::Track,
+                    "album" => ReplayGainMode::Album,
+                    _ => ReplayGainMode::Off,
+                };
+            }
+            if let Some(pre_amp) = input.pre_amp_db {
+                cfg.playback.pre_amp_db = pre_amp;
+            }
+            if let Some(ref device) = input.output_device {
+                cfg.playback.output_device = if device.is_empty() {
+                    None
+                } else {
+                    Some(device.clone())
+                };
+            }
+            if let Some(fps) = input.target_fps {
+                cfg.playback.target_fps = fps as u8;
+            }
+            if let Some(size) = input.art_size {
+                cfg.playback.art_size = size as u16;
+            }
+            if let Some(enabled) = input.remote_enabled {
+                cfg.remote.enabled = enabled;
+            }
+            if let Some(ref url) = input.remote_url {
+                cfg.remote.url = url.clone();
+            }
+            if let Some(ref username) = input.remote_username {
+                cfg.remote.username = username.clone();
+            }
+            if let Some(ref quality) = input.transcode_quality {
+                cfg.remote.transcode_quality = quality.clone();
+            }
+            if let Some(ref limit) = input.cache_limit {
+                cfg.remote.cache_limit = if limit.is_empty() {
+                    None
+                } else {
+                    Some(limit.clone())
+                };
+            }
+            if let Some(fps) = input.visualizer_fps {
+                cfg.visualizer.fps = fps as u8;
+            }
+            if let Some(port) = input.graphql_port {
+                cfg.graphql.port = port as u16;
+            }
+            if let Some(pg) = input.graphql_playground {
+                cfg.graphql.playground = pg;
+            }
+        })
+        .map_err(|e| async_graphql::Error::new(format!("config write error: {}", e)))?;
+
+        Ok(GqlStatus::success("config updated"))
+    }
+
     // -- Library management --
 
     async fn trigger_scan(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlScanResult> {

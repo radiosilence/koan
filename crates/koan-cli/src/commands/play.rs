@@ -74,18 +74,20 @@ pub fn cmd_play(
         let db_path = config::db_path();
         let state_api = state.clone();
         let tx_api = tx.clone();
+        let viz_api = viz_snapshot.clone();
         std::thread::Builder::new()
             .name("koan-api".into())
             .spawn(move || {
-                koan_server::graphql::start_api_background(
-                    state_api,
-                    tx_api,
+                koan_server::graphql::start_api_background(koan_server::graphql::ApiServerOpts {
+                    state: state_api,
+                    cmd_tx: tx_api,
                     db_path,
-                    opts.port,
-                    opts.bind,
-                    opts.subsonic,
-                    opts.playground,
-                );
+                    port: opts.port,
+                    bind: opts.bind,
+                    subsonic_port: opts.subsonic,
+                    playground: opts.playground,
+                    viz: Some(viz_api),
+                });
             })
             .expect("failed to spawn API server thread");
     }

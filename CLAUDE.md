@@ -136,10 +136,11 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | Module | What |
 |--------|------|
 | `graphql/mod.rs` | GraphQL schema builder, `KoanSchema` type, DB handle wrapper |
-| `graphql/queries.rs` | GraphQL query resolvers (artists, albums, tracks, nowPlaying, etc.) |
-| `graphql/mutations.rs` | GraphQL mutations (playback, queue, favourites, snapshots, organize) |
-| `graphql/types.rs` | GraphQL type definitions (GqlArtist, GqlTrack, GqlNowPlaying, etc.) |
-| `graphql/server.rs` | HTTP server (axum), `cmd_serve`, `start_api_background`, daemon mode |
+| `graphql/queries.rs` | GraphQL query resolvers (artists, albums, tracks, nowPlaying, vizFrame, config, playlistVersion, etc.) |
+| `graphql/mutations.rs` | GraphQL mutations (playback, queue, favourites, snapshots, organize, updateConfig) |
+| `graphql/subscriptions.rs` | GraphQL subscriptions: `nowPlaying`, `queueUpdated`, `vizFrame`. Push-based real-time data via WebSocket. |
+| `graphql/types.rs` | GraphQL type definitions (GqlArtist, GqlTrack, GqlNowPlaying, GqlVizFrame, GqlQueueSnapshot, GqlConfig, etc.) |
+| `graphql/server.rs` | HTTP + WebSocket server (axum), `cmd_serve`, `start_api_background`, `ApiServerOpts`, daemon mode |
 | `subsonic.rs` | Subsonic-compatible REST API (XML/JSON, auth, streaming, cover art) |
 | `mcp.rs` | MCP server for Claude Desktop (schema_sdl + graphql tools) |
 

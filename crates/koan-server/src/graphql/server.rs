@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossbeam_channel::Sender;
+use koan_core::audio::viz::VizSnapshot;
 use koan_core::config::Config;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
@@ -26,7 +27,7 @@ pub fn cmd_serve(
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
-    run_api_blocking(
+    run_api_blocking(ApiServerOpts {
         state,
         cmd_tx,
         db_path,
@@ -34,24 +35,39 @@ pub fn cmd_serve(
         bind,
         subsonic_port,
         playground,
-    );
+        viz: None, // headless — no viz analyzer
+    });
 }
 
 // ---------------------------------------------------------------------------
 // Shared API server logic — used by both headless and TUI+API modes
 // ---------------------------------------------------------------------------
 
+/// Options for the API server — avoids too-many-arguments.
+pub struct ApiServerOpts {
+    pub state: Arc<SharedPlayerState>,
+    pub cmd_tx: Sender<PlayerCommand>,
+    pub db_path: PathBuf,
+    pub port: Option<u16>,
+    pub bind: Option<std::net::IpAddr>,
+    pub subsonic_port: Option<u16>,
+    pub playground: bool,
+    pub viz: Option<Arc<VizSnapshot>>,
+}
+
 /// Run the GraphQL (+ optional Subsonic) API server, blocking the current thread.
 /// Called from `cmd_serve` (headless) and `start_api_background` (TUI companion).
-fn run_api_blocking(
-    state: Arc<SharedPlayerState>,
-    cmd_tx: Sender<PlayerCommand>,
-    db_path: PathBuf,
-    port: Option<u16>,
-    bind: Option<std::net::IpAddr>,
-    subsonic_port: Option<u16>,
-    playground: bool,
-) {
+fn run_api_blocking(opts: ApiServerOpts) {
+    let ApiServerOpts {
+        state,
+        cmd_tx,
+        db_path,
+        port,
+        bind,
+        subsonic_port,
+        playground,
+        viz,
+    } = opts;
     use axum::routing::{get, post};
 
     let cfg = Config::load().unwrap_or_default();
@@ -59,11 +75,16 @@ fn run_api_blocking(
     let bind = bind.unwrap_or(cfg.graphql.bind);
     let playground_enabled = playground || cfg.graphql.playground;
 
-    let schema = build_schema(state, cmd_tx, db_path.clone());
+    let schema = build_schema(state, cmd_tx, db_path.clone(), viz);
 
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
-        let mut gql_app = axum::Router::new().route("/graphql", post(graphql_handler));
+        let mut gql_app = axum::Router::new()
+            .route("/graphql", post(graphql_handler))
+            .route(
+                "/graphql/ws",
+                get(graphql_ws_handler),
+            );
         if playground_enabled {
             gql_app = gql_app.route("/graphql", get(graphql_playground));
         }
@@ -132,24 +153,8 @@ fn run_api_blocking(
 
 /// Start the API server on the current thread (blocks forever).
 /// Called from a background thread when TUI mode has API enabled.
-pub fn start_api_background(
-    state: Arc<SharedPlayerState>,
-    cmd_tx: Sender<PlayerCommand>,
-    db_path: PathBuf,
-    port: Option<u16>,
-    bind: Option<std::net::IpAddr>,
-    subsonic_port: Option<u16>,
-    playground: bool,
-) {
-    run_api_blocking(
-        state,
-        cmd_tx,
-        db_path,
-        port,
-        bind,
-        subsonic_port,
-        playground,
-    );
+pub fn start_api_background(opts: ApiServerOpts) {
+    run_api_blocking(opts);
 }
 
 async fn shutdown_signal() {
@@ -163,6 +168,21 @@ async fn graphql_handler(
     req: async_graphql_axum::GraphQLRequest,
 ) -> async_graphql_axum::GraphQLResponse {
     schema.execute(req.into_inner()).await.into()
+}
+
+async fn graphql_ws_handler(
+    axum::extract::State(schema): axum::extract::State<KoanSchema>,
+    protocol: async_graphql_axum::GraphQLProtocol,
+    websocket: axum::extract::WebSocketUpgrade,
+) -> axum::response::Response {
+    websocket
+        .protocols(async_graphql::http::ALL_WEBSOCKET_PROTOCOLS)
+        .on_upgrade(move |stream| {
+            let stream = async_graphql_axum::GraphQLWebSocket::new(stream, schema, protocol);
+            async move {
+                stream.serve().await;
+            }
+        })
 }
 
 async fn graphql_playground() -> axum::response::Html<String> {

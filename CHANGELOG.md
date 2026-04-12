@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **GraphQL subscriptions** — real-time push-based data for `nowPlaying` (playback state + position), `queueUpdated` (queue changes), and `vizFrame` (spectrum/peaks/VU/beat/waveform). WebSocket transport at `/graphql/ws`. Replaces `EmptySubscription`. ([#162](https://github.com/radiosilence/koan/issues/162))
+- **Queue entry status + download progress** — `queue` query now returns `QueueSnapshot` with derived `status` (Queued/Playing/Played/Downloading/PriorityPending/Failed), `downloadProgress`, `version` counter, and aggregate counts (`finishedCount`, `hasPlaying`, `queueCount`).
+- **VizFrame query + subscription** — `vizFrame` query and subscription expose spectrum (48 bars), peaks, VU levels, beat energy, and optional waveform data. Waveform is opt-in via `includeWaveform` parameter.
+- **Config query + mutation** — `config` query reads the current configuration; `updateConfig` mutation writes to `config.toml`. All fields optional on input.
+- **Playlist version query** — `playlistVersion` query exposes the monotonic version counter for change detection.
+
+### Changed
+
+- **`build_schema()` accepts `VizSnapshot`** — optional `Arc<VizSnapshot>` parameter enables viz data in the GraphQL API when the analyzer is running.
+- **`start_api_background()` uses `ApiServerOpts`** — struct parameter replaces 8 positional arguments.
+
 ## v0.21.0 (2026-04-12)
 
 ### Changed
