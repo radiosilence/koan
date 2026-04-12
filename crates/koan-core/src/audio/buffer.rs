@@ -1005,7 +1005,7 @@ mod tests {
         crate::test_utils::generate_wav_tone(&wav_path, 44100, 440.0, 0.1);
 
         // Set up rtrb ring buffer.
-        let (producer, mut consumer) = rtrb::RingBuffer::new(44100 * 2);
+        let (mut producer, mut consumer) = rtrb::RingBuffer::new(44100 * 2);
 
         let timeline = PlaybackTimeline::new();
         let stop = Arc::new(AtomicBool::new(false));
@@ -1020,7 +1020,7 @@ mod tests {
             &wav_path,
             &hint,
             mss,
-            &mut rtrb::Producer::from(producer),
+            &mut producer,
             &stop,
             0,
             &timeline,
