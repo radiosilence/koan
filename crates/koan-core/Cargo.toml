@@ -12,6 +12,11 @@ categories = ["multimedia::audio"]
 # Acoustic analysis
 bliss-audio = { version = "0.11", default-features = false, features = ["aubio-static", "symphonia-all"] }
 bliss-audio-aubio-rs = { version = "0.2", features = ["bindgen"] }
+# Auth
+argon2 = "0.5"
+jsonwebtoken = "9"
+pem = "3"
+ring = "0.17"
 crossbeam-channel = "0.5"
 chrono = "0.4"
 # Config

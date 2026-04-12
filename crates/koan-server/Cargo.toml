@@ -29,6 +29,7 @@ tokio = { version = "1.50.0", features = ["rt-multi-thread", "net", "macros", "s
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
 tower = { version = "0.5", features = ["util", "limit", "load-shed"] }
+tower-http = { version = "0.6", features = ["cors"] }
 uuid = { version = "1.22.0", features = ["v7"] }
 walkdir = { workspace = true }
 

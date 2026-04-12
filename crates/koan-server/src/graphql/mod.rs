@@ -16,12 +16,15 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueItemId, SharedPlayerState};
 use uuid::Uuid;
 
+use koan_core::auth::Role;
 use mutations::MutationRoot;
 use queries::QueryRoot;
 pub use server::{
     ApiServerOpts, cmd_serve, cmd_serve_daemon, execute_in_process, start_api_background,
 };
 use subscriptions::SubscriptionRoot;
+
+use crate::auth::AuthUser;
 
 // ---------------------------------------------------------------------------
 // DB handle wrapper (so we can put it in Context)
@@ -75,6 +78,28 @@ fn send_cmd(ctx: &Context<'_>, cmd: PlayerCommand) -> async_graphql::Result<()> 
     let tx = ctx.data::<Sender<PlayerCommand>>()?;
     tx.send(cmd)
         .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))
+}
+
+/// Extract the authenticated user from GraphQL context.
+/// Returns anonymous admin if no user is present (auth disabled or in-process).
+fn get_auth_user(ctx: &Context<'_>) -> AuthUser {
+    ctx.data::<AuthUser>()
+        .cloned()
+        .unwrap_or_else(|_| AuthUser::anonymous_admin())
+}
+
+/// Check that the current user has at least the required role.
+/// Returns an error suitable for GraphQL if the check fails.
+fn require_role(ctx: &Context<'_>, required: Role) -> async_graphql::Result<()> {
+    let user = get_auth_user(ctx);
+    if user.role.has_permission(required) {
+        Ok(())
+    } else {
+        Err(async_graphql::Error::new(format!(
+            "forbidden: requires {} role, you have {}",
+            required, user.role
+        )))
+    }
 }
 
 // ---------------------------------------------------------------------------
