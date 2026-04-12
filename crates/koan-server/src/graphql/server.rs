@@ -2,11 +2,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossbeam_channel::Sender;
+use koan_core::auth::{self, parse_duration_secs};
 use koan_core::config::Config;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
 
 use super::{KoanSchema, build_schema};
+use crate::auth::AuthUser;
+use crate::auth::middleware::{AuthState, auth_middleware};
+use crate::auth::routes::{AuthRouteState, auth_router};
 
 // ---------------------------------------------------------------------------
 // `koan --headless` entry point (standalone headless server)
@@ -58,20 +62,105 @@ fn run_api_blocking(
     let port = port.unwrap_or(cfg.graphql.port);
     let bind = bind.unwrap_or(cfg.graphql.bind);
     let playground_enabled = playground || cfg.graphql.playground;
+    let auth_enabled = cfg.graphql.auth_enabled;
+
+    // Load or generate Ed25519 keypair for JWT signing.
+    let (private_pem, public_pem) = if auth_enabled {
+        match auth::load_keypair() {
+            Ok(kp) => kp,
+            Err(e) => {
+                panic!(
+                    "Auth enabled but keypair not found: {}. Run `koan auth setup` first. \
+                     Refusing to start with auth_enabled=true and no valid keypair.",
+                    e
+                );
+            }
+        }
+    } else {
+        // When auth is disabled, we still need dummy keys for the route state
+        // (routes exist but won't be hit by middleware). Generate if available.
+        auth::load_or_generate_keypair().unwrap_or_default()
+    };
+
+    let auth_actually_enabled = auth_enabled && !private_pem.is_empty();
+
+    let access_ttl = parse_duration_secs(&cfg.graphql.access_token_ttl).unwrap_or(900);
+    let refresh_ttl = parse_duration_secs(&cfg.graphql.refresh_token_ttl).unwrap_or(2_592_000);
+
+    // Generate a process-scoped introspection key for playground access.
+    let introspection_key = if playground_enabled && auth_actually_enabled {
+        // Use UUID v4 as a random introspection key — 122 bits of randomness, no extra deps.
+        Some(Arc::new(uuid::Uuid::now_v7().to_string()))
+    } else {
+        None
+    };
+
+    let auth_state = AuthState {
+        public_pem: Arc::new(public_pem.clone()),
+        auth_enabled: auth_actually_enabled,
+        introspection_key: introspection_key.clone(),
+    };
+
+    let auth_route_state = AuthRouteState {
+        db_path: db_path.clone(),
+        private_pem: Arc::new(private_pem),
+        public_pem: Arc::new(public_pem),
+        access_ttl_secs: access_ttl,
+        refresh_ttl_secs: refresh_ttl,
+    };
 
     let schema = build_schema(state, cmd_tx, db_path.clone());
 
+    if auth_actually_enabled {
+        log::info!(
+            "Auth enabled (Ed25519 JWT, access TTL {}s, refresh TTL {}s)",
+            access_ttl,
+            refresh_ttl
+        );
+    } else {
+        log::info!("Auth disabled — all requests treated as admin");
+    }
+
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
-        let mut gql_app = axum::Router::new().route("/graphql", post(graphql_handler));
-        if playground_enabled {
-            gql_app = gql_app.route("/graphql", get(graphql_playground));
-        }
-        // Concurrency limit: prevent mutation spam DoS (e.g. trigger_scan flooding).
-        // Allows max 10 concurrent requests; excess requests get 503 back-pressure.
-        let gql_app = gql_app
+        // GraphQL routes — protected by auth middleware.
+        let gql_app = axum::Router::new()
+            .route("/graphql", post(graphql_handler))
+            .layer(axum::middleware::from_fn_with_state(
+                auth_state.clone(),
+                auth_middleware,
+            ))
             .layer(tower::limit::ConcurrencyLimitLayer::new(10))
             .with_state(schema);
+
+        // Auth routes — always accessible (no auth middleware).
+        let auth_app = auth_router(auth_route_state);
+
+        // Playground — GET /graphql serves GraphiQL, gated by introspection key.
+        // POST /graphql remains the normal auth-protected API endpoint.
+        let cors = tower_http::cors::CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
+            .allow_headers(tower_http::cors::Any);
+
+        let mut app = auth_app.merge(gql_app).layer(cors);
+        if playground_enabled {
+            app = app.route(
+                "/graphql",
+                get(graphql_playground).with_state(introspection_key.clone()),
+            );
+        }
+
+        // Build playground URL with introspection key.
+        let playground_url = if playground_enabled {
+            if let Some(ref key) = introspection_key {
+                format!("http://{}:{}/graphql?introspection-key={}", bind, port, key)
+            } else {
+                format!("http://{}:{}/graphql", bind, port)
+            }
+        } else {
+            format!("http://{}:{}/graphql", bind, port)
+        };
 
         let gql_addr = std::net::SocketAddr::new(bind, port);
 
@@ -79,7 +168,12 @@ fn run_api_blocking(
             Ok(l) => {
                 log::info!("GraphQL API on http://{}:{}/graphql", bind, port);
                 if playground_enabled {
-                    log::info!("GraphiQL: http://{}:{}/graphql", bind, port);
+                    log::info!("GraphiQL: {}", playground_url);
+                    // Open browser on macOS/Linux.
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("open").arg(&playground_url).spawn();
+                    #[cfg(target_os = "linux")]
+                    let _ = std::process::Command::new("xdg-open").arg(&playground_url).spawn();
                 }
                 l
             }
@@ -93,33 +187,39 @@ fn run_api_blocking(
             }
         };
         let gql_server =
-            axum::serve(gql_listener, gql_app).with_graceful_shutdown(shutdown_signal());
+            axum::serve(gql_listener, app).with_graceful_shutdown(shutdown_signal());
 
         if let Some(sub_port) = subsonic_port {
-            let sub_app = crate::subsonic::subsonic_router(db_path);
-            let sub_addr = std::net::SocketAddr::new(bind, sub_port);
+            if let Some(sub_app) = crate::subsonic::subsonic_router(db_path) {
+                let sub_addr = std::net::SocketAddr::new(bind, sub_port);
 
-            match tokio::net::TcpListener::bind(sub_addr).await {
-                Ok(sub_listener) => {
-                    log::info!("Subsonic REST on http://{}:{}/rest/", bind, sub_port);
-                    let sub_server = axum::serve(sub_listener, sub_app)
-                        .with_graceful_shutdown(shutdown_signal());
+                match tokio::net::TcpListener::bind(sub_addr).await {
+                    Ok(sub_listener) => {
+                        log::info!("Subsonic REST on http://{}:{}/rest/", bind, sub_port);
+                        let sub_server = axum::serve(sub_listener, sub_app)
+                            .with_graceful_shutdown(shutdown_signal());
 
-                    tokio::select! {
-                        r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
-                        r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
+                        tokio::select! {
+                            r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
+                            r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Subsonic API disabled: failed to bind port {} — {}",
+                            sub_port,
+                            e,
+                        );
+                        // Run GraphQL-only.
+                        if let Err(e) = gql_server.await {
+                            log::error!("GraphQL server error: {e}");
+                        }
                     }
                 }
-                Err(e) => {
-                    log::warn!(
-                        "Subsonic API disabled: failed to bind port {} — {}",
-                        sub_port,
-                        e,
-                    );
-                    // Run GraphQL-only.
-                    if let Err(e) = gql_server.await {
-                        log::error!("GraphQL server error: {e}");
-                    }
+            } else {
+                // subsonic_router returned None — credentials not configured.
+                if let Err(e) = gql_server.await {
+                    log::error!("GraphQL server error: {e}");
                 }
             }
         } else {
@@ -159,18 +259,43 @@ async fn shutdown_signal() {
 }
 
 async fn graphql_handler(
+    axum::Extension(user): axum::Extension<AuthUser>,
     axum::extract::State(schema): axum::extract::State<KoanSchema>,
     req: async_graphql_axum::GraphQLRequest,
 ) -> async_graphql_axum::GraphQLResponse {
-    schema.execute(req.into_inner()).await.into()
+    let mut request = req.into_inner();
+    // The auth middleware always injects AuthUser (anonymous_admin when auth is
+    // disabled, or a real user when auth is enabled). No fallback needed here.
+    request = request.data(user);
+    schema.execute(request).await.into()
 }
 
-async fn graphql_playground() -> axum::response::Html<String> {
-    axum::response::Html(
-        async_graphql::http::GraphiQLSource::build()
-            .endpoint("/graphql")
-            .finish(),
-    )
+async fn graphql_playground(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::State(key): axum::extract::State<Option<Arc<String>>>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // If an introspection key exists, require it in the URL.
+    if let Some(ref expected) = key {
+        let provided = params.get("introspection-key");
+        if provided.map(|k| k.as_str()) != Some(expected.as_str()) {
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                "invalid or missing introspection-key",
+            )
+                .into_response();
+        }
+    }
+
+    // Use async-graphql's built-in GraphiQL (self-contained, no CDN).
+    // Inject the introspection key as a default header so all queries are authed.
+    let mut source = async_graphql::http::GraphiQLSource::build().endpoint("/graphql");
+    if let Some(ref k) = key {
+        source = source.header("X-Introspection-Key", k.as_str());
+    }
+
+    axum::response::Html(source.finish()).into_response()
 }
 
 /// Run the server as a background daemon (fork + detach).
@@ -226,12 +351,15 @@ pub fn cmd_serve_daemon(
 // ---------------------------------------------------------------------------
 
 /// Execute a GraphQL query in-process (no HTTP round-trip).
+/// In-process requests bypass auth — they're trusted (e.g., MCP tools).
 pub async fn execute_in_process(
     schema: &KoanSchema,
     query: &str,
     variables: Option<serde_json::Value>,
 ) -> serde_json::Value {
     let mut request = async_graphql::Request::new(query);
+    // In-process = admin access (MCP/local tools).
+    request = request.data(AuthUser::anonymous_admin());
     if let Some(serde_json::Value::Object(map)) = variables {
         let mut gql_vars = async_graphql::Variables::default();
         for (k, v) in map {

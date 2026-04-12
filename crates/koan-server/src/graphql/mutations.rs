@@ -9,9 +9,11 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, QueueItemId, SharedPlayerState};
 use uuid::Uuid;
 
+use koan_core::auth::Role;
+
 use super::helpers::{spawn_downloads, sync_favourite_to_remote, track_to_playlist_item};
 use super::types::*;
-use super::{DbHandle, parse_queue_item_id, send_cmd};
+use super::{DbHandle, parse_queue_item_id, require_role, send_cmd};
 
 // ---------------------------------------------------------------------------
 // Mutation root
@@ -28,37 +30,44 @@ impl MutationRoot {
         ctx: &Context<'_>,
         queue_item_id: String,
     ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         let id = parse_queue_item_id(&queue_item_id)?;
         send_cmd(ctx, PlayerCommand::Play(id))?;
         Ok(GqlStatus::success("playing"))
     }
 
     async fn pause(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::Pause)?;
         Ok(GqlStatus::success("paused"))
     }
 
     async fn resume(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::Resume)?;
         Ok(GqlStatus::success("resumed"))
     }
 
     async fn stop(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::Stop)?;
         Ok(GqlStatus::success("stopped"))
     }
 
     async fn next(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::NextTrack)?;
         Ok(GqlStatus::success("skipped to next"))
     }
 
     async fn previous(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::PrevTrack)?;
         Ok(GqlStatus::success("skipped to previous"))
     }
 
     async fn seek(&self, ctx: &Context<'_>, position_ms: i64) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::Seek(position_ms as u64))?;
         Ok(GqlStatus::success(format!("seeked to {}ms", position_ms)))
     }
@@ -70,6 +79,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         track_ids: Vec<i64>,
     ) -> async_graphql::Result<GqlQueueMutationResult> {
+        require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
@@ -123,6 +133,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         track_ids: Vec<i64>,
     ) -> async_graphql::Result<GqlQueueMutationResult> {
+        require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
@@ -175,6 +186,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         queue_item_ids: Vec<String>,
     ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         let ids: Vec<QueueItemId> = queue_item_ids
             .iter()
             .map(|s| parse_queue_item_id(s))
@@ -194,6 +206,7 @@ impl MutationRoot {
         target_queue_item_id: String,
         after: bool,
     ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         let ids: Vec<QueueItemId> = queue_item_ids
             .iter()
             .map(|s| parse_queue_item_id(s))
@@ -207,16 +220,19 @@ impl MutationRoot {
     }
 
     async fn clear_queue(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::ClearPlaylist)?;
         Ok(GqlStatus::success("queue cleared"))
     }
 
     async fn undo(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::Undo)?;
         Ok(GqlStatus::success("undone"))
     }
 
     async fn redo(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::Redo)?;
         Ok(GqlStatus::success("redone"))
     }
@@ -228,11 +244,13 @@ impl MutationRoot {
         ctx: &Context<'_>,
         name: String,
     ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
         send_cmd(ctx, PlayerCommand::SetOutputDevice(name.clone()))?;
         Ok(GqlStatus::success(format!("switched to device '{}'", name)))
     }
 
     async fn clear_device(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
         send_cmd(ctx, PlayerCommand::ClearOutputDevice)?;
         Ok(GqlStatus::success("device cleared, using system default"))
     }
@@ -240,6 +258,7 @@ impl MutationRoot {
     // -- Favourites --
 
     async fn favourite(&self, ctx: &Context<'_>, track_id: i64) -> async_graphql::Result<GqlTrack> {
+        require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
@@ -260,6 +279,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         track_id: i64,
     ) -> async_graphql::Result<GqlTrack> {
+        require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
@@ -280,6 +300,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         track_id: i64,
     ) -> async_graphql::Result<GqlTrack> {
+        require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
@@ -302,6 +323,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         name: String,
     ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let (items, cursor) = state.snapshot_playlist();
@@ -335,6 +357,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         name: String,
     ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
@@ -398,6 +421,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         name: String,
     ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let deleted = queries::delete_snapshot(&db.conn, &name)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
@@ -414,12 +438,14 @@ impl MutationRoot {
     // -- Radio --
 
     async fn enable_radio(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         state.set_radio_mode(true);
         Ok(GqlStatus::success("radio mode enabled"))
     }
 
     async fn disable_radio(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         state.set_radio_mode(false);
         Ok(GqlStatus::success("radio mode disabled"))
@@ -433,6 +459,7 @@ impl MutationRoot {
         pattern: String,
         track_ids: Option<Vec<i64>>,
     ) -> async_graphql::Result<GqlOrganizePreview> {
+        require_role(ctx, Role::Admin)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let result = if let Some(ids) = track_ids {
             koan_core::organize::preview_for_tracks(&db, &ids, &pattern, None)
@@ -466,6 +493,7 @@ impl MutationRoot {
         pattern: String,
         track_ids: Option<Vec<i64>>,
     ) -> async_graphql::Result<GqlOrganizeResult> {
+        require_role(ctx, Role::Admin)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let result = if let Some(ids) = track_ids {
             koan_core::organize::execute_for_tracks(&db, &ids, &pattern, None)
@@ -486,6 +514,7 @@ impl MutationRoot {
     }
 
     async fn organize_undo(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let count = koan_core::organize::undo(&db)
             .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
@@ -495,6 +524,7 @@ impl MutationRoot {
     // -- Library management --
 
     async fn trigger_scan(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlScanResult> {
+        require_role(ctx, Role::Admin)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let cfg = Config::load().unwrap_or_default();
         let result = koan_core::index::scanner::full_scan(&db, &cfg.library.folders, false, None);
@@ -506,6 +536,7 @@ impl MutationRoot {
     }
 
     async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let cfg = Config::load().unwrap_or_default();
         let client = koan_core::helpers::subsonic_client(&cfg)
@@ -529,6 +560,7 @@ impl MutationRoot {
         track_ids: Vec<i64>,
         description: Option<String>,
     ) -> async_graphql::Result<GqlShare> {
+        require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let cfg = Config::load().unwrap_or_default();
         let client = koan_core::helpers::subsonic_client(&cfg)

@@ -151,6 +151,26 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             embedding   BLOB NOT NULL,
             updated_at  TEXT DEFAULT (datetime('now'))
         );
+
+        -- Auth tables
+        CREATE TABLE IF NOT EXISTS users (
+            id            INTEGER PRIMARY KEY,
+            username      TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL,
+            role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user', 'readonly')),
+            created_at    TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            id          TEXT PRIMARY KEY,
+            user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            expires_at  INTEGER NOT NULL,
+            revoked     INTEGER NOT NULL DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
         ",
     )?;
     // --- Migrations: add columns that didn't exist in earlier versions ---
