@@ -197,42 +197,83 @@ fn offer_save_to_1password(username: &str, password: &str) {
     }
 
     let title = format!("koan@{}", hostname);
-    let template = serde_json::json!({
-        "title": title,
-        "category": "LOGIN",
-        "fields": [
-            {"id": "username", "type": "STRING", "value": username, "purpose": "USERNAME"},
-            {"id": "password", "type": "CONCEALED", "value": password, "purpose": "PASSWORD"}
-        ],
-        "urls": [{"primary": true, "href": "http://localhost:4000"}]
-    });
 
-    let mut child = match std::process::Command::new("op")
-        .args(["item", "create", "--format=json"])
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::null())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(_) => return,
-    };
+    // Check if an item with this title already exists.
+    let existing = std::process::Command::new("op")
+        .args(["item", "get", &title, "--format=json"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success());
 
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        let _ = stdin.write_all(template.to_string().as_bytes());
-    }
-
-    let status = child.wait();
-
-    match status {
-        Ok(s) if s.success() => {
-            println!("{} Saved to 1Password", "✓".green().bold());
+    if existing.is_some() {
+        // Item exists — offer to update.
+        eprint!(
+            "{} '{}' already exists in 1Password. Update it? [Y/n] ",
+            "?".cyan().bold(),
+            title
+        );
+        let mut confirm = String::new();
+        if std::io::stdin().read_line(&mut confirm).is_err() {
+            return;
         }
-        _ => {
-            eprintln!(
-                "{} Failed to save to 1Password (is `op` signed in?)",
-                "!".yellow().bold()
-            );
+        if confirm.trim().eq_ignore_ascii_case("n") {
+            return;
+        }
+
+        let user_field = format!("username={}", username);
+        let pass_field = format!("password={}", password);
+        let status = std::process::Command::new("op")
+            .args(["item", "edit", &title, &user_field, &pass_field])
+            .stdout(std::process::Stdio::null())
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                println!("{} Updated '{}' in 1Password", "✓".green().bold(), title);
+            }
+            _ => {
+                eprintln!("{} Failed to update in 1Password", "!".yellow().bold());
+            }
+        }
+    } else {
+        // Create new item — pipe template via stdin.
+        let template = serde_json::json!({
+            "title": title,
+            "category": "LOGIN",
+            "fields": [
+                {"id": "username", "type": "STRING", "value": username, "purpose": "USERNAME"},
+                {"id": "password", "type": "CONCEALED", "value": password, "purpose": "PASSWORD"}
+            ],
+            "urls": [{"primary": true, "href": "http://localhost:4000"}]
+        });
+
+        let mut child = match std::process::Command::new("op")
+            .args(["item", "create", "--format=json"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(template.to_string().as_bytes());
+        }
+
+        match child.wait() {
+            Ok(s) if s.success() => {
+                println!("{} Saved to 1Password as '{}'", "✓".green().bold(), title);
+            }
+            _ => {
+                eprintln!(
+                    "{} Failed to save to 1Password (is `op` signed in?)",
+                    "!".yellow().bold()
+                );
+            }
         }
     }
 }
