@@ -253,12 +253,11 @@ impl Player {
         }));
         self.shared_state.set_position_ms(seek_ms);
         log::info!(
-            "playing: {} ({:?}) — {} {}Hz/{}bit/{}ch, {}ms{}",
+            "playing: {} ({:?}) — {} {}Hz/{}ch, {}ms{}",
             path.display(),
             id,
             info.codec,
             info.sample_rate,
-            info.bit_depth,
             info.channels,
             info.duration_ms,
             if seek_ms > 0 {
@@ -471,12 +470,11 @@ impl Player {
         }));
         self.shared_state.set_position_ms(0);
         log::info!(
-            "streaming: {} ({:?}) — {} {}Hz/{}bit/{}ch, {}ms",
+            "streaming: {} ({:?}) — {} {}Hz/{}ch, {}ms",
             path.display(),
             id,
             info.codec,
             info.sample_rate,
-            info.bit_depth,
             info.channels,
             info.duration_ms,
         );

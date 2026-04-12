@@ -40,7 +40,8 @@ pub struct StreamInfo {
     pub codec: String,
     pub sample_rate: u32,
     pub channels: u16,
-    pub bit_depth: u16,
+    /// None for lossy codecs where bit depth is meaningless (Opus, Vorbis, AAC, MP3).
+    pub bit_depth: Option<u16>,
     pub duration_ms: u64,
 }
 
@@ -290,9 +291,9 @@ fn probe_mss(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, DecodeEr
     };
     let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
     let bit_depth = if is_opus {
-        32
+        None // Lossy codec — bit depth is meaningless.
     } else {
-        codec_params.bits_per_sample.unwrap_or(16) as u16
+        Some(codec_params.bits_per_sample.unwrap_or(16) as u16)
     };
     let duration_ms = track
         .codec_params
@@ -368,7 +369,7 @@ where
         codec: String::from("?"),
         sample_rate: 44100,
         channels: 2,
-        bit_depth: 16,
+        bit_depth: Some(16),
         duration_ms: 0,
     };
 
@@ -562,11 +563,10 @@ fn decode_single(
         codec: codec_name(codec_params.codec),
         sample_rate,
         channels,
-        // Opus is internally float; report 32-bit.
         bit_depth: if is_opus_codec {
-            32
+            None
         } else {
-            codec_params.bits_per_sample.unwrap_or(16) as u16
+            Some(codec_params.bits_per_sample.unwrap_or(16) as u16)
         },
         duration_ms: codec_params
             .n_frames
@@ -792,7 +792,7 @@ mod tests {
             codec: "FLAC".to_string(),
             sample_rate,
             channels,
-            bit_depth: 16,
+            bit_depth: Some(16),
             duration_ms: 10_000,
         }
     }
