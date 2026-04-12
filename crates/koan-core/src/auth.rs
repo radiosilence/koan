@@ -153,6 +153,12 @@ pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     let dir = keypair_dir();
     fs::create_dir_all(&dir)?;
 
+    // Ensure the auth directory is gitignored — keys must never be committed.
+    let gitignore = dir.join(".gitignore");
+    if !gitignore.exists() {
+        let _ = fs::write(&gitignore, "*\n");
+    }
+
     // Generate Ed25519 keypair using ring (via jsonwebtoken's internal ring dep).
     // jsonwebtoken's EncodingKey::from_ed_pem expects PKCS8 PEM.
     let rng = ring::rand::SystemRandom::new();
