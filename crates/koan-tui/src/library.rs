@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Borders, Widget};
 
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
+use koan_core::graphql_client::GraphQLClient;
 
 use super::theme::Theme;
 use super::transport::format_time;
@@ -44,10 +45,12 @@ pub struct LibraryState {
     pub filter_active: bool,
     /// Cached unfiltered artist list — avoids re-querying DB on every filter keystroke.
     all_artists: Vec<LibraryNode>,
+    /// GQL client for data access (when available, bypasses direct DB queries).
+    gql_client: Option<GraphQLClient>,
 }
 
 impl LibraryState {
-    pub fn new(db_path: &Path) -> Self {
+    pub fn new(db_path: &Path, gql_client: Option<GraphQLClient>) -> Self {
         let mut state = Self {
             nodes: Vec::new(),
             cursor: 0,
@@ -56,6 +59,7 @@ impl LibraryState {
             filter: String::new(),
             filter_active: false,
             all_artists: Vec::new(),
+            gql_client,
         };
         state.load_artists();
         state
@@ -66,16 +70,28 @@ impl LibraryState {
     }
 
     fn load_artists(&mut self) {
-        let Some(db) = self.open_db() else { return };
-        let artists = queries::all_artists(&db.conn).unwrap_or_default();
-        self.all_artists = artists
-            .into_iter()
-            .map(|a| LibraryNode::Artist {
-                id: a.id,
-                name: a.name,
-                expanded: false,
-            })
-            .collect();
+        if let Some(ref client) = self.gql_client {
+            let artists = client.artists().unwrap_or_default();
+            self.all_artists = artists
+                .into_iter()
+                .map(|a| LibraryNode::Artist {
+                    id: a.id,
+                    name: a.name,
+                    expanded: false,
+                })
+                .collect();
+        } else {
+            let Some(db) = self.open_db() else { return };
+            let artists = queries::all_artists(&db.conn).unwrap_or_default();
+            self.all_artists = artists
+                .into_iter()
+                .map(|a| LibraryNode::Artist {
+                    id: a.id,
+                    name: a.name,
+                    expanded: false,
+                })
+                .collect();
+        }
         self.nodes = self.all_artists.clone();
     }
 
@@ -170,34 +186,56 @@ impl LibraryState {
         };
         let artist_id = *id;
 
-        let Some(db) = self.open_db() else { return };
-        let albums = queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
-
         if let LibraryNode::Artist { expanded, .. } = &mut self.nodes[self.cursor] {
             *expanded = true;
         }
 
-        let insert_pos = self.cursor + 1;
-        let new_nodes: Vec<LibraryNode> = albums
-            .into_iter()
-            .map(|a| {
-                let year = a.date.as_deref().and_then(|d| {
-                    if d.len() >= 4 {
-                        Some(d[..4].to_string())
-                    } else {
-                        None
+        let album_nodes: Vec<LibraryNode> = if let Some(ref client) = self.gql_client {
+            client
+                .albums_for_artist(artist_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| {
+                    let year = a.date.as_deref().and_then(|d| {
+                        if d.len() >= 4 {
+                            Some(d[..4].to_string())
+                        } else {
+                            None
+                        }
+                    });
+                    LibraryNode::Album {
+                        id: a.id,
+                        title: a.title,
+                        year,
+                        expanded: false,
                     }
-                });
-                LibraryNode::Album {
-                    id: a.id,
-                    title: a.title,
-                    year,
-                    expanded: false,
-                }
-            })
-            .collect();
+                })
+                .collect()
+        } else {
+            let Some(db) = self.open_db() else { return };
+            queries::albums_for_artist(&db.conn, artist_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|a| {
+                    let year = a.date.as_deref().and_then(|d| {
+                        if d.len() >= 4 {
+                            Some(d[..4].to_string())
+                        } else {
+                            None
+                        }
+                    });
+                    LibraryNode::Album {
+                        id: a.id,
+                        title: a.title,
+                        year,
+                        expanded: false,
+                    }
+                })
+                .collect()
+        };
 
-        for (i, node) in new_nodes.into_iter().enumerate() {
+        let insert_pos = self.cursor + 1;
+        for (i, node) in album_nodes.into_iter().enumerate() {
             self.nodes.insert(insert_pos + i, node);
         }
     }
@@ -208,26 +246,40 @@ impl LibraryState {
         };
         let album_id = *id;
 
-        let Some(db) = self.open_db() else { return };
-        let tracks = queries::tracks_for_album(&db.conn, album_id).unwrap_or_default();
-
         if let LibraryNode::Album { expanded, .. } = &mut self.nodes[self.cursor] {
             *expanded = true;
         }
 
-        let insert_pos = self.cursor + 1;
-        let new_nodes: Vec<LibraryNode> = tracks
-            .into_iter()
-            .map(|t| LibraryNode::Track {
-                id: t.id,
-                title: t.title,
-                number: t.track_number,
-                duration_ms: t.duration_ms,
-                source: t.source,
-            })
-            .collect();
+        let track_nodes: Vec<LibraryNode> = if let Some(ref client) = self.gql_client {
+            client
+                .tracks_for_album(album_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| LibraryNode::Track {
+                    id: t.id,
+                    title: t.title,
+                    number: t.track_number,
+                    duration_ms: t.duration_ms,
+                    source: t.source,
+                })
+                .collect()
+        } else {
+            let Some(db) = self.open_db() else { return };
+            queries::tracks_for_album(&db.conn, album_id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|t| LibraryNode::Track {
+                    id: t.id,
+                    title: t.title,
+                    number: t.track_number,
+                    duration_ms: t.duration_ms,
+                    source: t.source,
+                })
+                .collect()
+        };
 
-        for (i, node) in new_nodes.into_iter().enumerate() {
+        let insert_pos = self.cursor + 1;
+        for (i, node) in track_nodes.into_iter().enumerate() {
             self.nodes.insert(insert_pos + i, node);
         }
     }
@@ -351,6 +403,23 @@ impl LibraryState {
     pub fn enqueue_all_under_cursor(&self) -> Vec<i64> {
         if self.cursor >= self.nodes.len() {
             return vec![];
+        }
+        if let Some(ref client) = self.gql_client {
+            return match &self.nodes[self.cursor] {
+                LibraryNode::Artist { id, .. } => client
+                    .tracks_for_artist(*id)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|t| t.id)
+                    .collect(),
+                LibraryNode::Album { id, .. } => client
+                    .tracks_for_album(*id)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|t| t.id)
+                    .collect(),
+                LibraryNode::Track { id, .. } => vec![*id],
+            };
         }
         let Some(db) = self.open_db() else {
             return vec![];

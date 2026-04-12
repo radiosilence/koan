@@ -307,9 +307,14 @@ pub struct App {
 
     /// Persistent download queue — used to trigger downloads for pending items.
     pub download_queue: DownloadQueue,
+
+    /// GraphQL client for in-process or remote data access.
+    /// When present, TUI routes library/config/state queries through this.
+    pub gql_client: Option<koan_core::graphql_client::GraphQLClient>,
 }
 
 impl App {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         state: Arc<SharedPlayerState>,
         viz_snapshot: Arc<VizSnapshot>,
@@ -318,6 +323,7 @@ impl App {
         db_path: PathBuf,
         ticks_per_sec: u8,
         download_queue: DownloadQueue,
+        gql_client: Option<koan_core::graphql_client::GraphQLClient>,
     ) -> Self {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
         let ticker_divisor = {
@@ -386,6 +392,7 @@ impl App {
             radio_config: cfg.radio,
             art_size: cfg.playback.art_size,
             download_queue,
+            gql_client,
         }
     }
 
@@ -2891,7 +2898,7 @@ impl App {
 
     pub fn open_library(&mut self) {
         if self.library.is_none() {
-            self.library = Some(LibraryState::new(&self.db_path));
+            self.library = Some(LibraryState::new(&self.db_path, self.gql_client.clone()));
         }
         self.mode = Mode::LibraryBrowse;
         self.library_focus = LibraryFocus::Library;

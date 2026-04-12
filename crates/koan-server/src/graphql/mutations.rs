@@ -316,6 +316,51 @@ impl MutationRoot {
         Ok(GqlTrack { row: track })
     }
 
+    // -- Playback state persistence --
+
+    async fn save_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+
+        let (items, cursor) = state.snapshot_playlist();
+        if items.is_empty() {
+            queries::playback_state::clear_playback_state(&db.conn)
+                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            return Ok(GqlStatus::success("playback state cleared (empty queue)"));
+        }
+
+        let persisted: Vec<PersistedQueueItem> = items
+            .iter()
+            .map(PersistedQueueItem::from_playlist_item)
+            .collect();
+        let cursor_path = cursor.and_then(|cid| {
+            items
+                .iter()
+                .find(|i| i.id == cid)
+                .map(|i| i.path.to_string_lossy().into_owned())
+        });
+        let position_ms = state.position_ms();
+
+        queries::playback_state::save_playback_state(
+            &db.conn,
+            &persisted,
+            cursor_path.as_deref(),
+            position_ms,
+        )
+        .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+
+        Ok(GqlStatus::success("playback state saved"))
+    }
+
+    async fn clear_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let db = ctx.data::<DbHandle>()?.open()?;
+        queries::playback_state::clear_playback_state(&db.conn)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        Ok(GqlStatus::success("playback state cleared"))
+    }
+
     // -- Snapshots --
 
     async fn save_snapshot(

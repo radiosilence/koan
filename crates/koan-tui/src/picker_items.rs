@@ -1,4 +1,5 @@
 use koan_core::db::queries;
+use koan_core::graphql_client::GraphQLClient;
 
 use crate::picker::{PickerItem, PickerKind, PickerPartKind};
 
@@ -9,7 +10,10 @@ fn format_time(ms: u64) -> String {
     format!("{}:{:02}", mins, secs)
 }
 
-pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
+pub fn load_picker_items(kind: PickerKind, gql_client: Option<&GraphQLClient>) -> Vec<PickerItem> {
+    if let Some(client) = gql_client {
+        return load_picker_items_gql(kind, client);
+    }
     let db = koan_core::db::connection::Database::open_default().unwrap_or_else(|e| {
         log::error!("db error: {}", e);
         std::process::exit(1);
@@ -28,6 +32,33 @@ pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
             make_artist_picker_items(&artists)
         }
         // QueueJump items are created eagerly in app.rs, never lazy-loaded.
+        PickerKind::QueueJump => vec![],
+    }
+}
+
+fn load_picker_items_gql(kind: PickerKind, client: &GraphQLClient) -> Vec<PickerItem> {
+    match kind {
+        PickerKind::Track => match client.all_tracks() {
+            Ok(tracks) => make_track_picker_items_gql(&tracks),
+            Err(e) => {
+                log::warn!("GQL all_tracks failed: {}", e);
+                vec![]
+            }
+        },
+        PickerKind::Album => match client.all_albums() {
+            Ok(albums) => make_album_picker_items_gql(&albums),
+            Err(e) => {
+                log::warn!("GQL all_albums failed: {}", e);
+                vec![]
+            }
+        },
+        PickerKind::Artist => match client.artists() {
+            Ok(artists) => make_artist_picker_items_gql(&artists),
+            Err(e) => {
+                log::warn!("GQL artists failed: {}", e);
+                vec![]
+            }
+        },
         PickerKind::QueueJump => vec![],
     }
 }
@@ -97,6 +128,92 @@ pub fn make_album_picker_items(albums: &[queries::AlbumRow]) -> Vec<PickerItem> 
 }
 
 pub fn make_artist_picker_items(artists: &[queries::ArtistRow]) -> Vec<PickerItem> {
+    artists
+        .iter()
+        .map(|a| PickerItem {
+            id: a.id,
+            display: a.name.clone(),
+            match_text: a.name.clone(),
+            parts: vec![(a.name.clone(), PickerPartKind::Artist)],
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// GQL-backed picker item constructors
+// ---------------------------------------------------------------------------
+
+fn make_track_picker_items_gql(
+    tracks: &[koan_core::graphql_client::TrackResult],
+) -> Vec<PickerItem> {
+    tracks
+        .iter()
+        .map(|t| {
+            let dur = t
+                .duration_ms
+                .map(|d| format_time(d as u64))
+                .unwrap_or_default();
+            let track_num = match (t.disc, t.track_number) {
+                (Some(d), Some(n)) if d > 1 => format!("{}.{:02}", d, n),
+                (_, Some(n)) => format!("{:02}", n),
+                _ => "  ".into(),
+            };
+            let mut parts = vec![
+                (format!("{} ", track_num), PickerPartKind::TrackNum),
+                (t.artist.clone(), PickerPartKind::Artist),
+                (" - ".into(), PickerPartKind::Separator),
+                (t.title.clone(), PickerPartKind::Title),
+            ];
+            if !dur.is_empty() {
+                parts.push((format!(" {}", dur), PickerPartKind::Duration));
+            }
+            PickerItem {
+                id: t.id,
+                display: format!("{} {} - {} {}", track_num, t.artist, t.title, dur),
+                match_text: format!("{} {} {}", t.artist, t.album, t.title),
+                parts,
+            }
+        })
+        .collect()
+}
+
+fn make_album_picker_items_gql(
+    albums: &[koan_core::graphql_client::AlbumResult],
+) -> Vec<PickerItem> {
+    albums
+        .iter()
+        .map(|a| {
+            let year = a
+                .date
+                .as_deref()
+                .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None });
+            let codec = a.codec.as_deref();
+            let mut parts = vec![
+                (a.artist_name.clone(), PickerPartKind::Artist),
+                (" - ".into(), PickerPartKind::Separator),
+            ];
+            if let Some(y) = year {
+                parts.push((format!("({}) ", y), PickerPartKind::Date));
+            }
+            parts.push((a.title.clone(), PickerPartKind::Album));
+            if let Some(c) = codec {
+                parts.push((format!(" [{}]", c), PickerPartKind::Codec));
+            }
+            let year_str = year.map(|y| format!("({}) ", y)).unwrap_or_default();
+            let codec_str = codec.map(|c| format!(" [{}]", c)).unwrap_or_default();
+            PickerItem {
+                id: a.id,
+                display: format!("{} - {}{}{}", a.artist_name, year_str, a.title, codec_str),
+                match_text: format!("{} {}", a.artist_name, a.title),
+                parts,
+            }
+        })
+        .collect()
+}
+
+fn make_artist_picker_items_gql(
+    artists: &[koan_core::graphql_client::ArtistResult],
+) -> Vec<PickerItem> {
     artists
         .iter()
         .map(|a| PickerItem {

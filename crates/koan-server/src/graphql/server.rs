@@ -345,3 +345,71 @@ pub async fn execute_in_process(
     let response = schema.execute(request).await;
     serde_json::to_value(&response).unwrap_or(serde_json::Value::Null)
 }
+
+// ---------------------------------------------------------------------------
+// In-process QueryExecutor (for TUI GraphQLClient)
+// ---------------------------------------------------------------------------
+
+/// Implements `koan_core::graphql_client::QueryExecutor` by executing queries
+/// directly against the `KoanSchema` in-process. No HTTP round-trip.
+/// Runs async execution on a dedicated tokio runtime.
+pub struct InProcessExecutor {
+    schema: KoanSchema,
+    rt: tokio::runtime::Runtime,
+}
+
+impl InProcessExecutor {
+    pub fn new(schema: KoanSchema) -> Self {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("failed to create in-process executor runtime");
+        Self { schema, rt }
+    }
+}
+
+impl koan_core::graphql_client::QueryExecutor for InProcessExecutor {
+    fn execute_query(
+        &self,
+        query: &str,
+        variables: Option<serde_json::Value>,
+    ) -> Result<serde_json::Value, koan_core::graphql_client::GraphQLError> {
+        let schema = &self.schema;
+        let query = query.to_string();
+
+        let result = self.rt.block_on(async {
+            let mut request = async_graphql::Request::new(&query);
+            request = request.data(AuthUser::anonymous_admin());
+            if let Some(serde_json::Value::Object(map)) = variables {
+                let mut gql_vars = async_graphql::Variables::default();
+                for (k, v) in map {
+                    gql_vars.insert(
+                        async_graphql::Name::new(&k),
+                        async_graphql::Value::from_json(v).unwrap_or(async_graphql::Value::Null),
+                    );
+                }
+                request = request.variables(gql_vars);
+            }
+            let response = schema.execute(request).await;
+            serde_json::to_value(&response).unwrap_or(serde_json::Value::Null)
+        });
+
+        if let Some(errors) = result.get("errors")
+            && let Some(arr) = errors.as_array()
+            && !arr.is_empty()
+        {
+            let msg = arr[0]
+                .get("message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("unknown error");
+            return Err(koan_core::graphql_client::GraphQLError::Query(
+                msg.to_string(),
+            ));
+        }
+
+        Ok(result
+            .get("data")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
+    }
+}

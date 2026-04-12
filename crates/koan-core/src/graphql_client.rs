@@ -1,30 +1,32 @@
-//! Lightweight GraphQL client for connecting to a `koan serve` instance.
+//! GraphQL client for communicating with the koan schema.
 //!
-//! Uses blocking reqwest — call from a background thread when used from the TUI.
+//! Transport-agnostic: works over HTTP (remote server) or in-process
+//! (via `QueryExecutor` trait). The TUI uses the same `GraphQLClient`
+//! regardless of whether the server is local or remote.
+
+use std::sync::Arc;
 
 use serde_json::Value;
 
-/// A GraphQL client that talks to a koan server.
-#[derive(Debug, Clone)]
-pub struct GraphQLClient {
+// ---------------------------------------------------------------------------
+// Query executor trait
+// ---------------------------------------------------------------------------
+
+/// Abstraction over how GraphQL queries are executed.
+/// HTTP executor talks to a remote server. In-process executor calls
+/// `schema.execute()` directly (zero network overhead).
+pub trait QueryExecutor: Send + Sync {
+    fn execute_query(&self, query: &str, variables: Option<Value>) -> Result<Value, GraphQLError>;
+}
+
+/// HTTP executor — sends queries to a remote koan server via reqwest.
+struct HttpExecutor {
     url: String,
     http: reqwest::blocking::Client,
 }
 
-impl GraphQLClient {
-    pub fn new(server_url: &str) -> Self {
-        let url = format!("{}/graphql", server_url.trim_end_matches('/'));
-        Self {
-            url,
-            http: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("failed to build HTTP client"),
-        }
-    }
-
-    /// Execute a raw GraphQL query/mutation.
-    pub fn execute(&self, query: &str, variables: Option<Value>) -> Result<Value, GraphQLError> {
+impl QueryExecutor for HttpExecutor {
+    fn execute_query(&self, query: &str, variables: Option<Value>) -> Result<Value, GraphQLError> {
         let mut body = serde_json::json!({ "query": query });
         if let Some(vars) = variables {
             body["variables"] = vars;
@@ -52,15 +54,64 @@ impl GraphQLClient {
 
         Ok(resp.get("data").cloned().unwrap_or(Value::Null))
     }
+}
+
+// ---------------------------------------------------------------------------
+// GraphQL client
+// ---------------------------------------------------------------------------
+
+/// A GraphQL client that talks to the koan schema.
+///
+/// Transport is determined by the `QueryExecutor` implementation:
+/// - `GraphQLClient::new(url)` — HTTP transport (remote server)
+/// - `GraphQLClient::new_with_executor(executor)` — custom transport (in-process, test mock, etc.)
+#[derive(Clone)]
+pub struct GraphQLClient {
+    executor: Arc<dyn QueryExecutor>,
+    server_url: String,
+}
+
+impl GraphQLClient {
+    /// Create an HTTP-backed client pointing at a remote koan server.
+    pub fn new(server_url: &str) -> Self {
+        let url = format!("{}/graphql", server_url.trim_end_matches('/'));
+        Self {
+            server_url: server_url.trim_end_matches('/').to_string(),
+            executor: Arc::new(HttpExecutor {
+                url,
+                http: reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(30))
+                    .build()
+                    .expect("failed to build HTTP client"),
+            }),
+        }
+    }
+
+    /// Create a client with a custom executor (e.g. in-process schema execution).
+    pub fn new_with_executor(executor: Arc<dyn QueryExecutor>, server_url: &str) -> Self {
+        Self {
+            executor,
+            server_url: server_url.trim_end_matches('/').to_string(),
+        }
+    }
+
+    /// Execute a raw GraphQL query/mutation.
+    pub fn execute(&self, query: &str, variables: Option<Value>) -> Result<Value, GraphQLError> {
+        self.executor.execute_query(query, variables)
+    }
 
     /// Get the stream URL for a track (for audio playback).
     pub fn stream_url(&self, track_id: i64) -> String {
-        let base = self.url.trim_end_matches("/graphql");
-        format!("{}/rest/stream?id={}", base, track_id)
+        format!("{}/rest/stream?id={}", self.server_url, track_id)
+    }
+
+    /// Server URL (without /graphql path).
+    pub fn server_url(&self) -> &str {
+        &self.server_url
     }
 
     // -----------------------------------------------------------------------
-    // Typed helpers
+    // Queries
     // -----------------------------------------------------------------------
 
     pub fn now_playing(&self) -> Result<NowPlaying, GraphQLError> {
@@ -96,10 +147,10 @@ impl GraphQLClient {
 
     pub fn queue(&self) -> Result<Vec<QueueEntry>, GraphQLError> {
         let data = self.execute(
-            "{ queue { queueItemId title artist album codec trackNumber disc durationMs isCurrent } }",
+            "{ queue { entries { queueItemId title artist album codec trackNumber disc durationMs isCurrent } } }",
             None,
         )?;
-        let entries = data["queue"]
+        let entries = data["queue"]["entries"]
             .as_array()
             .map(|arr| {
                 arr.iter()
@@ -118,14 +169,6 @@ impl GraphQLClient {
             })
             .unwrap_or_default();
         Ok(entries)
-    }
-
-    pub fn search(&self, query: &str, limit: u32) -> Result<Vec<TrackResult>, GraphQLError> {
-        let data = self.execute(
-            "query($search: String!, $first: Int) { tracks(search: $search, first: $first) { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source } } } }",
-            Some(serde_json::json!({ "search": query, "first": limit })),
-        )?;
-        parse_track_edges(&data["tracks"])
     }
 
     pub fn artists(&self) -> Result<Vec<ArtistResult>, GraphQLError> {
@@ -154,10 +197,68 @@ impl GraphQLClient {
         parse_album_edges(&data["albums"])
     }
 
+    pub fn all_albums(&self) -> Result<Vec<AlbumResult>, GraphQLError> {
+        let data = self.execute(
+            "{ albums { edges { node { id title artistName date codec } } } }",
+            None,
+        )?;
+        parse_album_edges(&data["albums"])
+    }
+
     pub fn tracks_for_album(&self, album_id: i64) -> Result<Vec<TrackResult>, GraphQLError> {
         let data = self.execute(
             "query($albumId: Int!) { tracks(albumId: $albumId) { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source } } } }",
             Some(serde_json::json!({ "albumId": album_id })),
+        )?;
+        parse_track_edges(&data["tracks"])
+    }
+
+    pub fn tracks_for_artist(&self, artist_id: i64) -> Result<Vec<TrackResult>, GraphQLError> {
+        let data = self.execute(
+            "query($artistId: Int!) { tracks(artistId: $artistId) { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source } } } }",
+            Some(serde_json::json!({ "artistId": artist_id })),
+        )?;
+        parse_track_edges(&data["tracks"])
+    }
+
+    pub fn all_tracks(&self) -> Result<Vec<TrackResult>, GraphQLError> {
+        let data = self.execute(
+            "{ tracks { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source } } } }",
+            None,
+        )?;
+        parse_track_edges(&data["tracks"])
+    }
+
+    pub fn track(&self, id: i64) -> Result<Option<TrackResult>, GraphQLError> {
+        let data = self.execute(
+            "query($id: Int!) { track(id: $id) { id title artist album albumId artistId disc trackNumber durationMs codec genre source } }",
+            Some(serde_json::json!({ "id": id })),
+        )?;
+        let t = &data["track"];
+        if t.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(TrackResult {
+            id: t["id"].as_i64().unwrap_or(0),
+            title: t["title"].as_str().unwrap_or("").to_string(),
+            artist: t["artist"].as_str().unwrap_or("").to_string(),
+            album: t["album"].as_str().unwrap_or("").to_string(),
+            album_id: t["albumId"].as_i64(),
+            artist_id: t["artistId"].as_i64(),
+            disc: t["disc"].as_i64().map(|v| v as i32),
+            track_number: t["trackNumber"].as_i64().map(|v| v as i32),
+            duration_ms: t["durationMs"].as_i64(),
+            codec: t["codec"].as_str().map(String::from),
+            genre: t["genre"].as_str().map(String::from),
+            source: t["source"].as_str().unwrap_or("local").to_string(),
+            path: t["path"].as_str().map(String::from),
+        }))
+    }
+
+    pub fn search(&self, query: &str, limit: u32) -> Result<Vec<TrackResult>, GraphQLError> {
+        let data = self.execute(
+            "query($search: String!, $first: Int) { tracks(search: $search, first: $first) { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source } } } }",
+            Some(serde_json::json!({ "search": query, "first": limit })),
         )?;
         parse_track_edges(&data["tracks"])
     }
@@ -186,7 +287,40 @@ impl GraphQLClient {
             .unwrap_or_default())
     }
 
-    // -- Mutations --
+    pub fn favourites(&self) -> Result<Vec<TrackResult>, GraphQLError> {
+        let data = self.execute(
+            "{ favourites { edges { node { id title artist album albumId artistId disc trackNumber durationMs codec genre source path } } } }",
+            None,
+        )?;
+        parse_track_edges(&data["favourites"])
+    }
+
+    pub fn lyrics(&self, track_id: i64) -> Result<Option<LyricsResult>, GraphQLError> {
+        let data = self.execute(
+            "query($trackId: Int!) { lyrics(trackId: $trackId) { content synced source } }",
+            Some(serde_json::json!({ "trackId": track_id })),
+        )?;
+        let l = &data["lyrics"];
+        if l.is_null() {
+            return Ok(None);
+        }
+        Ok(Some(LyricsResult {
+            content: l["content"].as_str().unwrap_or("").to_string(),
+            synced: l["synced"].as_bool().unwrap_or(false),
+            source: l["source"].as_str().unwrap_or("").to_string(),
+        }))
+    }
+
+    pub fn library_stats(&self) -> Result<Value, GraphQLError> {
+        self.execute(
+            "{ libraryStats { totalTracks totalArtists totalAlbums localTracks remoteTracks cachedTracks } }",
+            None,
+        )
+    }
+
+    // -----------------------------------------------------------------------
+    // Mutations
+    // -----------------------------------------------------------------------
 
     pub fn pause(&self) -> Result<(), GraphQLError> {
         self.execute("mutation { pause { ok } }", None)?;
@@ -280,6 +414,14 @@ impl GraphQLClient {
         Ok(())
     }
 
+    pub fn toggle_favourite(&self, track_id: i64) -> Result<(), GraphQLError> {
+        self.execute(
+            "mutation($trackId: Int!) { toggleFavourite(trackId: $trackId) { id } }",
+            Some(serde_json::json!({ "trackId": track_id })),
+        )?;
+        Ok(())
+    }
+
     pub fn save_snapshot(&self, name: &str) -> Result<(), GraphQLError> {
         self.execute(
             "mutation($name: String!) { saveSnapshot(name: $name) { ok } }",
@@ -306,16 +448,14 @@ impl GraphQLClient {
         Ok(())
     }
 
-    pub fn library_stats(&self) -> Result<Value, GraphQLError> {
-        self.execute(
-            "{ libraryStats { totalTracks totalArtists totalAlbums localTracks remoteTracks cachedTracks } }",
-            None,
-        )
+    pub fn save_playback_state(&self) -> Result<(), GraphQLError> {
+        self.execute("mutation { savePlaybackState { ok } }", None)?;
+        Ok(())
     }
 
-    /// Server URL (without /graphql path).
-    pub fn server_url(&self) -> &str {
-        self.url.trim_end_matches("/graphql")
+    pub fn clear_playback_state(&self) -> Result<(), GraphQLError> {
+        self.execute("mutation { clearPlaybackState { ok } }", None)?;
+        Ok(())
     }
 }
 
@@ -380,6 +520,8 @@ pub struct TrackResult {
     pub codec: Option<String>,
     pub genre: Option<String>,
     pub source: String,
+    /// File path — only populated by certain queries (e.g. favourites).
+    pub path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -402,6 +544,13 @@ pub struct FuzzyMatch {
     pub id: i64,
     pub name: String,
     pub rank: i32,
+}
+
+#[derive(Debug, Clone)]
+pub struct LyricsResult {
+    pub content: String,
+    pub synced: bool,
+    pub source: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -428,6 +577,7 @@ fn parse_track_edges(connection: &Value) -> Result<Vec<TrackResult>, GraphQLErro
                         codec: n["codec"].as_str().map(String::from),
                         genre: n["genre"].as_str().map(String::from),
                         source: n["source"].as_str().unwrap_or("local").to_string(),
+                        path: n["path"].as_str().map(String::from),
                     }
                 })
                 .collect()
@@ -460,20 +610,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn client_constructs_url() {
+    fn http_client_constructs_url() {
         let c = GraphQLClient::new("http://localhost:4000");
-        assert_eq!(c.url, "http://localhost:4000/graphql");
+        assert_eq!(c.server_url, "http://localhost:4000");
     }
 
     #[test]
-    fn client_trailing_slash() {
+    fn http_client_trailing_slash() {
         let c = GraphQLClient::new("http://localhost:4000/");
-        assert_eq!(c.url, "http://localhost:4000/graphql");
+        assert_eq!(c.server_url, "http://localhost:4000");
     }
 
     #[test]
     fn stream_url_format() {
         let c = GraphQLClient::new("http://localhost:4000");
         assert_eq!(c.stream_url(42), "http://localhost:4000/rest/stream?id=42");
+    }
+
+    #[test]
+    fn custom_executor() {
+        struct TestExecutor;
+        impl QueryExecutor for TestExecutor {
+            fn execute_query(
+                &self,
+                _query: &str,
+                _variables: Option<Value>,
+            ) -> Result<Value, GraphQLError> {
+                Ok(serde_json::json!({ "nowPlaying": { "state": "PLAYING", "positionMs": 42000 } }))
+            }
+        }
+
+        let client =
+            GraphQLClient::new_with_executor(Arc::new(TestExecutor), "http://localhost:4000");
+        let np = client.now_playing().unwrap();
+        assert_eq!(np.state, "PLAYING");
+        assert_eq!(np.position_ms, 42000);
     }
 }

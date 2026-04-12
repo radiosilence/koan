@@ -69,19 +69,34 @@ pub fn cmd_play(
 
     let download_queue = DownloadQueue::spawn(tx.clone(), state.clone(), log_buffer.clone());
 
+    // Build the in-process GQL client — routes TUI data queries through the schema
+    // instead of hitting the DB directly.
+    let db_path = config::db_path();
+    let schema = koan_server::build_schema(
+        state.clone(),
+        tx.clone(),
+        db_path.clone(),
+        Some(viz_snapshot.clone()),
+    );
+    let executor = koan_server::graphql::InProcessExecutor::new(schema);
+    let gql_client = koan_core::graphql_client::GraphQLClient::new_with_executor(
+        std::sync::Arc::new(executor),
+        "http://localhost:4000",
+    );
+
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {
-        let db_path = config::db_path();
         let state_api = state.clone();
         let tx_api = tx.clone();
         let viz_api = viz_snapshot.clone();
+        let db_path_api = db_path.clone();
         std::thread::Builder::new()
             .name("koan-api".into())
             .spawn(move || {
                 koan_server::graphql::start_api_background(koan_server::graphql::ApiServerOpts {
                     state: state_api,
                     cmd_tx: tx_api,
-                    db_path,
+                    db_path: db_path_api,
                     port: opts.port,
                     bind: opts.bind,
                     subsonic_port: opts.subsonic,
@@ -206,6 +221,7 @@ pub fn cmd_play(
         restored_position_ms,
         download_queue,
         callbacks,
+        Some(gql_client),
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
@@ -260,6 +276,9 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         open_db,
     };
 
+    // Remote mode: use HTTP-backed GraphQLClient (talks to the remote server).
+    let remote_client = koan_core::graphql_client::GraphQLClient::new(server_url);
+
     if let Err(e) = koan_tui::play::run_tui(
         state,
         viz_snapshot,
@@ -270,6 +289,7 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         None,
         download_queue,
         callbacks,
+        Some(remote_client),
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }

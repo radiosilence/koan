@@ -40,6 +40,14 @@ pub struct TuiCallbacks {
 
 /// Save the current queue and playback position to DB.
 fn save_playback_state_from_app(app: &app::App) {
+    if let Some(ref client) = app.gql_client {
+        if let Err(e) = client.save_playback_state() {
+            log::warn!("failed to save playback state via GQL: {}", e);
+        }
+        return;
+    }
+
+    // Fallback: direct DB access.
     let (items, cursor) = app.state.snapshot_playlist();
     if items.is_empty() {
         if let Ok(db) = koan_core::db::connection::Database::open(&app.db_path) {
@@ -88,6 +96,7 @@ pub fn run_tui(
     restored_position_ms: Option<u64>,
     download_queue: DownloadQueue,
     callbacks: TuiCallbacks,
+    gql_client: Option<koan_core::graphql_client::GraphQLClient>,
 ) -> std::io::Result<()> {
     use crossterm::{
         event::{
@@ -131,6 +140,7 @@ pub fn run_tui(
         db_path,
         target_fps,
         download_queue.clone(),
+        gql_client,
     );
 
     if expects_playback {
@@ -286,35 +296,78 @@ pub fn run_tui(
         if let app::Mode::Picker(kind) = &app.mode
             && app.picker.is_none()
         {
-            let items = load_picker_items(*kind);
+            let items = load_picker_items(*kind, app.gql_client.as_ref());
             let multi = matches!(kind, PickerKind::Track);
             app.picker = Some(PickerState::new(*kind, items, multi));
         }
 
         if let Some(artist_id) = app.artist_drill_down.take() {
-            let db = (callbacks.open_db)();
-            let albums = queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
-            if albums.is_empty() {
-                let track_ids: Vec<i64> = queries::tracks_for_artist(&db.conn, artist_id)
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|t| t.id)
-                    .collect();
-                if !track_ids.is_empty() {
-                    app.picker_result =
-                        Some((PickerKind::Track, track_ids, PickerAction::AppendAndPlay));
+            if let Some(ref client) = app.gql_client {
+                // GQL path for artist drill-down.
+                match client.albums_for_artist(artist_id) {
+                    Ok(albums) if albums.is_empty() => {
+                        let track_ids: Vec<i64> = client
+                            .tracks_for_artist(artist_id)
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|t| t.id)
+                            .collect();
+                        if !track_ids.is_empty() {
+                            app.picker_result = Some((
+                                PickerKind::Track,
+                                track_ids,
+                                PickerAction::AppendAndPlay,
+                            ));
+                        }
+                    }
+                    Ok(albums) => {
+                        let mut items = vec![PickerItem {
+                            id: all_tracks_sentinel(artist_id),
+                            display: "all tracks".to_string(),
+                            match_text: "all tracks".into(),
+                            parts: vec![("all tracks".into(), PickerPartKind::Plain)],
+                        }];
+                        items.extend(
+                            crate::picker_items::make_album_picker_items_gql(&albums),
+                        );
+                        app.mode = app::Mode::Picker(PickerKind::Album);
+                        let picker = PickerState::new(PickerKind::Album, items, false);
+                        app.picker = Some(picker);
+                    }
+                    Err(e) => {
+                        log::warn!("GQL albums_for_artist failed: {}", e);
+                    }
                 }
             } else {
-                let mut items = vec![PickerItem {
-                    id: all_tracks_sentinel(artist_id),
-                    display: "all tracks".to_string(),
-                    match_text: "all tracks".into(),
-                    parts: vec![("all tracks".into(), PickerPartKind::Plain)],
-                }];
-                items.extend(make_album_picker_items(&albums));
-                app.mode = app::Mode::Picker(PickerKind::Album);
-                let picker = PickerState::new(PickerKind::Album, items, false);
-                app.picker = Some(picker);
+                let db = (callbacks.open_db)();
+                let albums =
+                    queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
+                if albums.is_empty() {
+                    let track_ids: Vec<i64> =
+                        queries::tracks_for_artist(&db.conn, artist_id)
+                            .unwrap_or_default()
+                            .iter()
+                            .map(|t| t.id)
+                            .collect();
+                    if !track_ids.is_empty() {
+                        app.picker_result = Some((
+                            PickerKind::Track,
+                            track_ids,
+                            PickerAction::AppendAndPlay,
+                        ));
+                    }
+                } else {
+                    let mut items = vec![PickerItem {
+                        id: all_tracks_sentinel(artist_id),
+                        display: "all tracks".to_string(),
+                        match_text: "all tracks".into(),
+                        parts: vec![("all tracks".into(), PickerPartKind::Plain)],
+                    }];
+                    items.extend(make_album_picker_items(&albums));
+                    app.mode = app::Mode::Picker(PickerKind::Album);
+                    let picker = PickerState::new(PickerKind::Album, items, false);
+                    app.picker = Some(picker);
+                }
             }
         }
 
@@ -322,6 +375,7 @@ pub fn run_tui(
             let tx_bg = tx.clone();
             let dq_bg = download_queue.clone();
             let open_db = callbacks.open_db;
+            let gql = app.gql_client.clone();
 
             app.loading_message = Some("loading...".into());
 
@@ -330,19 +384,38 @@ pub fn run_tui(
                 .spawn(move || {
                     let track_ids = match kind {
                         PickerKind::Album => {
-                            let db = open_db();
                             let mut expanded = Vec::new();
-                            for album_id in &ids {
-                                if is_all_tracks_sentinel(*album_id) {
-                                    let aid = artist_id_from_sentinel(*album_id);
-                                    let tracks = queries::tracks_for_artist(&db.conn, aid)
+                            if let Some(ref client) = gql {
+                                for album_id in &ids {
+                                    if is_all_tracks_sentinel(*album_id) {
+                                        let aid = artist_id_from_sentinel(*album_id);
+                                        let tracks = client
+                                            .tracks_for_artist(aid)
+                                            .unwrap_or_default();
+                                        expanded.extend(tracks.iter().map(|t| t.id));
+                                        continue;
+                                    }
+                                    let tracks = client
+                                        .tracks_for_album(*album_id)
                                         .unwrap_or_default();
                                     expanded.extend(tracks.iter().map(|t| t.id));
-                                    continue;
                                 }
-                                let tracks = queries::tracks_for_album(&db.conn, *album_id)
-                                    .unwrap_or_default();
-                                expanded.extend(tracks.iter().map(|t| t.id));
+                            } else {
+                                let db = open_db();
+                                for album_id in &ids {
+                                    if is_all_tracks_sentinel(*album_id) {
+                                        let aid = artist_id_from_sentinel(*album_id);
+                                        let tracks =
+                                            queries::tracks_for_artist(&db.conn, aid)
+                                                .unwrap_or_default();
+                                        expanded.extend(tracks.iter().map(|t| t.id));
+                                        continue;
+                                    }
+                                    let tracks =
+                                        queries::tracks_for_album(&db.conn, *album_id)
+                                            .unwrap_or_default();
+                                    expanded.extend(tracks.iter().map(|t| t.id));
+                                }
                             }
                             expanded
                         }
