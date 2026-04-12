@@ -2002,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "koan-cli"
-version = "0.20.4"
+version = "0.21.0"
 dependencies = [
  "chrono",
  "clap",
@@ -2026,7 +2026,7 @@ dependencies = [
 
 [[package]]
 name = "koan-core"
-version = "0.20.4"
+version = "0.21.0"
 dependencies = [
  "bliss-audio",
  "bliss-audio-aubio-rs",
@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "koan-server"
-version = "0.20.4"
+version = "0.21.0"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
@@ -2089,7 +2089,7 @@ dependencies = [
 
 [[package]]
 name = "koan-tui"
-version = "0.20.4"
+version = "0.21.0"
 dependencies = [
  "chrono",
  "core-foundation 0.9.4",

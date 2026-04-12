@@ -20,9 +20,9 @@ crossbeam-channel = "0.5"
 crossterm = "0.28"
 ctrlc = "3"
 jwalk = "0.8"
-koan-core = { path = "../koan-core", version = "0.20.4" }
-koan-server = { path = "../koan-server", version = "0.20.4" }
-koan-tui = { path = "../koan-tui", version = "0.20.4" }
+koan-core = { path = "../koan-core", version = "0.21.0" }
+koan-server = { path = "../koan-server", version = "0.21.0" }
+koan-tui = { path = "../koan-tui", version = "0.21.0" }
 log = "0.4"
 owo-colors = "4"
 rayon = "1"
