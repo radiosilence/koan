@@ -154,14 +154,39 @@ fn run_api_blocking(opts: ApiServerOpts) {
         let auth_app = auth_router(auth_route_state);
 
         // CORS — allow cross-origin requests for browser clients.
-        let cors = tower_http::cors::CorsLayer::new()
-            .allow_origin(tower_http::cors::Any)
-            .allow_methods([
-                axum::http::Method::GET,
-                axum::http::Method::POST,
-                axum::http::Method::OPTIONS,
-            ])
-            .allow_headers(tower_http::cors::Any);
+        // With specific origins we can enable credentials (cookies); with Any we cannot per spec.
+        let cors = if cfg.graphql.cors_origins.is_empty() {
+            // Dev mode: allow all origins (no credentials support with Any).
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(tower_http::cors::Any)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::OPTIONS,
+                ])
+                .allow_headers(tower_http::cors::Any)
+        } else {
+            // Production: specific origins with credentials for cookie auth.
+            let origins: Vec<axum::http::HeaderValue> = cfg
+                .graphql
+                .cors_origins
+                .iter()
+                .filter_map(|o| o.parse().ok())
+                .collect();
+            tower_http::cors::CorsLayer::new()
+                .allow_origin(origins)
+                .allow_methods([
+                    axum::http::Method::GET,
+                    axum::http::Method::POST,
+                    axum::http::Method::OPTIONS,
+                ])
+                .allow_headers([
+                    axum::http::header::AUTHORIZATION,
+                    axum::http::header::CONTENT_TYPE,
+                    axum::http::HeaderName::from_static("x-introspection-key"),
+                ])
+                .allow_credentials(true)
+        };
 
         let mut app = auth_app.merge(gql_app).layer(cors);
         if playground_enabled {

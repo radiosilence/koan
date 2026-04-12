@@ -6,6 +6,7 @@ use std::sync::Arc;
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::http::header::SET_COOKIE;
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
@@ -163,6 +164,11 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
     // Housekeeping: clean up expired tokens on login (non-blocking).
     let _ = auth_queries::cleanup_expired_tokens(&db.conn);
 
+    let cookie = format!(
+        "koan_access={}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age={}",
+        access_token, state.access_ttl_secs
+    );
+
     let resp = LoginResponse {
         access_token,
         refresh_token: refresh_token_id,
@@ -175,7 +181,7 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
         },
     };
 
-    (StatusCode::OK, Json(resp)).into_response()
+    (StatusCode::OK, [(SET_COOKIE, cookie)], Json(resp)).into_response()
 }
 
 async fn refresh(State(state): State<AuthRouteState>, Json(req): Json<RefreshRequest>) -> Response {
@@ -246,6 +252,11 @@ async fn refresh(State(state): State<AuthRouteState>, Json(req): Json<RefreshReq
         return (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response();
     }
 
+    let cookie = format!(
+        "koan_access={}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age={}",
+        access_token, state.access_ttl_secs
+    );
+
     let resp = RefreshResponse {
         access_token,
         refresh_token: new_refresh_id,
@@ -253,7 +264,7 @@ async fn refresh(State(state): State<AuthRouteState>, Json(req): Json<RefreshReq
         expires_in: state.access_ttl_secs,
     };
 
-    (StatusCode::OK, Json(resp)).into_response()
+    (StatusCode::OK, [(SET_COOKIE, cookie)], Json(resp)).into_response()
 }
 
 async fn logout(State(state): State<AuthRouteState>, Json(req): Json<LogoutRequest>) -> Response {
@@ -264,8 +275,11 @@ async fn logout(State(state): State<AuthRouteState>, Json(req): Json<LogoutReque
 
     let _ = auth_queries::revoke_refresh_token(&db.conn, &req.refresh_token);
 
+    let cookie = "koan_access=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0";
+
     (
         StatusCode::OK,
+        [(SET_COOKIE, cookie.to_owned())],
         Json(MessageResponse {
             message: "logged out".into(),
         }),
