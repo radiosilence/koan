@@ -276,6 +276,9 @@ pub struct GraphqlConfig {
     pub access_token_ttl: String,
     /// Refresh token TTL (default: "30d"). Supports: "30d", "7d", "720h".
     pub refresh_token_ttl: String,
+    /// Allowed CORS origins. Empty = allow all (dev mode). Set for production.
+    /// Example: ["https://music.example.com"]
+    pub cors_origins: Vec<String>,
 }
 
 fn default_bind() -> std::net::IpAddr {
@@ -293,6 +296,7 @@ impl Default for GraphqlConfig {
             auth_enabled: true,
             access_token_ttl: "15m".into(),
             refresh_token_ttl: "30d".into(),
+            cors_origins: Vec::new(),
         }
     }
 }

@@ -4,6 +4,9 @@
 
 ### Added
 
+- **Cookie auth for web clients** — auth routes set `HttpOnly; Secure; SameSite=None` cookies alongside JSON responses. Middleware checks cookie before Bearer header (priority: cookie > Bearer > query param). Logout clears the cookie. No breaking changes for CLI/mobile clients.
+- **Configurable CORS origins** — `[graphql] cors_origins = [...]` restricts allowed origins with `credentials: true` for cookie auth. Empty (default) keeps `Allow-Origin: *` for dev/backward compat.
+
 - **GraphQL subscriptions** — real-time data over WebSocket at `/graphql/ws`. Three subscriptions: `nowPlaying` (playback state at configurable interval), `queueUpdated` (full queue snapshot on change), `vizFrame` (spectrum/VU/waveform at configurable FPS). ([#162](https://github.com/radiosilence/koan/issues/162))
 - **Queue snapshot with status** — `queue` query returns `QueueSnapshot` with versioned entries, each with derived `status` (Queued/Playing/Played/Downloading/PriorityPending/Failed) and optional `downloadProgress`. Replaces flat `Vec<QueueEntry>`.
 - **Visualizer query** — `vizFrame` query returns current spectrum, peaks, VU levels, beat energy, and optional waveform. Returns null when no analyzer is running.

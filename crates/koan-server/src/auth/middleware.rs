@@ -52,13 +52,25 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // Extract token from Authorization header or ?token= query parameter.
+    // Priority: 1. koan_access cookie  2. Authorization: Bearer
+    //           3. ?token= query param
     let token = request
         .headers()
-        .get(header::AUTHORIZATION)
+        .get(axum::http::header::COOKIE)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .map(String::from)
+        .and_then(|cookies| {
+            cookies
+                .split(';')
+                .find_map(|c| c.trim().strip_prefix("koan_access=").map(String::from))
+        })
+        .or_else(|| {
+            request
+                .headers()
+                .get(header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .map(String::from)
+        })
         .or_else(|| {
             // Fall back to ?token= query parameter (for playground URLs).
             request.uri().query().and_then(|q| {
