@@ -37,12 +37,20 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // Extract Bearer token from Authorization header.
+    // Extract token from Authorization header or ?token= query parameter.
     let token = request
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(String::from)
+        .or_else(|| {
+            // Fall back to ?token= query parameter (for playground URLs).
+            request.uri().query().and_then(|q| {
+                q.split('&')
+                    .find_map(|pair| pair.strip_prefix("token=").map(String::from))
+            })
+        });
 
     let Some(token) = token else {
         return (
@@ -53,7 +61,7 @@ pub async fn auth_middleware(
             .into_response();
     };
 
-    match auth::validate_access_token(&state.public_pem, token) {
+    match auth::validate_access_token(&state.public_pem, &token) {
         Ok(claims) => {
             let role = claims.role.parse().unwrap_or(Role::Readonly);
             let user = AuthUser {

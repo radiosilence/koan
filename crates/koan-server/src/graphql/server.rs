@@ -115,12 +115,8 @@ fn run_api_blocking(
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
         // GraphQL routes — protected by auth middleware.
-        let mut gql_app = axum::Router::new().route("/graphql", post(graphql_handler));
-        if playground_enabled {
-            gql_app = gql_app.route("/graphql", get(graphql_playground));
-        }
-
-        let gql_app = gql_app
+        let gql_app = axum::Router::new()
+            .route("/graphql", post(graphql_handler))
             .layer(axum::middleware::from_fn_with_state(
                 auth_state.clone(),
                 auth_middleware,
@@ -131,8 +127,28 @@ fn run_api_blocking(
         // Auth routes — always accessible (no auth middleware).
         let auth_app = auth_router(auth_route_state);
 
-        // Merge: auth routes first (no middleware), then GraphQL (with middleware).
-        let app = auth_app.merge(gql_app);
+        // Playground — served without auth middleware (it's a static HTML page).
+        let mut app = auth_app.merge(gql_app);
+        if playground_enabled {
+            app = app.route("/graphql", get(graphql_playground));
+        }
+
+        // Generate a playground session token if auth is enabled.
+        let playground_url = if playground_enabled && auth_actually_enabled {
+            if let Ok((private_pem, _)) = koan_core::auth::load_keypair() {
+                // Mint a 1-hour admin token for playground use.
+                match koan_core::auth::mint_access_token(
+                    &private_pem, 0, "playground", koan_core::auth::Role::Admin, 3600,
+                ) {
+                    Ok(token) => format!("http://{}:{}/graphql?token={}", bind, port, token),
+                    Err(_) => format!("http://{}:{}/graphql", bind, port),
+                }
+            } else {
+                format!("http://{}:{}/graphql", bind, port)
+            }
+        } else {
+            format!("http://{}:{}/graphql", bind, port)
+        };
 
         let gql_addr = std::net::SocketAddr::new(bind, port);
 
@@ -140,7 +156,12 @@ fn run_api_blocking(
             Ok(l) => {
                 log::info!("GraphQL API on http://{}:{}/graphql", bind, port);
                 if playground_enabled {
-                    log::info!("GraphiQL: http://{}:{}/graphql", bind, port);
+                    log::info!("GraphiQL: {}", playground_url);
+                    // Open browser on macOS/Linux.
+                    #[cfg(target_os = "macos")]
+                    let _ = std::process::Command::new("open").arg(&playground_url).spawn();
+                    #[cfg(target_os = "linux")]
+                    let _ = std::process::Command::new("xdg-open").arg(&playground_url).spawn();
                 }
                 l
             }
