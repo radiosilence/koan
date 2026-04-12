@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_graphql::connection::{Connection, EmptyFields};
 use async_graphql::{Context, Object};
 use koan_core::audio;
 use koan_core::audio::viz::VizSnapshot;
@@ -32,7 +31,7 @@ impl QueryRoot {
         first: Option<i32>,
         #[graphql(default_with = "ArtistSortField::Name")] _sort_by: ArtistSortField,
         #[graphql(default_with = "SortDirection::Asc")] _sort_dir: SortDirection,
-    ) -> async_graphql::Result<Connection<usize, GqlArtist, EmptyFields, EmptyFields>> {
+    ) -> async_graphql::Result<Conn<GqlArtist>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let mut artists = if let Some(ref query) = search {
             queries::find_artists(&db.conn, query)
@@ -90,7 +89,7 @@ impl QueryRoot {
         first: Option<i32>,
         #[graphql(default_with = "AlbumSortField::ArtistThenDate")] _sort_by: AlbumSortField,
         #[graphql(default_with = "SortDirection::Asc")] _sort_dir: SortDirection,
-    ) -> async_graphql::Result<Connection<usize, GqlAlbum, EmptyFields, EmptyFields>> {
+    ) -> async_graphql::Result<Conn<GqlAlbum>> {
         let db = ctx.data::<DbHandle>()?.open()?;
 
         let mut albums = if let Some(aid) = artist_id {
@@ -205,7 +204,7 @@ impl QueryRoot {
         first: Option<i32>,
         #[graphql(default_with = "TrackSortField::ArtistAlbumDiscTrack")] _sort_by: TrackSortField,
         #[graphql(default_with = "SortDirection::Asc")] _sort_dir: SortDirection,
-    ) -> async_graphql::Result<Connection<usize, GqlTrack, EmptyFields, EmptyFields>> {
+    ) -> async_graphql::Result<Conn<GqlTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
 
         let mut tracks = if let Some(ref query) = search {
@@ -487,7 +486,7 @@ impl QueryRoot {
         ctx: &Context<'_>,
         after: Option<String>,
         first: Option<i32>,
-    ) -> async_graphql::Result<Connection<usize, GqlTrack, EmptyFields, EmptyFields>> {
+    ) -> async_graphql::Result<Conn<GqlTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let fav_paths = queries::load_favourites(&db.conn)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;

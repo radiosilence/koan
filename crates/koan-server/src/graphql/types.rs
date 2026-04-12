@@ -1,10 +1,22 @@
+use async_graphql::connection::{DisableNodesField, EmptyFields};
 use async_graphql::{Context, Enum, InputObject, Object, SimpleObject};
 
-use async_graphql::connection::{Connection, EmptyFields};
 use koan_core::db::queries;
 
 use super::DbHandle;
 use super::helpers::paginate;
+
+/// Connection type alias — standard async-graphql Connection with `nodes` field disabled.
+/// Exposes `edges` + `pageInfo` only (proper Relay spec).
+pub(super) type Conn<T> = async_graphql::connection::Connection<
+    usize,
+    T,
+    EmptyFields,
+    EmptyFields,
+    async_graphql::connection::DefaultConnectionName,
+    async_graphql::connection::DefaultEdgeName,
+    DisableNodesField,
+>;
 
 // ---------------------------------------------------------------------------
 // Enums
@@ -102,7 +114,7 @@ impl GqlArtist {
         ctx: &Context<'_>,
         after: Option<String>,
         first: Option<i32>,
-    ) -> async_graphql::Result<Connection<usize, GqlAlbum, EmptyFields, EmptyFields>> {
+    ) -> async_graphql::Result<Conn<GqlAlbum>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let all = queries::albums_for_artist(&db.conn, self.row.id)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
@@ -118,7 +130,7 @@ impl GqlArtist {
         ctx: &Context<'_>,
         after: Option<String>,
         first: Option<i32>,
-    ) -> async_graphql::Result<Connection<usize, GqlTrack, EmptyFields, EmptyFields>> {
+    ) -> async_graphql::Result<Conn<GqlTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let all = queries::tracks_for_artist(&db.conn, self.row.id)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
@@ -187,7 +199,7 @@ impl GqlAlbum {
         ctx: &Context<'_>,
         after: Option<String>,
         first: Option<i32>,
-    ) -> async_graphql::Result<Connection<usize, GqlTrack, EmptyFields, EmptyFields>> {
+    ) -> async_graphql::Result<Conn<GqlTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let all = queries::tracks_for_album(&db.conn, self.row.id)
             .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
