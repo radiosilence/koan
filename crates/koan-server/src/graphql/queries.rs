@@ -2,6 +2,8 @@ use std::sync::Arc;
 
 use async_graphql::{Context, Object};
 use koan_core::audio;
+use koan_core::audio::viz::VizSnapshot;
+use koan_core::config::Config;
 use koan_core::db::queries;
 use koan_core::player::state::{PlaybackState, SharedPlayerState};
 
@@ -403,23 +405,54 @@ impl QueryRoot {
         })
     }
 
-    async fn queue(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlQueueEntry>> {
+    /// The play queue with derived entry statuses, download progress, and a version counter.
+    async fn queue(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlQueueSnapshot> {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        let (items, cursor) = state.snapshot_playlist();
-        Ok(items
+        let version = state.playlist_version();
+        let snap = state.derive_visible_queue();
+
+        let entries = snap
+            .entries
             .iter()
-            .map(|item| GqlQueueEntry {
-                queue_item_id: item.id.0.to_string(),
-                title: item.title.clone(),
-                artist: item.artist.clone(),
-                album: item.album.clone(),
-                codec: item.codec.clone(),
-                track_number: item.track_number,
-                disc: item.disc,
-                duration_ms: item.duration_ms,
-                is_current: cursor == Some(item.id),
+            .map(|entry| {
+                use koan_core::player::state::QueueEntryStatus;
+
+                let status = match entry.status {
+                    QueueEntryStatus::Queued => GqlQueueEntryStatus::Queued,
+                    QueueEntryStatus::Playing => GqlQueueEntryStatus::Playing,
+                    QueueEntryStatus::Played => GqlQueueEntryStatus::Played,
+                    QueueEntryStatus::Downloading => GqlQueueEntryStatus::Downloading,
+                    QueueEntryStatus::PriorityPending => GqlQueueEntryStatus::PriorityPending,
+                    QueueEntryStatus::Failed => GqlQueueEntryStatus::Failed,
+                };
+
+                let download_progress = entry
+                    .download_progress
+                    .map(|(downloaded, total)| GqlDownloadProgress { downloaded, total });
+
+                GqlQueueEntry {
+                    queue_item_id: entry.id.0.to_string(),
+                    title: entry.title.clone(),
+                    artist: entry.artist.clone(),
+                    album: entry.album.clone(),
+                    codec: entry.codec.clone(),
+                    track_number: entry.track_number,
+                    disc: entry.disc,
+                    duration_ms: entry.duration_ms,
+                    is_current: entry.status == QueueEntryStatus::Playing,
+                    status,
+                    download_progress,
+                }
             })
-            .collect())
+            .collect();
+
+        Ok(GqlQueueSnapshot {
+            version,
+            entries,
+            finished_count: snap.finished_count as i32,
+            has_playing: snap.has_playing,
+            queue_count: snap.queue_count as i32,
+        })
     }
 
     async fn library_stats(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlLibraryStats> {
@@ -706,5 +739,68 @@ impl QueryRoot {
             }
             None => Ok(None),
         }
+    }
+
+    /// Current visualizer frame — spectrum, peaks, VU levels, beat energy, waveform.
+    /// Returns None if no VizSnapshot is available (headless without analyzer).
+    async fn viz_frame(
+        &self,
+        ctx: &Context<'_>,
+        #[graphql(
+            default = false,
+            desc = "Include raw waveform samples (4096 interleaved stereo floats)."
+        )]
+        include_waveform: bool,
+    ) -> async_graphql::Result<Option<GqlVizFrame>> {
+        let viz = match ctx.data_opt::<Arc<VizSnapshot>>() {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let frame = viz.read();
+        Ok(Some(GqlVizFrame {
+            spectrum: frame.spectrum.to_vec(),
+            peaks: frame.peaks.to_vec(),
+            vu_levels: frame.vu_levels.to_vec(),
+            beat_energy: frame.beat_energy,
+            waveform: if include_waveform {
+                frame.waveform.clone()
+            } else {
+                Vec::new()
+            },
+        }))
+    }
+
+    /// Current configuration.
+    async fn config(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlConfig> {
+        let cfg = Config::load().unwrap_or_default();
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        Ok(GqlConfig {
+            library_folders: cfg
+                .library
+                .folders
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+            replaygain_mode: format!("{:?}", cfg.playback.replaygain).to_lowercase(),
+            pre_amp_db: cfg.playback.pre_amp_db,
+            output_device: cfg.playback.output_device.clone(),
+            target_fps: cfg.playback.target_fps as i32,
+            art_size: cfg.playback.art_size as i32,
+            remote_enabled: cfg.remote.enabled,
+            remote_url: cfg.remote.url.clone(),
+            remote_username: cfg.remote.username.clone(),
+            transcode_quality: cfg.remote.transcode_quality.clone(),
+            cache_limit: cfg.remote.cache_limit.clone(),
+            visualizer_fps: cfg.visualizer.fps as i32,
+            radio_enabled: state.radio_mode(),
+            graphql_port: cfg.graphql.port as i32,
+            graphql_playground: cfg.graphql.playground,
+        })
+    }
+
+    /// Playlist version counter — bumped on every mutation. Use for change detection.
+    async fn playlist_version(&self, ctx: &Context<'_>) -> async_graphql::Result<u64> {
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        Ok(state.playlist_version())
     }
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **GraphQL subscriptions** — real-time data over WebSocket at `/graphql/ws`. Three subscriptions: `nowPlaying` (playback state at configurable interval), `queueUpdated` (full queue snapshot on change), `vizFrame` (spectrum/VU/waveform at configurable FPS). ([#162](https://github.com/radiosilence/koan/issues/162))
+- **Queue snapshot with status** — `queue` query returns `QueueSnapshot` with versioned entries, each with derived `status` (Queued/Playing/Played/Downloading/PriorityPending/Failed) and optional `downloadProgress`. Replaces flat `Vec<QueueEntry>`.
+- **Visualizer query** — `vizFrame` query returns current spectrum, peaks, VU levels, beat energy, and optional waveform. Returns null when no analyzer is running.
+- **Config query + mutation** — `config` query exposes current settings, `updateConfig` mutation writes individual fields to `config.toml` (admin-only).
+- **Playlist version query** — `playlistVersion` returns monotonic counter for change detection.
+- **Playback state persistence** — `savePlaybackState` and `clearPlaybackState` mutations for web clients.
+- **`ApiServerOpts` struct** — replaces positional args on internal `run_api_blocking`, carries optional `VizSnapshot` for subscription support.
+
 ## v0.22.0 (2026-04-12)
 
 ### Added

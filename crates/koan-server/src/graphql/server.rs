@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossbeam_channel::Sender;
+use koan_core::audio::viz::VizSnapshot;
 use koan_core::auth::{self, parse_duration_secs};
 use koan_core::config::Config;
 use koan_core::player::commands::PlayerCommand;
@@ -30,7 +31,7 @@ pub fn cmd_serve(
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
-    run_api_blocking(
+    run_api_blocking(ApiServerOpts {
         state,
         cmd_tx,
         db_path,
@@ -38,24 +39,39 @@ pub fn cmd_serve(
         bind,
         subsonic_port,
         playground,
-    );
+        viz: None, // headless — no viz analyzer
+    });
 }
 
 // ---------------------------------------------------------------------------
 // Shared API server logic — used by both headless and TUI+API modes
 // ---------------------------------------------------------------------------
 
+/// Options for the API server — avoids too-many-arguments.
+pub struct ApiServerOpts {
+    pub state: Arc<SharedPlayerState>,
+    pub cmd_tx: Sender<PlayerCommand>,
+    pub db_path: PathBuf,
+    pub port: Option<u16>,
+    pub bind: Option<std::net::IpAddr>,
+    pub subsonic_port: Option<u16>,
+    pub playground: bool,
+    pub viz: Option<Arc<VizSnapshot>>,
+}
+
 /// Run the GraphQL (+ optional Subsonic) API server, blocking the current thread.
 /// Called from `cmd_serve` (headless) and `start_api_background` (TUI companion).
-fn run_api_blocking(
-    state: Arc<SharedPlayerState>,
-    cmd_tx: Sender<PlayerCommand>,
-    db_path: PathBuf,
-    port: Option<u16>,
-    bind: Option<std::net::IpAddr>,
-    subsonic_port: Option<u16>,
-    playground: bool,
-) {
+fn run_api_blocking(opts: ApiServerOpts) {
+    let ApiServerOpts {
+        state,
+        cmd_tx,
+        db_path,
+        port,
+        bind,
+        subsonic_port,
+        playground,
+        viz,
+    } = opts;
     use axum::routing::{get, post};
 
     let cfg = Config::load().unwrap_or_default();
@@ -109,7 +125,7 @@ fn run_api_blocking(
         refresh_ttl_secs: refresh_ttl,
     };
 
-    let schema = build_schema(state, cmd_tx, db_path.clone());
+    let schema = build_schema(state, cmd_tx, db_path.clone(), viz);
 
     if auth_actually_enabled {
         log::info!(
@@ -126,6 +142,7 @@ fn run_api_blocking(
         // GraphQL routes — protected by auth middleware.
         let gql_app = axum::Router::new()
             .route("/graphql", post(graphql_handler))
+            .route("/graphql/ws", get(graphql_ws_handler))
             .layer(axum::middleware::from_fn_with_state(
                 auth_state.clone(),
                 auth_middleware,
@@ -136,11 +153,14 @@ fn run_api_blocking(
         // Auth routes — always accessible (no auth middleware).
         let auth_app = auth_router(auth_route_state);
 
-        // Playground — GET /graphql serves GraphiQL, gated by introspection key.
-        // POST /graphql remains the normal auth-protected API endpoint.
+        // CORS — allow cross-origin requests for browser clients.
         let cors = tower_http::cors::CorsLayer::new()
             .allow_origin(tower_http::cors::Any)
-            .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
             .allow_headers(tower_http::cors::Any);
 
         let mut app = auth_app.merge(gql_app).layer(cors);
@@ -232,6 +252,9 @@ fn run_api_blocking(
 
 /// Start the API server on the current thread (blocks forever).
 /// Called from a background thread when TUI mode has API enabled.
+///
+/// Accepts positional args for backward compatibility with koan-cli.
+/// Prefer `ApiServerOpts` for new call sites.
 pub fn start_api_background(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
@@ -241,7 +264,7 @@ pub fn start_api_background(
     subsonic_port: Option<u16>,
     playground: bool,
 ) {
-    run_api_blocking(
+    run_api_blocking(ApiServerOpts {
         state,
         cmd_tx,
         db_path,
@@ -249,7 +272,8 @@ pub fn start_api_background(
         bind,
         subsonic_port,
         playground,
-    );
+        viz: None,
+    });
 }
 
 async fn shutdown_signal() {
@@ -268,6 +292,27 @@ async fn graphql_handler(
     // disabled, or a real user when auth is enabled). No fallback needed here.
     request = request.data(user);
     schema.execute(request).await.into()
+}
+
+async fn graphql_ws_handler(
+    axum::Extension(user): axum::Extension<AuthUser>,
+    axum::extract::State(schema): axum::extract::State<KoanSchema>,
+    protocol: async_graphql_axum::GraphQLProtocol,
+    websocket: axum::extract::WebSocketUpgrade,
+) -> axum::response::Response {
+    websocket
+        .protocols(async_graphql::http::ALL_WEBSOCKET_PROTOCOLS)
+        .on_upgrade(move |stream| {
+            let stream = async_graphql_axum::GraphQLWebSocket::new(stream, schema, protocol)
+                .on_connection_init(move |_| async move {
+                    let mut data = async_graphql::Data::default();
+                    data.insert(user);
+                    Ok(data)
+                });
+            async move {
+                stream.serve().await;
+            }
+        })
 }
 
 async fn graphql_playground(

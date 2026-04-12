@@ -316,6 +316,51 @@ impl MutationRoot {
         Ok(GqlTrack { row: track })
     }
 
+    // -- Playback state persistence --
+
+    async fn save_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let db = ctx.data::<DbHandle>()?.open()?;
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+
+        let (items, cursor) = state.snapshot_playlist();
+        if items.is_empty() {
+            queries::playback_state::clear_playback_state(&db.conn)
+                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            return Ok(GqlStatus::success("playback state cleared (empty queue)"));
+        }
+
+        let persisted: Vec<PersistedQueueItem> = items
+            .iter()
+            .map(PersistedQueueItem::from_playlist_item)
+            .collect();
+        let cursor_path = cursor.and_then(|cid| {
+            items
+                .iter()
+                .find(|i| i.id == cid)
+                .map(|i| i.path.to_string_lossy().into_owned())
+        });
+        let position_ms = state.position_ms();
+
+        queries::playback_state::save_playback_state(
+            &db.conn,
+            &persisted,
+            cursor_path.as_deref(),
+            position_ms,
+        )
+        .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+
+        Ok(GqlStatus::success("playback state saved"))
+    }
+
+    async fn clear_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let db = ctx.data::<DbHandle>()?.open()?;
+        queries::playback_state::clear_playback_state(&db.conn)
+            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        Ok(GqlStatus::success("playback state cleared"))
+    }
+
     // -- Snapshots --
 
     async fn save_snapshot(
@@ -519,6 +564,78 @@ impl MutationRoot {
         let count = koan_core::organize::undo(&db)
             .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
         Ok(GqlStatus::success(format!("undone {} moves", count)))
+    }
+
+    // -- Config --
+
+    /// Update configuration fields. Only provided fields are written to config.toml.
+    async fn update_config(
+        &self,
+        ctx: &Context<'_>,
+        input: GqlConfigInput,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::Admin)?;
+        use koan_core::config::ReplayGainMode;
+
+        Config::update_base(|cfg| {
+            if let Some(ref folders) = input.library_folders {
+                cfg.library.folders = folders.iter().map(std::path::PathBuf::from).collect();
+            }
+            if let Some(ref mode) = input.replaygain_mode {
+                cfg.playback.replaygain = match mode.to_lowercase().as_str() {
+                    "track" => ReplayGainMode::Track,
+                    "album" => ReplayGainMode::Album,
+                    _ => ReplayGainMode::Off,
+                };
+            }
+            if let Some(pre_amp) = input.pre_amp_db {
+                cfg.playback.pre_amp_db = pre_amp;
+            }
+            if let Some(ref device) = input.output_device {
+                cfg.playback.output_device = if device.is_empty() {
+                    None
+                } else {
+                    Some(device.clone())
+                };
+            }
+            if let Some(fps) = input.target_fps {
+                cfg.playback.target_fps = fps as u8;
+            }
+            if let Some(size) = input.art_size {
+                cfg.playback.art_size = size as u16;
+            }
+            if let Some(enabled) = input.remote_enabled {
+                cfg.remote.enabled = enabled;
+            }
+            if let Some(ref url) = input.remote_url {
+                cfg.remote.url = url.clone();
+            }
+            if let Some(ref username) = input.remote_username {
+                cfg.remote.username = username.clone();
+            }
+            if let Some(ref quality) = input.transcode_quality {
+                cfg.remote.transcode_quality = quality.clone();
+            }
+            if let Some(ref limit) = input.cache_limit {
+                cfg.remote.cache_limit = if limit.is_empty() {
+                    None
+                } else {
+                    Some(limit.clone())
+                };
+            }
+            if let Some(fps) = input.visualizer_fps {
+                cfg.visualizer.fps = fps as u8;
+            }
+            if let Some(port) = input.graphql_port {
+                cfg.graphql.port = port as u16;
+            }
+            if let Some(pg) = input.graphql_playground {
+                cfg.graphql.playground = pg;
+            }
+        })
+        .map_err(|e| async_graphql::Error::new(format!("config write error: {}", e)))?;
+
+        Ok(GqlStatus::success("config updated"))
     }
 
     // -- Library management --
