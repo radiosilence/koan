@@ -110,10 +110,66 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
                 id,
                 role
             );
+            // Offer to save credentials to 1Password if `op` CLI is available.
+            offer_save_to_1password(username, &password);
         }
         Err(e) => {
             eprintln!("{} Failed to create user: {}", "✗".red().bold(), e);
             std::process::exit(1);
+        }
+    }
+}
+
+/// Check if `op` (1Password CLI) is available and offer to save credentials.
+fn offer_save_to_1password(username: &str, password: &str) {
+    // Check if `op` is on PATH.
+    let op_available = std::process::Command::new("op")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+
+    if !op_available {
+        return;
+    }
+
+    eprint!(
+        "{} 1Password CLI detected. Save credentials? [y/N] ",
+        "?".cyan().bold()
+    );
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() {
+        return;
+    }
+    if !input.trim().eq_ignore_ascii_case("y") {
+        return;
+    }
+
+    let title = format!("--title=koan ({})", username);
+    let user_field = format!("username={}", username);
+    let pass_field = format!("password={}", password);
+    let status = std::process::Command::new("op")
+        .args([
+            "item",
+            "create",
+            "--category=login",
+            &title,
+            "--url=http://localhost:4000",
+            &user_field,
+            &pass_field,
+        ])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            println!("{} Saved to 1Password", "✓".green().bold());
+        }
+        _ => {
+            eprintln!(
+                "{} Failed to save to 1Password (is `op` signed in?)",
+                "!".yellow().bold()
+            );
         }
     }
 }
