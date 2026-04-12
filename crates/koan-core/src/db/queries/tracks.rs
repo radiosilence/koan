@@ -313,8 +313,11 @@ pub fn remove_stale_tracks(conn: &Connection, folder: &Path) -> Result<usize, Db
                 params![id],
             )?;
         } else {
-            // Pure local — delete entirely.
+            // Pure local — delete entirely. Clean up all FK references first.
             conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![id])?;
+            conn.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", params![id])?;
+            conn.execute("DELETE FROM play_history WHERE track_id = ?1", params![id])?;
+            conn.execute("DELETE FROM track_vectors WHERE track_id = ?1", params![id])?;
             conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
         }
     }
