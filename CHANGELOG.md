@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.20.3 (2026-04-12)
+
+### Added
+
+- **Secrets-in-git startup check** — on launch, koan checks if config files containing passwords are tracked by git. If so, the app refuses to start and prints remediation steps (remove from git, add to .gitignore, rotate credentials). Hard panic, no bypass.
+
+### Changed
+
+- **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support.
+
+## v0.20.2 (2026-04-12)
+
+### Changed
+
+- **Reactive background** — beat-pulsing background color on braille modes (starfield, wormhole, kaleidoscope, lissajous, wireframe, spiral) moved behind `[visualizer] reactive_bg = false` config flag instead of being removed. Off by default.
+
+## v0.20.1 (2026-04-12)
+
+### Fixed
+
+- **Matrix rain character flicker** — characters no longer flash/disappear globally. Each position flickers independently at ~2hz with staggered phase offsets.
+- **Matrix rain speed** — reverted post-release speed experiments. Back to the v0.20.0 formula (band energy + beat + bass) with time-based frame_dt scaling so speed is consistent across different FPS targets.
+- **Reactive background removed** — the beat-pulsing background color on braille modes (starfield, wormhole, kaleidoscope, etc.) looked flickery. Transparent background integrates better with the TUI.
+- **Pleasures layout** — artist/album text properly spaced with blank lines above and below. Waveform box no longer clips peaks at the top (height scale capped per ridgeline). Raised cosine window tapers ridgelines to flat baselines at the edges.
+- **Animation timing** — all visualizer animations now use actual frame delta time instead of hardcoded 1/60. Consistent speed at 30fps, 60fps, or 120fps.
+
+### Added
+
+- **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support. Opus decoding is not yet supported (see [#149](https://github.com/radiosilence/koan/issues/149)).
+- **BPM detection** — beat onset interval tracking with median estimation. Stored on VisualizerState for future use. Resets on track changes.
+
 ## v0.20.0 (2026-04-11)
 
 ### Added

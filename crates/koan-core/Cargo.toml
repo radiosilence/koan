@@ -44,7 +44,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Audio
 symphonia = { version = "0.5", default-features = false, features = [
-    "flac", "mp3", "aac", "vorbis", "alac", "pcm", "isomp4", "ogg", "wav", "aiff", "opt-simd",
+    "flac", "mp3", "aac", "vorbis", "alac", "pcm", "adpcm", "isomp4", "ogg", "mkv", "caf", "wav", "aiff", "opt-simd",
 ] }
 # Utilities
 thiserror = "2"

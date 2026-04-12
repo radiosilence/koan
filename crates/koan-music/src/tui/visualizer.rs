@@ -407,23 +407,20 @@ impl BrailleGrid {
 }
 
 /// Fill an area with a beat-reactive pulsating background color.
-/// Intensity is low (subtle wash), color shifts with beat_hue_offset.
-/// Fill an area with a beat-reactive background color.
-/// Cycles through bold colors on beat hits, fades to black between.
+/// Gated by `reactive_bg` flag — no-op when disabled.
 fn fill_reactive_bg(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    if !state.reactive_bg {
+        return;
+    }
     let r = state.reactivity;
     let intensity = (state.beat_energy * r).clamp(0.0, 1.0);
     if intensity < 0.02 {
         return;
     }
-
-    // Pick a background color from the palette, cycling with beat hue offset.
     let hue_t = state.beat_hue_offset.rem_euclid(1.0);
     let base = state.palette.freq_color(hue_t);
-    // Scale brightness by beat intensity — strong beats get vivid bg, quiet = black.
     let bg = dim(base, 1.0 - intensity * 0.35);
     let style = Style::new().bg(bg);
-
     for row in 0..area.height {
         for col in 0..area.width {
             buf[(area.x + col, area.y + row)].set_style(style);
@@ -713,6 +710,16 @@ pub struct VisualizerState {
     pub bass_shake: bool,
     /// Matrix overlay: replace all rendered chars with matrix glyphs in green.
     pub matrix_overlay: bool,
+    /// Beat-reactive background on braille modes.
+    pub reactive_bg: bool,
+    /// Actual frame delta time in seconds (set each tick from last_update).
+    pub frame_dt: f32,
+    /// Estimated BPM from beat onset intervals. 0.0 = unknown.
+    pub bpm: f32,
+    /// Recent beat onset timestamps for BPM estimation.
+    beat_onsets: Vec<Instant>,
+    /// Whether the previous frame was above the beat threshold (for edge detection).
+    beat_was_high: bool,
 }
 
 impl VisualizerState {
@@ -724,6 +731,7 @@ impl VisualizerState {
         let reactivity = cfg.reactivity.clamp(0.0, 2.0);
         let bass_shake = cfg.bass_shake;
         let matrix_overlay = cfg.matrix_overlay;
+        let reactive_bg = cfg.reactive_bg;
         Self::with_config(
             bar_half_life,
             peak_half_life,
@@ -732,9 +740,11 @@ impl VisualizerState {
             reactivity,
             bass_shake,
             matrix_overlay,
+            reactive_bg,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_config(
         bar_half_life: f32,
         peak_half_life: f32,
@@ -743,6 +753,7 @@ impl VisualizerState {
         reactivity: f32,
         bass_shake: bool,
         matrix_overlay: bool,
+        reactive_bg: bool,
     ) -> Self {
         Self {
             spectrum: [0.0; NUM_BARS],
@@ -783,6 +794,11 @@ impl VisualizerState {
             scale_pulse: 1.0,
             bass_shake,
             matrix_overlay,
+            reactive_bg,
+            frame_dt: 1.0 / 60.0,
+            bpm: 0.0,
+            beat_onsets: Vec::new(),
+            beat_was_high: false,
         }
     }
 
@@ -803,6 +819,7 @@ impl VisualizerState {
         let now = Instant::now();
         let dt = now.duration_since(self.last_update).as_secs_f32();
         self.last_update = now;
+        self.frame_dt = dt.clamp(0.001, 0.1); // Store for renderers.
         // decay = 0.5^(dt / half_life)
         let bar_decay = 0.5f32.powf(dt / self.bar_half_life);
         let peak_decay = 0.5f32.powf(dt / self.peak_half_life);
@@ -840,11 +857,45 @@ impl VisualizerState {
             self.beat_hue_offset *= 0.95;
         }
 
+        // BPM detection: track rising edges of beat_energy.
+        // Reset on silence (track change) — stale onsets produce garbage BPM.
+        if self.beat_energy < 0.01 && self.spectrum.iter().all(|&v| v < 0.02) {
+            self.beat_onsets.clear();
+            self.bpm = 0.0;
+        }
+        let beat_is_high = self.beat_energy > 0.3;
+        if beat_is_high && !self.beat_was_high {
+            // Rising edge — new beat onset.
+            let now = Instant::now();
+            self.beat_onsets.push(now);
+            // Keep last 16 onsets, discard old ones (>5 seconds).
+            self.beat_onsets
+                .retain(|t| now.duration_since(*t).as_secs_f32() < 5.0);
+            if self.beat_onsets.len() > 16 {
+                self.beat_onsets.drain(..self.beat_onsets.len() - 16);
+            }
+            // Compute BPM from median interval between consecutive onsets.
+            if self.beat_onsets.len() >= 4 {
+                let mut intervals: Vec<f32> = self
+                    .beat_onsets
+                    .windows(2)
+                    .map(|w| w[1].duration_since(w[0]).as_secs_f32())
+                    .filter(|&i| i > 0.15 && i < 2.0) // 30-400 BPM range.
+                    .collect();
+                if intervals.len() >= 3 {
+                    intervals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    let median = intervals[intervals.len() / 2];
+                    self.bpm = 60.0 / median;
+                }
+            }
+        }
+        self.beat_was_high = beat_is_high;
+
         // Stash waveform for oscilloscope/lissajous modes.
         self.waveform = frame.waveform;
 
         // Advance radial rotation — slow drift + beat burst.
-        let dt = 1.0 / 60.0;
+        let dt = self.frame_dt;
         self.radial_angle += dt * 0.3 + self.beat_energy * 0.1;
         if self.radial_angle > std::f32::consts::TAU {
             self.radial_angle -= std::f32::consts::TAU;
@@ -1179,7 +1230,7 @@ fn render_particles(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
     let px_h = grid.px_height() as f32;
 
     // Step physics and emit new particles.
-    let dt = 1.0 / 60.0;
+    let dt = state.frame_dt;
     state
         .particles
         .update(&state.spectrum, state.beat_energy, px_w, px_h, dt);
@@ -2557,6 +2608,7 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 
     let r = state.reactivity;
     let bass = state.spectrum[..6].iter().sum::<f32>() / 6.0;
+    let dt = state.frame_dt;
 
     // Lazy init: create columns on first render or if terminal resized.
     if state.matrix_cols.len() != w {
@@ -2564,7 +2616,7 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         for col in 0..w {
             let seed = col as u32 * 2654435761;
             state.matrix_cols.push(MatrixColumn {
-                head_y: -(hash_f32(seed) * h as f32 * 2.0), // Stagger widely.
+                head_y: -(hash_f32(seed) * h as f32 * 2.0),
                 speed: 0.15 + hash_f32(seed.wrapping_add(1)) * 0.25,
                 trail_len: 8.0 + hash_f32(seed.wrapping_add(2)) * 12.0,
                 char_seed: seed,
@@ -2582,7 +2634,6 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
         let end = (center + width / 2).min(w);
         for col_idx in start..end {
             let col = &mut state.matrix_cols[col_idx];
-            // Only respawn if this column has already fallen past the top.
             if col.head_y > 0.0 {
                 col.head_y = -(hash_f32(col.char_seed.wrapping_add(cluster_seed)) * 3.0);
                 col.speed = 0.15 + state.beat_energy * 0.2 * r;
@@ -2593,13 +2644,12 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 
     // Update and render each column.
     for (col_idx, column) in state.matrix_cols.iter_mut().enumerate() {
-        // Map column to a spectrum band for per-column reactivity.
         let bar_idx = (col_idx * NUM_BARS / w).min(NUM_BARS - 1);
         let band_energy = state.spectrum[bar_idx];
 
-        // Speed: scales with energy. Quiet = gentle drift, beat = proper surge.
+        // Speed: time-based, reacts to per-band energy + beat + bass.
         let speed_mult = 0.3 + band_energy * 3.0 * r + state.beat_energy * 6.0 * r + bass * 4.0 * r;
-        column.head_y += column.speed * speed_mult;
+        column.head_y += column.speed * speed_mult * dt * 60.0;
 
         // Respawn when fully off-screen.
         if column.head_y > (h as f32 + column.trail_len + 5.0) {
@@ -2660,22 +2710,6 @@ fn render_matrix(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
                 style = style.add_modifier(Modifier::BOLD);
             }
             buf[(x, y)].set_char(ch).set_style(style);
-        }
-    }
-
-    // Beat flash: briefly brighten the entire background on hard hits.
-    if state.beat_energy > 0.6 && bass > 0.3 {
-        let flash = ((state.beat_energy - 0.6) * 2.5 * r).min(1.0);
-        let flash_g = (15.0 * flash) as u8;
-        for row in 0..h {
-            for col in 0..w {
-                let x = area.x + col as u16;
-                let y = area.y + row as u16;
-                let cell = &mut buf[(x, y)];
-                if cell.symbol() == " " {
-                    cell.set_style(Style::new().bg(Color::Rgb(0, flash_g, 0)));
-                }
-            }
         }
     }
 }
@@ -2874,6 +2908,7 @@ mod tests {
             1.0,
             true,
             false,
+            false,
         );
         assert_eq!(state.spectrum.len(), NUM_BARS);
         assert_eq!(state.peaks.len(), NUM_BARS);
@@ -2890,6 +2925,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
             false,
         );
         let snapshot = VizSnapshot::new();
@@ -2911,6 +2947,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
             false,
         );
         let snapshot = VizSnapshot::new();
@@ -2944,6 +2981,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
             false,
         );
         let snapshot = VizSnapshot::new();
@@ -2991,6 +3029,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
             false,
         );
         let snapshot = VizSnapshot::new();
