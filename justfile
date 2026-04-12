@@ -6,7 +6,7 @@ build:
 
 # Build + run CLI in release mode
 cli *ARGS:
-    cargo run --release -p koan-music -- {{ARGS}}
+    cargo run --release -p koan-cli -- {{ARGS}}
 
 # Run tests + clippy
 check:

@@ -27,7 +27,7 @@ koan --headless                   # GraphQL API on 127.0.0.1:4000, no TUI
 koan --headless --playground      # with GraphiQL web IDE
 koan --headless --subsonic 4040   # + Subsonic REST on port 4040
 koan --port 8080                  # custom GraphQL port
-koan --bind 0.0.0.0              # listen on all interfaces (no auth)
+koan --bind 0.0.0.0              # listen on all interfaces (auth enabled by default)
 koan -d                           # background daemon
 koan -d --subsonic 4040           # daemon with Subsonic
 ```
@@ -151,6 +151,34 @@ koan cache evict                  # run LRU eviction based on cache_limit
 ```
 
 See [Cache Management](../recipes/cache-management.md) for details.
+
+---
+
+## `koan auth`
+
+Manage authentication -- users, tokens, keypair.
+
+```bash
+koan auth setup                       # generate keypair + create first admin user
+koan auth create-user --username alice --role user  # create a user (admin, user, readonly)
+koan auth delete-user alice           # delete a user
+koan auth list-users                  # list all users
+koan auth login --server http://localhost:4000 --username admin  # login (stores refresh token in keychain)
+koan auth logout --server http://localhost:4000  # logout (revoke token)
+koan auth reset-password admin        # reset password (revokes all tokens for that user)
+koan auth set-role alice admin        # change role
+koan auth regenerate-keys             # regenerate Ed25519 keypair (invalidates all tokens)
+koan auth reset                       # nuclear: delete all keys, users, tokens
+```
+
+Non-interactive setup for scripting:
+
+```bash
+KOAN_USERNAME=admin KOAN_PASSWORD=secret koan auth setup
+KOAN_PASSWORD=secret koan auth create-user --username alice --role user
+```
+
+See [Authentication](../guide/authentication.md) for the full guide.
 
 ---
 

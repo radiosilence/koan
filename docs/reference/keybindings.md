@@ -36,6 +36,9 @@ Every key in every mode. The hint bar at the bottom of the TUI shows available k
 | `e` | Enter queue edit mode |
 | `i` | Track info modal (codec, sample rate, cover art) |
 | `z` | Zoom album art |
+| `v` | Visualizer picker (22 modes with live preview) |
+| `X` | Toggle matrix overlay on visualizer |
+| `S` | Toggle bass shake on visualizer |
 | `L` | Toggle lyrics panel |
 | `R` | Toggle radio mode |
 | `f` | Favourite / unfavourite current track |

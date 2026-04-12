@@ -64,8 +64,15 @@ koan --server http://host:4000          # full TUI
 koan --server http://host:4000 --jukebox  # remote control only (no local playback)
 ```
 
-## Security
+## Authentication
 
-The GraphQL API has **no authentication**. By default it binds to `127.0.0.1` (localhost only). If you expose it on `0.0.0.0`, anyone on your network can control playback, browse your library, move files (via organize), and clear your queue.
+Auth is enabled by default. Run `koan auth setup` before starting the server to create a keypair and admin user. See [Authentication](authentication.md) for the full guide.
 
-Only bind to all interfaces on trusted networks.
+The API binds to `127.0.0.1` by default. If you expose it on `0.0.0.0` with `--bind 0.0.0.0`, make sure auth is enabled (it is by default) or restrict access at the network level.
+
+To disable auth (localhost-only setups):
+
+```toml
+[graphql]
+auth_enabled = false
+```

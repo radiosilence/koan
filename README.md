@@ -18,11 +18,11 @@ brew install radiosilence/koan/koan
 mise use -g github:radiosilence/koan@latest
 
 # or via cargo
-cargo install koan-music
+cargo install koan-cli
 
 # or build from source
 git clone https://github.com/radiosilence/koan.git && cd koan
-cargo install --path crates/koan-music
+cargo install --path crates/koan-cli
 ```
 
 Single binary. macOS works out of the box (CoreAudio). Linux needs ALSA dev headers:
@@ -66,7 +66,8 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Bit-perfect playback** -- CoreAudio AUHAL / ALSA via cpal, automatic sample rate switching, no resampling
 - **Gapless transitions** -- decode thread keeps the ring buffer alive across track boundaries
 - **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV/AIFF/CAF, Ogg, MKV/WebM, MP4
-- **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, spectrum analyzer, lyrics panel, mouse support
+- **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
+- **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, favourite sync
 - **Radio mode** -- infinite play using Subsonic similarity, cached artist relationships, and genre matching
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
@@ -78,7 +79,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **SQLite FTS5 search** -- full-text search across your entire library
 - **Media keys** -- macOS Control Center integration (play/pause, next/prev, now playing info)
 - **Lyrics** -- synced (LRC) and plain lyrics from LRCLIB, current line highlighting
-- **22 visualizer modes** -- spectrum bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, pleasures, moiré, kaleidoscope, julia fractal, spiral, interference, wormhole, matrix rain. Picker with live preview (`v`), matrix overlay (`X`), bass shake (`S`), configurable reactivity
+- **22 visualizer modes** -- spectrum bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moiré, kaleidoscope, julia fractal, spiral, interference, wormhole, matrix rain. Picker with live preview (`v`), matrix overlay (`X`), bass shake (`S`), configurable reactivity
 
 <img width="815" height="598" alt="Screenshot 2026-03-04 at 18 30 43" src="https://github.com/user-attachments/assets/9dab1d13-5d48-4e60-8625-7d72dd2e7957" />
 
@@ -107,13 +108,14 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Media keys** | **macOS CC** | Via MPRIS | Via MPRIS | -- | Via MPRIS | Via MPRIS | -- |
 | **Drag & drop** | **Finder -> TUI** | No | No | No | No | No | No |
 | **Lyrics** | **Synced + plain** | Via MPD | No | Plugin | No | Via MPD | No |
-| **Spectrum analyzer** | **48-band FFT** | No | No | No | No | No | No |
+| **Visualizer** | **22 modes** | No | No | No | No | No | No |
 | **Favourites** | **Yes (syncs)** | Via MPD | No | Yes | No | Via MPD | **Yes** |
 | **Streaming playback** | **Yes (256KB)** | Via MPD | No | No | No | Via MPD | **Yes** |
 | **API / MCP** | **GraphQL + MCP** | MPD protocol | No | No | No | MPD protocol | No |
 | **Tag editing** | Soon | Via MPD | No | Yes | Yes | Via MPD | No |
 | **DSP / EQ** | Soon | Via MPD | Yes | Yes | No | Via MPD | No |
-| **Platforms** | macOS | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
+| **Auth** | **JWT + roles** | No | No | No | No | No | No |
+| **Platforms** | macOS, Linux | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
 | **Maintained** | Yes | Yes | Yes (2.12.0) | Slowing | Yes | Very active | Stale |
 
 ### Desktop players (GUI)
@@ -129,10 +131,10 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **File organization** | **Yes** | Yes (component) | **Yes** | No |
 | **Queue undo/redo** | **100-deep** | Partial | No | Yes |
 | **Lyrics** | **Synced + plain** | Plugin | No | Plugin |
-| **Spectrum analyzer** | **48-band FFT** | Plugin | No | Plugin |
+| **Visualizer** | **22 modes** | Plugin | No | Plugin |
 | **Tag editing** | Soon | **Yes** | Yes | **Yes** |
 | **DSP / EQ** | Soon | **Yes (VST)** | Yes | Yes |
-| **Platforms** | macOS | Windows/macOS | All | All |
+| **Platforms** | macOS, Linux | Windows/macOS | All | All |
 
 <img width="768" height="612" alt="Screenshot 2026-03-04 at 18 31 01" src="https://github.com/user-attachments/assets/0ad4879e-815f-42f3-8ebe-f6d01616bc96" />
 
@@ -141,6 +143,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | Guide | What it covers |
 |-------|---------------|
 | **[Getting Started](docs/getting-started.md)** | First-time setup, local and remote libraries, your first session |
+| **[Authentication](docs/guide/authentication.md)** | JWT auth, user management, 1Password integration, recovery |
 | **[Radio Mode](docs/guide/radio-mode.md)** | Infinite play, similarity scoring, tuning discovery |
 | **[Remote Servers](docs/guide/remote-servers.md)** | Navidrome/Subsonic setup, sync, streaming, cache management |
 | **[File Organization](docs/guide/file-organization.md)** | Rename and reorganize your library from the TUI |
@@ -160,11 +163,10 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 File -> Symphonia -> f32 samples -> rtrb ring buffer -> CoreAudio/cpal callback -> DAC
 ```
 
-Two crates: `koan-core` (audio engine, player, database, indexer) and `koan-music` (`koan` binary, TUI). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
+Four crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
 ## Coming soon
 
-- **Linux support** -- ALSA/PipeWire backends via trait-based audio abstraction ([plan](/.claude/plans/01-linux-and-audio-backends.md))
 - **DSP pipeline** -- EQ, headphone correction profiles, crossfeed ([plan](/.claude/plans/02-dsp-and-profiles.md))
 - **Tag editing** -- inline editing, bulk operations, vimv-style external editor ([plan](/.claude/plans/04-tagging.md))
 - **Artist metadata** -- bios, images, similar artists from MusicBrainz/Last.fm ([plan](/.claude/plans/09-artist-metadata.md))
@@ -174,7 +176,7 @@ Two crates: `koan-core` (audio engine, player, database, indexer) and `koan-musi
 ```bash
 just check    # test + clippy
 just fmt      # cargo fmt
-just cli      # cargo run -p koan-music -- <args>
+just cli      # cargo run -p koan-cli -- <args>
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

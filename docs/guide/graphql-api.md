@@ -18,9 +18,31 @@ koan -d --playground
 Then open `http://localhost:4000/graphql` for the GraphiQL IDE, or query directly:
 
 ```bash
+# If auth is enabled (default), get a token first
+TOKEN=$(curl -s -X POST http://localhost:4000/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"username": "admin", "password": "your-password"}' | jq -r '.access_token')
+
 curl -s http://localhost:4000/graphql \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"query": "{ nowPlaying { state, track { title, artist } } }"}'
+```
+
+## Authentication
+
+Auth is enabled by default (since v0.22.0). Run `koan auth setup` to create a keypair and first admin user before starting the server. See [Authentication](authentication.md) for the full guide.
+
+```bash
+koan auth setup              # generate keypair + create admin user
+koan --headless --playground # start server
+```
+
+To disable auth:
+
+```toml
+[graphql]
+auth_enabled = false
 ```
 
 ## Configuration
@@ -31,10 +53,13 @@ enabled = true                # run alongside TUI (default: true, --no-api disab
 port = 4000                   # API port (default: 4000)
 bind = "127.0.0.1"            # bind address (default: 127.0.0.1)
 playground = false             # GraphiQL IDE at GET /graphql (default: false)
+auth_enabled = true           # JWT authentication (default: true)
+access_token_ttl = "15m"      # access token lifetime (default: 15m)
+refresh_token_ttl = "30d"     # refresh token lifetime (default: 30d)
 # subsonic_port = 4040         # optional Subsonic REST API port (default: disabled, set to enable)
 ```
 
-The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in config to expose on all interfaces. There's no authentication, so only do this on trusted networks.
+The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in config to expose on all interfaces.
 
 ## Example queries
 

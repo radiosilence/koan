@@ -19,14 +19,14 @@ mise use -g github:radiosilence/koan@latest
 ### Cargo
 
 ```bash
-cargo install koan-music
+cargo install koan-cli
 ```
 
 ### Build from source
 
 ```bash
 git clone https://github.com/radiosilence/koan.git && cd koan
-cargo install --path crates/koan-music
+cargo install --path crates/koan-cli
 ```
 
 ### Linux dependencies
@@ -81,7 +81,7 @@ Then scan your library:
 koan scan
 ```
 
-Scanning runs in parallel -- fast even for large collections (tens of thousands of tracks). koan reads metadata from FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV, and AIFF files.
+Scanning runs in parallel -- fast even for large collections (tens of thousands of tracks). koan reads metadata from FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF, CAF, Ogg, MKV/WebM, and MP4 files.
 
 ### Option B: Remote server (Navidrome/Subsonic)
 
@@ -144,6 +144,7 @@ Type to filter. In any picker, press `Enter` to add to queue, `Ctrl+Enter` to ad
 | `i` | Track info (codec, sample rate, bit depth, cover art) |
 | `L` | Toggle lyrics panel |
 | `f` | Favourite / unfavourite |
+| `v` | Visualizer picker (22 modes with live preview) |
 | `R` | Toggle radio mode (infinite play) |
 
 ### Managing the queue
@@ -174,6 +175,7 @@ Then `koan play --album <TAB>` shows your actual albums with artist names.
 ## What's next?
 
 - **[Configuration](reference/configuration.md)** -- customize playback, visualizer, organize patterns, and more
+- **[Authentication](guide/authentication.md)** -- set up API auth, manage users
 - **[Radio Mode](guide/radio-mode.md)** -- let koan pick tracks for you
 - **[File Organization](guide/file-organization.md)** -- rename your library using format string patterns
 - **[Remote Servers](guide/remote-servers.md)** -- advanced Subsonic/Navidrome setup
