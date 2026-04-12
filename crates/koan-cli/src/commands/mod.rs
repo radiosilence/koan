@@ -3,28 +3,17 @@ use rayon::prelude::*;
 mod analyze;
 mod cache;
 mod config;
-pub(crate) mod download_queue;
-mod enqueue;
-pub mod graphql;
 mod library;
-pub mod mcp;
-mod picker_items;
 mod play;
 mod probe;
 mod remote;
 mod scan;
 mod search;
-pub mod serve;
 
 pub use analyze::cmd_analyze;
 pub use cache::{cmd_cache_clear, cmd_cache_status, evict_cache};
-pub use graphql::{cmd_serve, cmd_serve_daemon};
-pub use mcp::cmd_mcp;
-
 pub use config::{cmd_config, cmd_init};
-pub use enqueue::enqueue_playlist;
 pub use library::cmd_library;
-pub use picker_items::{load_picker_items, make_album_picker_items};
 pub use play::{ApiOptions, cmd_play, cmd_play_remote};
 pub use probe::{cmd_devices, cmd_probe};
 pub use remote::{cmd_remote_login, cmd_remote_status, cmd_remote_sync};
@@ -33,7 +22,6 @@ pub use search::cmd_search;
 
 use std::path::{Path, PathBuf};
 
-use koan_core::config as core_config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::player::state::{LoadState, PlaylistItem, QueueItemId};
@@ -93,7 +81,6 @@ pub(crate) fn install_terminal_panic_hook() {
     use std::io;
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |panic| {
-        // Log the panic to the log file before restoring the terminal.
         let location = panic
             .location()
             .map(|l| format!(" at {}:{}:{}", l.file(), l.line(), l.column()))
@@ -106,14 +93,10 @@ pub(crate) fn install_terminal_panic_hook() {
             "unknown".to_string()
         };
         log::error!("PANIC{}: {}", location, payload);
-        // Capture a backtrace.
         let bt = std::backtrace::Backtrace::force_capture();
         log::error!("backtrace:\n{}", bt);
         log::logger().flush();
 
-        // Always restore the terminal regardless of which thread panicked.
-        // All of these are idempotent — harmless if the terminal was never
-        // set up or already restored.
         let _ = disable_raw_mode();
         let _ = execute!(
             io::stdout(),
@@ -126,111 +109,6 @@ pub(crate) fn install_terminal_panic_hook() {
     }));
 }
 
-/// Get the remote password from config, falling back to Keychain for backwards compat.
-pub(crate) fn get_remote_password(cfg: &core_config::Config) -> String {
-    if !cfg.remote.password.is_empty() {
-        return cfg.remote.password.clone();
-    }
-    // Fallback to Keychain for users who set up before the config change.
-    match koan_core::credentials::get_password(&cfg.remote.url) {
-        Ok(p) => p,
-        Err(_) => {
-            eprintln!(
-                "{} no password configured — run {} to set up",
-                "error:".red().bold(),
-                "koan remote login".bold()
-            );
-            std::process::exit(1);
-        }
-    }
-}
-
-/// Build a `SubsonicClient` from the merged config, returning `None` if remote
-/// is disabled or has no URL configured.
-pub(crate) fn subsonic_client(
-    cfg: &koan_core::config::Config,
-) -> Option<koan_core::remote::client::SubsonicClient> {
-    if !cfg.remote.enabled || cfg.remote.url.is_empty() {
-        return None;
-    }
-    let password = get_remote_password(cfg);
-    Some(koan_core::remote::client::SubsonicClient::new(
-        &cfg.remote.url,
-        &cfg.remote.username,
-        &password,
-    ))
-}
-
-/// Sanitise and truncate a string for use as a path component.
-/// Strips illegal chars and caps at 240 bytes (macOS 255-byte filename limit minus room for ext).
-pub(crate) fn sanitise_filename(s: &str) -> String {
-    let cleaned: String = s
-        .chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => c,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string();
-
-    // Truncate on a char boundary to stay under 240 bytes.
-    if cleaned.len() <= 240 {
-        return cleaned;
-    }
-    let mut end = 240;
-    while !cleaned.is_char_boundary(end) && end > 0 {
-        end -= 1;
-    }
-    cleaned[..end].trim_end().to_string()
-}
-
-/// Build a structured cache path for a track:
-///   cache_dir/Album Artist/(Year) Album [Codec]/01. Track Artist - Title.ext
-pub(crate) fn cache_path_for_track(
-    cache_dir: &Path,
-    track: &queries::TrackRow,
-    album_date: Option<&str>,
-) -> PathBuf {
-    let artist_dir = sanitise_filename(&track.artist_name);
-
-    let year = album_date
-        .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
-        .map(|y| format!("({}) ", y))
-        .unwrap_or_default();
-    let codec = track
-        .codec
-        .as_deref()
-        .map(|c| format!(" [{}]", c))
-        .unwrap_or_default();
-    let album_dir = sanitise_filename(&format!("{}{}{}", year, track.album_title, codec));
-
-    let disc_prefix = match track.disc {
-        Some(d) if d > 1 => format!("{}-", d),
-        _ => String::new(),
-    };
-    let track_num = track
-        .track_number
-        .map(|n| format!("{:02}. ", n))
-        .unwrap_or_default();
-
-    let ext = track
-        .codec
-        .as_deref()
-        .map(|c| c.to_lowercase())
-        .unwrap_or_else(|| "flac".into());
-
-    let filename = sanitise_filename(&format!(
-        "{}{}{} - {}",
-        disc_prefix, track_num, track.artist_name, track.title
-    ));
-
-    cache_dir
-        .join(artist_dir)
-        .join(album_dir)
-        .join(format!("{}.{}", filename, ext))
-}
-
 /// Parse text from a terminal paste/drop event into file paths.
 /// Handles: shell-style escaping (`\ ` for spaces), `file://` URIs,
 /// newline/space/tab separation, and quoted paths.
@@ -240,7 +118,6 @@ pub(crate) fn parse_dropped_paths(text: &str) -> Vec<PathBuf> {
         return Vec::new();
     }
 
-    // If the text contains file:// URIs, parse them (iTerm2 and some others).
     if text.contains("file://") {
         let mut paths = Vec::new();
         for line in text.lines() {
@@ -249,7 +126,6 @@ pub(crate) fn parse_dropped_paths(text: &str) -> Vec<PathBuf> {
                 continue;
             }
             if let Some(uri) = line.strip_prefix("file://") {
-                // Strip optional localhost prefix.
                 let raw = uri.strip_prefix("localhost").unwrap_or(uri);
                 paths.push(PathBuf::from(percent_decode(raw)));
             } else {
@@ -259,16 +135,12 @@ pub(crate) fn parse_dropped_paths(text: &str) -> Vec<PathBuf> {
         return paths;
     }
 
-    // Shell-style splitting: handles backslash-escaped spaces, quoted strings,
-    // newline/space/tab separators. This is what Finder drag-and-drop produces.
     shell_split_paths(text)
         .into_iter()
         .map(PathBuf::from)
         .collect()
 }
 
-/// Shell-style split: unescapes `\ ` → space, respects single/double quotes,
-/// splits on unescaped whitespace (space, tab, newline).
 fn shell_split_paths(text: &str) -> Vec<String> {
     let mut result = Vec::new();
     let mut current = String::new();
@@ -279,7 +151,6 @@ fn shell_split_paths(text: &str) -> Vec<String> {
     while let Some(c) = chars.next() {
         match c {
             '\\' if !in_single => {
-                // Backslash escape: consume next char literally.
                 if let Some(&next) = chars.peek() {
                     current.push(next);
                     chars.next();
@@ -301,7 +172,6 @@ fn shell_split_paths(text: &str) -> Vec<String> {
     result
 }
 
-/// Minimal percent-decoding for file:// URIs (%20 → space, etc.).
 fn percent_decode(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.bytes();
@@ -328,14 +198,10 @@ fn percent_decode(input: &str) -> String {
 
 /// Build PlaylistItems from file paths. Checks the DB first for already-scanned
 /// tracks (instant), only falls back to lofty disk reads for unknown files.
-/// If `progress` is provided, the AtomicUsize is incremented after each file.
 pub(crate) fn playlist_items_from_paths(
     paths: &[PathBuf],
     progress: Option<&std::sync::atomic::AtomicUsize>,
 ) -> Vec<PlaylistItem> {
-    // For large path sets (whole-library plays), load all DB tracks in a single
-    // query instead of batching hundreds of WHERE IN queries. The threshold is
-    // where one full-table scan beats N batched indexed lookups.
     const BULK_THRESHOLD: usize = 1000;
     let db_cache: std::collections::HashMap<String, queries::TrackRow> =
         if paths.len() >= BULK_THRESHOLD {
@@ -384,12 +250,10 @@ pub(crate) fn playlist_items_from_paths(
     items
 }
 
-/// Try to open the DB without exiting on failure (used for optional cache).
-fn open_db_optional() -> Option<koan_core::db::connection::Database> {
-    koan_core::db::connection::Database::open_default().ok()
+fn open_db_optional() -> Option<Database> {
+    Database::open_default().ok()
 }
 
-/// Build a PlaylistItem from a DB TrackRow (no disk IO).
 fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> PlaylistItem {
     PlaylistItem {
         id: QueueItemId::new(),
@@ -399,7 +263,7 @@ fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> Playl
         artist: track.artist_name.clone(),
         album_artist: track.album_artist_name.clone(),
         album: track.album_title.clone(),
-        year: None, // TrackRow doesn't carry album date; cosmetic only
+        year: None,
         codec: track.codec.clone(),
         track_number: track.track_number.map(|n| n as i64),
         disc: track.disc.map(|n| n as i64),
@@ -408,7 +272,6 @@ fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> Playl
     }
 }
 
-/// Read metadata from disk and build a PlaylistItem.
 fn read_metadata_to_item(p: &Path) -> PlaylistItem {
     match koan_core::index::metadata::read_metadata(p) {
         Ok(meta) => PlaylistItem {
@@ -454,37 +317,6 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
                 load_state: LoadState::Ready,
             }
         }
-    }
-}
-
-/// Build a PlaylistItem from a TrackRow + album date + cache path.
-pub(crate) fn playlist_item_from_track(
-    track: &queries::TrackRow,
-    album_date: Option<&str>,
-    dest: PathBuf,
-    load_state: LoadState,
-) -> PlaylistItem {
-    let year = album_date.and_then(|d| {
-        if d.len() >= 4 {
-            Some(d[..4].to_string())
-        } else {
-            None
-        }
-    });
-    PlaylistItem {
-        id: QueueItemId::new(),
-        db_id: Some(track.id),
-        path: dest,
-        title: track.title.clone(),
-        artist: track.artist_name.clone(),
-        album_artist: track.album_artist_name.clone(),
-        album: track.album_title.clone(),
-        year,
-        codec: track.codec.clone(),
-        track_number: track.track_number.map(|n| n as i64),
-        disc: track.disc.map(|n| n as i64),
-        duration_ms: track.duration_ms.map(|d| d as u64),
-        load_state,
     }
 }
 
@@ -547,7 +379,6 @@ mod tests {
 
     #[test]
     fn test_parse_dropped_finder_style() {
-        // Finder sends space-separated, backslash-escaped paths.
         let input = "/Users/test/Music/My\\ Album /Users/test/Music/Track\\ 01.flac";
         let paths = parse_dropped_paths(input);
         assert_eq!(paths.len(), 2);

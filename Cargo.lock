@@ -2001,6 +2001,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "koan-cli"
+version = "0.20.4"
+dependencies = [
+ "chrono",
+ "clap",
+ "clap_complete",
+ "core-foundation 0.9.4",
+ "crossbeam-channel",
+ "crossterm",
+ "ctrlc",
+ "jwalk",
+ "koan-core",
+ "koan-server",
+ "koan-tui",
+ "log",
+ "owo-colors",
+ "rayon",
+ "rpassword",
+ "tempfile",
+ "toml 0.9.12+spec-1.1.0",
+ "walkdir",
+]
+
+[[package]]
 name = "koan-core"
 version = "0.20.4"
 dependencies = [
@@ -2037,43 +2061,54 @@ dependencies = [
 ]
 
 [[package]]
-name = "koan-music"
+name = "koan-server"
 version = "0.20.4"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
  "axum",
  "base64",
- "chrono",
- "clap",
- "clap_complete",
- "core-foundation 0.9.4",
  "crossbeam-channel",
- "crossterm",
- "ctrlc",
  "image",
- "jwalk",
  "koan-core",
  "log",
  "md5",
+ "nucleo",
+ "reqwest",
+ "rmcp",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "tower",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
+name = "koan-tui"
+version = "0.20.4"
+dependencies = [
+ "chrono",
+ "core-foundation 0.9.4",
+ "crossbeam-channel",
+ "crossterm",
+ "image",
+ "jwalk",
+ "koan-core",
+ "koan-server",
+ "log",
  "nucleo",
  "owo-colors",
  "ratatui",
  "rayon",
  "reqwest",
- "rmcp",
- "rpassword",
- "rusqlite",
- "serde",
- "serde_json",
  "souvlaki",
  "tempfile",
- "tokio",
- "tokio-util",
  "toml 0.9.12+spec-1.1.0",
- "tower",
  "uuid",
- "walkdir",
 ]
 
 [[package]]

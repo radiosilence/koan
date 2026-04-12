@@ -14,7 +14,7 @@ use koan_core::player::state::{
     VisibleQueueSnapshot,
 };
 
-use crate::commands::download_queue::DownloadQueue;
+use crate::download_queue::DownloadQueue;
 
 use super::library::LibraryState;
 use super::lyrics::LyricsState;
@@ -423,7 +423,7 @@ impl App {
             if let Ok(Some(remote_id)) = koan_core::db::queries::remote_id_for_path(&db.conn, path)
             {
                 let cfg = koan_core::config::Config::load().unwrap_or_default();
-                if let Some(client) = crate::commands::subsonic_client(&cfg) {
+                if let Some(client) = koan_core::helpers::subsonic_client(&cfg) {
                     let rid = remote_id.clone();
                     let star = is_fav;
                     std::thread::spawn(move || {
@@ -770,7 +770,7 @@ impl App {
                 }
                 if !deduped.is_empty() {
                     self.picker_result = Some((
-                        crate::tui::picker::PickerKind::Track,
+                        crate::picker::PickerKind::Track,
                         deduped,
                         PickerAction::Append,
                     ));
@@ -873,7 +873,7 @@ impl App {
                 let client = if radio_config.use_subsonic {
                     koan_core::config::Config::load()
                         .ok()
-                        .and_then(|cfg| crate::commands::subsonic_client(&cfg))
+                        .and_then(|cfg| koan_core::helpers::subsonic_client(&cfg))
                 } else {
                     None
                 };
@@ -1635,7 +1635,7 @@ impl App {
             return;
         }
 
-        let Some(client) = crate::commands::subsonic_client(&cfg) else {
+        let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
             self.status_message = Some(("Remote not configured".into(), std::time::Instant::now()));
             return;
         };

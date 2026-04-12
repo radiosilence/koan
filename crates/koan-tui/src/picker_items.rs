@@ -1,10 +1,19 @@
 use koan_core::db::queries;
 
-use super::{format_time, open_db};
-use crate::tui::picker::{PickerItem, PickerKind, PickerPartKind};
+use crate::picker::{PickerItem, PickerKind, PickerPartKind};
+
+fn format_time(ms: u64) -> String {
+    let secs = ms / 1000;
+    let mins = secs / 60;
+    let secs = secs % 60;
+    format!("{}:{:02}", mins, secs)
+}
 
 pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
-    let db = open_db();
+    let db = koan_core::db::connection::Database::open_default().unwrap_or_else(|e| {
+        log::error!("db error: {}", e);
+        std::process::exit(1);
+    });
     match kind {
         PickerKind::Track => {
             let tracks = queries::all_tracks(&db.conn).unwrap_or_default();

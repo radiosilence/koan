@@ -5,7 +5,7 @@ use koan_core::config;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{LoadState, QueueItemId, SharedPlayerState};
 
-use super::enqueue::download_track;
+use koan_core::helpers::download_track;
 
 /// Persistent download queue — lives for the app's lifetime.
 ///

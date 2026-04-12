@@ -1026,7 +1026,7 @@ async fn proxy_stream_from_upstream(
     client_headers: &HeaderMap,
 ) -> Result<Response, SubsonicError> {
     let cfg = Config::load().unwrap_or_default();
-    let client = match super::subsonic_client(&cfg) {
+    let client = match koan_core::helpers::subsonic_client(&cfg) {
         Some(c) => c,
         None => return Err(SubsonicError::not_found("Remote server not configured")),
     };
@@ -1708,7 +1708,7 @@ pub fn subsonic_router(db_path: PathBuf) -> axum::Router {
     let (username, password) = if cfg.remote.username.is_empty() {
         ("admin".to_string(), "admin".to_string())
     } else {
-        let pass = super::get_remote_password(&cfg);
+        let pass = koan_core::helpers::get_remote_password(&cfg).unwrap_or_default();
         (cfg.remote.username.clone(), pass)
     };
 

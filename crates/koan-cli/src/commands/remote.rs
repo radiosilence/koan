@@ -37,7 +37,7 @@ pub fn cmd_remote_login(url: &str, username: &str) {
 
 pub fn cmd_remote_sync(full: bool) {
     let cfg = config::Config::load().unwrap_or_default();
-    let client = match super::subsonic_client(&cfg) {
+    let client = match koan_core::helpers::subsonic_client(&cfg) {
         Some(c) => c,
         None => {
             eprintln!(
@@ -138,7 +138,7 @@ pub fn cmd_remote_status() {
         }
     );
 
-    if has_password && let Some(client) = super::subsonic_client(&cfg) {
+    if has_password && let Some(client) = koan_core::helpers::subsonic_client(&cfg) {
         match client.ping() {
             Ok(()) => println!("{} {}", "status:".cyan(), "connected".green()),
             Err(e) => println!(
