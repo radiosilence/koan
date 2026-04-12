@@ -177,16 +177,38 @@ pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     spki.extend_from_slice(pub_bytes);
     let public_pem = pem::encode(&pem::Pem::new("PUBLIC KEY", spki));
 
-    // Write with restrictive permissions.
-    fs::write(private_key_path(), &private_pem)?;
-    fs::write(public_key_path(), &public_pem)?;
-
+    // Write key files with restrictive permissions set BEFORE writing content
+    // to avoid a window where the file exists with default (world-readable) mode.
     #[cfg(unix)]
     {
+        use std::fs::OpenOptions;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
         use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(private_key_path(), fs::Permissions::from_mode(0o600));
-        let _ = fs::set_permissions(public_key_path(), fs::Permissions::from_mode(0o644));
+
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(private_key_path())?;
+        f.write_all(private_pem.as_bytes())?;
+
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o644)
+            .open(public_key_path())?;
+        f.write_all(public_pem.as_bytes())?;
+
         let _ = fs::set_permissions(&dir, fs::Permissions::from_mode(0o700));
+    }
+
+    #[cfg(not(unix))]
+    {
+        fs::write(private_key_path(), &private_pem)?;
+        fs::write(public_key_path(), &public_pem)?;
     }
 
     Ok((private_pem.into_bytes(), public_pem.into_bytes()))

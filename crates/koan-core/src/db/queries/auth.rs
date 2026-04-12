@@ -175,6 +175,35 @@ pub fn get_valid_refresh_token(
     }
 }
 
+/// Atomically consume a valid refresh token: revoke it and return the row in one
+/// statement. Returns `None` if the token doesn't exist, is already revoked, or
+/// has expired. This prevents TOCTOU races in refresh-token rotation.
+pub fn consume_refresh_token(
+    conn: &Connection,
+    token_id: &str,
+) -> Result<Option<RefreshTokenRow>, rusqlite::Error> {
+    let now = auth::now_unix() as i64;
+    let mut stmt = conn.prepare(
+        "UPDATE refresh_tokens SET revoked = 1
+         WHERE id = ?1 AND revoked = 0 AND expires_at > ?2
+         RETURNING id, user_id, expires_at, revoked, created_at",
+    )?;
+    let mut rows = stmt.query_map(params![token_id, now], |row| {
+        Ok(RefreshTokenRow {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            expires_at: row.get(2)?,
+            revoked: row.get::<_, i32>(3)? != 0,
+            created_at: row.get(4)?,
+        })
+    })?;
+    match rows.next() {
+        Some(Ok(token)) => Ok(Some(token)),
+        Some(Err(e)) => Err(e),
+        None => Ok(None),
+    }
+}
+
 /// Revoke a single refresh token (logout).
 pub fn revoke_refresh_token(conn: &Connection, token_id: &str) -> Result<bool, rusqlite::Error> {
     let count = conn.execute(

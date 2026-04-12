@@ -366,7 +366,8 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<(), Subson
     // Token-based: t = md5(password + s)
     if let (Some(token), Some(salt)) = (params.t.as_deref(), params.s.as_deref()) {
         let expected = format!("{:x}", md5::compute(format!("{}{}", state.password, salt)));
-        if token == expected {
+        use subtle::ConstantTimeEq;
+        if token.as_bytes().ct_eq(expected.as_bytes()).into() {
             return Ok(());
         }
         return Err(SubsonicError::wrong_auth());
@@ -379,7 +380,8 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<(), Subson
         } else {
             p.clone()
         };
-        if plain == state.password {
+        use subtle::ConstantTimeEq;
+        if plain.as_bytes().ct_eq(state.password.as_bytes()).into() {
             return Ok(());
         }
         return Err(SubsonicError::wrong_auth());
@@ -1700,25 +1702,35 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 
 /// Build a Subsonic-compatible REST API router.
 ///
-/// Auth credentials come from `Config::load()`.  If remote is not configured,
-/// falls back to admin/admin.
-pub fn subsonic_router(db_path: PathBuf) -> axum::Router {
+/// Auth credentials come from `Config::load()`.  Returns `None` if remote
+/// credentials are not configured (refuses to start with no auth).
+pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
     let cfg = Config::load().unwrap_or_default();
 
-    let (username, password) = if cfg.remote.username.is_empty() {
-        ("admin".to_string(), "admin".to_string())
-    } else {
-        let pass = koan_core::helpers::get_remote_password(&cfg).unwrap_or_default();
-        (cfg.remote.username.clone(), pass)
-    };
+    if cfg.remote.username.is_empty() {
+        log::warn!(
+            "Subsonic API disabled: remote.username is not configured. \
+             Set remote credentials in config.toml to enable the Subsonic API."
+        );
+        return None;
+    }
+
+    let password = koan_core::helpers::get_remote_password(&cfg).unwrap_or_default();
+    if password.is_empty() {
+        log::warn!(
+            "Subsonic API disabled: remote password is empty. \
+             Set remote credentials to enable the Subsonic API."
+        );
+        return None;
+    }
 
     let state = Arc::new(AppState {
         db_path,
-        username,
+        username: cfg.remote.username.clone(),
         password,
     });
 
-    register_subsonic_routes(axum::Router::new()).with_state(state)
+    Some(register_subsonic_routes(axum::Router::new()).with_state(state))
 }
 
 // ===========================================================================

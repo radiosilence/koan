@@ -69,13 +69,11 @@ fn run_api_blocking(
         match auth::load_keypair() {
             Ok(kp) => kp,
             Err(e) => {
-                log::error!(
-                    "Auth enabled but keypair not found: {}. Run `koan auth setup` first.",
+                panic!(
+                    "Auth enabled but keypair not found: {}. Run `koan auth setup` first. \
+                     Refusing to start with auth_enabled=true and no valid keypair.",
                     e
                 );
-                // Fall back to disabled auth rather than crashing.
-                log::warn!("Falling back to auth_enabled=false");
-                (vec![], vec![])
             }
         }
     } else {
@@ -159,30 +157,36 @@ fn run_api_blocking(
             axum::serve(gql_listener, app).with_graceful_shutdown(shutdown_signal());
 
         if let Some(sub_port) = subsonic_port {
-            let sub_app = crate::subsonic::subsonic_router(db_path);
-            let sub_addr = std::net::SocketAddr::new(bind, sub_port);
+            if let Some(sub_app) = crate::subsonic::subsonic_router(db_path) {
+                let sub_addr = std::net::SocketAddr::new(bind, sub_port);
 
-            match tokio::net::TcpListener::bind(sub_addr).await {
-                Ok(sub_listener) => {
-                    log::info!("Subsonic REST on http://{}:{}/rest/", bind, sub_port);
-                    let sub_server = axum::serve(sub_listener, sub_app)
-                        .with_graceful_shutdown(shutdown_signal());
+                match tokio::net::TcpListener::bind(sub_addr).await {
+                    Ok(sub_listener) => {
+                        log::info!("Subsonic REST on http://{}:{}/rest/", bind, sub_port);
+                        let sub_server = axum::serve(sub_listener, sub_app)
+                            .with_graceful_shutdown(shutdown_signal());
 
-                    tokio::select! {
-                        r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
-                        r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
+                        tokio::select! {
+                            r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
+                            r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "Subsonic API disabled: failed to bind port {} — {}",
+                            sub_port,
+                            e,
+                        );
+                        // Run GraphQL-only.
+                        if let Err(e) = gql_server.await {
+                            log::error!("GraphQL server error: {e}");
+                        }
                     }
                 }
-                Err(e) => {
-                    log::warn!(
-                        "Subsonic API disabled: failed to bind port {} — {}",
-                        sub_port,
-                        e,
-                    );
-                    // Run GraphQL-only.
-                    if let Err(e) = gql_server.await {
-                        log::error!("GraphQL server error: {e}");
-                    }
+            } else {
+                // subsonic_router returned None — credentials not configured.
+                if let Err(e) = gql_server.await {
+                    log::error!("GraphQL server error: {e}");
                 }
             }
         } else {
@@ -222,17 +226,14 @@ async fn shutdown_signal() {
 }
 
 async fn graphql_handler(
-    auth_user: Option<axum::Extension<AuthUser>>,
+    axum::Extension(user): axum::Extension<AuthUser>,
     axum::extract::State(schema): axum::extract::State<KoanSchema>,
     req: async_graphql_axum::GraphQLRequest,
 ) -> async_graphql_axum::GraphQLResponse {
     let mut request = req.into_inner();
-    // Inject the authenticated user into GraphQL context.
-    if let Some(axum::Extension(user)) = auth_user {
-        request = request.data(user);
-    } else {
-        request = request.data(AuthUser::anonymous_admin());
-    }
+    // The auth middleware always injects AuthUser (anonymous_admin when auth is
+    // disabled, or a real user when auth is enabled). No fallback needed here.
+    request = request.data(user);
     schema.execute(request).await.into()
 }
 
