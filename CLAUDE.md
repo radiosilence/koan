@@ -58,6 +58,9 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - **One `derive_visible_queue()` per frame** — cached snapshot, all render/mouse ops see consistent state.
 - **Track dedup across sources** — local file + remote entry = one DB row. 3-strategy match: path → remote_id → content.
 - **Figment-layered config** — defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Use `Config::update_base()` for base config writes, `patch_local(section, values)` for machine-specific updates to `config.local.toml`.
+- **QueryExecutor trait** — transport abstraction. `HttpExecutor` for remote, `InProcessExecutor` for local schema.execute(). `GraphQLClient` is transport-agnostic via `Arc<dyn QueryExecutor>`.
+- **PlayerBackend trait** — `LocalBackend` (crossbeam channel + direct state) or future `RemoteBackend` (GQL mutations + subscription state). TUI is backend-agnostic.
+- **Binary viz WebSocket** — `/ws/viz` pushes KVIZ frames (compact f32 LE). ~24KB/s spectrum-only at 60fps vs ~2.5MB/s JSON.
 
 ## Git
 
@@ -110,6 +113,8 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
 | `organize.rs` | File rename using format strings. Preview/execute/undo. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
+| `graphql_client.rs` | Transport-agnostic GQL client. `QueryExecutor` trait, `HttpExecutor`, `GraphQLClient`. Used by TUI and remote bridge. |
+| `auth.rs` | Ed25519 JWT signing, Argon2id password hashing, `Role` enum, `Claims` |
 
 ### koan-tui (`crates/koan-tui/src/`)
 
@@ -129,6 +134,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `media_keys.rs` | macOS Control Center via souvlaki, manual CFRunLoop pump |
 | `download_queue.rs` | Persistent download queue with priority/cursor-aware reordering |
 | `enqueue.rs` | `enqueue_playlist()` — build PlaylistItems from track IDs, submit downloads |
+| `backend.rs` | `PlayerBackend` trait — abstracts local (in-process) vs remote (GQL) player. `LocalBackend` impl. |
 | `remote_bridge.rs` | Remote bridge: connects TUI to a remote koan server via GraphQL |
 
 ### koan-server (`crates/koan-server/src/`)
@@ -140,7 +146,10 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `graphql/mutations.rs` | GraphQL mutations (playback, queue, favourites, snapshots, organize, updateConfig) |
 | `graphql/subscriptions.rs` | GraphQL subscriptions: `nowPlaying`, `queueUpdated`, `vizFrame`. Push-based real-time data via WebSocket. |
 | `graphql/types.rs` | GraphQL type definitions (GqlArtist, GqlTrack, GqlNowPlaying, GqlVizFrame, GqlQueueSnapshot, GqlConfig, etc.) |
-| `graphql/server.rs` | HTTP + WebSocket server (axum), `cmd_serve`, `start_api_background`, `ApiServerOpts`, daemon mode |
+| `graphql/server.rs` | HTTP + WebSocket server (axum), `cmd_serve`, `start_api_background`, `ApiServerOpts`, `InProcessExecutor`, binary viz WS (`/ws/viz`), daemon mode |
+| `auth/mod.rs` | `AuthUser` type, middleware, JWT validation |
+| `auth/middleware.rs` | Axum auth middleware, `AuthState` |
+| `auth/routes.rs` | Auth HTTP routes (`/auth/login`, `/auth/refresh`, `/auth/logout`), `AuthRouteState` |
 | `subsonic.rs` | Subsonic-compatible REST API (XML/JSON, auth, streaming, cover art) |
 | `mcp.rs` | MCP server for Claude Desktop (schema_sdl + graphql tools) |
 

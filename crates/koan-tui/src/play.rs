@@ -12,6 +12,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::LoadState;
 
 use crate::app::{self, PickerAction};
+use crate::backend::PlayerBackend;
 use crate::download_queue::DownloadQueue;
 use crate::enqueue::enqueue_playlist;
 use crate::picker::{
@@ -97,6 +98,7 @@ pub fn run_tui(
     download_queue: DownloadQueue,
     callbacks: TuiCallbacks,
     gql_client: Option<koan_core::graphql_client::GraphQLClient>,
+    backend: Arc<dyn PlayerBackend>,
 ) -> std::io::Result<()> {
     use crossterm::{
         event::{
@@ -120,8 +122,8 @@ pub fn run_tui(
         EnableMouseCapture,
         EnableBracketedPaste
     )?;
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let term_backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(term_backend)?;
 
     let db_path = koan_core::config::db_path();
 
@@ -141,6 +143,7 @@ pub fn run_tui(
         target_fps,
         download_queue.clone(),
         gql_client,
+        backend,
     );
 
     if expects_playback {

@@ -20,8 +20,14 @@
   - DB tables: `users`, `refresh_tokens` (auto-created on startup).
   - Role-based guards on all GraphQL mutations (admin: scan/organize/device, user: playback/queue/favourites, readonly: queries only).
 
+- **In-process GQL routing** — TUI data queries (library browsing, picker, favourites, playback state save/restore) now route through the GraphQL schema via `QueryExecutor` trait. Transport-agnostic: same code path for local in-process and remote HTTP execution. ([#162](https://github.com/radiosilence/koan/issues/162))
+- **Binary viz WebSocket** — `/ws/viz` endpoint pushes raw f32 spectrum/peaks/VU data in a compact binary format (KVIZ). At 60fps spectrum-only: ~24KB/s vs ~2.5MB/s JSON. Waveform opt-in via `?waveform=true`. ([#162](https://github.com/radiosilence/koan/issues/162))
+- **`PlayerBackend` trait** — abstracts local vs remote player communication. `LocalBackend` wraps the existing in-process channel+state. Foundation for remote TUI mode. ([#162](https://github.com/radiosilence/koan/issues/162))
+- **Playback state mutations** — `savePlaybackState` and `clearPlaybackState` GQL mutations for persisting queue state through the schema.
+
 ### Changed
 
+- **`GraphQLClient` is transport-agnostic** — refactored to use `QueryExecutor` trait. `new()` for HTTP, `new_with_executor()` for in-process. Now `Clone`-able via `Arc<dyn QueryExecutor>`.
 - **`build_schema()` accepts `VizSnapshot`** — optional `Arc<VizSnapshot>` parameter enables viz data in the GraphQL API when the analyzer is running.
 - **`start_api_background()` uses `ApiServerOpts`** — struct parameter replaces 8 positional arguments.
 

@@ -4,6 +4,7 @@
 //! Depends on koan-core. Uses koan-server for the embedded API server.
 
 pub mod app;
+pub mod backend;
 pub mod context_menu;
 pub mod cover_art;
 pub mod device_selector;

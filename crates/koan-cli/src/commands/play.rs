@@ -10,6 +10,7 @@ use koan_core::player::state::LoadState;
 use owo_colors::OwoColorize;
 
 use koan_tui::app::PickerAction;
+use koan_tui::backend::LocalBackend;
 use koan_tui::download_queue::DownloadQueue;
 use koan_tui::enqueue::enqueue_playlist;
 use koan_tui::play::TuiCallbacks;
@@ -211,6 +212,12 @@ pub fn cmd_play(
         open_db,
     };
 
+    let backend = Arc::new(LocalBackend::new(
+        state.clone(),
+        viz_snapshot.clone(),
+        tx.clone(),
+    ));
+
     if let Err(e) = koan_tui::play::run_tui(
         state,
         viz_snapshot,
@@ -222,6 +229,7 @@ pub fn cmd_play(
         download_queue,
         callbacks,
         Some(gql_client),
+        backend,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }
@@ -279,6 +287,15 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
     // Remote mode: use HTTP-backed GraphQLClient (talks to the remote server).
     let remote_client = koan_core::graphql_client::GraphQLClient::new(server_url);
 
+    // Wrap the remote bridge primitives in a LocalBackend — the remote bridge
+    // already provides SharedPlayerState + VizSnapshot + Sender<PlayerCommand>,
+    // so LocalBackend works fine here. A dedicated RemoteBackend will come later.
+    let backend = Arc::new(LocalBackend::new(
+        state.clone(),
+        viz_snapshot.clone(),
+        cmd_tx.clone(),
+    ));
+
     if let Err(e) = koan_tui::play::run_tui(
         state,
         viz_snapshot,
@@ -290,6 +307,7 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         download_queue,
         callbacks,
         Some(remote_client),
+        backend,
     ) {
         eprintln!("{} {}", "tui error:".red().bold(), e);
     }

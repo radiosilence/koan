@@ -14,6 +14,7 @@ use koan_core::player::state::{
     VisibleQueueSnapshot,
 };
 
+use crate::backend::PlayerBackend;
 use crate::download_queue::DownloadQueue;
 
 use super::library::LibraryState;
@@ -160,6 +161,9 @@ pub struct App {
     pub state: Arc<SharedPlayerState>,
     pub tx: Sender<PlayerCommand>,
     pub quit: bool,
+
+    /// Player backend abstraction — local or remote.
+    pub backend: Arc<dyn PlayerBackend>,
 
     /// Queue cursor, selection, scroll, and cached snapshot.
     pub queue: QueueState,
@@ -324,6 +328,7 @@ impl App {
         ticks_per_sec: u8,
         download_queue: DownloadQueue,
         gql_client: Option<koan_core::graphql_client::GraphQLClient>,
+        backend: Arc<dyn PlayerBackend>,
     ) -> Self {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
         let ticker_divisor = {
@@ -338,6 +343,7 @@ impl App {
             state,
             tx,
             quit: false,
+            backend,
             queue: QueueState::default(),
             picker: None,
             spinner_tick: 0,
