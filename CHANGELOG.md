@@ -7,6 +7,11 @@
 - **Opus codec support** — `.opus` files now play correctly. Uses `opus-decoder` (pure Rust, RFC 8251) to bridge Symphonia's Ogg demuxer with a real Opus decoder. Pre-skip trimming, 48 kHz output, ReplayGain scanning all handled. Closes [#149](https://github.com/radiosilence/koan/issues/149).
 - **Secrets-in-git startup check** — on launch, koan checks if config files containing passwords are tracked by git. If so, the app refuses to start and prints remediation steps (remove from git, add to .gitignore, rotate credentials). Hard panic, no bypass.
 
+### Fixed
+
+- **Scan FK constraint error** — `koan scan` failed with `FOREIGN KEY constraint failed` when removing stale tracks that had rows in `lyrics_cache`, `play_history`, or `track_vectors`. Now cleans all FK references before deleting. ([#152](https://github.com/radiosilence/koan/pull/152))
+- **Multi-instance state clobber** — autosave is now event-driven (dirty flag) and throttled to 100ms. An idle koan window no longer overwrites the saved state of an active instance.
+
 ### Changed
 
 - **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support.
