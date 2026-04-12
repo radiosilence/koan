@@ -9,10 +9,10 @@ koan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default.
 koan auth setup
 
 # 2. Start the server
-koan play  # or: koan serve --port 4000
+koan serve --port 4000  # or: koan play (starts API in background)
 
 # 3. Get a token
-curl -X POST http://localhost:4000/auth/login \
+curl -s -X POST http://localhost:4000/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username": "admin", "password": "your-password"}'
 
@@ -20,10 +20,41 @@ curl -X POST http://localhost:4000/auth/login \
 # { "access_token": "eyJ...", "refresh_token": "...", "expires_in": 900 }
 
 # 4. Use the token
-curl http://localhost:4000/graphql \
+curl -s http://localhost:4000/graphql \
   -H "Authorization: Bearer eyJ..." \
   -H "Content-Type: application/json" \
   -d '{"query": "{ libraryStats { trackCount } }"}'
+```
+
+### Full curl workflow (copy-pasteable)
+
+```bash
+# Login and capture tokens
+RESPONSE=$(curl -s -X POST http://localhost:4000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "your-password"}')
+
+ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+REFRESH_TOKEN=$(echo "$RESPONSE" | jq -r '.refresh_token')
+
+echo "Access token (15min):  ${ACCESS_TOKEN:0:20}..."
+echo "Refresh token (30d):   ${REFRESH_TOKEN:0:20}..."
+
+# Make authenticated GraphQL requests
+curl -s http://localhost:4000/graphql \
+  -H "Authorization: Bearer $ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "{ libraryStats { trackCount artistCount albumCount } }"}' | jq
+
+# When access token expires, refresh it (returns new pair)
+RESPONSE=$(curl -s -X POST http://localhost:4000/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d "{\"refresh_token\": \"$REFRESH_TOKEN\"}")
+
+ACCESS_TOKEN=$(echo "$RESPONSE" | jq -r '.access_token')
+REFRESH_TOKEN=$(echo "$RESPONSE" | jq -r '.refresh_token')
+
+echo "New access token: ${ACCESS_TOKEN:0:20}..."
 ```
 
 ## CLI authentication
@@ -31,6 +62,7 @@ curl http://localhost:4000/graphql \
 ```bash
 # Login to a running koan server (stores refresh token in system keyring)
 koan auth login http://localhost:4000
+# Prompts for username and password interactively
 
 # Token auto-refreshes — no need to login again until the refresh token expires (30 days)
 ```
@@ -41,9 +73,8 @@ koan auth login http://localhost:4000
 # List users
 koan auth list-users
 
-# Create a user with a specific role
+# Create a user with a specific role (prompts for password interactively)
 koan auth create-user --username alice --role user
-# (prompts for password)
 
 # Roles:
 #   admin    — everything: user management, config, organize, device switching
@@ -61,6 +92,21 @@ koan auth delete-user alice
 - **Refresh**: `POST /auth/refresh` with `{"refresh_token": "..."}` returns new access + refresh tokens.
 - **Logout**: `POST /auth/logout` with `{"refresh_token": "..."}` revokes the token.
 
+## GraphQL Playground
+
+The playground needs auth too. To avoid the hassle of manually setting headers, koan can generate a pre-authenticated playground URL:
+
+```bash
+# Start the playground with a one-time access key in the URL
+koan serve --playground
+# Opens: http://localhost:4000/playground?key=<one-time-key>
+# The key is valid for the session only and printed to stdout
+```
+
+The one-time key is injected as a query parameter and translated to a Bearer token server-side. No need to manually set Authorization headers in the playground UI.
+
+If you're running with `auth_enabled = false`, the playground works without any key.
+
 ## Keypair
 
 Ed25519 keypair is auto-generated on first `koan auth setup` and stored at:
@@ -75,7 +121,7 @@ Ed25519 keypair is auto-generated on first `koan auth setup` and stored at:
 ```bash
 # Use the CLI directly (doesn't need a running server or auth)
 koan auth create-user --username admin --role admin
-# This resets the password for an existing user if the username already exists
+# Prompts for new password. Resets password if username already exists.
 ```
 
 **Regenerate keypair:**
@@ -118,4 +164,4 @@ The TUI and MCP server run in the same process as the player. They bypass auth e
 
 ## Subsonic API
 
-Subsonic REST endpoints use their own auth (username + token/salt or plain password). This is separate from JWT auth and uses the same `users` table. The Subsonic auth flow is handled automatically by existing Subsonic clients.
+Subsonic REST endpoints use the standard Subsonic auth mechanism (username + token/salt or plain password) for compatibility with existing clients (play:Sub, DSub, Symfonium, etc.). Under the hood, credentials are verified against the same `users` table — same users, same passwords, same roles. The auth mechanism is different (Subsonic's MD5+salt scheme vs JWT) but the identity system is shared.
