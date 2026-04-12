@@ -8,6 +8,56 @@ use koan_core::player::state::{PlaybackState, QueueEntry, TrackInfo};
 
 use super::theme::Theme;
 
+/// Format audio quality info as a human-readable string.
+///
+/// Examples: "CD quality", "FLAC 96kHz/24bit", "Opus 48kHz/128kbps", "MP3 320kbps"
+#[allow(clippy::manual_is_multiple_of)]
+pub fn format_quality(info: &TrackInfo) -> String {
+    let rate = info.sample_rate;
+    let ch = info.channels;
+
+    // Human-friendly sample rate.
+    let rate_str = match rate {
+        44100 => "44.1kHz".to_string(),
+        48000 => "48kHz".to_string(),
+        88200 => "88.2kHz".to_string(),
+        96000 => "96kHz".to_string(),
+        176400 => "176.4kHz".to_string(),
+        192000 => "192kHz".to_string(),
+        352800 => "352.8kHz".to_string(),
+        384000 => "384kHz".to_string(),
+        _ if rate % 1000 == 0 => format!("{}kHz", rate / 1000),
+        _ => format!("{}Hz", rate),
+    };
+
+    // Quality label for well-known configurations.
+    let label = match (info.codec.as_str(), rate, info.bit_depth, ch) {
+        (_, 44100, Some(16), 2) => return format!("{} · CD quality", info.codec),
+        (_, 44100, Some(16), 1) => return format!("{} · CD quality (mono)", info.codec),
+        _ => None::<&str>,
+    };
+    let _ = label; // Unused — matched above return early.
+
+    // Detail: bit depth for lossless, bitrate for lossy.
+    let detail = if let Some(b) = info.bit_depth {
+        format!("/{}bit", b)
+    } else if let Some(kbps) = info.bitrate_kbps {
+        format!("/{}kbps", kbps)
+    } else {
+        String::new()
+    };
+
+    let ch_str = if ch == 1 {
+        "mono"
+    } else if ch == 2 {
+        "stereo"
+    } else {
+        return format!("{} {}{}/{}ch", info.codec, rate_str, detail, ch);
+    };
+
+    format!("{} {}{} {}", info.codec, rate_str, detail, ch_str)
+}
+
 pub struct TransportBar<'a> {
     track_info: Option<&'a TrackInfo>,
     playing_entry: Option<&'a QueueEntry>,
@@ -254,17 +304,7 @@ impl Widget for TransportBar<'_> {
                     album_spans.push(Span::styled(format!(" ({})", year), self.theme.hint_desc));
                 }
 
-                let detail_str = if let Some(b) = info.bit_depth {
-                    format!("/{}bit", b)
-                } else if let Some(kbps) = info.bitrate_kbps {
-                    format!("/{}kbps", kbps)
-                } else {
-                    String::new()
-                };
-                let format_info = format!(
-                    " \u{00B7} {} {}Hz{}/{}ch",
-                    info.codec, info.sample_rate, detail_str, info.channels
-                );
+                let format_info = format!(" \u{00B7} {}", format_quality(info));
                 album_spans.push(Span::styled(format_info, self.theme.hint_desc));
 
                 let album_line = Line::from(album_spans);
@@ -279,17 +319,7 @@ impl Widget for TransportBar<'_> {
                 .to_string_lossy()
                 .to_string();
 
-            let detail_str = if let Some(b) = info.bit_depth {
-                format!("/{}bit", b)
-            } else if let Some(kbps) = info.bitrate_kbps {
-                format!("/{}kbps", kbps)
-            } else {
-                String::new()
-            };
-            let format_info = format!(
-                "{} {}Hz{}/{}ch",
-                info.codec, info.sample_rate, detail_str, info.channels
-            );
+            let format_info = format_quality(info);
 
             let info_line = Line::from(vec![
                 Span::raw(" "),
