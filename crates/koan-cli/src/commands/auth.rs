@@ -113,6 +113,64 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
     }
 }
 
+/// `koan auth reset-password <username>`
+pub fn cmd_auth_reset_password(username: &str) {
+    let db = open_db();
+    let password = prompt_password_with_generate();
+
+    match auth_queries::update_password(&db.conn, username, &password) {
+        Ok(true) => {
+            println!(
+                "{} Password updated for '{}'. All tokens revoked.",
+                "✓".green().bold(),
+                username
+            );
+            offer_save_to_1password(username, &password);
+        }
+        Ok(false) => {
+            eprintln!("{} User '{}' not found", "✗".red().bold(), username);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("{} Failed to update password: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `koan auth set-role <username> <role>`
+pub fn cmd_auth_set_role(username: &str, role_str: &str) {
+    let db = open_db();
+
+    let role: Role = role_str.parse().unwrap_or_else(|_| {
+        eprintln!(
+            "{} Invalid role '{}'. Must be: admin, user, readonly",
+            "✗".red().bold(),
+            role_str
+        );
+        std::process::exit(1);
+    });
+
+    match auth_queries::update_role(&db.conn, username, role) {
+        Ok(true) => {
+            println!(
+                "{} Role updated: '{}' is now {}",
+                "✓".green().bold(),
+                username,
+                role
+            );
+        }
+        Ok(false) => {
+            eprintln!("{} User '{}' not found", "✗".red().bold(), username);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("{} Failed to update role: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Check if `op` is available.
 fn op_available() -> bool {
     std::process::Command::new("op")

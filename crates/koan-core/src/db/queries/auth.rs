@@ -115,6 +115,39 @@ pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Er
     Ok(count > 0)
 }
 
+/// Update a user's password. Revokes all their refresh tokens.
+pub fn update_password(
+    conn: &Connection,
+    username: &str,
+    new_password: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let hash = crate::auth::hash_password(new_password)?;
+    let updated = conn.execute(
+        "UPDATE users SET password_hash = ?1 WHERE username = ?2",
+        params![hash, username],
+    )?;
+    if updated > 0 {
+        // Revoke all existing tokens for this user.
+        if let Some(user) = get_user_by_username(conn, username)? {
+            revoke_all_user_tokens(conn, user.id)?;
+        }
+    }
+    Ok(updated > 0)
+}
+
+/// Update a user's role.
+pub fn update_role(
+    conn: &Connection,
+    username: &str,
+    role: crate::auth::Role,
+) -> Result<bool, rusqlite::Error> {
+    let updated = conn.execute(
+        "UPDATE users SET role = ?1 WHERE username = ?2",
+        params![role.as_str(), username],
+    )?;
+    Ok(updated > 0)
+}
+
 /// Check if any users exist (for first-run detection).
 pub fn has_users(conn: &Connection) -> Result<bool, rusqlite::Error> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
