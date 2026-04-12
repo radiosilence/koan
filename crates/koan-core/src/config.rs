@@ -290,7 +290,7 @@ impl Default for GraphqlConfig {
             bind: default_bind(),
             playground: false,
             subsonic_port: None,
-            auth_enabled: false,
+            auth_enabled: true,
             access_token_ttl: "15m".into(),
             refresh_token_ttl: "30d".into(),
         }
