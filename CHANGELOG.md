@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.22.0 (2026-04-12)
 
 ### Added
 
@@ -14,6 +14,24 @@
   - Config: `[graphql]` section gains `auth_enabled`, `access_token_ttl`, `refresh_token_ttl`.
   - DB tables: `users`, `refresh_tokens` (auto-created on startup).
   - Role-based guards on all GraphQL mutations (admin: scan/organize/device, user: playback/queue/favourites, readonly: queries only).
+  - `koan auth reset-password <user>` — reset password, revoke all tokens.
+  - `koan auth set-role <user> <role>` — change a user's role.
+  - `koan auth regenerate-keys` — regenerate Ed25519 keypair, invalidate all tokens.
+  - `koan auth reset` — nuclear option, wipe all auth state.
+  - Non-interactive setup via `KOAN_USERNAME` + `KOAN_PASSWORD` env vars.
+- **1Password CLI integration** — on user creation, offers to generate a secure 32-char password and save to 1Password as `koan@<hostname>`. Updates existing items if found. Passwords piped via stdin (never in CLI args).
+- **GraphQL playground with introspection key** — `koan --headless --playground` generates a process-scoped UUIDv7 key, injects it into GraphiQL as a default header, auto-opens the browser. Playground page only renders with the correct `?introspection-key=` param. Normal JWT auth unaffected.
+- **CORS support** — `Access-Control-Allow-Origin: *` on API endpoints for browser clients.
+
+### Security
+
+- Constant-time password comparison in Subsonic API (fixes timing attack).
+- Atomic refresh token rotation (single SQL `UPDATE ... RETURNING`, no TOCTOU race).
+- Key file permissions set before write via `OpenOptionsExt::mode(0o600)` (no world-readable window).
+- Server panics if auth enabled but keypair missing (fail-closed, not fail-open).
+- GraphQL handler requires AuthUser injection (no silent admin fallback on misconfiguration).
+- Hardcoded admin/admin Subsonic fallback removed — refuses to start without configured credentials.
+- Auth keypair directory gets automatic `.gitignore` with wildcard `*`.
 
 ## v0.21.0 (2026-04-12)
 
