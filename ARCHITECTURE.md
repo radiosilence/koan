@@ -7,15 +7,23 @@ Developer manual for working on koan. Read this before touching the code.
 ```
 crates/
 ├── koan-core/     Library crate. Audio engine, player, database, indexer,
-│                  format strings, file organization, remote client.
+│                  format strings, file organization, remote client, auth.
 │                  No UI code, no terminal deps.
 │
-└── koan-music/      Binary crate. The `koan` executable.
-                   Ratatui TUI, CLI arg parsing, media keys.
-                   Depends on koan-core.
+├── koan-tui/      Library crate. Ratatui TUI, visualizers, media keys,
+│                  transport, download queue. Exports `run_tui()`.
+│                  Depends on koan-core and koan-server.
+│
+├── koan-server/   Library crate. GraphQL (async-graphql + axum),
+│                  Subsonic REST API, MCP server.
+│                  Depends on koan-core.
+│
+└── koan-cli/      Binary crate. The `koan` executable.
+                   Thin entry point: clap CLI, logger, signal handling.
+                   Depends on koan-core, koan-tui, koan-server.
 ```
 
-Two crates, one workspace. `koan-core` is the engine, `koan-music` is the interface. If you wanted a different UI (GUI, web, whatever), you'd write a new crate that depends on `koan-core` — the CLI doesn't own any business logic.
+Four crates, one workspace. `koan-core` is the engine, `koan-tui` is the terminal UI, `koan-server` is the API layer, and `koan-cli` is the binary that ties them together. Dependency rules are enforced by Cargo: `koan-tui` and `koan-server` cannot import each other. If you wanted a different UI, write a new crate against `koan-core` -- the CLI owns zero business logic.
 
 ## Threading model
 
@@ -231,56 +239,41 @@ fb2k-compatible template engine.
 | `organize.rs` | File renaming using format strings. Preview/execute/undo. Scoped operations via `preview_for_tracks()`/`execute_for_tracks()` (used by TUI modal). Moves ancillary files (cover art, cue sheets). Logs moves for undo. |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
 
-## koan-music modules
+## koan-cli modules
 
-### `main.rs`
+Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch, logger setup, and signal handling. Delegates everything to command handlers (some in koan-cli itself, some calling into koan-tui and koan-server).
 
-CLI entry point (clap). Struct definitions, match dispatch, logger. Delegates everything to `commands/` modules.
-
-### `commands/`
-
-Subcommand handlers split into focused modules:
-
-| File | Functions |
-|---|---|
-| `mod.rs` | Shared helpers: `open_db`, `format_time`, `format_bytes`, `install_terminal_panic_hook`, `get_remote_password`, `sanitise_filename`, `cache_path_for_track`, `playlist_item_from_track`, `playlist_items_from_paths` |
-| `play.rs` | `cmd_play` (path resolution, player spawn), `run_tui` (event loop, picker loading, enqueue routing) |
-| `probe.rs` | `cmd_probe`, `cmd_devices` |
-| `scan.rs` | `cmd_scan` |
-| `search.rs` | `cmd_search` (FTS5 search with tree-grouped output) |
-| `library.rs` | `cmd_artists`, `cmd_albums`, `cmd_library` |
-| `config.rs` | `cmd_config`, `cmd_init` |
-| `remote.rs` | `cmd_remote_login`, `cmd_remote_sync`, `cmd_remote_status` |
-| `cache.rs` | `cmd_cache_status`, `cmd_cache_clear` |
-| `organize.rs` | `cmd_organize` |
-| `pick.rs` | `cmd_pick` (standalone fuzzy picker TUI) |
-| `enqueue.rs` | `enqueue_playlist` (action-aware: append/play/replace), `resolve_item_path`, `download_single_track` |
-| `picker_items.rs` | `load_picker_items`, `make_track_picker_items`, `make_album_picker_items`, `make_artist_picker_items` |
-
-### `tui/`
+## koan-tui modules
 
 | File | Purpose |
 |---|---|
 | `app.rs` | `App` struct (state machine), `Mode` enum, `PickerAction` enum, `ContextAction` enum, event handlers (key/mouse per mode). Sub-state structs: `QueueState`, `LayoutRects`, `ArtState`. |
-| `ui.rs` | Render pipeline: layout computation → transport bar → content area (queue ± library) → overlays (picker, context menu, organize, track info, cover art zoom) → hint bar |
-| `transport.rs` | `TransportBar` widget: seek bar (━─), current track info, click-to-seek |
+| `ui.rs` | Render pipeline: layout computation -> transport bar -> content area (queue +/- library) -> overlays (picker, context menu, organize, track info, cover art zoom) -> hint bar |
+| `transport.rs` | `TransportBar` widget: seek bar, current track info, click-to-seek |
 | `queue.rs` | `QueueView` widget: album-grouped display with headers, status icons, selection markers, drag target line |
-| `library.rs` | `LibraryState` + `LibraryView`: flattened tree (artist→album→track), expand/collapse, substring filter with cached artist list |
+| `library.rs` | `LibraryState` + `LibraryView`: flattened tree (artist->album->track), expand/collapse, substring filter with cached artist list |
 | `picker.rs` | `PickerState`: Nucleo fuzzy search engine, multi-select, colored result parts. Sentinel helpers for artist drill-down. |
-| `cover_art.rs` | Halfblock rendering: extract from tags → resize with Lanczos3 → 2 pixels per terminal cell (upper half block char with FG/BG colors). Forces even pixel height to prevent black bar artifacts. |
+| `cover_art.rs` | Halfblock rendering: extract from tags -> resize with Lanczos3 -> 2 pixels per terminal cell (upper half block char with FG/BG colors). Forces even pixel height to prevent black bar artifacts. |
 | `track_info.rs` | `TrackInfoOverlay`: modal with full metadata fields + embedded album art |
 | `theme.rs` | Color palette. Cyan for active/cursor, green for albums, DarkGray for hints. |
 | `context_menu.rs` | `ContextMenuOverlay` widget: action list popup (currently: Organize) |
 | `organize.rs` | `OrganizeModalState` + `OrganizeOverlay`: pattern picker, scoped preview table, background execute with path update propagation to player |
-| `visualizer.rs` | Spectrum analyzer widget: reads `VizSnapshot`, renders 48-band bars with Unicode block chars, peak markers. Configurable palettes (`mono`/`spectrum`/`fire`/`neon`) with frequency-mapped gradients, beat-reactive brightness, and peak glow |
+| `visualizer.rs` | 22-mode visualizer: bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moire, kaleidoscope, julia, spiral, interference, wormhole, matrix. Picker with live preview, matrix overlay, bass shake. |
+| `viz_picker.rs` | Visualizer mode picker modal with live preview |
 | `lyrics.rs` | Lyrics side panel: synced (LRC) line highlighting with auto-scroll, plain text fallback |
 | `device_selector.rs` | Audio output device selection modal |
 | `help_modal.rs` | Help overlay with key binding reference |
 | `keys.rs` | `HintBar` widget: mode-specific key binding hints |
+| `media_keys.rs` | macOS Control Center integration via souvlaki. Pumps CFRunLoop manually (terminal apps don't have a Cocoa event loop). Maps media key events to PlayerCommands. |
 
-### `media_keys.rs`
+## koan-server modules
 
-macOS Control Center integration via souvlaki. Pumps CFRunLoop manually (terminal apps don't have a Cocoa event loop). Maps media key events to PlayerCommands: play/pause/stop, next/prev, seek (absolute + relative), quit. Sends track metadata including album art (extracted to temp file, passed as file:// URL).
+| File | Purpose |
+|---|---|
+| `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/snapshots/radio. |
+| `subsonic/` | Subsonic REST API endpoints for compatibility with existing clients (DSub, Symfonium, play:Sub). |
+| `mcp.rs` | MCP server on stdio -- exposes `schema_sdl` and `graphql` tools for Claude Desktop integration. |
+| `auth.rs` | JWT middleware, Ed25519 token generation/validation, role-based guards. |
 
 ## Picker actions
 
@@ -320,7 +313,7 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **Audio path:** `audio/buffer.rs` has `start_decode` → `decode_queue_loop` → `decode_single` (the actual Symphonia decode loop). `audio/backend.rs` defines the `AudioBackend` trait; platform implementations live in `coreaudio_backend.rs` (macOS) and `cpal_backend.rs` (Linux).
 
-**TUI:** `koan-music/src/tui/app.rs` is the state machine. Follow `handle_normal_key()` for the main mode, `handle_tick()` for the per-frame update cycle. `ui.rs` is the render pipeline.
+**TUI:** `koan-tui/src/app.rs` is the state machine. Follow `handle_normal_key()` for the main mode, `handle_tick()` for the per-frame update cycle. `ui.rs` is the render pipeline.
 
 **Database:** Start at `db/schema.rs` for the table definitions, then `db/queries/tracks.rs` for the dedup logic in `upsert_track`.
 

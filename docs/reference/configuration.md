@@ -170,17 +170,25 @@ See [Remote Servers](../guide/remote-servers.md) for the full setup guide.
 
 ```toml
 [visualizer]
-enabled = true                # show spectrum analyzer in transport area (default: true)
+enabled = true                # show visualizer in transport area (default: true)
+mode = "bars"                 # visualizer mode (default: bars). Press `v` in TUI to pick.
 fps = 60                      # analysis thread update rate in Hz (default: 60)
 scale = "bark"                # frequency scale (default: bark)
 amplitude_scale = "aweight"   # amplitude scale (default: aweight)
 bar_decay_ms = 50             # bar drop half-life in ms (default: 50)
 peak_decay_ms = 180           # peak marker linger half-life in ms (default: 180)
+palette = "spectrum"          # color palette: spectrum, mono, fire, neon (default: spectrum)
+reactivity = 1.0              # animation reactivity 0.0..2.0 (default: 1.0)
+bass_shake = false            # camera jitter on bass hits for braille modes (default: false)
+matrix_overlay = false        # replace characters with matrix glyphs (default: false)
+reactive_bg = false           # beat-reactive background on braille modes (default: false)
 ```
 
 Also accepts `[visualiser]` spelling.
 
-The spectrum analyzer renders above the transport text when album art is present. 48-band FFT with sub-cell resolution using Unicode block characters, peak hold markers, and smooth exponential decay. Bars are colored by signal level -- green at safe headroom, yellow when getting hot, red near clipping (0dBFS). The FFT runs on a dedicated thread so the UI is never blocked.
+22 modes available: bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moire, kaleidoscope, julia, spiral, interference, wormhole, matrix. Press `v` in the TUI to open the picker with live preview.
+
+The visualizer renders above the transport text when album art is present. 48-band FFT with sub-cell resolution using Unicode block characters, peak hold markers, and smooth exponential decay. The FFT runs on a dedicated thread so the UI is never blocked.
 
 ### Frequency scales (`scale`)
 
@@ -237,11 +245,14 @@ port = 4000                   # API port (default: 4000)
 bind = "127.0.0.1"            # bind address (default: 127.0.0.1)
 playground = false             # enable GraphiQL IDE at GET /graphql (default: false)
 subsonic_port = 4040           # optional Subsonic REST API port (default: disabled)
+auth_enabled = true           # JWT authentication (default: true)
+access_token_ttl = "15m"      # access token lifetime (default: 15m)
+refresh_token_ttl = "30d"     # refresh token lifetime (default: 30d)
 ```
 
-Set `bind = "0.0.0.0"` to listen on all interfaces. There's no authentication, so only do this on trusted networks.
+Auth is enabled by default. Run `koan auth setup` to create a keypair and admin user. Set `auth_enabled = false` if you only use localhost and don't need auth.
 
-See [GraphQL API](../guide/graphql-api.md) and [Headless Server](../guide/headless-server.md) for usage guides.
+See [Authentication](../guide/authentication.md), [GraphQL API](../guide/graphql-api.md), and [Headless Server](../guide/headless-server.md) for usage guides.
 
 ---
 

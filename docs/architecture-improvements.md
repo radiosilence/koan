@@ -1,102 +1,19 @@
 # Architecture Improvements Plan
 
-## 1. Audio Backend Decoupling
+> **Status:** Sections 1 and 2 are DONE as of v0.21.0. The `AudioBackend` trait exists in `audio/backend.rs` with `CoreAudioBackend` (macOS) and `CpalBackend` (Linux via cpal) implementations. Platform switching is via `#[cfg(target_os)]`.
 
-### Current State
+## 1. Audio Backend Decoupling -- DONE
 
-Audio output is deeply coupled to CoreAudio across two files:
+Completed in v0.21.0. The `AudioBackend` and `AudioEngineHandle` traits live in `audio/backend.rs`. Platform implementations:
 
-- **`audio/engine.rs`** (~270 lines) — AUHAL output unit, render callback, start/stop lifecycle
-- **`audio/device.rs`** (~270 lines) — device enumeration, sample rate get/set, CFString conversion
+- `audio/coreaudio_backend.rs` -- macOS (AUHAL, bit-perfect)
+- `audio/cpal_backend.rs` -- Linux (ALSA/PipeWire/PulseAudio via cpal)
 
-The good news: **`audio/buffer.rs` is entirely platform-agnostic.** The decode thread, ring buffer producer, timeline tracking, gapless logic — none of it touches CoreAudio. The interface between platform-specific and generic code is already clean:
+Conditional compilation via `#[cfg(target_os = "...")]` in the backend module.
 
-- Engine takes: `device_id`, `sample_rate`, `channels`, `rtrb::Consumer<f32>`, `Arc<AtomicU64>`
-- Engine provides: `start()`, `stop()`, `is_running()`, `Drop`
+## 2. Linux Audio Backend -- DONE
 
-Total replacement surface: ~540 lines.
-
-### Proposed Trait
-
-```rust
-pub trait AudioOutput: Send {
-    fn start(&mut self) -> Result<(), PlayerError>;
-    fn stop(&mut self) -> Result<(), PlayerError>;
-    fn is_running(&self) -> bool;
-}
-
-pub trait AudioDevices {
-    fn default_output() -> Result<DeviceId, PlayerError>;
-    fn list_outputs() -> Result<Vec<OutputDevice>, PlayerError>;
-    fn get_sample_rate(device: &DeviceId) -> Result<f64, PlayerError>;
-    fn set_sample_rate(device: &DeviceId, rate: f64) -> Result<(), PlayerError>;
-    fn available_sample_rates(device: &DeviceId) -> Result<Vec<f64>, PlayerError>;
-}
-```
-
-### File Layout
-
-```
-audio/
-├── mod.rs              # re-exports, #[cfg] switching
-├── buffer.rs           # unchanged — platform-agnostic
-├── replaygain.rs       # unchanged — platform-agnostic
-├── output.rs           # trait definitions
-├── macos/
-│   ├── engine.rs       # current engine.rs
-│   └── device.rs       # current device.rs
-└── linux/
-    ├── engine.rs       # ALSA write thread
-    └── device.rs       # ALSA card/device enumeration
-```
-
-### Approach
-
-Conditional compilation via `#[cfg(target_os = "...")]` in `mod.rs`. Both backends expose the same trait. Feature flags optional but not required — platform detection at compile time is sufficient.
-
----
-
-## 2. Linux Audio Backend
-
-### Recommendation: ALSA Direct
-
-ALSA `hw:` device is the only path to true bit-perfect on Linux. It bypasses PulseAudio/PipeWire entirely — no resampling, no mixing, no format conversion. This matches koan's CoreAudio philosophy exactly.
-
-| Option | Bit-perfect | Sample Rate Switch | Crate Maturity | Verdict |
-|--------|:-----------:|:------------------:|:--------------:|---------|
-| **alsa** (direct hw:) | **Yes** | **Yes** | Stable (v0.9) | **Use this** |
-| PipeWire | Partial (needs force-rate) | Via graph negotiation | OK (v0.9, docs spotty) | Future option |
-| cpal | No (uses `default` device) | No (issue #788 open) | Popular but wrong tool | Skip |
-| rodio | No (adds mixing layer) | No | N/A | Skip |
-
-### How ALSA Fits
-
-The render model flips from pull (CoreAudio calls you via callback) to push (you call `writei()`). This is actually **simpler** — no unsafe extern "C" callback, no raw pointer juggling:
-
-```
-Decode thread → rtrb::Producer<f32>
-ALSA write thread → rtrb::Consumer<f32> → pcm.writei() → DAC
-```
-
-The write thread owns the consumer directly, blocks on ALSA when the hardware buffer is full, increments `samples_played` after each successful write.
-
-### Gotchas
-
-- Requires `libasound2-dev` at build time, `libasound2` at runtime
-- `hw:` device is exclusive (one app at a time) — that's the point, but users need to know
-- Some DACs don't accept f32 — may need s32le/s24le fallback with trivial conversion
-- No desktop integration (volume knob in GNOME won't work) — ALSA bypasses the sound server
-
-### Non-Audio Platform Concerns
-
-| Component | macOS | Linux | Status |
-|-----------|-------|-------|--------|
-| **souvlaki** (media keys) | CFRunLoop | MPRIS/D-Bus | Already cross-platform, code has `#[cfg]` |
-| **security-framework** (Keychain) | macOS only | N/A | Password already in config.local.toml, Keychain is legacy fallback |
-| **core-foundation** (CFRunLoop) | macOS only | N/A | Already `#[cfg(target_os = "macos")]` gated |
-| **build.rs** | Links CoreAudio framework | Needs `#[cfg]` guard | Trivial fix |
-| **TUI** (ratatui + crossterm) | Works | Works | No changes needed |
-| Everything else | Works | Works | Pure Rust / cross-platform |
+Implemented via cpal (`CpalBackend`). Supports ALSA, PipeWire, and PulseAudio. Not direct ALSA `hw:` as originally planned -- cpal was chosen for broader compatibility. A direct ALSA backend for bit-perfect output remains a future option.
 
 ---
 
@@ -143,8 +60,6 @@ Config fields that exist but aren't wired into anything:
 
 | Field | Config Location | Library Code | Wired In? |
 |-------|----------------|-------------|-----------|
-| `playback.replaygain` | config.rs | replaygain.rs (full impl) | **No** — needs decode pipeline integration |
-| `playback.software_volume` | config.rs | N/A | **No** — needs sample scaling in decode |
-| `remote.transcode_quality` | config.rs | N/A | **No** — needs stream URL parameter |
-
-These should be wired in or removed. ReplayGain wiring is in progress on the `rg-config-wiring` branch.
+| `playback.replaygain` | config.rs | replaygain.rs (full impl) | **Yes** -- wired into decode pipeline |
+| `playback.software_volume` | config.rs | N/A | **No** -- needs sample scaling in decode |
+| `remote.transcode_quality` | config.rs | N/A | **No** -- needs stream URL parameter |

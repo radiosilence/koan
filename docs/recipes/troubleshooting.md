@@ -43,7 +43,7 @@ Another koan instance (or another process) is using port 4000. Either:
 
 - Check that `[library] folders` in `config.local.toml` points to the right directory
 - koan scans recursively -- you only need the top-level directory
-- Supported formats: FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV, AIFF, APE, M4A
+- Supported formats: FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF, CAF, Ogg, MKV/WebM, MP4
 - Run `koan config` to verify the resolved config
 
 ### Duplicate tracks after remote sync
@@ -97,9 +97,10 @@ If art shows as garbled characters, your terminal may not support halfblock rend
 
 ### Visualizer not showing
 
-The spectrum analyzer renders in the transport area when album art is present. If it's not visible:
+The visualizer renders in the transport area when album art is present. If it's not visible:
 - Check that `[visualizer] enabled = true` (default)
 - The terminal window needs to be wide enough to fit both album art and the visualizer
+- Press `v` to open the visualizer picker and try different modes
 - Some terminals with limited Unicode support may not render the block characters correctly
 
 ### Terminal not restored after crash

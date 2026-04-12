@@ -31,7 +31,7 @@ just fmt
 
 ## Architecture
 
-Two crates: `koan-core` (library — audio engine, player, database, indexer) and `koan-music` (binary — TUI, CLI). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
+Four crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), and `koan-cli` (binary -- CLI entry point). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
 
 If you're touching the audio path: the render callback must never allocate or lock. Read the threading model docs before changing anything in `audio/`.
 
