@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.20.2 (2026-04-12)
+
+### Changed
+
+- **Reactive background** — beat-pulsing background color on braille modes (starfield, wormhole, kaleidoscope, lissajous, wireframe, spiral) moved behind `[visualizer] reactive_bg = false` config flag instead of being removed. Off by default.
+
 ## v0.20.1 (2026-04-12)
 
 ### Fixed
