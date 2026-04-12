@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Integration test coverage** — 12 new behavioral tests covering the scanner, decode pipeline, session persistence, remote sync, GraphQL mutations, and config loading. Shared WAV file generators in `test_utils.rs`. Safety net for the planned koan-music crate split.
+
 ## v0.20.4 (2026-04-12)
 
 ### Fixed
