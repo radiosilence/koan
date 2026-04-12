@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.20.4 (2026-04-12)
+
+### Fixed
+
+- **Bit depth hidden for lossy codecs** — Opus, Vorbis, AAC, and MP3 no longer show a fake "32bit" in the transport bar. `bit_depth` is now `Option<u16>` — `None` for lossy codecs, displayed only for lossless (FLAC, ALAC, WAV, AIFF). Transport shows `"Opus 48000Hz/2ch"` instead of `"Opus 48000Hz/32bit/2ch"`.
+
 ## v0.20.3 (2026-04-12)
 
 ### Added

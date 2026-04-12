@@ -143,7 +143,9 @@ impl Widget for TrackInfoOverlay<'_> {
         // Audio details from TrackInfo (only for currently playing track).
         if let Some(info) = self.track_info {
             field("Sample Rate", &format!("{} Hz", info.sample_rate));
-            field("Bit Depth", &info.bit_depth.to_string());
+            if let Some(bd) = info.bit_depth {
+                field("Bit Depth", &bd.to_string());
+            }
             field("Channels", &info.channels.to_string());
         }
 
