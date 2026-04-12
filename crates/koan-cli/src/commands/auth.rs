@@ -38,14 +38,20 @@ pub fn cmd_auth_setup() {
         return;
     }
 
-    // Create first admin user interactively.
+    // Create first admin user. Supports non-interactive: KOAN_USERNAME + KOAN_PASSWORD env vars.
     println!("\nCreating admin user...");
 
-    let username = prompt("Username: ");
-    if username.is_empty() {
-        eprintln!("{} Username cannot be empty", "✗".red().bold());
-        std::process::exit(1);
-    }
+    let username = std::env::var("KOAN_USERNAME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let u = prompt("Username: ");
+            if u.is_empty() {
+                eprintln!("{} Username cannot be empty", "✗".red().bold());
+                std::process::exit(1);
+            }
+            u
+        });
 
     let password = prompt_password_with_generate();
 
@@ -136,8 +142,16 @@ fn generate_password() -> String {
         .collect()
 }
 
-/// Prompt for a password — offer to generate a secure one first.
+/// Get password from KOAN_PASSWORD env var, or prompt interactively.
+/// Supports non-interactive use: KOAN_PASSWORD=secret koan auth create-user ...
 fn prompt_password_with_generate() -> String {
+    // Non-interactive: env var takes precedence.
+    if let Ok(pw) = std::env::var("KOAN_PASSWORD")
+        && !pw.is_empty()
+    {
+        return pw;
+    }
+
     let has_op = op_available();
     let hint = if has_op {
         " (can be saved to 1Password)"
