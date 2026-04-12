@@ -146,6 +146,9 @@ impl Widget for TrackInfoOverlay<'_> {
             if let Some(bd) = info.bit_depth {
                 field("Bit Depth", &bd.to_string());
             }
+            if let Some(kbps) = info.bitrate_kbps {
+                field("Bitrate", &format!("{} kbps", kbps));
+            }
             field("Channels", &info.channels.to_string());
         }
 
