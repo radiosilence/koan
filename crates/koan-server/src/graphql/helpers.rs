@@ -1,12 +1,14 @@
 use std::sync::Arc;
 
-use async_graphql::connection::{Connection, Edge, EmptyFields};
+use async_graphql::connection::Edge;
 use crossbeam_channel::Sender;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueItemId, SharedPlayerState};
+
+use super::types::Conn;
 
 // ---------------------------------------------------------------------------
 // Pagination helper — uses usize as cursor (async-graphql has built-in impl)
@@ -16,7 +18,7 @@ pub(super) fn paginate<T: async_graphql::OutputType>(
     items: Vec<T>,
     after: Option<String>,
     first: Option<i32>,
-) -> async_graphql::Result<Connection<usize, T, EmptyFields, EmptyFields>> {
+) -> async_graphql::Result<Conn<T>> {
     let total = items.len();
 
     let start = if let Some(ref cursor) = after {
@@ -31,7 +33,7 @@ pub(super) fn paginate<T: async_graphql::OutputType>(
         total
     };
 
-    let mut conn = Connection::new(start > 0, end < total);
+    let mut conn = Conn::new(start > 0, end < total);
     for (i, item) in items.into_iter().enumerate().skip(start).take(end - start) {
         conn.edges.push(Edge::new(i, item));
     }
