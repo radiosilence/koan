@@ -136,11 +136,17 @@ fn run_api_blocking(
         // Auth routes — always accessible (no auth middleware).
         let auth_app = auth_router(auth_route_state);
 
-        // Playground — served without auth middleware, gated by introspection key.
-        let mut app = auth_app.merge(gql_app);
+        // Playground — GET /graphql serves GraphiQL, gated by introspection key.
+        // POST /graphql remains the normal auth-protected API endpoint.
+        let cors = tower_http::cors::CorsLayer::new()
+            .allow_origin(tower_http::cors::Any)
+            .allow_methods([axum::http::Method::GET, axum::http::Method::POST, axum::http::Method::OPTIONS])
+            .allow_headers(tower_http::cors::Any);
+
+        let mut app = auth_app.merge(gql_app).layer(cors);
         if playground_enabled {
             app = app.route(
-                "/playground",
+                "/graphql",
                 get(graphql_playground).with_state(introspection_key.clone()),
             );
         }
@@ -148,9 +154,9 @@ fn run_api_blocking(
         // Build playground URL with introspection key.
         let playground_url = if playground_enabled {
             if let Some(ref key) = introspection_key {
-                format!("http://{}:{}/playground?key={}", bind, port, key)
+                format!("http://{}:{}/graphql?introspection-key={}", bind, port, key)
             } else {
-                format!("http://{}:{}/playground", bind, port)
+                format!("http://{}:{}/graphql", bind, port)
             }
         } else {
             format!("http://{}:{}/graphql", bind, port)
@@ -272,54 +278,24 @@ async fn graphql_playground(
 
     // If an introspection key exists, require it in the URL.
     if let Some(ref expected) = key {
-        let provided = params
-            .get("key")
-            .or_else(|| params.get("introspection-key"));
+        let provided = params.get("introspection-key");
         if provided.map(|k| k.as_str()) != Some(expected.as_str()) {
             return (
                 axum::http::StatusCode::FORBIDDEN,
-                "invalid introspection key",
+                "invalid or missing introspection-key",
             )
                 .into_response();
         }
-
-        // Render GraphiQL with the introspection key injected as a default header.
-        let html = format!(
-            r#"<!DOCTYPE html>
-<html>
-<head>
-  <title>koan GraphiQL</title>
-  <link rel="stylesheet" href="https://unpkg.com/graphiql/graphiql.min.css" />
-</head>
-<body style="margin:0">
-  <div id="graphiql" style="height:100vh"></div>
-  <script crossorigin src="https://unpkg.com/react/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom/umd/react-dom.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/graphiql/graphiql.min.js"></script>
-  <script>
-    const fetcher = GraphiQL.createFetcher({{
-      url: '/graphql',
-      headers: {{ 'X-Introspection-Key': '{}' }},
-    }});
-    ReactDOM.render(
-      React.createElement(GraphiQL, {{ fetcher }}),
-      document.getElementById('graphiql')
-    );
-  </script>
-</body>
-</html>"#,
-            expected
-        );
-        return axum::response::Html(html).into_response();
     }
 
-    // No auth — serve default GraphiQL.
-    axum::response::Html(
-        async_graphql::http::GraphiQLSource::build()
-            .endpoint("/graphql")
-            .finish(),
-    )
-    .into_response()
+    // Use async-graphql's built-in GraphiQL (self-contained, no CDN).
+    // Inject the introspection key as a default header so all queries are authed.
+    let mut source = async_graphql::http::GraphiQLSource::build().endpoint("/graphql");
+    if let Some(ref k) = key {
+        source = source.header("X-Introspection-Key", k.as_str());
+    }
+
+    axum::response::Html(source.finish()).into_response()
 }
 
 /// Run the server as a background daemon (fork + detach).
