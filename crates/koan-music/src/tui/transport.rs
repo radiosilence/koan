@@ -254,13 +254,16 @@ impl Widget for TransportBar<'_> {
                     album_spans.push(Span::styled(format!(" ({})", year), self.theme.hint_desc));
                 }
 
-                let bit_str = info
-                    .bit_depth
-                    .map(|b| format!("/{}bit", b))
-                    .unwrap_or_default();
+                let detail_str = if let Some(b) = info.bit_depth {
+                    format!("/{}bit", b)
+                } else if let Some(kbps) = info.bitrate_kbps {
+                    format!("/{}kbps", kbps)
+                } else {
+                    String::new()
+                };
                 let format_info = format!(
                     " \u{00B7} {} {}Hz{}/{}ch",
-                    info.codec, info.sample_rate, bit_str, info.channels
+                    info.codec, info.sample_rate, detail_str, info.channels
                 );
                 album_spans.push(Span::styled(format_info, self.theme.hint_desc));
 
@@ -276,13 +279,16 @@ impl Widget for TransportBar<'_> {
                 .to_string_lossy()
                 .to_string();
 
-            let bit_str = info
-                .bit_depth
-                .map(|b| format!("/{}bit", b))
-                .unwrap_or_default();
+            let detail_str = if let Some(b) = info.bit_depth {
+                format!("/{}bit", b)
+            } else if let Some(kbps) = info.bitrate_kbps {
+                format!("/{}kbps", kbps)
+            } else {
+                String::new()
+            };
             let format_info = format!(
                 "{} {}Hz{}/{}ch",
-                info.codec, info.sample_rate, bit_str, info.channels
+                info.codec, info.sample_rate, detail_str, info.channels
             );
 
             let info_line = Line::from(vec![

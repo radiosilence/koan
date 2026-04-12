@@ -20,6 +20,9 @@ pub fn cmd_probe(path: &Path) {
             if let Some(bd) = info.bit_depth {
                 println!("{} {}", "bit depth:".cyan(), bd);
             }
+            if let Some(kbps) = info.bitrate_kbps {
+                println!("{} {} kbps", "bitrate:".cyan(), kbps);
+            }
             println!("{} {}", "channels:".cyan(), info.channels);
             println!(
                 "{} {} {}",

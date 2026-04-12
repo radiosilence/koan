@@ -41,6 +41,8 @@ pub struct StreamInfo {
     pub sample_rate: u32,
     pub channels: u16,
     pub bit_depth: Option<u16>,
+    /// Bitrate in kbps. Meaningful for lossy codecs, None for lossless.
+    pub bitrate_kbps: Option<u32>,
     pub duration_ms: u64,
 }
 
@@ -258,13 +260,24 @@ pub fn probe_source(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, D
 
 /// Probe a file and return stream info without decoding.
 pub fn probe_file(path: &Path) -> Result<StreamInfo, DecodeError> {
+    let file_size = std::fs::metadata(path).ok().map(|m| m.len());
     let file = File::open(path)?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
-    probe_mss(mss, &hint)
+    let mut info = probe_mss(mss, &hint)?;
+    // For Opus (and other lossy codecs where symphonia couldn't give us a
+    // bitrate), estimate from file size / duration when both are available.
+    if info.bitrate_kbps.is_none()
+        && info.bit_depth.is_none()
+        && let Some(size) = file_size
+        && info.duration_ms > 0
+    {
+        info.bitrate_kbps = Some((size * 8 / info.duration_ms) as u32);
+    }
+    Ok(info)
 }
 
 /// Internal: probe a `MediaSourceStream` with a hint.
@@ -301,11 +314,18 @@ fn probe_mss(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, DecodeEr
         .unwrap_or(0);
     let codec = codec_name(codec_params.codec);
 
+    // Symphonia doesn't expose bitrate directly. For lossy codecs we can
+    // estimate from bits_per_coded_sample when the demuxer provides it.
+    // Opus estimation from file size is handled in probe_file() where we
+    // have the path; here we only have a MediaSourceStream.
+    let bitrate_kbps = estimate_bitrate_from_codec_params(codec_params);
+
     Ok(StreamInfo {
         codec,
         sample_rate,
         channels,
         bit_depth,
+        bitrate_kbps,
         duration_ms,
     })
 }
@@ -369,6 +389,7 @@ where
         sample_rate: 44100,
         channels: 2,
         bit_depth: Some(16),
+        bitrate_kbps: None,
         duration_ms: 0,
     };
 
@@ -558,6 +579,21 @@ fn decode_single(
     };
     let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
 
+    let duration_ms = codec_params
+        .n_frames
+        .map(|f| f * 1000 / sample_rate as u64)
+        .unwrap_or(0);
+
+    // Try codec_params first; fall back to file-size estimation for Opus/lossy.
+    let mut bitrate_kbps = estimate_bitrate_from_codec_params(codec_params);
+    if bitrate_kbps.is_none()
+        && is_opus_codec
+        && let Ok(meta) = std::fs::metadata(path)
+        && duration_ms > 0
+    {
+        bitrate_kbps = Some((meta.len() * 8 / duration_ms) as u32);
+    }
+
     let info = StreamInfo {
         codec: codec_name(codec_params.codec),
         sample_rate,
@@ -567,10 +603,8 @@ fn decode_single(
         } else {
             Some(codec_params.bits_per_sample.unwrap_or(16) as u16)
         },
-        duration_ms: codec_params
-            .n_frames
-            .map(|f| f * 1000 / sample_rate as u64)
-            .unwrap_or(0),
+        bitrate_kbps,
+        duration_ms,
     };
 
     let seek_samples = seek_ms * sample_rate as u64 * channels as u64 / 1000;
@@ -760,6 +794,30 @@ fn decode_single(
     }
 }
 
+/// Estimate bitrate (kbps) from Symphonia codec parameters.
+///
+/// Symphonia doesn't expose a `bit_rate` field. For lossy codecs like MP3/AAC
+/// we can derive it from `bits_per_coded_sample` when the demuxer populates it.
+/// Returns `None` for lossless codecs or when the info isn't available.
+fn estimate_bitrate_from_codec_params(
+    params: &symphonia::core::codecs::CodecParameters,
+) -> Option<u32> {
+    let is_lossy = matches!(
+        params.codec,
+        CODEC_TYPE_MP3 | CODEC_TYPE_AAC | CODEC_TYPE_VORBIS | CODEC_TYPE_OPUS
+    );
+    if !is_lossy {
+        return None;
+    }
+
+    // bits_per_coded_sample * sample_rate / 1000 gives kbps for CBR streams.
+    // Few demuxers fill this in, but it's our best shot without file size.
+    let bpcs = params.bits_per_coded_sample?;
+    let sr = params.sample_rate?;
+    let channels = params.channels.map(|c| c.count() as u32).unwrap_or(2);
+    Some(bpcs * sr * channels / 1000)
+}
+
 pub fn codec_name(codec: CodecType) -> String {
     match codec {
         CODEC_TYPE_FLAC => "FLAC",
@@ -792,6 +850,7 @@ mod tests {
             sample_rate,
             channels,
             bit_depth: Some(16),
+            bitrate_kbps: None,
             duration_ms: 10_000,
         }
     }
