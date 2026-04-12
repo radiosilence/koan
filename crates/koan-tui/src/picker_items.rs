@@ -177,7 +177,7 @@ fn make_track_picker_items_gql(
         .collect()
 }
 
-fn make_album_picker_items_gql(
+pub fn make_album_picker_items_gql(
     albums: &[koan_core::graphql_client::AlbumResult],
 ) -> Vec<PickerItem> {
     albums

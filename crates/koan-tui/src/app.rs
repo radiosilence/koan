@@ -407,8 +407,22 @@ impl App {
         self.mode = self.mode_stack.pop().unwrap_or(Mode::Normal);
     }
 
-    /// Load favourites from the database.
+    /// Load favourites from the database (or via GQL when available).
     pub fn load_favourites(&mut self) {
+        if let Some(ref client) = self.gql_client {
+            match client.favourites() {
+                Ok(tracks) => {
+                    self.favourites = tracks
+                        .iter()
+                        .filter_map(|t| t.path.as_deref().map(std::path::PathBuf::from))
+                        .collect();
+                }
+                Err(e) => {
+                    log::warn!("failed to load favourites via GQL: {}", e);
+                }
+            }
+            return;
+        }
         if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
             && let Ok(favs) = koan_core::db::queries::load_favourites(&db.conn)
         {
@@ -416,8 +430,28 @@ impl App {
         }
     }
 
-    /// Toggle favourite status for a track path. Returns true if now favourite.
-    pub fn toggle_favourite(&mut self, path: &std::path::Path) -> bool {
+    /// Toggle favourite status for a track. Returns true if now favourite.
+    ///
+    /// When `gql_client` is available and `db_id` is `Some`, routes through
+    /// the GraphQL mutation. Otherwise falls back to direct DB toggle +
+    /// Subsonic star/unstar sync.
+    pub fn toggle_favourite(&mut self, path: &std::path::Path, db_id: Option<i64>) -> bool {
+        if let Some(ref client) = self.gql_client
+            && let Some(track_id) = db_id
+        {
+            let was_fav = self.favourites.contains(path);
+            if let Err(e) = client.toggle_favourite(track_id) {
+                log::warn!("GQL toggle_favourite failed: {}", e);
+                return was_fav;
+            }
+            if was_fav {
+                self.favourites.remove(path);
+            } else {
+                self.favourites.insert(path.to_path_buf());
+            }
+            return !was_fav;
+        }
+
         if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
             && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(&db.conn, path)
         {
@@ -1127,7 +1161,8 @@ impl App {
                 let visible = self.visible_queue();
                 if let Some(entry) = visible.get(self.queue.cursor) {
                     let path = entry.path.clone();
-                    self.toggle_favourite(&path);
+                    let db_id = entry.db_id;
+                    self.toggle_favourite(&path, db_id);
                 }
             }
             KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -1562,7 +1597,8 @@ impl App {
                 let visible = self.visible_queue();
                 if let Some(entry) = visible.get(self.queue.cursor) {
                     let path = entry.path.clone();
-                    self.toggle_favourite(&path);
+                    let db_id = entry.db_id;
+                    self.toggle_favourite(&path, db_id);
                 }
             }
             ContextAction::TrackInfo => {

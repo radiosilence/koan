@@ -1,8 +1,9 @@
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crossbeam_channel::Sender;
-use koan_core::audio::viz::VizSnapshot;
+use koan_core::audio::viz::{VizFrame, VizSnapshot};
 use koan_core::auth::{self, parse_duration_secs};
 use koan_core::config::Config;
 use koan_core::player::commands::PlayerCommand;
@@ -118,7 +119,7 @@ fn run_api_blocking(opts: ApiServerOpts) {
         refresh_ttl_secs: refresh_ttl,
     };
 
-    let schema = build_schema(state, cmd_tx, db_path.clone(), viz);
+    let schema = build_schema(state, cmd_tx, db_path.clone(), viz.clone());
 
     if auth_actually_enabled {
         log::info!(
@@ -151,8 +152,19 @@ fn run_api_blocking(opts: ApiServerOpts) {
         // Auth routes — always accessible (no auth middleware).
         let auth_app = auth_router(auth_route_state);
 
-        // Merge: auth routes first (no middleware), then GraphQL (with middleware).
-        let app = auth_app.merge(gql_app);
+        // Binary viz WebSocket — separate from GQL, no auth (perf-critical read-only).
+        let viz_app = if let Some(ref viz) = viz {
+            log::info!("Binary viz WebSocket enabled at /ws/viz");
+            axum::Router::new()
+                .route("/ws/viz", get(viz_ws_handler))
+                .with_state(Arc::clone(viz))
+        } else {
+            axum::Router::new()
+        };
+
+        // Merge: auth routes first (no middleware), then GraphQL (with middleware),
+        // then binary viz WebSocket (no middleware, own state).
+        let app = auth_app.merge(gql_app).merge(viz_app);
 
         let gql_addr = std::net::SocketAddr::new(bind, port);
 
@@ -260,6 +272,149 @@ async fn graphql_ws_handler(
                 stream.serve().await;
             }
         })
+}
+
+// ---------------------------------------------------------------------------
+// Binary VizFrame WebSocket — `/ws/viz`
+// ---------------------------------------------------------------------------
+
+/// Magic header for binary viz frames.
+const KVIZ_MAGIC: &[u8; 4] = b"KVIZ";
+
+/// Query parameters for the binary viz WebSocket.
+#[derive(serde::Deserialize)]
+struct VizWsParams {
+    /// Target frames per second (1..=120, default 30).
+    fps: Option<u32>,
+    /// Include raw waveform samples in each frame (default false).
+    waveform: Option<bool>,
+}
+
+/// Encode a `VizFrame` into the compact binary format:
+///
+/// ```text
+/// [4B magic "KVIZ"]
+/// [4B u32 LE — bar count]
+/// [bars × 4B f32 LE — spectrum]
+/// [bars × 4B f32 LE — peaks]
+/// [2 × 4B f32 LE — VU L, R]
+/// [4B f32 LE — beat energy]
+/// [4B u32 LE — waveform length]
+/// [N × 4B f32 LE — waveform samples]
+/// ```
+pub fn encode_viz_frame(frame: &VizFrame, include_waveform: bool) -> Vec<u8> {
+    let bar_count = frame.spectrum.len() as u32;
+    let waveform_len = if include_waveform {
+        frame.waveform.len() as u32
+    } else {
+        0
+    };
+
+    let capacity = 4 + 4 + (bar_count as usize * 4 * 2) + 8 + 4 + 4 + (waveform_len as usize * 4);
+    let mut buf = Vec::with_capacity(capacity);
+
+    buf.extend_from_slice(KVIZ_MAGIC);
+    buf.extend_from_slice(&bar_count.to_le_bytes());
+    for &v in &frame.spectrum {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &frame.peaks {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    for &v in &frame.vu_levels {
+        buf.extend_from_slice(&v.to_le_bytes());
+    }
+    buf.extend_from_slice(&frame.beat_energy.to_le_bytes());
+    buf.extend_from_slice(&waveform_len.to_le_bytes());
+    if include_waveform {
+        for &v in &frame.waveform {
+            buf.extend_from_slice(&v.to_le_bytes());
+        }
+    }
+    buf
+}
+
+/// Decode a binary viz frame back into its components. Used by tests and clients.
+/// Returns `(spectrum, peaks, vu_levels, beat_energy, waveform)` or `None` on invalid data.
+#[allow(clippy::type_complexity)]
+pub fn decode_viz_frame(data: &[u8]) -> Option<(Vec<f32>, Vec<f32>, [f32; 2], f32, Vec<f32>)> {
+    if data.len() < 8 || &data[0..4] != KVIZ_MAGIC {
+        return None;
+    }
+
+    let bar_count = u32::from_le_bytes(data[4..8].try_into().ok()?) as usize;
+    let header_end = 8 + bar_count * 4 * 2 + 8 + 4 + 4;
+    if data.len() < header_end {
+        return None;
+    }
+
+    let mut offset = 8;
+    let mut spectrum = Vec::with_capacity(bar_count);
+    for _ in 0..bar_count {
+        spectrum.push(f32::from_le_bytes(
+            data[offset..offset + 4].try_into().ok()?,
+        ));
+        offset += 4;
+    }
+
+    let mut peaks = Vec::with_capacity(bar_count);
+    for _ in 0..bar_count {
+        peaks.push(f32::from_le_bytes(
+            data[offset..offset + 4].try_into().ok()?,
+        ));
+        offset += 4;
+    }
+
+    let vu_l = f32::from_le_bytes(data[offset..offset + 4].try_into().ok()?);
+    offset += 4;
+    let vu_r = f32::from_le_bytes(data[offset..offset + 4].try_into().ok()?);
+    offset += 4;
+
+    let beat_energy = f32::from_le_bytes(data[offset..offset + 4].try_into().ok()?);
+    offset += 4;
+
+    let waveform_len = u32::from_le_bytes(data[offset..offset + 4].try_into().ok()?) as usize;
+    offset += 4;
+
+    if data.len() < offset + waveform_len * 4 {
+        return None;
+    }
+
+    let mut waveform = Vec::with_capacity(waveform_len);
+    for _ in 0..waveform_len {
+        waveform.push(f32::from_le_bytes(
+            data[offset..offset + 4].try_into().ok()?,
+        ));
+        offset += 4;
+    }
+
+    Some((spectrum, peaks, [vu_l, vu_r], beat_energy, waveform))
+}
+
+/// WebSocket handler for binary viz frames. No auth — read-only, perf-critical.
+async fn viz_ws_handler(
+    axum::extract::State(viz): axum::extract::State<Arc<VizSnapshot>>,
+    ws: axum::extract::WebSocketUpgrade,
+    axum::extract::Query(params): axum::extract::Query<VizWsParams>,
+) -> axum::response::Response {
+    let fps = params.fps.unwrap_or(30).clamp(1, 120);
+    let include_waveform = params.waveform.unwrap_or(false);
+    let interval = Duration::from_millis(1000 / fps as u64);
+
+    ws.on_upgrade(move |mut socket| async move {
+        use axum::extract::ws::Message;
+
+        loop {
+            let frame = viz.read();
+            let binary = encode_viz_frame(&frame, include_waveform);
+
+            if socket.send(Message::Binary(binary.into())).await.is_err() {
+                break; // Client disconnected.
+            }
+
+            tokio::time::sleep(interval).await;
+        }
+    })
 }
 
 async fn graphql_playground() -> axum::response::Html<String> {

@@ -20,8 +20,8 @@ use koan_core::auth::Role;
 use mutations::MutationRoot;
 use queries::QueryRoot;
 pub use server::{
-    ApiServerOpts, InProcessExecutor, cmd_serve, cmd_serve_daemon, execute_in_process,
-    start_api_background,
+    ApiServerOpts, InProcessExecutor, cmd_serve, cmd_serve_daemon, decode_viz_frame,
+    encode_viz_frame, execute_in_process, start_api_background,
 };
 use subscriptions::SubscriptionRoot;
 
@@ -571,5 +571,97 @@ mod tests {
             "missing queueUpdated subscription"
         );
         assert!(names.contains(&"vizFrame"), "missing vizFrame subscription");
+    }
+
+    // ---- Binary viz frame encoding/decoding roundtrip tests ----
+
+    #[test]
+    fn viz_frame_binary_roundtrip_no_waveform() {
+        use koan_core::audio::viz::{NUM_BARS, VizFrame};
+
+        let mut spectrum = [0.0f32; NUM_BARS];
+        spectrum[0] = 0.99;
+        spectrum[47] = 0.42;
+
+        let mut peaks = [0.0f32; NUM_BARS];
+        peaks[10] = 0.77;
+
+        let frame = VizFrame {
+            spectrum,
+            peaks,
+            vu_levels: [0.65, 0.31],
+            beat_energy: 0.88,
+            timestamp: std::time::Instant::now(),
+            waveform: vec![0.1, -0.2, 0.3, -0.4],
+        };
+
+        let encoded = server::encode_viz_frame(&frame, false);
+
+        // Header: 4 (magic) + 4 (bar count) + 48*4*2 (spectrum+peaks) + 8 (VU) + 4 (beat) + 4 (waveform len) = 408
+        assert_eq!(encoded.len(), 4 + 4 + 48 * 4 * 2 + 8 + 4 + 4);
+
+        let (spectrum_d, peaks_d, vu_d, beat_d, waveform_d) =
+            server::decode_viz_frame(&encoded).expect("decode should succeed");
+
+        assert_eq!(spectrum_d.len(), NUM_BARS);
+        assert!((spectrum_d[0] - 0.99).abs() < 1e-6);
+        assert!((spectrum_d[47] - 0.42).abs() < 1e-6);
+        assert_eq!(peaks_d.len(), NUM_BARS);
+        assert!((peaks_d[10] - 0.77).abs() < 1e-6);
+        assert!((vu_d[0] - 0.65).abs() < 1e-6);
+        assert!((vu_d[1] - 0.31).abs() < 1e-6);
+        assert!((beat_d - 0.88).abs() < 1e-6);
+        assert!(waveform_d.is_empty(), "waveform should be excluded");
+    }
+
+    #[test]
+    fn viz_frame_binary_roundtrip_with_waveform() {
+        use koan_core::audio::viz::{NUM_BARS, VizFrame};
+
+        let waveform: Vec<f32> = (0..128).map(|i| (i as f32 / 128.0) * 2.0 - 1.0).collect();
+
+        let frame = VizFrame {
+            spectrum: [0.5; NUM_BARS],
+            peaks: [0.3; NUM_BARS],
+            vu_levels: [0.4, 0.6],
+            beat_energy: 0.1,
+            timestamp: std::time::Instant::now(),
+            waveform: waveform.clone(),
+        };
+
+        let encoded = server::encode_viz_frame(&frame, true);
+        let expected_len = 4 + 4 + 48 * 4 * 2 + 8 + 4 + 4 + 128 * 4;
+        assert_eq!(encoded.len(), expected_len);
+
+        let (spectrum_d, peaks_d, vu_d, beat_d, waveform_d) =
+            server::decode_viz_frame(&encoded).expect("decode should succeed");
+
+        assert_eq!(spectrum_d.len(), NUM_BARS);
+        assert!(spectrum_d.iter().all(|&v| (v - 0.5).abs() < 1e-6));
+        assert_eq!(peaks_d.len(), NUM_BARS);
+        assert!(peaks_d.iter().all(|&v| (v - 0.3).abs() < 1e-6));
+        assert!((vu_d[0] - 0.4).abs() < 1e-6);
+        assert!((vu_d[1] - 0.6).abs() < 1e-6);
+        assert!((beat_d - 0.1).abs() < 1e-6);
+        assert_eq!(waveform_d.len(), 128);
+        for (i, &v) in waveform_d.iter().enumerate() {
+            assert!(
+                (v - waveform[i]).abs() < 1e-6,
+                "waveform mismatch at index {}",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn viz_frame_binary_decode_rejects_garbage() {
+        assert!(server::decode_viz_frame(&[]).is_none());
+        assert!(server::decode_viz_frame(&[0, 1, 2, 3]).is_none());
+        assert!(server::decode_viz_frame(b"KVIZ").is_none());
+        // Valid magic + bar_count=1 but truncated data.
+        let mut bad = Vec::new();
+        bad.extend_from_slice(b"KVIZ");
+        bad.extend_from_slice(&1u32.to_le_bytes());
+        assert!(server::decode_viz_frame(&bad).is_none());
     }
 }
