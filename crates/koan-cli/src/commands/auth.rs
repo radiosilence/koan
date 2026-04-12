@@ -47,7 +47,7 @@ pub fn cmd_auth_setup() {
         std::process::exit(1);
     }
 
-    let password = prompt_manual_password();
+    let password = prompt_password_with_generate();
 
     match auth_queries::create_user(&db.conn, &username, &password, Role::Admin) {
         Ok(id) => {
@@ -86,7 +86,7 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
         std::process::exit(1);
     });
 
-    let password = prompt_manual_password();
+    let password = prompt_password_with_generate();
 
     match auth_queries::create_user(&db.conn, username, &password, role) {
         Ok(id) => {
@@ -117,8 +117,46 @@ fn op_available() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// Prompt for a password manually (with confirmation).
-fn prompt_manual_password() -> String {
+/// Generate a secure random password (alphanumeric + symbols, 32 chars).
+fn generate_password() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*-_=+";
+    (0..32)
+        .map(|_| {
+            let mut h = RandomState::new().build_hasher();
+            h.write_u64(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64,
+            );
+            chars[h.finish() as usize % chars.len()] as char
+        })
+        .collect()
+}
+
+/// Prompt for a password — offer to generate a secure one first.
+fn prompt_password_with_generate() -> String {
+    let has_op = op_available();
+    let hint = if has_op {
+        " (can be saved to 1Password)"
+    } else {
+        ""
+    };
+    eprint!(
+        "{} Generate a secure password{}? [Y/n] ",
+        "?".cyan().bold(),
+        hint
+    );
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_ok() && !input.trim().eq_ignore_ascii_case("n") {
+        let pw = generate_password();
+        println!("{} Generated password: {}", "✓".green().bold(), pw.bold());
+        return pw;
+    }
+
+    // Manual entry.
     let password = prompt_password("Password: ");
     if password.is_empty() {
         eprintln!("{} Password cannot be empty", "✗".red().bold());
@@ -138,22 +176,29 @@ fn offer_save_to_1password(username: &str, password: &str) {
         return;
     }
 
+    let hostname = std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "localhost".into());
+
     eprint!(
-        "{} 1Password CLI detected. Save credentials? [y/N] ",
-        "?".cyan().bold()
+        "{} Save to 1Password as 'koan@{}'? [Y/n] ",
+        "?".cyan().bold(),
+        hostname
     );
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_err() {
         return;
     }
-    if !input.trim().eq_ignore_ascii_case("y") {
+    if input.trim().eq_ignore_ascii_case("n") {
         return;
     }
 
-    // Build the item template as JSON and pipe via stdin to avoid
-    // the password appearing in `ps` output (security audit L4).
+    let title = format!("koan@{}", hostname);
     let template = serde_json::json!({
-        "title": format!("koan ({})", username),
+        "title": title,
         "category": "LOGIN",
         "fields": [
             {"id": "username", "type": "STRING", "value": username, "purpose": "USERNAME"},
