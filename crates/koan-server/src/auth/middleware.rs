@@ -21,6 +21,9 @@ pub struct AuthState {
     pub public_pem: Arc<Vec<u8>>,
     /// Whether auth is enforced.
     pub auth_enabled: bool,
+    /// Process-scoped introspection key. Bypasses auth when matched.
+    /// Generated randomly on server start, dies with the process.
+    pub introspection_key: Option<Arc<String>>,
 }
 
 /// Axum middleware: validate JWT and inject `AuthUser`.
@@ -33,6 +36,18 @@ pub async fn auth_middleware(
     next: Next,
 ) -> Response {
     if !state.auth_enabled {
+        request.extensions_mut().insert(AuthUser::anonymous_admin());
+        return next.run(request).await;
+    }
+
+    // Check for introspection key (playground bypass).
+    if let Some(ref expected_key) = state.introspection_key
+        && let Some(provided) = request
+            .headers()
+            .get("X-Introspection-Key")
+            .and_then(|v| v.to_str().ok())
+        && provided == expected_key.as_str()
+    {
         request.extensions_mut().insert(AuthUser::anonymous_admin());
         return next.run(request).await;
     }

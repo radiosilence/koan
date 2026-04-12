@@ -87,9 +87,18 @@ fn run_api_blocking(
     let access_ttl = parse_duration_secs(&cfg.graphql.access_token_ttl).unwrap_or(900);
     let refresh_ttl = parse_duration_secs(&cfg.graphql.refresh_token_ttl).unwrap_or(2_592_000);
 
+    // Generate a process-scoped introspection key for playground access.
+    let introspection_key = if playground_enabled && auth_actually_enabled {
+        // Use UUID v4 as a random introspection key — 122 bits of randomness, no extra deps.
+        Some(Arc::new(uuid::Uuid::now_v7().to_string()))
+    } else {
+        None
+    };
+
     let auth_state = AuthState {
         public_pem: Arc::new(public_pem.clone()),
         auth_enabled: auth_actually_enabled,
+        introspection_key: introspection_key.clone(),
     };
 
     let auth_route_state = AuthRouteState {
@@ -127,24 +136,21 @@ fn run_api_blocking(
         // Auth routes — always accessible (no auth middleware).
         let auth_app = auth_router(auth_route_state);
 
-        // Playground — served without auth middleware (it's a static HTML page).
+        // Playground — served without auth middleware, gated by introspection key.
         let mut app = auth_app.merge(gql_app);
         if playground_enabled {
-            app = app.route("/graphql", get(graphql_playground));
+            app = app.route(
+                "/playground",
+                get(graphql_playground).with_state(introspection_key.clone()),
+            );
         }
 
-        // Generate a playground session token if auth is enabled.
-        let playground_url = if playground_enabled && auth_actually_enabled {
-            if let Ok((private_pem, _)) = koan_core::auth::load_keypair() {
-                // Mint a 1-hour admin token for playground use.
-                match koan_core::auth::mint_access_token(
-                    &private_pem, 0, "playground", koan_core::auth::Role::Admin, 3600,
-                ) {
-                    Ok(token) => format!("http://{}:{}/graphql?token={}", bind, port, token),
-                    Err(_) => format!("http://{}:{}/graphql", bind, port),
-                }
+        // Build playground URL with introspection key.
+        let playground_url = if playground_enabled {
+            if let Some(ref key) = introspection_key {
+                format!("http://{}:{}/playground?key={}", bind, port, key)
             } else {
-                format!("http://{}:{}/graphql", bind, port)
+                format!("http://{}:{}/playground", bind, port)
             }
         } else {
             format!("http://{}:{}/graphql", bind, port)
@@ -258,12 +264,62 @@ async fn graphql_handler(
     schema.execute(request).await.into()
 }
 
-async fn graphql_playground() -> axum::response::Html<String> {
+async fn graphql_playground(
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::extract::State(key): axum::extract::State<Option<Arc<String>>>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // If an introspection key exists, require it in the URL.
+    if let Some(ref expected) = key {
+        let provided = params
+            .get("key")
+            .or_else(|| params.get("introspection-key"));
+        if provided.map(|k| k.as_str()) != Some(expected.as_str()) {
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                "invalid introspection key",
+            )
+                .into_response();
+        }
+
+        // Render GraphiQL with the introspection key injected as a default header.
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+<head>
+  <title>koan GraphiQL</title>
+  <link rel="stylesheet" href="https://unpkg.com/graphiql/graphiql.min.css" />
+</head>
+<body style="margin:0">
+  <div id="graphiql" style="height:100vh"></div>
+  <script crossorigin src="https://unpkg.com/react/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom/umd/react-dom.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/graphiql/graphiql.min.js"></script>
+  <script>
+    const fetcher = GraphiQL.createFetcher({{
+      url: '/graphql',
+      headers: {{ 'X-Introspection-Key': '{}' }},
+    }});
+    ReactDOM.render(
+      React.createElement(GraphiQL, {{ fetcher }}),
+      document.getElementById('graphiql')
+    );
+  </script>
+</body>
+</html>"#,
+            expected
+        );
+        return axum::response::Html(html).into_response();
+    }
+
+    // No auth — serve default GraphiQL.
     axum::response::Html(
         async_graphql::http::GraphiQLSource::build()
             .endpoint("/graphql")
             .finish(),
     )
+    .into_response()
 }
 
 /// Run the server as a background daemon (fork + detach).
