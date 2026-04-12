@@ -253,3 +253,119 @@ pub fn analyze_missing(
     log::info!("analysis complete: {} ok, {} errors", analyzed, errors);
     (analyzed, errors)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::connection::Database;
+    use crate::db::queries;
+    use crate::test_utils;
+
+    fn test_db(dir: &Path) -> Database {
+        let db_path = dir.join("test.db");
+        Database::open(&db_path).unwrap()
+    }
+
+    #[test]
+    fn scan_folder_indexes_new_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let music_dir = dir.path().join("music");
+        std::fs::create_dir_all(&music_dir).unwrap();
+
+        // Generate a valid WAV file (1 second, 44100 Hz, mono, 16-bit).
+        let wav_path = music_dir.join("silence.wav");
+        test_utils::generate_wav(&wav_path, 44100, 1, 1.0, 16);
+
+        let db = test_db(dir.path());
+        let result = scan_folder(&db, &music_dir, false, None);
+
+        assert_eq!(result.added, 1, "expected 1 track added");
+        assert_eq!(result.skipped, 0);
+        assert_eq!(result.removed, 0);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+
+        // Verify the track exists in the DB.
+        let stats = queries::library_stats(&db.conn).unwrap();
+        assert_eq!(stats.total_tracks, 1, "expected 1 track in DB");
+    }
+
+    #[test]
+    fn scan_folder_skips_unchanged_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let music_dir = dir.path().join("music");
+        std::fs::create_dir_all(&music_dir).unwrap();
+
+        let wav_path = music_dir.join("unchanged.wav");
+        test_utils::generate_wav(&wav_path, 44100, 1, 1.0, 16);
+
+        let db = test_db(dir.path());
+
+        // First scan: adds the file.
+        let r1 = scan_folder(&db, &music_dir, false, None);
+        assert_eq!(r1.added, 1);
+
+        // Second scan: file unchanged, should be skipped.
+        let r2 = scan_folder(&db, &music_dir, false, None);
+        assert_eq!(r2.skipped, 1, "expected unchanged file to be skipped");
+        assert_eq!(r2.added, 0, "no new files should be added");
+    }
+
+    #[test]
+    fn scan_folder_removes_deleted_tracks() {
+        let dir = tempfile::tempdir().unwrap();
+        let music_dir = dir.path().join("music");
+        std::fs::create_dir_all(&music_dir).unwrap();
+
+        let wav_path = music_dir.join("ephemeral.wav");
+        test_utils::generate_wav(&wav_path, 44100, 1, 1.0, 16);
+
+        let db = test_db(dir.path());
+
+        // First scan: adds the file.
+        let r1 = scan_folder(&db, &music_dir, false, None);
+        assert_eq!(r1.added, 1);
+
+        // Delete the file.
+        std::fs::remove_file(&wav_path).unwrap();
+
+        // Second scan: should detect removal.
+        let r2 = scan_folder(&db, &music_dir, false, None);
+        assert_eq!(
+            r2.removed, 1,
+            "expected 1 track removed after file deletion"
+        );
+
+        // DB should have 0 tracks.
+        let stats = queries::library_stats(&db.conn).unwrap();
+        assert_eq!(stats.total_tracks, 0, "expected 0 tracks after removal");
+    }
+
+    #[test]
+    fn scan_folder_updates_modified_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let music_dir = dir.path().join("music");
+        std::fs::create_dir_all(&music_dir).unwrap();
+
+        let wav_path = music_dir.join("modified.wav");
+        test_utils::generate_wav(&wav_path, 44100, 1, 1.0, 16);
+
+        let db = test_db(dir.path());
+
+        // First scan.
+        let r1 = scan_folder(&db, &music_dir, false, None);
+        assert_eq!(r1.added, 1);
+
+        // Modify the file (rewrite with different duration → different size + mtime).
+        // Sleep briefly to ensure mtime changes (some FS have 1s resolution).
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        test_utils::generate_wav(&wav_path, 44100, 1, 2.0, 16);
+
+        // Second scan: should detect the modification.
+        let r2 = scan_folder(&db, &music_dir, false, None);
+        assert_eq!(
+            r2.added, 1,
+            "modified file should be re-indexed (counted as added by upsert)"
+        );
+        assert_eq!(r2.skipped, 0, "modified file should not be skipped");
+    }
+}

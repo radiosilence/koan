@@ -10,3 +10,6 @@ pub mod organize;
 pub mod player;
 pub mod radio;
 pub mod remote;
+
+#[cfg(test)]
+pub mod test_utils;

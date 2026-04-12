@@ -1049,4 +1049,60 @@ cache_limit = "50GB"
         let serialized = toml::to_string_pretty(&cfg).unwrap();
         assert!(!serialized.contains("cache_limit"));
     }
+
+    #[test]
+    fn player_uses_config_on_init() {
+        // Verify that Config::load_from correctly picks up playback settings
+        // that Player::new() would consume. This tests the contract between
+        // config and player initialization without requiring audio hardware.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(
+            &path,
+            r#"
+[playback]
+replaygain = "track"
+output_device = "My Fancy DAC"
+pre_amp_db = -3.5
+software_volume = true
+target_fps = 30
+art_size = 32
+
+[visualizer]
+enabled = false
+mode = "oscilloscope"
+fps = 30
+"#,
+        )
+        .unwrap();
+
+        let cfg = Config::load_from(&path).unwrap();
+
+        // These are the fields Player::new() reads from config.
+        assert_eq!(
+            cfg.playback.replaygain,
+            ReplayGainMode::Track,
+            "replaygain should be 'track'"
+        );
+        assert_eq!(
+            cfg.playback.output_device.as_deref(),
+            Some("My Fancy DAC"),
+            "output_device should match config"
+        );
+        assert!(
+            (cfg.playback.pre_amp_db - (-3.5)).abs() < f64::EPSILON,
+            "pre_amp_db should be -3.5"
+        );
+        assert!(
+            cfg.playback.software_volume,
+            "software_volume should be true"
+        );
+        assert_eq!(cfg.playback.target_fps, 30, "target_fps should be 30");
+        assert_eq!(cfg.playback.art_size, 32, "art_size should be 32");
+
+        // Visualizer config is also consumed at player init.
+        assert!(!cfg.visualizer.enabled, "visualizer should be disabled");
+        assert_eq!(cfg.visualizer.mode, "oscilloscope");
+        assert_eq!(cfg.visualizer.fps, 30);
+    }
 }
