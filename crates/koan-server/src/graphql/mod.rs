@@ -2,13 +2,15 @@ mod helpers;
 mod mutations;
 mod queries;
 mod server;
+mod subscriptions;
 mod types;
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use async_graphql::{Context, EmptySubscription, Schema};
+use async_graphql::{Context, Schema};
 use crossbeam_channel::Sender;
+use koan_core::audio::viz::VizSnapshot;
 use koan_core::db::connection::Database;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{QueueItemId, SharedPlayerState};
@@ -17,7 +19,10 @@ use uuid::Uuid;
 use koan_core::auth::Role;
 use mutations::MutationRoot;
 use queries::QueryRoot;
-pub use server::{cmd_serve, cmd_serve_daemon, execute_in_process, start_api_background};
+pub use server::{
+    ApiServerOpts, cmd_serve, cmd_serve_daemon, execute_in_process, start_api_background,
+};
+use subscriptions::SubscriptionRoot;
 
 use crate::auth::AuthUser;
 
@@ -41,18 +46,22 @@ impl DbHandle {
 // Schema builder
 // ---------------------------------------------------------------------------
 
-pub type KoanSchema = Schema<QueryRoot, MutationRoot, EmptySubscription>;
+pub type KoanSchema = Schema<QueryRoot, MutationRoot, SubscriptionRoot>;
 
 pub fn build_schema(
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
     db_path: PathBuf,
+    viz: Option<Arc<VizSnapshot>>,
 ) -> KoanSchema {
-    Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+    let mut builder = Schema::build(QueryRoot, MutationRoot, SubscriptionRoot)
         .data(DbHandle { path: db_path })
         .data(state)
-        .data(cmd_tx)
-        .finish()
+        .data(cmd_tx);
+    if let Some(viz) = viz {
+        builder = builder.data(viz);
+    }
+    builder.finish()
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +129,7 @@ mod tests {
         let tx = ch.tx.clone();
         let rx = ch.rx.clone();
 
-        let schema = build_schema(state, tx, db_path);
+        let schema = build_schema(state, tx, db_path, None);
         (schema, rx, tmp)
     }
 
@@ -383,5 +392,183 @@ mod tests {
             matches!(cmd3, PlayerCommand::Play(_)),
             "third command should be Play"
         );
+    }
+
+    // ---- Phase 1 tests: queue snapshot, viz, config, playlist version, subscriptions ----
+
+    #[tokio::test]
+    async fn queue_snapshot_has_version_and_status() {
+        let (schema, _rx, _tmp) = test_schema();
+
+        let resp = schema
+            .execute("{ queue { version entries { queueItemId status } hasPlaying queueCount } }")
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        // Empty queue.
+        assert_eq!(data["queue"]["version"], 0);
+        assert_eq!(data["queue"]["entries"].as_array().unwrap().len(), 0);
+        assert_eq!(data["queue"]["hasPlaying"], false);
+        assert_eq!(data["queue"]["queueCount"], 0);
+    }
+
+    #[tokio::test]
+    async fn queue_entries_have_status_and_download_progress() {
+        use koan_core::player::state::{LoadState, PlaylistItem};
+
+        // Build schema with a shared state we can manipulate directly.
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+        koan_core::db::schema::create_tables(&db.conn).unwrap();
+
+        let state = SharedPlayerState::new();
+        let ch = CommandChannel::new();
+        let schema = build_schema(state.clone(), ch.tx.clone(), db_path, None);
+
+        // Directly add items to the playlist (simulating what the player thread does).
+        let item = PlaylistItem {
+            id: QueueItemId::new(),
+            db_id: None,
+            path: std::path::PathBuf::from("/tmp/test/windowlicker.flac"),
+            title: "Windowlicker".to_string(),
+            artist: "Aphex Twin".to_string(),
+            album_artist: "Aphex Twin".to_string(),
+            album: "Windowlicker EP".to_string(),
+            year: None,
+            codec: Some("FLAC".to_string()),
+            track_number: Some(1),
+            disc: Some(1),
+            duration_ms: Some(240000),
+            load_state: LoadState::Ready,
+        };
+        state.add_items(vec![item]);
+
+        // Query the queue — should have one entry with QUEUED status.
+        let resp = schema
+            .execute(
+                "{ queue { version entries { queueItemId title status downloadProgress { downloaded total } isCurrent } finishedCount } }",
+            )
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let entries = data["queue"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["title"], "Windowlicker");
+        // Without a cursor set, all entries are QUEUED.
+        assert_eq!(entries[0]["status"], "QUEUED");
+        assert_eq!(entries[0]["isCurrent"], false);
+        // Local track — no download progress.
+        assert!(entries[0]["downloadProgress"].is_null());
+    }
+
+    #[tokio::test]
+    async fn viz_frame_returns_none_without_viz() {
+        let (schema, _rx, _tmp) = test_schema();
+
+        let resp = schema
+            .execute("{ vizFrame { spectrum peaks vuLevels beatEnergy } }")
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert!(data["vizFrame"].is_null());
+    }
+
+    #[tokio::test]
+    async fn viz_frame_returns_data_with_viz() {
+        // Build schema with a VizSnapshot.
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+        koan_core::db::schema::create_tables(&db.conn).unwrap();
+
+        let state = SharedPlayerState::new();
+        let ch = CommandChannel::new();
+        let viz = koan_core::audio::viz::VizSnapshot::new();
+
+        // Write some test data.
+        let mut spectrum = [0.0f32; 48];
+        spectrum[0] = 0.75;
+        viz.write(koan_core::audio::viz::VizFrame {
+            spectrum,
+            peaks: [0.0; 48],
+            vu_levels: [0.42, 0.38],
+            beat_energy: 0.6,
+            timestamp: std::time::Instant::now(),
+            waveform: Vec::new(),
+        });
+
+        let schema = build_schema(state, ch.tx.clone(), db_path, Some(viz));
+
+        let resp = schema
+            .execute("{ vizFrame { spectrum peaks vuLevels beatEnergy waveform } }")
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let frame = &data["vizFrame"];
+        assert!(!frame.is_null());
+        let spectrum = frame["spectrum"].as_array().unwrap();
+        assert_eq!(spectrum.len(), 48);
+        assert!((spectrum[0].as_f64().unwrap() - 0.75).abs() < 0.01);
+        let vu = frame["vuLevels"].as_array().unwrap();
+        assert_eq!(vu.len(), 2);
+        assert!((vu[0].as_f64().unwrap() - 0.42).abs() < 0.01);
+        assert!((frame["beatEnergy"].as_f64().unwrap() - 0.6).abs() < 0.01);
+        // Waveform empty — we didn't request includeWaveform.
+        let waveform = frame["waveform"].as_array().unwrap();
+        assert!(waveform.is_empty());
+    }
+
+    #[tokio::test]
+    async fn config_query() {
+        let (schema, _rx, _tmp) = test_schema();
+
+        let resp = schema
+            .execute(
+                "{ config { libraryFolders replaygainMode targetFps artSize remoteEnabled graphqlPort } }",
+            )
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let cfg = &data["config"];
+        // Defaults from Config::default().
+        assert!(cfg["libraryFolders"].is_array());
+        assert!(cfg["targetFps"].as_i64().unwrap() > 0);
+        assert!(cfg["artSize"].as_i64().unwrap() > 0);
+    }
+
+    #[tokio::test]
+    async fn playlist_version_query() {
+        let (schema, _rx, _tmp) = test_schema();
+
+        let resp = schema.execute("{ playlistVersion }").await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["playlistVersion"], 0);
+    }
+
+    #[tokio::test]
+    async fn subscription_types_in_schema() {
+        // Verify that subscriptions are registered by introspecting the schema.
+        let (schema, _rx, _tmp) = test_schema();
+
+        let resp = schema
+            .execute("{ __schema { subscriptionType { fields { name } } } }")
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        let fields = data["__schema"]["subscriptionType"]["fields"]
+            .as_array()
+            .unwrap();
+        let names: Vec<&str> = fields.iter().filter_map(|f| f["name"].as_str()).collect();
+        assert!(
+            names.contains(&"nowPlaying"),
+            "missing nowPlaying subscription"
+        );
+        assert!(
+            names.contains(&"queueUpdated"),
+            "missing queueUpdated subscription"
+        );
+        assert!(names.contains(&"vizFrame"), "missing vizFrame subscription");
     }
 }
