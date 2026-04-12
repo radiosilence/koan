@@ -1,17 +1,18 @@
+//! MCP (Model Context Protocol) server for koan.
+//!
+//! Exposes the GraphQL schema as MCP tools for Claude Desktop / MCP clients.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossbeam_channel::Sender;
-use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Json;
 use rmcp::model::{ServerCapabilities, ServerInfo};
-use rmcp::{ServerHandler, ServiceExt, schemars, tool, tool_router};
+use rmcp::{ServerHandler, schemars, tool_router};
 use serde::{Deserialize, Serialize};
-
-use super::open_db;
 
 // ---------------------------------------------------------------------------
 // Parameter types
@@ -46,7 +47,7 @@ pub struct GraphqlResponse {
 pub struct KoanMcpServer {
     #[allow(dead_code)]
     tool_router: ToolRouter<Self>,
-    graphql_schema: super::graphql::KoanSchema,
+    graphql_schema: crate::graphql::KoanSchema,
 }
 
 impl KoanMcpServer {
@@ -56,7 +57,7 @@ impl KoanMcpServer {
         db_path: PathBuf,
     ) -> Self {
         let graphql_schema =
-            super::graphql::build_schema(state.clone(), cmd_tx.clone(), db_path.clone());
+            crate::graphql::build_schema(state.clone(), cmd_tx.clone(), db_path.clone());
         Self {
             tool_router: Self::tool_router(),
             graphql_schema,
@@ -65,6 +66,7 @@ impl KoanMcpServer {
 }
 
 use rmcp::handler::server::wrapper::Parameters;
+use rmcp::tool;
 
 #[tool_router]
 impl KoanMcpServer {
@@ -107,7 +109,7 @@ impl KoanMcpServer {
         let rt =
             tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime".to_string())?;
         let result = tokio::task::block_in_place(|| {
-            rt.block_on(super::graphql::execute_in_process(
+            rt.block_on(crate::graphql::execute_in_process(
                 &schema, &query, variables,
             ))
         });
@@ -146,8 +148,11 @@ impl ServerHandler for KoanMcpServer {
 
 /// Entry point for `koan mcp` — starts a headless player with an MCP server on stdio.
 pub fn cmd_mcp() {
+    use koan_core::player::Player;
+    use rmcp::ServiceExt;
+
     // Validate DB is accessible before starting the server.
-    let _db = open_db();
+    let _db = koan_core::db::connection::Database::open_default().expect("failed to open database");
     let db_path = koan_core::config::db_path();
 
     // Spawn the player engine (headless — no TUI).

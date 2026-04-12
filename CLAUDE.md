@@ -2,12 +2,14 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Pure Rust, Ratatui TUI. Two crates:
+Bit-perfect music player (macOS + Linux). Pure Rust, Ratatui TUI. Four crates:
 
-- **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client. No UI code, no terminal deps.
-- **koan-music** — binary crate (`koan`). Ratatui TUI, CLI (clap), media keys. Depends on koan-core.
+- **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
+- **koan-tui** — library crate. Ratatui TUI, visualizers, media keys, download queue. Exports `run_tui()`. Depends on koan-core.
+- **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
+- **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
-If you want a different UI, write a new crate against koan-core. The CLI owns zero business logic.
+Dependency rules (compiler-enforced): koan-tui and koan-server cannot import each other. Future iOS app imports only koan-core.
 
 ## Architecture overview
 
@@ -109,36 +111,55 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `organize.rs` | File rename using format strings. Preview/execute/undo. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
 
-### koan-music (`crates/koan-music/src/`)
+### koan-tui (`crates/koan-tui/src/`)
+
+| Module | What |
+|--------|------|
+| `play.rs` | `run_tui()` — TUI event loop entry point, frame timing, input handling |
+| `app.rs` | `App` state machine, `Mode` enum, event handlers per mode |
+| `ui.rs` | Render pipeline: layout → transport → content → overlays → hints |
+| `transport.rs` | Transport bar widget: seek bar, track info, click-to-seek |
+| `queue.rs` | Album-grouped queue with status icons, selection, drag targets |
+| `library.rs` | Flattened tree (artist→album→track), expand/collapse, substring filter |
+| `picker.rs` | Nucleo fuzzy search, multi-select, colored matches |
+| `cover_art.rs` | Halfblock rendering (2px per terminal cell, Lanczos3 resize) |
+| `visualizer.rs` | Spectrum analyzer widget (reads `VizSnapshot`) |
+| `lyrics.rs` | Lyrics side panel — synced line highlighting, scroll |
+| `organize.rs` | Organize modal: pattern picker → preview table → background execute |
+| `media_keys.rs` | macOS Control Center via souvlaki, manual CFRunLoop pump |
+| `download_queue.rs` | Persistent download queue with priority/cursor-aware reordering |
+| `enqueue.rs` | `enqueue_playlist()` — build PlaylistItems from track IDs, submit downloads |
+| `remote_bridge.rs` | Remote bridge: connects TUI to a remote koan server via GraphQL |
+
+### koan-server (`crates/koan-server/src/`)
+
+| Module | What |
+|--------|------|
+| `graphql/mod.rs` | GraphQL schema builder, `KoanSchema` type, DB handle wrapper |
+| `graphql/queries.rs` | GraphQL query resolvers (artists, albums, tracks, nowPlaying, etc.) |
+| `graphql/mutations.rs` | GraphQL mutations (playback, queue, favourites, snapshots, organize) |
+| `graphql/types.rs` | GraphQL type definitions (GqlArtist, GqlTrack, GqlNowPlaying, etc.) |
+| `graphql/server.rs` | HTTP server (axum), `cmd_serve`, `start_api_background`, daemon mode |
+| `subsonic.rs` | Subsonic-compatible REST API (XML/JSON, auth, streaming, cover art) |
+| `mcp.rs` | MCP server for Claude Desktop (schema_sdl + graphql tools) |
+
+### koan-cli (`crates/koan-cli/src/`)
 
 | Module | What |
 |--------|------|
 | `main.rs` | CLI entry point (clap), logger (file + buffer), signal handling |
-| `commands/play.rs` | `cmd_play`, `run_tui` (event loop, picker loading, enqueue routing) |
-| `commands/enqueue.rs` | `enqueue_playlist` (append/play/replace), download coordination |
+| `commands/play.rs` | `cmd_play` — orchestrates player spawn, queue restore, calls `run_tui()` |
 | `commands/scan.rs` | `cmd_scan` |
 | `commands/search.rs` | `cmd_search` (FTS5 with tree output) |
 | `commands/remote.rs` | Remote login/sync/status |
-| `commands/graphql/` | GraphQL schema (async-graphql), resolvers, axum HTTP server, in-process execution for MCP. Snapshot/radio/favourite mutations with remote sync |
-| `commands/mod.rs` | Shared helpers: `open_db`, formatters, cache paths, playlist item builders |
-| `tui/app.rs` | `App` state machine, `Mode` enum, event handlers per mode |
-| `tui/ui.rs` | Render pipeline: layout → transport → content → overlays → hints |
-| `tui/transport.rs` | Transport bar widget: seek bar, track info, click-to-seek |
-| `tui/queue.rs` | Album-grouped queue with status icons, selection, drag targets |
-| `tui/library.rs` | Flattened tree (artist→album→track), expand/collapse, substring filter |
-| `tui/picker.rs` | Nucleo fuzzy search, multi-select, colored matches |
-| `tui/cover_art.rs` | Halfblock rendering (2px per terminal cell, Lanczos3 resize) |
-| `tui/visualizer.rs` | Spectrum analyzer widget (reads `VizSnapshot`) |
-| `tui/lyrics.rs` | Lyrics side panel — synced line highlighting, scroll |
-| `tui/organize.rs` | Organize modal: pattern picker → preview table → background execute |
-| `media_keys.rs` | macOS Control Center via souvlaki, manual CFRunLoop pump |
+| `commands/mod.rs` | Shared CLI helpers: `open_db`, formatters, path parsing, playlist builders |
 
 ## How to read the code
 
 1. **Start:** `koan-core/src/player/state.rs` — the data model
 2. **Then:** `koan-core/src/player/mod.rs` — the command loop
 3. **Audio:** `audio/buffer.rs` (decode pipeline) → `audio/engine.rs` (CoreAudio setup)
-4. **TUI:** `koan-music/src/tui/app.rs` (state machine) → `tui/ui.rs` (render)
+4. **TUI:** `koan-tui/src/app.rs` (state machine) → `ui.rs` (render)
 5. **Database:** `db/schema.rs` (tables) → `db/queries/tracks.rs` (dedup logic)
 
 ## Concurrency patterns to follow

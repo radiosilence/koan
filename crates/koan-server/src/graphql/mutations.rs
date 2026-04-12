@@ -508,7 +508,7 @@ impl MutationRoot {
     async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let cfg = Config::load().unwrap_or_default();
-        let client = super::super::subsonic_client(&cfg)
+        let client = koan_core::helpers::subsonic_client(&cfg)
             .ok_or_else(|| async_graphql::Error::new("remote not configured"))?;
         koan_core::remote::sync::sync_library(
             &db,
@@ -531,7 +531,7 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlShare> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let cfg = Config::load().unwrap_or_default();
-        let client = super::super::subsonic_client(&cfg)
+        let client = koan_core::helpers::subsonic_client(&cfg)
             .ok_or_else(|| async_graphql::Error::new("remote not configured"))?;
 
         // Resolve track IDs to remote IDs.

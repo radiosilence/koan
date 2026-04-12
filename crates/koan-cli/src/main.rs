@@ -98,9 +98,6 @@ impl log::Log for BufferedLogger {
 }
 
 mod commands;
-mod media_keys;
-mod remote_bridge;
-mod tui;
 
 #[derive(Parser)]
 #[command(name = "koan", about = "bit-perfect music player", version)]
@@ -298,11 +295,11 @@ fn main() {
 
     // Daemon/headless are root-level server modes — handle before subcommands.
     if cli.daemonize {
-        commands::cmd_serve_daemon(cli.port, cli.bind, cli.subsonic, cli.playground);
+        koan_server::graphql::cmd_serve_daemon(cli.port, cli.bind, cli.subsonic, cli.playground);
         return;
     }
     if cli.headless {
-        commands::cmd_serve(cli.port, cli.bind, cli.subsonic, cli.playground);
+        koan_server::graphql::cmd_serve(cli.port, cli.bind, cli.subsonic, cli.playground);
         return;
     }
 
@@ -331,7 +328,7 @@ fn main() {
                 commands::cmd_analyze();
             }
         }
-        Some(Commands::Mcp) => commands::cmd_mcp(),
+        Some(Commands::Mcp) => koan_server::mcp::cmd_mcp(),
         Some(Commands::Analyze) => commands::cmd_analyze(),
         Some(Commands::Search { query }) => commands::cmd_search(&query),
         Some(Commands::Library) => commands::cmd_library(),

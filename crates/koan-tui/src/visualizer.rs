@@ -467,6 +467,12 @@ pub struct ParticleSystem {
     particles: Vec<Particle>,
 }
 
+impl Default for ParticleSystem {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ParticleSystem {
     pub fn new() -> Self {
         Self {
@@ -555,6 +561,12 @@ pub struct LissajousTrail {
     write_idx: usize,
 }
 
+impl Default for LissajousTrail {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LissajousTrail {
     pub fn new() -> Self {
         Self {
@@ -595,6 +607,12 @@ pub struct SpectrumHistory {
     frames: Vec<[f32; NUM_BARS]>,
     write_idx: usize,
     len: usize,
+}
+
+impl Default for SpectrumHistory {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SpectrumHistory {

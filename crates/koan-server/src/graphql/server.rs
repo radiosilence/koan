@@ -21,7 +21,7 @@ pub fn cmd_serve(
     use koan_core::player::Player;
 
     // Validate DB is accessible before starting the server.
-    let _db = super::super::open_db();
+    let _db = koan_core::db::connection::Database::open_default().expect("failed to open database");
     let db_path = koan_core::config::db_path();
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
@@ -96,7 +96,7 @@ fn run_api_blocking(
             axum::serve(gql_listener, gql_app).with_graceful_shutdown(shutdown_signal());
 
         if let Some(sub_port) = subsonic_port {
-            let sub_app = super::super::serve::subsonic_router(db_path);
+            let sub_app = crate::subsonic::subsonic_router(db_path);
             let sub_addr = std::net::SocketAddr::new(bind, sub_port);
 
             match tokio::net::TcpListener::bind(sub_addr).await {

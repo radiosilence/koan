@@ -73,7 +73,7 @@ pub(super) fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
         .ok()
         .flatten();
     if let Some(rid) = remote_id {
-        let Some(client) = super::super::subsonic_client(&cfg) else {
+        let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
             return;
         };
         std::thread::Builder::new()
@@ -93,69 +93,24 @@ pub(super) fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
 }
 
 // ---------------------------------------------------------------------------
-// Download spawning
+// Download spawning — delegates to koan-core helpers
 // ---------------------------------------------------------------------------
 
-/// Spawn background downloads for remote tracks that were added to the queue
-/// with LoadState::Pending. Uses the same download pipeline as the TUI.
 pub(super) fn spawn_downloads(
     pending: Vec<(i64, QueueItemId)>,
     tx: Sender<PlayerCommand>,
     state: Arc<SharedPlayerState>,
 ) {
-    use std::sync::Mutex;
-
-    let log_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    std::thread::Builder::new()
-        .name("koan-gql-download".into())
-        .spawn(move || {
-            let cfg = Config::load().unwrap_or_default();
-            for (db_id, queue_id) in pending {
-                super::super::enqueue::download_track(db_id, queue_id, &tx, &log_buf, &state, &cfg);
-            }
-        })
-        .ok();
+    koan_core::helpers::spawn_downloads(pending, tx, state);
 }
 
 // ---------------------------------------------------------------------------
-// TrackRow -> PlaylistItem
+// TrackRow -> PlaylistItem — delegates to koan-core helpers
 // ---------------------------------------------------------------------------
 
 pub fn track_to_playlist_item(
     track: &queries::TrackRow,
     db: &Database,
 ) -> koan_core::player::state::PlaylistItem {
-    use koan_core::player::state::PlaylistItem;
-
-    let album_date = track
-        .album_id
-        .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten());
-
-    let cfg = Config::load().unwrap_or_default();
-    let (path, load_state) =
-        super::super::enqueue::resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
-
-    let year = album_date.as_deref().and_then(|d| {
-        if d.len() >= 4 {
-            Some(d[..4].to_string())
-        } else {
-            None
-        }
-    });
-
-    PlaylistItem {
-        id: QueueItemId::new(),
-        db_id: Some(track.id),
-        path,
-        title: track.title.clone(),
-        artist: track.artist_name.clone(),
-        album_artist: track.album_artist_name.clone(),
-        album: track.album_title.clone(),
-        year,
-        codec: track.codec.clone(),
-        track_number: track.track_number.map(|n| n as i64),
-        disc: track.disc.map(|n| n as i64),
-        duration_ms: track.duration_ms.map(|d| d as u64),
-        load_state,
-    }
+    koan_core::helpers::track_to_playlist_item(track, db)
 }
