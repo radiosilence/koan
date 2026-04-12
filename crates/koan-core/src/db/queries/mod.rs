@@ -1,5 +1,6 @@
 mod albums;
 mod artists;
+pub mod auth;
 mod favourites;
 pub mod lyrics;
 pub mod playback_state;

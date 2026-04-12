@@ -269,6 +269,13 @@ pub struct GraphqlConfig {
     /// Enable Subsonic REST API on this port. Omit or null to disable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subsonic_port: Option<u16>,
+    /// Require authentication for API access (default: false for backward compat).
+    /// When false, all requests are treated as admin. When true, JWT auth is enforced.
+    pub auth_enabled: bool,
+    /// Access token TTL (default: "15m"). Supports: "15m", "1h", "3600s".
+    pub access_token_ttl: String,
+    /// Refresh token TTL (default: "30d"). Supports: "30d", "7d", "720h".
+    pub refresh_token_ttl: String,
 }
 
 fn default_bind() -> std::net::IpAddr {
@@ -283,6 +290,9 @@ impl Default for GraphqlConfig {
             bind: default_bind(),
             playground: false,
             subsonic_port: None,
+            auth_enabled: false,
+            access_token_ttl: "15m".into(),
+            refresh_token_ttl: "30d".into(),
         }
     }
 }

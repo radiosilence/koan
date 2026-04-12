@@ -2,11 +2,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crossbeam_channel::Sender;
+use koan_core::auth::{self, parse_duration_secs};
 use koan_core::config::Config;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
 
 use super::{KoanSchema, build_schema};
+use crate::auth::AuthUser;
+use crate::auth::middleware::{AuthState, auth_middleware};
+use crate::auth::routes::{AuthRouteState, auth_router};
 
 // ---------------------------------------------------------------------------
 // `koan --headless` entry point (standalone headless server)
@@ -58,20 +62,79 @@ fn run_api_blocking(
     let port = port.unwrap_or(cfg.graphql.port);
     let bind = bind.unwrap_or(cfg.graphql.bind);
     let playground_enabled = playground || cfg.graphql.playground;
+    let auth_enabled = cfg.graphql.auth_enabled;
+
+    // Load or generate Ed25519 keypair for JWT signing.
+    let (private_pem, public_pem) = if auth_enabled {
+        match auth::load_keypair() {
+            Ok(kp) => kp,
+            Err(e) => {
+                log::error!(
+                    "Auth enabled but keypair not found: {}. Run `koan auth setup` first.",
+                    e
+                );
+                // Fall back to disabled auth rather than crashing.
+                log::warn!("Falling back to auth_enabled=false");
+                (vec![], vec![])
+            }
+        }
+    } else {
+        // When auth is disabled, we still need dummy keys for the route state
+        // (routes exist but won't be hit by middleware). Generate if available.
+        auth::load_or_generate_keypair().unwrap_or_default()
+    };
+
+    let auth_actually_enabled = auth_enabled && !private_pem.is_empty();
+
+    let access_ttl = parse_duration_secs(&cfg.graphql.access_token_ttl).unwrap_or(900);
+    let refresh_ttl = parse_duration_secs(&cfg.graphql.refresh_token_ttl).unwrap_or(2_592_000);
+
+    let auth_state = AuthState {
+        public_pem: Arc::new(public_pem.clone()),
+        auth_enabled: auth_actually_enabled,
+    };
+
+    let auth_route_state = AuthRouteState {
+        db_path: db_path.clone(),
+        private_pem: Arc::new(private_pem),
+        public_pem: Arc::new(public_pem),
+        access_ttl_secs: access_ttl,
+        refresh_ttl_secs: refresh_ttl,
+    };
 
     let schema = build_schema(state, cmd_tx, db_path.clone());
 
+    if auth_actually_enabled {
+        log::info!(
+            "Auth enabled (Ed25519 JWT, access TTL {}s, refresh TTL {}s)",
+            access_ttl,
+            refresh_ttl
+        );
+    } else {
+        log::info!("Auth disabled — all requests treated as admin");
+    }
+
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
+        // GraphQL routes — protected by auth middleware.
         let mut gql_app = axum::Router::new().route("/graphql", post(graphql_handler));
         if playground_enabled {
             gql_app = gql_app.route("/graphql", get(graphql_playground));
         }
-        // Concurrency limit: prevent mutation spam DoS (e.g. trigger_scan flooding).
-        // Allows max 10 concurrent requests; excess requests get 503 back-pressure.
+
         let gql_app = gql_app
+            .layer(axum::middleware::from_fn_with_state(
+                auth_state.clone(),
+                auth_middleware,
+            ))
             .layer(tower::limit::ConcurrencyLimitLayer::new(10))
             .with_state(schema);
+
+        // Auth routes — always accessible (no auth middleware).
+        let auth_app = auth_router(auth_route_state);
+
+        // Merge: auth routes first (no middleware), then GraphQL (with middleware).
+        let app = auth_app.merge(gql_app);
 
         let gql_addr = std::net::SocketAddr::new(bind, port);
 
@@ -93,7 +156,7 @@ fn run_api_blocking(
             }
         };
         let gql_server =
-            axum::serve(gql_listener, gql_app).with_graceful_shutdown(shutdown_signal());
+            axum::serve(gql_listener, app).with_graceful_shutdown(shutdown_signal());
 
         if let Some(sub_port) = subsonic_port {
             let sub_app = crate::subsonic::subsonic_router(db_path);
@@ -159,10 +222,18 @@ async fn shutdown_signal() {
 }
 
 async fn graphql_handler(
+    auth_user: Option<axum::Extension<AuthUser>>,
     axum::extract::State(schema): axum::extract::State<KoanSchema>,
     req: async_graphql_axum::GraphQLRequest,
 ) -> async_graphql_axum::GraphQLResponse {
-    schema.execute(req.into_inner()).await.into()
+    let mut request = req.into_inner();
+    // Inject the authenticated user into GraphQL context.
+    if let Some(axum::Extension(user)) = auth_user {
+        request = request.data(user);
+    } else {
+        request = request.data(AuthUser::anonymous_admin());
+    }
+    schema.execute(request).await.into()
 }
 
 async fn graphql_playground() -> axum::response::Html<String> {
@@ -226,12 +297,15 @@ pub fn cmd_serve_daemon(
 // ---------------------------------------------------------------------------
 
 /// Execute a GraphQL query in-process (no HTTP round-trip).
+/// In-process requests bypass auth — they're trusted (e.g., MCP tools).
 pub async fn execute_in_process(
     schema: &KoanSchema,
     query: &str,
     variables: Option<serde_json::Value>,
 ) -> serde_json::Value {
     let mut request = async_graphql::Request::new(query);
+    // In-process = admin access (MCP/local tools).
+    request = request.data(AuthUser::anonymous_admin());
     if let Some(serde_json::Value::Object(map)) = variables {
         let mut gql_vars = async_graphql::Variables::default();
         for (k, v) in map {
