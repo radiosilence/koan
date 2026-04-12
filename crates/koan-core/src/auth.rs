@@ -135,7 +135,7 @@ pub fn verify_password(password: &str, hash: &str) -> Result<(), AuthError> {
 // Ed25519 Keypair management
 // ---------------------------------------------------------------------------
 
-fn keypair_dir() -> PathBuf {
+pub fn keypair_dir() -> PathBuf {
     config::config_dir().join("auth")
 }
 

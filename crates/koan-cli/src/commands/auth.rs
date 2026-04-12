@@ -348,6 +348,64 @@ pub fn cmd_auth_login(server_url: &str, username: &str) {
 }
 
 /// `koan auth logout --server <url>`
+/// `koan auth regenerate-keys` — delete and regenerate Ed25519 keypair.
+/// All existing tokens are invalidated (signed by old key).
+pub fn cmd_auth_regenerate_keys() {
+    eprint!(
+        "{} This will invalidate ALL existing tokens. Continue? [y/N] ",
+        "!".yellow().bold()
+    );
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() || !input.trim().eq_ignore_ascii_case("y") {
+        println!("Aborted.");
+        return;
+    }
+
+    let dir = koan_core::auth::keypair_dir();
+    let _ = std::fs::remove_file(dir.join("ed25519.pem"));
+    let _ = std::fs::remove_file(dir.join("ed25519_pub.pem"));
+
+    match koan_core::auth::generate_keypair() {
+        Ok(_) => {
+            println!(
+                "{} New Ed25519 keypair generated. All users must re-login.",
+                "✓".green().bold()
+            );
+        }
+        Err(e) => {
+            eprintln!("{} Failed to generate keypair: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `koan auth reset` — delete all auth state (keys, users, tokens). Nuclear option.
+pub fn cmd_auth_reset() {
+    eprint!(
+        "{} This will delete ALL keys, users, and tokens. Continue? [y/N] ",
+        "!".red().bold()
+    );
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() || !input.trim().eq_ignore_ascii_case("y") {
+        println!("Aborted.");
+        return;
+    }
+
+    // Delete keypair.
+    let dir = koan_core::auth::keypair_dir();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // Delete users and tokens from DB.
+    let db = open_db();
+    let _ = db.conn.execute("DELETE FROM refresh_tokens", []);
+    let _ = db.conn.execute("DELETE FROM users", []);
+
+    println!(
+        "{} Auth state wiped. Run `koan auth setup` to start fresh.",
+        "✓".green().bold()
+    );
+}
+
 pub fn cmd_auth_logout(server_url: &str) {
     let keychain_key = format!("koan-auth:{}", server_url);
 

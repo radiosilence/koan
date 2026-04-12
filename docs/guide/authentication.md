@@ -126,10 +126,9 @@ koan auth create-user --username admin --role admin
 
 **Regenerate keypair:**
 ```bash
-# Delete the old keypair — all existing tokens will be invalidated
-rm ~/.config/koan/auth/ed25519*.pem
-koan auth setup
-# All users keep their passwords, but must re-login (old JWTs are unsigned by the new key)
+koan auth regenerate-keys
+# Generates new Ed25519 keypair. All existing tokens are invalidated.
+# Users keep their passwords but must re-login.
 ```
 
 **Disable auth entirely:**
@@ -141,11 +140,9 @@ auth_enabled = false
 
 **Nuclear option (start fresh):**
 ```bash
-# Delete auth state entirely
-rm -rf ~/.config/koan/auth/
-# Users are in the DB — delete them too if you want a clean slate:
-sqlite3 ~/.config/koan/koan.db "DELETE FROM users; DELETE FROM refresh_tokens;"
-koan auth setup
+koan auth reset
+# Deletes all keys, users, and tokens. Prompts for confirmation.
+# Then: koan auth setup
 ```
 
 ## Configuration
