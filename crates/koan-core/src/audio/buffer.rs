@@ -17,6 +17,7 @@ use symphonia::core::probe::Hint;
 use symphonia::core::units::Time;
 use thiserror::Error;
 
+use crate::audio::opus::OpusBridge;
 use crate::audio::viz::VizBuffer;
 use crate::config::ReplayGainMode;
 use crate::player::state::QueueItemId;
@@ -280,9 +281,19 @@ fn probe_mss(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, DecodeEr
     let reader = probed.format;
     let track = reader.default_track().ok_or(DecodeError::NoTrack)?;
     let codec_params = &track.codec_params;
-    let sample_rate = codec_params.sample_rate.unwrap_or(44100);
+    let is_opus = codec_params.codec == CODEC_TYPE_OPUS;
+    // Opus always decodes to 48 kHz regardless of the input sample rate.
+    let sample_rate = if is_opus {
+        48000
+    } else {
+        codec_params.sample_rate.unwrap_or(44100)
+    };
     let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
-    let bit_depth = codec_params.bits_per_sample.unwrap_or(16) as u16;
+    let bit_depth = if is_opus {
+        32
+    } else {
+        codec_params.bits_per_sample.unwrap_or(16) as u16
+    };
     let duration_ms = track
         .codec_params
         .n_frames
@@ -537,14 +548,26 @@ fn decode_single(
     let track = reader.default_track().ok_or(DecodeError::NoTrack)?;
     let track_id = track.id;
     let codec_params = &track.codec_params;
-    let sample_rate = codec_params.sample_rate.unwrap_or(44100);
+    let is_opus_codec = codec_params.codec == CODEC_TYPE_OPUS;
+
+    // Opus always decodes to 48 kHz regardless of the internal rate.
+    let sample_rate = if is_opus_codec {
+        48000
+    } else {
+        codec_params.sample_rate.unwrap_or(44100)
+    };
     let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
 
     let info = StreamInfo {
         codec: codec_name(codec_params.codec),
         sample_rate,
         channels,
-        bit_depth: codec_params.bits_per_sample.unwrap_or(16) as u16,
+        // Opus is internally float; report 32-bit.
+        bit_depth: if is_opus_codec {
+            32
+        } else {
+            codec_params.bits_per_sample.unwrap_or(16) as u16
+        },
         duration_ms: codec_params
             .n_frames
             .map(|f| f * 1000 / sample_rate as u64)
@@ -564,9 +587,21 @@ fn decode_single(
         seek_samples,
     });
 
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .map_err(|_| DecodeError::UnsupportedCodec)?;
+    // Build either a Symphonia decoder or our Opus bridge.
+    let mut symphonia_decoder = if is_opus_codec {
+        None
+    } else {
+        Some(
+            symphonia::default::get_codecs()
+                .make(&track.codec_params, &DecoderOptions::default())
+                .map_err(|_| DecodeError::UnsupportedCodec)?,
+        )
+    };
+    let mut opus_bridge = if is_opus_codec {
+        Some(OpusBridge::new(codec_params).map_err(|e| DecodeError::Decode(e.to_string()))?)
+    } else {
+        None
+    };
 
     // Seek if requested (only for the first track usually).
     if seek_ms > 0 {
@@ -581,7 +616,12 @@ fn decode_single(
                 },
             )
             .map_err(|e| DecodeError::Decode(format!("seek failed: {}", e)))?;
-        decoder.reset();
+        if let Some(ref mut dec) = symphonia_decoder {
+            dec.reset();
+        }
+        if let Some(ref mut opus) = opus_bridge {
+            opus.reset();
+        }
     }
 
     // Read ReplayGain tags and select the active gain for this track.
@@ -630,31 +670,46 @@ fn decode_single(
             continue;
         }
 
-        let decoded = match decoder.decode(&packet) {
-            Ok(d) => d,
-            Err(symphonia::core::errors::Error::DecodeError(e)) => {
-                log::warn!("decode error (skipping packet): {}", e);
-                continue;
+        // Decode the packet — either via Opus bridge or Symphonia codec.
+        let samples: &[f32] = if let Some(ref mut opus) = opus_bridge {
+            match opus.decode_packet(packet.buf()) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::warn!("opus decode error (skipping packet): {}", e);
+                    continue;
+                }
             }
-            Err(e) => return Err(DecodeError::Decode(e.to_string())),
+        } else {
+            let decoder = symphonia_decoder.as_mut().unwrap();
+            let decoded = match decoder.decode(&packet) {
+                Ok(d) => d,
+                Err(symphonia::core::errors::Error::DecodeError(e)) => {
+                    log::warn!("decode error (skipping packet): {}", e);
+                    continue;
+                }
+                Err(e) => return Err(DecodeError::Decode(e.to_string())),
+            };
+
+            let spec = *decoded.spec();
+            let duration = decoded.capacity();
+            let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(duration as u64, spec));
+            sbuf.copy_interleaved_ref(decoded);
+            sbuf.samples()
         };
 
-        let spec = *decoded.spec();
-        let duration = decoded.capacity();
-
-        let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(duration as u64, spec));
-
-        sbuf.copy_interleaved_ref(decoded);
+        if samples.is_empty() {
+            continue;
+        }
 
         // Apply ReplayGain if active. Uses a reusable scratch buffer to avoid
         // allocating per packet. Zero overhead when RG is off.
         let samples = if let Some((gain_db, peak)) = rg_gain {
             rg_scratch.clear();
-            rg_scratch.extend_from_slice(sbuf.samples());
+            rg_scratch.extend_from_slice(samples);
             crate::audio::replaygain::apply_gain(&mut rg_scratch, gain_db, peak, pre_amp_db);
             &rg_scratch[..]
         } else {
-            sbuf.samples()
+            samples
         };
 
         // Push samples into ring buffer, blocking if full.

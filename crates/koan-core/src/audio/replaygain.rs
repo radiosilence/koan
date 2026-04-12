@@ -4,13 +4,14 @@ use std::path::{Path, PathBuf};
 use lofty::prelude::*;
 use lofty::tag::ItemValue;
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::DecoderOptions;
+use symphonia::core::codecs::{CODEC_TYPE_OPUS, DecoderOptions};
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
 use thiserror::Error;
 
+use crate::audio::opus::OpusBridge;
 use crate::config::ReplayGainMode;
 
 /// Reference loudness for ReplayGain 2 (EBU R128): -18 LUFS.
@@ -334,16 +335,35 @@ fn decode_to_samples(path: &Path) -> Result<(u32, u16, Vec<f32>), ReplayGainErro
     let mut reader = probed.format;
     let track = reader.default_track().ok_or(ReplayGainError::NoTrack)?;
     let track_id = track.id;
-    let sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+    let is_opus = track.codec_params.codec == CODEC_TYPE_OPUS;
+    let sample_rate = if is_opus {
+        48000
+    } else {
+        track.codec_params.sample_rate.unwrap_or(44100)
+    };
     let channels = track
         .codec_params
         .channels
         .map(|c| c.count() as u16)
         .unwrap_or(2);
 
-    let mut decoder = symphonia::default::get_codecs()
-        .make(&track.codec_params, &DecoderOptions::default())
-        .map_err(|e| ReplayGainError::Decode(e.to_string()))?;
+    let mut symphonia_decoder = if is_opus {
+        None
+    } else {
+        Some(
+            symphonia::default::get_codecs()
+                .make(&track.codec_params, &DecoderOptions::default())
+                .map_err(|e| ReplayGainError::Decode(e.to_string()))?,
+        )
+    };
+    let mut opus_bridge = if is_opus {
+        Some(
+            OpusBridge::new(&track.codec_params)
+                .map_err(|e| ReplayGainError::Decode(e.to_string()))?,
+        )
+    } else {
+        None
+    };
 
     let mut all_samples = Vec::new();
     let mut sample_buf: Option<SampleBuffer<f32>> = None;
@@ -363,20 +383,33 @@ fn decode_to_samples(path: &Path) -> Result<(u32, u16, Vec<f32>), ReplayGainErro
             continue;
         }
 
-        let decoded = match decoder.decode(&packet) {
-            Ok(d) => d,
-            Err(symphonia::core::errors::Error::DecodeError(e)) => {
-                log::warn!("decode error (skipping packet): {}", e);
-                continue;
+        if let Some(ref mut opus) = opus_bridge {
+            match opus.decode_packet(packet.buf()) {
+                Ok(samples) if !samples.is_empty() => {
+                    all_samples.extend_from_slice(samples);
+                }
+                Ok(_) => {} // header/comment packet
+                Err(e) => {
+                    log::warn!("opus decode error (skipping packet): {}", e);
+                }
             }
-            Err(e) => return Err(ReplayGainError::Decode(e.to_string())),
-        };
+        } else {
+            let decoder = symphonia_decoder.as_mut().unwrap();
+            let decoded = match decoder.decode(&packet) {
+                Ok(d) => d,
+                Err(symphonia::core::errors::Error::DecodeError(e)) => {
+                    log::warn!("decode error (skipping packet): {}", e);
+                    continue;
+                }
+                Err(e) => return Err(ReplayGainError::Decode(e.to_string())),
+            };
 
-        let spec = *decoded.spec();
-        let duration = decoded.capacity();
-        let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(duration as u64, spec));
-        sbuf.copy_interleaved_ref(decoded);
-        all_samples.extend_from_slice(sbuf.samples());
+            let spec = *decoded.spec();
+            let duration = decoded.capacity();
+            let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(duration as u64, spec));
+            sbuf.copy_interleaved_ref(decoded);
+            all_samples.extend_from_slice(sbuf.samples());
+        }
     }
 
     Ok((sample_rate, channels, all_samples))
