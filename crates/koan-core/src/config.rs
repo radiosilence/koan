@@ -149,6 +149,8 @@ pub struct VisualizerConfig {
     /// Matrix overlay: replace all rendered characters with random matrix glyphs in green.
     /// Applies to any visualizer mode as a post-processing pass.
     pub matrix_overlay: bool,
+    /// Beat-reactive background color on braille modes (starfield, wormhole, etc.).
+    pub reactive_bg: bool,
 }
 
 impl Default for VisualizerConfig {
@@ -165,6 +167,7 @@ impl Default for VisualizerConfig {
             reactivity: 1.0,
             bass_shake: true,
             matrix_overlay: false,
+            reactive_bg: false,
         }
     }
 }

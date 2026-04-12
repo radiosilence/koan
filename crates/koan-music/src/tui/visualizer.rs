@@ -407,6 +407,27 @@ impl BrailleGrid {
 }
 
 /// Fill an area with a beat-reactive pulsating background color.
+/// Gated by `reactive_bg` flag — no-op when disabled.
+fn fill_reactive_bg(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    if !state.reactive_bg {
+        return;
+    }
+    let r = state.reactivity;
+    let intensity = (state.beat_energy * r).clamp(0.0, 1.0);
+    if intensity < 0.02 {
+        return;
+    }
+    let hue_t = state.beat_hue_offset.rem_euclid(1.0);
+    let base = state.palette.freq_color(hue_t);
+    let bg = dim(base, 1.0 - intensity * 0.35);
+    let style = Style::new().bg(bg);
+    for row in 0..area.height {
+        for col in 0..area.width {
+            buf[(area.x + col, area.y + row)].set_style(style);
+        }
+    }
+}
+
 /// Map subpixel position within a cell to the braille bit index.
 /// Layout: col 0 = bits 0,1,2,6 (top to bottom), col 1 = bits 3,4,5,7.
 fn braille_bit(sub_x: usize, sub_y: usize) -> u8 {
@@ -689,6 +710,8 @@ pub struct VisualizerState {
     pub bass_shake: bool,
     /// Matrix overlay: replace all rendered chars with matrix glyphs in green.
     pub matrix_overlay: bool,
+    /// Beat-reactive background on braille modes.
+    pub reactive_bg: bool,
     /// Actual frame delta time in seconds (set each tick from last_update).
     pub frame_dt: f32,
     /// Estimated BPM from beat onset intervals. 0.0 = unknown.
@@ -708,6 +731,7 @@ impl VisualizerState {
         let reactivity = cfg.reactivity.clamp(0.0, 2.0);
         let bass_shake = cfg.bass_shake;
         let matrix_overlay = cfg.matrix_overlay;
+        let reactive_bg = cfg.reactive_bg;
         Self::with_config(
             bar_half_life,
             peak_half_life,
@@ -716,9 +740,11 @@ impl VisualizerState {
             reactivity,
             bass_shake,
             matrix_overlay,
+            reactive_bg,
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn with_config(
         bar_half_life: f32,
         peak_half_life: f32,
@@ -727,6 +753,7 @@ impl VisualizerState {
         reactivity: f32,
         bass_shake: bool,
         matrix_overlay: bool,
+        reactive_bg: bool,
     ) -> Self {
         Self {
             spectrum: [0.0; NUM_BARS],
@@ -767,6 +794,7 @@ impl VisualizerState {
             scale_pulse: 1.0,
             bass_shake,
             matrix_overlay,
+            reactive_bg,
             frame_dt: 1.0 / 60.0,
             bpm: 0.0,
             beat_onsets: Vec::new(),
@@ -1218,6 +1246,7 @@ fn render_particles(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Lissajous Renderer ─────────────────────────────────────────────────────
 
 fn render_lissajous(state: &mut VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width();
     let px_h = grid.px_height();
@@ -1684,6 +1713,7 @@ fn render_tunnel(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Wireframe Renderer ────────────────────────────────────────────────────
 
 fn render_wireframe(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -1873,6 +1903,7 @@ fn render_metaballs(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Starfield Renderer ────────────────────────────────────────────────────
 
 fn render_starfield(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2121,6 +2152,7 @@ fn render_moire(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Kaleidoscope Renderer ─────────────────────────────────────────────────
 
 fn render_kaleidoscope(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2252,6 +2284,7 @@ fn render_julia(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
 // ── Spiral Renderer ───────────────────────────────────────────────────────
 
 fn render_spiral(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2401,6 +2434,7 @@ fn hash_f32(seed: u32) -> f32 {
 }
 
 fn render_wormhole(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
+    fill_reactive_bg(state, area, buf);
     let mut grid = BrailleGrid::new(area.width as usize, area.height as usize);
     let px_w = grid.px_width() as f32;
     let px_h = grid.px_height() as f32;
@@ -2874,6 +2908,7 @@ mod tests {
             1.0,
             true,
             false,
+            false,
         );
         assert_eq!(state.spectrum.len(), NUM_BARS);
         assert_eq!(state.peaks.len(), NUM_BARS);
@@ -2890,6 +2925,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
             false,
         );
         let snapshot = VizSnapshot::new();
@@ -2911,6 +2947,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
             false,
         );
         let snapshot = VizSnapshot::new();
@@ -2944,6 +2981,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
             false,
         );
         let snapshot = VizSnapshot::new();
@@ -2991,6 +3029,7 @@ mod tests {
             VisualizerMode::Bars,
             1.0,
             true,
+            false,
             false,
         );
         let snapshot = VizSnapshot::new();
