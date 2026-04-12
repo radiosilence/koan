@@ -85,7 +85,7 @@ impl GraphQLClient {
                     album: t["album"].as_str().unwrap_or("").to_string(),
                     codec: t["codec"].as_str().unwrap_or("").to_string(),
                     sample_rate: t["sampleRate"].as_u64().unwrap_or(0) as u32,
-                    bit_depth: t["bitDepth"].as_u64().unwrap_or(0) as u16,
+                    bit_depth: t["bitDepth"].as_u64().map(|v| v as u16),
                     channels: t["channels"].as_u64().unwrap_or(0) as u16,
                     duration_ms: t["durationMs"].as_u64().unwrap_or(0),
                 })
@@ -346,7 +346,7 @@ pub struct NowPlayingTrack {
     pub album: String,
     pub codec: String,
     pub sample_rate: u32,
-    pub bit_depth: u16,
+    pub bit_depth: Option<u16>,
     pub channels: u16,
     pub duration_ms: u64,
 }

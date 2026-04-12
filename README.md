@@ -65,7 +65,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 
 - **Bit-perfect playback** -- CoreAudio AUHAL / ALSA via cpal, automatic sample rate switching, no resampling
 - **Gapless transitions** -- decode thread keeps the ring buffer alive across track boundaries
-- **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, WavPack, WAV/AIFF (via Symphonia)
+- **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV/AIFF/CAF, Ogg, MKV/WebM, MP4
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, spectrum analyzer, lyrics panel, mouse support
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, favourite sync
 - **Radio mode** -- infinite play using Subsonic similarity, cached artist relationships, and genre matching
@@ -78,7 +78,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **SQLite FTS5 search** -- full-text search across your entire library
 - **Media keys** -- macOS Control Center integration (play/pause, next/prev, now playing info)
 - **Lyrics** -- synced (LRC) and plain lyrics from LRCLIB, current line highlighting
-- **Spectrum analyzer** -- 48-band FFT on a dedicated thread, configurable frequency/amplitude scales
+- **22 visualizer modes** -- spectrum bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, pleasures, moiré, kaleidoscope, julia fractal, spiral, interference, wormhole, matrix rain. Picker with live preview (`v`), matrix overlay (`X`), bass shake (`S`), configurable reactivity
 
 <img width="815" height="598" alt="Screenshot 2026-03-04 at 18 30 43" src="https://github.com/user-attachments/assets/9dab1d13-5d48-4e60-8625-7d72dd2e7957" />
 

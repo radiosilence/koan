@@ -54,7 +54,7 @@ pub struct TrackInfo {
     pub path: PathBuf,
     pub codec: String,
     pub sample_rate: u32,
-    pub bit_depth: u16,
+    pub bit_depth: Option<u16>,
     pub channels: u16,
     pub duration_ms: u64,
 }

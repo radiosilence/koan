@@ -17,7 +17,9 @@ pub fn cmd_probe(path: &Path) {
             println!("{} {}", "file:".cyan(), path.display());
             println!("{} {}", "codec:".cyan(), info.codec.yellow());
             println!("{} {} Hz", "sample rate:".cyan(), info.sample_rate);
-            println!("{} {}", "bit depth:".cyan(), info.bit_depth);
+            if let Some(bd) = info.bit_depth {
+                println!("{} {}", "bit depth:".cyan(), bd);
+            }
             println!("{} {}", "channels:".cyan(), info.channels);
             println!(
                 "{} {} {}",
