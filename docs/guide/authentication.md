@@ -9,7 +9,7 @@ koan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default.
 koan auth setup
 
 # 2. Start the server
-koan serve --port 4000  # or: koan play (starts API in background)
+koan --headless --port 4000  # or: koan play (starts API alongside TUI)
 
 # 3. Get a token
 curl -s -X POST http://localhost:4000/auth/login \
@@ -23,7 +23,7 @@ curl -s -X POST http://localhost:4000/auth/login \
 curl -s http://localhost:4000/graphql \
   -H "Authorization: Bearer eyJ..." \
   -H "Content-Type: application/json" \
-  -d '{"query": "{ libraryStats { trackCount } }"}'
+  -d '{"query": "{ libraryStats { totalTracks totalArtists totalAlbums } }"}' | jq
 ```
 
 ### Full curl workflow (copy-pasteable)
@@ -44,7 +44,7 @@ echo "Refresh token (30d):   ${REFRESH_TOKEN:0:20}..."
 curl -s http://localhost:4000/graphql \
   -H "Authorization: Bearer $ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"query": "{ libraryStats { trackCount artistCount albumCount } }"}' | jq
+  -d '{"query": "{ libraryStats { totalTracks totalArtists totalAlbums } }"}' | jq
 
 # When access token expires, refresh it (returns new pair)
 RESPONSE=$(curl -s -X POST http://localhost:4000/auth/refresh \
@@ -57,12 +57,20 @@ REFRESH_TOKEN=$(echo "$RESPONSE" | jq -r '.refresh_token')
 echo "New access token: ${ACCESS_TOKEN:0:20}..."
 ```
 
+### Non-interactive setup (scripting/CI)
+
+```bash
+# Use environment variables to skip interactive prompts
+KOAN_USERNAME=admin KOAN_PASSWORD=secret koan auth setup
+KOAN_PASSWORD=secret koan auth create-user --username alice --role user
+```
+
 ## CLI authentication
 
 ```bash
 # Login to a running koan server (stores refresh token in system keyring)
-koan auth login http://localhost:4000
-# Prompts for username and password interactively
+koan auth login --server http://localhost:4000 --username admin
+# Prompts for password interactively
 
 # Token auto-refreshes — no need to login again until the refresh token expires (30 days)
 ```
@@ -73,13 +81,19 @@ koan auth login http://localhost:4000
 # List users
 koan auth list-users
 
-# Create a user with a specific role (prompts for password interactively)
+# Create a user (offers to generate a secure password, offers to save to 1Password)
 koan auth create-user --username alice --role user
 
 # Roles:
 #   admin    — everything: user management, config, organize, device switching
 #   user     — playback, queue, search, favourites, lyrics
 #   readonly — browse library, view queue. No mutations.
+
+# Reset a user's password (revokes all their tokens)
+koan auth reset-password alice
+
+# Change a user's role
+koan auth set-role alice admin
 
 # Delete a user
 koan auth delete-user alice
@@ -94,42 +108,45 @@ koan auth delete-user alice
 
 ## GraphQL Playground
 
-The playground needs auth too. To avoid the hassle of manually setting headers, koan can generate a pre-authenticated playground URL:
-
 ```bash
-# Start the playground with a one-time access key in the URL
-koan serve --playground
-# Opens: http://localhost:4000/playground?key=<one-time-key>
-# The key is valid for the session only and printed to stdout
+koan --headless --playground
+# Prints: GraphiQL: http://127.0.0.1:4000/graphql?introspection-key=<uuid>
+# Auto-opens the browser. The introspection key is injected into all requests.
+# Key is process-scoped — dies when the server exits.
 ```
 
-The one-time key is injected as a query parameter and translated to a Bearer token server-side. No need to manually set Authorization headers in the playground UI.
+The playground page only renders with the correct `?introspection-key=` param (403 otherwise). The key is injected as an `X-Introspection-Key` header on every GraphQL request. Normal JWT auth still works for real API clients.
 
-If you're running with `auth_enabled = false`, the playground works without any key.
+## 1Password integration
+
+If the `op` CLI is detected on your system:
+
+- **Password generation**: offered on user creation (`[Y/n]` — generates a 32-char random password and prints it)
+- **Credential saving**: offered after creation (`Save to 1Password as 'koan@hostname'? [Y/n]`)
+- **Updates**: if a `koan@hostname` item already exists, offers to update it instead of creating a duplicate
 
 ## Keypair
 
 Ed25519 keypair is auto-generated on first `koan auth setup` and stored at:
 ```
-~/.config/koan/auth/ed25519.pem       # private key
+~/.config/koan/auth/ed25519.pem       # private key (0600 perms)
 ~/.config/koan/auth/ed25519_pub.pem   # public key
+~/.config/koan/auth/.gitignore        # wildcard * — prevents commits
 ```
 
 ## Recovery / lockout
 
-**Forgot password:**
+**Reset a password:**
 ```bash
-# Use the CLI directly (doesn't need a running server or auth)
-koan auth create-user --username admin --role admin
-# Prompts for new password. Resets password if username already exists.
+koan auth reset-password admin
+# Prompts for new password. Revokes all existing tokens for that user.
 ```
 
 **Regenerate keypair:**
 ```bash
-# Delete the old keypair — all existing tokens will be invalidated
-rm ~/.config/koan/auth/ed25519*.pem
-koan auth setup
-# All users keep their passwords, but must re-login (old JWTs are unsigned by the new key)
+koan auth regenerate-keys
+# Generates new Ed25519 keypair. All existing tokens are invalidated.
+# Users keep their passwords but must re-login.
 ```
 
 **Disable auth entirely:**
@@ -141,11 +158,9 @@ auth_enabled = false
 
 **Nuclear option (start fresh):**
 ```bash
-# Delete auth state entirely
-rm -rf ~/.config/koan/auth/
-# Users are in the DB — delete them too if you want a clean slate:
-sqlite3 ~/.config/koan/koan.db "DELETE FROM users; DELETE FROM refresh_tokens;"
-koan auth setup
+koan auth reset
+# Deletes all keys, users, and tokens. Prompts for confirmation.
+# Then: koan auth setup
 ```
 
 ## Configuration
@@ -153,9 +168,10 @@ koan auth setup
 ```toml
 # config.toml
 [graphql]
-auth_enabled = true         # default: true
-access_token_ttl = "15m"    # access token lifetime
-refresh_token_ttl = "30d"   # refresh token lifetime
+enabled = true            # default: true — API starts with TUI
+auth_enabled = true       # default: true
+access_token_ttl = "15m"  # access token lifetime
+refresh_token_ttl = "30d" # refresh token lifetime
 ```
 
 ## In-process access

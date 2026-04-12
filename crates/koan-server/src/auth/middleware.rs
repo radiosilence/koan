@@ -21,6 +21,9 @@ pub struct AuthState {
     pub public_pem: Arc<Vec<u8>>,
     /// Whether auth is enforced.
     pub auth_enabled: bool,
+    /// Process-scoped introspection key. Bypasses auth when matched.
+    /// Generated randomly on server start, dies with the process.
+    pub introspection_key: Option<Arc<String>>,
 }
 
 /// Axum middleware: validate JWT and inject `AuthUser`.
@@ -37,12 +40,32 @@ pub async fn auth_middleware(
         return next.run(request).await;
     }
 
-    // Extract Bearer token from Authorization header.
+    // Check for introspection key (playground bypass).
+    if let Some(ref expected_key) = state.introspection_key
+        && let Some(provided) = request
+            .headers()
+            .get("X-Introspection-Key")
+            .and_then(|v| v.to_str().ok())
+        && provided == expected_key.as_str()
+    {
+        request.extensions_mut().insert(AuthUser::anonymous_admin());
+        return next.run(request).await;
+    }
+
+    // Extract token from Authorization header or ?token= query parameter.
     let token = request
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "));
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(String::from)
+        .or_else(|| {
+            // Fall back to ?token= query parameter (for playground URLs).
+            request.uri().query().and_then(|q| {
+                q.split('&')
+                    .find_map(|pair| pair.strip_prefix("token=").map(String::from))
+            })
+        });
 
     let Some(token) = token else {
         return (
@@ -53,7 +76,7 @@ pub async fn auth_middleware(
             .into_response();
     };
 
-    match auth::validate_access_token(&state.public_pem, token) {
+    match auth::validate_access_token(&state.public_pem, &token) {
         Ok(claims) => {
             let role = claims.role.parse().unwrap_or(Role::Readonly);
             let user = AuthUser {

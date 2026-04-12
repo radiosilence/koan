@@ -115,6 +115,39 @@ pub fn delete_user(conn: &Connection, user_id: i64) -> Result<bool, rusqlite::Er
     Ok(count > 0)
 }
 
+/// Update a user's password. Revokes all their refresh tokens.
+pub fn update_password(
+    conn: &Connection,
+    username: &str,
+    new_password: &str,
+) -> Result<bool, Box<dyn std::error::Error>> {
+    let hash = crate::auth::hash_password(new_password)?;
+    let updated = conn.execute(
+        "UPDATE users SET password_hash = ?1 WHERE username = ?2",
+        params![hash, username],
+    )?;
+    if updated > 0 {
+        // Revoke all existing tokens for this user.
+        if let Some(user) = get_user_by_username(conn, username)? {
+            revoke_all_user_tokens(conn, user.id)?;
+        }
+    }
+    Ok(updated > 0)
+}
+
+/// Update a user's role.
+pub fn update_role(
+    conn: &Connection,
+    username: &str,
+    role: crate::auth::Role,
+) -> Result<bool, rusqlite::Error> {
+    let updated = conn.execute(
+        "UPDATE users SET role = ?1 WHERE username = ?2",
+        params![role.as_str(), username],
+    )?;
+    Ok(updated > 0)
+}
+
 /// Check if any users exist (for first-run detection).
 pub fn has_users(conn: &Connection) -> Result<bool, rusqlite::Error> {
     let count: i64 = conn.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
@@ -158,6 +191,35 @@ pub fn get_valid_refresh_token(
         "SELECT id, user_id, expires_at, revoked, created_at
          FROM refresh_tokens
          WHERE id = ?1 AND revoked = 0 AND expires_at > ?2",
+    )?;
+    let mut rows = stmt.query_map(params![token_id, now], |row| {
+        Ok(RefreshTokenRow {
+            id: row.get(0)?,
+            user_id: row.get(1)?,
+            expires_at: row.get(2)?,
+            revoked: row.get::<_, i32>(3)? != 0,
+            created_at: row.get(4)?,
+        })
+    })?;
+    match rows.next() {
+        Some(Ok(token)) => Ok(Some(token)),
+        Some(Err(e)) => Err(e),
+        None => Ok(None),
+    }
+}
+
+/// Atomically consume a valid refresh token: revoke it and return the row in one
+/// statement. Returns `None` if the token doesn't exist, is already revoked, or
+/// has expired. This prevents TOCTOU races in refresh-token rotation.
+pub fn consume_refresh_token(
+    conn: &Connection,
+    token_id: &str,
+) -> Result<Option<RefreshTokenRow>, rusqlite::Error> {
+    let now = auth::now_unix() as i64;
+    let mut stmt = conn.prepare(
+        "UPDATE refresh_tokens SET revoked = 1
+         WHERE id = ?1 AND revoked = 0 AND expires_at > ?2
+         RETURNING id, user_id, expires_at, revoked, created_at",
     )?;
     let mut rows = stmt.query_map(params![token_id, now], |row| {
         Ok(RefreshTokenRow {

@@ -38,26 +38,22 @@ pub fn cmd_auth_setup() {
         return;
     }
 
-    // Create first admin user interactively.
+    // Create first admin user. Supports non-interactive: KOAN_USERNAME + KOAN_PASSWORD env vars.
     println!("\nCreating admin user...");
 
-    let username = prompt("Username: ");
-    if username.is_empty() {
-        eprintln!("{} Username cannot be empty", "✗".red().bold());
-        std::process::exit(1);
-    }
+    let username = std::env::var("KOAN_USERNAME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            let u = prompt("Username: ");
+            if u.is_empty() {
+                eprintln!("{} Username cannot be empty", "✗".red().bold());
+                std::process::exit(1);
+            }
+            u
+        });
 
-    let password = prompt_password("Password: ");
-    if password.is_empty() {
-        eprintln!("{} Password cannot be empty", "✗".red().bold());
-        std::process::exit(1);
-    }
-
-    let confirm_pw = prompt_password("Confirm password: ");
-    if password != confirm_pw {
-        eprintln!("{} Passwords do not match", "✗".red().bold());
-        std::process::exit(1);
-    }
+    let password = prompt_password_with_generate();
 
     match auth_queries::create_user(&db.conn, &username, &password, Role::Admin) {
         Ok(id) => {
@@ -67,7 +63,14 @@ pub fn cmd_auth_setup() {
                 username,
                 id
             );
-            println!("\nEnable auth in config.toml:\n  [graphql]\n  auth_enabled = true");
+            offer_save_to_1password(&username, &password);
+            let cfg = koan_core::config::Config::load_or_default();
+            if !cfg.graphql.auth_enabled {
+                println!(
+                    "\n{} Auth is currently disabled. Enable in config.toml:\n  [graphql]\n  auth_enabled = true",
+                    "!".yellow().bold()
+                );
+            }
         }
         Err(e) => {
             eprintln!("{} Failed to create user: {}", "✗".red().bold(), e);
@@ -89,17 +92,7 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
         std::process::exit(1);
     });
 
-    let password = prompt_password("Password: ");
-    if password.is_empty() {
-        eprintln!("{} Password cannot be empty", "✗".red().bold());
-        std::process::exit(1);
-    }
-
-    let confirm_pw = prompt_password("Confirm password: ");
-    if password != confirm_pw {
-        eprintln!("{} Passwords do not match", "✗".red().bold());
-        std::process::exit(1);
-    }
+    let password = prompt_password_with_generate();
 
     match auth_queries::create_user(&db.conn, username, &password, role) {
         Ok(id) => {
@@ -120,56 +113,239 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
     }
 }
 
-/// Check if `op` (1Password CLI) is available and offer to save credentials.
-fn offer_save_to_1password(username: &str, password: &str) {
-    // Check if `op` is on PATH.
-    let op_available = std::process::Command::new("op")
+/// `koan auth reset-password <username>`
+pub fn cmd_auth_reset_password(username: &str) {
+    let db = open_db();
+    let password = prompt_password_with_generate();
+
+    match auth_queries::update_password(&db.conn, username, &password) {
+        Ok(true) => {
+            println!(
+                "{} Password updated for '{}'. All tokens revoked.",
+                "✓".green().bold(),
+                username
+            );
+            offer_save_to_1password(username, &password);
+        }
+        Ok(false) => {
+            eprintln!("{} User '{}' not found", "✗".red().bold(), username);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("{} Failed to update password: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `koan auth set-role <username> <role>`
+pub fn cmd_auth_set_role(username: &str, role_str: &str) {
+    let db = open_db();
+
+    let role: Role = role_str.parse().unwrap_or_else(|_| {
+        eprintln!(
+            "{} Invalid role '{}'. Must be: admin, user, readonly",
+            "✗".red().bold(),
+            role_str
+        );
+        std::process::exit(1);
+    });
+
+    match auth_queries::update_role(&db.conn, username, role) {
+        Ok(true) => {
+            println!(
+                "{} Role updated: '{}' is now {}",
+                "✓".green().bold(),
+                username,
+                role
+            );
+        }
+        Ok(false) => {
+            eprintln!("{} User '{}' not found", "✗".red().bold(), username);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("{} Failed to update role: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Check if `op` is available.
+fn op_available() -> bool {
+    std::process::Command::new("op")
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status()
-        .is_ok_and(|s| s.success());
+        .is_ok_and(|s| s.success())
+}
 
-    if !op_available {
+/// Generate a secure random password (alphanumeric + symbols, 32 chars).
+fn generate_password() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::{BuildHasher, Hasher};
+    let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*-_=+";
+    (0..32)
+        .map(|_| {
+            let mut h = RandomState::new().build_hasher();
+            h.write_u64(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64,
+            );
+            chars[h.finish() as usize % chars.len()] as char
+        })
+        .collect()
+}
+
+/// Get password from KOAN_PASSWORD env var, or prompt interactively.
+/// Supports non-interactive use: KOAN_PASSWORD=secret koan auth create-user ...
+fn prompt_password_with_generate() -> String {
+    // Non-interactive: env var takes precedence.
+    if let Ok(pw) = std::env::var("KOAN_PASSWORD")
+        && !pw.is_empty()
+    {
+        return pw;
+    }
+
+    let has_op = op_available();
+    let hint = if has_op {
+        " (can be saved to 1Password)"
+    } else {
+        ""
+    };
+    eprint!(
+        "{} Generate a secure password{}? [Y/n] ",
+        "?".cyan().bold(),
+        hint
+    );
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_ok() && !input.trim().eq_ignore_ascii_case("n") {
+        let pw = generate_password();
+        println!("{} Generated password: {}", "✓".green().bold(), pw.bold());
+        return pw;
+    }
+
+    // Manual entry.
+    let password = prompt_password("Password: ");
+    if password.is_empty() {
+        eprintln!("{} Password cannot be empty", "✗".red().bold());
+        std::process::exit(1);
+    }
+    let confirm = prompt_password("Confirm password: ");
+    if password != confirm {
+        eprintln!("{} Passwords do not match", "✗".red().bold());
+        std::process::exit(1);
+    }
+    password
+}
+
+/// Offer to save credentials to 1Password if `op` CLI is available.
+fn offer_save_to_1password(username: &str, password: &str) {
+    if !op_available() {
         return;
     }
 
+    let hostname = std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "localhost".into());
+
     eprint!(
-        "{} 1Password CLI detected. Save credentials? [y/N] ",
-        "?".cyan().bold()
+        "{} Save to 1Password as 'koan@{}'? [Y/n] ",
+        "?".cyan().bold(),
+        hostname
     );
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_err() {
         return;
     }
-    if !input.trim().eq_ignore_ascii_case("y") {
+    if input.trim().eq_ignore_ascii_case("n") {
         return;
     }
 
-    let title = format!("--title=koan ({})", username);
-    let user_field = format!("username={}", username);
-    let pass_field = format!("password={}", password);
-    let status = std::process::Command::new("op")
-        .args([
-            "item",
-            "create",
-            "--category=login",
-            &title,
-            "--url=http://localhost:4000",
-            &user_field,
-            &pass_field,
-        ])
-        .status();
+    let title = format!("koan@{}", hostname);
 
-    match status {
-        Ok(s) if s.success() => {
-            println!("{} Saved to 1Password", "✓".green().bold());
+    // Check if an item with this title already exists.
+    let existing = std::process::Command::new("op")
+        .args(["item", "get", &title, "--format=json"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success());
+
+    if existing.is_some() {
+        // Item exists — offer to update.
+        eprint!(
+            "{} '{}' already exists in 1Password. Update it? [Y/n] ",
+            "?".cyan().bold(),
+            title
+        );
+        let mut confirm = String::new();
+        if std::io::stdin().read_line(&mut confirm).is_err() {
+            return;
         }
-        _ => {
-            eprintln!(
-                "{} Failed to save to 1Password (is `op` signed in?)",
-                "!".yellow().bold()
-            );
+        if confirm.trim().eq_ignore_ascii_case("n") {
+            return;
+        }
+
+        let user_field = format!("username={}", username);
+        let pass_field = format!("password={}", password);
+        let status = std::process::Command::new("op")
+            .args(["item", "edit", &title, &user_field, &pass_field])
+            .stdout(std::process::Stdio::null())
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                println!("{} Updated '{}' in 1Password", "✓".green().bold(), title);
+            }
+            _ => {
+                eprintln!("{} Failed to update in 1Password", "!".yellow().bold());
+            }
+        }
+    } else {
+        // Create new item — pipe template via stdin.
+        let template = serde_json::json!({
+            "title": title,
+            "category": "LOGIN",
+            "fields": [
+                {"id": "username", "type": "STRING", "value": username, "purpose": "USERNAME"},
+                {"id": "password", "type": "CONCEALED", "value": password, "purpose": "PASSWORD"}
+            ],
+            "urls": [{"primary": true, "href": "http://localhost:4000"}]
+        });
+
+        let mut child = match std::process::Command::new("op")
+            .args(["item", "create", "--format=json"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(template.to_string().as_bytes());
+        }
+
+        match child.wait() {
+            Ok(s) if s.success() => {
+                println!("{} Saved to 1Password as '{}'", "✓".green().bold(), title);
+            }
+            _ => {
+                eprintln!(
+                    "{} Failed to save to 1Password (is `op` signed in?)",
+                    "!".yellow().bold()
+                );
+            }
         }
     }
 }
@@ -317,6 +493,64 @@ pub fn cmd_auth_login(server_url: &str, username: &str) {
 }
 
 /// `koan auth logout --server <url>`
+/// `koan auth regenerate-keys` — delete and regenerate Ed25519 keypair.
+/// All existing tokens are invalidated (signed by old key).
+pub fn cmd_auth_regenerate_keys() {
+    eprint!(
+        "{} This will invalidate ALL existing tokens. Continue? [y/N] ",
+        "!".yellow().bold()
+    );
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() || !input.trim().eq_ignore_ascii_case("y") {
+        println!("Aborted.");
+        return;
+    }
+
+    let dir = koan_core::auth::keypair_dir();
+    let _ = std::fs::remove_file(dir.join("ed25519.pem"));
+    let _ = std::fs::remove_file(dir.join("ed25519_pub.pem"));
+
+    match koan_core::auth::generate_keypair() {
+        Ok(_) => {
+            println!(
+                "{} New Ed25519 keypair generated. All users must re-login.",
+                "✓".green().bold()
+            );
+        }
+        Err(e) => {
+            eprintln!("{} Failed to generate keypair: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `koan auth reset` — delete all auth state (keys, users, tokens). Nuclear option.
+pub fn cmd_auth_reset() {
+    eprint!(
+        "{} This will delete ALL keys, users, and tokens. Continue? [y/N] ",
+        "!".red().bold()
+    );
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_err() || !input.trim().eq_ignore_ascii_case("y") {
+        println!("Aborted.");
+        return;
+    }
+
+    // Delete keypair.
+    let dir = koan_core::auth::keypair_dir();
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // Delete users and tokens from DB.
+    let db = open_db();
+    let _ = db.conn.execute("DELETE FROM refresh_tokens", []);
+    let _ = db.conn.execute("DELETE FROM users", []);
+
+    println!(
+        "{} Auth state wiped. Run `koan auth setup` to start fresh.",
+        "✓".green().bold()
+    );
+}
+
 pub fn cmd_auth_logout(server_url: &str) {
     let keychain_key = format!("koan-auth:{}", server_url);
 

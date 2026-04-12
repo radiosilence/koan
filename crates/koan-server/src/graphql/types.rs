@@ -1,6 +1,5 @@
 use async_graphql::connection::{DisableNodesField, EmptyFields};
 use async_graphql::{Context, Enum, InputObject, Object, SimpleObject};
-
 use koan_core::db::queries;
 
 use super::DbHandle;

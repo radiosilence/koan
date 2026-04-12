@@ -295,6 +295,22 @@ enum AuthCommands {
         #[arg(long, default_value = "http://127.0.0.1:4000")]
         server: String,
     },
+    /// Reset a user's password
+    ResetPassword {
+        /// Username
+        username: String,
+    },
+    /// Change a user's role
+    SetRole {
+        /// Username
+        username: String,
+        /// New role (admin, user, readonly)
+        role: String,
+    },
+    /// Regenerate Ed25519 keypair (invalidates all existing tokens)
+    RegenerateKeys,
+    /// Delete all auth state (keys, users, tokens) — nuclear option
+    Reset,
 }
 
 /// Global flag set by SIGINT handler for graceful Ctrl+C shutdown.
@@ -405,6 +421,14 @@ fn main() {
                 commands::cmd_auth_login(&server, &username);
             }
             AuthCommands::Logout { server } => commands::cmd_auth_logout(&server),
+            AuthCommands::ResetPassword { username } => {
+                commands::cmd_auth_reset_password(&username);
+            }
+            AuthCommands::SetRole { username, role } => {
+                commands::cmd_auth_set_role(&username, &role);
+            }
+            AuthCommands::RegenerateKeys => commands::cmd_auth_regenerate_keys(),
+            AuthCommands::Reset => commands::cmd_auth_reset(),
         },
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());

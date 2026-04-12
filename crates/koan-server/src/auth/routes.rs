@@ -184,8 +184,9 @@ async fn refresh(State(state): State<AuthRouteState>, Json(req): Json<RefreshReq
         Err((status, msg)) => return (status, msg).into_response(),
     };
 
-    // Validate refresh token.
-    let token = match auth_queries::get_valid_refresh_token(&db.conn, &req.refresh_token) {
+    // Atomically consume (validate + revoke) the refresh token in a single
+    // statement to prevent TOCTOU races during token rotation.
+    let token = match auth_queries::consume_refresh_token(&db.conn, &req.refresh_token) {
         Ok(Some(t)) => t,
         Ok(None) => {
             return (
@@ -201,9 +202,6 @@ async fn refresh(State(state): State<AuthRouteState>, Json(req): Json<RefreshReq
             return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
         }
     };
-
-    // Revoke the old token (single-use rotation).
-    let _ = auth_queries::revoke_refresh_token(&db.conn, &req.refresh_token);
 
     // Look up the user.
     let user = match auth_queries::get_user_by_id(&db.conn, token.user_id) {

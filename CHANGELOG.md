@@ -9,17 +9,6 @@
 - **VizFrame query + subscription** — `vizFrame` query and subscription expose spectrum (48 bars), peaks, VU levels, beat energy, and optional waveform data. Waveform is opt-in via `includeWaveform` parameter.
 - **Config query + mutation** — `config` query reads the current configuration; `updateConfig` mutation writes to `config.toml`. All fields optional on input.
 - **Playlist version query** — `playlistVersion` query exposes the monotonic version counter for change detection.
-- **API authentication** — JWT-based auth with Ed25519 signing for the GraphQL and Subsonic APIs. ([#161](https://github.com/radiosilence/koan/issues/161))
-  - Three roles: `admin` (full control), `user` (playback, queue, favourites), `readonly` (browse-only).
-  - Argon2id password hashing, short-lived access tokens (15min default), single-use rotating refresh tokens (30d default).
-  - Auth routes: `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`.
-  - Axum middleware validates JWT on protected routes. When `auth_enabled = false` (default), all requests pass through as admin — zero breaking change for existing installs.
-  - CLI commands: `koan auth setup` (keypair + first admin), `koan auth create-user`, `koan auth delete-user`, `koan auth list-users`, `koan auth login`, `koan auth logout`.
-  - Refresh tokens stored in platform keychain via `keyring`. In-process execution (MCP) bypasses auth.
-  - Config: `[graphql]` section gains `auth_enabled`, `access_token_ttl`, `refresh_token_ttl`.
-  - DB tables: `users`, `refresh_tokens` (auto-created on startup).
-  - Role-based guards on all GraphQL mutations (admin: scan/organize/device, user: playback/queue/favourites, readonly: queries only).
-
 - **In-process GQL routing** — TUI data queries (library browsing, picker, favourites, playback state save/restore) now route through the GraphQL schema via `QueryExecutor` trait. Transport-agnostic: same code path for local in-process and remote HTTP execution. ([#162](https://github.com/radiosilence/koan/issues/162))
 - **Binary viz WebSocket** — `/ws/viz` endpoint pushes raw f32 spectrum/peaks/VU data in a compact binary format (KVIZ). At 60fps spectrum-only: ~24KB/s vs ~2.5MB/s JSON. Waveform opt-in via `?waveform=true`. ([#162](https://github.com/radiosilence/koan/issues/162))
 - **`PlayerBackend` trait** — abstracts local vs remote player communication. `LocalBackend` wraps the existing in-process channel+state. Foundation for remote TUI mode. ([#162](https://github.com/radiosilence/koan/issues/162))
@@ -30,6 +19,40 @@
 - **`GraphQLClient` is transport-agnostic** — refactored to use `QueryExecutor` trait. `new()` for HTTP, `new_with_executor()` for in-process. Now `Clone`-able via `Arc<dyn QueryExecutor>`.
 - **`build_schema()` accepts `VizSnapshot`** — optional `Arc<VizSnapshot>` parameter enables viz data in the GraphQL API when the analyzer is running.
 - **`start_api_background()` uses `ApiServerOpts`** — struct parameter replaces 8 positional arguments.
+
+## v0.22.0 (2026-04-12)
+
+### Added
+
+- **API authentication** — JWT-based auth with Ed25519 signing for the GraphQL and Subsonic APIs. ([#161](https://github.com/radiosilence/koan/issues/161))
+  - Three roles: `admin` (full control), `user` (playback, queue, favourites), `readonly` (browse-only).
+  - Argon2id password hashing, short-lived access tokens (15min default), single-use rotating refresh tokens (30d default).
+  - Auth routes: `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`.
+  - Axum middleware validates JWT on protected routes. When `auth_enabled = false` (default), all requests pass through as admin — zero breaking change for existing installs.
+  - CLI commands: `koan auth setup` (keypair + first admin), `koan auth create-user`, `koan auth delete-user`, `koan auth list-users`, `koan auth login`, `koan auth logout`.
+  - Refresh tokens stored in platform keychain via `keyring`. In-process execution (MCP) bypasses auth.
+  - Config: `[graphql]` section gains `auth_enabled`, `access_token_ttl`, `refresh_token_ttl`.
+  - DB tables: `users`, `refresh_tokens` (auto-created on startup).
+  - Role-based guards on all GraphQL mutations (admin: scan/organize/device, user: playback/queue/favourites, readonly: queries only).
+  - `koan auth reset-password <user>` — reset password, revoke all tokens.
+  - `koan auth set-role <user> <role>` — change a user's role.
+  - `koan auth regenerate-keys` — regenerate Ed25519 keypair, invalidate all tokens.
+  - `koan auth reset` — nuclear option, wipe all auth state.
+  - Non-interactive setup via `KOAN_USERNAME` + `KOAN_PASSWORD` env vars.
+  - Auth enabled by default.
+- **1Password CLI integration** — on user creation, offers to generate a secure 32-char password and save to 1Password as `koan@<hostname>`. Updates existing items if found.
+- **GraphQL playground with introspection key** — `koan --headless --playground` generates a process-scoped key, injects it into GraphiQL as a default header, auto-opens the browser. Normal JWT auth unaffected.
+- **CORS support** — API endpoints accept cross-origin requests for browser clients.
+
+### Security
+
+- Constant-time password comparison in Subsonic API (fixes timing attack).
+- Atomic refresh token rotation (single SQL statement, no TOCTOU race).
+- Key file permissions set before write (no world-readable window).
+- Server panics if auth enabled but keypair missing (fail-closed).
+- GraphQL handler requires AuthUser injection (no silent admin fallback).
+- Hardcoded admin/admin Subsonic fallback removed.
+- Auth keypair directory gets automatic `.gitignore`.
 
 ## v0.21.0 (2026-04-12)
 
@@ -45,6 +68,12 @@
 ### Added
 
 - **Integration test coverage** — 12 new behavioral tests covering the scanner, decode pipeline, session persistence, remote sync, GraphQL mutations, and config loading. Shared WAV file generators in `test_utils.rs`. Safety net for the crate restructure.
+- **Bitrate display for lossy codecs** — transport bar shows bitrate (e.g. `Opus 48kHz/128kbps stereo`) instead of a fake bit depth. Estimated from file size / duration for Opus. ([#155](https://github.com/radiosilence/koan/pull/155))
+- **Human-readable quality labels** — `FLAC · CD quality` for 44.1kHz/16bit/stereo, `stereo`/`mono` instead of `2ch`/`1ch`, sample rates as `44.1kHz` not `44100Hz`. ([#155](https://github.com/radiosilence/koan/pull/155))
+
+### Fixed
+
+- **GraphQL connections** — disabled `nodes` shortcut field on Relay connections, edges-only for consistency. ([#166](https://github.com/radiosilence/koan/pull/166))
 
 ## v0.20.4 (2026-04-12)
 
