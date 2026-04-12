@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **GraphQL connections expose `edges` only** — disabled the non-standard `nodes` shortcut field on all connection types via async-graphql's `DisableNodesField`. Connections now return `edges` + `pageInfo` per the Relay spec. ([#166](https://github.com/radiosilence/koan/pull/166))
+
 ## v0.21.0 (2026-04-12)
 
 ### Changed
