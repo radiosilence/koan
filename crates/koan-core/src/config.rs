@@ -356,9 +356,14 @@ impl Config {
 
     /// Load config from all layers: defaults → config.toml → config.local.toml → KOAN_* env vars.
     pub fn load() -> Result<Self, ConfigError> {
-        Self::figment()
+        let cfg: Self = Self::figment()
             .extract()
-            .map_err(|e| ConfigError::Figment(Box::new(e)))
+            .map_err(|e| ConfigError::Figment(Box::new(e)))?;
+
+        // Security: warn if config files containing secrets are tracked by git.
+        check_secrets_in_git();
+
+        Ok(cfg)
     }
 
     /// Load config, logging and falling back to defaults on error.
@@ -482,6 +487,78 @@ pub fn config_local_file_path() -> PathBuf {
 /// Path to the database file.
 pub fn db_path() -> PathBuf {
     config_dir().join("koan.db")
+}
+
+/// Check if any config file containing secrets (password fields) is tracked by git.
+/// Prints a loud warning to stderr and panics if so — credentials in version control
+/// is a security incident, not a warning you can ignore.
+fn check_secrets_in_git() {
+    let sensitive_fields = ["password"];
+
+    for (label, path) in [
+        ("config.toml", config_file_path()),
+        ("config.local.toml", config_local_file_path()),
+    ] {
+        let Ok(contents) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+
+        // Check if this file contains any sensitive fields with non-empty values.
+        let has_secrets = sensitive_fields.iter().any(|field| {
+            contents.lines().any(|line| {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix(field) {
+                    let rest = rest.trim_start();
+                    if let Some(value) = rest.strip_prefix('=') {
+                        let value = value.trim().trim_matches('"').trim_matches('\'');
+                        return !value.is_empty();
+                    }
+                }
+                false
+            })
+        });
+
+        if !has_secrets {
+            continue;
+        }
+
+        // Check if this file is tracked by git.
+        if is_tracked_by_git(&path) {
+            eprintln!();
+            eprintln!("╔══════════════════════════════════════════════════════════════╗");
+            eprintln!("║  SECURITY: {label} contains credentials and is tracked by git!  ║");
+            eprintln!("╠══════════════════════════════════════════════════════════════╣");
+            eprintln!("║                                                              ║");
+            eprintln!("║  File: {:<52} ║", path.display());
+            eprintln!("║                                                              ║");
+            eprintln!("║  Your password is in version control. You should:            ║");
+            eprintln!("║  1. Remove the file from git: git rm --cached <file>         ║");
+            eprintln!("║  2. Add it to .gitignore                                     ║");
+            eprintln!("║  3. Rotate your credentials immediately                      ║");
+            eprintln!("║  4. Move secrets to config.local.toml (gitignored)           ║");
+            eprintln!("║     or use `koan remote login` for keyring storage           ║");
+            eprintln!("║                                                              ║");
+            eprintln!("╚══════════════════════════════════════════════════════════════╝");
+            eprintln!();
+            panic!("Refusing to start: credentials tracked by git in {label}. See above.");
+        }
+    }
+}
+
+/// Check if a file is tracked by git (staged or committed, not just in a repo).
+fn is_tracked_by_git(path: &Path) -> bool {
+    let Some(parent) = path.parent() else {
+        return false;
+    };
+    // `git ls-files --error-unmatch <file>` exits 0 if tracked, 1 if not.
+    std::process::Command::new("git")
+        .args(["ls-files", "--error-unmatch"])
+        .arg(path)
+        .current_dir(parent)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 #[cfg(test)]
