@@ -339,4 +339,91 @@ mod tests {
     fn parse_epoch() {
         assert_eq!(parse_iso8601_to_unix("1970-01-01T00:00:00Z"), Some(0));
     }
+
+    // --- Sync → DB integration tests ---
+
+    use crate::db::connection::Database;
+    use crate::db::queries;
+
+    fn test_db() -> (Database, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("sync_test.db")).unwrap();
+        (db, dir)
+    }
+
+    /// Build a TrackMeta matching how sync_library constructs them from SubsonicSong data.
+    fn remote_track_meta(remote_id: &str, title: &str, artist: &str, album: &str) -> TrackMeta {
+        TrackMeta {
+            title: title.into(),
+            artist: artist.into(),
+            album_artist: Some(artist.into()),
+            album: album.into(),
+            date: Some("2024".into()),
+            disc: Some(1),
+            track_number: Some(1),
+            genre: Some("Electronic".into()),
+            label: None,
+            duration_ms: Some(240_000),
+            codec: Some("FLAC".into()),
+            sample_rate: None,
+            bit_depth: None,
+            channels: None,
+            bitrate: Some(1000),
+            size_bytes: None,
+            mtime: None,
+            path: None,
+            source: "remote".into(),
+            remote_id: Some(remote_id.into()),
+            remote_url: Some(format!("https://example.com/stream?id={}", remote_id)),
+        }
+    }
+
+    #[test]
+    fn sync_upserts_tracks_to_database() {
+        let (db, _dir) = test_db();
+
+        let meta = remote_track_meta("remote-001", "Vordhosbn", "Aphex Twin", "Drukqs");
+        let track_id = queries::upsert_track(&db.conn, &meta).unwrap();
+        assert!(track_id > 0, "upsert should return a valid track ID");
+
+        // Verify the track exists with correct remote_id.
+        let row = queries::get_track_row(&db.conn, track_id)
+            .unwrap()
+            .expect("track should exist in DB");
+        assert_eq!(row.title, "Vordhosbn");
+        assert_eq!(row.artist_name, "Aphex Twin");
+        assert_eq!(row.album_title, "Drukqs");
+        assert_eq!(row.remote_id.as_deref(), Some("remote-001"));
+        assert_eq!(row.source, "remote");
+    }
+
+    #[test]
+    fn sync_deduplicates_by_remote_id() {
+        let (db, _dir) = test_db();
+
+        // First upsert.
+        let meta1 = remote_track_meta("remote-dup", "Original Title", "Artist A", "Album X");
+        let id1 = queries::upsert_track(&db.conn, &meta1).unwrap();
+
+        // Second upsert with same remote_id but different metadata.
+        let meta2 = remote_track_meta("remote-dup", "Updated Title", "Artist A", "Album X");
+        let id2 = queries::upsert_track(&db.conn, &meta2).unwrap();
+
+        // Should be the same row (dedup by remote_id).
+        assert_eq!(id1, id2, "same remote_id should resolve to same track row");
+
+        // Verify the metadata was updated.
+        let row = queries::get_track_row(&db.conn, id2)
+            .unwrap()
+            .expect("track should exist");
+        assert_eq!(row.title, "Updated Title");
+        assert_eq!(row.remote_id.as_deref(), Some("remote-dup"));
+
+        // Verify only one track exists.
+        let stats = queries::library_stats(&db.conn).unwrap();
+        assert_eq!(
+            stats.total_tracks, 1,
+            "should have exactly 1 track after dedup"
+        );
+    }
 }

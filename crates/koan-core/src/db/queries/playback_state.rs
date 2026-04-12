@@ -377,4 +377,110 @@ mod tests {
             "missing field should default to None"
         );
     }
+
+    #[test]
+    fn save_and_restore_playback_state_roundtrip() {
+        // Full round-trip: build playlist items, save state with cursor and position,
+        // clear in-memory, restore from DB, verify everything matches.
+        let conn = test_conn();
+
+        let items = vec![
+            PersistedQueueItem {
+                path: "/music/alpha.flac".into(),
+                title: "Alpha".into(),
+                artist: "Band".into(),
+                album_artist: "Band".into(),
+                album: "Debut".into(),
+                year: Some("2023".into()),
+                codec: Some("FLAC".into()),
+                track_number: Some(1),
+                disc: Some(1),
+                duration_ms: Some(300_000),
+                db_id: Some(10),
+            },
+            PersistedQueueItem {
+                path: "/music/beta.flac".into(),
+                title: "Beta".into(),
+                artist: "Band".into(),
+                album_artist: "Band".into(),
+                album: "Debut".into(),
+                year: Some("2023".into()),
+                codec: Some("FLAC".into()),
+                track_number: Some(2),
+                disc: Some(1),
+                duration_ms: Some(250_000),
+                db_id: Some(11),
+            },
+            PersistedQueueItem {
+                path: "/music/gamma.flac".into(),
+                title: "Gamma".into(),
+                artist: "Other".into(),
+                album_artist: "Other".into(),
+                album: "Solo".into(),
+                year: None,
+                codec: Some("MP3".into()),
+                track_number: Some(1),
+                disc: None,
+                duration_ms: Some(180_000),
+                db_id: None,
+            },
+        ];
+
+        // Save with cursor on the second track, position 42s in.
+        let cursor_path = "/music/beta.flac";
+        let position_ms = 42_000u64;
+        save_playback_state(&conn, &items, Some(cursor_path), position_ms).unwrap();
+
+        // Simulate "clear in-memory state" by just loading fresh from DB.
+        let restored = load_playback_state(&conn)
+            .unwrap()
+            .expect("should have persisted state");
+
+        // Verify queue integrity.
+        assert_eq!(restored.items.len(), 3, "queue length mismatch");
+
+        // Verify item fields survived the round-trip.
+        assert_eq!(restored.items[0].title, "Alpha");
+        assert_eq!(restored.items[0].path, "/music/alpha.flac");
+        assert_eq!(restored.items[0].db_id, Some(10));
+        assert_eq!(restored.items[0].track_number, Some(1));
+
+        assert_eq!(restored.items[1].title, "Beta");
+        assert_eq!(restored.items[1].artist, "Band");
+        assert_eq!(restored.items[1].duration_ms, Some(250_000));
+        assert_eq!(restored.items[1].db_id, Some(11));
+
+        assert_eq!(restored.items[2].title, "Gamma");
+        assert_eq!(restored.items[2].artist, "Other");
+        assert_eq!(restored.items[2].codec.as_deref(), Some("MP3"));
+        assert_eq!(restored.items[2].db_id, None);
+
+        // Verify cursor and position.
+        assert_eq!(
+            restored.cursor_path.as_deref(),
+            Some(cursor_path),
+            "cursor should point to the second track"
+        );
+        assert_eq!(
+            restored.position_ms, position_ms,
+            "position should survive round-trip"
+        );
+
+        // Verify to_playlist_item conversion (paths don't exist on disk, so all get Pending).
+        let playlist_items: Vec<_> = restored
+            .items
+            .iter()
+            .map(|i| i.to_playlist_item())
+            .collect();
+        assert_eq!(playlist_items.len(), 3);
+        for pi in &playlist_items {
+            assert!(
+                matches!(pi.load_state, crate::player::state::LoadState::Pending),
+                "non-existent paths should be Pending"
+            );
+        }
+        // Each converted item should have a unique QueueItemId.
+        let ids: std::collections::HashSet<_> = playlist_items.iter().map(|i| i.id.0).collect();
+        assert_eq!(ids.len(), 3, "each item should get a unique QueueItemId");
+    }
 }

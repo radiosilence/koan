@@ -274,4 +274,89 @@ mod tests {
         let cmd = rx.try_recv().unwrap();
         assert!(matches!(cmd, PlayerCommand::ClearPlaylist));
     }
+
+    #[tokio::test]
+    async fn enqueue_mutation_adds_to_queue() {
+        let (schema, rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+
+        // Insert a track into the DB.
+        let track_id = insert_test_track(&db_path, "Windowlicker", "Aphex Twin", "Windowlicker EP");
+
+        // Execute the addToQueue mutation.
+        let query = format!(
+            "mutation {{ addToQueue(trackIds: [{}]) {{ ok message addedCount queueItemIds }} }}",
+            track_id
+        );
+        let resp = schema.execute(&query).await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["addToQueue"]["ok"], true);
+        assert_eq!(data["addToQueue"]["addedCount"], 1);
+
+        let queue_ids = data["addToQueue"]["queueItemIds"].as_array().unwrap();
+        assert_eq!(queue_ids.len(), 1, "should return one queue item ID");
+
+        // Verify the PlayerCommand was sent through the channel.
+        // The mutation sends AddToPlaylist and then Play (auto-play when stopped).
+        let cmd = rx.try_recv().unwrap();
+        match cmd {
+            PlayerCommand::AddToPlaylist(items) => {
+                assert_eq!(items.len(), 1);
+                assert_eq!(items[0].title, "Windowlicker");
+                assert_eq!(items[0].artist, "Aphex Twin");
+                assert_eq!(items[0].album, "Windowlicker EP");
+            }
+            other => panic!("expected AddToPlaylist, got {:?}", other),
+        }
+
+        // Auto-play command should follow.
+        let play_cmd = rx.try_recv().unwrap();
+        assert!(
+            matches!(play_cmd, PlayerCommand::Play(_)),
+            "expected Play command for auto-play, got {:?}",
+            play_cmd
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_queue_mutation_clears_and_enqueues() {
+        let (schema, rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+
+        let id1 = insert_test_track(&db_path, "Track A", "Artist", "Album");
+        let id2 = insert_test_track(&db_path, "Track B", "Artist", "Album");
+
+        let query = format!(
+            "mutation {{ replaceQueue(trackIds: [{}, {}]) {{ ok addedCount queueItemIds }} }}",
+            id1, id2
+        );
+        let resp = schema.execute(&query).await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["replaceQueue"]["addedCount"], 2);
+
+        // Should send: ClearPlaylist, AddToPlaylist, Play
+        let cmd1 = rx.try_recv().unwrap();
+        assert!(
+            matches!(cmd1, PlayerCommand::ClearPlaylist),
+            "first command should be ClearPlaylist"
+        );
+
+        let cmd2 = rx.try_recv().unwrap();
+        match cmd2 {
+            PlayerCommand::AddToPlaylist(items) => {
+                assert_eq!(items.len(), 2);
+            }
+            other => panic!("expected AddToPlaylist, got {:?}", other),
+        }
+
+        let cmd3 = rx.try_recv().unwrap();
+        assert!(
+            matches!(cmd3, PlayerCommand::Play(_)),
+            "third command should be Play"
+        );
+    }
 }

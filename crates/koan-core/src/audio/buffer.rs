@@ -972,4 +972,88 @@ mod tests {
             "samples_written should be 0 after reset"
         );
     }
+
+    // --- Probe and decode integration tests ---
+
+    #[test]
+    fn probe_file_extracts_stream_info() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav_path = dir.path().join("probe_test.wav");
+        crate::test_utils::generate_wav(&wav_path, 44100, 2, 1.0, 16);
+
+        let info = probe_file(&wav_path).expect("probe_file should succeed on a valid WAV");
+        assert_eq!(info.sample_rate, 44100, "sample rate mismatch");
+        assert_eq!(info.channels, 2, "channel count mismatch");
+        assert_eq!(info.bit_depth, Some(16), "bit depth mismatch");
+        assert!(
+            info.duration_ms > 900 && info.duration_ms < 1100,
+            "duration should be ~1000ms, got {}",
+            info.duration_ms
+        );
+        assert!(
+            info.codec.contains("PCM"),
+            "codec should be PCM variant, got {}",
+            info.codec
+        );
+    }
+
+    #[test]
+    fn decode_single_produces_samples() {
+        let dir = tempfile::tempdir().unwrap();
+        let wav_path = dir.path().join("tone.wav");
+        // 440 Hz sine, mono, 0.1s — enough to verify non-zero decode output.
+        crate::test_utils::generate_wav_tone(&wav_path, 44100, 440.0, 0.1);
+
+        // Set up rtrb ring buffer.
+        let (producer, mut consumer) = rtrb::RingBuffer::new(44100 * 2);
+
+        let timeline = PlaybackTimeline::new();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let id = QueueItemId::new();
+        let entry = SourceEntry::from_file(id, wav_path.clone());
+        let hint = entry.hint.clone();
+        let mss = (entry.make_mss)().expect("should open WAV file");
+
+        let result = decode_single(
+            id,
+            &wav_path,
+            &hint,
+            mss,
+            &mut rtrb::Producer::from(producer),
+            &stop,
+            0,
+            &timeline,
+            None,
+            crate::config::ReplayGainMode::Off,
+            0.0,
+        );
+        assert!(result.is_ok(), "decode_single should succeed: {:?}", result);
+
+        // Read samples from the consumer side.
+        let available = consumer.slots();
+        assert!(available > 0, "expected samples in ring buffer, got 0");
+
+        // Verify at least some samples are non-zero (it's a sine wave, not silence).
+        let mut found_nonzero = false;
+        while consumer.slots() > 0 {
+            if let Ok(chunk) = consumer.read_chunk(consumer.slots().min(1024)) {
+                let (first, second) = chunk.as_slices();
+                for &s in first.iter().chain(second.iter()) {
+                    if s.abs() > 0.001 {
+                        found_nonzero = true;
+                        break;
+                    }
+                }
+                chunk.commit_all();
+            }
+            if found_nonzero {
+                break;
+            }
+        }
+        assert!(
+            found_nonzero,
+            "expected non-zero samples from 440Hz sine decode"
+        );
+    }
 }
