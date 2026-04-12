@@ -404,7 +404,7 @@ fn run_tui(
 
     // Periodic auto-save: persist queue every second so state is always fresh.
     let mut last_autosave = std::time::Instant::now();
-    const AUTOSAVE_INTERVAL: Duration = Duration::from_secs(1);
+    const AUTOSAVE_INTERVAL: Duration = Duration::from_millis(100);
 
     loop {
         // Check for Ctrl+C (SIGINT).
@@ -638,15 +638,20 @@ fn run_tui(
                 .ok();
         }
 
-        // Auto-save playback state every second.
-        if last_autosave.elapsed() >= AUTOSAVE_INTERVAL {
+        // Persist state when dirty, throttled to 1s intervals.
+        // Dirty = queue changed (playlist_version bumped) or position advancing (playing).
+        // Idle windows with no mutations never save, preventing multi-instance clobber.
+        if app.state_dirty && last_autosave.elapsed() >= AUTOSAVE_INTERVAL {
             save_playback_state_from_app(&app);
+            app.state_dirty = false;
             last_autosave = std::time::Instant::now();
         }
 
         if app.quit {
             // Save state BEFORE stopping the player (Stop clears the playlist).
-            save_playback_state_from_app(&app);
+            if app.has_played {
+                save_playback_state_from_app(&app);
+            }
             app.tx.send(PlayerCommand::Stop).ok();
             break;
         }

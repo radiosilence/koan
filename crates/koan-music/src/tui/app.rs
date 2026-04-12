@@ -180,6 +180,9 @@ pub struct App {
     // Track whether we've ever been in Playing state.
     pub has_played: bool,
 
+    /// State has changed and should be persisted at next autosave interval.
+    pub state_dirty: bool,
+
     // Theme.
     pub theme: Theme,
 
@@ -336,6 +339,7 @@ impl App {
             last_click_idx: None,
             log_buffer,
             has_played: false,
+            state_dirty: false,
             theme: Theme::default(),
             layout: LayoutRects::default(),
             loading_message: None,
@@ -514,9 +518,10 @@ impl App {
             self.status_message = None;
         }
 
-        // Track playing state.
+        // Track playing state — mark dirty so position is persisted.
         if self.state.playback_state() == PlaybackState::Playing {
             self.has_played = true;
+            self.state_dirty = true;
         }
 
         // Clear loading overlay once playback starts or pending queue populates.
@@ -3072,6 +3077,7 @@ impl App {
         if v != self.queue.vq_version {
             self.queue.vq_cache = self.state.derive_visible_queue();
             self.queue.vq_version = v;
+            self.state_dirty = true; // Queue mutated — persist.
             // Clamp cursor after every external playlist change.
             self.clamp_queue_cursor();
         }
