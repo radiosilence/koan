@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.20.3 (2026-04-12)
+
+### Added
+
+- **Secrets-in-git startup check** — on launch, koan checks if config files containing passwords are tracked by git. If so, the app refuses to start and prints remediation steps (remove from git, add to .gitignore, rotate credentials). Hard panic, no bypass.
+
+### Changed
+
+- **Symphonia format support** — added ADPCM codec, MKV/WebM and CAF container support.
+
 ## v0.20.2 (2026-04-12)
 
 ### Changed

@@ -20,7 +20,7 @@ ctrlc = "3"
 crossbeam-channel = "0.5"
 crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-koan-core = { path = "../koan-core", version = "0.20.2" }
+koan-core = { path = "../koan-core", version = "0.20.3" }
 log = "0.4"
 nucleo = "0.5"
 owo-colors = "4"
