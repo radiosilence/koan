@@ -232,6 +232,7 @@ fn poll_and_stream_loop(
                         codec: track.codec.clone(),
                         sample_rate: track.sample_rate,
                         bit_depth: track.bit_depth,
+                        bitrate_kbps: track.bitrate_kbps,
                         channels: track.channels,
                         duration_ms: track.duration_ms,
                     }));

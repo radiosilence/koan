@@ -318,6 +318,7 @@ pub(super) struct GqlNowPlayingTrack {
     pub codec: String,
     pub sample_rate: u32,
     pub bit_depth: Option<u16>,
+    pub bitrate_kbps: Option<u32>,
     pub channels: u16,
     pub duration_ms: u64,
 }

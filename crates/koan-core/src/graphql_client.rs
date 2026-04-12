@@ -66,7 +66,7 @@ impl GraphQLClient {
     pub fn now_playing(&self) -> Result<NowPlaying, GraphQLError> {
         let data = self.execute(
             "{ nowPlaying { state positionMs durationMs queueItemId \
-             track { title artist album codec sampleRate bitDepth channels durationMs } } }",
+             track { title artist album codec sampleRate bitDepth bitrateKbps channels durationMs } } }",
             None,
         )?;
         let np = &data["nowPlaying"];
@@ -86,6 +86,7 @@ impl GraphQLClient {
                     codec: t["codec"].as_str().unwrap_or("").to_string(),
                     sample_rate: t["sampleRate"].as_u64().unwrap_or(0) as u32,
                     bit_depth: t["bitDepth"].as_u64().map(|v| v as u16),
+                    bitrate_kbps: t["bitrateKbps"].as_u64().map(|v| v as u32),
                     channels: t["channels"].as_u64().unwrap_or(0) as u16,
                     duration_ms: t["durationMs"].as_u64().unwrap_or(0),
                 })
@@ -347,6 +348,7 @@ pub struct NowPlayingTrack {
     pub codec: String,
     pub sample_rate: u32,
     pub bit_depth: Option<u16>,
+    pub bitrate_kbps: Option<u32>,
     pub channels: u16,
     pub duration_ms: u64,
 }

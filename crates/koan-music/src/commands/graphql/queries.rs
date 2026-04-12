@@ -382,6 +382,7 @@ impl QueryRoot {
                 codec: info.codec.clone(),
                 sample_rate: info.sample_rate,
                 bit_depth: info.bit_depth,
+                bitrate_kbps: info.bitrate_kbps,
                 channels: info.channels,
                 duration_ms: info.duration_ms,
             };
