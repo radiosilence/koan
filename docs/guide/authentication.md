@@ -9,7 +9,7 @@ koan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default.
 koan auth setup
 
 # 2. Start the server
-koan serve --port 4000  # or: koan play (starts API in background)
+koan --headless --port 4000  # or: koan play (starts API alongside TUI)
 
 # 3. Get a token
 curl -s -X POST http://localhost:4000/auth/login \
