@@ -188,7 +188,19 @@ fn run_api_blocking(opts: ApiServerOpts) {
                 .allow_credentials(true)
         };
 
-        let mut app = auth_app.merge(gql_app).layer(cors);
+        // Subsonic REST routes — always mounted on the GraphQL port when
+        // remote creds are configured. Previously only available on the
+        // dedicated `--subsonic <port>` listener, which broke `koan play
+        // --server <url>` because the remote TUI bridge builds its stream
+        // URL off the GraphQL base.
+        let subsonic_merged = crate::subsonic::subsonic_router(db_path.clone());
+        let subsonic_on_main = subsonic_merged.is_some();
+
+        let mut app = auth_app.merge(gql_app);
+        if let Some(sub) = subsonic_merged {
+            app = app.merge(sub);
+        }
+        let mut app = app.layer(cors);
         if playground_enabled {
             app = app.route(
                 "/graphql",
@@ -212,6 +224,9 @@ fn run_api_blocking(opts: ApiServerOpts) {
         let gql_listener = match tokio::net::TcpListener::bind(gql_addr).await {
             Ok(l) => {
                 log::info!("GraphQL API on http://{}:{}/graphql", bind, port);
+                if subsonic_on_main {
+                    log::info!("Subsonic REST on http://{}:{}/rest/", bind, port);
+                }
                 if playground_enabled {
                     log::info!("GraphiQL: {}", playground_url);
                     // Open browser on macOS/Linux.
@@ -234,43 +249,42 @@ fn run_api_blocking(opts: ApiServerOpts) {
         let gql_server =
             axum::serve(gql_listener, app).with_graceful_shutdown(shutdown_signal());
 
-        if let Some(sub_port) = subsonic_port {
-            if let Some(sub_app) = crate::subsonic::subsonic_router(db_path) {
-                let sub_addr = std::net::SocketAddr::new(bind, sub_port);
+        // If `--subsonic <port>` is set AND differs from the GraphQL port,
+        // run an additional dedicated listener. This preserves the old
+        // behavior for users who want Subsonic on its own port.
+        let extra_sub_port = subsonic_port.filter(|p| *p != port);
+        if let Some(sub_port) = extra_sub_port
+            && let Some(sub_app) = crate::subsonic::subsonic_router(db_path)
+        {
+            let sub_addr = std::net::SocketAddr::new(bind, sub_port);
+            match tokio::net::TcpListener::bind(sub_addr).await {
+                Ok(sub_listener) => {
+                    log::info!(
+                        "Subsonic REST also on http://{}:{}/rest/ (dedicated port)",
+                        bind,
+                        sub_port,
+                    );
+                    let sub_server = axum::serve(sub_listener, sub_app)
+                        .with_graceful_shutdown(shutdown_signal());
 
-                match tokio::net::TcpListener::bind(sub_addr).await {
-                    Ok(sub_listener) => {
-                        log::info!("Subsonic REST on http://{}:{}/rest/", bind, sub_port);
-                        let sub_server = axum::serve(sub_listener, sub_app)
-                            .with_graceful_shutdown(shutdown_signal());
-
-                        tokio::select! {
-                            r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
-                            r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
-                        }
+                    tokio::select! {
+                        r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
+                        r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
                     }
-                    Err(e) => {
-                        log::warn!(
-                            "Subsonic API disabled: failed to bind port {} — {}",
-                            sub_port,
-                            e,
-                        );
-                        // Run GraphQL-only.
-                        if let Err(e) = gql_server.await {
-                            log::error!("GraphQL server error: {e}");
-                        }
-                    }
+                    return;
                 }
-            } else {
-                // subsonic_router returned None — credentials not configured.
-                if let Err(e) = gql_server.await {
-                    log::error!("GraphQL server error: {e}");
+                Err(e) => {
+                    log::warn!(
+                        "Dedicated Subsonic port {} unavailable — {}. Mounted on GraphQL port only.",
+                        sub_port,
+                        e,
+                    );
                 }
             }
-        } else {
-            if let Err(e) = gql_server.await {
-                log::error!("GraphQL server error: {e}");
-            }
+        }
+
+        if let Err(e) = gql_server.await {
+            log::error!("GraphQL server error: {e}");
         }
     });
 }
