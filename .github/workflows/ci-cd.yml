@@ -198,9 +198,12 @@ jobs:
               cargo publish -p "${crate}" --no-verify
             fi
           }
+          # Order matters: koan-tui depends on koan-server, not the other way
+          # around. Publishing tui before server breaks with "no matching
+          # package named `koan-server`" because the index hasn't seen it yet.
           publish_crate koan-core
-          publish_crate koan-tui
           publish_crate koan-server
+          publish_crate koan-tui
           publish_crate koan-cli
 
   update-homebrew:

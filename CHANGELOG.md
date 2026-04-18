@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.23.2 (2026-04-18)
+
+Second attempt at getting the split crates on crates.io. v0.23.1 published `koan-core` but then failed because the publish order had `koan-tui` before `koan-server` — and `koan-tui` depends on `koan-server`. Flipped the order; no code delta.
+
+### Fixed
+
+- **Publish order** — `koan-server` now publishes before `koan-tui` so the crates.io index sees the dependency before downstream crates try to resolve it.
+
 ## v0.23.1 (2026-04-18)
 
 Re-release of v0.23.0 to publish the split crates to crates.io. No code changes from v0.23.0.
