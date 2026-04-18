@@ -16,7 +16,7 @@ axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22.1"
 crossbeam-channel = "0.5"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-koan-core = { path = "../koan-core", version = "0.23.0" }
+koan-core = { path = "../koan-core", version = "0.23.1" }
 log = "0.4"
 nucleo = "0.5"
 md5 = "0.8"
