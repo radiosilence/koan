@@ -384,9 +384,8 @@ fn render_track_line<'a>(
         }
         QueueEntryStatus::Downloading => {
             if let Some(&(downloaded, total)) = progress {
-                if total > 0 {
-                    let pct = (downloaded * 100 / total).min(99);
-                    Span::styled(format!("{:2}%", pct), theme.spinner)
+                if let Some(pct) = (downloaded * 100).checked_div(total) {
+                    Span::styled(format!("{:2}%", pct.min(99)), theme.spinner)
                 } else {
                     let kb = downloaded / 1024;
                     Span::styled(format!("{}K", kb), theme.spinner)
@@ -397,9 +396,8 @@ fn render_track_line<'a>(
         }
         QueueEntryStatus::PriorityPending => {
             if let Some(&(downloaded, total)) = progress {
-                if total > 0 {
-                    let pct = (downloaded * 100 / total).min(99);
-                    Span::styled(format!("{:2}%", pct), theme.track_playing)
+                if let Some(pct) = (downloaded * 100).checked_div(total) {
+                    Span::styled(format!("{:2}%", pct.min(99)), theme.track_playing)
                 } else {
                     let kb = downloaded / 1024;
                     Span::styled(format!("{}K", kb), theme.track_playing)
