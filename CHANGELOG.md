@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.23.1 (2026-04-18)
+
+Re-release of v0.23.0 to publish the split crates to crates.io. No code changes from v0.23.0.
+
+### Fixed
+
+- **Missing crates on crates.io** — the publish-crate CI job referenced the pre-split binary name (`koan-music`) and silently failed for every release since v0.21.0. `koan-tui`, `koan-server`, and `koan-cli` had never been published. The job now publishes all four crates in dependency order and is idempotent across partial retries. ([#177](https://github.com/radiosilence/koan/pull/177))
+
 ## v0.23.0 (2026-04-18)
 
 Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, real-time subscriptions, cookie auth, and configurable CORS. Subsonic streaming now rides the GraphQL port by default, so the remote TUI (`koan play --server`) finally works end-to-end.
