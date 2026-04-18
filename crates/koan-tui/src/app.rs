@@ -1126,10 +1126,8 @@ impl App {
             KeyCode::Char('z') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.tx.send(PlayerCommand::Undo).ok();
             }
-            KeyCode::Char('z') => {
-                if self.art.now_playing_art.cached().is_some() {
-                    self.mode = Mode::CoverArtZoom;
-                }
+            KeyCode::Char('z') if self.art.now_playing_art.cached().is_some() => {
+                self.mode = Mode::CoverArtZoom;
             }
             KeyCode::Char('Z')
                 if key
@@ -1191,22 +1189,18 @@ impl App {
                 self.device_selector = None;
                 self.pop_mode();
             }
-            KeyCode::Up | KeyCode::Char('k') => {
-                if !selector.devices.is_empty() {
-                    if selector.cursor == 0 {
-                        selector.cursor = selector.devices.len() - 1;
-                    } else {
-                        selector.cursor -= 1;
-                    }
+            KeyCode::Up | KeyCode::Char('k') if !selector.devices.is_empty() => {
+                if selector.cursor == 0 {
+                    selector.cursor = selector.devices.len() - 1;
+                } else {
+                    selector.cursor -= 1;
                 }
             }
-            KeyCode::Down | KeyCode::Char('j') => {
-                if !selector.devices.is_empty() {
-                    if selector.cursor + 1 >= selector.devices.len() {
-                        selector.cursor = 0;
-                    } else {
-                        selector.cursor += 1;
-                    }
+            KeyCode::Down | KeyCode::Char('j') if !selector.devices.is_empty() => {
+                if selector.cursor + 1 >= selector.devices.len() {
+                    selector.cursor = 0;
+                } else {
+                    selector.cursor += 1;
                 }
             }
             KeyCode::Enter => {
@@ -1361,22 +1355,20 @@ impl App {
                     self.update_scroll();
                 }
             }
-            KeyCode::Char('K') => {
-                if self.queue.cursor > 0 {
+            KeyCode::Char('K')
+                if self.queue.cursor > 0 => {
                     self.queue.cursor -= 1;
                     self.extend_selection_to(self.queue.cursor);
                     self.update_scroll();
                 }
-            }
             KeyCode::Char('i') => {
                 self.open_track_info(self.queue.cursor);
             }
-            KeyCode::Char(' ') => {
+            KeyCode::Char(' ')
                 // Open context menu if there's a selection.
-                if !self.queue.selected_ids.is_empty() {
+                if !self.queue.selected_ids.is_empty() => {
                     self.open_context_menu();
                 }
-            }
             // Vim: page up/down, home/end.
             KeyCode::PageUp | KeyCode::Char('u')
                 if key.code == KeyCode::PageUp || key.modifiers.contains(KeyModifiers::CONTROL) =>
@@ -1480,11 +1472,9 @@ impl App {
                 };
             }
             KeyCode::Up => match org.focus {
-                super::organize::OrganizeFocus::PatternList => {
-                    if org.pattern_cursor > 0 {
-                        org.pattern_cursor -= 1;
-                        org.request_preview();
-                    }
+                super::organize::OrganizeFocus::PatternList if org.pattern_cursor > 0 => {
+                    org.pattern_cursor -= 1;
+                    org.request_preview();
                 }
                 super::organize::OrganizeFocus::Preview => {
                     org.scroll = org.scroll.saturating_sub(1);
@@ -1492,21 +1482,19 @@ impl App {
                 _ => {}
             },
             KeyCode::Down => match org.focus {
-                super::organize::OrganizeFocus::PatternList => {
-                    if org.pattern_cursor + 1 < org.patterns.len() {
-                        org.pattern_cursor += 1;
-                        org.request_preview();
-                    }
+                super::organize::OrganizeFocus::PatternList
+                    if org.pattern_cursor + 1 < org.patterns.len() =>
+                {
+                    org.pattern_cursor += 1;
+                    org.request_preview();
                 }
                 super::organize::OrganizeFocus::Preview => {
                     org.scroll += 1;
                 }
                 _ => {}
             },
-            KeyCode::Enter => {
-                if !org.executing {
-                    org.request_execute();
-                }
+            KeyCode::Enter if !org.executing => {
+                org.request_execute();
             }
             _ => {}
         }
@@ -2355,9 +2343,9 @@ impl App {
                 self.queue.drag.take();
                 self.scrollbar_grab_offset = None;
             }
-            MouseEventKind::Down(MouseButton::Right) => {
+            MouseEventKind::Down(MouseButton::Right)
                 // Right-click on queue item -> context menu at click position.
-                if self.is_in_rect(event.column, event.row, self.layout.queue_area) {
+                if self.is_in_rect(event.column, event.row, self.layout.queue_area) => {
                     let visible = self.visible_queue();
                     if let Some(idx) = queue::QueueView::queue_index_at_y(
                         &visible,
@@ -2415,7 +2403,6 @@ impl App {
                         self.hover.row = event.row;
                     }
                 }
-            }
             MouseEventKind::ScrollUp => {
                 if let Mode::Picker(_) = &self.mode {
                     if let Some(ref mut picker) = self.picker {

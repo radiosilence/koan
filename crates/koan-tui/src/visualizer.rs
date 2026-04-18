@@ -1594,7 +1594,7 @@ fn render_flame(state: &VisualizerState, area: Rect, buf: &mut Buffer) {
             let base = state.palette.freq_color(warped);
             let color = dim(brighten(base, state.beat_energy * 0.3), 1.0 - brightness);
 
-            let y_start = (peak_y as usize).max(0);
+            let y_start = peak_y as usize;
             let y_end = (bottom_y as usize).min(px_h);
             for py in y_start..y_end {
                 grid.set_dot(px_x, py, color);

@@ -473,11 +473,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
             StandardTagKey::AlbumArtist => album_artist = Some(value),
             StandardTagKey::Album => album = Some(value),
             StandardTagKey::Date => date = Some(value),
-            StandardTagKey::OriginalDate => {
-                if date.is_none() {
-                    date = Some(value);
-                }
-            }
+            StandardTagKey::OriginalDate if date.is_none() => date = Some(value),
             StandardTagKey::TrackNumber => {
                 track_number = value.split('/').next().and_then(|s| s.trim().parse().ok());
             }
