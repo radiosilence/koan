@@ -176,17 +176,32 @@ jobs:
     runs-on: ubuntu-latest
     needs: [publish-release, check-version]
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
+    env:
+      VERSION: ${{ needs.check-version.outputs.version }}
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - name: Install system deps
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
       - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
-      - run: cargo publish -p koan-core --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      - run: cargo publish -p koan-music --no-verify
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      # Publish in dependency order: koan-core first, then the libraries that
+      # depend on it, then the binary crate. `publish_crate` is idempotent —
+      # if the version already exists on crates.io (e.g. from a partial
+      # previous run) it logs and continues rather than failing the job.
+      - name: Publish crates
+        run: |
+          publish_crate() {
+            local crate="$1"
+            if curl -sf "https://crates.io/api/v1/crates/${crate}/${VERSION}" > /dev/null; then
+              echo "${crate}@${VERSION} already on crates.io, skipping"
+            else
+              cargo publish -p "${crate}" --no-verify
+            fi
+          }
+          publish_crate koan-core
+          publish_crate koan-tui
+          publish_crate koan-server
+          publish_crate koan-cli
 
   update-homebrew:
     name: Update Homebrew Tap
