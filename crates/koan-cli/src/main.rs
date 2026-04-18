@@ -122,7 +122,9 @@ struct Cli {
     #[arg(long)]
     bind: Option<std::net::IpAddr>,
 
-    /// Enable Subsonic REST API on this port (e.g. --subsonic 4040)
+    /// Also expose Subsonic REST on a dedicated port (e.g. --subsonic 4040).
+    /// Subsonic is always mounted on the GraphQL port when remote creds are configured;
+    /// this flag adds an additional listener for clients that expect a separate port.
     #[arg(long)]
     subsonic: Option<u16>,
 
