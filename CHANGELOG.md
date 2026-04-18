@@ -1,18 +1,31 @@
 # Changelog
 
-## Unreleased
+## v0.23.0 (2026-04-18)
+
+Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, real-time subscriptions, cookie auth, and configurable CORS. Subsonic streaming now rides the GraphQL port by default, so the remote TUI (`koan play --server`) finally works end-to-end.
 
 ### Added
 
-- **Cookie auth for web clients** — auth routes set `HttpOnly; Secure; SameSite=None` cookies alongside JSON responses. Middleware checks cookie before Bearer header (priority: cookie > Bearer > query param). Logout clears the cookie. No breaking changes for CLI/mobile clients.
-- **Configurable CORS origins** — `[graphql] cors_origins = [...]` restricts allowed origins with `credentials: true` for cookie auth. Empty (default) keeps `Allow-Origin: *` for dev/backward compat.
-
-- **GraphQL subscriptions** — real-time data over WebSocket at `/graphql/ws`. Three subscriptions: `nowPlaying` (playback state at configurable interval), `queueUpdated` (full queue snapshot on change), `vizFrame` (spectrum/VU/waveform at configurable FPS). ([#162](https://github.com/radiosilence/koan/issues/162))
+- **GraphQL subscriptions** — real-time data over WebSocket at `/graphql/ws`. Three subscriptions: `nowPlaying` (playback state at configurable interval), `queueUpdated` (full queue snapshot on change), `vizFrame` (spectrum/VU/waveform at configurable FPS). ([#162](https://github.com/radiosilence/koan/issues/162), [#171](https://github.com/radiosilence/koan/pull/171))
 - **Queue snapshot with status** — `queue` query returns `QueueSnapshot` with versioned entries, each with derived `status` (Queued/Playing/Played/Downloading/PriorityPending/Failed) and optional `downloadProgress`. Replaces flat `Vec<QueueEntry>`.
 - **Visualizer query** — `vizFrame` query returns current spectrum, peaks, VU levels, beat energy, and optional waveform. Returns null when no analyzer is running.
 - **Config query + mutation** — `config` query exposes current settings, `updateConfig` mutation writes individual fields to `config.toml` (admin-only).
 - **Playlist version query** — `playlistVersion` returns monotonic counter for change detection.
 - **Playback state persistence** — `savePlaybackState` and `clearPlaybackState` mutations for web clients.
+- **Cookie auth for web clients** — auth routes set `HttpOnly; Secure; SameSite=None` cookies alongside JSON responses. Middleware checks cookie before Bearer header (priority: cookie > Bearer > query param). Logout clears the cookie. No breaking changes for CLI/mobile clients. ([#172](https://github.com/radiosilence/koan/pull/172))
+- **Configurable CORS origins** — `[graphql] cors_origins = [...]` restricts allowed origins with `credentials: true` for cookie auth. Empty (default) keeps `Allow-Origin: *` for dev/backward compat.
+
+### Fixed
+
+- **Subsonic streaming works on the GraphQL port** — Subsonic REST is now merged onto the GraphQL router whenever remote credentials are configured, so `koan play --server <url>` can pull streams without a second listener. `--subsonic <port>` continues to expose an additional dedicated listener for clients that expect a separate port. ([#174](https://github.com/radiosilence/koan/pull/174))
+- **Rust 1.95 clippy lints** — resolved `collapsible_match`, `manual_checked_ops`, and `absurd_extreme_comparisons` across `koan-core` and `koan-tui`. Pure refactor; no behaviour change. ([#175](https://github.com/radiosilence/koan/pull/175))
+
+### Known issues
+
+- **Remote TUI client doesn't send a JWT yet** — `koan play --server <url>` still fails against `auth_enabled = true` servers because the client has no login/token flow. Tracked in [#173](https://github.com/radiosilence/koan/issues/173).
+
+### Internal
+
 - **`ApiServerOpts` struct** — replaces positional args on internal `run_api_blocking`, carries optional `VizSnapshot` for subscription support.
 
 ## v0.22.0 (2026-04-12)
