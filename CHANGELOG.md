@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.23.3 (2026-04-19)
 
 ### Fixed
 
-- **`similarArtists` crashed on old DBs** — schema added a `relationship` column to `similar_artists` but shipped no `ALTER TABLE` migration, so databases created before the column existed blew up with `no such column: sa.relationship` the moment the query ran. Added the migration and a regression test that boots a pre-migration schema and verifies `create_tables` patches it.
+- **`similarArtists` crashed on pre-existing DBs** — schema added a `relationship` column to `similar_artists` but shipped no `ALTER TABLE` migration, so databases created before the column existed blew up with `no such column: sa.relationship` the moment the query ran. Added the migration alongside the existing cache-column migrations and a regression test that boots a pre-migration schema and verifies `create_tables` patches it. ([#180](https://github.com/radiosilence/koan/pull/180))
 
 ## v0.23.2 (2026-04-18)
 
