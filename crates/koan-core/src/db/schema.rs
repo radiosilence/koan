@@ -178,6 +178,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     let migrations = [
         "ALTER TABLE tracks ADD COLUMN cache_size_bytes INTEGER",
         "ALTER TABLE tracks ADD COLUMN cache_download_date INTEGER",
+        "ALTER TABLE similar_artists ADD COLUMN relationship TEXT NOT NULL DEFAULT 'similar'",
     ];
     for sql in &migrations {
         match conn.execute(sql, []) {
@@ -189,4 +190,57 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrates_similar_artists_relationship_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE artists (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+             CREATE TABLE similar_artists (
+                 artist_id  INTEGER NOT NULL REFERENCES artists(id),
+                 similar_id INTEGER NOT NULL REFERENCES artists(id),
+                 score      REAL NOT NULL DEFAULT 0.0,
+                 source     TEXT NOT NULL DEFAULT 'subsonic',
+                 updated_at TEXT DEFAULT (datetime('now')),
+                 PRIMARY KEY (artist_id, similar_id, source)
+             );",
+        )
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        let has_relationship: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('similar_artists') WHERE name = 'relationship'",
+                [],
+                |row| row.get::<_, i64>(0).map(|n| n > 0),
+            )
+            .unwrap();
+        assert!(has_relationship, "relationship column was not added");
+
+        conn.execute(
+            "INSERT INTO artists (id, name) VALUES (1, 'A'), (2, 'B')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO similar_artists (artist_id, similar_id, score, source)
+             VALUES (1, 2, 0.9, 'subsonic')",
+            [],
+        )
+        .unwrap();
+        let rel: String = conn
+            .query_row(
+                "SELECT relationship FROM similar_artists WHERE artist_id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(rel, "similar");
+    }
 }
