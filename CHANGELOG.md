@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`similarArtists` crashed on old DBs** — schema added a `relationship` column to `similar_artists` but shipped no `ALTER TABLE` migration, so databases created before the column existed blew up with `no such column: sa.relationship` the moment the query ran. Added the migration and a regression test that boots a pre-migration schema and verifies `create_tables` patches it.
+
 ## v0.23.2 (2026-04-18)
 
 Second attempt at getting the split crates on crates.io. v0.23.1 published `koan-core` but then failed because the publish order had `koan-tui` before `koan-server` — and `koan-tui` depends on `koan-server`. Flipped the order; no code delta.
