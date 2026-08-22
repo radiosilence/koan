@@ -53,12 +53,6 @@ impl GraphQLClient {
         Ok(resp.get("data").cloned().unwrap_or(Value::Null))
     }
 
-    /// Get the stream URL for a track (for audio playback).
-    pub fn stream_url(&self, track_id: i64) -> String {
-        let base = self.url.trim_end_matches("/graphql");
-        format!("{}/rest/stream?id={}", base, track_id)
-    }
-
     // -----------------------------------------------------------------------
     // Typed helpers
     // -----------------------------------------------------------------------
@@ -66,7 +60,7 @@ impl GraphQLClient {
     pub fn now_playing(&self) -> Result<NowPlaying, GraphQLError> {
         let data = self.execute(
             "{ nowPlaying { state positionMs durationMs queueItemId \
-             track { title artist album codec sampleRate bitDepth bitrateKbps channels durationMs } } }",
+             track { trackId title artist album codec sampleRate bitDepth bitrateKbps channels durationMs } } }",
             None,
         )?;
         let np = &data["nowPlaying"];
@@ -80,6 +74,7 @@ impl GraphQLClient {
                     return None;
                 }
                 Some(NowPlayingTrack {
+                    track_id: t["trackId"].as_i64(),
                     title: t["title"].as_str().unwrap_or("").to_string(),
                     artist: t["artist"].as_str().unwrap_or("").to_string(),
                     album: t["album"].as_str().unwrap_or("").to_string(),
@@ -96,7 +91,7 @@ impl GraphQLClient {
 
     pub fn queue(&self) -> Result<Vec<QueueEntry>, GraphQLError> {
         let data = self.execute(
-            "{ queue { queueItemId title artist album codec trackNumber disc durationMs isCurrent } }",
+            "{ queue { queueItemId trackId title artist album codec trackNumber disc durationMs isCurrent } }",
             None,
         )?;
         let entries = data["queue"]
@@ -105,6 +100,7 @@ impl GraphQLClient {
                 arr.iter()
                     .map(|e| QueueEntry {
                         queue_item_id: e["queueItemId"].as_str().unwrap_or("").to_string(),
+                        track_id: e["trackId"].as_i64(),
                         title: e["title"].as_str().unwrap_or("").to_string(),
                         artist: e["artist"].as_str().unwrap_or("").to_string(),
                         album: e["album"].as_str().unwrap_or("").to_string(),
@@ -342,6 +338,9 @@ pub struct NowPlaying {
 
 #[derive(Debug, Clone)]
 pub struct NowPlayingTrack {
+    /// Library row id on the server. `None` for a queue entry the server built
+    /// from a file with no database row, which cannot be streamed.
+    pub track_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -356,6 +355,7 @@ pub struct NowPlayingTrack {
 #[derive(Debug, Clone)]
 pub struct QueueEntry {
     pub queue_item_id: String,
+    pub track_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -469,11 +469,5 @@ mod tests {
     fn client_trailing_slash() {
         let c = GraphQLClient::new("http://localhost:4000/");
         assert_eq!(c.url, "http://localhost:4000/graphql");
-    }
-
-    #[test]
-    fn stream_url_format() {
-        let c = GraphQLClient::new("http://localhost:4000");
-        assert_eq!(c.stream_url(42), "http://localhost:4000/rest/stream?id=42");
     }
 }

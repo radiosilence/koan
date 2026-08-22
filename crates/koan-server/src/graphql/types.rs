@@ -366,6 +366,10 @@ pub(super) struct GqlNowPlaying {
 #[derive(SimpleObject)]
 #[graphql(name = "NowPlayingTrack")]
 pub(super) struct GqlNowPlayingTrack {
+    /// Library row id, when the queue entry came from the database. The remote
+    /// bridge streams `/rest/stream?id=<trackId>`; without it a client had no
+    /// way to name the track the server is playing.
+    pub track_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -405,6 +409,7 @@ impl GqlNowPlaying {
             position_ms,
             duration_ms: Some(info.duration_ms),
             track: Some(GqlNowPlayingTrack {
+                track_id: playlist_item.and_then(|i| i.db_id),
                 title: playlist_item.map(|i| i.title.clone()).unwrap_or_default(),
                 artist: playlist_item.map(|i| i.artist.clone()).unwrap_or_default(),
                 album: playlist_item.map(|i| i.album.clone()).unwrap_or_default(),
@@ -422,6 +427,7 @@ impl GqlNowPlaying {
 
 pub(super) struct GqlQueueEntry {
     pub queue_item_id: String,
+    pub track_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -438,6 +444,11 @@ pub(super) struct GqlQueueEntry {
 impl GqlQueueEntry {
     async fn queue_item_id(&self) -> &str {
         &self.queue_item_id
+    }
+
+    /// Library row id — see `NowPlayingTrack::trackId`.
+    async fn track_id(&self) -> Option<i64> {
+        self.track_id
     }
 
     async fn title(&self) -> &str {
@@ -737,6 +748,7 @@ impl GqlQueueSnapshot {
                 };
                 GqlQueueEntry {
                     queue_item_id: entry.id.0.to_string(),
+                    track_id: entry.db_id,
                     title: entry.title.clone(),
                     artist: entry.artist.clone(),
                     album: entry.album.clone(),

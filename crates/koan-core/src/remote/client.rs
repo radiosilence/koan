@@ -25,40 +25,30 @@ pub enum SubsonicError {
     Entropy(#[from] getrandom::Error),
 }
 
-/// Subsonic/Navidrome API client.
+/// A Subsonic server and the credentials that sign requests to it.
 ///
-/// Holds two HTTP clients with different timeout semantics: `http` bounds a
-/// whole JSON request, which is right for small API responses read in one go;
-/// `downloader` bounds only connect and per-read stalls, so a large track on a
-/// slow link is never cut off for taking too long overall.
-pub struct SubsonicClient {
-    base_url: String,
-    username: String,
-    password: String,
-    http: reqwest::blocking::Client,
-    downloader: reqwest::blocking::Client,
+/// Kept separate from `SubsonicClient` because constructing that builds two
+/// blocking `reqwest` clients, each carrying its own runtime — doing so from
+/// inside a tokio runtime panics. A caller that only needs a signed URL, such
+/// as koan's own Subsonic proxy, holds this instead.
+#[derive(Debug, Clone)]
+pub struct SubsonicAuth {
+    pub base_url: String,
+    pub username: String,
+    pub password: String,
 }
 
-impl SubsonicClient {
+impl SubsonicAuth {
     pub fn new(base_url: &str, username: &str, password: &str) -> Self {
-        let base_url = base_url.trim_end_matches('/').to_string();
         Self {
-            base_url,
+            base_url: base_url.trim_end_matches('/').to_string(),
             username: username.to_string(),
             password: password.to_string(),
-            http: download::api_client().unwrap_or_else(|e| {
-                log::warn!("falling back to default HTTP client: {}", e);
-                reqwest::blocking::Client::new()
-            }),
-            downloader: download::download_client().unwrap_or_else(|e| {
-                log::warn!("falling back to default download client: {}", e);
-                reqwest::blocking::Client::new()
-            }),
         }
     }
 
     /// Build auth query params: u, t (token), s (salt), v, c, f.
-    fn auth_params(&self) -> Result<HashMap<String, String>, SubsonicError> {
+    fn params(&self) -> Result<HashMap<String, String>, SubsonicError> {
         let salt = random_salt()?;
 
         let token = format!("{:x}", md5::compute(format!("{}{}", self.password, salt)));
@@ -73,6 +63,56 @@ impl SubsonicClient {
         Ok(params)
     }
 
+    /// Build the streaming URL for a track (doesn't make a request).
+    pub fn stream_url(&self, track_id: &str) -> Result<String, SubsonicError> {
+        let query: String = self
+            .params()?
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("&");
+        Ok(format!(
+            "{}/rest/stream?id={}&{}",
+            self.base_url, track_id, query
+        ))
+    }
+}
+
+/// Subsonic/Navidrome API client.
+///
+/// Holds two HTTP clients with different timeout semantics: `http` bounds a
+/// whole JSON request, which is right for small API responses read in one go;
+/// `downloader` bounds only connect and per-read stalls, so a large track on a
+/// slow link is never cut off for taking too long overall.
+pub struct SubsonicClient {
+    auth: SubsonicAuth,
+    http: reqwest::blocking::Client,
+    downloader: reqwest::blocking::Client,
+}
+
+impl SubsonicClient {
+    pub fn new(base_url: &str, username: &str, password: &str) -> Self {
+        Self::from_auth(SubsonicAuth::new(base_url, username, password))
+    }
+
+    pub fn from_auth(auth: SubsonicAuth) -> Self {
+        Self {
+            auth,
+            http: download::api_client().unwrap_or_else(|e| {
+                log::warn!("falling back to default HTTP client: {}", e);
+                reqwest::blocking::Client::new()
+            }),
+            downloader: download::download_client().unwrap_or_else(|e| {
+                log::warn!("falling back to default download client: {}", e);
+                reqwest::blocking::Client::new()
+            }),
+        }
+    }
+
+    fn auth_params(&self) -> Result<HashMap<String, String>, SubsonicError> {
+        self.auth.params()
+    }
+
     /// Make a GET request to a Subsonic API endpoint.
     fn get(&self, endpoint: &str) -> Result<SubsonicResponse, SubsonicError> {
         self.get_with_params(endpoint, &[])
@@ -83,7 +123,7 @@ impl SubsonicClient {
         endpoint: &str,
         extra: &[(&str, &str)],
     ) -> Result<SubsonicResponse, SubsonicError> {
-        let url = format!("{}/rest/{}", self.base_url, endpoint);
+        let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
         let mut params = self.auth_params()?;
         for (k, v) in extra {
             params.insert((*k).to_string(), (*v).to_string());
@@ -150,21 +190,12 @@ impl SubsonicClient {
 
     /// Build the streaming URL for a track (doesn't make a request).
     pub fn stream_url(&self, track_id: &str) -> Result<String, SubsonicError> {
-        let query: String = self
-            .auth_params()?
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect::<Vec<_>>()
-            .join("&");
-        Ok(format!(
-            "{}/rest/stream?id={}&{}",
-            self.base_url, track_id, query
-        ))
+        self.auth.stream_url(track_id)
     }
 
     /// Stream URL without auth params — safe for database storage.
     pub fn stream_url_template(&self, track_id: &str) -> String {
-        format!("{}/rest/stream?id={}", self.base_url, track_id)
+        format!("{}/rest/stream?id={}", self.auth.base_url, track_id)
     }
 
     /// Download a track to a local path.
@@ -183,7 +214,31 @@ impl SubsonicClient {
         dest: &Path,
         on_progress: impl Fn(u64, u64),
     ) -> Result<(), SubsonicError> {
-        let url = format!("{}/rest/download", self.base_url);
+        self.fetch_to_file("download", track_id, dest, on_progress)
+    }
+
+    /// Fetch a track through `/rest/stream` instead of `/rest/download`.
+    ///
+    /// `download` returns the untranscoded original and is what library sync
+    /// wants from Navidrome. koan's own server implements only `stream`, so
+    /// that is how the remote bridge pulls audio from a `koan serve` instance.
+    pub fn stream_to_file(
+        &self,
+        track_id: &str,
+        dest: &Path,
+        on_progress: impl Fn(u64, u64),
+    ) -> Result<(), SubsonicError> {
+        self.fetch_to_file("stream", track_id, dest, on_progress)
+    }
+
+    fn fetch_to_file(
+        &self,
+        endpoint: &str,
+        track_id: &str,
+        dest: &Path,
+        on_progress: impl Fn(u64, u64),
+    ) -> Result<(), SubsonicError> {
+        let url = format!("{}/rest/{}", self.auth.base_url, endpoint);
         download::download_with_retries(
             dest,
             download::DEFAULT_ATTEMPTS,
@@ -237,7 +292,7 @@ impl SubsonicClient {
         ids: &[&str],
         description: Option<&str>,
     ) -> Result<SubsonicShare, SubsonicError> {
-        let url = format!("{}/rest/createShare", self.base_url);
+        let url = format!("{}/rest/createShare", self.auth.base_url);
         let mut params = self.auth_params()?;
         if let Some(desc) = description {
             params.insert("description".into(), desc.to_string());
@@ -299,7 +354,7 @@ impl SubsonicClient {
 
     /// The configured server base URL (for constructing share links etc).
     pub fn base_url(&self) -> &str {
-        &self.base_url
+        &self.auth.base_url
     }
 }
 
