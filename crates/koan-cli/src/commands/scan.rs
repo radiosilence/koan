@@ -6,7 +6,7 @@ use owo_colors::OwoColorize;
 
 use super::open_db;
 
-pub fn cmd_scan(path: Option<&Path>, force: bool) {
+pub fn cmd_scan(path: Option<&Path>, force: bool, force_remove: bool) {
     let db = open_db();
     let cfg = config::Config::load().unwrap_or_default();
 
@@ -29,6 +29,16 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
             "{} {}",
             "scanning".cyan().bold(),
             folder.display().to_string().dimmed()
+        );
+    }
+
+    if force_remove {
+        eprintln!(
+            "{} {}",
+            "force-remove:".yellow().bold(),
+            "missing files will be deleted however many there are, along with their \
+             play history, lyrics and embeddings"
+                .yellow(),
         );
     }
 
@@ -63,7 +73,11 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
         }
     };
 
-    let result = koan_core::index::scanner::full_scan(&db, &folders, force, Some(&on_track));
+    let opts = koan_core::index::scanner::ScanOptions {
+        force,
+        force_remove,
+    };
+    let result = koan_core::index::scanner::full_scan(&db, &folders, opts, Some(&on_track));
     let elapsed = start.elapsed();
 
     // Clear the progress line.
@@ -82,6 +96,20 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
         result.removed.to_string().red(),
         result.skipped.to_string().dimmed(),
     );
+
+    if force_remove && !result.removed_paths.is_empty() {
+        eprintln!();
+        eprintln!("{}", "removed".red().bold());
+        for path in result.removed_paths.iter().take(20) {
+            eprintln!("  {} {}", "-".red(), path.dimmed());
+        }
+        if result.removed_paths.len() > 20 {
+            eprintln!(
+                "  {}",
+                format!("... and {} more", result.removed_paths.len() - 20).dimmed()
+            );
+        }
+    }
 
     if result.unreadable > 0 {
         eprintln!(

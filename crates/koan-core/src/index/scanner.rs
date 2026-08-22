@@ -20,7 +20,22 @@ pub struct ScanResult {
     /// Directory entries walkdir could not read — unreadable subtrees, symlink
     /// loops. Their contents are absent from the scan entirely.
     pub unreadable: usize,
+    /// Paths of the tracks deleted or demoted to remote-only, so a caller can
+    /// show what a removal actually took.
+    pub removed_paths: Vec<String>,
     pub errors: Vec<(PathBuf, String)>,
+}
+
+/// How a scan should behave.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ScanOptions {
+    /// Re-read tags for every file, ignoring `scan_cache`.
+    pub force: bool,
+    /// Delete stale tracks even when the proportion missing looks like a mount
+    /// failure. Lifts the removal-fraction brake only — a folder that yields no
+    /// audio files is still left alone, and an IO error still never counts as
+    /// "file gone".
+    pub force_remove: bool,
 }
 
 /// Files per transaction. Bounds peak memory (only one chunk's metadata is
@@ -45,7 +60,7 @@ pub struct ScanEvent<'a> {
 pub fn scan_folder(
     db: &Database,
     path: &Path,
-    force: bool,
+    opts: ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
     let mut result = ScanResult::default();
@@ -72,7 +87,7 @@ pub fn scan_folder(
     // Filter to files that need scanning.
     // Batch-load the entire scan_cache into a HashMap to avoid O(N) individual
     // DB lookups (one per file). For 100k+ file libraries this is dramatically faster.
-    let files_to_scan: Vec<PathBuf> = if force {
+    let files_to_scan: Vec<PathBuf> = if opts.force {
         std::mem::take(&mut audio_files)
     } else {
         let scan_cache = queries::load_scan_cache(&db.conn).unwrap_or_default();
@@ -205,12 +220,14 @@ pub fn scan_folder(
             return result;
         }
     };
-    match queries::remove_stale_tracks(&tx, path) {
+    match queries::remove_stale_tracks(&tx, path, opts.force_remove) {
         Ok(removed) => {
-            result.removed = removed;
+            result.removed = removed.len();
+            result.removed_paths = removed;
             if let Err(e) = tx.commit() {
                 log::error!("failed to commit stale removals: {}", e);
                 result.removed = 0;
+                result.removed_paths.clear();
                 result
                     .errors
                     .push((path.to_path_buf(), format!("db error: {}", e)));
@@ -243,7 +260,7 @@ fn isolate_read(
 pub fn full_scan(
     db: &Database,
     folders: &[PathBuf],
-    force: bool,
+    opts: ScanOptions,
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
     let mut total = ScanResult::default();
@@ -252,12 +269,13 @@ pub fn full_scan(
             log::warn!("library folder does not exist: {}", folder.display());
             continue;
         }
-        let r = scan_folder(db, folder, force, on_track);
+        let r = scan_folder(db, folder, opts, on_track);
         total.added += r.added;
         total.updated += r.updated;
         total.removed += r.removed;
         total.skipped += r.skipped;
         total.unreadable += r.unreadable;
+        total.removed_paths.extend(r.removed_paths);
         total.errors.extend(r.errors);
     }
     total
@@ -375,7 +393,7 @@ mod tests {
         test_utils::generate_wav(&wav_path, 44100, 1, 1.0, 16);
 
         let db = test_db(dir.path());
-        let result = scan_folder(&db, &music_dir, false, None);
+        let result = scan_folder(&db, &music_dir, ScanOptions::default(), None);
 
         assert_eq!(result.added, 1, "expected 1 track added");
         assert_eq!(result.skipped, 0);
@@ -399,11 +417,11 @@ mod tests {
         let db = test_db(dir.path());
 
         // First scan: adds the file.
-        let r1 = scan_folder(&db, &music_dir, false, None);
+        let r1 = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         assert_eq!(r1.added, 1);
 
         // Second scan: file unchanged, should be skipped.
-        let r2 = scan_folder(&db, &music_dir, false, None);
+        let r2 = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         assert_eq!(r2.skipped, 1, "expected unchanged file to be skipped");
         assert_eq!(r2.added, 0, "no new files should be added");
     }
@@ -421,14 +439,14 @@ mod tests {
         let db = test_db(dir.path());
 
         // First scan: adds both files.
-        let r1 = scan_folder(&db, &music_dir, false, None);
+        let r1 = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         assert_eq!(r1.added, 2);
 
         // Delete one of them.
         std::fs::remove_file(&wav_path).unwrap();
 
         // Second scan: should detect removal.
-        let r2 = scan_folder(&db, &music_dir, false, None);
+        let r2 = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         assert_eq!(
             r2.removed, 1,
             "expected 1 track removed after file deletion"
@@ -447,14 +465,17 @@ mod tests {
         test_utils::generate_wav(&music_dir.join("b.wav"), 44100, 1, 1.0, 16);
 
         let db = test_db(dir.path());
-        assert_eq!(scan_folder(&db, &music_dir, false, None).added, 2);
+        assert_eq!(
+            scan_folder(&db, &music_dir, ScanOptions::default(), None).added,
+            2
+        );
 
         // The folder is still there but yields nothing — an unmounted NAS, a
         // detached volume, a Docker volume that failed to attach.
         std::fs::remove_file(music_dir.join("a.wav")).unwrap();
         std::fs::remove_file(music_dir.join("b.wav")).unwrap();
 
-        let r = scan_folder(&db, &music_dir, false, None);
+        let r = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         assert_eq!(r.removed, 0, "stale removal must be skipped entirely");
         assert_eq!(queries::library_stats(&db.conn).unwrap().total_tracks, 2);
     }
@@ -473,7 +494,10 @@ mod tests {
         test_utils::generate_wav(&locked_file, 44100, 1, 1.0, 16);
 
         let db = test_db(dir.path());
-        assert_eq!(scan_folder(&db, &music_dir, false, None).added, 2);
+        assert_eq!(
+            scan_folder(&db, &music_dir, ScanOptions::default(), None).added,
+            2
+        );
 
         std::fs::set_permissions(&locked_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
         if locked_file.try_exists().is_ok() {
@@ -482,7 +506,7 @@ mod tests {
             return;
         }
 
-        let r = scan_folder(&db, &music_dir, false, None);
+        let r = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         std::fs::set_permissions(&locked_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
 
         assert!(
@@ -511,7 +535,7 @@ mod tests {
             assert!(seen.get() <= CHUNK_SIZE, "simulated interrupt");
         };
         let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            scan_folder(&db, &music_dir, false, Some(&abort));
+            scan_folder(&db, &music_dir, ScanOptions::default(), Some(&abort));
         }));
         assert!(panicked.is_err());
 
@@ -522,7 +546,7 @@ mod tests {
         );
 
         // And the next run picks up where it left off instead of restarting.
-        let r = scan_folder(&db, &music_dir, false, None);
+        let r = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         assert_eq!(r.skipped, CHUNK_SIZE, "committed files should be cached");
         assert_eq!(r.added, 6 - CHUNK_SIZE);
         assert_eq!(queries::library_stats(&db.conn).unwrap().total_tracks, 6);
@@ -538,7 +562,7 @@ mod tests {
         std::fs::write(&broken, b"").unwrap();
 
         let db = test_db(dir.path());
-        let r = scan_folder(&db, &music_dir, false, None);
+        let r = scan_folder(&db, &music_dir, ScanOptions::default(), None);
 
         assert_eq!(r.added, 1, "the good file must still be indexed");
         assert_eq!(r.errors.len(), 1);
@@ -565,7 +589,7 @@ mod tests {
         let db = test_db(dir.path());
 
         // First scan.
-        let r1 = scan_folder(&db, &music_dir, false, None);
+        let r1 = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         assert_eq!(r1.added, 1);
 
         // Modify the file (rewrite with different duration → different size + mtime).
@@ -574,7 +598,7 @@ mod tests {
         test_utils::generate_wav(&wav_path, 44100, 1, 2.0, 16);
 
         // Second scan: should detect the modification.
-        let r2 = scan_folder(&db, &music_dir, false, None);
+        let r2 = scan_folder(&db, &music_dir, ScanOptions::default(), None);
         assert_eq!(r2.updated, 1, "modified file should be re-indexed");
         assert_eq!(r2.added, 0, "the row already exists");
         assert_eq!(r2.skipped, 0, "modified file should not be skipped");
