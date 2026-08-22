@@ -16,7 +16,7 @@ path = "src/main.rs"
 chrono = "0.4"
 clap = { version = "4.6", features = ["derive"] }
 clap_complete = { version = "4.6", features = ["unstable-dynamic"] }
-crossterm = "0.28"
+crossterm = "0.29"
 ctrlc = "3"
 jwalk = "0.9"
 koan-core = { workspace = true }

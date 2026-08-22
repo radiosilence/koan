@@ -90,6 +90,8 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             track_id   INTEGER,
             from_path  TEXT NOT NULL,
             to_path    TEXT NOT NULL,
+            size_bytes INTEGER,
+            mtime      INTEGER,
             created_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -179,6 +181,10 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         "ALTER TABLE tracks ADD COLUMN cache_size_bytes INTEGER",
         "ALTER TABLE tracks ADD COLUMN cache_download_date INTEGER",
         "ALTER TABLE similar_artists ADD COLUMN relationship TEXT NOT NULL DEFAULT 'similar'",
+        // Undo checks these against the file before moving it back, so a file that
+        // was replaced since the organize is left alone.
+        "ALTER TABLE organize_log ADD COLUMN size_bytes INTEGER",
+        "ALTER TABLE organize_log ADD COLUMN mtime INTEGER",
     ];
     for sql in &migrations {
         match conn.execute(sql, []) {

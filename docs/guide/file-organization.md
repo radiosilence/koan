@@ -70,7 +70,14 @@ See [Format Strings](../format-strings.md) for the complete syntax reference and
 
 ## Safety
 
-- **Preview before execute.** The organize modal always shows you exactly what will be moved before doing anything.
-- **Path traversal protection.** Malicious metadata containing `..` or `.` path components is stripped. Destinations are validated to stay under the library base directory.
-- **Undo support.** Organize operations are tracked in the database (`organize_log` table) for potential reversal.
-- **Ancillary files move with music.** Cover art, cue sheets, and log files in the same directory are moved alongside the music files.
+Music files are irreplaceable, so organize refuses anything it can't do without risk rather than doing its best.
+
+- **Nothing is ever overwritten.** Two tracks that resolve to the same destination, or a destination that already holds a file, are reported as errors and skipped -- the second file stays exactly where it is. On macOS the check is case-insensitive, because `Rain.flac` and `RAIN.flac` are one file there.
+- **Preview matches execute.** Both read metadata through the same resolver, so the paths you confirm are the paths that get used.
+- **A pattern that produces an empty path component is refused.** An unknown function (`$nun` for `$num`) is a parse error rather than a silently empty result, and `..` or `.` components are errors, not something to strip.
+- **Long titles are shortened, not rejected.** A destination name is capped below the filesystem's limit, extension included.
+- **The database moves with the file.** Track paths, the scan cache, favourites, queue snapshots and saved playback state are all rewritten in the same transaction as the move. A constraint violation aborts before the file is touched.
+- **Undo.** Every move -- including files the library has no row for -- is written to `organize_log`, newest batch first. Undo restores a file only if its original path is still free and the moved file is still the one that was logged; anything else is reported and left alone, with its log entry intact.
+- **Cross-filesystem moves are copied, flushed and verified before the original is deleted.** A run that won't fit is refused before it starts.
+- **Empty directories are cleaned up, but never a configured library root** or anything above one.
+- **Ancillary files move with music.** Cover art, cue sheets, and log files in the same directory are moved alongside the music files. Artwork already at the destination is left alone.

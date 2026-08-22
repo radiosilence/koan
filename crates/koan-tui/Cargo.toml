@@ -10,14 +10,14 @@ categories = ["multimedia::audio"]
 
 [dependencies]
 crossbeam-channel = "0.5"
-crossterm = "0.28"
+crossterm = "0.29"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 jwalk = "0.9"
 koan-core = { workspace = true }
 log = "0.4"
 reqwest = { workspace = true }
 nucleo = "0.5"
-ratatui = "0.29"
+ratatui = "0.30"
 souvlaki = "0.8"
 uuid = { version = "1.22.0", features = ["v7"] }
 

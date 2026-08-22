@@ -16,11 +16,19 @@ pub enum FormatError {
     UnclosedFunction(usize),
     #[error("unexpected character '{0}' at position {1}")]
     UnexpectedChar(char, usize),
+    #[error("unknown function '${0}' at position {1}")]
+    UnknownFunction(String, usize),
+    #[error("expression nested more than {MAX_DEPTH} levels deep at position {0}")]
+    TooDeep(usize),
 }
+
+/// Nesting ceiling for conditionals and function arguments. The parser recurses per
+/// level, so without a cap a deeply nested string overflows the stack.
+const MAX_DEPTH: usize = 64;
 
 pub fn parse(input: &str) -> Result<Vec<Token>, FormatError> {
     let chars: Vec<char> = input.chars().collect();
-    let (tokens, _) = parse_tokens(&chars, 0, &[])?;
+    let (tokens, _) = parse_tokens(&chars, 0, &[], 0)?;
     Ok(tokens)
 }
 
@@ -30,7 +38,11 @@ fn parse_tokens(
     chars: &[char],
     start: usize,
     stop_chars: &[char],
+    depth: usize,
 ) -> Result<(Vec<Token>, usize), FormatError> {
+    if depth > MAX_DEPTH {
+        return Err(FormatError::TooDeep(start));
+    }
     let mut tokens = Vec::new();
     let mut pos = start;
     let mut literal = String::new();
@@ -68,7 +80,7 @@ fn parse_tokens(
                 }
                 let bracket_pos = pos;
                 pos += 1;
-                let (inner, end) = parse_tokens(chars, pos, &[']'])?;
+                let (inner, end) = parse_tokens(chars, pos, &[']'], depth + 1)?;
                 if end >= chars.len() || chars[end] != ']' {
                     return Err(FormatError::UnclosedConditional(bracket_pos));
                 }
@@ -81,34 +93,21 @@ fn parse_tokens(
                 }
                 pos += 1;
                 let name_start = pos;
-                while pos < chars.len() && chars[pos].is_alphanumeric()
-                    || pos < chars.len() && chars[pos] == '_'
-                {
+                while pos < chars.len() && (chars[pos].is_alphanumeric() || chars[pos] == '_') {
                     pos += 1;
                 }
                 let name: String = chars[name_start..pos].iter().collect();
                 if pos >= chars.len() || chars[pos] != '(' {
                     return Err(FormatError::UnclosedFunction(name_start - 1));
                 }
+                if !crate::format::functions::is_known_function(&name) {
+                    return Err(FormatError::UnknownFunction(name, name_start - 1));
+                }
                 pos += 1; // skip '('
-                let args = parse_function_args(chars, pos, name_start - 1)?;
-                let mut end = pos;
-                // Find the matching ')' respecting nesting
-                let mut depth = 1;
-                while end < chars.len() && depth > 0 {
-                    match chars[end] {
-                        '(' => depth += 1,
-                        ')' => depth -= 1,
-                        _ => {}
-                    }
-                    if depth > 0 {
-                        end += 1;
-                    }
-                }
-                if depth != 0 {
-                    return Err(FormatError::UnclosedFunction(name_start - 1));
-                }
-                pos = end + 1;
+                // The argument parser consumes quoted literals, so it — not a raw
+                // paren count — is what knows where the call really ends.
+                let (args, close) = parse_function_args(chars, pos, name_start - 1, depth + 1)?;
+                pos = close + 1;
                 tokens.push(Token::Function { name, args });
             }
             '\'' => {
@@ -151,16 +150,18 @@ fn parse_tokens(
 }
 
 /// Parse comma-separated function arguments, respecting nesting.
+/// Returns the arguments and the index of the closing `)`.
 fn parse_function_args(
     chars: &[char],
     start: usize,
     func_pos: usize,
-) -> Result<Vec<Vec<Token>>, FormatError> {
+    depth: usize,
+) -> Result<(Vec<Vec<Token>>, usize), FormatError> {
     let mut args = Vec::new();
     let mut pos = start;
 
     loop {
-        let (arg_tokens, end) = parse_tokens(chars, pos, &[',', ')'])?;
+        let (arg_tokens, end) = parse_tokens(chars, pos, &[',', ')'], depth)?;
         args.push(arg_tokens);
 
         if end >= chars.len() {
@@ -168,18 +169,53 @@ fn parse_function_args(
         }
 
         if chars[end] == ')' {
-            break;
+            return Ok((args, end));
         }
         // comma — continue to next arg
         pos = end + 1;
     }
-
-    Ok(args)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_function_is_an_error() {
+        // A typo used to parse into a function that evaluated to nothing, which
+        // silently emptied a path component.
+        assert!(matches!(
+            parse("$nun(%tracknumber%,2)"),
+            Err(FormatError::UnknownFunction(name, _)) if name == "nun"
+        ));
+        assert!(parse("$num(%tracknumber%,2)").is_ok());
+    }
+
+    #[test]
+    fn deep_nesting_is_rejected_not_crashed() {
+        let deep = "[".repeat(5000) + &"]".repeat(5000);
+        assert!(matches!(parse(&deep), Err(FormatError::TooDeep(_))));
+
+        let deep_calls = "$if(".repeat(5000) + &")".repeat(5000);
+        assert!(parse(&deep_calls).is_err());
+    }
+
+    #[test]
+    fn nesting_within_the_limit_still_parses() {
+        let nested = "[".repeat(32) + "%title%" + &"]".repeat(32);
+        assert!(parse(&nested).is_ok());
+    }
+
+    /// The end of a call is found by parsing its arguments, so a `)` inside a quoted
+    /// literal no longer ends the scan early and leave the tail as a stray literal.
+    #[test]
+    fn parenthesis_in_a_quoted_argument_does_not_end_the_call() {
+        let tokens = parse("$if(%album%,%album%,'Unknown )')/%title%").unwrap();
+        assert_eq!(tokens.len(), 3);
+        assert!(matches!(&tokens[0], Token::Function { name, .. } if name == "if"));
+        assert_eq!(tokens[1], Token::Literal("/".into()));
+        assert_eq!(tokens[2], Token::Field("title".into()));
+    }
 
     #[test]
     fn simple_field() {

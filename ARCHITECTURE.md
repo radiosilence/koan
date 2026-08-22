@@ -236,7 +236,7 @@ fb2k-compatible template engine.
 |---|---|
 | `config.rs` | Figment-based layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Playback, library, remote, graphql, radio, visualizer, organize, discovery settings. See `Config::update_base()` for safe writes. |
 | `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
-| `organize.rs` | File renaming using format strings. Preview/execute/undo. Scoped operations via `preview_for_tracks()`/`execute_for_tracks()` (used by TUI modal). Moves ancillary files (cover art, cue sheets). Logs moves for undo. |
+| `organize.rs` | File renaming using format strings. Preview/execute/undo, all planned by one `plan()` so a preview and the execute that follows it agree. Scoped by track id or by path. Refuses to overwrite; database rows (track paths, scan cache, favourites, snapshots, playback state) are rewritten in the same transaction as the move. Every move is logged for undo. Moves ancillary files (cover art, cue sheets). |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
 
 ## koan-cli modules
