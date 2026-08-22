@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Symphonia 0.5 → 0.6.1** — 0.6 rebuilt the format/codec registry, audio primitives, and metadata types around multi-track (audio/video/subtitle) media. Track timing moved off `CodecParameters` onto `Track`, which is where the audible wins come from: 24-bit/96 kHz ALAC now reports 96 kHz instead of 48 kHz (it previously played at half speed, and switched the output device to the wrong rate — fatal for a bit-perfect player), and ALAC-in-CAF decodes at all instead of erroring out. Playback frame counts are byte-identical across every other format.
+
+### Fixed
+
+- **Matroska duration** — MKV states its duration at media level in millisecond ticks, which was being read as a frame count and rendered a 10-second file as 226 ms. Durations now come from the container's stated duration via its own timebase, falling back to the playable frame count.
+- **Gapless trimming in ReplayGain scans** — encoder delay and padding are now dropped before loudness analysis, so MP3/Vorbis scans no longer measure the silence the decoder discards. Scanned gain values shift very slightly; re-scan to refresh them.
+
 ## v0.23.3 (2026-04-19)
 
 ### Fixed

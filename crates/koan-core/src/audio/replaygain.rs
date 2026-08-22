@@ -3,12 +3,12 @@ use std::path::{Path, PathBuf};
 
 use lofty::prelude::*;
 use lofty::tag::ItemValue;
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{CODEC_TYPE_OPUS, DecoderOptions};
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::codecs::audio::AudioDecoderOptions;
+use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 use thiserror::Error;
 
 use crate::audio::opus::OpusBridge;
@@ -323,27 +323,33 @@ fn decode_to_samples(path: &Path) -> Result<(u32, u16, Vec<f32>), ReplayGainErro
         hint.with_extension(ext);
     }
 
-    let probed = symphonia::default::get_probe()
-        .format(
+    let mut reader = symphonia::default::get_probe()
+        .probe(
             &hint,
             mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .map_err(|e| ReplayGainError::Decode(e.to_string()))?;
 
-    let mut reader = probed.format;
-    let track = reader.default_track().ok_or(ReplayGainError::NoTrack)?;
+    let track = reader
+        .default_track(TrackType::Audio)
+        .ok_or(ReplayGainError::NoTrack)?;
     let track_id = track.id;
-    let is_opus = track.codec_params.codec == CODEC_TYPE_OPUS;
+    let codec_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or(ReplayGainError::NoTrack)?;
+    let is_opus = codec_params.codec == CODEC_ID_OPUS;
     let sample_rate = if is_opus {
         48000
     } else {
-        track.codec_params.sample_rate.unwrap_or(44100)
+        codec_params.sample_rate.unwrap_or(44100)
     };
-    let channels = track
-        .codec_params
+    let channels = codec_params
         .channels
+        .as_ref()
         .map(|c| c.count() as u16)
         .unwrap_or(2);
 
@@ -352,39 +358,32 @@ fn decode_to_samples(path: &Path) -> Result<(u32, u16, Vec<f32>), ReplayGainErro
     } else {
         Some(
             symphonia::default::get_codecs()
-                .make(&track.codec_params, &DecoderOptions::default())
+                .make_audio_decoder(codec_params, &AudioDecoderOptions::default())
                 .map_err(|e| ReplayGainError::Decode(e.to_string()))?,
         )
     };
     let mut opus_bridge = if is_opus {
-        Some(
-            OpusBridge::new(&track.codec_params)
-                .map_err(|e| ReplayGainError::Decode(e.to_string()))?,
-        )
+        Some(OpusBridge::new(codec_params).map_err(|e| ReplayGainError::Decode(e.to_string()))?)
     } else {
         None
     };
 
     let mut all_samples = Vec::new();
-    let mut sample_buf: Option<SampleBuffer<f32>> = None;
+    let mut sample_buf: Vec<f32> = Vec::new();
 
     loop {
         let packet = match reader.next_packet() {
-            Ok(p) => p,
-            Err(symphonia::core::errors::Error::IoError(ref e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                break;
-            }
+            Ok(Some(p)) => p,
+            Ok(None) => break,
             Err(e) => return Err(ReplayGainError::Decode(e.to_string())),
         };
 
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
         if let Some(ref mut opus) = opus_bridge {
-            match opus.decode_packet(packet.buf()) {
+            match opus.decode_packet(&packet.data) {
                 Ok(samples) if !samples.is_empty() => {
                     all_samples.extend_from_slice(samples);
                 }
@@ -404,11 +403,8 @@ fn decode_to_samples(path: &Path) -> Result<(u32, u16, Vec<f32>), ReplayGainErro
                 Err(e) => return Err(ReplayGainError::Decode(e.to_string())),
             };
 
-            let spec = *decoded.spec();
-            let duration = decoded.capacity();
-            let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(duration as u64, spec));
-            sbuf.copy_interleaved_ref(decoded);
-            all_samples.extend_from_slice(sbuf.samples());
+            decoded.copy_to_vec_interleaved(&mut sample_buf);
+            all_samples.extend_from_slice(&sample_buf);
         }
     }
 

@@ -6,7 +6,7 @@ use lofty::config::ParseOptions;
 use lofty::file::AudioFile;
 use lofty::mp4::{Mp4Codec, Mp4File};
 use lofty::prelude::*;
-use symphonia::core::meta::{MetadataRevision, StandardTagKey};
+use symphonia::core::meta::{MetadataRevision, StandardTag};
 use thiserror::Error;
 
 use crate::db::queries::TrackMeta;
@@ -212,11 +212,11 @@ struct SymphoniaProps {
 
 /// Probe audio properties via Symphonia (duration, sample rate, codec, etc.).
 fn probe_symphonia(path: &Path) -> SymphoniaProps {
-    use symphonia::core::codecs::CODEC_TYPE_NULL;
-    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::codecs::audio::CODEC_ID_NULL_AUDIO;
+    use symphonia::core::formats::probe::Hint;
+    use symphonia::core::formats::{FormatOptions, TrackType};
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
 
     let empty = SymphoniaProps {
         duration_ms: None,
@@ -237,41 +237,44 @@ fn probe_symphonia(path: &Path) -> SymphoniaProps {
         hint.with_extension(ext);
     }
 
-    let probed = match symphonia::default::get_probe().format(
+    let reader = match symphonia::default::get_probe().probe(
         &hint,
         mss,
-        &FormatOptions::default(),
-        &MetadataOptions::default(),
+        FormatOptions::default(),
+        MetadataOptions::default(),
     ) {
-        Ok(p) => p,
+        Ok(r) => r,
         Err(_) => return empty,
     };
 
-    let track = match probed.format.default_track() {
+    let track = match reader.default_track(TrackType::Audio) {
         Some(t) => t,
         None => return empty,
     };
 
-    let params = &track.codec_params;
+    let params = match track.codec_params.as_ref().and_then(|p| p.audio()) {
+        Some(p) => p,
+        None => return empty,
+    };
     let sample_rate = params.sample_rate.map(|r| r as i32);
     let bit_depth = params.bits_per_sample.map(|b| b as i32);
-    let channels = params.channels.map(|c| c.count() as i32);
+    let channels = params.channels.as_ref().map(|c| c.count() as i32);
 
-    let duration_ms = params.n_frames.and_then(|frames| {
-        params
-            .sample_rate
-            .map(|sr| (frames as f64 / sr as f64 * 1000.0) as i64)
+    let duration_ms = params.sample_rate.and_then(|sr| {
+        let ms = crate::audio::buffer::track_duration_ms(&*reader, track, sr);
+        (ms > 0).then_some(ms as i64)
     });
 
     let bitrate = params.sample_rate.and_then(|sr| {
         params.bits_per_sample.and_then(|bps| {
             params
                 .channels
+                .as_ref()
                 .map(|ch| (sr as i32 * bps as i32 * ch.count() as i32) / 1000)
         })
     });
 
-    let codec = if params.codec != CODEC_TYPE_NULL {
+    let codec = if params.codec != CODEC_ID_NULL_AUDIO {
         Some(symphonia_codec_name(params.codec))
     } else {
         None
@@ -288,27 +291,27 @@ fn probe_symphonia(path: &Path) -> SymphoniaProps {
 }
 
 /// Map Symphonia codec type to a human-readable string.
-fn symphonia_codec_name(codec: symphonia::core::codecs::CodecType) -> String {
-    use symphonia::core::codecs;
+fn symphonia_codec_name(codec: symphonia::core::codecs::audio::AudioCodecId) -> String {
+    use symphonia::core::codecs::audio::well_known as ids;
     match codec {
-        codecs::CODEC_TYPE_FLAC => "FLAC".to_string(),
-        codecs::CODEC_TYPE_MP3 => "MP3".to_string(),
-        codecs::CODEC_TYPE_AAC => "AAC".to_string(),
-        codecs::CODEC_TYPE_ALAC => "ALAC".to_string(),
-        codecs::CODEC_TYPE_VORBIS => "Vorbis".to_string(),
-        codecs::CODEC_TYPE_OPUS => "Opus".to_string(),
-        codecs::CODEC_TYPE_WAVPACK => "WavPack".to_string(),
-        codecs::CODEC_TYPE_PCM_S16LE
-        | codecs::CODEC_TYPE_PCM_S24LE
-        | codecs::CODEC_TYPE_PCM_S32LE
-        | codecs::CODEC_TYPE_PCM_F32LE
-        | codecs::CODEC_TYPE_PCM_F64LE
-        | codecs::CODEC_TYPE_PCM_S16BE
-        | codecs::CODEC_TYPE_PCM_S24BE
-        | codecs::CODEC_TYPE_PCM_S32BE
-        | codecs::CODEC_TYPE_PCM_F32BE
-        | codecs::CODEC_TYPE_PCM_F64BE
-        | codecs::CODEC_TYPE_PCM_U8 => "PCM".to_string(),
+        ids::CODEC_ID_FLAC => "FLAC".to_string(),
+        ids::CODEC_ID_MP3 => "MP3".to_string(),
+        ids::CODEC_ID_AAC => "AAC".to_string(),
+        ids::CODEC_ID_ALAC => "ALAC".to_string(),
+        ids::CODEC_ID_VORBIS => "Vorbis".to_string(),
+        ids::CODEC_ID_OPUS => "Opus".to_string(),
+        ids::CODEC_ID_WAVPACK => "WavPack".to_string(),
+        ids::CODEC_ID_PCM_S16LE
+        | ids::CODEC_ID_PCM_S24LE
+        | ids::CODEC_ID_PCM_S32LE
+        | ids::CODEC_ID_PCM_F32LE
+        | ids::CODEC_ID_PCM_F64LE
+        | ids::CODEC_ID_PCM_S16BE
+        | ids::CODEC_ID_PCM_S24BE
+        | ids::CODEC_ID_PCM_S32BE
+        | ids::CODEC_ID_PCM_F32BE
+        | ids::CODEC_ID_PCM_F64BE
+        | ids::CODEC_ID_PCM_U8 => "PCM".to_string(),
         _ => "Unknown".to_string(),
     }
 }
@@ -317,9 +320,9 @@ fn symphonia_codec_name(codec: symphonia::core::codecs::CodecType) -> String {
 /// Symphonia is more lenient with corrupted ID3 frames than lofty.
 fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<String>) {
     use symphonia::core::formats::FormatOptions;
+    use symphonia::core::formats::probe::Hint;
     use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::{MetadataOptions, StandardTagKey};
-    use symphonia::core::probe::Hint;
+    use symphonia::core::meta::{MetadataOptions, StandardTag};
 
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
@@ -331,13 +334,13 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
         hint.with_extension(ext);
     }
 
-    let mut probed = match symphonia::default::get_probe().format(
+    let mut reader = match symphonia::default::get_probe().probe(
         &hint,
         mss,
-        &FormatOptions::default(),
-        &MetadataOptions::default(),
+        FormatOptions::default(),
+        MetadataOptions::default(),
     ) {
-        Ok(p) => p,
+        Ok(r) => r,
         Err(_) => return (None, None, None),
     };
 
@@ -345,35 +348,27 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
     let mut artist = None;
     let mut album = None;
 
-    // Check metadata on the probe result itself.
-    if let Some(md) = probed.metadata.get()
-        && let Some(rev) = md.current()
-    {
-        for tag in rev.tags() {
-            match tag.std_key {
-                Some(StandardTagKey::TrackTitle) => title = Some(tag.value.to_string()),
-                Some(StandardTagKey::Artist) => artist = Some(tag.value.to_string()),
-                Some(StandardTagKey::Album) => album = Some(tag.value.to_string()),
-                _ => {}
+    // Metadata found while probing is queued on the reader ahead of the
+    // container's own, so walking the revision log oldest-first keeps the
+    // probe's tags authoritative and fills any gaps from the container.
+    let mut log = reader.metadata();
+    loop {
+        if let Some(rev) = log.current() {
+            for tag in &rev.media.tags {
+                match &tag.std {
+                    Some(StandardTag::TrackTitle(v)) if title.is_none() => {
+                        title = Some(v.to_string())
+                    }
+                    Some(StandardTag::Artist(v)) if artist.is_none() => {
+                        artist = Some(v.to_string())
+                    }
+                    Some(StandardTag::Album(v)) if album.is_none() => album = Some(v.to_string()),
+                    _ => {}
+                }
             }
         }
-    }
-
-    // Also check format-level metadata.
-    if let Some(md) = probed.format.metadata().current() {
-        for tag in md.tags() {
-            match tag.std_key {
-                Some(StandardTagKey::TrackTitle) if title.is_none() => {
-                    title = Some(tag.value.to_string())
-                }
-                Some(StandardTagKey::Artist) if artist.is_none() => {
-                    artist = Some(tag.value.to_string())
-                }
-                Some(StandardTagKey::Album) if album.is_none() => {
-                    album = Some(tag.value.to_string())
-                }
-                _ => {}
-            }
+        if log.pop().is_none() {
+            break;
         }
     }
 
@@ -461,27 +456,39 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
     let mut genre: Option<String> = None;
     let mut label: Option<String> = None;
 
-    for tag in meta.tags() {
-        let Some(std_key) = tag.std_key else { continue };
-        let value = tag.value.to_string();
-        if value.is_empty() {
-            continue;
+    // A non-empty text tag replaces the field; empty values are ignored so a
+    // blank tag never shadows a later populated one or the fallback.
+    let set_text = |slot: &mut Option<String>, value: &str| {
+        if !value.is_empty() {
+            *slot = Some(value.to_string());
         }
-        match std_key {
-            StandardTagKey::TrackTitle => title = Some(value),
-            StandardTagKey::Artist => artist = Some(value),
-            StandardTagKey::AlbumArtist => album_artist = Some(value),
-            StandardTagKey::Album => album = Some(value),
-            StandardTagKey::Date => date = Some(value),
-            StandardTagKey::OriginalDate if date.is_none() => date = Some(value),
-            StandardTagKey::TrackNumber => {
-                track_number = value.split('/').next().and_then(|s| s.trim().parse().ok());
+    };
+
+    for tag in &meta.media.tags {
+        let Some(std) = &tag.std else { continue };
+        match std {
+            StandardTag::TrackTitle(v) => set_text(&mut title, v),
+            StandardTag::Artist(v) => set_text(&mut artist, v),
+            StandardTag::AlbumArtist(v) => set_text(&mut album_artist, v),
+            StandardTag::Album(v) => set_text(&mut album, v),
+            StandardTag::ReleaseDate(v) | StandardTag::RecordingDate(v) => set_text(&mut date, v),
+            StandardTag::ReleaseYear(y) | StandardTag::RecordingYear(y) if date.is_none() => {
+                date = Some(y.to_string())
             }
-            StandardTagKey::DiscNumber => {
-                disc = value.split('/').next().and_then(|s| s.trim().parse().ok());
+            StandardTag::OriginalReleaseDate(v) | StandardTag::OriginalRecordingDate(v)
+                if date.is_none() =>
+            {
+                set_text(&mut date, v)
             }
-            StandardTagKey::Genre => genre = Some(value),
-            StandardTagKey::Label => label = Some(value),
+            StandardTag::OriginalReleaseYear(y) | StandardTag::OriginalRecordingYear(y)
+                if date.is_none() =>
+            {
+                date = Some(y.to_string())
+            }
+            StandardTag::TrackNumber(n) => track_number = Some(*n as i32),
+            StandardTag::DiscNumber(n) => disc = Some(*n as i32),
+            StandardTag::Genre(v) => set_text(&mut genre, v),
+            StandardTag::Label(v) => set_text(&mut label, v),
             _ => {}
         }
     }
@@ -556,66 +563,70 @@ mod tests {
     }
 
     // --- metadata_from_probe_result tests ---
-    //
-    // MetadataRevision has private fields and can only be constructed via
-    // MetadataBuilder (symphonia::core::meta::MetadataBuilder). Tag::new()
-    // is public, so we can build arbitrary revisions in tests.
 
-    use symphonia::core::meta::{MetadataBuilder, StandardTagKey, Tag, Value};
+    use symphonia::core::meta::well_known::METADATA_ID_ID3V2;
+    use symphonia::core::meta::{MetadataBuilder, MetadataInfo, StandardTag, Tag};
 
-    fn make_revision(tags: &[(StandardTagKey, &str)]) -> symphonia::core::meta::MetadataRevision {
-        let mut builder = MetadataBuilder::new();
-        for (key, value) in tags {
-            builder.add_tag(Tag::new(Some(*key), "", Value::String(value.to_string())));
+    const TEST_META_INFO: MetadataInfo = MetadataInfo {
+        metadata: METADATA_ID_ID3V2,
+        short_name: "id3v2",
+        long_name: "ID3v2",
+    };
+
+    fn make_revision(tags: &[StandardTag]) -> symphonia::core::meta::MetadataRevision {
+        let mut builder = MetadataBuilder::new(TEST_META_INFO);
+        for std in tags {
+            builder.add_tag(Tag::new_from_parts("", "", Some(std.clone())));
         }
-        builder.metadata()
+        builder.build()
     }
 
     #[test]
-    fn test_probe_track_number_slash_format() {
-        // "3/12" in TrackNumber tag should parse to track_number = Some(3),
-        // ignoring the total-tracks part after the slash.
+    fn test_probe_track_and_disc_numbers() {
         let rev = make_revision(&[
-            (StandardTagKey::TrackTitle, "My Song"),
-            (StandardTagKey::Artist, "Artist"),
-            (StandardTagKey::Album, "Album"),
-            (StandardTagKey::TrackNumber, "3/12"),
+            StandardTag::TrackTitle("My Song".to_string().into()),
+            StandardTag::Artist("Artist".to_string().into()),
+            StandardTag::Album("Album".to_string().into()),
+            StandardTag::TrackNumber(3),
+            StandardTag::TrackTotal(12),
+            StandardTag::DiscNumber(2),
         ]);
         let meta = metadata_from_probe_result(&rev, "fallback");
         assert_eq!(
             meta.track_number,
             Some(3),
-            "slash-format track number should parse to the first component"
+            "track number should come from the track number tag, not the total"
         );
+        assert_eq!(meta.disc, Some(2));
     }
 
     #[test]
     fn test_probe_original_date_fallback() {
-        // When Date is absent, OriginalDate should be used as the date.
+        // When no release/recording date is present, the original date is used.
         let rev = make_revision(&[
-            (StandardTagKey::TrackTitle, "My Song"),
-            (StandardTagKey::OriginalDate, "1991"),
+            StandardTag::TrackTitle("My Song".to_string().into()),
+            StandardTag::OriginalReleaseDate("1991".to_string().into()),
         ]);
         let meta = metadata_from_probe_result(&rev, "fallback");
         assert_eq!(
             meta.date,
             Some("1991".to_string()),
-            "OriginalDate should be used when Date is missing"
+            "original release date should be used when the release date is missing"
         );
     }
 
     #[test]
     fn test_probe_original_date_not_used_when_date_present() {
-        // When both Date and OriginalDate are present, Date wins.
+        // The release date takes precedence over the original release date.
         let rev = make_revision(&[
-            (StandardTagKey::Date, "2005"),
-            (StandardTagKey::OriginalDate, "1991"),
+            StandardTag::ReleaseDate("2005".to_string().into()),
+            StandardTag::OriginalReleaseDate("1991".to_string().into()),
         ]);
         let meta = metadata_from_probe_result(&rev, "fallback");
         assert_eq!(
             meta.date,
             Some("2005".to_string()),
-            "Date should take precedence over OriginalDate"
+            "release date should take precedence over original release date"
         );
     }
 
@@ -624,9 +635,9 @@ mod tests {
         // Tags with empty string values should be silently skipped,
         // leaving the corresponding fields as None (or falling back to defaults).
         let rev = make_revision(&[
-            (StandardTagKey::Artist, ""),
-            (StandardTagKey::Album, ""),
-            (StandardTagKey::Genre, ""),
+            StandardTag::Artist(String::new().into()),
+            StandardTag::Album(String::new().into()),
+            StandardTag::Genre(String::new().into()),
         ]);
         let meta = metadata_from_probe_result(&rev, "Title");
         // Empty artist/album fall back to defaults, not empty string.
