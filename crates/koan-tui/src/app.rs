@@ -30,7 +30,7 @@ pub enum Mode {
     QueueEdit,
     Picker(PickerKind),
     LibraryBrowse,
-    TrackInfo(usize),
+    TrackInfo(QueueItemId),
     CoverArtZoom,
     ContextMenu,
     Organize,
@@ -384,7 +384,7 @@ impl App {
             radio_pending: false,
             radio_rx: None,
             radio_config: cfg.radio,
-            art_size: cfg.playback.art_size,
+            art_size: cfg.playback.art_size.clamp(4, 80),
             download_queue,
         }
     }
@@ -718,7 +718,7 @@ impl App {
                     .iter()
                     .position(|e| e.status == QueueEntryStatus::Playing)
                 {
-                    let visible_height = self.layout.queue_area.height.max(5) as usize;
+                    let visible_height = self.queue_visible_height();
                     self.queue.scroll_offset = queue::scroll_for_cursor(
                         &self.visible_queue(),
                         idx,
@@ -1728,7 +1728,7 @@ impl App {
                             self.tx.send(PlayerCommand::Play(entry.id)).ok();
                             self.queue.cursor = idx;
                             // Scroll so the jumped-to track is near the top.
-                            let visible_height = self.layout.queue_area.height.max(10) as usize;
+                            let visible_height = self.queue_visible_height();
                             self.queue.scroll_offset =
                                 queue::scroll_cursor_to_top(&visible, idx, visible_height);
                         }
@@ -1782,13 +1782,12 @@ impl App {
     }
 
     fn open_track_info(&mut self, idx: usize) {
-        let visible = self.visible_queue();
-        if visible.is_empty() || idx >= visible.len() {
+        let Some(entry) = self.queue.vq_cache.entries.get(idx) else {
             return;
-        }
-        self.mode = Mode::TrackInfo(idx);
+        };
+        let (id, path) = (entry.id, entry.path.clone());
+        self.mode = Mode::TrackInfo(id);
         // Prime the cache for this track's path.
-        let path = visible[idx].path.clone();
         self.art.cover_art.get(&path);
     }
 
@@ -1797,13 +1796,11 @@ impl App {
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 // Start drag if clicking near the bottom edge of transport area.
-                let transport_bottom =
-                    self.layout.transport_area.y + self.layout.transport_area.height;
-                if event.row >= transport_bottom.saturating_sub(1)
-                    && event.row <= transport_bottom
-                    && event.column >= self.layout.transport_area.x
-                    && event.column
-                        < self.layout.transport_area.x + self.layout.transport_area.width
+                let t = self.layout.transport_area;
+                if t.height > 0
+                    && event.row == t.y + t.height - 1
+                    && event.column >= t.x
+                    && event.column < t.x + t.width
                 {
                     self.transport_drag = Some((event.row, self.art_size));
                 }
@@ -1981,10 +1978,10 @@ impl App {
                     && self.is_in_rect(event.column, event.row, self.layout.library_area)
                 {
                     self.library_focus = LibraryFocus::Library;
+                    let inner_h = self.library_content_height();
                     if let Some(ref mut lib) = self.library {
                         let inner_x = self.layout.library_area.x + 1;
                         let inner_y = self.layout.library_area.y + 1;
-                        let inner_h = self.layout.library_area.height.saturating_sub(2) as usize;
                         if event.row >= inner_y && (event.row - inner_y) < inner_h as u16 {
                             let row = (event.row - inner_y) as usize;
                             let col = event.column.saturating_sub(inner_x) as usize;
@@ -2069,10 +2066,9 @@ impl App {
                 // All thumb math uses 1/8th-cell units for sub-pixel precision.
                 let q = self.layout.queue_area;
                 let scrollbar_x = q.x + q.width - 1;
-                if event.column == scrollbar_x && event.row > q.y && event.row + 1 < q.y + q.height
-                {
+                if event.column == scrollbar_x && event.row > q.y && event.row < q.y + q.height {
                     let inner_y = q.y + 1;
-                    let visible_height = q.height.saturating_sub(2) as usize;
+                    let visible_height = self.queue_visible_height();
                     let visible = self.visible_queue();
                     let total_lines = super::queue::display_line_count(&visible);
 
@@ -2432,7 +2428,7 @@ impl App {
                 } else {
                     let visible = self.visible_queue();
                     let total_display = super::queue::display_line_count(&visible);
-                    let visible_height = self.layout.queue_area.height.saturating_sub(2) as usize;
+                    let visible_height = self.queue_visible_height();
                     let max_scroll = total_display.saturating_sub(visible_height);
                     self.queue.scroll_offset = (self.queue.scroll_offset + 1).min(max_scroll);
                 }
@@ -2498,7 +2494,7 @@ impl App {
         // Library item.
         if self.mode == Mode::LibraryBrowse && self.is_in_rect(col, row, self.layout.library_area) {
             let inner_y = self.layout.library_area.y + 1;
-            let inner_h = self.layout.library_area.height.saturating_sub(2) as usize;
+            let inner_h = self.library_content_height();
             if row >= inner_y
                 && (row - inner_y) < inner_h as u16
                 && let Some(ref lib) = self.library
@@ -2927,7 +2923,7 @@ impl App {
 
     /// Move cursor up by one page.
     fn page_up(&mut self, extend: bool) {
-        let page_size = self.layout.queue_area.height.max(5) as usize;
+        let page_size = self.queue_visible_height().max(1);
         self.queue.cursor = self.queue.cursor.saturating_sub(page_size);
         if extend {
             self.extend_selection_to(self.queue.cursor);
@@ -2940,7 +2936,7 @@ impl App {
     /// Move cursor down by one page.
     fn page_down(&mut self, extend: bool) {
         let visible_len = self.visible_queue().len();
-        let page_size = self.layout.queue_area.height.max(5) as usize;
+        let page_size = self.queue_visible_height().max(1);
         if visible_len > 0 {
             self.queue.cursor = (self.queue.cursor + page_size).min(visible_len - 1);
         }
@@ -2977,9 +2973,25 @@ impl App {
         self.update_scroll();
     }
 
+    /// Rows of library content on screen. The filter input owns the bottom
+    /// row while it has focus.
+    pub(super) fn library_content_height(&self) -> usize {
+        let inner = self.layout.library_area.height.saturating_sub(2) as usize;
+        let filter_rows = self.library.as_ref().is_some_and(|lib| lib.filter_active) as usize;
+        inner.saturating_sub(filter_rows)
+    }
+
+    /// Rows of queue content on screen. `Borders::TOP` eats the first row.
+    ///
+    /// Rendering, scrolling and every hit-test read this — they drift apart the
+    /// moment there is more than one definition.
+    pub(super) fn queue_visible_height(&self) -> usize {
+        self.layout.queue_area.height.saturating_sub(1) as usize
+    }
+
     fn update_scroll(&mut self) {
         let visible = self.visible_queue();
-        let visible_height = self.layout.queue_area.height.max(10) as usize;
+        let visible_height = self.queue_visible_height();
         self.queue.scroll_offset = queue::scroll_for_cursor(
             &visible,
             self.queue.cursor,
@@ -2993,7 +3005,7 @@ impl App {
     fn scroll_to_scrollbar_y(&mut self, y: u16) {
         let q = self.layout.queue_area;
         let inner_y = q.y + 1;
-        let visible_height = q.height.saturating_sub(2) as usize;
+        let visible_height = self.queue_visible_height();
         if visible_height == 0 {
             return;
         }
@@ -3067,6 +3079,18 @@ impl App {
             self.state_dirty = true; // Queue mutated — persist.
             // Clamp cursor after every external playlist change.
             self.clamp_queue_cursor();
+            self.close_stale_track_info();
+        }
+    }
+
+    /// The track info modal renders nothing once its track leaves the queue,
+    /// and would swallow every keystroke until the user guessed Esc.
+    pub(super) fn close_stale_track_info(&mut self) {
+        if let Mode::TrackInfo(id) = self.mode
+            && !self.queue.vq_cache.entries.iter().any(|e| e.id == id)
+        {
+            self.mode = Mode::Normal;
+            self.art.cover_art.clear();
         }
     }
 

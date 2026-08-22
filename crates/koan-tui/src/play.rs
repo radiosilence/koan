@@ -111,6 +111,24 @@ pub fn run_tui(
         EnableMouseCapture,
         EnableBracketedPaste
     )?;
+    /// Puts the terminal back however the loop exits — `?` included.
+    struct TerminalGuard;
+
+    impl Drop for TerminalGuard {
+        fn drop(&mut self) {
+            let _ = disable_raw_mode();
+            let _ = execute!(
+                io::stdout(),
+                LeaveAlternateScreen,
+                DisableMouseCapture,
+                DisableBracketedPaste,
+                crossterm::cursor::Show
+            );
+        }
+    }
+
+    let _restore = TerminalGuard;
+
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -158,7 +176,9 @@ pub fn run_tui(
 
         terminal.draw(|f| crate::ui::render(f, &mut app))?;
 
-        let mut last_mouse: Option<crossterm::event::MouseEvent> = None;
+        // Motion coalesces to the latest position; clicks and wheel ticks
+        // each carry meaning and are dispatched in order.
+        let mut pending_motion: Option<crossterm::event::MouseEvent> = None;
         loop {
             let now = std::time::Instant::now();
             let remaining = next_frame.saturating_duration_since(now);
@@ -167,9 +187,25 @@ pub fn run_tui(
                 break;
             }
             match crossterm::event::read()? {
-                crossterm::event::Event::Key(key) => app.handle_key(key),
+                crossterm::event::Event::Key(key) => {
+                    if let Some(m) = pending_motion.take() {
+                        app.handle_mouse(m);
+                    }
+                    app.handle_key(key)
+                }
                 crossterm::event::Event::Mouse(mouse) => {
-                    last_mouse = Some(mouse);
+                    if matches!(
+                        mouse.kind,
+                        crossterm::event::MouseEventKind::Moved
+                            | crossterm::event::MouseEventKind::Drag(_)
+                    ) {
+                        pending_motion = Some(mouse);
+                    } else {
+                        if let Some(m) = pending_motion.take() {
+                            app.handle_mouse(m);
+                        }
+                        app.handle_mouse(mouse);
+                    }
                 }
                 crossterm::event::Event::Paste(text) => {
                     let tx_drop = tx.clone();
@@ -238,7 +274,7 @@ pub fn run_tui(
             }
         }
 
-        if let Some(mouse) = last_mouse {
+        if let Some(mouse) = pending_motion.take() {
             app.handle_mouse(mouse);
         }
 
@@ -370,16 +406,6 @@ pub fn run_tui(
             break;
         }
     }
-
-    // Restore terminal.
-    disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture,
-        DisableBracketedPaste
-    )?;
-    terminal.show_cursor()?;
 
     Ok(())
 }

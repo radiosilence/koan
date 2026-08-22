@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
+
+use parking_lot::{Condvar, Mutex as PlMutex};
 
 use koan_core::config;
 use koan_core::player::commands::PlayerCommand;
@@ -18,7 +20,7 @@ pub struct DownloadQueue {
 }
 
 struct Inner {
-    work: Mutex<VecDeque<(i64, QueueItemId)>>,
+    work: PlMutex<VecDeque<(i64, QueueItemId)>>,
     has_work: Condvar,
     state: Arc<SharedPlayerState>,
     cmd_tx: crossbeam_channel::Sender<PlayerCommand>,
@@ -36,7 +38,7 @@ impl DownloadQueue {
         let num_workers = cfg.remote.download_workers.max(1);
 
         let inner = Arc::new(Inner {
-            work: Mutex::new(VecDeque::new()),
+            work: PlMutex::new(VecDeque::new()),
             has_work: Condvar::new(),
             state,
             cmd_tx,
@@ -67,7 +69,7 @@ impl DownloadQueue {
         if items.is_empty() {
             return;
         }
-        let mut q = self.inner.work.lock().unwrap();
+        let mut q = self.inner.work.lock();
         q.extend(items);
         // Wake all workers — there's new work.
         self.inner.has_work.notify_all();
@@ -78,7 +80,7 @@ impl DownloadQueue {
     pub fn prioritize(&self, db_id: i64, queue_id: QueueItemId) {
         // Yank this item from the queue if it's already there (avoid duplicate download).
         {
-            let mut q = self.inner.work.lock().unwrap();
+            let mut q = self.inner.work.lock();
             q.retain(|(_, qid)| *qid != queue_id);
         }
 
@@ -104,7 +106,7 @@ impl DownloadQueue {
         if !album_mates.is_empty() {
             let mate_set: std::collections::HashSet<QueueItemId> =
                 album_mates.into_iter().collect();
-            let mut q = self.inner.work.lock().unwrap();
+            let mut q = self.inner.work.lock();
             let mut front = VecDeque::new();
             let mut rest = VecDeque::new();
             for item in q.drain(..) {
@@ -126,13 +128,13 @@ fn worker_loop(inner: Arc<Inner>) {
     let cfg = config::Config::load().unwrap_or_default();
     loop {
         let item = {
-            let mut q = inner.work.lock().unwrap();
+            let mut q = inner.work.lock();
             loop {
                 if let Some(item) = q.pop_front() {
                     break item;
                 }
                 // Wait for new work — condvar releases lock while sleeping.
-                q = inner.has_work.wait(q).unwrap();
+                inner.has_work.wait(&mut q);
             }
         };
         let (db_id, queue_id) = item;
@@ -184,7 +186,7 @@ fn cursor_watcher(inner: Arc<Inner>) {
         // Pull cursor track from the queue and spawn priority download.
         let mut priority_items = Vec::new();
         {
-            let mut q = inner.work.lock().unwrap();
+            let mut q = inner.work.lock();
             if let Some(pos) = q.iter().position(|(_, qid)| *qid == cursor_id) {
                 priority_items.push(q.remove(pos).unwrap());
 
