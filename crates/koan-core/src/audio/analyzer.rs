@@ -13,22 +13,18 @@
 //!    a single copy.
 //! 2. **Compute phase** — run windowing, FFT, bin→bar accumulation *without*
 //!    holding any lock.
-//! 3. **Output phase** — lock `SharedAnalysisOutput` briefly, memcpy the
-//!    computed spectrum/peaks/VU into it, release.  The TUI thread is blocked
-//!    for at most one memcpy of 48-element Vec slices.
+//! 3. **Output phase** — take the `VizSnapshot` write lock briefly, swap in the
+//!    finished frame, release.  The TUI thread is blocked for at most one
+//!    ~200-byte memcpy.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use parking_lot::Mutex;
 use realfft::RealFftPlanner;
 
-use super::viz::{
-    AnalysisOutput, NUM_BARS, RawVizSnapshot, SharedAnalysisOutput, VizBuffer, VizFrame,
-    VizSnapshot,
-};
+use super::viz::{NUM_BARS, RawVizSnapshot, VizBuffer, VizFrame, VizSnapshot, WAVEFORM_SAMPLES};
 use crate::config::VisualizerConfig;
 
 // ── FFT constants ────────────────────────────────────────────────────────────
@@ -214,6 +210,10 @@ fn build_bin_to_bar(sample_rate: f32, scale: FrequencyScale) -> Vec<Option<usize
 struct AnalysisState {
     /// Precomputed Hann window.
     window: Vec<f32>,
+    /// Magnitude scale that maps a windowed bin back to signal amplitude.
+    /// Derived from the window's coherent gain, so it stays correct if the
+    /// window function changes.
+    fft_norm: f32,
     /// FFT scratch: time-domain input (windowed mono).
     fft_input: Vec<f32>,
     /// FFT scratch: frequency-domain output.
@@ -264,8 +264,11 @@ impl AnalysisState {
         let fft = planner.plan_fft_forward(FFT_SIZE);
         let fft_input = fft.make_input_vec();
         let fft_output = fft.make_output_vec();
+        let window = hann_window();
+        let fft_norm = 2.0 / window.iter().sum::<f32>();
         Self {
-            window: hann_window(),
+            window,
+            fft_norm,
             fft_input,
             fft_output,
             fft,
@@ -356,7 +359,7 @@ impl AnalysisState {
             *c = 0;
         }
 
-        let norm = 2.0 / FFT_SIZE as f32;
+        let norm = self.fft_norm;
         let db_range_inv = 1.0 / (DB_CEIL - DB_FLOOR);
         let num_bins = self.fft_output.len().min(self.bin_to_bar.len());
 
@@ -388,18 +391,7 @@ impl AnalysisState {
             self.bar_counts[bar_idx] += 1;
         }
 
-        // ── Interpolate empty bars ───────────────────────────────────────────
-        for i in 0..NUM_BARS {
-            if self.bar_counts[i] == 0 {
-                let left = if i > 0 { self.spectrum[i - 1] } else { 0.0 };
-                let right = if i + 1 < NUM_BARS {
-                    self.spectrum[i + 1]
-                } else {
-                    0.0
-                };
-                self.spectrum[i] = (left + right) * 0.5;
-            }
-        }
+        self.fill_empty_bars();
 
         // ── Time-based smoothing + peak hold ────────────────────────────────
         let (bar_decay, peak_decay) = self.decay_factors();
@@ -437,6 +429,50 @@ impl AnalysisState {
         // Beat energy: rise instantly, decay slower than bars for a visible pulse.
         // Using sqrt of bar_decay gives roughly double the half-life.
         self.beat_energy = beat_spike.max(self.beat_energy * bar_decay.sqrt());
+    }
+
+    /// Fill bars that no FFT bin landed in.
+    ///
+    /// At high sample rates a 2048-point FFT spaces bins ~94 Hz apart, leaving
+    /// whole runs of the bottom Bark bars with no bin at all. Each run is
+    /// interpolated across its two *measured* neighbours in one pass, so a
+    /// synthesised bar is never used as an endpoint for the next one.
+    fn fill_empty_bars(&mut self) {
+        let mut i = 0;
+        while i < NUM_BARS {
+            if self.bar_counts[i] != 0 {
+                i += 1;
+                continue;
+            }
+            let mut end = i;
+            while end < NUM_BARS && self.bar_counts[end] == 0 {
+                end += 1;
+            }
+
+            match (i.checked_sub(1), (end < NUM_BARS).then_some(end)) {
+                (Some(left), Some(right)) => {
+                    let (lo, hi) = (self.spectrum[left], self.spectrum[right]);
+                    let span = (right - left) as f32;
+                    for (n, bar) in (i..end).enumerate() {
+                        let t = (n + 1) as f32 / span;
+                        self.spectrum[bar] = lo + (hi - lo) * t;
+                    }
+                }
+                // A run at either edge has one measured neighbour; extend it
+                // rather than fading the outermost bar toward an imaginary zero.
+                (Some(left), None) => {
+                    let value = self.spectrum[left];
+                    self.spectrum[i..end].fill(value);
+                }
+                (None, Some(right)) => {
+                    let value = self.spectrum[right];
+                    self.spectrum[i..end].fill(value);
+                }
+                (None, None) => self.spectrum.fill(0.0),
+            }
+
+            i = end;
+        }
     }
 
     /// Apply decay-to-silence (called when paused or no audio).
@@ -491,45 +527,28 @@ impl AnalysisState {
 
 /// Background FFT analysis engine.
 ///
-/// Call `VizAnalyzer::spawn` to start the analysis thread. Drop the returned
-/// handle (or let it go out of scope) to request graceful shutdown; the thread
-/// exits within one analysis interval.
-///
-/// The latest analysis results are always available via `output()` or via the
-/// `VizSnapshot` passed to `spawn_with_snapshot`.
+/// Call `VizAnalyzer::spawn_with_snapshot` to start the analysis thread. Drop
+/// the returned handle (or let it go out of scope) to request graceful
+/// shutdown; the thread exits within one analysis interval.
 pub struct VizAnalyzer {
-    output: SharedAnalysisOutput,
     running: Arc<AtomicBool>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
 impl VizAnalyzer {
-    /// Spawn the background analysis thread.
+    /// Spawn the background analysis thread, writing each pass to `snapshot`.
     ///
-    /// * `viz_buffer` — the shared sample ring-buffer written by the decode thread.
-    /// * `cfg`        — visualizer configuration (scale, decay times, fps).
-    pub fn spawn(viz_buffer: Arc<VizBuffer>, cfg: &VisualizerConfig) -> Self {
-        Self::spawn_inner(viz_buffer, cfg, None)
-    }
-
-    /// Spawn the background analysis thread, also writing results to `snapshot`.
-    ///
-    /// Each analysis pass writes a `VizFrame` to `snapshot` (write lock <1us)
-    /// in addition to updating `SharedAnalysisOutput`.
+    /// * `viz_buffer`     — the delay line written by the decode thread.
+    /// * `cfg`            — visualizer configuration (scale, decay times, fps).
+    /// * `snapshot`       — where each finished `VizFrame` is published.
+    /// * `samples_played` — the engine's played counter, used to read the delay
+    ///   line at the position currently reaching the DAC.
     pub fn spawn_with_snapshot(
         viz_buffer: Arc<VizBuffer>,
         cfg: &VisualizerConfig,
         snapshot: Arc<VizSnapshot>,
+        samples_played: Arc<AtomicU64>,
     ) -> Self {
-        Self::spawn_inner(viz_buffer, cfg, Some(snapshot))
-    }
-
-    fn spawn_inner(
-        viz_buffer: Arc<VizBuffer>,
-        cfg: &VisualizerConfig,
-        snapshot: Option<Arc<VizSnapshot>>,
-    ) -> Self {
-        let output: SharedAnalysisOutput = Arc::new(Mutex::new(AnalysisOutput::default()));
         let running = Arc::new(AtomicBool::new(true));
 
         let scale = FrequencyScale::parse(&cfg.scale);
@@ -538,7 +557,6 @@ impl VizAnalyzer {
         let peak_half_life = cfg.peak_decay_ms as f32 / 1000.0;
         let interval = Duration::from_millis(1000 / cfg.fps.max(1) as u64);
 
-        let output_clone = Arc::clone(&output);
         let running_clone = Arc::clone(&running);
 
         let handle = thread::Builder::new()
@@ -546,8 +564,8 @@ impl VizAnalyzer {
             .spawn(move || {
                 analysis_loop(
                     viz_buffer,
-                    output_clone,
                     snapshot,
+                    samples_played,
                     running_clone,
                     scale,
                     amplitude_scale,
@@ -559,24 +577,9 @@ impl VizAnalyzer {
             .expect("failed to spawn viz-analyzer thread");
 
         Self {
-            output,
             running,
             handle: Some(handle),
         }
-    }
-
-    /// Clone the latest analysis output for rendering.
-    ///
-    /// Acquires the output lock for the duration of a `Clone` — typically a
-    /// handful of `memcpy`s over 48-element `Vec`s.
-    pub fn output(&self) -> AnalysisOutput {
-        self.output.lock().clone()
-    }
-
-    /// Shared reference to the raw output mutex (for callers that prefer to
-    /// lock once and read multiple fields without cloning).
-    pub fn shared_output(&self) -> SharedAnalysisOutput {
-        Arc::clone(&self.output)
     }
 
     /// Signal the background thread to stop and wait for it to exit.
@@ -596,11 +599,19 @@ impl Drop for VizAnalyzer {
 
 // ── Analysis thread loop ─────────────────────────────────────────────────────
 
+/// Frames read from the delay line each pass: enough for both the FFT window
+/// and the widest waveform the UI draws.
+const WINDOW_FRAMES: usize = if FFT_SIZE > WAVEFORM_SAMPLES {
+    FFT_SIZE
+} else {
+    WAVEFORM_SAMPLES
+};
+
 #[allow(clippy::too_many_arguments)]
 fn analysis_loop(
     viz_buffer: Arc<VizBuffer>,
-    output: SharedAnalysisOutput,
-    snapshot: Option<Arc<VizSnapshot>>,
+    snapshot: Arc<VizSnapshot>,
+    samples_played: Arc<AtomicU64>,
     running: Arc<AtomicBool>,
     scale: FrequencyScale,
     amplitude_scale: AmplitudeScale,
@@ -609,12 +620,14 @@ fn analysis_loop(
     interval: Duration,
 ) {
     let mut state = AnalysisState::new(scale, bar_half_life, peak_half_life, amplitude_scale);
+    let mut snap = RawVizSnapshot::default();
 
     while running.load(Ordering::Relaxed) {
         let start = Instant::now();
 
-        // ── Phase 1: snapshot (lock held briefly) ────────────────────────────
-        let snap: RawVizSnapshot = viz_buffer.snapshot_with_meta();
+        // ── Phase 1: read the delay line at the play head (lock held briefly) ─
+        let played = samples_played.load(Ordering::Relaxed);
+        viz_buffer.snapshot_at(played, WINDOW_FRAMES, &mut snap);
 
         // ── Phase 2: compute (no lock held) ──────────────────────────────────
         state.analyze(
@@ -623,35 +636,19 @@ fn analysis_loop(
             snap.sample_rate as f32,
         );
 
-        // ── Phase 3a: publish to SharedAnalysisOutput (Mutex, <1us) ──────────
-        {
-            let mut out = output.lock();
-            out.spectrum.copy_from_slice(&state.spectrum);
-            out.peaks.copy_from_slice(&state.peaks);
-            out.vu_levels = state.vu_levels;
-        }
-
-        // ── Phase 3b: publish to VizSnapshot (RwLock write, <1us) ────────────
-        if let Some(ref snap_out) = snapshot {
-            // Stash the most recent waveform samples for oscilloscope/lissajous.
-            // Take the tail of the raw snapshot (already in chronological order).
-            use super::viz::WAVEFORM_SAMPLES;
-            let waveform = if snap.channels >= 1 && !snap.samples.is_empty() {
-                let interleaved_len = WAVEFORM_SAMPLES * snap.channels.max(1) as usize;
-                let start = snap.samples.len().saturating_sub(interleaved_len);
-                snap.samples[start..].to_vec()
-            } else {
-                Vec::new()
-            };
-            snap_out.write(VizFrame {
-                spectrum: state.spectrum,
-                peaks: state.peaks,
-                vu_levels: state.vu_levels,
-                beat_energy: state.beat_energy,
-                timestamp: Instant::now(),
-                waveform,
-            });
-        }
+        // ── Phase 3: publish to VizSnapshot (RwLock write, <1us) ─────────────
+        // The tail of the window is the newest audible audio, which is what the
+        // oscilloscope and lissajous modes draw.
+        let interleaved_len = WAVEFORM_SAMPLES * snap.channels.max(1) as usize;
+        let waveform_start = snap.samples.len().saturating_sub(interleaved_len);
+        snapshot.write(VizFrame {
+            spectrum: state.spectrum,
+            peaks: state.peaks,
+            vu_levels: state.vu_levels,
+            beat_energy: state.beat_energy,
+            timestamp: Instant::now(),
+            waveform: snap.samples[waveform_start..].to_vec(),
+        });
 
         // ── Sleep for the remainder of the interval ───────────────────────────
         let elapsed = start.elapsed();
@@ -673,49 +670,163 @@ mod tests {
         VisualizerConfig::default()
     }
 
+    /// Interleaved stereo sine, `frames` long, at `freq` Hz.
+    fn sine(frames: usize, freq: f32, amplitude: f32, sample_rate: u32) -> Vec<f32> {
+        let mut samples = Vec::with_capacity(frames * 2);
+        for i in 0..frames {
+            let t = i as f32 / sample_rate as f32;
+            let val = (2.0 * std::f32::consts::PI * freq * t).sin() * amplitude;
+            samples.push(val);
+            samples.push(val);
+        }
+        samples
+    }
+
+    fn spawn_analyzer(
+        buf: Arc<VizBuffer>,
+        cfg: &VisualizerConfig,
+        played: u64,
+    ) -> (VizAnalyzer, Arc<VizSnapshot>) {
+        let snapshot = VizSnapshot::new();
+        let analyzer = VizAnalyzer::spawn_with_snapshot(
+            buf,
+            cfg,
+            Arc::clone(&snapshot),
+            Arc::new(AtomicU64::new(played)),
+        );
+        (analyzer, snapshot)
+    }
+
     #[test]
     fn analyzer_spawns_and_shuts_down() {
         let buf = VizBuffer::new();
         let cfg = make_cfg();
-        let mut analyzer = VizAnalyzer::spawn(buf, &cfg);
+        let (mut analyzer, snapshot) = spawn_analyzer(buf, &cfg, 0);
         // Let it run for one cycle.
         std::thread::sleep(Duration::from_millis(100));
         analyzer.shutdown();
-        // output() must still work after shutdown.
-        let out = analyzer.output();
-        assert_eq!(out.spectrum.len(), NUM_BARS);
-        assert_eq!(out.peaks.len(), NUM_BARS);
+        // The snapshot must still be readable after shutdown.
+        let frame = snapshot.read();
+        assert_eq!(frame.spectrum.len(), NUM_BARS);
+        assert_eq!(frame.peaks.len(), NUM_BARS);
     }
 
     #[test]
     fn analyzer_produces_nonzero_output_for_sine() {
         let buf = VizBuffer::new();
         let sample_rate = 44100u32;
-        let channels = 2u16;
-        let num_frames = 4096;
-        let mut samples = Vec::with_capacity(num_frames * 2);
-        for i in 0..num_frames {
-            let t = i as f32 / sample_rate as f32;
-            let val = (2.0 * std::f32::consts::PI * 440.0 * t).sin() * 0.5;
-            samples.push(val);
-            samples.push(val);
-        }
-        buf.push_samples(&samples, channels, sample_rate);
+        let samples = sine(4096, 440.0, 0.5, sample_rate);
+        buf.push_samples(&samples, 2, sample_rate);
 
         let cfg = make_cfg();
-        let mut analyzer = VizAnalyzer::spawn(Arc::clone(&buf), &cfg);
+        // Everything pushed has been played, so the window sits at the head.
+        let (mut analyzer, snapshot) = spawn_analyzer(Arc::clone(&buf), &cfg, samples.len() as u64);
         // Wait for at least two analysis passes.
         std::thread::sleep(Duration::from_millis(150));
 
-        let out = analyzer.output();
+        let frame = snapshot.read();
         analyzer.shutdown();
 
-        let max_bar = out.spectrum.iter().cloned().fold(0.0f32, f32::max);
+        let max_bar = frame.spectrum.iter().cloned().fold(0.0f32, f32::max);
         assert!(
             max_bar > 0.05,
             "expected nonzero spectrum for 440 Hz sine, max = {}",
             max_bar
         );
+    }
+
+    #[test]
+    fn analyzer_reads_the_delay_line_at_the_play_head() {
+        let sample_rate = 44100u32;
+        let buf = VizBuffer::new();
+        // A second of silence is heard first; a tone is decoded far ahead of it.
+        buf.push_samples(&vec![0.0; sample_rate as usize * 2], 2, sample_rate);
+        buf.push_samples(&sine(4096, 440.0, 0.8, sample_rate), 2, sample_rate);
+
+        let cfg = make_cfg();
+        // The DAC is still inside the silence.
+        let (mut analyzer, snapshot) = spawn_analyzer(Arc::clone(&buf), &cfg, sample_rate as u64);
+        std::thread::sleep(Duration::from_millis(150));
+        let frame = snapshot.read();
+        analyzer.shutdown();
+
+        let max_bar = frame.spectrum.iter().cloned().fold(0.0f32, f32::max);
+        assert!(
+            max_bar < 0.05,
+            "visualizer showed audio the DAC has not reached yet, max = {}",
+            max_bar
+        );
+    }
+
+    #[test]
+    fn full_scale_sine_reads_zero_db() {
+        // Linear amplitude scale so no A-weighting shifts the level, and a
+        // bin-centred frequency so there is no scalloping loss to hide a
+        // wrong window gain.
+        let mut state =
+            AnalysisState::new(FrequencyScale::Bark, 0.08, 0.35, AmplitudeScale::Linear);
+        let sample_rate = 44100.0;
+        let freq = 46.0 * sample_rate / FFT_SIZE as f32;
+        let samples = sine(FFT_SIZE, freq, 1.0, sample_rate as u32);
+
+        state.analyze(&samples, 2, sample_rate);
+
+        // 0 dBFS maps to the top of the DB_FLOOR..DB_CEIL range.
+        let max_bar = state.spectrum.iter().cloned().fold(0.0f32, f32::max);
+        assert!(
+            max_bar > 0.98,
+            "full-scale sine should reach the top of the widget, got {}",
+            max_bar
+        );
+    }
+
+    #[test]
+    fn bark_bars_go_unmapped_at_high_sample_rates() {
+        // 192 kHz over a 2048-point FFT is 93.75 Hz per bin — too coarse for
+        // the bottom of the Bark scale, which is what makes interpolation
+        // load-bearing rather than cosmetic.
+        let mapping = build_bin_to_bar(192_000.0, FrequencyScale::Bark);
+        let mut counts = [0u32; NUM_BARS];
+        for bar in mapping.iter().flatten() {
+            counts[*bar] += 1;
+        }
+        assert_eq!(
+            counts[0], 0,
+            "no bin reaches the lowest Bark bar at 192 kHz"
+        );
+        assert!(
+            counts.iter().filter(|&&c| c == 0).count() > 3,
+            "expected several unmapped bass bars, got {:?}",
+            counts
+        );
+    }
+
+    #[test]
+    fn empty_bars_interpolate_without_sawtooth() {
+        let mut state =
+            AnalysisState::new(FrequencyScale::Bark, 0.08, 0.35, AmplitudeScale::Linear);
+        // A rising bass ramp measured only on the bars a 192 kHz FFT reaches.
+        for (n, &bar) in [1usize, 4, 6, 8].iter().enumerate() {
+            state.bar_counts[bar] = 1;
+            state.spectrum[bar] = 0.2 + 0.1 * n as f32;
+        }
+        for bar in 9..NUM_BARS {
+            state.bar_counts[bar] = 1;
+            state.spectrum[bar] = 0.5;
+        }
+
+        state.fill_empty_bars();
+
+        // Bar 0 has no measured neighbour below it, so it takes bar 1's level
+        // rather than half of it.
+        assert!((state.spectrum[0] - state.spectrum[1]).abs() < 1e-6);
+        for i in 0..8 {
+            assert!(
+                state.spectrum[i + 1] >= state.spectrum[i] - 1e-6,
+                "sawtooth across interpolated bass: {:?}",
+                &state.spectrum[..9]
+            );
+        }
     }
 
     #[test]

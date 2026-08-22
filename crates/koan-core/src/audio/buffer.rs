@@ -13,7 +13,7 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::{Duration, Time, TimeBase};
+use symphonia::core::units::{Duration, Time, TimeBase, Timestamp};
 use thiserror::Error;
 
 use crate::audio::opus::OpusBridge;
@@ -455,12 +455,21 @@ where
 // Internal decode loop
 // ---------------------------------------------------------------------------
 
+/// Sources that may fail to open or decode in a row before the session is
+/// abandoned. One bad file must not end the queue, but a queue of nothing but
+/// bad files still has to terminate.
+const MAX_CONSECUTIVE_FAILURES: u32 = 32;
+
 /// Gapless decode loop: decode first entry, then call next_track on EOF.
 ///
 /// Every track in a session shares one ring buffer, and therefore the audio
 /// engine configured for it. A track whose PCM format differs from the first
 /// ends the session rather than being written at the wrong format; the player
 /// restarts it on a correctly configured engine.
+///
+/// An unreadable source is skipped, not fatal — the decode head runs up to a
+/// full ring buffer ahead of the DAC, so tearing down here would truncate the
+/// track still being heard as well as dropping the rest of the queue.
 #[allow(clippy::too_many_arguments)]
 fn decode_queue_loop<N>(
     first: SourceEntry,
@@ -475,85 +484,73 @@ fn decode_queue_loop<N>(
 ) where
     N: Fn() -> Option<SourceEntry>,
 {
-    'session: {
-        let path = first.path.clone();
-        let hint = first.hint.clone();
-        let mss = match (first.make_mss)() {
-            Ok(mss) => mss,
-            Err(e) => {
-                if !stop.load(Ordering::Relaxed) {
-                    log::error!("failed to open {}: {}", path.display(), e);
-                }
-                break 'session;
-            }
-        };
+    // The delay line is indexed against the engine's played counter, which the
+    // player has just reset for this session.
+    if let Some(viz) = viz_buffer {
+        viz.reset();
+    }
 
-        let format = match decode_single(
-            first.id,
-            &path,
-            &hint,
-            mss,
-            &mut producer,
-            stop,
-            initial_seek_ms,
-            timeline,
-            viz_buffer,
-            rg_mode,
-            pre_amp_db,
-            None,
-        ) {
-            Ok(Decoded::Complete(format)) => format,
-            Ok(Decoded::FormatMismatch) => break 'session,
-            Err(e) => {
-                if !stop.load(Ordering::Relaxed) {
-                    log::error!("decode error on {}: {}", path.display(), e);
-                }
-                break 'session;
-            }
-        };
+    let mut pending = Some(first);
+    let mut seek_ms = initial_seek_ms;
+    let mut format: Option<PcmFormat> = None;
+    let mut failures: u32 = 0;
 
-        while !stop.load(Ordering::Relaxed) {
-            let Some(entry) = (next_track)() else {
-                log::info!("playlist exhausted, decode thread finishing");
-                break;
-            };
+    while let Some(entry) = pending.take() {
+        if stop.load(Ordering::Relaxed) {
+            break;
+        }
 
-            log::info!("gapless transition → {}", entry.path.display());
-            let next_path = entry.path.clone();
-            let next_hint = entry.hint.clone();
-            let next_mss = match (entry.make_mss)() {
-                Ok(mss) => mss,
-                Err(e) => {
-                    if !stop.load(Ordering::Relaxed) {
-                        log::error!("failed to open {}: {}", next_path.display(), e);
-                    }
-                    break;
-                }
-            };
+        let SourceEntry {
+            id,
+            path,
+            hint,
+            make_mss,
+        } = entry;
 
-            match decode_single(
-                entry.id,
-                &next_path,
-                &next_hint,
-                next_mss,
+        let outcome = make_mss().map_err(DecodeError::Io).and_then(|mss| {
+            decode_single(
+                id,
+                &path,
+                &hint,
+                mss,
                 &mut producer,
                 stop,
-                0,
+                seek_ms,
                 timeline,
                 viz_buffer,
                 rg_mode,
                 pre_amp_db,
-                Some(format),
-            ) {
-                Ok(Decoded::Complete(_)) => {}
-                Ok(Decoded::FormatMismatch) => break,
-                Err(e) => {
-                    if !stop.load(Ordering::Relaxed) {
-                        log::error!("decode error on {}: {}", next_path.display(), e);
-                    }
+                format,
+            )
+        });
+
+        match outcome {
+            Ok(Decoded::Complete(decoded_format)) => {
+                format = Some(decoded_format);
+                failures = 0;
+            }
+            Ok(Decoded::FormatMismatch) => break,
+            Err(e) => {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                failures += 1;
+                log::error!("skipping {}: {}", path.display(), e);
+                if failures >= MAX_CONSECUTIVE_FAILURES {
+                    log::error!(
+                        "{} sources failed in a row, decode thread giving up",
+                        failures
+                    );
                     break;
                 }
             }
+        }
+
+        seek_ms = 0;
+        pending = (next_track)();
+        match pending {
+            Some(ref next) => log::info!("gapless transition → {}", next.path.display()),
+            None => log::info!("playlist exhausted, decode thread finishing"),
         }
     }
 
@@ -625,6 +622,7 @@ fn decode_single(
         .default_track(TrackType::Audio)
         .ok_or(DecodeError::NoTrack)?;
     let track_id = track.id;
+    let time_base = track.time_base;
     let codec_params = track
         .codec_params
         .as_ref()
@@ -683,19 +681,6 @@ fn decode_single(
         return Ok(Decoded::FormatMismatch);
     }
 
-    let seek_samples = seek_ms * sample_rate as u64 * channels as u64 / 1000;
-
-    // Record this track's boundary in the timeline.
-    let write_offset = timeline.samples_written.load(Ordering::Relaxed);
-    timeline.push_boundary(TrackBoundary {
-        id: queue_item_id,
-        path: path.to_path_buf(),
-        info,
-        sample_offset: write_offset,
-        samples_written: 0,
-        seek_samples,
-    });
-
     // Build either a Symphonia decoder or our Opus bridge.
     let mut symphonia_decoder = if is_opus_codec {
         None
@@ -713,16 +698,27 @@ fn decode_single(
     };
 
     // Seek if requested (only for the first track usually).
+    //
+    // Accurate rather than coarse: a coarse seek picks a byte offset by
+    // interpolating linearly over the file and then derives its reported
+    // timestamp from that same guess, so on VBR MP3 it lands seconds from the
+    // request *and* reports a position it never reached. Accurate mode walks
+    // frame headers and is truthful about both, for 1.5-3ms on files up to
+    // 79MB. The timeline records where playback actually resumed, so the
+    // transport shows the position being heard.
+    let mut seek_samples = 0;
     if seek_ms > 0 {
-        reader
+        let seeked = reader
             .seek(
-                SeekMode::Coarse,
+                SeekMode::Accurate,
                 SeekTo::Time {
                     time: Time::from_millis_u64(seek_ms),
                     track_id: Some(track_id),
                 },
             )
             .map_err(|e| DecodeError::Decode(format!("seek failed: {}", e)))?;
+        seek_samples = landing_samples(time_base, seeked.actual_ts, sample_rate, channels)
+            .unwrap_or(seek_ms * sample_rate as u64 * channels as u64 / 1000);
         if let Some(ref mut dec) = symphonia_decoder {
             dec.reset();
         }
@@ -730,6 +726,17 @@ fn decode_single(
             opus.reset();
         }
     }
+
+    // Record this track's boundary in the timeline.
+    let write_offset = timeline.samples_written.load(Ordering::Relaxed);
+    timeline.push_boundary(TrackBoundary {
+        id: queue_item_id,
+        path: path.to_path_buf(),
+        info,
+        sample_offset: write_offset,
+        samples_written: 0,
+        seek_samples,
+    });
 
     // Read ReplayGain tags and select the active gain for this track.
     let rg_gain = if rg_mode != ReplayGainMode::Off {
@@ -875,6 +882,23 @@ fn decode_single(
 
         timeline.add_written(samples.len() as u64);
     }
+}
+
+/// Interleaved sample offset of a seek's landing point.
+///
+/// `actual_ts` is in the track's timebase, which is not always the reciprocal
+/// of the sample rate (Matroska ticks in milliseconds), so it is converted
+/// through `Time` rather than assumed to be a frame count.
+fn landing_samples(
+    time_base: Option<TimeBase>,
+    actual_ts: Timestamp,
+    sample_rate: u32,
+    channels: u16,
+) -> Option<u64> {
+    let (seconds, nanos) = time_base?.calc_time(actual_ts)?.parts();
+    let rate = sample_rate as u64;
+    let frames = seconds.max(0) as u64 * rate + (nanos as u64 * rate) / 1_000_000_000;
+    Some(frames * channels as u64)
 }
 
 /// Duration of a track in milliseconds.
@@ -1359,5 +1383,227 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(true));
         wait_for_drain(&producer, &stop);
         drop(consumer);
+    }
+
+    // --- Failure handling in the gapless queue ---
+
+    /// A file that exists and has an audio extension but no audio in it.
+    fn write_garbage(path: &Path) {
+        std::fs::write(path, b"this is not a wav file").unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_track_is_skipped_and_the_queue_continues() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.wav");
+        let bad = dir.path().join("bad.wav");
+        let c = dir.path().join("c.wav");
+        crate::test_utils::generate_wav(&a, 44100, 2, 0.1, 16);
+        write_garbage(&bad);
+        crate::test_utils::generate_wav(&c, 44100, 2, 0.1, 16);
+
+        let bounds = run_queue(&[a.clone(), bad, c.clone()]);
+        let decoded: Vec<_> = bounds.iter().map(|b| b.path.clone()).collect();
+        assert_eq!(
+            decoded,
+            vec![a, c],
+            "one bad file must not take the rest of the queue with it"
+        );
+    }
+
+    #[test]
+    fn a_missing_track_is_skipped_and_the_queue_continues() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("gone.wav");
+        let b = dir.path().join("b.wav");
+        crate::test_utils::generate_wav(&b, 44100, 2, 0.1, 16);
+
+        let bounds = run_queue(&[missing, b.clone()]);
+        assert_eq!(bounds.len(), 1);
+        assert_eq!(
+            bounds[0].path, b,
+            "a bad first track must not end the session"
+        );
+    }
+
+    #[test]
+    fn an_entirely_unreadable_queue_terminates() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("bad.wav");
+        write_garbage(&bad);
+
+        // Nothing decodes, so the ring stays empty; the consumer only has to
+        // outlive the producer.
+        let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(1 << 12);
+        let timeline = PlaybackTimeline::new();
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = calls.clone();
+        let bad_path = bad.clone();
+        let next_track = move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+            Some(SourceEntry::from_file(QueueItemId::new(), bad_path.clone()))
+        };
+
+        decode_queue_loop(
+            SourceEntry::from_file(QueueItemId::new(), bad),
+            producer,
+            &stop,
+            0,
+            &next_track,
+            &timeline,
+            None,
+            crate::config::ReplayGainMode::Off,
+            0.0,
+        );
+
+        // The first source plus one per next_track call, capped.
+        assert_eq!(
+            calls.load(Ordering::Relaxed) + 1,
+            MAX_CONSECUTIVE_FAILURES as usize
+        );
+        assert!(timeline.boundaries.read().is_empty());
+    }
+
+    // --- Seek landing position ---
+
+    #[test]
+    fn landing_samples_converts_frame_timebases() {
+        // The usual audio case: one tick per frame.
+        let tb = TimeBase::try_from_recip(44100).unwrap();
+        assert_eq!(
+            landing_samples(Some(tb), Timestamp::from(44100u32), 44100, 2),
+            Some(88_200)
+        );
+    }
+
+    #[test]
+    fn landing_samples_converts_millisecond_timebases() {
+        // Matroska ticks in milliseconds, not frames.
+        let tb = TimeBase::try_new(1, 1000).unwrap();
+        assert_eq!(
+            landing_samples(Some(tb), Timestamp::from(1500u32), 48000, 2),
+            Some(48000 * 3 / 2 * 2)
+        );
+    }
+
+    #[test]
+    fn landing_samples_needs_a_timebase() {
+        assert_eq!(
+            landing_samples(None, Timestamp::from(1000u32), 44100, 2),
+            None
+        );
+    }
+
+    /// Build a 300s VBR MP3: 30s of near-silence then a loud tone, which gives
+    /// lame a wide enough bitrate spread to make coarse seeking miss badly.
+    #[cfg(test)]
+    fn make_vbr_mp3(dir: &Path) -> PathBuf {
+        let wav = dir.join("source.wav");
+        let mp3 = dir.join("source.mp3");
+        let ok = std::process::Command::new("sox")
+            .args(["-n", "-r", "44100", "-c", "2"])
+            .arg(&wav)
+            .args([
+                "synth", "30", "sine", "200", "vol", "0.02", ":", "synth", "270", "sine", "880",
+                "vol", "0.9",
+            ])
+            .status()
+            .expect("sox not installed")
+            .success();
+        assert!(ok, "sox failed");
+        let ok = std::process::Command::new("lame")
+            .args(["-V", "2", "--quiet"])
+            .arg(&wav)
+            .arg(&mp3)
+            .status()
+            .expect("lame not installed")
+            .success();
+        assert!(ok, "lame failed");
+        mp3
+    }
+
+    /// A VBR seek must report where playback actually resumed: the reported
+    /// start plus the audio that actually followed has to add back up to the
+    /// file's duration. Under a coarse seek this file lands 3.7s late while
+    /// reporting 83ms early — a 3.8s lie for the rest of the track.
+    #[test]
+    #[ignore = "generates a fixture with sox + lame; run with cargo test -- --ignored"]
+    fn seek_on_vbr_reports_where_it_landed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = make_vbr_mp3(dir.path());
+        let info = probe_file(&path).unwrap();
+        let channels = info.channels as u64;
+        let rate = info.sample_rate as u64;
+
+        let seek_ms = 150_000u64;
+        let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(1 << 16);
+        let stop = Arc::new(AtomicBool::new(false));
+        let timeline = PlaybackTimeline::new();
+
+        let drain_stop = stop.clone();
+        let drained = std::thread::spawn(move || {
+            let mut total = 0u64;
+            while !drain_stop.load(Ordering::Relaxed) {
+                let slots = consumer.slots();
+                if slots == 0 {
+                    std::thread::sleep(std::time::Duration::from_micros(200));
+                    continue;
+                }
+                let chunk = consumer.read_chunk(slots).unwrap();
+                total += slots as u64;
+                chunk.commit_all();
+            }
+            total
+        });
+
+        let file = File::open(&path).unwrap();
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let mut hint = Hint::new();
+        hint.with_extension("mp3");
+        decode_single(
+            QueueItemId::new(),
+            &path,
+            &hint,
+            mss,
+            &mut producer,
+            &stop,
+            seek_ms,
+            &timeline,
+            None,
+            ReplayGainMode::Off,
+            0.0,
+            None,
+        )
+        .unwrap();
+
+        let written = timeline.samples_written.load(Ordering::Relaxed);
+        stop.store(true, Ordering::Relaxed);
+        drained.join().unwrap();
+
+        let reported_start_ms = {
+            let bounds = timeline.boundaries.read();
+            (bounds[0].seek_samples / channels) * 1000 / rate
+        };
+        let decoded_ms = (written / channels) * 1000 / rate;
+
+        // Where playback started plus how much audio followed is the whole file.
+        let total_ms = reported_start_ms + decoded_ms;
+        assert!(
+            total_ms.abs_diff(info.duration_ms) < 500,
+            "reported start {}ms + {}ms decoded = {}ms, but the file is {}ms",
+            reported_start_ms,
+            decoded_ms,
+            total_ms,
+            info.duration_ms
+        );
+        // Landing is frame-granular, never sample-exact.
+        assert!(
+            reported_start_ms.abs_diff(seek_ms) < 100,
+            "seek to {}ms reported {}ms",
+            seek_ms,
+            reported_start_ms
+        );
     }
 }

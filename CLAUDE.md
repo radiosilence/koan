@@ -9,7 +9,7 @@ Bit-perfect music player (macOS + Linux). Pure Rust, Ratatui TUI. Four crates:
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
-Dependency rules: koan-server must not depend on koan-tui. koan-tui declares an unused koan-server dep (`crates/koan-tui/Cargo.toml`) — removing it makes the boundary compiler-enforced. Future iOS app imports only koan-core.
+Dependency rules (compiler-enforced): koan-tui and koan-server cannot import each other; both depend only on koan-core. Future iOS app imports only koan-core.
 
 ## Architecture overview
 
@@ -103,7 +103,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats, snapshots, `batch` (SQL-side track filtering, batched parent→child reads) |
 | `index/scanner.rs` | Parallel library scan: walkdir → rayon → sequential DB upsert |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
-| `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 55 built-in functions |
+| `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 59 built-in functions |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
 | `remote/sync.rs` | Parallel library sync: paginate → rayon fetch → batch DB write |
