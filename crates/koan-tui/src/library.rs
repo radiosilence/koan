@@ -33,6 +33,13 @@ pub enum LibraryNode {
     },
 }
 
+/// Leading year of a free-form album date tag. Tags are arbitrary text — this
+/// counts characters, not bytes, and yields nothing when there aren't four.
+pub fn album_year(date: Option<&str>) -> Option<String> {
+    let year: String = date?.chars().take(4).collect();
+    (year.chars().count() == 4).then_some(year)
+}
+
 pub struct LibraryState {
     pub nodes: Vec<LibraryNode>,
     pub cursor: usize,
@@ -181,13 +188,7 @@ impl LibraryState {
         let new_nodes: Vec<LibraryNode> = albums
             .into_iter()
             .map(|a| {
-                let year = a.date.as_deref().and_then(|d| {
-                    if d.len() >= 4 {
-                        Some(d[..4].to_string())
-                    } else {
-                        None
-                    }
-                });
+                let year = album_year(a.date.as_deref());
                 LibraryNode::Album {
                     id: a.id,
                     title: a.title,
@@ -570,5 +571,30 @@ fn render_node<'a>(node: &LibraryNode, is_cursor: bool, theme: &Theme) -> Line<'
                 source_span,
             ])
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::album_year;
+
+    /// Date tags are free-form text — Japanese and Chinese pressings routinely
+    /// carry multibyte dates, and byte slicing split them mid-character.
+    #[test]
+    fn album_year_slices_on_char_boundaries() {
+        assert_eq!(album_year(Some("2024-05-01")).as_deref(), Some("2024"));
+        assert_eq!(album_year(Some("2024")).as_deref(), Some("2024"));
+        assert_eq!(album_year(Some("\u{65e5}\u{672c}\u{8a9e}")), None);
+        assert_eq!(
+            album_year(Some("\u{ff12}\u{ff10}\u{ff12}\u{ff14}")).as_deref(),
+            Some("\u{ff12}\u{ff10}\u{ff12}\u{ff14}")
+        );
+        assert_eq!(album_year(Some("20")), None);
+        assert_eq!(
+            album_year(Some("\u{4e94}\u{6708}\u{5929}2024")).as_deref(),
+            Some("\u{4e94}\u{6708}\u{5929}2")
+        );
+        assert_eq!(album_year(Some("")), None);
+        assert_eq!(album_year(None), None);
     }
 }
