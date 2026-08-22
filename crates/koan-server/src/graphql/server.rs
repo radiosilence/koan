@@ -11,7 +11,7 @@ use koan_core::player::state::SharedPlayerState;
 use super::{KoanSchema, build_schema};
 use crate::auth::AuthUser;
 use crate::auth::middleware::{AuthState, auth_middleware};
-use crate::auth::routes::{AuthRouteState, auth_router};
+use crate::auth::routes::{AuthRouteState, LoginRateLimiter, auth_router};
 
 // ---------------------------------------------------------------------------
 // `koan --headless` entry point (standalone headless server)
@@ -31,7 +31,7 @@ pub fn cmd_serve(
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
-    run_api_blocking(ApiServerOpts {
+    if let Err(e) = run_api_blocking(ApiServerOpts {
         state,
         cmd_tx,
         db_path,
@@ -40,7 +40,10 @@ pub fn cmd_serve(
         subsonic_port,
         playground,
         viz: None, // headless — no viz analyzer
-    });
+    }) {
+        eprintln!("koan: {}", e);
+        std::process::exit(1);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +64,10 @@ pub struct ApiServerOpts {
 
 /// Run the GraphQL (+ optional Subsonic) API server, blocking the current thread.
 /// Called from `cmd_serve` (headless) and `start_api_background` (TUI companion).
-fn run_api_blocking(opts: ApiServerOpts) {
+///
+/// `Err` means the server refused to start on a misconfiguration the caller has
+/// to surface — never a silent downgrade to an unauthenticated server.
+fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
     let ApiServerOpts {
         state,
         cmd_tx,
@@ -82,38 +88,44 @@ fn run_api_blocking(opts: ApiServerOpts) {
 
     // Load or generate Ed25519 keypair for JWT signing.
     let (private_pem, public_pem) = if auth_enabled {
-        match auth::load_keypair() {
-            Ok(kp) => kp,
-            Err(e) => {
-                panic!(
-                    "Auth enabled but keypair not found: {}. Run `koan auth setup` first. \
-                     Refusing to start with auth_enabled=true and no valid keypair.",
-                    e
-                );
-            }
+        let kp = auth::load_keypair().map_err(|e| {
+            format!(
+                "auth_enabled = true but the keypair could not be loaded: {}. \
+                 Run `koan auth setup`.",
+                e
+            )
+        })?;
+        // An empty or truncated key file would otherwise leave every request an
+        // unauthenticated admin, which is the opposite of what was asked for.
+        if kp.0.is_empty() || kp.1.is_empty() {
+            return Err("auth_enabled = true but the keypair files are empty. \
+                 Run `koan auth regenerate-keys`."
+                .into());
         }
+        kp
     } else {
         // When auth is disabled, we still need dummy keys for the route state
         // (routes exist but won't be hit by middleware). Generate if available.
         auth::load_or_generate_keypair().unwrap_or_default()
     };
 
-    let auth_actually_enabled = auth_enabled && !private_pem.is_empty();
-
     let access_ttl = parse_duration_secs(&cfg.graphql.access_token_ttl).unwrap_or(900);
     let refresh_ttl = parse_duration_secs(&cfg.graphql.refresh_token_ttl).unwrap_or(2_592_000);
 
-    // Generate a process-scoped introspection key for playground access.
-    let introspection_key = if playground_enabled && auth_actually_enabled {
-        // Use UUID v4 as a random introspection key — 122 bits of randomness, no extra deps.
-        Some(Arc::new(uuid::Uuid::now_v7().to_string()))
+    // Process-scoped introspection key for playground access. It is a bearer
+    // credential compared verbatim, so it has to be full-entropy random — a
+    // UUID would leak the server start time and cut the guessable space.
+    let introspection_key = if playground_enabled && auth_enabled {
+        Some(Arc::new(auth::random_token().map_err(|e| {
+            format!("failed to generate introspection key: {}", e)
+        })?))
     } else {
         None
     };
 
     let auth_state = AuthState {
         public_pem: Arc::new(public_pem.clone()),
-        auth_enabled: auth_actually_enabled,
+        auth_enabled,
         introspection_key: introspection_key.clone(),
     };
 
@@ -123,11 +135,13 @@ fn run_api_blocking(opts: ApiServerOpts) {
         public_pem: Arc::new(public_pem),
         access_ttl_secs: access_ttl,
         refresh_ttl_secs: refresh_ttl,
+        cookie_secure: cfg.graphql.cookie_secure,
+        login_limiter: Arc::new(LoginRateLimiter::default()),
     };
 
     let schema = build_schema(state, cmd_tx, db_path.clone(), viz);
 
-    if auth_actually_enabled {
+    if auth_enabled {
         log::info!(
             "Auth enabled (Ed25519 JWT, access TTL {}s, refresh TTL {}s)",
             access_ttl,
@@ -135,6 +149,15 @@ fn run_api_blocking(opts: ApiServerOpts) {
         );
     } else {
         log::info!("Auth disabled — all requests treated as admin");
+    }
+
+    let browser_policy = Arc::new(BrowserPolicy {
+        origins: cfg.graphql.cors_origins.clone(),
+        hosts: cfg.graphql.allowed_hosts.clone(),
+    });
+
+    if cfg.graphql.cors_origins.is_empty() {
+        log::info!("CORS: no origins configured — browsers get no cross-origin access");
     }
 
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
@@ -147,46 +170,40 @@ fn run_api_blocking(opts: ApiServerOpts) {
                 auth_state.clone(),
                 auth_middleware,
             ))
+            // Runs before auth: a rejected request should never reach a
+            // credential check, let alone execute.
+            .layer(axum::middleware::from_fn_with_state(
+                browser_policy.clone(),
+                browser_guard,
+            ))
             .layer(tower::limit::ConcurrencyLimitLayer::new(10))
             .with_state(schema);
 
         // Auth routes — always accessible (no auth middleware).
         let auth_app = auth_router(auth_route_state);
 
-        // CORS — allow cross-origin requests for browser clients.
-        // With specific origins we can enable credentials (cookies); with Any we cannot per spec.
-        let cors = if cfg.graphql.cors_origins.is_empty() {
-            // Dev mode: allow all origins (no credentials support with Any).
-            tower_http::cors::CorsLayer::new()
-                .allow_origin(tower_http::cors::Any)
-                .allow_methods([
-                    axum::http::Method::GET,
-                    axum::http::Method::POST,
-                    axum::http::Method::OPTIONS,
-                ])
-                .allow_headers(tower_http::cors::Any)
-        } else {
-            // Production: specific origins with credentials for cookie auth.
-            let origins: Vec<axum::http::HeaderValue> = cfg
-                .graphql
-                .cors_origins
-                .iter()
-                .filter_map(|o| o.parse().ok())
-                .collect();
-            tower_http::cors::CorsLayer::new()
-                .allow_origin(origins)
-                .allow_methods([
-                    axum::http::Method::GET,
-                    axum::http::Method::POST,
-                    axum::http::Method::OPTIONS,
-                ])
-                .allow_headers([
-                    axum::http::header::AUTHORIZATION,
-                    axum::http::header::CONTENT_TYPE,
-                    axum::http::HeaderName::from_static("x-introspection-key"),
-                ])
-                .allow_credentials(true)
-        };
+        // CORS. An empty origin list emits no `Access-Control-Allow-Origin` at
+        // all: the previous wildcard handed every web page on the internet the
+        // ability to read this library.
+        let origins: Vec<axum::http::HeaderValue> = cfg
+            .graphql
+            .cors_origins
+            .iter()
+            .filter_map(|o| o.parse().ok())
+            .collect();
+        let cors = tower_http::cors::CorsLayer::new()
+            .allow_origin(origins)
+            .allow_methods([
+                axum::http::Method::GET,
+                axum::http::Method::POST,
+                axum::http::Method::OPTIONS,
+            ])
+            .allow_headers([
+                axum::http::header::AUTHORIZATION,
+                axum::http::header::CONTENT_TYPE,
+                axum::http::HeaderName::from_static("x-introspection-key"),
+            ])
+            .allow_credentials(true);
 
         // Subsonic REST routes — always mounted on the GraphQL port when
         // remote creds are configured. Previously only available on the
@@ -200,13 +217,19 @@ fn run_api_blocking(opts: ApiServerOpts) {
         if let Some(sub) = subsonic_merged {
             app = app.merge(sub);
         }
-        let mut app = app.layer(cors);
         if playground_enabled {
             app = app.route(
                 "/graphql",
                 get(graphql_playground).with_state(introspection_key.clone()),
             );
         }
+        // Outermost: a request whose `Host` we do not recognise is refused
+        // before anything else looks at it. Without this a DNS-rebinding page
+        // reaches the API as same-origin and CORS stops mattering.
+        let app = app.layer(cors).layer(axum::middleware::from_fn_with_state(
+            browser_policy.clone(),
+            host_guard,
+        ));
 
         // Build playground URL with introspection key.
         let playground_url = if playground_enabled {
@@ -243,11 +266,14 @@ fn run_api_blocking(opts: ApiServerOpts) {
                     port,
                     e,
                 );
-                return;
+                return Ok(());
             }
         };
-        let gql_server =
-            axum::serve(gql_listener, app).with_graceful_shutdown(shutdown_signal());
+        let gql_server = axum::serve(
+            gql_listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(shutdown_signal());
 
         // If `--subsonic <port>` is set AND differs from the GraphQL port,
         // run an additional dedicated listener. This preserves the old
@@ -271,7 +297,7 @@ fn run_api_blocking(opts: ApiServerOpts) {
                         r = gql_server => { if let Err(e) = r { log::error!("GraphQL server error: {e}"); } },
                         r = sub_server => { if let Err(e) = r { log::error!("Subsonic server error: {e}"); } },
                     }
-                    return;
+                    return Ok(());
                 }
                 Err(e) => {
                     log::warn!(
@@ -286,7 +312,8 @@ fn run_api_blocking(opts: ApiServerOpts) {
         if let Err(e) = gql_server.await {
             log::error!("GraphQL server error: {e}");
         }
-    });
+        Ok(())
+    })
 }
 
 /// Start the API server on the current thread (blocks forever).
@@ -303,7 +330,9 @@ pub fn start_api_background(
     subsonic_port: Option<u16>,
     playground: bool,
 ) {
-    run_api_blocking(ApiServerOpts {
+    // Runs on a spawned thread in TUI mode, where a panic would take the API
+    // down with nothing on screen to say so.
+    if let Err(e) = run_api_blocking(ApiServerOpts {
         state,
         cmd_tx,
         db_path,
@@ -312,7 +341,133 @@ pub fn start_api_background(
         subsonic_port,
         playground,
         viz: None,
-    });
+    }) {
+        log::error!("API server not started: {}", e);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Browser perimeter
+// ---------------------------------------------------------------------------
+
+/// What this server will answer to when the caller is a browser.
+///
+/// Two separate questions: which `Host` values name this server (DNS rebinding),
+/// and which `Origin` values may talk to it (CSRF, cross-site WebSockets).
+pub(crate) struct BrowserPolicy {
+    origins: Vec<String>,
+    hosts: Vec<String>,
+}
+
+impl BrowserPolicy {
+    fn host_allowed(&self, host: &str) -> bool {
+        if self.hosts.iter().any(|h| h.eq_ignore_ascii_case(host)) {
+            return true;
+        }
+        let bare = strip_port(host);
+        if self.hosts.iter().any(|h| h.eq_ignore_ascii_case(bare)) {
+            return true;
+        }
+        // A rebinding attack needs a name it controls; literals and localhost
+        // resolve to this machine by definition.
+        bare.eq_ignore_ascii_case("localhost") || bare.parse::<std::net::IpAddr>().is_ok()
+    }
+
+    /// An origin is allowed if it is configured, or if it is simply this server
+    /// talking to itself — which is what the bundled playground does.
+    fn origin_allowed(&self, origin: &str, host: Option<&str>) -> bool {
+        if self.origins.iter().any(|o| o == origin) {
+            return true;
+        }
+        match (origin.split_once("://"), host) {
+            (Some((_, authority)), Some(host)) => authority.eq_ignore_ascii_case(host),
+            _ => false,
+        }
+    }
+}
+
+/// `example.com:4000` -> `example.com`, `[::1]:4000` -> `::1`.
+fn strip_port(host: &str) -> &str {
+    if let Some(rest) = host.strip_prefix('[') {
+        return rest.split(']').next().unwrap_or(rest);
+    }
+    match host.rsplit_once(':') {
+        Some((h, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => h,
+        _ => host,
+    }
+}
+
+fn header_str(request: &axum::extract::Request, name: axum::http::HeaderName) -> Option<&str> {
+    request.headers().get(name).and_then(|v| v.to_str().ok())
+}
+
+/// Reject requests carrying an unrecognised `Host`.
+async fn host_guard(
+    axum::extract::State(policy): axum::extract::State<Arc<BrowserPolicy>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // No `Host` at all means no browser: only HTTP/1.0 and raw tooling omit it,
+    // and neither can be steered by an attacker page.
+    let host = header_str(&request, axum::http::header::HOST)
+        .map(str::to_owned)
+        .or_else(|| request.uri().host().map(str::to_owned));
+
+    if let Some(ref host) = host
+        && !policy.host_allowed(host)
+    {
+        log::warn!("rejected request for unrecognised Host: {}", host);
+        return (axum::http::StatusCode::FORBIDDEN, "host not allowed").into_response();
+    }
+
+    next.run(request).await
+}
+
+/// Reject cross-site GraphQL traffic.
+///
+/// Two holes, one guard. A WebSocket handshake is exempt from CORS entirely, so
+/// a foreign page can open `/graphql/ws`, have the browser attach the session
+/// cookie, and read every response. And a POST whose content type is
+/// CORS-safelisted (`text/plain`) is sent without a preflight, yet
+/// async-graphql parses it as JSON regardless — so the mutation lands even
+/// though the reply is unreadable.
+async fn browser_guard(
+    axum::extract::State(policy): axum::extract::State<Arc<BrowserPolicy>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    let host = header_str(&request, axum::http::header::HOST).map(str::to_owned);
+    // No `Origin` means a non-browser client, which CSRF cannot reach.
+    if let Some(origin) = header_str(&request, axum::http::header::ORIGIN)
+        && !policy.origin_allowed(origin, host.as_deref())
+    {
+        log::warn!(
+            "rejected GraphQL request from disallowed Origin: {}",
+            origin
+        );
+        return (axum::http::StatusCode::FORBIDDEN, "origin not allowed").into_response();
+    }
+
+    if request.method() == axum::http::Method::POST && !is_graphql_content_type(&request) {
+        return (
+            axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "content type must be application/json or application/graphql",
+        )
+            .into_response();
+    }
+
+    next.run(request).await
+}
+
+fn is_graphql_content_type(request: &axum::extract::Request) -> bool {
+    header_str(request, axum::http::header::CONTENT_TYPE).is_some_and(|ct| {
+        let ct = ct.trim().to_ascii_lowercase();
+        ct.starts_with("application/json") || ct.starts_with("application/graphql")
+    })
 }
 
 async fn shutdown_signal() {
@@ -435,15 +590,20 @@ pub fn cmd_serve_daemon(
 // ---------------------------------------------------------------------------
 
 /// Execute a GraphQL query in-process (no HTTP round-trip).
-/// In-process requests bypass auth — they're trusted (e.g., MCP tools).
+///
+/// There is no credential to check, so the caller states the role it wants the
+/// query executed at — see `mcp::mcp_role`.
 pub async fn execute_in_process(
     schema: &KoanSchema,
     query: &str,
     variables: Option<serde_json::Value>,
+    role: koan_core::auth::Role,
 ) -> serde_json::Value {
     let mut request = async_graphql::Request::new(query);
-    // In-process = admin access (MCP/local tools).
-    request = request.data(AuthUser::anonymous_admin());
+    request = request.data(AuthUser {
+        role,
+        ..AuthUser::anonymous_admin()
+    });
     if let Some(serde_json::Value::Object(map)) = variables {
         let mut gql_vars = async_graphql::Variables::default();
         for (k, v) in map {
@@ -456,4 +616,168 @@ pub async fn execute_in_process(
     }
     let response = schema.execute(request).await;
     serde_json::to_value(&response).unwrap_or(serde_json::Value::Null)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Request as HttpRequest, StatusCode};
+    use axum::routing::{get, post};
+    use tower::ServiceExt as _;
+
+    fn policy() -> Arc<BrowserPolicy> {
+        Arc::new(BrowserPolicy {
+            origins: vec!["https://music.example.com".into()],
+            hosts: vec!["koan.local".into()],
+        })
+    }
+
+    async fn ok() -> &'static str {
+        "ok"
+    }
+
+    fn routes() -> axum::Router<Arc<BrowserPolicy>> {
+        axum::Router::new()
+            .route("/graphql", post(ok).get(ok))
+            .route("/graphql/ws", get(ok))
+    }
+
+    async fn run_host(req: HttpRequest<Body>) -> StatusCode {
+        let app = routes()
+            .layer(axum::middleware::from_fn_with_state(policy(), host_guard))
+            .with_state(policy());
+        app.oneshot(req).await.unwrap().status()
+    }
+
+    async fn run_browser(req: HttpRequest<Body>) -> StatusCode {
+        let app = routes()
+            .layer(axum::middleware::from_fn_with_state(
+                policy(),
+                browser_guard,
+            ))
+            .with_state(policy());
+        app.oneshot(req).await.unwrap().status()
+    }
+
+    fn json_post(uri: &str) -> axum::http::request::Builder {
+        HttpRequest::post(uri).header(axum::http::header::CONTENT_TYPE, "application/json")
+    }
+
+    // -- Host allowlist (DNS rebinding) --
+
+    #[test]
+    fn host_policy_accepts_loopback_literals_and_configured_names() {
+        let p = policy();
+        assert!(p.host_allowed("localhost:4000"));
+        assert!(p.host_allowed("127.0.0.1:4000"));
+        assert!(p.host_allowed("192.168.1.20:4000"));
+        assert!(p.host_allowed("[::1]:4000"));
+        assert!(p.host_allowed("koan.local"));
+        assert!(p.host_allowed("koan.local:4000"));
+    }
+
+    #[test]
+    fn host_policy_rejects_attacker_controlled_names() {
+        let p = policy();
+        assert!(!p.host_allowed("evil.com"));
+        assert!(!p.host_allowed("rebind.evil.com:4000"));
+        assert!(!p.host_allowed("koan.local.evil.com"));
+    }
+
+    #[tokio::test]
+    async fn host_guard_rejects_foreign_host() {
+        let req = json_post("/graphql")
+            .header(axum::http::header::HOST, "rebind.evil.com")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(run_host(req).await, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn host_guard_allows_known_host_and_missing_host() {
+        let req = json_post("/graphql")
+            .header(axum::http::header::HOST, "127.0.0.1:4000")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(run_host(req).await, StatusCode::OK);
+
+        let req = json_post("/graphql").body(Body::empty()).unwrap();
+        assert_eq!(run_host(req).await, StatusCode::OK);
+    }
+
+    // -- Cross-site WebSocket --
+
+    #[tokio::test]
+    async fn ws_upgrade_from_foreign_origin_is_rejected() {
+        let req = HttpRequest::get("/graphql/ws")
+            .header(axum::http::header::HOST, "127.0.0.1:4000")
+            .header(axum::http::header::ORIGIN, "https://evil.com")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(run_browser(req).await, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn ws_upgrade_without_origin_is_allowed() {
+        let req = HttpRequest::get("/graphql/ws")
+            .header(axum::http::header::HOST, "127.0.0.1:4000")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(run_browser(req).await, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn configured_and_same_origin_are_allowed() {
+        let req = HttpRequest::get("/graphql/ws")
+            .header(axum::http::header::HOST, "127.0.0.1:4000")
+            .header(axum::http::header::ORIGIN, "https://music.example.com")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(run_browser(req).await, StatusCode::OK);
+
+        // The bundled playground posts to the host it was served from.
+        let req = json_post("/graphql")
+            .header(axum::http::header::HOST, "127.0.0.1:4000")
+            .header(axum::http::header::ORIGIN, "http://127.0.0.1:4000")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(run_browser(req).await, StatusCode::OK);
+    }
+
+    // -- CSRF via a CORS-safelisted content type --
+
+    #[tokio::test]
+    async fn text_plain_post_is_rejected() {
+        let req = HttpRequest::post("/graphql")
+            .header(axum::http::header::CONTENT_TYPE, "text/plain")
+            .body(Body::from(r#"{"query":"mutation{clearQueue{ok}}"}"#))
+            .unwrap();
+        assert_eq!(run_browser(req).await, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn post_without_content_type_is_rejected() {
+        let req = HttpRequest::post("/graphql").body(Body::empty()).unwrap();
+        assert_eq!(run_browser(req).await, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    #[tokio::test]
+    async fn json_post_is_accepted() {
+        let req = json_post("/graphql").body(Body::empty()).unwrap();
+        assert_eq!(run_browser(req).await, StatusCode::OK);
+
+        let req = HttpRequest::post("/graphql")
+            .header(
+                axum::http::header::CONTENT_TYPE,
+                "application/json; charset=utf-8",
+            )
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(run_browser(req).await, StatusCode::OK);
+    }
 }

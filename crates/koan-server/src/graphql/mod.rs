@@ -37,9 +37,17 @@ struct DbHandle {
 
 impl DbHandle {
     fn open(&self) -> async_graphql::Result<Database> {
-        Database::open(&self.path)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))
+        Database::open(&self.path).map_err(|e| internal_error("db open", e))
     }
+}
+
+/// Log the detail, return a generic message.
+///
+/// SQLite errors quote the offending statement and filesystem errors quote
+/// absolute paths — a map of the host handed to whoever asked.
+pub(super) fn internal_error(context: &str, e: impl std::fmt::Display) -> async_graphql::Error {
+    log::error!("graphql {}: {}", context, e);
+    async_graphql::Error::new("internal error")
 }
 
 // ---------------------------------------------------------------------------
@@ -61,7 +69,9 @@ pub fn build_schema(
     if let Some(viz) = viz {
         builder = builder.data(viz);
     }
-    builder.finish()
+    // A single nested query can otherwise fan out across the whole library and
+    // pin the process for minutes.
+    builder.limit_depth(12).limit_complexity(2000).finish()
 }
 
 // ---------------------------------------------------------------------------
