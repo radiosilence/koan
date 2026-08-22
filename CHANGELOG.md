@@ -14,13 +14,18 @@
 - **keyring on Linux talks to secret-service over zbus** instead of dbus-secret-service. macOS Keychain access is unchanged — same generic-password service/account attributes and the same user keychain — so existing credentials still resolve.
 - **bliss-audio no longer needs the aubio C library**; upstream replaced it with a Rust implementation, so `bliss-audio-aubio-rs` and its bindgen build are gone. The feature vector is unchanged (`FeaturesVersion::Version2`), so stored embeddings stay valid, though decoded values may shift marginally after bliss's Symphonia/Rubato update.
 
+### Fixed
+
+- **MP3s at unusual sample rates played at the wrong speed** — the audio engine was configured with the rate the *device* settled on, not the rate the PCM actually is. Output devices reject the MPEG-2/2.5 rates that only MP3 uses (8/11.025/12/16/22.05/24 kHz, and 32 kHz on many DACs), so a 22.05 kHz MP3 on a 44.1 kHz device played at exactly double speed. The engine is now always configured from the source format and the device switch is a best-effort bit-perfect optimisation; when it fails the platform resamples instead. FLAC never hit this because it is only ever ripped at rates every device supports. ([#181](https://github.com/radiosilence/koan/pull/181))
+- **Mixed-format queues played the second track at the wrong speed** — every track in a gapless session shares one ring buffer and therefore one engine, but the decode thread would happily push a 48 kHz track in behind a 44.1 kHz one. A track whose rate or channel count differs now ends the decode session so the player can restart it on a correctly configured engine.
+- **Tail of the last decoded track was cut off** — the decode thread signalled completion as soon as it had *written* the last sample, up to 4 seconds before the audio engine had played it. It now waits for the ring buffer to drain first.
+
 ### Internal
 
 - **Internal crate versions are declared once**, in `[workspace.dependencies]`, instead of being pinned per member — the per-member pins had drifted a patch behind and would have published a broken `koan-cli` at the next minor bump.
 - **`koan-tui` no longer depends on `koan-server`.** It never imported it; the dependency pulled axum, async-graphql, rmcp, tokio and tower into every TUI build and contradicted the documented crate boundary, which is now compiler-enforced again.
 - **`reqwest` is declared once in `[workspace.dependencies]`** with the feature union the workspace already resolved to, replacing four declarations with four different feature sets.
 - Dropped confirmed-unused deps: `toml`, `chrono`, `rayon`, `owo-colors` from koan-tui; `walkdir` from koan-server; `core-foundation`, `crossbeam-channel` from koan-cli.
-- `bytes_to_embedding` uses `as_chunks::<4>()` — Rust 1.98 lints the constant-size `chunks_exact`. No behaviour change.
 - Tests covering the `ALTER TABLE` schema migrations: SQLite's "duplicate column" wording is the only thing stopping `Database::open` from failing on an already-migrated database, so it is now asserted rather than assumed.
 
 ## v0.23.3 (2026-04-19)
