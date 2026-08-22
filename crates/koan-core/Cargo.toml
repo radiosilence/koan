@@ -24,7 +24,7 @@ dirs = "6"
 figment = { version = "0.10", features = ["toml", "env"] }
 ebur128 = "0.1"
 # Credentials (cross-platform: macOS Keychain, Linux secret-service)
-keyring = { version = "3", features = ["apple-native", "sync-secret-service"] }
+keyring = "4"
 # Metadata
 lofty = "0.25"
 log = "0.4"
