@@ -463,7 +463,7 @@ pub struct SubsonicShare {
 /// Generate a random hex salt string for Subsonic auth.
 fn random_salt() -> String {
     let mut buf = [0u8; 12];
-    getrandom::getrandom(&mut buf).expect("failed to generate random salt");
+    getrandom::fill(&mut buf).expect("failed to generate random salt");
     buf.iter().map(|b| format!("{:02x}", b)).collect()
 }
 

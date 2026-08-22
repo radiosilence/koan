@@ -15,26 +15,22 @@ path = "src/main.rs"
 
 [dependencies]
 chrono = "0.4"
-clap = { version = "4.5", features = ["derive"] }
-clap_complete = { version = "4.5", features = ["unstable-dynamic"] }
-crossbeam-channel = "0.5"
+clap = { version = "4.6", features = ["derive"] }
+clap_complete = { version = "4.6", features = ["unstable-dynamic"] }
 crossterm = "0.29"
 ctrlc = "3"
-jwalk = "0.8"
-koan-core = { path = "../koan-core", version = "0.23.2" }
-koan-server = { path = "../koan-server", version = "0.23.2" }
-koan-tui = { path = "../koan-tui", version = "0.23.2" }
+jwalk = "0.9"
+koan-core = { workspace = true }
+koan-server = { workspace = true }
+koan-tui = { workspace = true }
 log = "0.4"
 owo-colors = "4"
 rayon = "1"
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+reqwest = { workspace = true }
 rpassword = "7.4"
 serde_json = "1"
-toml = "0.9"
+toml = "1.1"
 walkdir = { workspace = true }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-core-foundation = "0.9"
 
 [dev-dependencies]
 tempfile = "3"
