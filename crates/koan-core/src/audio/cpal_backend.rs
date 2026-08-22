@@ -187,11 +187,9 @@ impl AudioBackend for CpalBackend {
         let running = Arc::new(AtomicBool::new(false));
         let running_cb = running.clone();
 
-        // Wrap consumer in a Mutex so we can move it into the FnMut callback.
-        // RT safety: use try_lock() only — never block the audio thread.
-        // Contention is effectively zero (only this callback touches it),
-        // but try_lock guarantees we never block even if the OS preempts us.
-        let consumer = std::sync::Mutex::new(consumer);
+        // The consumer is owned outright by the callback: rtrb::Consumer is Send,
+        // and cpal's data callback is FnMut, so a by-value capture is enough.
+        let mut consumer = consumer;
 
         let stream = suppress_stderr(|| {
             dev.build_output_stream(
@@ -201,13 +199,6 @@ impl AudioBackend for CpalBackend {
                         data.fill(0.0);
                         return;
                     }
-
-                    let Ok(mut consumer) = consumer.try_lock() else {
-                        // Lock contested — output silence rather than blocking
-                        // the real-time audio thread.
-                        data.fill(0.0);
-                        return;
-                    };
 
                     let total_samples = data.len();
                     let available = consumer.slots();

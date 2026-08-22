@@ -6,7 +6,9 @@
 //! on the same process is unaffected.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+
+use parking_lot::Mutex;
 
 use async_graphql::Enum;
 use uuid::Uuid;
@@ -42,7 +44,7 @@ impl JobRegistry {
     /// Two concurrent scans of the same library fight over the same rows, so
     /// the second caller gets the first job's handle instead of a second scan.
     pub(super) fn start(&self, kind: &str) -> Result<Job, Job> {
-        let mut jobs = self.inner.lock().expect("job registry poisoned");
+        let mut jobs = self.inner.lock();
         if let Some(running) = jobs
             .values()
             .find(|j| j.kind == kind && j.state == JobState::Running)
@@ -70,7 +72,7 @@ impl JobRegistry {
     }
 
     pub(super) fn finish(&self, id: &str, state: JobState, message: String) {
-        let mut jobs = self.inner.lock().expect("job registry poisoned");
+        let mut jobs = self.inner.lock();
         if let Some(job) = jobs.get_mut(id) {
             job.state = state;
             job.message = message;
@@ -78,21 +80,11 @@ impl JobRegistry {
     }
 
     pub(super) fn get(&self, id: &str) -> Option<Job> {
-        self.inner
-            .lock()
-            .expect("job registry poisoned")
-            .get(id)
-            .cloned()
+        self.inner.lock().get(id).cloned()
     }
 
     pub(super) fn list(&self) -> Vec<Job> {
-        let mut jobs: Vec<Job> = self
-            .inner
-            .lock()
-            .expect("job registry poisoned")
-            .values()
-            .cloned()
-            .collect();
+        let mut jobs: Vec<Job> = self.inner.lock().values().cloned().collect();
         jobs.sort_by(|a, b| a.id.cmp(&b.id));
         jobs
     }

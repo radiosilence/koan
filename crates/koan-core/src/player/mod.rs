@@ -351,13 +351,12 @@ impl Player {
         // (separate from the UI cursor) so it can look ahead through the
         // playlist without affecting what the UI shows as "now playing".
         let advance_state = self.shared_state.clone();
-        let decode_cursor = std::sync::Mutex::new(Some(id));
+        let decode_cursor = parking_lot::Mutex::new(Some(id));
         let next_track = move || {
-            let current = decode_cursor.lock().ok()?.take()?;
+            let current = decode_cursor.lock().take()?;
             let next = advance_state.peek_next_ready_after(current);
-            if let Some((next_id, _)) = &next
-                && let Ok(mut guard) = decode_cursor.lock()
-            {
+            if let Some((next_id, _)) = &next {
+                let mut guard = decode_cursor.lock();
                 *guard = Some(*next_id);
             }
             next
@@ -581,13 +580,12 @@ impl Player {
 
         // Gapless lookahead after streaming: next track uses normal file path.
         let advance_state = self.shared_state.clone();
-        let decode_cursor = std::sync::Mutex::new(Some(id));
+        let decode_cursor = parking_lot::Mutex::new(Some(id));
         let next_track = move || {
-            let current = decode_cursor.lock().ok()?.take()?;
+            let current = decode_cursor.lock().take()?;
             let next = advance_state.peek_next_ready_after(current);
-            if let Some((next_id, _)) = &next
-                && let Ok(mut guard) = decode_cursor.lock()
-            {
+            if let Some((next_id, _)) = &next {
+                let mut guard = decode_cursor.lock();
                 *guard = Some(*next_id);
             }
             next
