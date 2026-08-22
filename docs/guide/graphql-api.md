@@ -132,7 +132,50 @@ Every query supports rich filtering:
 - **Tracks**: genre, codec, sample rate, bit depth, duration
 - **Artists**: genre
 
-All string filters are case-insensitive substrings. Relay-style cursor pagination is available on all collection queries.
+All string filters are case-insensitive substrings. `%` and `_` in a filter value are literal, not
+wildcards.
+
+### Pagination and sorting
+
+Collections are Relay connections (`edges` + `pageInfo`). **A collection with no `first` returns 50
+rows, and `first` is capped at 500** — the API will not hand back a whole library in one response.
+Page with the cursor from `pageInfo.endCursor`:
+
+```graphql
+{
+  tracks(first: 200, after: "199", sortBy: TITLE, sortDir: DESC) {
+    edges { cursor node { title } }
+    pageInfo { hasNextPage endCursor }
+  }
+}
+```
+
+`sortBy` accepts `TITLE`, `ARTIST`, `ALBUM`, `DURATION` or `ARTIST_ALBUM_DISC_TRACK` for tracks;
+`NAME`, `ALBUM_COUNT` or `TRACK_COUNT` for artists; `TITLE`, `DATE`, `ARTIST_THEN_DATE` or
+`TRACK_COUNT` for albums.
+
+### Long-running work
+
+`triggerScan` and `triggerRemoteSync` run for minutes, so they return a job handle immediately and
+do the work on a detached thread:
+
+```graphql
+mutation { triggerScan { id kind state } }
+{ job(id: "0199...") { state message } }
+```
+
+`state` is `RUNNING`, `SUCCEEDED` or `FAILED`; `message` carries the outcome. Only one job of each
+kind runs at a time — calling again while one is live returns the running job rather than starting a
+second.
+
+### Limits
+
+Requests are refused rather than queued when the server is saturated, so a slow client cannot make
+every other client slow:
+
+- query depth 12, complexity 2000
+- 30 second timeout on a query (`408`); subscriptions are exempt
+- 64 queries in flight, beyond which further requests get `503` immediately
 
 ## Available operations
 

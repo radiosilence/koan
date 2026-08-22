@@ -46,6 +46,86 @@
 - **No query depth or complexity limit** — a single nested query could fan out across the whole library. Now `limit_depth(12)`, `limit_complexity(2000)`.
 - **Subsonic username was compared with `!=`** while both password paths correctly used `subtle`. Now constant-time.
 - **`parse_range` underflowed on a 0-byte track file** — panic in debug, `u64::MAX` in release. Guarded.
+- **Dependency refresh across the workspace.** Notable majors: rusqlite 0.40, keyring 4, jsonwebtoken 11, rtrb 0.4, cpal 0.18, rmcp 3.1, bliss-audio 0.13, lofty 0.25, base64 0.23, tower-http 0.7, pem 4, getrandom 0.4, toml 1.1, jwalk 0.9, core-foundation 0.10, clap 4.6.
+- **jsonwebtoken now uses the aws-lc-rs backend**, shared with rustls rather than pulling a second crypto stack. Token verification is stricter than under 9.x: the signature check can no longer be disabled, and the `alg` header is matched against the pinned `EdDSA` unconditionally.
+- **keyring on Linux talks to secret-service over zbus** instead of dbus-secret-service. macOS Keychain access is unchanged — same generic-password service/account attributes and the same user keychain — so existing credentials still resolve.
+- **bliss-audio no longer needs the aubio C library**; upstream replaced it with a Rust implementation, so `bliss-audio-aubio-rs` and its bindgen build are gone. The feature vector is unchanged (`FeaturesVersion::Version2`), so stored embeddings stay valid, though decoded values may shift marginally after bliss's Symphonia/Rubato update.
+### Changed
+
+- **Symphonia 0.5 → 0.6.1** — 0.6 rebuilt the format/codec registry, audio primitives, and metadata types around multi-track (audio/video/subtitle) media. Track timing moved off `CodecParameters` onto `Track`, which is where the audible wins come from: 24-bit/96 kHz ALAC now reports 96 kHz instead of 48 kHz (it previously played at half speed, and switched the output device to the wrong rate — fatal for a bit-perfect player), and ALAC-in-CAF decodes at all instead of erroring out. Playback frame counts are byte-identical across every other format.
+
+### Changed
+
+- **GraphQL collections default to 50 rows and cap at 500.** A query with no `first` used to return
+  the entire collection, so `{ tracks { edges { node { title } } } }` materialised a whole library as
+  rows, as GraphQL values and as serialised JSON at once. Clients that relied on the unbounded form
+  must paginate with `first`/`after`.
+- **`triggerScan` and `triggerRemoteSync` return a `Job`, not a result.** Both run for minutes; they
+  now start a detached worker and hand back `{ id, kind, state, message }`, polled with the new
+  `job(id:)` and `jobs` queries. One job of each kind runs at a time — a second call returns the
+  running one. The old `ScanResult` type is gone; added/updated/unchanged counts arrive in the
+  finished job's `message`.
+- **`sortBy` and `sortDir` now do something.** They were declared, published in the SDL and to MCP,
+  and silently dropped: a client asking for `sortBy: DATE` got DB order and no error.
+- **GraphQL queries time out at 30s, shed load past 64 in flight (503) and survive a panicking
+  resolver.** The concurrency limit alone queued the surplus, so an overloaded server answered
+  everyone slowly instead of telling the excess to come back. Subscriptions are exempt from the
+  timeout.
+
+### Fixed
+
+- **A GraphQL query could stall audio in every connected Subsonic client.** rusqlite is blocking and
+  nothing in the server ran it off the async runtime, so resolvers occupied tokio workers directly.
+  Four concurrent `fuzzySearch` calls on a 4-core box took every worker, the `ReaderStream` feeding
+  each in-flight `/rest/stream` response stopped producing bytes, and clients dropped the connection
+  mid-track. One `triggerScan` did it single-handedly for the length of the scan. Every SQLite call,
+  HTTP fetch, tag read and file decode now runs on the blocking pool.
+- **A fresh SQLite connection was opened per resolver field.** `Database::open` creates the parent
+  directory, chmods the file, sets four pragmas, attempts a WAL checkpoint and runs a ~30-statement
+  DDL batch plus three migrations — all of it, every field. On a 500-artist library the nested
+  artists → albums → tracks query cost roughly 3,500 open cycles, about 120,000 statements. The
+  schema now holds a small connection pool sized to the core count, `Database::open_existing` skips
+  the setup for pooled connections, and the DDL runs once.
+- **N+1 queries across the type graph.** `Track.isFavourite` opened a connection and scanned the
+  whole `favourites` table per track; `Album.trackCount` and `totalDurationMs` each materialised
+  every row of the album to count or sum them; `Artist.albumCount`/`trackCount` re-ran the query
+  their sibling field had just run. Counts and sums are now `COUNT(*)`/`SUM(...)` in SQLite, and
+  parent → child edges go through dataloaders, so `{ tracks(first: 500) { isFavourite } }` is one
+  query rather than 500 connections and 500 table scans.
+- **`tracks(...)` loaded the whole library and filtered it in Rust.** Every predicate ran as a
+  `retain()` over every row before pagination, `search:` silently truncated at 10,000 rows, and
+  `yearStart`/`yearEnd` ran `SELECT date FROM albums WHERE id = ?` once per track in the library.
+  Filters, ordering and the page window are now SQL with bound parameters.
+- **`first: -1` overflowed the page arithmetic** — a panic in debug, a request for the entire
+  library in release.
+- **A full player command channel parked a tokio worker.** `send_cmd` used crossbeam's blocking
+  `send` on a bounded(16) channel while the player can sit in `start_playback` for about a second
+  during a device rate change. It now waits 250ms and reports "player busy".
+- **`cargo test` overwrote the user's real JWT signing key.** `auth`'s keypair tests called
+  `generate_keypair()`, which writes to `~/.config/koan/auth/`, so running the test suite rotated the
+  live Ed25519 key and invalidated every issued token. Keypair derivation is now split from the
+  filesystem write and the tests use the pure form.
+- **MP3s at unusual sample rates played at the wrong speed** — the audio engine was configured with the rate the *device* settled on, not the rate the PCM actually is. Output devices reject the MPEG-2/2.5 rates that only MP3 uses (8/11.025/12/16/22.05/24 kHz, and 32 kHz on many DACs), so a 22.05 kHz MP3 on a 44.1 kHz device played at exactly double speed. The engine is now always configured from the source format and the device switch is a best-effort bit-perfect optimisation; when it fails the platform resamples instead. FLAC never hit this because it is only ever ripped at rates every device supports. ([#181](https://github.com/radiosilence/koan/pull/181))
+- **Mixed-format queues played the second track at the wrong speed** — every track in a gapless session shares one ring buffer and therefore one engine, but the decode thread would happily push a 48 kHz track in behind a 44.1 kHz one. A track whose rate or channel count differs now ends the decode session so the player can restart it on a correctly configured engine.
+- **Tail of the last decoded track was cut off** — the decode thread signalled completion as soon as it had *written* the last sample, up to 4 seconds before the audio engine had played it. It now waits for the ring buffer to drain first.
+- **An empty or unmounted library folder deleted the entire library** — `full_scan` only checked that the folder existed, so a NAS mount that failed, an unattached Docker volume, or a directory whose permissions changed left an empty-but-present path. Stale removal then found every indexed path missing and deleted the rows along with their play history, lyrics and embeddings. Three brakes now: a folder yielding zero audio files skips stale removal entirely, `try_exists` means an IO error is never read as "deleted", and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright.
+- **Scanning one folder swept its siblings** — the stale-removal prefix had no trailing separator, so scanning `/Volumes/Music` also matched `/Volumes/Music Backup`. Unplugging the backup drive and rescanning the main one deleted the backup's rows.
+- **Content dedup merged distinct tracks and lost a file** — the match ignored `disc`, so a 2-CD box set whose discs share a track title and number collapsed into one row pointing at whichever disc was scanned last; the other file became unreachable in library, search and queue, and stale removal never noticed because the file was still on disk. `disc` is now part of the predicate, and the match only fires across sources: two rows that both carry a local path, or that both carry a remote id, are two tracks. That keeps the local↔remote dedup the design wants. The cost is that a server which rotates its ids yields visible duplicates instead of re-attaching silently — duplicates you can see and fix, where a swallowed track you can do neither with.
+- **Remote sync erased locally-scanned audio properties** — merging wrote every column straight from the incoming metadata, so syncing against a Navidrome serving the same files nulled `sample_rate`, `bit_depth`, `channels`, `size_bytes` and `mtime` across the library and rewrote the codec. A merge now fills gaps only and never overwrites a populated column with NULL.
+- **Orphaned `scan_cache` rows aborted stale cleanup half-done** — cleanup deleted the cache row by the track's current path, leaving any row under a former path behind. The foreign key then failed the `DELETE FROM tracks` — after the FTS, lyrics, play-history and embedding rows had already gone — and every remaining stale track in that run was skipped. Cache rows are now cleared by `track_id` as well as path.
+- **A single panicking file aborted the whole scan** — lofty and symphonia can panic on hostile tags; rayon re-raised it at `collect()`, so one bad file out of 500k produced zero indexed tracks and a backtrace that didn't name it. Tag reads are contained; the file is reported as an error and the scan continues. Same for acoustic analysis.
+- **Files skipped by walkdir vanished silently** — permission-denied subtrees and symlink loops were discarded without a word. They are logged, counted in `ScanResult::unreadable`, and reported by `koan scan`.
+- **`ScanResult::updated` was always zero** — every upsert counted as `added`, so `koan scan` printed "0 updated" every run and GraphQL returned the same through `tracksUpdated`. `upsert_track_status` reports whether a row was inserted, which also makes `ScanEvent::is_new` truthful.
+- **A failed `scan_cache` write was swallowed** — the track was indexed but uncached, so every future scan re-read its tags with no diagnostic.
+
+- **Failed album fetches no longer become permanent library holes** — a sync that lost albums to network errors still reported success and advanced `last_sync`, so the next incremental sync skipped straight past them. `last_sync` now only advances when every album fetch succeeded, and `SyncResult` carries the failure count so `koan remote sync` and `triggerRemoteSync` report an incomplete run.
+- **Sync pagination can no longer skip albums** — the offset walk used `type=newest`, whose ordering shifts whenever the server reorders or adds an album mid-sync. It now walks `alphabeticalByName`, de-duplicates album ids for the run, and uses `created` only to decide which albums need a detail fetch.
+- **Truncated downloads can no longer masquerade as cached tracks** — the TUI remote bridge wrote straight to its destination and only checked completeness when the server sent a Content-Length, so a dropped connection on a chunked stream (Navidrome's transcoded output) left a truncated file that played as a stub for the rest of the session. Every remote download now goes through one implementation that writes a `.part` file and renames only on a verified-complete transfer.
+- **The remote-stream cache is bounded** — bridge downloads were keyed on a per-session queue id, so nothing was ever reused and every play left a full-size file behind forever. They are now keyed on track identity and the directory is pruned to a 2GB budget.
+- **Priority downloads respect `download_workers`** — cursor movement spawned an unbounded thread per landing, so scrolling a large remote queue fired hundreds of concurrent requests at the server. Priority downloads now run on a two-permit lane, tracks already downloading are never started twice, and anything over the limit goes to the head of the worker queue.
+- **Favouriting a track mid-download sticks** — the star was keyed on the in-progress `.part` path, which stops existing when the download completes, so it silently disappeared and was never pushed to the server.
+- **Download workers survive panics** — a panicking download permanently shrank the worker pool for the process lifetime.
+- **Lost server connections are visible** — the remote bridge swallowed poll errors and froze on the last known state while retrying at 10Hz. Connection loss and recovery are now logged.
 
 ### Added
 

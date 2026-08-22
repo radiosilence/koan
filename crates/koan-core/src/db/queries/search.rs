@@ -6,7 +6,7 @@ use super::TrackRow;
 
 /// Sanitize a user query for FTS5 MATCH: escapes double-quotes and wraps in
 /// a quoted phrase so FTS5 special characters are treated as literals.
-fn sanitize_fts_query(query: &str) -> String {
+pub(crate) fn sanitize_fts_query(query: &str) -> String {
     let trimmed = query.trim();
     if trimmed.is_empty() {
         return String::new();

@@ -14,7 +14,7 @@ use super::{PlaybackSource, TrackMeta, TrackRow};
 /// disc, track_number, title, duration_ms, path,
 /// codec, sample_rate, bit_depth, channels, bitrate,
 /// genre, source, remote_id, cached_path
-fn row_to_track_row(row: &rusqlite::Row) -> rusqlite::Result<TrackRow> {
+pub(crate) fn row_to_track_row(row: &rusqlite::Row) -> rusqlite::Result<TrackRow> {
     let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
     Ok(TrackRow {
         id: row.get(0)?,
