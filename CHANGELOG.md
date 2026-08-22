@@ -30,6 +30,17 @@
 ### Removed
 
 - **`remove_track_by_path` and `remove_tracks_by_source`** — unused outside their own tests, and both left orphaned foreign-key rows behind that would fail a later delete.
+### Changed
+
+- **ratatui 0.29 → 0.30, crossterm 0.28 → 0.29** — the two move together because `ratatui-crossterm` defaults to crossterm 0.29; bumping ratatui alone resolves two crossterm versions and breaks at the backend boundary. No source changes: koan's ratatui surface is `Buffer`, `Rect`, `Style`, `Line`/`Span`, `Widget` and `Length`/`Min`/`Percentage` constraints, and every 0.30 breaking change lands elsewhere.
+
+  0.30 splits into `ratatui-core`/`ratatui-widgets`/`ratatui-crossterm` and replaces the cassowary layout solver with kasuari. Solver output is unchanged for koan's constraint sets, and `Buffer`'s out-of-bounds policy still panics rather than clamping, so nothing that used to render now renders differently or silently truncates. The one behavioural change is that halfwidth katakana dakuten/handakuten (`U+FF9E`/`U+FF9F`) now measure one cell instead of zero, matching how terminals actually draw them.
+
+  The optional `termwiz`/`termina` backends appear in `Cargo.lock` but stay out of the build graph.
+
+### Added
+
+- **Render tests for the TUI** (`crates/koan-tui/tests/render.rs`) — the widget layer had no test coverage, and layout and unicode regressions compile cleanly while rendering wrong. Pins the main layout split at every terminal height, asserts the seek bar's click hit-test agrees with the columns actually painted, and sweeps every widget across terminal sizes from 1×1 upward with titles containing CJK, emoji, ZWJ sequences, combining marks and RTL text.
 
 ## v0.23.3 (2026-04-19)
 
