@@ -12,7 +12,7 @@ crates/
 │
 ├── koan-tui/      Library crate. Ratatui TUI, visualizers, media keys,
 │                  transport, download queue. Exports `run_tui()`.
-│                  Depends on koan-core and koan-server.
+│                  Depends on koan-core.
 │
 ├── koan-server/   Library crate. GraphQL (async-graphql + axum),
 │                  Subsonic REST API, MCP server.
@@ -23,7 +23,7 @@ crates/
                    Depends on koan-core, koan-tui, koan-server.
 ```
 
-Four crates, one workspace. `koan-core` is the engine, `koan-tui` is the terminal UI, `koan-server` is the API layer, and `koan-cli` is the binary that ties them together. Dependency rules are enforced by Cargo: `koan-tui` and `koan-server` cannot import each other. If you wanted a different UI, write a new crate against `koan-core` -- the CLI owns zero business logic.
+Four crates, one workspace. `koan-core` is the engine, `koan-tui` is the terminal UI, `koan-server` is the API layer, and `koan-cli` is the binary that ties them together. Dependency rule: `koan-server` must not depend on `koan-tui`. `koan-tui` currently declares an unused `koan-server` dependency; removing it makes the boundary compiler-enforced. If you wanted a different UI, write a new crate against `koan-core` -- the CLI owns zero business logic.
 
 ## Threading model
 
@@ -56,7 +56,7 @@ Five threads at steady state during playback:
 └─────────────────┘  └──────────────────────────┘
 
 ┌─────────────────────────────────────────────────┐
-│ Analyzer Thread ("koan-analyzer")               │
+│ Analyzer Thread ("viz-analyzer")               │
 │ Always spawned. Reads VizBuffer, runs FFT,      │
 │ writes VizSnapshot. Configurable fps (default   │
 │ 60). Never blocks audio or UI.                  │
@@ -336,16 +336,16 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 ## Dependencies
 
-All deps are current as of March 2026. Key choices:
+Key choices:
 
 | Dep | Why |
 |---|---|
-| `symphonia` | Rust-native audio decoder. All codecs via `features = ["all"]`. Gapless support built in. |
+| `symphonia` | Rust-native audio decoder. Explicit codec feature list with `default-features = false` (flac, mp3, aac, vorbis, alac, pcm, adpcm, isomp4, ogg, mkv, caf, wav, aiff, opt-simd). Gapless support built in. |
 | `rtrb` | Lock-free SPSC ring buffer. The only thing connecting decode → audio output. |
 | `coreaudio-sys` | Raw CoreAudio bindings for AUHAL output unit (macOS only). |
 | `cpal` | Cross-platform audio I/O — ALSA/PipeWire/PulseAudio backend (Linux only). |
 | `keyring` | Cross-platform credential storage (macOS Keychain, Linux secret-service). |
-| `rusqlite` | SQLite with `bundled-full` (portable, includes FTS5). |
+| `rusqlite` | SQLite via `bundled` (portable, includes FTS5) (portable, includes FTS5). |
 | `lofty` | Tag reading/writing across ID3, Vorbis, MP4, APE. |
 | `ratatui` + `crossterm` | TUI framework + terminal backend. |
 | `nucleo` | Fuzzy matching engine (same as used by Helix editor). |

@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Security
+
+- **h2 unbounded empty DATA frames (RUSTSEC-2026-0258)** — `axum::serve` runs hyper-util's auto builder, which speaks h2c on a plaintext listener, so anyone able to reach the API port could grow server memory without limit. h2 is now 0.4.18 (patched in 0.4.16).
+- **rustls-webpki CRL panic and name-constraint bypasses (RUSTSEC-2026-0104, -0098, -0099, -0049)** — a hostile certificate chain from a Subsonic/Navidrome server could panic the sync client, and URI/wildcard name constraints were mis-evaluated. rustls-webpki is now 0.103.15.
+
+### Changed
+
+- **Dependency refresh across the workspace.** Notable majors: rusqlite 0.40, keyring 4, jsonwebtoken 11, rtrb 0.4, cpal 0.18, rmcp 3.1, bliss-audio 0.13, lofty 0.25, base64 0.23, tower-http 0.7, pem 4, getrandom 0.4, toml 1.1, jwalk 0.9, core-foundation 0.10, clap 4.6.
+- **jsonwebtoken now uses the aws-lc-rs backend**, shared with rustls rather than pulling a second crypto stack. Token verification is stricter than under 9.x: the signature check can no longer be disabled, and the `alg` header is matched against the pinned `EdDSA` unconditionally.
+- **keyring on Linux talks to secret-service over zbus** instead of dbus-secret-service. macOS Keychain access is unchanged — same generic-password service/account attributes and the same user keychain — so existing credentials still resolve.
+- **bliss-audio no longer needs the aubio C library**; upstream replaced it with a Rust implementation, so `bliss-audio-aubio-rs` and its bindgen build are gone. The feature vector is unchanged (`FeaturesVersion::Version2`), so stored embeddings stay valid, though decoded values may shift marginally after bliss's Symphonia/Rubato update.
+
 ### Fixed
 
 - **`cargo test` overwrote the user's real JWT signing key.** `auth`'s keypair tests called
@@ -76,6 +88,43 @@ Also hardened, same blast radius:
 - **A `)` inside a quoted argument no longer truncates a call.** The end of a function call is now found by the argument parser, which understands quoting, instead of a naive paren count that ended mid-expression and re-parsed the tail as a literal — silently appending garbage to the path.
 - **Path components are length-capped** at the same 240 bytes as the rest of the codebase, so a long title is shortened rather than previewing cleanly and failing with `ENAMETOOLONG`.
 ||||||| 465429f
+- **Release pipeline could not recover from a partial crates.io publish.** The idempotency guard used
+  `curl -sf` against the crates.io API, which returns 403 to curl's default User-Agent under its
+  data-access policy — so the guard never fired and a retry after a partial publish always failed on
+  "crate version already uploaded". The only escape was another version bump, which is what v0.23.2 and
+  v0.23.3 were. Replaced the hand-rolled loop with `cargo publish --workspace`, which orders by
+  dependency and waits for the index itself, and dropped `--no-verify` so the packaged crate is
+  actually built.
+- **The git tag was cut before crates.io.** Once tagged, `check-version` saw the release as done and
+  set `should_release=false` forever, so crates.io could never be retried. crates.io now publishes
+  first and the tag marks a release that actually shipped.
+- Documented `auth_enabled` default was wrong in four places (it defaults to **true**), and the v0.22.0
+  changelog entry contradicted itself. The guides that show how to disable auth now warn that doing so
+  with the default wildcard CORS and no `Host` validation lets any visited web page read the library.
+- `ARCHITECTURE.md` and `CLAUDE.md` claimed the koan-tui/koan-server boundary was compiler-enforced. It
+  is not — koan-tui declares an (unused) dependency on koan-server.
+
+### Added
+
+- MSRV declared (`rust-version = "1.89"`, set by async-graphql) and enforced by a CI job.
+- `cargo audit` job and Dependabot for both cargo and GitHub Actions.
+- Release gate that fails if the internal path-dep versions drift from the workspace version — the
+  drift that `--no-verify` was hiding.
+- Job timeouts, and `.gitignore` entries for local secrets and state.
+
+### Changed
+
+- The pre-push hook no longer runs `git add -A && git commit --amend` when `cargo fmt` changes files —
+  it swept unrelated working-tree changes into the user's commit. It now fails and asks. It also runs
+  `--all-targets`, matching CI, so warnings in test code stop passing the hook and failing CI.
+
+### Internal
+
+- **Internal crate versions are declared once**, in `[workspace.dependencies]`, instead of being pinned per member — the per-member pins had drifted a patch behind and would have published a broken `koan-cli` at the next minor bump.
+- **`koan-tui` no longer depends on `koan-server`.** It never imported it; the dependency pulled axum, async-graphql, rmcp, tokio and tower into every TUI build and contradicted the documented crate boundary, which is now compiler-enforced again.
+- **`reqwest` is declared once in `[workspace.dependencies]`** with the feature union the workspace already resolved to, replacing four declarations with four different feature sets.
+- Dropped confirmed-unused deps: `toml`, `chrono`, `rayon`, `owo-colors` from koan-tui; `walkdir` from koan-server; `core-foundation`, `crossbeam-channel` from koan-cli.
+- Tests covering the `ALTER TABLE` schema migrations: SQLite's "duplicate column" wording is the only thing stopping `Database::open` from failing on an already-migrated database, so it is now asserted rather than assumed.
 
 ## v0.23.3 (2026-04-19)
 
@@ -135,7 +184,7 @@ Groundwork for the upcoming browser SPA: full GraphQL schema for web clients, re
   - Three roles: `admin` (full control), `user` (playback, queue, favourites), `readonly` (browse-only).
   - Argon2id password hashing, short-lived access tokens (15min default), single-use rotating refresh tokens (30d default).
   - Auth routes: `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`.
-  - Axum middleware validates JWT on protected routes. When `auth_enabled = false` (default), all requests pass through as admin — zero breaking change for existing installs.
+  - Axum middleware validates JWT on protected routes. When `auth_enabled = false`, all requests pass through as admin — zero breaking change for existing installs.
   - CLI commands: `koan auth setup` (keypair + first admin), `koan auth create-user`, `koan auth delete-user`, `koan auth list-users`, `koan auth login`, `koan auth logout`.
   - Refresh tokens stored in platform keychain via `keyring`. In-process execution (MCP) bypasses auth.
   - Config: `[graphql]` section gains `auth_enabled`, `access_token_ttl`, `refresh_token_ttl`.

@@ -45,6 +45,11 @@ To disable auth:
 auth_enabled = false
 ```
 
+> **Warning:** with auth disabled, `cors_origins` unset defaults to `Access-Control-Allow-Origin: *`,
+> and koan performs no `Host` validation. Any web page you visit can then read your entire library —
+> and a DNS-rebinding page can reach it even on a loopback bind. Only disable auth on a host you
+> control, bound to `127.0.0.1`, and never with the port forwarded.
+
 ## Configuration
 
 ```toml

@@ -447,7 +447,7 @@ pub struct SubsonicShare {
 /// worker must not die because `getrandom` hiccupped.
 fn random_salt() -> String {
     let mut buf = [0u8; 12];
-    if let Err(e) = getrandom::getrandom(&mut buf) {
+    if let Err(e) = getrandom::fill(&mut buf) {
         log::warn!(
             "entropy source unavailable ({}), using clock-derived salt",
             e

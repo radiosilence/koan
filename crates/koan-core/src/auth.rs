@@ -150,7 +150,6 @@ fn public_key_path() -> PathBuf {
 /// Derive a new Ed25519 keypair as PEM. Touches no filesystem state.
 /// Returns (private_pem, public_pem).
 pub fn generate_keypair_pem() -> Result<(String, String), AuthError> {
-    // Generate Ed25519 keypair using ring (via jsonwebtoken's internal ring dep).
     // jsonwebtoken's EncodingKey::from_ed_pem expects PKCS8 PEM.
     let rng = ring::rand::SystemRandom::new();
     let pkcs8_doc = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng)

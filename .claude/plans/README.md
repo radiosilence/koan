@@ -2,38 +2,43 @@
 
 Feasibility research and implementation plans for koan's next major features.
 
-## Plans
+## Active
 
-| # | Plan | Effort | Key Decision | Status |
-|---|------|--------|-------------|--------|
-| [01](01-linux-and-audio-backends.md) | Linux + Audio Backends | ~7-9 days | Custom gapless is correct — just abstract the output. `AudioBackend` trait wrapping CoreAudio/ALSA directly. | Research |
-| [02](02-dsp-and-profiles.md) | DSP + Headphone Profiles | ~5-7 days | Insert between decode and ring buffer. `biquad` for parametric EQ. AutoEQ profiles trivially parseable. Fixes ReplayGain never being applied. | Research |
-| [03](03-ansi-visualizers.md) | ANSI Art Visualizers | ~4-6 days | Tap audio on decode thread via mutex buffer. `realfft` for FFT. Spectrogram waterfall reuses cover art halfblock technique. | Research |
-| [04](04-tagging.md) | Tag Editing | ~8-12 days | lofty 0.23 writes fine. vimv-style (TSV + $EDITOR) first, TUI inline editor second. Terminal suspend/resume is standard ratatui pattern. | Research |
-| [06](06-decoupled-backends.md) | Decoupled Backends | ~6-10 days | Trait-based subsystems. `keyring` for credentials (trivial). Don't abstract SQLite. Custom `AudioBackend` over cpal for bit-perfect. | Research |
-| [07](07-non-tag-metadata.md) | Non-Tag Metadata | ~7-10 days | Last.fm + LRCLIB + Cover Art Archive — all free/open. Radio mode = queue feature. Lyrics is highest ROI. | Research |
-| [08](08-replaygain-wiring.md) | ReplayGain Wiring | ~1 day | All code exists, just not called during decode. Apply gain in `decode_single()` before ring buffer push. ~40-60 line diff. | Ready |
+| # | Plan | Effort | Key Decision |
+|---|------|--------|-------------|
+| [02](02-dsp-and-profiles.md) | DSP + Headphone Profiles | ~5-7 days | Insert between decode and ring buffer. `biquad` for parametric EQ. AutoEQ profiles trivially parseable. |
+| [04](04-tagging.md) | Tag Editing | ~8-12 days | vimv-style (TSV + $EDITOR) first, TUI inline editor second. Terminal suspend/resume is a standard ratatui pattern. |
+| [09](09-artist-metadata.md) | Artist Metadata | — | Bios, images and similar artists from MusicBrainz/Last.fm. |
+
+## Shipped
+
+| # | Plan | Landed as |
+|---|------|-----------|
+| 01 | Linux + Audio Backends | `audio/cpal_backend.rs`; CI builds and lints on ubuntu |
+| 03 | ANSI Art Visualizers | `koan-tui/src/visualizer.rs` |
+| 06 | Decoupled Backends | `audio/backend.rs` trait with CoreAudio and cpal implementors; `credentials.rs` over `keyring` |
+| 07 | Non-Tag Metadata | `remote/lrclib.rs` + the `lyrics_cache` table |
+| 08 | ReplayGain Wiring | applied in `decode_single()` before the ring-buffer push |
+
+Plans 03, 07 and 08 live in `archive/`. Plans 01, 06 and 09 were written before the crate split —
+`koan-music/` paths in them map to `koan-tui/` (TUI) and `koan-cli/` (binary).
 
 ## Dependencies Between Plans
 
 ```
-06 Decoupled Backends ──► 01 Linux + Audio Backends
-                     └──► 02 DSP Pipeline (audio trait must exist first)
-                     └──► 07 Non-Tag Metadata (remote trait enables more sources)
-
-02 DSP Pipeline ────────► 03 Visualizers (shared audio tap infrastructure)
+02 DSP Pipeline ────────► shares the audio tap with the visualizers
 ```
 
 ## Open Questions
 
-- **cpal vs raw ALSA**: Plans 01 and 06 disagree. cpal may not support sample rate switching for bit-perfect playback. Needs hands-on testing before committing.
-- **MusicBrainz/AcoustID** (Plan 04): Requires chromaprint C FFI, breaking the pure-Rust philosophy. Marked as optional stretch goal.
+- **MusicBrainz/AcoustID** (Plan 04): requires chromaprint C FFI, breaking the pure-Rust philosophy.
+  Optional stretch goal.
+
+The cpal-vs-raw-ALSA question is settled: cpal, for compatibility. Direct ALSA remains a future option
+if bit-perfect output on Linux needs it — see `docs/architecture-improvements.md`.
 
 ## Suggested Implementation Order
 
-1. **06 Decoupled Backends** — foundational, unblocks everything
-2. **01 Linux + Audio Backends** — biggest reach expansion
-3. **04 Tagging** — vimv phase is self-contained
-4. **02 DSP + Profiles** — builds on audio backend trait
-5. **07 Non-Tag Metadata** — lyrics first, radio mode later
-6. **03 Visualizers** — fun but lowest priority; shares DSP audio tap
+1. **04 Tagging** — self-contained, vimv phase first
+2. **02 DSP + Profiles** — builds on the audio backend trait
+3. **09 Artist Metadata**

@@ -21,3 +21,11 @@
 .vscode/
 *.swp
 *.swo
+
+# Secrets & local state
+config.local.toml
+.env
+*.pem
+*.db
+*.sqlite*
+*.log

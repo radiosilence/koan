@@ -269,7 +269,7 @@ pub struct GraphqlConfig {
     /// Enable Subsonic REST API on this port. Omit or null to disable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subsonic_port: Option<u16>,
-    /// Require authentication for API access (default: false for backward compat).
+    /// Require authentication for API access (default: true).
     /// When false, all requests are treated as admin. When true, JWT auth is enforced.
     pub auth_enabled: bool,
     /// Access token TTL (default: "15m"). Supports: "15m", "1h", "3600s".
