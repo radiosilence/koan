@@ -68,6 +68,21 @@ impl KoanMcpServer {
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::tool;
 
+/// Role the MCP `graphql` tool executes at.
+///
+/// The transport carries no credential, so anything reachable here is reachable
+/// by whoever can talk to the MCP process. `User` covers everything the tool
+/// advertises — browsing, playback, queue, favourites, snapshots, radio — and
+/// leaves out the admin mutations that move files on disk (`organize*`), rewrite
+/// config, or change the output device. `KOAN_MCP_ADMIN=1` opts back in.
+fn mcp_role() -> koan_core::auth::Role {
+    if std::env::var("KOAN_MCP_ADMIN").is_ok_and(|v| v == "1") {
+        koan_core::auth::Role::Admin
+    } else {
+        koan_core::auth::Role::User
+    }
+}
+
 #[tool_router]
 impl KoanMcpServer {
     #[tool(
@@ -110,7 +125,10 @@ impl KoanMcpServer {
             tokio::runtime::Handle::try_current().map_err(|_| "no tokio runtime".to_string())?;
         let result = tokio::task::block_in_place(|| {
             rt.block_on(crate::graphql::execute_in_process(
-                &schema, &query, variables,
+                &schema,
+                &query,
+                variables,
+                mcp_role(),
             ))
         });
         Ok(Json(GraphqlResponse { result }))
@@ -137,8 +155,11 @@ impl ServerHandler for KoanMcpServer {
              - **Snapshots**: `saveSnapshot`, `restoreSnapshot`, `deleteSnapshot` — bank curated \
                mixes and switch between them\n\
              - **Radio**: `enableRadio`, `disableRadio` — auto-queues similar tracks\n\
-             - **Devices**: query `devices`, mutation `setDevice`, `clearDevice`\n\
+             - **Devices**: query `devices`; `setDevice`/`clearDevice` need `KOAN_MCP_ADMIN=1`\n\
              - **History**: query `playHistory`, `similarArtists`\n\n\
+             ## Not available\n\
+             Admin mutations — `organize*` (moves files on disk), `updateConfig`, \
+             `triggerScan`, `createShare` — are refused unless `KOAN_MCP_ADMIN=1` is set.\n\n\
              ## ID conventions\n\
              - Track IDs: integers from the library database\n\
              - Queue item IDs: UUIDs assigned when tracks enter the queue",

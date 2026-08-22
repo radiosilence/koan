@@ -15,6 +15,18 @@ use super::helpers::{spawn_downloads, sync_favourite_to_remote, track_to_playlis
 use super::types::*;
 use super::{DbHandle, parse_queue_item_id, require_role, send_cmd};
 
+/// The `organize*` mutations physically move files, so admin alone is not the
+/// bar — the deployment has to have opted in.
+fn require_organize() -> async_graphql::Result<()> {
+    if Config::load().unwrap_or_default().graphql.allow_organize {
+        Ok(())
+    } else {
+        Err(async_graphql::Error::new(
+            "organize is disabled — set [graphql] allow_organize = true to enable it",
+        ))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Mutation root
 // ---------------------------------------------------------------------------
@@ -261,7 +273,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .map_err(|e| super::internal_error("db", e))?
             .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
         let path = track
             .path
@@ -269,7 +281,7 @@ impl MutationRoot {
             .or(track.cached_path.as_ref())
             .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
         queries::add_favourite(&db.conn, std::path::Path::new(path))
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         sync_favourite_to_remote(&db, path, true);
         Ok(GqlTrack { row: track })
     }
@@ -282,7 +294,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .map_err(|e| super::internal_error("db", e))?
             .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
         let path = track
             .path
@@ -290,7 +302,7 @@ impl MutationRoot {
             .or(track.cached_path.as_ref())
             .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
         queries::remove_favourite(&db.conn, std::path::Path::new(path))
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         sync_favourite_to_remote(&db, path, false);
         Ok(GqlTrack { row: track })
     }
@@ -303,7 +315,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .map_err(|e| super::internal_error("db", e))?
             .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
         let path = track
             .path
@@ -311,7 +323,7 @@ impl MutationRoot {
             .or(track.cached_path.as_ref())
             .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
         let is_now_fav = queries::toggle_favourite(&db.conn, std::path::Path::new(path))
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         sync_favourite_to_remote(&db, path, is_now_fav);
         Ok(GqlTrack { row: track })
     }
@@ -326,7 +338,7 @@ impl MutationRoot {
         let (items, cursor) = state.snapshot_playlist();
         if items.is_empty() {
             queries::playback_state::clear_playback_state(&db.conn)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                .map_err(|e| super::internal_error("db", e))?;
             return Ok(GqlStatus::success("playback state cleared (empty queue)"));
         }
 
@@ -348,7 +360,7 @@ impl MutationRoot {
             cursor_path.as_deref(),
             position_ms,
         )
-        .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        .map_err(|e| super::internal_error("db", e))?;
 
         Ok(GqlStatus::success("playback state saved"))
     }
@@ -357,7 +369,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         queries::playback_state::clear_playback_state(&db.conn)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         Ok(GqlStatus::success("playback state cleared"))
     }
 
@@ -392,7 +404,7 @@ impl MutationRoot {
             cursor_path.as_deref(),
             position_ms,
         )
-        .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        .map_err(|e| super::internal_error("db", e))?;
 
         Ok(GqlStatus::success(format!("saved snapshot '{}'", name)))
     }
@@ -407,7 +419,7 @@ impl MutationRoot {
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
         let snap = queries::load_snapshot(&db.conn, &name)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .map_err(|e| super::internal_error("db", e))?
             .ok_or_else(|| async_graphql::Error::new(format!("snapshot '{}' not found", name)))?;
 
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
@@ -469,7 +481,7 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let deleted = queries::delete_snapshot(&db.conn, &name)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         if deleted {
             Ok(GqlStatus::success(format!("deleted snapshot '{}'", name)))
         } else {
@@ -505,13 +517,14 @@ impl MutationRoot {
         track_ids: Option<Vec<i64>>,
     ) -> async_graphql::Result<GqlOrganizePreview> {
         require_role(ctx, Role::Admin)?;
+        require_organize()?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let result = if let Some(ids) = track_ids {
             koan_core::organize::preview_for_tracks(&db, &ids, &pattern, None)
         } else {
             koan_core::organize::preview(&db, &pattern, None)
         }
-        .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
+        .map_err(|e| super::internal_error("organize", e))?;
 
         Ok(GqlOrganizePreview {
             moves: result
@@ -539,13 +552,14 @@ impl MutationRoot {
         track_ids: Option<Vec<i64>>,
     ) -> async_graphql::Result<GqlOrganizeResult> {
         require_role(ctx, Role::Admin)?;
+        require_organize()?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let result = if let Some(ids) = track_ids {
             koan_core::organize::execute_for_tracks(&db, &ids, &pattern, None)
         } else {
             koan_core::organize::execute(&db, &pattern, None)
         }
-        .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
+        .map_err(|e| super::internal_error("organize", e))?;
 
         Ok(GqlOrganizeResult {
             moved_count: result.moves.len() as i32,
@@ -560,9 +574,10 @@ impl MutationRoot {
 
     async fn organize_undo(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::Admin)?;
+        require_organize()?;
         let db = ctx.data::<DbHandle>()?.open()?;
-        let result = koan_core::organize::undo(&db)
-            .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
+        let result =
+            koan_core::organize::undo(&db).map_err(|e| super::internal_error("organize", e))?;
         let mut message = format!("undone {} moves", result.restored);
         if !result.errors.is_empty() {
             message.push_str(&format!(
@@ -590,10 +605,22 @@ impl MutationRoot {
         require_role(ctx, Role::Admin)?;
         use koan_core::config::ReplayGainMode;
 
+        // `libraryFolders` plus `triggerScan` plus `organizeExecute` is a
+        // remote move of arbitrary files into the music tree, and `remoteUrl`
+        // repoints sync at whatever server the caller names. Neither belongs on
+        // a network API — they stay CLI-only.
+        if input.library_folders.is_some() {
+            return Err(async_graphql::Error::new(
+                "library folders can only be changed from the CLI",
+            ));
+        }
+        if input.remote_url.is_some() {
+            return Err(async_graphql::Error::new(
+                "remote URL can only be changed from the CLI",
+            ));
+        }
+
         Config::update_base(|cfg| {
-            if let Some(ref folders) = input.library_folders {
-                cfg.library.folders = folders.iter().map(std::path::PathBuf::from).collect();
-            }
             if let Some(ref mode) = input.replaygain_mode {
                 cfg.playback.replaygain = match mode.to_lowercase().as_str() {
                     "track" => ReplayGainMode::Track,
@@ -620,9 +647,6 @@ impl MutationRoot {
             if let Some(enabled) = input.remote_enabled {
                 cfg.remote.enabled = enabled;
             }
-            if let Some(ref url) = input.remote_url {
-                cfg.remote.url = url.clone();
-            }
             if let Some(ref username) = input.remote_username {
                 cfg.remote.username = username.clone();
             }
@@ -646,7 +670,7 @@ impl MutationRoot {
                 cfg.graphql.playground = pg;
             }
         })
-        .map_err(|e| async_graphql::Error::new(format!("config write error: {}", e)))?;
+        .map_err(|e| super::internal_error("config write", e))?;
 
         Ok(GqlStatus::success("config updated"))
     }
@@ -683,7 +707,7 @@ impl MutationRoot {
             &cfg.remote.url,
             &cfg.remote.username,
         )
-        .map_err(|e| async_graphql::Error::new(format!("sync error: {}", e)))?;
+        .map_err(|e| super::internal_error("remote sync", e))?;
         if result.is_complete() {
             Ok(GqlStatus::success("remote sync complete"))
         } else {
@@ -727,7 +751,7 @@ impl MutationRoot {
         let id_refs: Vec<&str> = remote_ids.iter().map(|s| s.as_str()).collect();
         let share = client
             .create_share(&id_refs, description.as_deref())
-            .map_err(|e| async_graphql::Error::new(format!("share error: {}", e)))?;
+            .map_err(|e| super::internal_error("share", e))?;
 
         Ok(GqlShare {
             url: share.url,

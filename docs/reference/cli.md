@@ -116,6 +116,21 @@ See [Remote Servers](../guide/remote-servers.md) for the full guide.
 
 ---
 
+## `koan subsonic`
+
+Manage koan's own Subsonic-compatible REST API at `/rest/*`.
+
+```bash
+koan subsonic setup               # generate a secret and enable the API
+koan subsonic setup --username me # pick the username (default: koan)
+koan subsonic status              # show whether it is enabled and configured
+koan subsonic disable             # stop serving /rest/* and delete the secret
+```
+
+The secret is separate from your `[remote]` (Navidrome) password and is printed once. See [Configuration](configuration.md#subsonic) for why.
+
+---
+
 ## `koan config`
 
 Show the resolved configuration from all layers.

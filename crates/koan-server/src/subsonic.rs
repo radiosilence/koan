@@ -2,7 +2,8 @@
 //!
 //! Implements a subset of the Subsonic/OpenSubsonic REST API backed by the
 //! local koan database.  Supports both XML (default) and JSON (`f=json`)
-//! responses.  Auth uses MD5+salt tokens *and* legacy plaintext passwords.
+//! responses.  Auth is `t=md5(password + s)` only, against a dedicated
+//! `[subsonic]` secret — see `validate_auth`.
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
@@ -23,6 +24,8 @@ use tokio::io::AsyncReadExt as _;
 
 const SUBSONIC_API_VERSION: &str = "1.16.1";
 const SUBSONIC_XMLNS: &str = "http://subsonic.org/restapi";
+const MIN_COVER_SIZE: u32 = 16;
+const MAX_COVER_SIZE: u32 = 2048;
 
 // ---------------------------------------------------------------------------
 // Shared state
@@ -353,49 +356,42 @@ fn xml_escape(s: &str) -> String {
 // Auth — MD5+salt token *and* legacy plaintext password
 // ---------------------------------------------------------------------------
 
+/// Validate `u` + `t` + `s` against the configured `[subsonic]` credentials.
+///
+/// Token auth only. `p=` (plaintext, and its `enc:` hex dressing) is refused:
+/// the protocol offers no transport guarantee, so accepting it means handing the
+/// secret to anyone watching the wire. `t=md5(password + attacker-chosen salt)`
+/// leaks an offline-crackable digest, which is why the secret is a generated
+/// 256-bit value rather than something a human picked.
 fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<(), SubsonicError> {
+    use subtle::ConstantTimeEq;
+
     let username = params
         .u
         .as_deref()
         .ok_or_else(|| SubsonicError::missing_param("u"))?;
 
-    if username != state.username {
-        return Err(SubsonicError::wrong_auth());
-    }
+    let user_ok: bool = username
+        .as_bytes()
+        .ct_eq(state.username.as_bytes())
+        .unwrap_u8()
+        == 1;
 
-    // Token-based: t = md5(password + s)
-    if let (Some(token), Some(salt)) = (params.t.as_deref(), params.s.as_deref()) {
-        let expected = format!("{:x}", md5::compute(format!("{}{}", state.password, salt)));
-        use subtle::ConstantTimeEq;
-        if token.as_bytes().ct_eq(expected.as_bytes()).into() {
-            return Ok(());
+    let (Some(token), Some(salt)) = (params.t.as_deref(), params.s.as_deref()) else {
+        if params.p.is_some() {
+            return Err(SubsonicError::wrong_auth());
         }
-        return Err(SubsonicError::wrong_auth());
+        return Err(SubsonicError::missing_param("t and s"));
+    };
+
+    let expected = format!("{:x}", md5::compute(format!("{}{}", state.password, salt)));
+    let token_ok: bool = token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() == 1;
+
+    if user_ok && token_ok {
+        Ok(())
+    } else {
+        Err(SubsonicError::wrong_auth())
     }
-
-    // Legacy plaintext (with optional enc: hex prefix)
-    if let Some(ref p) = params.p {
-        let plain = if let Some(hex) = p.strip_prefix("enc:") {
-            hex_decode(hex)
-        } else {
-            p.clone()
-        };
-        use subtle::ConstantTimeEq;
-        if plain.as_bytes().ct_eq(state.password.as_bytes()).into() {
-            return Ok(());
-        }
-        return Err(SubsonicError::wrong_auth());
-    }
-
-    Err(SubsonicError::missing_param("t and s, or p"))
-}
-
-fn hex_decode(hex: &str) -> String {
-    let bytes: Vec<u8> = (0..hex.len())
-        .step_by(2)
-        .filter_map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
-        .collect();
-    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 // ---------------------------------------------------------------------------
@@ -1081,6 +1077,9 @@ async fn proxy_stream_from_upstream(
 }
 
 fn parse_range(range: &str, total: u64) -> Option<(u64, u64)> {
+    if total == 0 {
+        return None;
+    }
     let bytes_prefix = range.strip_prefix("bytes=")?;
     let mut parts = bytes_prefix.splitn(2, '-');
     let start_str = parts.next()?.trim();
@@ -1137,7 +1136,11 @@ async fn get_cover_art(
     };
 
     let final_bytes = if let Some(size) = params.size {
-        resize_image(&art_bytes, size, is_png)?
+        resize_image(
+            &art_bytes,
+            size.clamp(MIN_COVER_SIZE, MAX_COVER_SIZE),
+            is_png,
+        )?
     } else {
         art_bytes
     };
@@ -1153,9 +1156,16 @@ async fn get_cover_art(
         .into_response())
 }
 
+/// `image`'s `resize` upscales, and the allocation for the result is not fallible
+/// — an oversized `size=` would abort the process rather than return an error.
+/// Clamped, and never larger than the source.
 fn resize_image(data: &[u8], size: u32, output_png: bool) -> Result<Vec<u8>, SubsonicError> {
+    use image::GenericImageView as _;
+
     let img = image::load_from_memory(data)
         .map_err(|e| SubsonicError::internal(format!("image decode error: {}", e)))?;
+    let (w, h) = img.dimensions();
+    let size = size.clamp(MIN_COVER_SIZE, MAX_COVER_SIZE).min(w.max(h));
     let resized = img.resize(size, size, image::imageops::FilterType::Lanczos3);
     let format = if output_png {
         image::ImageFormat::Png
@@ -1704,31 +1714,31 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 
 /// Build a Subsonic-compatible REST API router.
 ///
-/// Auth credentials come from `Config::load()`.  Returns `None` if remote
-/// credentials are not configured (refuses to start with no auth).
+/// Returns `None` unless `[subsonic]` is enabled and has its own credentials.
+/// `/rest/*` carries no JWT layer, so these credentials alone guard every byte
+/// of the library — they must never be the upstream `[remote]` password.
 pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
     let cfg = Config::load().unwrap_or_default();
 
-    if cfg.remote.username.is_empty() {
-        log::warn!(
-            "Subsonic API disabled: remote.username is not configured. \
-             Set remote credentials in config.toml to enable the Subsonic API."
-        );
+    if !cfg.subsonic.enabled {
         return None;
     }
 
-    let password = koan_core::helpers::get_remote_password(&cfg).unwrap_or_default();
-    if password.is_empty() {
-        log::warn!(
-            "Subsonic API disabled: remote password is empty. \
-             Set remote credentials to enable the Subsonic API."
-        );
+    if cfg.subsonic.username.is_empty() {
+        log::warn!("Subsonic API disabled: subsonic.username is empty.");
         return None;
     }
+
+    let Some(password) = koan_core::helpers::get_subsonic_password(&cfg) else {
+        log::warn!(
+            "Subsonic API disabled: no secret configured. Run `koan subsonic setup` to generate one."
+        );
+        return None;
+    };
 
     let state = Arc::new(AppState {
         db_path,
-        username: cfg.remote.username.clone(),
+        username: cfg.subsonic.username.clone(),
         password,
     });
 
@@ -1842,12 +1852,6 @@ mod tests {
     }
 
     #[test]
-    fn test_hex_decode() {
-        assert_eq!(hex_decode("68656c6c6f"), "hello");
-        assert_eq!(hex_decode(""), "");
-    }
-
-    #[test]
     fn test_parse_range_full() {
         assert_eq!(parse_range("bytes=0-999", 5000), Some((0, 999)));
     }
@@ -1927,11 +1931,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_legacy_password_auth() {
+    async fn test_legacy_password_auth_rejected() {
         let (state, _dir) = test_state();
         let app = build_test_router(state);
         let (_, body) = get_response(app, "/rest/ping?u=testuser&p=testpass&v=1.16.1&c=test").await;
-        assert!(body.contains("status=\"ok\""));
+        assert!(body.contains("status=\"failed\""));
+        assert!(body.contains("code=\"40\""));
+    }
+
+    #[tokio::test]
+    async fn test_enc_hex_password_auth_rejected() {
+        let (state, _dir) = test_state();
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            "/rest/ping?u=testuser&p=enc:7465737470617373&v=1.16.1&c=test",
+        )
+        .await;
+        assert!(body.contains("status=\"failed\""));
+    }
+
+    #[tokio::test]
+    async fn test_cover_art_size_is_clamped() {
+        // A 1x1 PNG upscaled to 65535x65535 would ask for ~17GB and abort the
+        // process; the clamp keeps the request bounded.
+        let png = image::RgbImage::from_pixel(1, 1, image::Rgb([1, 2, 3]));
+        let mut src = Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(png)
+            .write_to(&mut src, image::ImageFormat::Png)
+            .unwrap();
+
+        let out = resize_image(&src.into_inner(), u32::MAX, true).unwrap();
+        let decoded = image::load_from_memory(&out).unwrap();
+        use image::GenericImageView as _;
+        assert_eq!(decoded.dimensions(), (1, 1));
+    }
+
+    #[test]
+    fn test_parse_range_on_empty_file() {
+        assert_eq!(parse_range("bytes=0-", 0), None);
+        assert_eq!(parse_range("bytes=-100", 0), None);
     }
 
     #[tokio::test]
