@@ -100,7 +100,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `player/undo.rs` | Undo/redo stack for playlist operations (100-deep) |
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |
-| `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats, snapshots |
+| `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats, snapshots, `batch` (SQL-side track filtering, batched parent→child reads) |
 | `index/scanner.rs` | Parallel library scan: walkdir → rayon → sequential DB upsert |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
 | `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 59 built-in functions |
@@ -136,11 +136,13 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 
 | Module | What |
 |--------|------|
-| `graphql/mod.rs` | GraphQL schema builder, `KoanSchema` type, DB handle wrapper |
+| `graphql/mod.rs` | GraphQL schema builder, `KoanSchema` type, SQLite connection pool, `with_db`/`blocking` offload helpers |
+| `graphql/loaders.rs` | Dataloaders for artist→albums, album→tracks, counts, favourites |
+| `graphql/jobs.rs` | Job registry for `triggerScan`/`triggerRemoteSync` — detached threads, polled via `job(id:)` |
 | `graphql/queries.rs` | GraphQL query resolvers (artists, albums, tracks, nowPlaying, etc.) |
 | `graphql/mutations.rs` | GraphQL mutations (playback, queue, favourites, snapshots, organize) |
 | `graphql/types.rs` | GraphQL type definitions (GqlArtist, GqlTrack, GqlNowPlaying, etc.) |
-| `graphql/server.rs` | HTTP server (axum), `cmd_serve`, `start_api_background`, daemon mode |
+| `graphql/server.rs` | HTTP server (axum), `cmd_serve`, `start_api_background`, daemon mode, timeout/load-shed/panic-catch layers |
 | `subsonic.rs` | Subsonic-compatible REST API (XML/JSON, auth, streaming, cover art) |
 | `mcp.rs` | MCP server for Claude Desktop (schema_sdl + graphql tools) |
 

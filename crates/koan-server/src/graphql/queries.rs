@@ -5,11 +5,13 @@ use koan_core::audio;
 use koan_core::audio::viz::VizSnapshot;
 use koan_core::config::Config;
 use koan_core::db::queries;
-use koan_core::player::state::{PlaybackState, SharedPlayerState};
+use koan_core::db::queries::batch::{TrackFilter, TrackOrder};
+use koan_core::player::state::SharedPlayerState;
 
-use super::DbHandle;
-use super::helpers::{album_year, paginate, track_year};
+use super::helpers::{MAX_PAGE, album_year, page_offset, page_size, paginate, paginate_window};
+use super::jobs::JobRegistry;
 use super::types::*;
+use super::{blocking, with_db};
 
 // ---------------------------------------------------------------------------
 // Query root
@@ -29,40 +31,66 @@ impl QueryRoot {
         #[graphql(default = false)] favourites_only: bool,
         after: Option<String>,
         first: Option<i32>,
-        #[graphql(default_with = "ArtistSortField::Name")] _sort_by: ArtistSortField,
-        #[graphql(default_with = "SortDirection::Asc")] _sort_dir: SortDirection,
+        #[graphql(default_with = "ArtistSortField::Name")] sort_by: ArtistSortField,
+        #[graphql(default_with = "SortDirection::Asc")] sort_dir: SortDirection,
     ) -> async_graphql::Result<Conn<GqlArtist>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let mut artists = if let Some(ref query) = search {
-            queries::find_artists(&db.conn, query).map_err(|e| super::internal_error("db", e))?
-        } else {
-            queries::all_artists(&db.conn).map_err(|e| super::internal_error("db", e))?
-        };
+        let rows = with_db(ctx, move |db| {
+            let mut artists = if let Some(ref query) = search {
+                queries::find_artists(&db.conn, query)
+                    .map_err(|e| super::internal_error("db", e))?
+            } else {
+                queries::all_artists(&db.conn).map_err(|e| super::internal_error("db", e))?
+            };
 
-        if let Some(ref id_list) = ids {
-            artists.retain(|a| id_list.contains(&a.id));
-        }
+            if let Some(ref id_list) = ids {
+                artists.retain(|a| id_list.contains(&a.id));
+            }
 
-        if let Some(ref g) = genre {
-            let g_lower = g.to_lowercase();
-            let artist_ids: Vec<i64> = artists.iter().map(|a| a.id).collect();
-            let genre_map = queries::genres_by_artist_ids(&db.conn, &artist_ids)
-                .map_err(|e| super::internal_error("db", e))?;
-            artists.retain(|a| {
-                genre_map
-                    .get(&a.id)
-                    .is_some_and(|genres| genres.iter().any(|ag| ag.contains(&g_lower)))
-            });
-        }
+            if let Some(ref g) = genre {
+                let g_lower = g.to_lowercase();
+                let artist_ids: Vec<i64> = artists.iter().map(|a| a.id).collect();
+                let genre_map = queries::genres_by_artist_ids(&db.conn, &artist_ids)
+                    .map_err(|e| super::internal_error("db", e))?;
+                artists.retain(|a| {
+                    genre_map
+                        .get(&a.id)
+                        .is_some_and(|genres| genres.iter().any(|ag| ag.contains(&g_lower)))
+                });
+            }
 
-        if favourites_only {
-            let fav_ids = queries::favourite_artist_ids_batch(&db.conn)
-                .map_err(|e| super::internal_error("db", e))?;
-            artists.retain(|a| fav_ids.contains(&a.id));
-        }
+            if favourites_only {
+                let fav_ids = queries::favourite_artist_ids_batch(&db.conn)
+                    .map_err(|e| super::internal_error("db", e))?;
+                artists.retain(|a| fav_ids.contains(&a.id));
+            }
+
+            match sort_by {
+                ArtistSortField::Name => artists.sort_by(|a, b| a.name.cmp(&b.name)),
+                ArtistSortField::AlbumCount | ArtistSortField::TrackCount => {
+                    let ids: Vec<i64> = artists.iter().map(|a| a.id).collect();
+                    let stats = queries::batch::artist_stats(&db.conn, &ids)
+                        .map_err(|e| super::internal_error("db", e))?;
+                    let key = |id: i64| {
+                        let s = stats.get(&id).copied().unwrap_or_default();
+                        if sort_by == ArtistSortField::AlbumCount {
+                            s.album_count
+                        } else {
+                            s.track_count
+                        }
+                    };
+                    artists.sort_by(|a, b| key(a.id).cmp(&key(b.id)).then(a.name.cmp(&b.name)));
+                }
+            }
+            if sort_dir == SortDirection::Desc {
+                artists.reverse();
+            }
+
+            Ok(artists)
+        })
+        .await?;
 
         paginate(
-            artists.into_iter().map(|row| GqlArtist { row }).collect(),
+            rows.into_iter().map(|row| GqlArtist { row }).collect(),
             after,
             first,
         )
@@ -85,94 +113,123 @@ impl QueryRoot {
         #[graphql(default = false)] favourites_only: bool,
         after: Option<String>,
         first: Option<i32>,
-        #[graphql(default_with = "AlbumSortField::ArtistThenDate")] _sort_by: AlbumSortField,
-        #[graphql(default_with = "SortDirection::Asc")] _sort_dir: SortDirection,
+        #[graphql(default_with = "AlbumSortField::ArtistThenDate")] sort_by: AlbumSortField,
+        #[graphql(default_with = "SortDirection::Asc")] sort_dir: SortDirection,
     ) -> async_graphql::Result<Conn<GqlAlbum>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
+        let rows = with_db(ctx, move |db| {
+            let mut albums = if let Some(aid) = artist_id {
+                queries::albums_for_artist(&db.conn, aid)
+                    .map_err(|e| super::internal_error("db", e))?
+            } else if let Some(ref aids) = artist_ids {
+                queries::batch::albums_for_artists(&db.conn, aids)
+                    .map_err(|e| super::internal_error("db", e))?
+                    .into_values()
+                    .flatten()
+                    .collect()
+            } else {
+                queries::all_albums(&db.conn).map_err(|e| super::internal_error("db", e))?
+            };
 
-        let mut albums = if let Some(aid) = artist_id {
-            queries::albums_for_artist(&db.conn, aid).map_err(|e| super::internal_error("db", e))?
-        } else if let Some(ref aids) = artist_ids {
-            let mut all = Vec::new();
-            for &aid in aids {
-                let mut a = queries::albums_for_artist(&db.conn, aid)
-                    .map_err(|e| super::internal_error("db", e))?;
-                all.append(&mut a);
+            if let Some(ref id_list) = ids {
+                albums.retain(|a| id_list.contains(&a.id));
             }
-            all
-        } else {
-            queries::all_albums(&db.conn).map_err(|e| super::internal_error("db", e))?
-        };
 
-        if let Some(ref id_list) = ids {
-            albums.retain(|a| id_list.contains(&a.id));
-        }
+            if let Some(ref query) = search {
+                let q = query.to_lowercase();
+                albums.retain(|a| {
+                    a.title.to_lowercase().contains(&q) || a.artist_name.to_lowercase().contains(&q)
+                });
+            }
 
-        if let Some(ref query) = search {
-            let q = query.to_lowercase();
-            albums.retain(|a| {
-                a.title.to_lowercase().contains(&q) || a.artist_name.to_lowercase().contains(&q)
-            });
-        }
+            if let Some(ref t) = title {
+                let t_lower = t.to_lowercase();
+                albums.retain(|a| a.title.to_lowercase().contains(&t_lower));
+            }
 
-        if let Some(ref t) = title {
-            let t_lower = t.to_lowercase();
-            albums.retain(|a| a.title.to_lowercase().contains(&t_lower));
-        }
+            if let Some(ys) = year_start {
+                albums.retain(|a| album_year(a).map(|y| y >= ys).unwrap_or(false));
+            }
 
-        if let Some(ys) = year_start {
-            albums.retain(|a| album_year(a).map(|y| y >= ys).unwrap_or(false));
-        }
+            if let Some(ye) = year_end {
+                albums.retain(|a| album_year(a).map(|y| y <= ye).unwrap_or(false));
+            }
 
-        if let Some(ye) = year_end {
-            albums.retain(|a| album_year(a).map(|y| y <= ye).unwrap_or(false));
-        }
+            if let Some(ref c) = codec {
+                let c_lower = c.to_lowercase();
+                albums.retain(|a| {
+                    a.codec
+                        .as_ref()
+                        .map(|ac| ac.to_lowercase().contains(&c_lower))
+                        .unwrap_or(false)
+                });
+            }
 
-        if let Some(ref c) = codec {
-            let c_lower = c.to_lowercase();
-            albums.retain(|a| {
-                a.codec
-                    .as_ref()
-                    .map(|ac| ac.to_lowercase().contains(&c_lower))
-                    .unwrap_or(false)
-            });
-        }
+            if let Some(ref l) = label {
+                let l_lower = l.to_lowercase();
+                albums.retain(|a| {
+                    a.label
+                        .as_ref()
+                        .map(|al| al.to_lowercase().contains(&l_lower))
+                        .unwrap_or(false)
+                });
+            }
 
-        if let Some(ref l) = label {
-            let l_lower = l.to_lowercase();
-            albums.retain(|a| {
-                a.label
-                    .as_ref()
-                    .map(|al| al.to_lowercase().contains(&l_lower))
-                    .unwrap_or(false)
-            });
-        }
+            if let Some(ref g) = genre {
+                let g_lower = g.to_lowercase();
+                let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
+                let genre_map = queries::genres_by_album_ids(&db.conn, &album_ids)
+                    .map_err(|e| super::internal_error("db", e))?;
+                albums.retain(|a| {
+                    genre_map
+                        .get(&a.id)
+                        .is_some_and(|genres| genres.iter().any(|ag| ag.contains(&g_lower)))
+                });
+            }
 
-        if let Some(ref g) = genre {
-            let g_lower = g.to_lowercase();
-            let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
-            let genre_map = queries::genres_by_album_ids(&db.conn, &album_ids)
-                .map_err(|e| super::internal_error("db", e))?;
-            albums.retain(|a| {
-                genre_map
-                    .get(&a.id)
-                    .is_some_and(|genres| genres.iter().any(|ag| ag.contains(&g_lower)))
-            });
-        }
+            if favourites_only {
+                let fav_ids = queries::favourite_album_ids_batch(&db.conn)
+                    .map_err(|e| super::internal_error("db", e))?;
+                albums.retain(|a| fav_ids.contains(&a.id));
+            }
 
-        if favourites_only {
-            let fav_ids = queries::favourite_album_ids_batch(&db.conn)
-                .map_err(|e| super::internal_error("db", e))?;
-            albums.retain(|a| fav_ids.contains(&a.id));
-        }
+            match sort_by {
+                AlbumSortField::Title => albums.sort_by(|a, b| a.title.cmp(&b.title)),
+                AlbumSortField::Date => {
+                    albums.sort_by(|a, b| a.date.cmp(&b.date).then(a.title.cmp(&b.title)))
+                }
+                AlbumSortField::ArtistThenDate => albums.sort_by(|a, b| {
+                    a.artist_name
+                        .cmp(&b.artist_name)
+                        .then(a.date.cmp(&b.date))
+                        .then(a.title.cmp(&b.title))
+                }),
+                AlbumSortField::TrackCount => {
+                    let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
+                    let stats = queries::batch::album_stats(&db.conn, &album_ids)
+                        .map_err(|e| super::internal_error("db", e))?;
+                    let key = |id: i64| stats.get(&id).map(|s| s.track_count).unwrap_or(0);
+                    albums.sort_by(|a, b| key(a.id).cmp(&key(b.id)).then(a.title.cmp(&b.title)));
+                }
+            }
+            if sort_dir == SortDirection::Desc {
+                albums.reverse();
+            }
+
+            Ok(albums)
+        })
+        .await?;
 
         paginate(
-            albums.into_iter().map(|row| GqlAlbum { row }).collect(),
+            rows.into_iter().map(|row| GqlAlbum { row }).collect(),
             after,
             first,
         )
     }
 
+    /// Tracks matching the given filters.
+    ///
+    /// Every filter is a SQL predicate and the window is a `LIMIT`/`OFFSET`, so
+    /// the cost of a page is the page, not the library.
     #[allow(clippy::too_many_arguments)]
     async fn tracks(
         &self,
@@ -198,139 +255,69 @@ impl QueryRoot {
         #[graphql(default = false)] favourites_only: bool,
         after: Option<String>,
         first: Option<i32>,
-        #[graphql(default_with = "TrackSortField::ArtistAlbumDiscTrack")] _sort_by: TrackSortField,
-        #[graphql(default_with = "SortDirection::Asc")] _sort_dir: SortDirection,
+        #[graphql(default_with = "TrackSortField::ArtistAlbumDiscTrack")] sort_by: TrackSortField,
+        #[graphql(default_with = "SortDirection::Asc")] sort_dir: SortDirection,
     ) -> async_graphql::Result<Conn<GqlTrack>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-
-        let mut tracks = if let Some(ref query) = search {
-            queries::search_tracks_paged(&db.conn, query, 10000, 0)
-                .map_err(|e| super::internal_error("db", e))?
-        } else if let Some(album) = album_id {
-            queries::tracks_for_album(&db.conn, album)
-                .map_err(|e| super::internal_error("db", e))?
-        } else if let Some(ref aids) = artist_ids {
-            let mut all = Vec::new();
-            for &aid in aids {
-                let mut t = queries::tracks_for_artist(&db.conn, aid)
-                    .map_err(|e| super::internal_error("db", e))?;
-                all.append(&mut t);
-            }
-            all
-        } else if let Some(aid) = artist_id {
-            queries::tracks_for_artist(&db.conn, aid).map_err(|e| super::internal_error("db", e))?
-        } else {
-            queries::all_tracks(&db.conn).map_err(|e| super::internal_error("db", e))?
+        let artist_ids = match (artist_ids, artist_id) {
+            (Some(list), _) => Some(list),
+            (None, Some(one)) => Some(vec![one]),
+            (None, None) => None,
+        };
+        let filter = TrackFilter {
+            ids,
+            search,
+            album_id,
+            artist_ids,
+            title,
+            artist_name,
+            album_title,
+            genre,
+            codec,
+            source: source.map(|s| s.as_db_value().to_string()),
+            year_start,
+            year_end,
+            min_sample_rate,
+            min_bit_depth,
+            channels,
+            min_duration_ms,
+            max_duration_ms,
+            favourites_only,
         };
 
-        if let Some(ref id_list) = ids {
-            tracks.retain(|t| id_list.contains(&t.id));
-        }
+        let offset = page_offset(after.as_deref());
+        let limit = page_size(first);
+        let order = TrackOrder::from(sort_by);
+        let descending = sort_dir == SortDirection::Desc;
 
-        if let Some(ref t) = title {
-            let t_lower = t.to_lowercase();
-            tracks.retain(|tr| tr.title.to_lowercase().contains(&t_lower));
-        }
+        let rows = with_db(ctx, move |db| {
+            // One row past the page tells us whether a next page exists without
+            // a second COUNT(*) over the same predicate.
+            queries::batch::filter_tracks(
+                &db.conn,
+                &filter,
+                order,
+                descending,
+                limit as u32 + 1,
+                offset as u32,
+            )
+            .map_err(|e| super::internal_error("db", e))
+        })
+        .await?;
 
-        if let Some(ref a) = artist_name {
-            let a_lower = a.to_lowercase();
-            tracks.retain(|tr| {
-                tr.artist_name.to_lowercase().contains(&a_lower)
-                    || tr.album_artist_name.to_lowercase().contains(&a_lower)
-            });
-        }
-
-        if let Some(ref al) = album_title {
-            let al_lower = al.to_lowercase();
-            tracks.retain(|tr| tr.album_title.to_lowercase().contains(&al_lower));
-        }
-
-        if let Some(ref g) = genre {
-            let g_lower = g.to_lowercase();
-            tracks.retain(|tr| {
-                tr.genre
-                    .as_ref()
-                    .map(|tg| tg.to_lowercase().contains(&g_lower))
-                    .unwrap_or(false)
-            });
-        }
-
-        if let Some(ref c) = codec {
-            let c_lower = c.to_lowercase();
-            tracks.retain(|tr| {
-                tr.codec
-                    .as_ref()
-                    .map(|tc| tc.to_lowercase().contains(&c_lower))
-                    .unwrap_or(false)
-            });
-        }
-
-        if let Some(src) = source {
-            let src_str = match src {
-                TrackSource::Local => "local",
-                TrackSource::Remote => "remote",
-                TrackSource::Cached => "cached",
-            };
-            tracks.retain(|t| t.source == src_str);
-        }
-
-        if year_start.is_some() || year_end.is_some() {
-            tracks.retain(|t| {
-                let y = track_year(&db, t);
-                match y {
-                    Some(year) => {
-                        year_start.is_none_or(|ys| year >= ys)
-                            && year_end.is_none_or(|ye| year <= ye)
-                    }
-                    None => false,
-                }
-            });
-        }
-
-        if let Some(sr) = min_sample_rate {
-            tracks.retain(|t| t.sample_rate.map(|v| v >= sr).unwrap_or(false));
-        }
-
-        if let Some(bd) = min_bit_depth {
-            tracks.retain(|t| t.bit_depth.map(|v| v >= bd).unwrap_or(false));
-        }
-
-        if let Some(ch) = channels {
-            tracks.retain(|t| t.channels == Some(ch));
-        }
-
-        if let Some(min_d) = min_duration_ms {
-            tracks.retain(|t| t.duration_ms.map(|d| d >= min_d).unwrap_or(false));
-        }
-
-        if let Some(max_d) = max_duration_ms {
-            tracks.retain(|t| t.duration_ms.map(|d| d <= max_d).unwrap_or(false));
-        }
-
-        if favourites_only {
-            let fav_paths =
-                queries::load_favourites(&db.conn).map_err(|e| super::internal_error("db", e))?;
-            tracks.retain(|t| {
-                t.path
-                    .as_ref()
-                    .or(t.cached_path.as_ref())
-                    .map(|p| fav_paths.contains(std::path::Path::new(p)))
-                    .unwrap_or(false)
-            });
-        }
-
-        paginate(
-            tracks.into_iter().map(|row| GqlTrack { row }).collect(),
-            after,
-            first,
-        )
+        Ok(paginate_window(
+            rows.into_iter().map(|row| GqlTrack { row }).collect(),
+            offset,
+            limit,
+        ))
     }
 
     async fn track(&self, ctx: &Context<'_>, id: i64) -> async_graphql::Result<Option<GqlTrack>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let row =
-            queries::get_track_row(&db.conn, id).map_err(|e| super::internal_error("db", e))?;
-        Ok(row.map(|row| GqlTrack { row }))
+        with_db(ctx, move |db| {
+            let row =
+                queries::get_track_row(&db.conn, id).map_err(|e| super::internal_error("db", e))?;
+            Ok(row.map(|row| GqlTrack { row }))
+        })
+        .await
     }
 
     async fn random_tracks(
@@ -340,140 +327,67 @@ impl QueryRoot {
         artist_id: Option<i64>,
         artist_ids: Option<Vec<i64>>,
     ) -> async_graphql::Result<Vec<GqlTrack>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-
-        if let Some(ref aids) = artist_ids {
-            let mut all = Vec::new();
-            let per = (count as u32 / aids.len() as u32).max(1);
-            for &aid in aids {
-                let mut t = queries::random_tracks(&db.conn, per, Some(aid))
-                    .map_err(|e| super::internal_error("db", e))?;
-                all.append(&mut t);
-            }
-            all.truncate(count as usize);
-            Ok(all.into_iter().map(|row| GqlTrack { row }).collect())
-        } else {
-            let tracks = queries::random_tracks(&db.conn, count as u32, artist_id)
-                .map_err(|e| super::internal_error("db", e))?;
+        let count = count.clamp(0, MAX_PAGE as i32) as u32;
+        with_db(ctx, move |db| {
+            let tracks = if let Some(ref aids) = artist_ids {
+                let mut all = Vec::new();
+                let per = (count / aids.len().max(1) as u32).max(1);
+                for &aid in aids {
+                    let mut t = queries::random_tracks(&db.conn, per, Some(aid))
+                        .map_err(|e| super::internal_error("db", e))?;
+                    all.append(&mut t);
+                }
+                all.truncate(count as usize);
+                all
+            } else {
+                queries::random_tracks(&db.conn, count, artist_id)
+                    .map_err(|e| super::internal_error("db", e))?
+            };
             Ok(tracks.into_iter().map(|row| GqlTrack { row }).collect())
-        }
+        })
+        .await
     }
 
     async fn now_playing(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlNowPlaying> {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        let playback_state = match state.playback_state() {
-            PlaybackState::Stopped => PlaybackStateEnum::Stopped,
-            PlaybackState::Playing => PlaybackStateEnum::Playing,
-            PlaybackState::Paused => PlaybackStateEnum::Paused,
-        };
-        let position_ms = state.position_ms();
-        let (track, queue_item_id, duration_ms) = if let Some(info) = state.track_info() {
-            let (items, _cursor) = state.snapshot_playlist();
-            let playlist_item = items.iter().find(|i| i.id == info.id);
-            let track = GqlNowPlayingTrack {
-                track_id: playlist_item.and_then(|i| i.db_id),
-                title: playlist_item.map(|i| i.title.clone()).unwrap_or_default(),
-                artist: playlist_item.map(|i| i.artist.clone()).unwrap_or_default(),
-                album: playlist_item.map(|i| i.album.clone()).unwrap_or_default(),
-                codec: info.codec.clone(),
-                sample_rate: info.sample_rate,
-                bit_depth: info.bit_depth,
-                bitrate_kbps: info.bitrate_kbps,
-                channels: info.channels,
-                duration_ms: info.duration_ms,
-            };
-            (
-                Some(track),
-                Some(info.id.0.to_string()),
-                Some(info.duration_ms),
-            )
-        } else {
-            (None, None, None)
-        };
-
-        Ok(GqlNowPlaying {
-            state: playback_state,
-            position_ms,
-            duration_ms,
-            track,
-            queue_item_id,
-        })
+        Ok(GqlNowPlaying::capture(state))
     }
 
     /// The play queue with derived entry statuses, download progress, and a version counter.
     async fn queue(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlQueueSnapshot> {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        let version = state.playlist_version();
-        let snap = state.derive_visible_queue();
-
-        let entries = snap
-            .entries
-            .iter()
-            .map(|entry| {
-                use koan_core::player::state::QueueEntryStatus;
-
-                let status = match entry.status {
-                    QueueEntryStatus::Queued => GqlQueueEntryStatus::Queued,
-                    QueueEntryStatus::Playing => GqlQueueEntryStatus::Playing,
-                    QueueEntryStatus::Played => GqlQueueEntryStatus::Played,
-                    QueueEntryStatus::Downloading => GqlQueueEntryStatus::Downloading,
-                    QueueEntryStatus::PriorityPending => GqlQueueEntryStatus::PriorityPending,
-                    QueueEntryStatus::Failed => GqlQueueEntryStatus::Failed,
-                };
-
-                let download_progress = entry
-                    .download_progress
-                    .map(|(downloaded, total)| GqlDownloadProgress { downloaded, total });
-
-                GqlQueueEntry {
-                    queue_item_id: entry.id.0.to_string(),
-                    track_id: entry.db_id,
-                    title: entry.title.clone(),
-                    artist: entry.artist.clone(),
-                    album: entry.album.clone(),
-                    codec: entry.codec.clone(),
-                    track_number: entry.track_number,
-                    disc: entry.disc,
-                    duration_ms: entry.duration_ms,
-                    is_current: entry.status == QueueEntryStatus::Playing,
-                    status,
-                    download_progress,
-                }
-            })
-            .collect();
-
-        Ok(GqlQueueSnapshot {
-            version,
-            entries,
-            finished_count: snap.finished_count as i32,
-            has_playing: snap.has_playing,
-            queue_count: snap.queue_count as i32,
-        })
+        Ok(GqlQueueSnapshot::capture(state))
     }
 
     async fn library_stats(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlLibraryStats> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let stats = queries::library_stats(&db.conn).map_err(|e| super::internal_error("db", e))?;
-        Ok(GqlLibraryStats {
-            total_tracks: stats.total_tracks,
-            local_tracks: stats.local_tracks,
-            remote_tracks: stats.remote_tracks,
-            cached_tracks: stats.cached_tracks,
-            total_albums: stats.total_albums,
-            total_artists: stats.total_artists,
+        with_db(ctx, |db| {
+            let stats =
+                queries::library_stats(&db.conn).map_err(|e| super::internal_error("db", e))?;
+            Ok(GqlLibraryStats {
+                total_tracks: stats.total_tracks,
+                local_tracks: stats.local_tracks,
+                remote_tracks: stats.remote_tracks,
+                cached_tracks: stats.cached_tracks,
+                total_albums: stats.total_albums,
+                total_artists: stats.total_artists,
+            })
         })
+        .await
     }
 
     async fn devices(&self) -> async_graphql::Result<Vec<GqlDevice>> {
-        let devices =
-            audio::list_output_devices().map_err(|e| super::internal_error("device", e))?;
-        Ok(devices
-            .iter()
-            .map(|d| GqlDevice {
-                name: d.name.clone(),
-                sample_rates: d.sample_rates.clone(),
-            })
-            .collect())
+        blocking(|| {
+            let devices =
+                audio::list_output_devices().map_err(|e| super::internal_error("device", e))?;
+            Ok(devices
+                .iter()
+                .map(|d| GqlDevice {
+                    name: d.name.clone(),
+                    sample_rates: d.sample_rates.clone(),
+                })
+                .collect())
+        })
+        .await
     }
 
     async fn favourites(
@@ -482,33 +396,47 @@ impl QueryRoot {
         after: Option<String>,
         first: Option<i32>,
     ) -> async_graphql::Result<Conn<GqlTrack>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let fav_paths =
-            queries::load_favourites(&db.conn).map_err(|e| super::internal_error("db", e))?;
-        let mut tracks = Vec::new();
-        for path in &fav_paths {
-            let path_str = path.to_string_lossy();
-            if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &path_str)
-                && let Ok(Some(row)) = queries::get_track_row(&db.conn, tid)
-            {
-                tracks.push(GqlTrack { row });
-            }
-        }
-        paginate(tracks, after, first)
+        let offset = page_offset(after.as_deref());
+        let limit = page_size(first);
+        let rows = with_db(ctx, move |db| {
+            let filter = TrackFilter {
+                favourites_only: true,
+                ..Default::default()
+            };
+            queries::batch::filter_tracks(
+                &db.conn,
+                &filter,
+                TrackOrder::ArtistAlbumDiscTrack,
+                false,
+                limit as u32 + 1,
+                offset as u32,
+            )
+            .map_err(|e| super::internal_error("db", e))
+        })
+        .await?;
+
+        Ok(paginate_window(
+            rows.into_iter().map(|row| GqlTrack { row }).collect(),
+            offset,
+            limit,
+        ))
     }
 
     async fn snapshots(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlSnapshot>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let list = queries::list_snapshots(&db.conn).map_err(|e| super::internal_error("db", e))?;
-        Ok(list
-            .into_iter()
-            .map(|s| GqlSnapshot {
-                name: s.name,
-                track_count: s.track_count as i32,
-                position_ms: s.position_ms,
-                created_at: s.created_at,
-            })
-            .collect())
+        with_db(ctx, |db| {
+            let list =
+                queries::list_snapshots(&db.conn).map_err(|e| super::internal_error("db", e))?;
+            Ok(list
+                .into_iter()
+                .map(|s| GqlSnapshot {
+                    name: s.name,
+                    track_count: s.track_count as i32,
+                    position_ms: s.position_ms,
+                    created_at: s.created_at,
+                })
+                .collect())
+        })
+        .await
     }
 
     async fn radio_status(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlRadioStatus> {
@@ -523,21 +451,23 @@ impl QueryRoot {
         ctx: &Context<'_>,
         artist_id: i64,
     ) -> async_graphql::Result<Vec<GqlSimilarArtist>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let entries = queries::get_similar_artists_detailed(&db.conn, artist_id)
-            .map_err(|e| super::internal_error("db", e))?;
-        Ok(entries
-            .into_iter()
-            .map(|e| GqlSimilarArtist {
-                artist: GqlSimilarArtistInfo {
-                    id: e.artist.id,
-                    name: e.artist.name,
-                },
-                score: e.score,
-                source: e.source,
-                relationship: e.relationship,
-            })
-            .collect())
+        with_db(ctx, move |db| {
+            let entries = queries::get_similar_artists_detailed(&db.conn, artist_id)
+                .map_err(|e| super::internal_error("db", e))?;
+            Ok(entries
+                .into_iter()
+                .map(|e| GqlSimilarArtist {
+                    artist: GqlSimilarArtistInfo {
+                        id: e.artist.id,
+                        name: e.artist.name,
+                    },
+                    score: e.score,
+                    source: e.source,
+                    relationship: e.relationship,
+                })
+                .collect())
+        })
+        .await
     }
 
     async fn play_history(
@@ -546,28 +476,33 @@ impl QueryRoot {
         #[graphql(default = 50)] limit: i32,
         #[graphql(default = 0)] offset: i32,
     ) -> async_graphql::Result<Vec<GqlPlayHistoryEntry>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let entries = queries::get_play_history(&db.conn, limit as u32, offset as u32)
-            .map_err(|e| super::internal_error("db", e))?;
-        Ok(entries
-            .into_iter()
-            .map(|e| {
-                let track = queries::get_track_row(&db.conn, e.track_id)
-                    .ok()
-                    .flatten()
-                    .map(|t| GqlPlayHistoryTrack {
-                        title: t.title,
-                        artist: t.artist_name,
-                        album: t.album_title,
+        let limit = limit.clamp(0, MAX_PAGE as i32) as u32;
+        let offset = offset.max(0) as u32;
+        with_db(ctx, move |db| {
+            let entries = queries::get_play_history(&db.conn, limit, offset)
+                .map_err(|e| super::internal_error("db", e))?;
+            // One lookup for the whole page rather than one per entry.
+            let ids: Vec<i64> = entries.iter().map(|e| e.track_id).collect();
+            let by_id = tracks_by_id(db, ids)?;
+
+            Ok(entries
+                .into_iter()
+                .map(|e| {
+                    let track = by_id.get(&e.track_id).map(|t| GqlPlayHistoryTrack {
+                        title: t.title.clone(),
+                        artist: t.artist_name.clone(),
+                        album: t.album_title.clone(),
                     });
-                GqlPlayHistoryEntry {
-                    track_id: e.track_id,
-                    played_at: e.played_at,
-                    duration_ms: e.duration_ms,
-                    track,
-                }
-            })
-            .collect())
+                    GqlPlayHistoryEntry {
+                        track_id: e.track_id,
+                        played_at: e.played_at,
+                        duration_ms: e.duration_ms,
+                        track,
+                    }
+                })
+                .collect())
+        })
+        .await
     }
 
     async fn fuzzy_search(
@@ -577,78 +512,80 @@ impl QueryRoot {
         #[graphql(default_with = "FuzzySearchKind::Track")] kind: FuzzySearchKind,
         #[graphql(default = 50)] limit: i32,
     ) -> async_graphql::Result<Vec<GqlFuzzyMatch>> {
-        use nucleo::pattern::{CaseMatching, Normalization};
-        use nucleo::{Config, Nucleo};
+        let limit = limit.clamp(0, MAX_PAGE as i32) as usize;
+        with_db(ctx, move |db| {
+            use nucleo::pattern::{CaseMatching, Normalization};
+            use nucleo::{Config, Nucleo};
 
-        let db = ctx.data::<DbHandle>()?.open()?;
+            // Build (id, match_text) pairs based on kind.
+            let items: Vec<(i64, String)> = match kind {
+                FuzzySearchKind::Track => {
+                    let tracks = queries::all_tracks(&db.conn)
+                        .map_err(|e| super::internal_error("db", e))?;
+                    tracks
+                        .into_iter()
+                        .map(|t| {
+                            (
+                                t.id,
+                                format!("{} — {} — {}", t.artist_name, t.album_title, t.title),
+                            )
+                        })
+                        .collect()
+                }
+                FuzzySearchKind::Album => {
+                    let albums = queries::all_albums(&db.conn)
+                        .map_err(|e| super::internal_error("db", e))?;
+                    albums
+                        .into_iter()
+                        .map(|a| (a.id, format!("{} — {}", a.artist_name, a.title)))
+                        .collect()
+                }
+                FuzzySearchKind::Artist => {
+                    let artists = queries::all_artists(&db.conn)
+                        .map_err(|e| super::internal_error("db", e))?;
+                    artists.into_iter().map(|a| (a.id, a.name)).collect()
+                }
+            };
 
-        // Build (id, match_text) pairs based on kind.
-        let items: Vec<(i64, String)> = match kind {
-            FuzzySearchKind::Track => {
-                let tracks =
-                    queries::all_tracks(&db.conn).map_err(|e| super::internal_error("db", e))?;
-                tracks
-                    .into_iter()
-                    .map(|t| {
-                        (
-                            t.id,
-                            format!("{} — {} — {}", t.artist_name, t.album_title, t.title),
-                        )
-                    })
-                    .collect()
+            // Run nucleo fuzzy matching.
+            let mut nucleo: Nucleo<u32> =
+                Nucleo::new(Config::DEFAULT, std::sync::Arc::new(|| {}), None, 1);
+            let injector = nucleo.injector();
+            for (i, (_id, text)) in items.iter().enumerate() {
+                let text = text.clone();
+                injector.push(i as u32, |_val, cols| {
+                    cols[0] = text.into();
+                });
             }
-            FuzzySearchKind::Album => {
-                let albums =
-                    queries::all_albums(&db.conn).map_err(|e| super::internal_error("db", e))?;
-                albums
-                    .into_iter()
-                    .map(|a| (a.id, format!("{} — {}", a.artist_name, a.title)))
-                    .collect()
+
+            // Parse pattern and tick until matching settles.
+            nucleo
+                .pattern
+                .reparse(0, &query, CaseMatching::Smart, Normalization::Smart, false);
+            // Tick enough times for matching to complete on the dataset.
+            for _ in 0..20 {
+                nucleo.tick(10);
             }
-            FuzzySearchKind::Artist => {
-                let artists =
-                    queries::all_artists(&db.conn).map_err(|e| super::internal_error("db", e))?;
-                artists.into_iter().map(|a| (a.id, a.name)).collect()
-            }
-        };
 
-        // Run nucleo fuzzy matching.
-        let mut nucleo: Nucleo<u32> =
-            Nucleo::new(Config::DEFAULT, std::sync::Arc::new(|| {}), None, 1);
-        let injector = nucleo.injector();
-        for (i, (_id, text)) in items.iter().enumerate() {
-            let text = text.clone();
-            injector.push(i as u32, |_val, cols| {
-                cols[0] = text.into();
-            });
-        }
-
-        // Parse pattern and tick until matching settles.
-        nucleo
-            .pattern
-            .reparse(0, &query, CaseMatching::Smart, Normalization::Smart, false);
-        // Tick enough times for matching to complete on the dataset.
-        for _ in 0..20 {
-            nucleo.tick(10);
-        }
-
-        let snap = nucleo.snapshot();
-        let count = (snap.matched_item_count() as usize).min(limit as usize);
-        let mut results = Vec::with_capacity(count);
-        for i in 0..count as u32 {
-            if let Some(item) = snap.get_matched_item(i) {
-                let idx = *item.data as usize;
-                if idx < items.len() {
-                    results.push(GqlFuzzyMatch {
-                        id: items[idx].0,
-                        name: items[idx].1.clone(),
-                        rank: i as i32,
-                        kind,
-                    });
+            let snap = nucleo.snapshot();
+            let count = (snap.matched_item_count() as usize).min(limit);
+            let mut results = Vec::with_capacity(count);
+            for i in 0..count as u32 {
+                if let Some(item) = snap.get_matched_item(i) {
+                    let idx = *item.data as usize;
+                    if idx < items.len() {
+                        results.push(GqlFuzzyMatch {
+                            id: items[idx].0,
+                            name: items[idx].1.clone(),
+                            rank: i as i32,
+                            kind,
+                        });
+                    }
                 }
             }
-        }
-        Ok(results)
+            Ok(results)
+        })
+        .await
     }
 
     async fn lyrics(
@@ -656,26 +593,31 @@ impl QueryRoot {
         ctx: &Context<'_>,
         track_id: i64,
     ) -> async_graphql::Result<Option<GqlLyrics>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| super::internal_error("db", e))?
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
-        let duration_secs = track.duration_ms.map(|d| d as u64 / 1000).unwrap_or(0);
-        match koan_core::lyrics::fetch_lyrics(
-            &db.conn,
-            track_id,
-            &track.artist_name,
-            &track.title,
-            &track.album_title,
-            duration_secs,
-        ) {
-            Ok(lyrics) => Ok(Some(GqlLyrics {
-                content: lyrics.content,
-                synced: lyrics.synced,
-                source: format!("{:?}", lyrics.source),
-            })),
-            Err(_) => Ok(None),
-        }
+        with_db(ctx, move |db| {
+            let track = queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| super::internal_error("db", e))?
+                .ok_or_else(|| {
+                    async_graphql::Error::new(format!("track {} not found", track_id))
+                })?;
+            let duration_secs = track.duration_ms.map(|d| d as u64 / 1000).unwrap_or(0);
+            // Falls through to a blocking LRCLIB fetch when nothing is cached.
+            match koan_core::lyrics::fetch_lyrics(
+                &db.conn,
+                track_id,
+                &track.artist_name,
+                &track.title,
+                &track.album_title,
+                duration_secs,
+            ) {
+                Ok(lyrics) => Ok(Some(GqlLyrics {
+                    content: lyrics.content,
+                    synced: lyrics.synced,
+                    source: format!("{:?}", lyrics.source),
+                })),
+                Err(_) => Ok(None),
+            }
+        })
+        .await
     }
 
     async fn similar_tracks(
@@ -684,19 +626,23 @@ impl QueryRoot {
         track_id: i64,
         #[graphql(default = 20)] limit: i32,
     ) -> async_graphql::Result<Vec<GqlSimilarTrack>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let results = queries::find_similar(&db.conn, track_id, limit as usize)
-            .map_err(|e| super::internal_error("db", e))?;
-        let mut out = Vec::with_capacity(results.len());
-        for (tid, dist) in results {
-            if let Ok(Some(row)) = queries::get_track_row(&db.conn, tid) {
-                out.push(GqlSimilarTrack {
-                    row,
-                    distance: dist as f64,
-                });
-            }
-        }
-        Ok(out)
+        let limit = limit.clamp(0, MAX_PAGE as i32) as usize;
+        with_db(ctx, move |db| {
+            let results = queries::find_similar(&db.conn, track_id, limit)
+                .map_err(|e| super::internal_error("db", e))?;
+            let by_id = tracks_by_id(db, results.iter().map(|(tid, _)| *tid).collect())?;
+
+            Ok(results
+                .into_iter()
+                .filter_map(|(tid, dist)| {
+                    by_id.get(&tid).map(|row| GqlSimilarTrack {
+                        row: row.clone(),
+                        distance: dist as f64,
+                    })
+                })
+                .collect())
+        })
+        .await
     }
 
     async fn cover_art(
@@ -704,35 +650,42 @@ impl QueryRoot {
         ctx: &Context<'_>,
         track_id: i64,
     ) -> async_graphql::Result<Option<GqlCoverArt>> {
-        use base64::Engine;
+        with_db(ctx, move |db| {
+            use base64::Engine;
 
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| super::internal_error("db", e))?
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
-        let path = track
-            .path
-            .as_ref()
-            .or(track.cached_path.as_ref())
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
+            let track = queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| super::internal_error("db", e))?
+                .ok_or_else(|| {
+                    async_graphql::Error::new(format!("track {} not found", track_id))
+                })?;
+            let path = track
+                .path
+                .as_ref()
+                .or(track.cached_path.as_ref())
+                .ok_or_else(|| {
+                    async_graphql::Error::new(format!("track {} has no path", track_id))
+                })?;
 
-        match koan_core::index::metadata::extract_cover_art(std::path::Path::new(path)) {
-            Some(data) => {
-                let mime = if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-                    "image/png"
-                } else if data.starts_with(&[0xFF, 0xD8]) {
-                    "image/jpeg"
-                } else {
-                    "application/octet-stream"
-                };
-                let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-                Ok(Some(GqlCoverArt {
-                    data_base64: encoded,
-                    mime: mime.into(),
-                }))
+            // Reads and parses the whole media file.
+            match koan_core::index::metadata::extract_cover_art(std::path::Path::new(path)) {
+                Some(data) => {
+                    let mime = if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
+                        "image/png"
+                    } else if data.starts_with(&[0xFF, 0xD8]) {
+                        "image/jpeg"
+                    } else {
+                        "application/octet-stream"
+                    };
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
+                    Ok(Some(GqlCoverArt {
+                        data_base64: encoded,
+                        mime: mime.into(),
+                    }))
+                }
+                None => Ok(None),
             }
-            None => Ok(None),
-        }
+        })
+        .await
     }
 
     /// Current visualizer frame — spectrum, peaks, VU levels, beat energy, waveform.
@@ -764,37 +717,79 @@ impl QueryRoot {
         }))
     }
 
+    /// A background job started by `triggerScan` or `triggerRemoteSync`.
+    async fn job(&self, ctx: &Context<'_>, id: String) -> async_graphql::Result<Option<GqlJob>> {
+        let registry = ctx.data::<JobRegistry>()?;
+        Ok(registry.get(&id).map(GqlJob::from))
+    }
+
+    /// Background jobs started by this process, oldest first.
+    async fn jobs(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlJob>> {
+        let registry = ctx.data::<JobRegistry>()?;
+        Ok(registry.list().into_iter().map(GqlJob::from).collect())
+    }
+
     /// Current configuration.
     async fn config(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlConfig> {
-        let cfg = Config::load().unwrap_or_default();
-        let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        Ok(GqlConfig {
-            library_folders: cfg
-                .library
-                .folders
-                .iter()
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect(),
-            replaygain_mode: format!("{:?}", cfg.playback.replaygain).to_lowercase(),
-            pre_amp_db: cfg.playback.pre_amp_db,
-            output_device: cfg.playback.output_device.clone(),
-            target_fps: cfg.playback.target_fps as i32,
-            art_size: cfg.playback.art_size as i32,
-            remote_enabled: cfg.remote.enabled,
-            remote_url: cfg.remote.url.clone(),
-            remote_username: cfg.remote.username.clone(),
-            transcode_quality: cfg.remote.transcode_quality.clone(),
-            cache_limit: cfg.remote.cache_limit.clone(),
-            visualizer_fps: cfg.visualizer.fps as i32,
-            radio_enabled: state.radio_mode(),
-            graphql_port: cfg.graphql.port as i32,
-            graphql_playground: cfg.graphql.playground,
+        let radio_enabled = ctx.data::<Arc<SharedPlayerState>>()?.radio_mode();
+        blocking(move || {
+            let cfg = Config::load().unwrap_or_default();
+            Ok(GqlConfig {
+                library_folders: cfg
+                    .library
+                    .folders
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect(),
+                replaygain_mode: format!("{:?}", cfg.playback.replaygain).to_lowercase(),
+                pre_amp_db: cfg.playback.pre_amp_db,
+                output_device: cfg.playback.output_device.clone(),
+                target_fps: cfg.playback.target_fps as i32,
+                art_size: cfg.playback.art_size as i32,
+                remote_enabled: cfg.remote.enabled,
+                remote_url: cfg.remote.url.clone(),
+                remote_username: cfg.remote.username.clone(),
+                transcode_quality: cfg.remote.transcode_quality.clone(),
+                cache_limit: cfg.remote.cache_limit.clone(),
+                visualizer_fps: cfg.visualizer.fps as i32,
+                radio_enabled,
+                graphql_port: cfg.graphql.port as i32,
+                graphql_playground: cfg.graphql.playground,
+            })
         })
+        .await
     }
 
     /// Playlist version counter — bumped on every mutation. Use for change detection.
     async fn playlist_version(&self, ctx: &Context<'_>) -> async_graphql::Result<u64> {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         Ok(state.playlist_version())
+    }
+}
+
+/// Fetch a set of tracks by ID in one statement.
+fn tracks_by_id(
+    db: &koan_core::db::connection::Database,
+    ids: Vec<i64>,
+) -> async_graphql::Result<std::collections::HashMap<i64, queries::TrackRow>> {
+    let count = ids.len().max(1) as u32;
+    let filter = TrackFilter {
+        ids: Some(ids),
+        ..Default::default()
+    };
+    let rows = queries::batch::filter_tracks(&db.conn, &filter, TrackOrder::Title, false, count, 0)
+        .map_err(|e| super::internal_error("db", e))?;
+    Ok(rows.into_iter().map(|t| (t.id, t)).collect())
+}
+
+impl From<TrackSortField> for TrackOrder {
+    fn from(field: TrackSortField) -> Self {
+        match field {
+            TrackSortField::Title => TrackOrder::Title,
+            TrackSortField::Artist => TrackOrder::Artist,
+            TrackSortField::Album => TrackOrder::Album,
+            TrackSortField::Duration => TrackOrder::Duration,
+            TrackSortField::ArtistAlbumDiscTrack => TrackOrder::ArtistAlbumDiscTrack,
+        }
     }
 }
