@@ -5,6 +5,7 @@ members = ["crates/koan-core", "crates/koan-server", "crates/koan-tui", "crates/
 [workspace.package]
 version = "0.23.3"
 edition = "2024"
+rust-version = "1.89"
 homepage = "https://github.com/radiosilence/koan"
 repository = "https://github.com/radiosilence/koan"
 license = "MIT"
