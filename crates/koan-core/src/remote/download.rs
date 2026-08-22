@@ -39,6 +39,8 @@ pub enum DownloadError {
     Incomplete { got: u64, expected: u64 },
     #[error("server returned {0}")]
     Status(reqwest::StatusCode),
+    #[error("request could not be built: {0}")]
+    Request(String),
 }
 
 impl DownloadError {
@@ -51,6 +53,7 @@ impl DownloadError {
             DownloadError::Status(s) => {
                 s.is_server_error() || *s == reqwest::StatusCode::TOO_MANY_REQUESTS
             }
+            DownloadError::Request(_) => false,
         }
     }
 }
@@ -75,7 +78,8 @@ pub fn api_client() -> reqwest::Result<reqwest::blocking::Client> {
 /// Download to `dest`, retrying transient failures with exponential backoff.
 ///
 /// `request` is invoked once per attempt so per-request state (Subsonic auth
-/// salts, for one) is regenerated rather than replayed. `on_progress` receives
+/// salts, for one) is regenerated rather than replayed; a request that cannot
+/// be built is fatal, not retried. `on_progress` receives
 /// `(bytes_this_attempt, total)` where `total` is 0 if the server sent no
 /// Content-Length; it restarts from zero when an attempt is retried.
 ///
@@ -83,7 +87,7 @@ pub fn api_client() -> reqwest::Result<reqwest::blocking::Client> {
 pub fn download_with_retries(
     dest: &Path,
     attempts: u32,
-    request: impl Fn() -> reqwest::blocking::RequestBuilder,
+    request: impl Fn() -> Result<reqwest::blocking::RequestBuilder, DownloadError>,
     on_progress: impl Fn(u64, u64),
 ) -> Result<u64, DownloadError> {
     let attempts = attempts.max(1);
@@ -118,10 +122,10 @@ pub fn download_with_retries(
 
 fn attempt_download(
     dest: &Path,
-    request: &impl Fn() -> reqwest::blocking::RequestBuilder,
+    request: &impl Fn() -> Result<reqwest::blocking::RequestBuilder, DownloadError>,
     on_progress: &impl Fn(u64, u64),
 ) -> Result<u64, DownloadError> {
-    let resp = request().send()?;
+    let resp = request()?.send()?;
     let status = resp.status();
     if !status.is_success() {
         return Err(DownloadError::Status(status));
@@ -349,7 +353,7 @@ mod tests {
         let client = download_client().unwrap();
 
         let written =
-            download_with_retries(&dest, 1, || client.get(server.url()), |_, _| {}).unwrap();
+            download_with_retries(&dest, 1, || Ok(client.get(server.url())), |_, _| {}).unwrap();
 
         assert_eq!(written, body.len() as u64);
         assert_eq!(std::fs::read(&dest).unwrap(), body);
@@ -366,7 +370,7 @@ mod tests {
         let dest = tmp_dest(&dir);
         let client = download_client().unwrap();
 
-        let err = download_with_retries(&dest, 1, || client.get(server.url()), |_, _| {})
+        let err = download_with_retries(&dest, 1, || Ok(client.get(server.url())), |_, _| {})
             .expect_err("a short body must not succeed");
 
         assert!(
@@ -386,7 +390,7 @@ mod tests {
         let dest = tmp_dest(&dir);
         let client = download_client().unwrap();
 
-        let err = download_with_retries(&dest, 1, || client.get(server.url()), |_, _| {})
+        let err = download_with_retries(&dest, 1, || Ok(client.get(server.url())), |_, _| {})
             .expect_err("a cut-off chunked body must not succeed");
 
         assert!(matches!(err, DownloadError::Io(_)), "unexpected: {err}");
@@ -410,7 +414,7 @@ mod tests {
         let client = download_client().unwrap();
 
         let written =
-            download_with_retries(&dest, 3, || client.get(server.url()), |_, _| {}).unwrap();
+            download_with_retries(&dest, 3, || Ok(client.get(server.url())), |_, _| {}).unwrap();
 
         assert_eq!(written, body.len() as u64);
         assert_eq!(server.hits(), 3, "should have used all three attempts");
@@ -429,7 +433,7 @@ mod tests {
         download_with_retries(
             &dest,
             1,
-            || client.get(server.url()),
+            || Ok(client.get(server.url())),
             |d, t| {
                 seen.lock().unwrap().push((d, t));
             },

@@ -166,7 +166,7 @@ fn download_and_play(
     let result = download::download_with_retries(
         dest,
         download::DEFAULT_ATTEMPTS,
-        || http.get(stream_url),
+        || Ok(http.get(stream_url)),
         |downloaded, total| {
             bytes_written.store(downloaded, Ordering::Release);
             state.update_load_state(
