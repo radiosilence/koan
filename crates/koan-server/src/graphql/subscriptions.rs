@@ -5,7 +5,7 @@ use async_graphql::{Context, Subscription};
 use tokio_stream::Stream;
 
 use koan_core::audio::viz::VizSnapshot;
-use koan_core::player::state::{PlaybackState, QueueEntryStatus, SharedPlayerState};
+use koan_core::player::state::SharedPlayerState;
 
 use super::types::*;
 
@@ -38,54 +38,21 @@ impl SubscriptionRoot {
             let mut last_queue_item: Option<String> = None;
 
             loop {
-                let playback_state = state.playback_state();
+                let playback_state = state.playback_state() as u8;
                 let position_ms = state.position_ms();
-
-                let state_u8 = playback_state as u8;
                 let queue_item_id = state.track_info().map(|ti| ti.id.0.to_string());
 
                 // Emit on any change: state, position, or track.
-                let changed = state_u8 != last_state
+                let changed = playback_state != last_state
                     || position_ms != last_position
                     || queue_item_id != last_queue_item;
 
                 if changed {
-                    last_state = state_u8;
+                    last_state = playback_state;
                     last_position = position_ms;
-                    last_queue_item = queue_item_id.clone();
+                    last_queue_item = queue_item_id;
 
-                    let playback_enum = match playback_state {
-                        PlaybackState::Stopped => PlaybackStateEnum::Stopped,
-                        PlaybackState::Playing => PlaybackStateEnum::Playing,
-                        PlaybackState::Paused => PlaybackStateEnum::Paused,
-                    };
-
-                    let (track, duration_ms) = if let Some(info) = state.track_info() {
-                        let (items, _cursor) = state.snapshot_playlist();
-                        let playlist_item = items.iter().find(|i| i.id == info.id);
-                        let track = GqlNowPlayingTrack {
-                            title: playlist_item.map(|i| i.title.clone()).unwrap_or_default(),
-                            artist: playlist_item.map(|i| i.artist.clone()).unwrap_or_default(),
-                            album: playlist_item.map(|i| i.album.clone()).unwrap_or_default(),
-                            codec: info.codec.clone(),
-                            sample_rate: info.sample_rate,
-                            bit_depth: info.bit_depth,
-                            bitrate_kbps: info.bitrate_kbps,
-                            channels: info.channels,
-                            duration_ms: info.duration_ms,
-                        };
-                        (Some(track), Some(info.duration_ms))
-                    } else {
-                        (None, None)
-                    };
-
-                    yield GqlNowPlaying {
-                        state: playback_enum,
-                        position_ms,
-                        duration_ms,
-                        track,
-                        queue_item_id,
-                    };
+                    yield GqlNowPlaying::capture(&state);
                 }
 
                 tokio::time::sleep(interval).await;
@@ -111,49 +78,7 @@ impl SubscriptionRoot {
 
                 if version != last_version {
                     last_version = version;
-
-                    let snap = state.derive_visible_queue();
-                    let entries = snap
-                        .entries
-                        .iter()
-                        .map(|entry| {
-                            let status = match entry.status {
-                                QueueEntryStatus::Queued => GqlQueueEntryStatus::Queued,
-                                QueueEntryStatus::Playing => GqlQueueEntryStatus::Playing,
-                                QueueEntryStatus::Played => GqlQueueEntryStatus::Played,
-                                QueueEntryStatus::Downloading => GqlQueueEntryStatus::Downloading,
-                                QueueEntryStatus::PriorityPending => GqlQueueEntryStatus::PriorityPending,
-                                QueueEntryStatus::Failed => GqlQueueEntryStatus::Failed,
-                            };
-
-                            let download_progress =
-                                entry.download_progress.map(|(downloaded, total)| {
-                                    GqlDownloadProgress { downloaded, total }
-                                });
-
-                            GqlQueueEntry {
-                                queue_item_id: entry.id.0.to_string(),
-                                title: entry.title.clone(),
-                                artist: entry.artist.clone(),
-                                album: entry.album.clone(),
-                                codec: entry.codec.clone(),
-                                track_number: entry.track_number,
-                                disc: entry.disc,
-                                duration_ms: entry.duration_ms,
-                                is_current: entry.status == QueueEntryStatus::Playing,
-                                status,
-                                download_progress,
-                            }
-                        })
-                        .collect();
-
-                    yield GqlQueueSnapshot {
-                        version,
-                        entries,
-                        finished_count: snap.finished_count as i32,
-                        has_playing: snap.has_playing,
-                        queue_count: snap.queue_count as i32,
-                    };
+                    yield GqlQueueSnapshot::capture(&state);
                 }
 
                 tokio::time::sleep(interval).await;

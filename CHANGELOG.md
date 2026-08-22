@@ -17,8 +17,53 @@
 
 - **Symphonia 0.5 → 0.6.1** — 0.6 rebuilt the format/codec registry, audio primitives, and metadata types around multi-track (audio/video/subtitle) media. Track timing moved off `CodecParameters` onto `Track`, which is where the audible wins come from: 24-bit/96 kHz ALAC now reports 96 kHz instead of 48 kHz (it previously played at half speed, and switched the output device to the wrong rate — fatal for a bit-perfect player), and ALAC-in-CAF decodes at all instead of erroring out. Playback frame counts are byte-identical across every other format.
 
+### Changed
+
+- **GraphQL collections default to 50 rows and cap at 500.** A query with no `first` used to return
+  the entire collection, so `{ tracks { edges { node { title } } } }` materialised a whole library as
+  rows, as GraphQL values and as serialised JSON at once. Clients that relied on the unbounded form
+  must paginate with `first`/`after`.
+- **`triggerScan` and `triggerRemoteSync` return a `Job`, not a result.** Both run for minutes; they
+  now start a detached worker and hand back `{ id, kind, state, message }`, polled with the new
+  `job(id:)` and `jobs` queries. One job of each kind runs at a time — a second call returns the
+  running one. The old `ScanResult` type is gone; added/updated/unchanged counts arrive in the
+  finished job's `message`.
+- **`sortBy` and `sortDir` now do something.** They were declared, published in the SDL and to MCP,
+  and silently dropped: a client asking for `sortBy: DATE` got DB order and no error.
+- **GraphQL queries time out at 30s, shed load past 64 in flight (503) and survive a panicking
+  resolver.** The concurrency limit alone queued the surplus, so an overloaded server answered
+  everyone slowly instead of telling the excess to come back. Subscriptions are exempt from the
+  timeout.
+
 ### Fixed
 
+- **A GraphQL query could stall audio in every connected Subsonic client.** rusqlite is blocking and
+  nothing in the server ran it off the async runtime, so resolvers occupied tokio workers directly.
+  Four concurrent `fuzzySearch` calls on a 4-core box took every worker, the `ReaderStream` feeding
+  each in-flight `/rest/stream` response stopped producing bytes, and clients dropped the connection
+  mid-track. One `triggerScan` did it single-handedly for the length of the scan. Every SQLite call,
+  HTTP fetch, tag read and file decode now runs on the blocking pool.
+- **A fresh SQLite connection was opened per resolver field.** `Database::open` creates the parent
+  directory, chmods the file, sets four pragmas, attempts a WAL checkpoint and runs a ~30-statement
+  DDL batch plus three migrations — all of it, every field. On a 500-artist library the nested
+  artists → albums → tracks query cost roughly 3,500 open cycles, about 120,000 statements. The
+  schema now holds a small connection pool sized to the core count, `Database::open_existing` skips
+  the setup for pooled connections, and the DDL runs once.
+- **N+1 queries across the type graph.** `Track.isFavourite` opened a connection and scanned the
+  whole `favourites` table per track; `Album.trackCount` and `totalDurationMs` each materialised
+  every row of the album to count or sum them; `Artist.albumCount`/`trackCount` re-ran the query
+  their sibling field had just run. Counts and sums are now `COUNT(*)`/`SUM(...)` in SQLite, and
+  parent → child edges go through dataloaders, so `{ tracks(first: 500) { isFavourite } }` is one
+  query rather than 500 connections and 500 table scans.
+- **`tracks(...)` loaded the whole library and filtered it in Rust.** Every predicate ran as a
+  `retain()` over every row before pagination, `search:` silently truncated at 10,000 rows, and
+  `yearStart`/`yearEnd` ran `SELECT date FROM albums WHERE id = ?` once per track in the library.
+  Filters, ordering and the page window are now SQL with bound parameters.
+- **`first: -1` overflowed the page arithmetic** — a panic in debug, a request for the entire
+  library in release.
+- **A full player command channel parked a tokio worker.** `send_cmd` used crossbeam's blocking
+  `send` on a bounded(16) channel while the player can sit in `start_playback` for about a second
+  during a device rate change. It now waits 250ms and reports "player busy".
 - **`cargo test` overwrote the user's real JWT signing key.** `auth`'s keypair tests called
   `generate_keypair()`, which writes to `~/.config/koan/auth/`, so running the test suite rotated the
   live Ed25519 key and invalidated every issued token. Keypair derivation is now split from the

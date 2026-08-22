@@ -1,6 +1,7 @@
 mod albums;
 mod artists;
 pub mod auth;
+pub mod batch;
 mod favourites;
 pub mod lyrics;
 pub mod playback_state;
@@ -17,6 +18,7 @@ use std::path::PathBuf;
 // Re-export all public items so `use queries::*` still works.
 pub use albums::*;
 pub use artists::*;
+pub use batch::*;
 pub use favourites::*;
 pub use lyrics::*;
 pub use playback_state::*;

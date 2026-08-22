@@ -271,7 +271,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 
 | File | Purpose |
 |---|---|
-| `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/snapshots/radio. |
+| `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/snapshots/radio. rusqlite is blocking, so resolvers run their DB and HTTP work on `spawn_blocking` with a pooled connection; parent → child edges go through dataloaders. |
 | `subsonic/` | Subsonic REST API endpoints for compatibility with existing clients (DSub, Symfonium, play:Sub). |
 | `mcp.rs` | MCP server on stdio -- exposes `schema_sdl` and `graphql` tools for Claude Desktop integration. |
 | `auth.rs` | JWT middleware, Ed25519 token generation/validation, role-based guards. |
