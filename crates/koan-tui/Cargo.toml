@@ -18,6 +18,7 @@ koan-core = { workspace = true }
 log = "0.4"
 reqwest = { workspace = true }
 nucleo = "0.5"
+parking_lot = "0.12"
 ratatui = "0.30"
 souvlaki = "0.8"
 uuid = { version = "1.22.0", features = ["v7"] }

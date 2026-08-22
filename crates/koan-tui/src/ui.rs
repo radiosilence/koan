@@ -28,20 +28,20 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     let area = frame.area();
 
+    // Below this the transport/queue geometry has no room to lay out.
+    if area.height < 5 || area.width < 20 {
+        frame.render_widget(Paragraph::new("terminal too small"), area);
+        return;
+    }
+
     // Fullscreen visualizer — take the entire frame, skip everything else.
     if app.viz_fullscreen && app.viz_config.enabled {
         let viz = VisualizerWidget::new(&mut app.visualizer, &app.theme);
         viz.render(area, frame.buffer_mut());
 
         // FPS overlay in fullscreen too.
-        if app.show_fps && area.width >= 8 {
-            let beat = app.visualizer.beat_energy;
-            let beat_tag = if beat > 0.3 { " BEAT" } else { "" };
-            let fps_text = format!(" {}fps b:{:.2}{} ", app.display_fps, beat, beat_tag);
-            let w = fps_text.len() as u16;
-            let fps_area = Rect::new(area.x + area.width - w, area.y, w, 1);
-            let fps_line = Line::from(Span::styled(fps_text, app.theme.hint_desc));
-            frame.render_widget(Paragraph::new(fps_line), fps_area);
+        if app.show_fps {
+            render_fps(frame, app, area);
         }
 
         // Visualizer picker overlay renders on top of fullscreen viz.
@@ -56,8 +56,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     let has_art = app.art.now_playing_art.cached().is_some();
-    let art_width = app.art_size;
-    let art_height = art_width / 2; // square via halfblock rendering
+    let art_height = app.art_size / 2; // square via halfblock rendering
     let transport_height = art_height.max(TRANSPORT_HEIGHT_DEFAULT);
 
     // Main layout: transport | content (flex) | hints (1)
@@ -68,8 +67,10 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     ])
     .split(area);
 
-    // Store areas for mouse interaction.
-    app.layout.transport_area = chunks[0];
+    // The solver shrinks the transport when the terminal is short — every
+    // rect below is derived from what it actually granted, not the request.
+    let transport_rect = chunks[0];
+    app.layout.transport_area = transport_rect;
 
     // Transport — with optional album art on the left.
     let track_info = app.state.track_info();
@@ -84,15 +85,21 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         .cloned();
 
     // Always reserve art space — placeholder keeps layout stable.
-    let art_area = Rect::new(chunks[0].x, chunks[0].y, art_width, transport_height);
+    let art_width = app.art_size.min(transport_rect.width.saturating_sub(2));
+    let art_area = Rect::new(
+        transport_rect.x,
+        transport_rect.y,
+        art_width,
+        transport_rect.height,
+    );
     let text_area = {
-        // Bottom-align the transport text (3 lines) within the full height.
-        let text_height = 3u16.min(transport_height);
-        let text_y = chunks[0].y + transport_height - text_height;
+        // Bottom-align the transport text (3 lines) within the granted height.
+        let text_height = 3u16.min(transport_rect.height);
+        let text_y = transport_rect.y + transport_rect.height - text_height;
         Rect::new(
-            chunks[0].x + art_width + 1,
+            transport_rect.x + art_width + 1,
             text_y,
-            chunks[0].width.saturating_sub(art_width + 1),
+            transport_rect.width.saturating_sub(art_width + 1),
             text_height,
         )
     };
@@ -136,12 +143,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
 
     // Visualizer — renders in the space above the transport text.
     // Dispatches to the active mode (bars, oscilloscope, radial, particles, lissajous).
-    if transport_height > TRANSPORT_HEIGHT_DEFAULT {
-        let spectrum_height = transport_height - TRANSPORT_HEIGHT_DEFAULT;
+    let spectrum_height = transport_rect
+        .height
+        .saturating_sub(TRANSPORT_HEIGHT_DEFAULT);
+    if spectrum_height > 0 {
         let spectrum_area = Rect::new(
-            chunks[0].x + art_width + 1,
-            chunks[0].y,
-            chunks[0].width.saturating_sub(art_width + 1),
+            transport_rect.x + art_width + 1,
+            transport_rect.y,
+            transport_rect.width.saturating_sub(art_width + 1),
             spectrum_height,
         );
         let viz = VisualizerWidget::new(&mut app.visualizer, &app.theme);
@@ -164,8 +173,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         app.layout.queue_area = panes[1];
 
         // Library pane.
+        let visible_height = app.library_content_height();
         if let Some(ref mut lib) = app.library {
-            let visible_height = panes[0].height.saturating_sub(2) as usize;
             lib.update_scroll(visible_height);
             let focused = app.library_focus == LibraryFocus::Library;
             let hover_idx = match &app.hover.zone {
@@ -307,8 +316,14 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // Track info overlay.
-    if let Mode::TrackInfo(idx) = app.mode
-        && let Some(entry) = app.queue.vq_cache.entries.get(idx).cloned()
+    if let Mode::TrackInfo(id) = app.mode
+        && let Some(entry) = app
+            .queue
+            .vq_cache
+            .entries
+            .iter()
+            .find(|e| e.id == id)
+            .cloned()
     {
         let current_track_info = app.state.track_info();
         let is_playing = entry.status == koan_core::player::state::QueueEntryStatus::Playing;
@@ -390,14 +405,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 
     // FPS counter overlay (top-right corner).
-    if app.show_fps && area.width >= 8 {
-        let beat = app.visualizer.beat_energy;
-        let beat_tag = if beat > 0.3 { " BEAT" } else { "" };
-        let fps_text = format!(" {}fps b:{:.2}{} ", app.display_fps, beat, beat_tag);
-        let w = fps_text.len() as u16;
-        let fps_area = Rect::new(area.x + area.width - w, area.y, w, 1);
-        let fps_line = Line::from(Span::styled(fps_text, app.theme.hint_desc));
-        frame.render_widget(Paragraph::new(fps_line), fps_area);
+    if app.show_fps {
+        render_fps(frame, app, area);
     }
 
     // Loading overlay with braille spinner.
@@ -423,6 +432,20 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     }
 }
 
+/// FPS + beat-energy counter, right-aligned on the top row.
+fn render_fps(frame: &mut Frame, app: &App, area: Rect) {
+    let beat = app.visualizer.beat_energy;
+    let beat_tag = if beat > 0.3 { " BEAT" } else { "" };
+    let fps_text = format!(" {}fps b:{:.2}{} ", app.display_fps, beat, beat_tag);
+    let w = fps_text.chars().count() as u16;
+    if area.width < w {
+        return;
+    }
+    let fps_area = Rect::new(area.x + area.width - w, area.y, w, 1);
+    let fps_line = Line::from(Span::styled(fps_text, app.theme.hint_desc));
+    frame.render_widget(Paragraph::new(fps_line), fps_area);
+}
+
 fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     // Clamp cursor before borrowing visible queue.
     let vq_len = app.queue.vq_cache.entries.len();
@@ -446,4 +469,169 @@ fn render_queue(frame: &mut Frame, app: &mut App, area: ratatui::layout::Rect) {
     .with_hover(&app.hover.zone)
     .with_favourites(&app.favourites);
     frame.render_widget(queue_view, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koan_core::player::state::{
+        QueueEntry, QueueEntryStatus, QueueItemId, SharedPlayerState, TrackInfo,
+    };
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+    use std::path::PathBuf;
+
+    fn entry(n: usize) -> QueueEntry {
+        QueueEntry {
+            id: QueueItemId::new(),
+            db_id: None,
+            path: PathBuf::from(format!("/music/{}.flac", n)),
+            title: format!("track {}", n),
+            artist: "artist".into(),
+            album_artist: "artist".into(),
+            album: "album".into(),
+            year: Some("2024".into()),
+            codec: Some("FLAC".into()),
+            track_number: Some(n as i64 + 1),
+            disc: None,
+            duration_ms: Some(200_000),
+            status: QueueEntryStatus::Queued,
+            download_progress: None,
+        }
+    }
+
+    /// An `App` with a queue and a track playing, detached from any real player.
+    fn app_with_queue(len: usize) -> App {
+        let state = SharedPlayerState::new();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let log_buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let download_queue = crate::download_queue::DownloadQueue::spawn(
+            tx.clone(),
+            state.clone(),
+            log_buffer.clone(),
+        );
+
+        let mut entries: Vec<QueueEntry> = (0..len).map(entry).collect();
+        if let Some(first) = entries.first_mut() {
+            first.status = QueueEntryStatus::Playing;
+        }
+        if let Some(first) = entries.first() {
+            state.set_track_info(Some(TrackInfo {
+                id: first.id,
+                path: first.path.clone(),
+                codec: "FLAC".into(),
+                sample_rate: 44100,
+                bit_depth: Some(16),
+                bitrate_kbps: None,
+                channels: 2,
+                duration_ms: 200_000,
+            }));
+        }
+
+        let mut app = App::new(
+            state,
+            koan_core::audio::viz::VizSnapshot::new(),
+            tx,
+            log_buffer,
+            PathBuf::from("/nonexistent/koan-test.db"),
+            60,
+            download_queue,
+        );
+        app.queue.vq_cache.entries = entries;
+        app.queue.vq_version = app.state.playlist_version();
+        // Pinned so the sweep does not inherit the developer's own config.
+        app.art_size = 24;
+        app.show_fps = false;
+        app.viz_fullscreen = false;
+        app.viz_config.enabled = true;
+        app
+    }
+
+    fn draw(app: &mut App, w: u16, h: u16) {
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal.draw(|f| render(f, app)).unwrap();
+    }
+
+    /// Transport geometry used to be derived from the requested height rather
+    /// than the height the layout solver granted, writing below the buffer.
+    #[test]
+    fn renders_at_any_terminal_size() {
+        let mut app = app_with_queue(40);
+        for art_size in [4u16, 24, 56, 80] {
+            app.art_size = art_size;
+            for w in [1u16, 2, 3, 19, 20, 26, 40, 80, 200] {
+                for h in [1u16, 2, 3, 4, 5, 8, 9, 10, 24, 60] {
+                    draw(&mut app, w, h);
+                }
+            }
+        }
+    }
+
+    /// Dragging the transport divider large on a big screen used to poison
+    /// config.toml and panic on the first frame of every smaller terminal.
+    #[test]
+    fn oversized_art_renders_on_a_short_terminal() {
+        let mut app = app_with_queue(40);
+        app.art_size = 80;
+        draw(&mut app, 80, 24);
+        draw(&mut app, 26, 8);
+        draw(&mut app, 200, 6);
+    }
+
+    /// The counter is 14 cells wide (19 with the beat tag) — narrower areas
+    /// underflowed the right-aligned x.
+    #[test]
+    fn fps_counter_renders_at_narrow_widths() {
+        let mut app = app_with_queue(4);
+        app.show_fps = true;
+        for beat in [0.0f32, 0.9] {
+            app.visualizer.beat_energy = beat;
+            for w in 1u16..=25 {
+                let mut terminal = Terminal::new(TestBackend::new(w, 3)).unwrap();
+                terminal
+                    .draw(|f| {
+                        let area = f.area();
+                        render_fps(f, &app, area)
+                    })
+                    .unwrap();
+            }
+        }
+        // And through both render paths that reach it.
+        for fullscreen in [false, true] {
+            app.viz_fullscreen = fullscreen;
+            for w in [20u16, 26, 80] {
+                draw(&mut app, w, 24);
+            }
+        }
+    }
+
+    /// Indices shift when a track is removed; the modal keyed off one and
+    /// silently showed a different track, or rendered nothing while swallowing
+    /// every keystroke.
+    #[test]
+    fn track_info_modal_closes_when_its_track_is_removed() {
+        let mut app = app_with_queue(5);
+        let id = app.queue.vq_cache.entries[3].id;
+        app.mode = Mode::TrackInfo(id);
+        draw(&mut app, 80, 24);
+
+        app.queue.vq_cache.entries.retain(|e| e.id != id);
+        app.close_stale_track_info();
+
+        assert_eq!(app.mode, Mode::Normal);
+        // Still renders, and keys are no longer swallowed by a dead modal.
+        draw(&mut app, 80, 24);
+    }
+
+    #[test]
+    fn track_info_modal_follows_its_track_across_a_removal() {
+        let mut app = app_with_queue(5);
+        let id = app.queue.vq_cache.entries[3].id;
+        app.mode = Mode::TrackInfo(id);
+
+        app.queue.vq_cache.entries.remove(0);
+        app.close_stale_track_info();
+
+        assert_eq!(app.mode, Mode::TrackInfo(id));
+    }
 }

@@ -2633,6 +2633,7 @@ dependencies = [
  "koan-core",
  "log",
  "nucleo",
+ "parking_lot",
  "ratatui",
  "reqwest",
  "souvlaki",
