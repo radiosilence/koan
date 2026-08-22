@@ -248,9 +248,41 @@ subsonic_port = 4040           # optional Subsonic REST API port (default: disab
 auth_enabled = true           # JWT authentication (default: true)
 access_token_ttl = "15m"      # access token lifetime (default: 15m)
 refresh_token_ttl = "30d"     # refresh token lifetime (default: 30d)
+cors_origins = []             # origins allowed to call the API from a browser
+allowed_hosts = []            # extra Host: values to answer to (see below)
+cookie_secure = false         # mark cookies Secure — only with HTTPS in front
+allow_organize = false        # expose the organize* mutations, which move files
 ```
 
 Auth is enabled by default. Run `koan auth setup` to create a keypair and admin user. Set `auth_enabled = false` if you only use localhost and don't need auth.
+
+### Browser access
+
+`cors_origins` is empty by default, which means no web page may read the API cross-origin. Add the origin your web client is served from — `["https://music.example.com"]` — to allow it.
+
+`allowed_hosts` names the hostnames this server answers to, on top of `localhost` and any bare IP address. A request arriving with any other `Host` is refused: without that check, a page whose DNS flips to `127.0.0.1` after loading reaches the API as same-origin and CORS stops applying. Set it if you reach koan through a name like `koan.lan`.
+
+`cookie_secure` should stay `false` unless clients reach koan over HTTPS. Browsers discard `Secure` cookies delivered over plain `http://` to anything but localhost, so setting it on a LAN deployment silently breaks cookie auth.
+
+`allow_organize` gates `organizePreview`, `organizeExecute` and `organizeUndo`. They rename and move files on disk, which is not something a network API should offer by default.
+
+---
+
+## `[subsonic]`
+
+koan's own Subsonic-compatible REST API, served at `/rest/*`.
+
+```toml
+[subsonic]
+enabled = false               # serve /rest/* (default: false)
+username = "koan"             # username Subsonic clients authenticate as
+```
+
+Run `koan subsonic setup` to enable it. That generates a secret, stores it in the OS keychain (falling back to `config.local.toml`), and prints it once.
+
+The secret is deliberately **not** your Navidrome/`[remote]` password. The Subsonic protocol authenticates with `md5(secret + salt)` where the client picks the salt, over whatever transport it likes — so anyone who can capture one request walks away with a digest to crack offline. A generated 256-bit secret makes that worthless; your Navidrome password would not.
+
+`/rest/*` is not covered by JWT auth, so these credentials alone guard every file in the library. Don't expose the port to the internet.
 
 See [Authentication](../guide/authentication.md), [GraphQL API](../guide/graphql-api.md), and [Headless Server](../guide/headless-server.md) for usage guides.
 

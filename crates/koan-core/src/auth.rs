@@ -132,6 +132,35 @@ pub fn verify_password(password: &str, hash: &str) -> Result<(), AuthError> {
 }
 
 // ---------------------------------------------------------------------------
+// Random secrets
+// ---------------------------------------------------------------------------
+
+/// Generate a 256-bit random secret, hex encoded.
+///
+/// Used for bearer-style secrets that are compared verbatim rather than hashed
+/// (introspection key, Subsonic shared secret), so the entropy has to carry the
+/// whole security argument.
+pub fn random_token() -> Result<String, AuthError> {
+    use ring::rand::SecureRandom;
+
+    let mut bytes = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| AuthError::Hash("rng failure".into()))?;
+    Ok(bytes.iter().map(|b| format!("{:02x}", b)).collect())
+}
+
+/// SHA-256 of `input`, hex encoded. Refresh tokens are stored under this so a
+/// database read does not yield usable credentials.
+pub fn sha256_hex(input: &str) -> String {
+    ring::digest::digest(&ring::digest::SHA256, input.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Ed25519 Keypair management
 // ---------------------------------------------------------------------------
 
@@ -262,6 +291,20 @@ pub fn mint_access_token(
     role: Role,
     ttl_secs: u64,
 ) -> Result<String, AuthError> {
+    mint_access_token_with_role_str(private_pem, user_id, username, role.as_str(), ttl_secs)
+}
+
+/// Mint an access token carrying an arbitrary `role` claim.
+///
+/// The claim is a free-text string on the wire; this is the seam that lets the
+/// consumers of a token be tested against role values they cannot parse.
+pub fn mint_access_token_with_role_str(
+    private_pem: &[u8],
+    user_id: i64,
+    username: &str,
+    role: &str,
+    ttl_secs: u64,
+) -> Result<String, AuthError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -270,7 +313,7 @@ pub fn mint_access_token(
     let claims = Claims {
         sub: user_id,
         username: username.to_string(),
-        role: role.as_str().to_string(),
+        role: role.to_string(),
         iat: now,
         exp: now + ttl_secs,
     };

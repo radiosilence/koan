@@ -34,11 +34,9 @@ impl QueryRoot {
     ) -> async_graphql::Result<Conn<GqlArtist>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let mut artists = if let Some(ref query) = search {
-            queries::find_artists(&db.conn, query)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            queries::find_artists(&db.conn, query).map_err(|e| super::internal_error("db", e))?
         } else {
-            queries::all_artists(&db.conn)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            queries::all_artists(&db.conn).map_err(|e| super::internal_error("db", e))?
         };
 
         if let Some(ref id_list) = ids {
@@ -49,7 +47,7 @@ impl QueryRoot {
             let g_lower = g.to_lowercase();
             let artist_ids: Vec<i64> = artists.iter().map(|a| a.id).collect();
             let genre_map = queries::genres_by_artist_ids(&db.conn, &artist_ids)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                .map_err(|e| super::internal_error("db", e))?;
             artists.retain(|a| {
                 genre_map
                     .get(&a.id)
@@ -59,7 +57,7 @@ impl QueryRoot {
 
         if favourites_only {
             let fav_ids = queries::favourite_artist_ids_batch(&db.conn)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                .map_err(|e| super::internal_error("db", e))?;
             artists.retain(|a| fav_ids.contains(&a.id));
         }
 
@@ -93,19 +91,17 @@ impl QueryRoot {
         let db = ctx.data::<DbHandle>()?.open()?;
 
         let mut albums = if let Some(aid) = artist_id {
-            queries::albums_for_artist(&db.conn, aid)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            queries::albums_for_artist(&db.conn, aid).map_err(|e| super::internal_error("db", e))?
         } else if let Some(ref aids) = artist_ids {
             let mut all = Vec::new();
             for &aid in aids {
                 let mut a = queries::albums_for_artist(&db.conn, aid)
-                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                    .map_err(|e| super::internal_error("db", e))?;
                 all.append(&mut a);
             }
             all
         } else {
-            queries::all_albums(&db.conn)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            queries::all_albums(&db.conn).map_err(|e| super::internal_error("db", e))?
         };
 
         if let Some(ref id_list) = ids {
@@ -156,7 +152,7 @@ impl QueryRoot {
             let g_lower = g.to_lowercase();
             let album_ids: Vec<i64> = albums.iter().map(|a| a.id).collect();
             let genre_map = queries::genres_by_album_ids(&db.conn, &album_ids)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                .map_err(|e| super::internal_error("db", e))?;
             albums.retain(|a| {
                 genre_map
                     .get(&a.id)
@@ -166,7 +162,7 @@ impl QueryRoot {
 
         if favourites_only {
             let fav_ids = queries::favourite_album_ids_batch(&db.conn)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                .map_err(|e| super::internal_error("db", e))?;
             albums.retain(|a| fav_ids.contains(&a.id));
         }
 
@@ -209,24 +205,22 @@ impl QueryRoot {
 
         let mut tracks = if let Some(ref query) = search {
             queries::search_tracks_paged(&db.conn, query, 10000, 0)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+                .map_err(|e| super::internal_error("db", e))?
         } else if let Some(album) = album_id {
             queries::tracks_for_album(&db.conn, album)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+                .map_err(|e| super::internal_error("db", e))?
         } else if let Some(ref aids) = artist_ids {
             let mut all = Vec::new();
             for &aid in aids {
                 let mut t = queries::tracks_for_artist(&db.conn, aid)
-                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                    .map_err(|e| super::internal_error("db", e))?;
                 all.append(&mut t);
             }
             all
         } else if let Some(aid) = artist_id {
-            queries::tracks_for_artist(&db.conn, aid)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            queries::tracks_for_artist(&db.conn, aid).map_err(|e| super::internal_error("db", e))?
         } else {
-            queries::all_tracks(&db.conn)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            queries::all_tracks(&db.conn).map_err(|e| super::internal_error("db", e))?
         };
 
         if let Some(ref id_list) = ids {
@@ -314,8 +308,8 @@ impl QueryRoot {
         }
 
         if favourites_only {
-            let fav_paths = queries::load_favourites(&db.conn)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            let fav_paths =
+                queries::load_favourites(&db.conn).map_err(|e| super::internal_error("db", e))?;
             tracks.retain(|t| {
                 t.path
                     .as_ref()
@@ -334,8 +328,8 @@ impl QueryRoot {
 
     async fn track(&self, ctx: &Context<'_>, id: i64) -> async_graphql::Result<Option<GqlTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
-        let row = queries::get_track_row(&db.conn, id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let row =
+            queries::get_track_row(&db.conn, id).map_err(|e| super::internal_error("db", e))?;
         Ok(row.map(|row| GqlTrack { row }))
     }
 
@@ -353,14 +347,14 @@ impl QueryRoot {
             let per = (count as u32 / aids.len() as u32).max(1);
             for &aid in aids {
                 let mut t = queries::random_tracks(&db.conn, per, Some(aid))
-                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                    .map_err(|e| super::internal_error("db", e))?;
                 all.append(&mut t);
             }
             all.truncate(count as usize);
             Ok(all.into_iter().map(|row| GqlTrack { row }).collect())
         } else {
             let tracks = queries::random_tracks(&db.conn, count as u32, artist_id)
-                .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                .map_err(|e| super::internal_error("db", e))?;
             Ok(tracks.into_iter().map(|row| GqlTrack { row }).collect())
         }
     }
@@ -457,8 +451,7 @@ impl QueryRoot {
 
     async fn library_stats(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlLibraryStats> {
         let db = ctx.data::<DbHandle>()?.open()?;
-        let stats = queries::library_stats(&db.conn)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let stats = queries::library_stats(&db.conn).map_err(|e| super::internal_error("db", e))?;
         Ok(GqlLibraryStats {
             total_tracks: stats.total_tracks,
             local_tracks: stats.local_tracks,
@@ -470,8 +463,8 @@ impl QueryRoot {
     }
 
     async fn devices(&self) -> async_graphql::Result<Vec<GqlDevice>> {
-        let devices = audio::list_output_devices()
-            .map_err(|e| async_graphql::Error::new(format!("device error: {}", e)))?;
+        let devices =
+            audio::list_output_devices().map_err(|e| super::internal_error("device", e))?;
         Ok(devices
             .iter()
             .map(|d| GqlDevice {
@@ -488,8 +481,8 @@ impl QueryRoot {
         first: Option<i32>,
     ) -> async_graphql::Result<Conn<GqlTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
-        let fav_paths = queries::load_favourites(&db.conn)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let fav_paths =
+            queries::load_favourites(&db.conn).map_err(|e| super::internal_error("db", e))?;
         let mut tracks = Vec::new();
         for path in &fav_paths {
             let path_str = path.to_string_lossy();
@@ -504,8 +497,7 @@ impl QueryRoot {
 
     async fn snapshots(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlSnapshot>> {
         let db = ctx.data::<DbHandle>()?.open()?;
-        let list = queries::list_snapshots(&db.conn)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+        let list = queries::list_snapshots(&db.conn).map_err(|e| super::internal_error("db", e))?;
         Ok(list
             .into_iter()
             .map(|s| GqlSnapshot {
@@ -531,7 +523,7 @@ impl QueryRoot {
     ) -> async_graphql::Result<Vec<GqlSimilarArtist>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let entries = queries::get_similar_artists_detailed(&db.conn, artist_id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         Ok(entries
             .into_iter()
             .map(|e| GqlSimilarArtist {
@@ -554,7 +546,7 @@ impl QueryRoot {
     ) -> async_graphql::Result<Vec<GqlPlayHistoryEntry>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let entries = queries::get_play_history(&db.conn, limit as u32, offset as u32)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         Ok(entries
             .into_iter()
             .map(|e| {
@@ -591,8 +583,8 @@ impl QueryRoot {
         // Build (id, match_text) pairs based on kind.
         let items: Vec<(i64, String)> = match kind {
             FuzzySearchKind::Track => {
-                let tracks = queries::all_tracks(&db.conn)
-                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                let tracks =
+                    queries::all_tracks(&db.conn).map_err(|e| super::internal_error("db", e))?;
                 tracks
                     .into_iter()
                     .map(|t| {
@@ -604,16 +596,16 @@ impl QueryRoot {
                     .collect()
             }
             FuzzySearchKind::Album => {
-                let albums = queries::all_albums(&db.conn)
-                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                let albums =
+                    queries::all_albums(&db.conn).map_err(|e| super::internal_error("db", e))?;
                 albums
                     .into_iter()
                     .map(|a| (a.id, format!("{} — {}", a.artist_name, a.title)))
                     .collect()
             }
             FuzzySearchKind::Artist => {
-                let artists = queries::all_artists(&db.conn)
-                    .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+                let artists =
+                    queries::all_artists(&db.conn).map_err(|e| super::internal_error("db", e))?;
                 artists.into_iter().map(|a| (a.id, a.name)).collect()
             }
         };
@@ -664,7 +656,7 @@ impl QueryRoot {
     ) -> async_graphql::Result<Option<GqlLyrics>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .map_err(|e| super::internal_error("db", e))?
             .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
         let duration_secs = track.duration_ms.map(|d| d as u64 / 1000).unwrap_or(0);
         match koan_core::lyrics::fetch_lyrics(
@@ -692,7 +684,7 @@ impl QueryRoot {
     ) -> async_graphql::Result<Vec<GqlSimilarTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let results = queries::find_similar(&db.conn, track_id, limit as usize)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         let mut out = Vec::with_capacity(results.len());
         for (tid, dist) in results {
             if let Ok(Some(row)) = queries::get_track_row(&db.conn, tid) {
@@ -714,7 +706,7 @@ impl QueryRoot {
 
         let db = ctx.data::<DbHandle>()?.open()?;
         let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?
+            .map_err(|e| super::internal_error("db", e))?
             .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
         let path = track
             .path
