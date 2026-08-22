@@ -1,5 +1,57 @@
 # Changelog
 
+## Unreleased
+
+Closes the browser-facing attack surface on `koan serve`. The threat model that drove this: koan on a LAN, reachable from other machines on the network and from any web page the owner's browser happens to load.
+
+### Breaking
+
+- **The Subsonic REST API now has its own credentials and is off by default.** It previously authenticated with `remote.username` plus the `[remote]` password — the user's actual Navidrome account password — and `/rest/*` was mounted outside the JWT middleware, so `auth_enabled = true` did nothing for the surface that streams every file in the library. The protocol sends `md5(password + salt)` with a client-chosen salt over whatever transport the client picked, so one captured `/rest/ping` on the LAN yielded a digest to crack offline — and cracking it owned the remote music account too.
+
+  Migration:
+
+  ```bash
+  koan subsonic setup     # generates a 256-bit secret, stores it in the keychain, prints it once
+  ```
+
+  Then re-point your Subsonic clients at the new username (`koan` by default) and secret. `koan subsonic status` shows the current state, `koan subsonic disable` turns it back off. Nothing is served at `/rest/*` until you run setup.
+
+- **Plaintext Subsonic auth (`p=`, including `p=enc:...`) is refused.** Token auth (`u` + `t` + `s`) only. Every current client uses it.
+
+- **`updateConfig` no longer accepts `libraryFolders` or `remoteUrl`.** Chained with `triggerScan` and `organizeExecute`, `libraryFolders` was a remote move of arbitrary files into the music tree; `remoteUrl` repointed sync at an attacker's server. Both stay CLI-only.
+
+- **The `organize*` mutations are gated behind `[graphql] allow_organize = true`** (default `false`). They physically rename and move files.
+
+- **Existing refresh tokens are invalidated.** They are now stored as `sha256(token)`; rows written under the old scheme no longer match. Clients re-login once.
+
+- **Default CORS no longer allows any origin.** With `cors_origins` empty the server emits no `Access-Control-Allow-Origin` at all. List the origins your web client is served from.
+
+- **The MCP `graphql` tool executes at `user` role**, not admin. It could previously invoke `organizeExecute`, `organizeUndo`, `updateConfig`, `triggerScan` and `createShare` — none of which its tool description advertised. `KOAN_MCP_ADMIN=1` restores admin; `setDevice`/`clearDevice`/`triggerScan` need it.
+
+### Security
+
+- **Cross-site WebSocket hijacking** — `/graphql/ws` upgraded with no `Origin` check. WebSocket handshakes are exempt from CORS, so any page the owner visited could open a socket, have the browser attach the session cookie, and run queries *and* mutations while reading every response. Requests carrying a foreign `Origin` are now refused before the upgrade; an absent `Origin` (non-browser client) still passes.
+- **CSRF via a CORS-safelisted content type** — `POST /graphql` with `Content-Type: text/plain` needs no preflight, so the browser sent it with cookies attached, and async-graphql parsed the body as JSON regardless. The response was unreadable but the mutation landed. `POST /graphql` now requires `application/json` or `application/graphql`.
+- **DNS rebinding** — no `Host` was ever checked, so a page whose DNS flipped to `127.0.0.1` after loading reached the API as same-origin, at which point CORS, Private Network Access and `SameSite` are all irrelevant. Requests are now refused unless the `Host` is `localhost`, a bare IP literal, or listed in `[graphql] allowed_hosts`.
+- **Session cookies were `SameSite=None; Secure`** — `None` is what made the two attacks above reachable, and `Secure` means browsers refuse to *store* the cookie over plain `http://` on a LAN address, so cookie auth was silently dead in the deployment the docs recommend. Now `SameSite=Lax`, with `Secure` only when `[graphql] cookie_secure = true`. The refresh token gets its own `HttpOnly` cookie scoped to `Path=/auth/refresh`.
+- **`/auth/login` was unauthenticated, unthrottled and outside the concurrency limit** — Argon2 at 19MiB per verification meant a few hundred concurrent logins exhausted memory and pegged the CPU, and the handler ran the hash on the async workers, stalling every other request. Now: a concurrency limit of 2 on the auth router, a per-IP rate limit (10/minute), and `spawn_blocking` around verification.
+- **An empty or truncated keypair silently downgraded to no-auth** — `auth_enabled && !private_pem.is_empty()` meant a damaged key file made every request an anonymous admin. It is now a startup failure. In TUI mode that failure is logged rather than panicking a background thread, where it left the API silently absent.
+- **`getCoverArt?size=` was unbounded and upscaled** — `?size=65535` on a 1000×1000 cover asked for ~17GB, and `Vec`'s allocation failure aborts the process, which no panic handler can intercept. Clamped to 16–2048 and never larger than the source.
+- **`?token=` applied to every route** — a valid JWT could sit in any URL, and from there in shell history, proxy logs and `Referer`. It exists for WebSocket URLs, which cannot carry a header, and is now confined to `/graphql/ws`.
+- **The playground introspection key was a UUIDv7** — 48 of its bits were the server start time in milliseconds. It is now 256 bits from the system CSPRNG, and compared in constant time.
+- **Refresh tokens were stored as plaintext UUIDs.** Now `sha256(token)`, and the tokens themselves are CSPRNG values rather than UUIDs.
+- **GraphQL errors returned raw SQLite messages and absolute filesystem paths.** The detail is logged; clients get "internal error".
+- **No query depth or complexity limit** — a single nested query could fan out across the whole library. Now `limit_depth(12)`, `limit_complexity(2000)`.
+- **Subsonic username was compared with `!=`** while both password paths correctly used `subtle`. Now constant-time.
+- **`parse_range` underflowed on a 0-byte track file** — panic in debug, `u64::MAX` in release. Guarded.
+
+### Added
+
+- `koan subsonic setup|status|disable`.
+- `[graphql] allowed_hosts`, `cookie_secure`, `allow_organize`.
+- `[subsonic] enabled`, `username`, `password`.
+- Tests for `auth/middleware.rs`, which previously had none: the cookie/Bearer/query-param precedence chain, the `auth_enabled = false` admin bypass, the introspection-key bypass and its constant-time mismatch, the `unwrap_or(Role::Readonly)` fallback on an unparseable role claim, tokens signed by another key. Plus the WebSocket `Origin` check (foreign rejected, absent allowed, same-origin and configured allowed), the `text/plain` POST rejection, the `Host` allowlist, cover-art size clamping, the empty-file range guard, cookie flags, and the login rate limiter.
+
 ## v0.23.3 (2026-04-19)
 
 ### Fixed

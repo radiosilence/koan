@@ -116,7 +116,7 @@ impl GqlArtist {
     ) -> async_graphql::Result<Conn<GqlAlbum>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let all = queries::albums_for_artist(&db.conn, self.row.id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         paginate(
             all.into_iter().map(|row| GqlAlbum { row }).collect(),
             after,
@@ -132,7 +132,7 @@ impl GqlArtist {
     ) -> async_graphql::Result<Conn<GqlTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let all = queries::tracks_for_artist(&db.conn, self.row.id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         paginate(
             all.into_iter().map(|row| GqlTrack { row }).collect(),
             after,
@@ -143,14 +143,14 @@ impl GqlArtist {
     async fn album_count(&self, ctx: &Context<'_>) -> async_graphql::Result<i32> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let albums = queries::albums_for_artist(&db.conn, self.row.id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         Ok(albums.len() as i32)
     }
 
     async fn track_count(&self, ctx: &Context<'_>) -> async_graphql::Result<i32> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let tracks = queries::tracks_for_artist(&db.conn, self.row.id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         Ok(tracks.len() as i32)
     }
 }
@@ -201,7 +201,7 @@ impl GqlAlbum {
     ) -> async_graphql::Result<Conn<GqlTrack>> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let all = queries::tracks_for_album(&db.conn, self.row.id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         paginate(
             all.into_iter().map(|row| GqlTrack { row }).collect(),
             after,
@@ -212,14 +212,14 @@ impl GqlAlbum {
     async fn track_count(&self, ctx: &Context<'_>) -> async_graphql::Result<i32> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let tracks = queries::tracks_for_album(&db.conn, self.row.id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         Ok(tracks.len() as i32)
     }
 
     async fn total_duration_ms(&self, ctx: &Context<'_>) -> async_graphql::Result<i64> {
         let db = ctx.data::<DbHandle>()?.open()?;
         let tracks = queries::tracks_for_album(&db.conn, self.row.id)
-            .map_err(|e| async_graphql::Error::new(format!("db error: {}", e)))?;
+            .map_err(|e| super::internal_error("db", e))?;
         Ok(tracks.iter().filter_map(|t| t.duration_ms).sum())
     }
 }

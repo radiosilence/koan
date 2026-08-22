@@ -132,6 +132,35 @@ pub fn verify_password(password: &str, hash: &str) -> Result<(), AuthError> {
 }
 
 // ---------------------------------------------------------------------------
+// Random secrets
+// ---------------------------------------------------------------------------
+
+/// Generate a 256-bit random secret, hex encoded.
+///
+/// Used for bearer-style secrets that are compared verbatim rather than hashed
+/// (introspection key, Subsonic shared secret), so the entropy has to carry the
+/// whole security argument.
+pub fn random_token() -> Result<String, AuthError> {
+    use ring::rand::SecureRandom;
+
+    let mut bytes = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| AuthError::Hash("rng failure".into()))?;
+    Ok(bytes.iter().map(|b| format!("{:02x}", b)).collect())
+}
+
+/// SHA-256 of `input`, hex encoded. Refresh tokens are stored under this so a
+/// database read does not yield usable credentials.
+pub fn sha256_hex(input: &str) -> String {
+    ring::digest::digest(&ring::digest::SHA256, input.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Ed25519 Keypair management
 // ---------------------------------------------------------------------------
 
@@ -147,18 +176,9 @@ fn public_key_path() -> PathBuf {
     keypair_dir().join("ed25519.pub.pem")
 }
 
-/// Generate a new Ed25519 keypair and write PEM files to the config dir.
+/// Generate an Ed25519 keypair without touching the filesystem.
 /// Returns (private_pem, public_pem).
-pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
-    let dir = keypair_dir();
-    fs::create_dir_all(&dir)?;
-
-    // Ensure the auth directory is gitignored — keys must never be committed.
-    let gitignore = dir.join(".gitignore");
-    if !gitignore.exists() {
-        let _ = fs::write(&gitignore, "*\n");
-    }
-
+pub fn generate_keypair_in_memory() -> Result<(String, String), AuthError> {
     // Generate Ed25519 keypair using ring (via jsonwebtoken's internal ring dep).
     // jsonwebtoken's EncodingKey::from_ed_pem expects PKCS8 PEM.
     let rng = ring::rand::SystemRandom::new();
@@ -182,6 +202,23 @@ pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     ];
     spki.extend_from_slice(pub_bytes);
     let public_pem = pem::encode(&pem::Pem::new("PUBLIC KEY", spki));
+
+    Ok((private_pem, public_pem))
+}
+
+/// Generate a new Ed25519 keypair and write PEM files to the config dir.
+/// Returns (private_pem, public_pem).
+pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
+    let dir = keypair_dir();
+    fs::create_dir_all(&dir)?;
+
+    // Ensure the auth directory is gitignored — keys must never be committed.
+    let gitignore = dir.join(".gitignore");
+    if !gitignore.exists() {
+        let _ = fs::write(&gitignore, "*\n");
+    }
+
+    let (private_pem, public_pem) = generate_keypair_in_memory()?;
 
     // Write key files with restrictive permissions set BEFORE writing content
     // to avoid a window where the file exists with default (world-readable) mode.
@@ -255,6 +292,20 @@ pub fn mint_access_token(
     role: Role,
     ttl_secs: u64,
 ) -> Result<String, AuthError> {
+    mint_access_token_with_role_str(private_pem, user_id, username, role.as_str(), ttl_secs)
+}
+
+/// Mint an access token carrying an arbitrary `role` claim.
+///
+/// The claim is a free-text string on the wire; this is the seam that lets the
+/// consumers of a token be tested against role values they cannot parse.
+pub fn mint_access_token_with_role_str(
+    private_pem: &[u8],
+    user_id: i64,
+    username: &str,
+    role: &str,
+    ttl_secs: u64,
+) -> Result<String, AuthError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -263,7 +314,7 @@ pub fn mint_access_token(
     let claims = Claims {
         sub: user_id,
         username: username.to_string(),
-        role: role.as_str().to_string(),
+        role: role.to_string(),
         iat: now,
         exp: now + ttl_secs,
     };

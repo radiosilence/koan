@@ -30,6 +30,7 @@ pub struct Config {
     pub visualizer: VisualizerConfig,
     pub radio: RadioConfig,
     pub graphql: GraphqlConfig,
+    pub subsonic: SubsonicConfig,
     pub discovery: DiscoveryConfig,
 }
 
@@ -276,9 +277,19 @@ pub struct GraphqlConfig {
     pub access_token_ttl: String,
     /// Refresh token TTL (default: "30d"). Supports: "30d", "7d", "720h".
     pub refresh_token_ttl: String,
-    /// Allowed CORS origins. Empty = allow all (dev mode). Set for production.
+    /// Allowed CORS origins. Empty = no cross-origin browser access at all.
     /// Example: ["https://music.example.com"]
     pub cors_origins: Vec<String>,
+    /// Extra `Host:` values the server will answer to, beyond `localhost` and
+    /// bare IP literals. Requests carrying any other Host are refused, which is
+    /// what stops a DNS-rebinding page from reaching the API as same-origin.
+    pub allowed_hosts: Vec<String>,
+    /// Mark the session cookie `Secure`. Only set this when clients reach koan
+    /// over HTTPS — browsers silently discard `Secure` cookies sent over plain
+    /// `http://` to anything but localhost.
+    pub cookie_secure: bool,
+    /// Expose the `organize*` mutations, which physically move files on disk.
+    pub allow_organize: bool,
 }
 
 fn default_bind() -> std::net::IpAddr {
@@ -297,6 +308,39 @@ impl Default for GraphqlConfig {
             access_token_ttl: "15m".into(),
             refresh_token_ttl: "30d".into(),
             cors_origins: Vec::new(),
+            allowed_hosts: Vec::new(),
+            cookie_secure: false,
+            allow_organize: false,
+        }
+    }
+}
+
+/// Subsonic-compatible REST API.
+///
+/// Credentials are deliberately separate from `[remote]`: the Subsonic protocol
+/// authenticates with `md5(password + salt)` over whatever transport the client
+/// picked, so the secret has to be recoverable and is exposed to anyone who can
+/// capture a request. Reusing the upstream Navidrome password would hand out
+/// that account too.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SubsonicConfig {
+    /// Serve `/rest/*`. Off unless explicitly enabled.
+    pub enabled: bool,
+    /// Username Subsonic clients authenticate as.
+    pub username: String,
+    /// Shared secret. Prefer the OS keychain (`koan subsonic setup`); this field
+    /// is the fallback for machines without one, and lives in config.local.toml.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub password: String,
+}
+
+impl Default for SubsonicConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            username: "koan".into(),
+            password: String::new(),
         }
     }
 }
@@ -783,6 +827,22 @@ url = "https://base.example.com"
         let reloaded = Config::load_from(&base_path).unwrap();
         assert!(!reloaded.visualizer.enabled);
         assert_eq!(reloaded.remote.url, "https://base.example.com");
+    }
+
+    #[test]
+    fn test_subsonic_defaults_off_and_keeps_secret_out_of_base_config() {
+        let cfg = Config::default();
+        assert!(!cfg.subsonic.enabled);
+        assert!(cfg.subsonic.password.is_empty());
+
+        // Serialising a config never invents a `password` key, so a base
+        // config.toml rewritten by any other setting cannot acquire one.
+        let dir = tempfile::tempdir().unwrap();
+        let base_path = dir.path().join("config.toml");
+        cfg.write_to(&base_path).unwrap();
+        let written = fs::read_to_string(&base_path).unwrap();
+        assert!(written.contains("[subsonic]"));
+        assert!(!written.contains("password"));
     }
 
     #[test]
