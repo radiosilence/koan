@@ -15,7 +15,7 @@ bliss-audio-aubio-rs = { version = "0.2", features = ["bindgen"] }
 # Auth
 argon2 = "0.5"
 jsonwebtoken = "9"
-pem = "3"
+pem = "4"
 ring = "0.17"
 crossbeam-channel = "0.5"
 chrono = "0.4"
@@ -29,7 +29,7 @@ keyring = { version = "3", features = ["apple-native", "sync-secret-service"] }
 lofty = "0.25"
 log = "0.4"
 # Subsonic/Navidrome
-getrandom = "0.2"
+getrandom = "0.4"
 md5 = "0.8"
 # Async/threading
 parking_lot = "0.12"
@@ -56,12 +56,12 @@ symphonia = { version = "0.5", default-features = false, features = [
 # Utilities
 thiserror = "2"
 uuid = { version = "1", features = ["v7"] }
-toml = "0.9"
+toml = "1.1"
 walkdir = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
-core-foundation = "0.9"
+core-foundation = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 cpal = "0.15"
