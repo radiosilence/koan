@@ -1,12 +1,12 @@
 //! Opus decoding bridge — wraps `opus-decoder` to decode packets from
-//! Symphonia's Ogg demuxer. Symphonia 0.5 can identify Opus streams but
-//! has no codec implementation; this module fills that gap.
+//! Symphonia's Ogg demuxer. Symphonia can identify Opus streams but has no
+//! codec implementation; this module fills that gap.
 //!
 //! Opus always decodes to 48 kHz, regardless of the internal sample rate.
 //! Channel count is read from the Opus identification header (first packet).
 
 use opus_decoder::OpusDecoder;
-use symphonia::core::codecs::CodecParameters;
+use symphonia::core::codecs::audio::AudioCodecParameters;
 
 /// Errors from the Opus decode bridge.
 #[derive(Debug, thiserror::Error)]
@@ -57,16 +57,16 @@ fn parse_opus_head(data: &[u8]) -> Result<(usize, u32), OpusError> {
 impl OpusBridge {
     /// Create a new Opus decoder from Symphonia codec parameters.
     ///
-    /// The `extra_data` in `CodecParameters` should contain the Opus
+    /// The `extra_data` in `AudioCodecParameters` should contain the Opus
     /// identification header (OpusHead). If not present, falls back to
     /// channel count from codec params.
-    pub fn new(params: &CodecParameters) -> Result<Self, OpusError> {
+    pub fn new(params: &AudioCodecParameters) -> Result<Self, OpusError> {
         // Try to get channel count and pre-skip from the OpusHead extra data.
         let (channels, pre_skip) = if let Some(extra) = &params.extra_data {
             parse_opus_head(extra)?
         } else {
             // Fallback: use codec params channel count, assume no pre-skip.
-            let ch = params.channels.map(|c| c.count()).unwrap_or(2);
+            let ch = params.channels.as_ref().map(|c| c.count()).unwrap_or(2);
             (ch, 0)
         };
 
@@ -199,7 +199,7 @@ mod tests {
         header[10] = 0x38;
         header[11] = 0x01; // pre_skip=312
 
-        let mut params = CodecParameters::new();
+        let mut params = AudioCodecParameters::new();
         params.with_extra_data(header.into_boxed_slice());
 
         let bridge = OpusBridge::new(&params).unwrap();
@@ -215,7 +215,7 @@ mod tests {
         header[10] = 0x00;
         header[11] = 0x00;
 
-        let mut params = CodecParameters::new();
+        let mut params = AudioCodecParameters::new();
         params.with_extra_data(header.into_boxed_slice());
 
         assert!(OpusBridge::new(&params).is_err());

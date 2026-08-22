@@ -457,7 +457,7 @@ impl Player {
         // Probe via a streaming reader — blocks (via condvar) until enough header data arrives.
         let probe_reader = stream_buf.reader();
         let probe_hint = {
-            let mut h = symphonia::core::probe::Hint::new();
+            let mut h = symphonia::core::formats::probe::Hint::new();
             if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                 h.with_extension(ext);
             }
@@ -518,7 +518,7 @@ impl Player {
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_string();
-        let mut decode_hint = symphonia::core::probe::Hint::new();
+        let mut decode_hint = symphonia::core::formats::probe::Hint::new();
         if !ext.is_empty() {
             decode_hint.with_extension(&ext);
         }

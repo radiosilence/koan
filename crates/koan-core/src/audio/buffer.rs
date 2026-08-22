@@ -4,17 +4,16 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{
-    CODEC_TYPE_AAC, CODEC_TYPE_ALAC, CODEC_TYPE_FLAC, CODEC_TYPE_MP3, CODEC_TYPE_OPUS,
-    CODEC_TYPE_PCM_F32LE, CODEC_TYPE_PCM_S16LE, CODEC_TYPE_PCM_S24LE, CODEC_TYPE_PCM_S32LE,
-    CODEC_TYPE_VORBIS, CODEC_TYPE_WAVPACK, CodecType, DecoderOptions,
+use symphonia::core::codecs::audio::well_known::{
+    CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MP3, CODEC_ID_OPUS, CODEC_ID_PCM_F32LE,
+    CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32LE, CODEC_ID_VORBIS, CODEC_ID_WAVPACK,
 };
-use symphonia::core::formats::{FormatOptions, SeekMode, SeekTo};
+use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
-use symphonia::core::units::Time;
+use symphonia::core::units::{Duration, Time, TimeBase};
 use thiserror::Error;
 
 use crate::audio::opus::OpusBridge;
@@ -221,7 +220,7 @@ pub struct SourceEntry {
     /// Format hint for Symphonia (e.g. file extension).
     pub hint: Hint,
     /// Factory that creates the `MediaSourceStream`. Called exactly once per track.
-    pub make_mss: Box<dyn FnOnce() -> std::io::Result<MediaSourceStream> + Send>,
+    pub make_mss: Box<dyn FnOnce() -> std::io::Result<MediaSourceStream<'static>> + Send>,
 }
 
 impl SourceEntry {
@@ -254,7 +253,7 @@ impl SourceEntry {
 // ---------------------------------------------------------------------------
 
 /// Probe a `MediaSourceStream` (with hint) and return stream info without decoding.
-pub fn probe_source(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, DecodeError> {
+pub fn probe_source(mss: MediaSourceStream<'_>, hint: &Hint) -> Result<StreamInfo, DecodeError> {
     probe_mss(mss, hint)
 }
 
@@ -281,37 +280,42 @@ pub fn probe_file(path: &Path) -> Result<StreamInfo, DecodeError> {
 }
 
 /// Internal: probe a `MediaSourceStream` with a hint.
-fn probe_mss(mss: MediaSourceStream, hint: &Hint) -> Result<StreamInfo, DecodeError> {
-    let probed = symphonia::default::get_probe()
-        .format(
+fn probe_mss(mss: MediaSourceStream<'_>, hint: &Hint) -> Result<StreamInfo, DecodeError> {
+    let reader = symphonia::default::get_probe()
+        .probe(
             hint,
             mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .map_err(|e| DecodeError::Decode(e.to_string()))?;
 
-    let reader = probed.format;
-    let track = reader.default_track().ok_or(DecodeError::NoTrack)?;
-    let codec_params = &track.codec_params;
-    let is_opus = codec_params.codec == CODEC_TYPE_OPUS;
+    let track = reader
+        .default_track(TrackType::Audio)
+        .ok_or(DecodeError::NoTrack)?;
+    let codec_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or(DecodeError::NoTrack)?;
+    let is_opus = codec_params.codec == CODEC_ID_OPUS;
     // Opus always decodes to 48 kHz regardless of the input sample rate.
     let sample_rate = if is_opus {
         48000
     } else {
         codec_params.sample_rate.unwrap_or(44100)
     };
-    let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
+    let channels = codec_params
+        .channels
+        .as_ref()
+        .map(|c| c.count() as u16)
+        .unwrap_or(2);
     let bit_depth = if is_opus {
         None
     } else {
         Some(codec_params.bits_per_sample.unwrap_or(16) as u16)
     };
-    let duration_ms = track
-        .codec_params
-        .n_frames
-        .map(|frames| frames * 1000 / sample_rate as u64)
-        .unwrap_or(0);
+    let duration_ms = track_duration_ms(&*reader, track, sample_rate);
     let codec = codec_name(codec_params.codec);
 
     // Symphonia doesn't expose bitrate directly. For lossy codecs we can
@@ -598,7 +602,7 @@ fn decode_single(
     queue_item_id: QueueItemId,
     path: &Path,
     hint: &Hint,
-    mss: MediaSourceStream,
+    mss: MediaSourceStream<'_>,
     producer: &mut rtrb::Producer<f32>,
     stop: &AtomicBool,
     seek_ms: u64,
@@ -608,20 +612,25 @@ fn decode_single(
     pre_amp_db: f64,
     expected: Option<PcmFormat>,
 ) -> Result<Decoded, DecodeError> {
-    let format_opts = FormatOptions {
-        enable_gapless: true,
-        ..Default::default()
-    };
-
-    let probed = symphonia::default::get_probe()
-        .format(hint, mss, &format_opts, &MetadataOptions::default())
+    let mut reader = symphonia::default::get_probe()
+        .probe(
+            hint,
+            mss,
+            FormatOptions::default(),
+            MetadataOptions::default(),
+        )
         .map_err(|e| DecodeError::Decode(e.to_string()))?;
 
-    let mut reader = probed.format;
-    let track = reader.default_track().ok_or(DecodeError::NoTrack)?;
+    let track = reader
+        .default_track(TrackType::Audio)
+        .ok_or(DecodeError::NoTrack)?;
     let track_id = track.id;
-    let codec_params = &track.codec_params;
-    let is_opus_codec = codec_params.codec == CODEC_TYPE_OPUS;
+    let codec_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or(DecodeError::NoTrack)?;
+    let is_opus_codec = codec_params.codec == CODEC_ID_OPUS;
 
     // Opus always decodes to 48 kHz regardless of the internal rate.
     let sample_rate = if is_opus_codec {
@@ -629,12 +638,13 @@ fn decode_single(
     } else {
         codec_params.sample_rate.unwrap_or(44100)
     };
-    let channels = codec_params.channels.map(|c| c.count() as u16).unwrap_or(2);
+    let channels = codec_params
+        .channels
+        .as_ref()
+        .map(|c| c.count() as u16)
+        .unwrap_or(2);
 
-    let duration_ms = codec_params
-        .n_frames
-        .map(|f| f * 1000 / sample_rate as u64)
-        .unwrap_or(0);
+    let duration_ms = track_duration_ms(&*reader, track, sample_rate);
 
     // Try codec_params first; fall back to file-size estimation for Opus/lossy.
     let mut bitrate_kbps = estimate_bitrate_from_codec_params(codec_params);
@@ -692,7 +702,7 @@ fn decode_single(
     } else {
         Some(
             symphonia::default::get_codecs()
-                .make(&track.codec_params, &DecoderOptions::default())
+                .make_audio_decoder(codec_params, &AudioDecoderOptions::default())
                 .map_err(|_| DecodeError::UnsupportedCodec)?,
         )
     };
@@ -704,13 +714,11 @@ fn decode_single(
 
     // Seek if requested (only for the first track usually).
     if seek_ms > 0 {
-        let secs = seek_ms / 1000;
-        let frac = (seek_ms % 1000) as f64 / 1000.0;
         reader
             .seek(
                 SeekMode::Coarse,
                 SeekTo::Time {
-                    time: Time::new(secs, frac),
+                    time: Time::from_millis_u64(seek_ms),
                     track_id: Some(track_id),
                 },
             )
@@ -748,7 +756,7 @@ fn decode_single(
     };
     let mut rg_scratch: Vec<f32> = Vec::new();
 
-    let mut sample_buf: Option<SampleBuffer<f32>> = None;
+    let mut sample_buf: Vec<f32> = Vec::new();
 
     loop {
         if stop.load(Ordering::Relaxed) {
@@ -756,22 +764,18 @@ fn decode_single(
         }
 
         let packet = match reader.next_packet() {
-            Ok(p) => p,
-            Err(symphonia::core::errors::Error::IoError(ref e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                return Ok(Decoded::Complete((sample_rate, channels)));
-            }
+            Ok(Some(p)) => p,
+            Ok(None) => return Ok(Decoded::Complete((sample_rate, channels))),
             Err(e) => return Err(DecodeError::Decode(e.to_string())),
         };
 
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
 
         // Decode the packet — either via Opus bridge or Symphonia codec.
         let samples: &[f32] = if let Some(ref mut opus) = opus_bridge {
-            match opus.decode_packet(packet.buf()) {
+            match opus.decode_packet(&packet.data) {
                 Ok(s) => s,
                 Err(e) => {
                     log::warn!("opus decode error (skipping packet): {}", e);
@@ -789,25 +793,24 @@ fn decode_single(
                 Err(e) => return Err(DecodeError::Decode(e.to_string())),
             };
 
-            let spec = *decoded.spec();
+            let spec = decoded.spec();
+            let (decoded_rate, decoded_channels) = (spec.rate(), spec.channels().count() as u16);
             // The engine is configured from the probed format. PCM that
             // disagrees with it would play at the wrong speed, so end the
             // session instead and let the player reconfigure.
-            if (spec.rate, spec.channels.count() as u16) != (sample_rate, channels) {
+            if (decoded_rate, decoded_channels) != (sample_rate, channels) {
                 log::warn!(
                     "{}: decoded {}Hz/{}ch but stream declares {}Hz/{}ch, restarting audio engine",
                     path.display(),
-                    spec.rate,
-                    spec.channels.count(),
+                    decoded_rate,
+                    decoded_channels,
                     sample_rate,
                     channels
                 );
                 return Ok(Decoded::FormatMismatch);
             }
-            let duration = decoded.capacity();
-            let sbuf = sample_buf.get_or_insert_with(|| SampleBuffer::new(duration as u64, spec));
-            sbuf.copy_interleaved_ref(decoded);
-            sbuf.samples()
+            decoded.copy_to_vec_interleaved(&mut sample_buf);
+            &sample_buf[..]
         };
 
         if samples.is_empty() {
@@ -874,17 +877,42 @@ fn decode_single(
     }
 }
 
+/// Duration of a track in milliseconds.
+///
+/// The container's stated duration is authoritative because a track's timebase
+/// is not always the reciprocal of the sample rate — Matroska ticks in
+/// milliseconds, and states its duration at media level rather than per track.
+/// Falls back to the playable frame count when no duration is stated at all.
+pub(crate) fn track_duration_ms(
+    reader: &(impl FormatReader + ?Sized),
+    track: &Track,
+    sample_rate: u32,
+) -> u64 {
+    fn to_ms(time_base: Option<TimeBase>, duration: Option<Duration>) -> Option<u64> {
+        let time = time_base?.calc_duration(duration?)?;
+        Some(time.as_millis().max(0) as u64)
+    }
+
+    let media = reader.media_info();
+    to_ms(track.time_base, track.duration)
+        .or_else(|| to_ms(media.time_base, media.duration))
+        .or_else(|| {
+            track
+                .num_frames
+                .map(|frames| frames * 1000 / sample_rate as u64)
+        })
+        .unwrap_or(0)
+}
+
 /// Estimate bitrate (kbps) from Symphonia codec parameters.
 ///
 /// Symphonia doesn't expose a `bit_rate` field. For lossy codecs like MP3/AAC
 /// we can derive it from `bits_per_coded_sample` when the demuxer populates it.
 /// Returns `None` for lossless codecs or when the info isn't available.
-fn estimate_bitrate_from_codec_params(
-    params: &symphonia::core::codecs::CodecParameters,
-) -> Option<u32> {
+fn estimate_bitrate_from_codec_params(params: &AudioCodecParameters) -> Option<u32> {
     let is_lossy = matches!(
         params.codec,
-        CODEC_TYPE_MP3 | CODEC_TYPE_AAC | CODEC_TYPE_VORBIS | CODEC_TYPE_OPUS
+        CODEC_ID_MP3 | CODEC_ID_AAC | CODEC_ID_VORBIS | CODEC_ID_OPUS
     );
     if !is_lossy {
         return None;
@@ -894,23 +922,27 @@ fn estimate_bitrate_from_codec_params(
     // Few demuxers fill this in, but it's our best shot without file size.
     let bpcs = params.bits_per_coded_sample?;
     let sr = params.sample_rate?;
-    let channels = params.channels.map(|c| c.count() as u32).unwrap_or(2);
+    let channels = params
+        .channels
+        .as_ref()
+        .map(|c| c.count() as u32)
+        .unwrap_or(2);
     Some(bpcs * sr * channels / 1000)
 }
 
-pub fn codec_name(codec: CodecType) -> String {
+pub fn codec_name(codec: AudioCodecId) -> String {
     match codec {
-        CODEC_TYPE_FLAC => "FLAC",
-        CODEC_TYPE_MP3 => "MP3",
-        CODEC_TYPE_AAC => "AAC",
-        CODEC_TYPE_VORBIS => "Vorbis",
-        CODEC_TYPE_OPUS => "Opus",
-        CODEC_TYPE_ALAC => "ALAC",
-        CODEC_TYPE_WAVPACK => "WavPack",
-        CODEC_TYPE_PCM_S16LE => "PCM/16",
-        CODEC_TYPE_PCM_S24LE => "PCM/24",
-        CODEC_TYPE_PCM_S32LE => "PCM/32",
-        CODEC_TYPE_PCM_F32LE => "PCM/f32",
+        CODEC_ID_FLAC => "FLAC",
+        CODEC_ID_MP3 => "MP3",
+        CODEC_ID_AAC => "AAC",
+        CODEC_ID_VORBIS => "Vorbis",
+        CODEC_ID_OPUS => "Opus",
+        CODEC_ID_ALAC => "ALAC",
+        CODEC_ID_WAVPACK => "WavPack",
+        CODEC_ID_PCM_S16LE => "PCM/16",
+        CODEC_ID_PCM_S24LE => "PCM/24",
+        CODEC_ID_PCM_S32LE => "PCM/32",
+        CODEC_ID_PCM_F32LE => "PCM/f32",
         other => return format!("Unknown({:?})", other),
     }
     .to_string()
