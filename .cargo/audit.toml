@@ -1,0 +1,31 @@
+# Advisories present in the current lockfile, acknowledged so that `cargo audit`
+# still fails on anything NEW. Remove entries as the dependency work clears them —
+# an ignore that outlives its cause is worse than no gate at all.
+[advisories]
+ignore = [
+    # Transitive via rustls' aws-lc backend. X.509 name-constraint bypasses;
+    # koan only validates public WebPKI certs when talking to a remote server.
+    "RUSTSEC-2026-0044",
+    "RUSTSEC-2026-0048",
+    # rustls-webpki: CRL parsing panic + name-constraint acceptance flaws.
+    # Reachable only from a hostile remote server's certificate chain.
+    "RUSTSEC-2026-0049",
+    "RUSTSEC-2026-0098",
+    "RUSTSEC-2026-0099",
+    "RUSTSEC-2026-0104",
+    # h2 unbounded empty DATA frames — unauthenticated DoS for anyone who can
+    # reach the port, because axum::serve speaks h2c on plaintext.
+    "RUSTSEC-2026-0258",
+    # quinn-proto / crossbeam-epoch: transitive, not on any path koan executes.
+    "RUSTSEC-2026-0185",
+    "RUSTSEC-2026-0204",
+    # rmcp DNS rebinding — does NOT apply: koan's MCP transport is stdio only,
+    # it never opens an HTTP listener.
+    "RUSTSEC-2026-0189",
+    # Informational: unmaintained or unsound crates, all transitive.
+    "RUSTSEC-2024-0436", # paste, unmaintained
+    "RUSTSEC-2026-0190", # anyhow, Error::downcast_mut unsoundness
+    "RUSTSEC-2026-0002", # lru, IterMut stacked-borrows violation
+    "RUSTSEC-2026-0253", # lru, panic safety in pop
+    "RUSTSEC-2026-0097", # rand, unsound with a custom logger
+]

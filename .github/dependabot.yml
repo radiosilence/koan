@@ -1,0 +1,17 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      patch-and-minor:
+        update-types: ["minor", "patch"]
+
+  # Every action here is SHA-pinned, which is correct and also means they never
+  # update themselves.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
