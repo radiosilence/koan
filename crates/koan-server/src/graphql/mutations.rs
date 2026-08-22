@@ -561,9 +561,22 @@ impl MutationRoot {
     async fn organize_undo(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::Admin)?;
         let db = ctx.data::<DbHandle>()?.open()?;
-        let count = koan_core::organize::undo(&db)
+        let result = koan_core::organize::undo(&db)
             .map_err(|e| async_graphql::Error::new(format!("organize error: {}", e)))?;
-        Ok(GqlStatus::success(format!("undone {} moves", count)))
+        let mut message = format!("undone {} moves", result.restored);
+        if !result.errors.is_empty() {
+            message.push_str(&format!(
+                "; {} left in place: {}",
+                result.errors.len(),
+                result
+                    .errors
+                    .iter()
+                    .map(|(p, e)| format!("{}: {}", p.display(), e))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ));
+        }
+        Ok(GqlStatus::success(message))
     }
 
     // -- Config --
