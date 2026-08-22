@@ -118,6 +118,53 @@ impl Player {
         &self.undo_stack
     }
 
+    /// Create an audio engine for a stream, switching the output device to the
+    /// source rate first so output is bit-perfect.
+    ///
+    /// The engine is always configured with the source's own rate and channel
+    /// count — the format the decode thread writes into the ring buffer. A
+    /// device that cannot take the requested rate (MPEG-2/2.5 MP3 rates are
+    /// commonly refused) resamples instead of playing at the wrong speed.
+    fn create_engine_for(
+        &self,
+        info: &buffer::StreamInfo,
+        consumer: rtrb::Consumer<f32>,
+    ) -> Result<Box<dyn AudioEngineHandle>, PlayerError> {
+        let device = self.resolve_device()?;
+        let device_rate = self.backend.get_device_sample_rate(&device)?;
+        let source_rate = info.sample_rate as f64;
+
+        if (device_rate - source_rate).abs() > 0.1 {
+            log::info!(
+                "switching device sample rate: {}Hz → {}Hz",
+                device_rate,
+                source_rate
+            );
+            let settled = match self.backend.set_device_sample_rate(&device, source_rate) {
+                Ok(rate) => rate,
+                Err(e) => {
+                    log::warn!("failed to set device sample rate: {}", e);
+                    device_rate
+                }
+            };
+            if (settled - source_rate).abs() > 0.1 {
+                log::warn!(
+                    "device stayed at {}Hz (wanted {}Hz) — output is resampled, not bit-perfect",
+                    settled,
+                    source_rate
+                );
+            }
+        }
+
+        Ok(self.backend.create_engine(
+            &device,
+            source_rate,
+            info.channels as u32,
+            consumer,
+            self.timeline.samples_played_counter(),
+        )?)
+    }
+
     /// Resolve the output device: use configured device name if set,
     /// falling back to system default if not set or if the named device is unavailable.
     fn resolve_device(&self) -> Result<backend::DeviceInfo, PlayerError> {
@@ -268,39 +315,6 @@ impl Player {
             }
         );
 
-        let device = self.resolve_device()?;
-        let device_rate = self.backend.get_device_sample_rate(&device)?;
-        let source_rate = info.sample_rate as f64;
-
-        let actual_rate = if (device_rate - source_rate).abs() > 0.1 {
-            log::info!(
-                "switching device sample rate: {}Hz → {}Hz",
-                device_rate,
-                source_rate
-            );
-            match self.backend.set_device_sample_rate(&device, source_rate) {
-                Ok(confirmed_rate) => {
-                    if (confirmed_rate - source_rate).abs() > 0.1 {
-                        log::warn!(
-                            "device stayed at {}Hz (wanted {}Hz) — playback will use device rate",
-                            confirmed_rate,
-                            source_rate
-                        );
-                    }
-                    confirmed_rate
-                }
-                Err(e) => {
-                    log::warn!(
-                        "failed to set sample rate (continuing at device rate): {}",
-                        e
-                    );
-                    device_rate
-                }
-            }
-        } else {
-            device_rate
-        };
-
         let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
 
         let _generation = self.shared_state.bump_generation();
@@ -345,14 +359,7 @@ impl Player {
             },
         )?;
 
-        // Create and start audio engine with the confirmed device rate.
-        let engine = self.backend.create_engine(
-            &device,
-            actual_rate,
-            info.channels as u32,
-            consumer,
-            self.timeline.samples_played_counter(),
-        )?;
+        let engine = self.create_engine_for(&info, consumer)?;
         engine.start()?;
 
         self.shared_state.set_playback_state(PlaybackState::Playing);
@@ -481,39 +488,6 @@ impl Player {
             info.duration_ms,
         );
 
-        let device = self.resolve_device()?;
-        let device_rate = self.backend.get_device_sample_rate(&device)?;
-        let source_rate = info.sample_rate as f64;
-
-        let actual_rate = if (device_rate - source_rate).abs() > 0.1 {
-            log::info!(
-                "switching device sample rate: {}Hz → {}Hz",
-                device_rate,
-                source_rate
-            );
-            match self.backend.set_device_sample_rate(&device, source_rate) {
-                Ok(confirmed_rate) => {
-                    if (confirmed_rate - source_rate).abs() > 0.1 {
-                        log::warn!(
-                            "device stayed at {}Hz (wanted {}Hz) — playback will use device rate",
-                            confirmed_rate,
-                            source_rate
-                        );
-                    }
-                    confirmed_rate
-                }
-                Err(e) => {
-                    log::warn!(
-                        "failed to set sample rate (continuing at device rate): {}",
-                        e
-                    );
-                    device_rate
-                }
-            }
-        } else {
-            device_rate
-        };
-
         let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
 
         let _generation = self.shared_state.bump_generation();
@@ -583,14 +557,7 @@ impl Player {
             },
         )?;
 
-        // Create and start audio engine with the confirmed device rate.
-        let engine = self.backend.create_engine(
-            &device,
-            actual_rate,
-            info.channels as u32,
-            consumer,
-            self.timeline.samples_played_counter(),
-        )?;
+        let engine = self.create_engine_for(&info, consumer)?;
         engine.start()?;
 
         self.shared_state.set_playback_state(PlaybackState::Playing);
@@ -1655,5 +1622,107 @@ mod tests {
             dropped.load(Ordering::SeqCst),
             "AudioEngine must be dropped synchronously in stop_engine (GitHub #89)"
         );
+    }
+
+    // --- Engine format matches the decoded PCM ---
+
+    /// Backend pinned to one sample rate that refuses every switch, recording
+    /// the format the engine is asked for.
+    struct StuckBackend {
+        rate: f64,
+        asked: Arc<std::sync::Mutex<Option<(f64, u32)>>>,
+    }
+
+    struct NullEngine;
+    impl AudioEngineHandle for NullEngine {
+        fn start(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn stop(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn is_running(&self) -> bool {
+            false
+        }
+    }
+
+    impl AudioBackend for StuckBackend {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            Ok(vec![self.default_device()?])
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            Ok(backend::DeviceInfo {
+                name: "Stuck DAC".into(),
+                sample_rates: vec![self.rate],
+                platform_id: 0,
+            })
+        }
+        fn supported_sample_rates(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            Ok(vec![self.rate])
+        }
+        fn get_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            Ok(self.rate)
+        }
+        fn set_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            Err(BackendError::UnsupportedSampleRate(rate))
+        }
+        fn create_engine(
+            &self,
+            _device: &backend::DeviceInfo,
+            sample_rate: f64,
+            channels: u32,
+            _consumer: rtrb::Consumer<f32>,
+            _samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            *self.asked.lock().unwrap() = Some((sample_rate, channels));
+            Ok(Box::new(NullEngine))
+        }
+    }
+
+    fn engine_format_for(source_rate: u32, channels: u16, device_rate: f64) -> (f64, u32) {
+        let asked = Arc::new(std::sync::Mutex::new(None));
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: device_rate,
+            asked: asked.clone(),
+        });
+
+        let info = buffer::StreamInfo {
+            codec: "MP3".into(),
+            sample_rate: source_rate,
+            channels,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_producer, consumer) = rtrb::RingBuffer::new(16);
+        player
+            .create_engine_for(&info, consumer)
+            .expect("engine creation should succeed");
+        let asked = *asked.lock().unwrap();
+        asked.expect("engine was never created")
+    }
+
+    #[test]
+    fn engine_uses_source_rate_when_device_refuses_switch() {
+        // MPEG-2 MP3 rates are routinely rejected by output devices. The engine
+        // must still be told the rate the PCM actually is.
+        assert_eq!(engine_format_for(22050, 2, 48000.0), (22050.0, 2));
+        assert_eq!(engine_format_for(32000, 2, 44100.0), (32000.0, 2));
+    }
+
+    #[test]
+    fn engine_uses_source_channel_count() {
+        assert_eq!(engine_format_for(44100, 1, 44100.0), (44100.0, 1));
     }
 }
