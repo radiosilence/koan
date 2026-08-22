@@ -115,6 +115,9 @@ pub struct PlaybackTimeline {
     /// Total interleaved samples consumed (played) by the audio engine.
     /// Written by CoreAudio render callback, read by UI.
     pub samples_played: Arc<AtomicU64>,
+    /// Incremented by every `reset()`. A decode thread writes only while the
+    /// generation it started in is still the current one.
+    generation: AtomicU64,
 }
 
 impl PlaybackTimeline {
@@ -123,27 +126,34 @@ impl PlaybackTimeline {
             boundaries: parking_lot::RwLock::new(Vec::new()),
             samples_written: AtomicU64::new(0),
             samples_played: Arc::new(AtomicU64::new(0)),
+            generation: AtomicU64::new(0),
         })
     }
 
-    /// Called by decode thread when starting a new track.
-    fn push_boundary(&self, boundary: TrackBoundary) {
-        self.boundaries.write().push(boundary);
+    /// The current session's generation, to be handed to `writer`.
+    ///
+    /// Read on the player thread between `reset()` and spawning the decode
+    /// thread, so a session can never capture a generation newer than its own.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
 
-    /// Called by decode thread after pushing samples.
-    fn add_written(&self, count: u64) {
-        self.samples_written.fetch_add(count, Ordering::Relaxed);
-        // Also update the last boundary's samples_written.
-        let mut bounds = self.boundaries.write();
-        if let Some(last) = bounds.last_mut() {
-            last.samples_written += count;
+    /// Open a write handle for the session identified by `generation`.
+    pub fn writer(&self, generation: u64) -> TimelineWriter<'_> {
+        TimelineWriter {
+            timeline: self,
+            generation,
         }
     }
 
     /// Reset for a new playback session.
     pub fn reset(&self) {
-        self.boundaries.write().clear();
+        // The generation bump happens under the boundary lock, which is the
+        // same lock every guarded write takes — so a write either lands wholly
+        // before this reset or sees the new generation and is dropped.
+        let mut bounds = self.boundaries.write();
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        bounds.clear();
         self.samples_written.store(0, Ordering::Relaxed);
         self.samples_played.store(0, Ordering::Relaxed);
     }
@@ -202,6 +212,61 @@ impl PlaybackTimeline {
             current.info.clone(),
             position_ms,
         ))
+    }
+}
+
+/// One decode session's write access to the timeline.
+///
+/// `stop_engine` signals the decode thread and hands the join to a cleanup
+/// thread, so the outgoing thread can still be mid-packet when `reset()` runs
+/// and the next session starts. Without a guard its final `add_written` lands
+/// on the fresh timeline and the first boundary of the new track gets stamped
+/// at that offset instead of 0 — `current_playback()` then finds nothing at
+/// `samples_played = 0` and the transport goes blank for ~50-100ms on every
+/// skip and seek. A late `push_boundary` is worse: the wrong track's metadata
+/// for the rest of the session.
+///
+/// Carrying the generation in the handle rather than passing it per call means
+/// a write cannot be made with the wrong one.
+pub struct TimelineWriter<'a> {
+    timeline: &'a PlaybackTimeline,
+    generation: u64,
+}
+
+impl TimelineWriter<'_> {
+    /// False once another session has started. The decode thread polls this
+    /// alongside its stop flag as a second abort signal.
+    pub fn is_current(&self) -> bool {
+        self.timeline.generation.load(Ordering::Acquire) == self.generation
+    }
+
+    /// Cumulative samples written to the ring buffer this session.
+    fn samples_written(&self) -> u64 {
+        self.timeline.samples_written.load(Ordering::Relaxed)
+    }
+
+    /// Called by decode thread when starting a new track.
+    fn push_boundary(&self, boundary: TrackBoundary) {
+        let mut bounds = self.timeline.boundaries.write();
+        if !self.is_current() {
+            return;
+        }
+        bounds.push(boundary);
+    }
+
+    /// Called by decode thread after pushing samples.
+    fn add_written(&self, count: u64) {
+        let mut bounds = self.timeline.boundaries.write();
+        if !self.is_current() {
+            return;
+        }
+        self.timeline
+            .samples_written
+            .fetch_add(count, Ordering::Relaxed);
+        // Also update the last boundary's samples_written.
+        if let Some(last) = bounds.last_mut() {
+            last.samples_written += count;
+        }
     }
 }
 
@@ -362,6 +427,10 @@ where
 {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
+    // Captured here rather than on the decode thread: the player has just
+    // reset the timeline, and reading it before the spawn means this session
+    // cannot pick up a generation belonging to a later one.
+    let generation = timeline.generation();
 
     let thread = thread::Builder::new()
         .name("koan-decode".into())
@@ -372,7 +441,7 @@ where
                 &stop_clone,
                 seek_ms,
                 &next_track,
-                &timeline,
+                &timeline.writer(generation),
                 viz_buffer.as_deref(),
                 rg_mode,
                 pre_amp_db,
@@ -477,7 +546,7 @@ fn decode_queue_loop<N>(
     stop: &AtomicBool,
     initial_seek_ms: u64,
     next_track: &N,
-    timeline: &PlaybackTimeline,
+    timeline: &TimelineWriter<'_>,
     viz_buffer: Option<&VizBuffer>,
     rg_mode: ReplayGainMode,
     pre_amp_db: f64,
@@ -496,7 +565,7 @@ fn decode_queue_loop<N>(
     let mut failures: u32 = 0;
 
     while let Some(entry) = pending.take() {
-        if stop.load(Ordering::Relaxed) {
+        if stop.load(Ordering::Relaxed) || !timeline.is_current() {
             break;
         }
 
@@ -603,7 +672,7 @@ fn decode_single(
     producer: &mut rtrb::Producer<f32>,
     stop: &AtomicBool,
     seek_ms: u64,
-    timeline: &PlaybackTimeline,
+    timeline: &TimelineWriter<'_>,
     viz_buffer: Option<&VizBuffer>,
     rg_mode: ReplayGainMode,
     pre_amp_db: f64,
@@ -728,7 +797,7 @@ fn decode_single(
     }
 
     // Record this track's boundary in the timeline.
-    let write_offset = timeline.samples_written.load(Ordering::Relaxed);
+    let write_offset = timeline.samples_written();
     timeline.push_boundary(TrackBoundary {
         id: queue_item_id,
         path: path.to_path_buf(),
@@ -766,7 +835,7 @@ fn decode_single(
     let mut sample_buf: Vec<f32> = Vec::new();
 
     loop {
-        if stop.load(Ordering::Relaxed) {
+        if stop.load(Ordering::Relaxed) || !timeline.is_current() {
             return Ok(Decoded::Complete((sample_rate, channels)));
         }
 
@@ -843,7 +912,9 @@ fn decode_single(
         // viz buffer only ~11 times/sec, making waveform modes visibly choppy.
         let mut offset = 0;
         while offset < samples.len() {
-            if stop.load(Ordering::Relaxed) {
+            // Also drops out on a stale generation, which keeps a dying thread
+            // from pushing into the viz delay line the next session just reset.
+            if stop.load(Ordering::Relaxed) || !timeline.is_current() {
                 return Ok(Decoded::Complete((sample_rate, channels)));
             }
 
@@ -1008,6 +1079,11 @@ mod tests {
         }
     }
 
+    /// A writer for the timeline's current generation.
+    fn writer(timeline: &PlaybackTimeline) -> TimelineWriter<'_> {
+        timeline.writer(timeline.generation())
+    }
+
     // --- PlaybackTimeline tests ---
 
     #[test]
@@ -1016,10 +1092,11 @@ mod tests {
         // After simulating 44100 frames (88200 interleaved samples) played,
         // current_playback() should report track index 0 at position 1000 ms.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id = QueueItemId::new();
         // sample_offset=0, seek_samples=0, channels=2, sample_rate=44100
-        timeline.push_boundary(make_boundary(id, 0, 0, 2, 44100));
-        timeline.add_written(88200); // 1 second of audio
+        tl.push_boundary(make_boundary(id, 0, 0, 2, 44100));
+        tl.add_written(88200); // 1 second of audio
 
         // Simulate 1 second played: 44100 frames * 2 channels = 88200 interleaved samples
         timeline.samples_played.store(88200, Ordering::Relaxed);
@@ -1043,16 +1120,17 @@ mod tests {
         // Track 2 begins at sample_offset 88200. When playback head is at 100000 (past the boundary),
         // current_playback() should report track 2.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id1 = QueueItemId::new();
         let id2 = QueueItemId::new();
 
         // Track 1: starts at offset 0
-        timeline.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
-        timeline.add_written(88200);
+        tl.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
+        tl.add_written(88200);
 
         // Track 2: starts at offset 88200 (immediately after track 1's samples)
-        timeline.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
-        timeline.add_written(44100); // half a second of track 2
+        tl.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
+        tl.add_written(44100); // half a second of track 2
 
         // Set playback head past the track 1/2 boundary
         timeline.samples_played.store(90000, Ordering::Relaxed);
@@ -1073,9 +1151,10 @@ mod tests {
         // With 0 samples played and a boundary at offset 0, current_playback() should
         // still return the first track at position 0 ms.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id = QueueItemId::new();
-        timeline.push_boundary(make_boundary(id, 0, 0, 2, 44100));
-        timeline.add_written(1000);
+        tl.push_boundary(make_boundary(id, 0, 0, 2, 44100));
+        tl.add_written(1000);
         timeline.samples_played.store(0, Ordering::Relaxed);
 
         let result = timeline.current_playback();
@@ -1093,13 +1172,14 @@ mod tests {
         // When samples_played exceeds all boundaries, the last track should be reported.
         // The binary search finds the last boundary whose sample_offset <= played.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id1 = QueueItemId::new();
         let id2 = QueueItemId::new();
 
-        timeline.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
-        timeline.add_written(88200);
-        timeline.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
-        timeline.add_written(88200);
+        tl.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
+        tl.add_written(88200);
+        tl.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
+        tl.add_written(88200);
 
         // Simulate playback far past both tracks
         timeline
@@ -1121,10 +1201,11 @@ mod tests {
         // seek_samples = 88200 means playback started 1 second into the track.
         // With 0 additional samples played past the boundary, position should be 1000 ms.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id = QueueItemId::new();
         let seek_samples = 88200u64; // 1 second at 44100 Hz stereo
-        timeline.push_boundary(make_boundary(id, 0, seek_samples, 2, 44100));
-        timeline.add_written(44100); // half a second written so far
+        tl.push_boundary(make_boundary(id, 0, seek_samples, 2, 44100));
+        tl.add_written(44100); // half a second written so far
         // samples_played at the track boundary (0 frames past the track start)
         timeline.samples_played.store(0, Ordering::Relaxed);
 
@@ -1142,9 +1223,10 @@ mod tests {
     fn test_timeline_reset() {
         // After reset(), current_playback() returns None and all counters are cleared.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id = QueueItemId::new();
-        timeline.push_boundary(make_boundary(id, 0, 0, 2, 44100));
-        timeline.add_written(88200);
+        tl.push_boundary(make_boundary(id, 0, 0, 2, 44100));
+        tl.add_written(88200);
         timeline.samples_played.store(44100, Ordering::Relaxed);
 
         // Sanity check: playback is live before reset
@@ -1203,6 +1285,7 @@ mod tests {
         let (mut producer, mut consumer) = rtrb::RingBuffer::new(44100 * 2);
 
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let stop = Arc::new(AtomicBool::new(false));
 
         let id = QueueItemId::new();
@@ -1218,7 +1301,7 @@ mod tests {
             &mut producer,
             &stop,
             0,
-            &timeline,
+            &tl,
             None,
             crate::config::ReplayGainMode::Off,
             0.0,
@@ -1264,6 +1347,7 @@ mod tests {
     fn run_queue(paths: &[PathBuf]) -> Vec<TrackBoundary> {
         let (producer, mut consumer) = rtrb::RingBuffer::new(1 << 16);
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let stop = Arc::new(AtomicBool::new(false));
 
         let drain_stop = Arc::new(AtomicBool::new(false));
@@ -1295,7 +1379,7 @@ mod tests {
             &stop,
             0,
             &next_track,
-            &timeline,
+            &tl,
             None,
             crate::config::ReplayGainMode::Off,
             0.0,
@@ -1385,6 +1469,62 @@ mod tests {
         drop(consumer);
     }
 
+    // --- Generation guard on timeline writes ---
+
+    #[test]
+    fn a_writer_knows_when_its_session_has_ended() {
+        let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
+        assert!(tl.is_current());
+
+        timeline.reset();
+        assert!(!tl.is_current(), "reset must retire the outgoing writer");
+        assert!(writer(&timeline).is_current());
+    }
+
+    #[test]
+    fn stale_writes_are_dropped_after_reset() {
+        let timeline = PlaybackTimeline::new();
+        let dying = writer(&timeline);
+        dying.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
+        dying.add_written(88200);
+
+        timeline.reset();
+
+        // The outgoing decode thread checks `stop` only at the top of its chunk
+        // loop, so its last packet lands after the reset.
+        dying.add_written(4608);
+        dying.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
+
+        assert_eq!(timeline.samples_written.load(Ordering::Relaxed), 0);
+        assert!(timeline.boundaries.read().is_empty());
+    }
+
+    #[test]
+    fn a_dying_decode_thread_cannot_blank_the_transport() {
+        let timeline = PlaybackTimeline::new();
+        let dying = writer(&timeline);
+        dying.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
+        dying.add_written(88200);
+
+        // A skip: reset, then the old thread's final packet, then the new
+        // session stamps its first boundary at whatever the counter now says.
+        timeline.reset();
+        dying.add_written(4608);
+
+        let fresh = writer(&timeline);
+        let id = QueueItemId::new();
+        let write_offset = fresh.samples_written();
+        fresh.push_boundary(make_boundary(id, write_offset, 0, 2, 44100));
+
+        assert_eq!(write_offset, 0, "first boundary must start at 0");
+        let (playing, _, _, position_ms) = timeline
+            .current_playback()
+            .expect("transport must not go blank at samples_played = 0");
+        assert_eq!(playing, id);
+        assert_eq!(position_ms, 0);
+    }
+
     // --- Failure handling in the gapless queue ---
 
     /// A file that exists and has an audio extension but no audio in it.
@@ -1436,6 +1576,7 @@ mod tests {
         // outlive the producer.
         let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(1 << 12);
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let stop = Arc::new(AtomicBool::new(false));
 
         let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1452,7 +1593,7 @@ mod tests {
             &stop,
             0,
             &next_track,
-            &timeline,
+            &tl,
             None,
             crate::config::ReplayGainMode::Off,
             0.0,
@@ -1541,6 +1682,7 @@ mod tests {
         let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(1 << 16);
         let stop = Arc::new(AtomicBool::new(false));
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
 
         let drain_stop = stop.clone();
         let drained = std::thread::spawn(move || {
@@ -1570,7 +1712,7 @@ mod tests {
             &mut producer,
             &stop,
             seek_ms,
-            &timeline,
+            &tl,
             None,
             ReplayGainMode::Off,
             0.0,
