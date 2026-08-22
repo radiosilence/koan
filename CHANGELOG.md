@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Fixed
+
+- **No modern Subsonic client could finish a library sync.** The JSON serialiser emitted every attribute as a string, so `getSong?f=json` returned `"duration": "240"` where the OpenSubsonic `Child` schema says int. Symfonium, Substreamer and Feishin all default to `f=json` with generated deserialisers and aborted on the first song; `isDir` was never emitted at all. Attribute values now carry their wire type — `duration`/`track`/`bitRate`/`year`/`songCount`/`albumCount` are ints, `isDir`/`public`/the `getUser` roles are booleans — and only JSON changes. **The XML wire format is byte-for-byte what it was**, plus the newly added attributes.
+- **No client showed cover art anywhere.** Neither songs nor albums carried a `coverArt` id. They now do (`mf-<id>` and `al-<id>`), and `getCoverArt` resolves the prefix: it previously read every id as a *track* id, so `getCoverArt?id=5` meaning "album 5" silently served track 5's art. A bare numeric id still means a track. Rendered covers are cached (256 entries, keyed on id and size) — painting a 200-album grid used to decode 200 media files.
+- **`createPlaylist` with any song returned a bare HTTP 400.** `serde_urlencoded`, which axum's `Query` extractor uses, cannot deserialise the repeated `songId` parameter into a `Vec`, so the request was rejected with a plain-text body before the handler ran and only empty playlists could be created. The query is now parsed directly. The response also carries the created playlist, as it has since Subsonic 1.14.0.
+- **Playlist contents were invisible to XML clients.** `getPlaylist` emitted members as `<song>` where the schema says `<entry>`.
+- **Unimplemented endpoints returned an empty HTTP 404** instead of a Subsonic error, which several clients read as a broken server and fail their connection test on. Anything unhandled under `/rest/` now answers with error code 70. `getIndexes`, `getMusicDirectory`, `getAlbumList`, `getUser` and `getScanStatus` are implemented rather than refused — the first two are how DSub and every file-browse client enumerate a library.
+- **`koan play --server` never played audio.** The bridge built `/rest/stream?id=<queue-item UUID>` with no auth parameters, against a handler expecting a library row id, so every request was rejected before it ran. `NowPlayingTrack` and `QueueEntry` now expose `trackId`, and the bridge signs its requests with the `[subsonic]` credentials from the machine it runs on — set those to match the server's, or client mode has nothing to stream with.
+- **`getGenres` returned blank genre names to XML clients** — the name was written as a `value` attribute, which is the JSON spelling; the XSD carries it as element text. It also loaded the entire tracks table to count genres, now one `GROUP BY`.
+- **An unsatisfiable `Range` served the whole file with a 200** instead of a 416 with `Content-Range: bytes */<total>`. A `Range` header that does not parse is still ignored, per RFC 9110.
+- **A malformed `id` came back as a bare HTTP 400** from axum's extractor rather than a Subsonic error 10.
+- **Database errors read as an empty library.** `getAlbum`, `getGenres`, `getPlaylists` and the artist album counts swallowed failures and answered `status="ok"` with zero rows, which tells a client to drop its cached library.
+- **The Subsonic router was built twice at startup**, each build re-reading two config files and, on macOS, prompting the keychain. Proxied upstream streams also built a fresh HTTP client and re-read the config on every request; both are now resolved once.
+
+### Changed
+
+- `koan-core`: `SubsonicAuth` splits the credentials and URL signing out of `SubsonicClient`, which constructs blocking `reqwest` clients and so cannot be built inside a tokio runtime. `SubsonicClient::stream_to_file` fetches through `/rest/stream` for servers that implement only that. `GraphQLClient::stream_url` is gone — it was unused and omitted the auth parameters `/rest/*` requires.
+
 ### Security
 
 - **h2 unbounded empty DATA frames (RUSTSEC-2026-0258)** — `axum::serve` runs hyper-util's auto builder, which speaks h2c on a plaintext listener, so anyone able to reach the API port could grow server memory without limit. h2 is now 0.4.18 (patched in 0.4.16).

@@ -7,11 +7,12 @@
 
 use std::collections::BTreeMap;
 use std::io::Cursor;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path as UrlPath, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
@@ -19,6 +20,8 @@ use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::index::metadata::extract_cover_art;
+use koan_core::remote::client::SubsonicAuth;
+use lru::LruCache;
 use serde::Deserialize;
 use tokio::io::AsyncReadExt as _;
 
@@ -27,15 +30,42 @@ const SUBSONIC_XMLNS: &str = "http://subsonic.org/restapi";
 const MIN_COVER_SIZE: u32 = 16;
 const MAX_COVER_SIZE: u32 = 2048;
 
+/// Rendered cover images held in memory. Each entry is one encoded JPEG/PNG at
+/// one requested size; a client painting an album grid asks for a few hundred
+/// in a burst, and re-decoding the source media file for each one dominated the
+/// request.
+const COVER_CACHE_ENTRIES: usize = 256;
+
+/// Articles clients strip when sorting the artist index. Every real server
+/// sends this; DSub sorts wrongly without it.
+const IGNORED_ARTICLES: &str = "The El La Los Las Le Les";
+
 // ---------------------------------------------------------------------------
 // Shared state
 // ---------------------------------------------------------------------------
 
-#[derive(Clone)]
 struct AppState {
     db_path: PathBuf,
     username: String,
     password: String,
+    /// Upstream Navidrome/Subsonic, used to build signed stream URLs for tracks
+    /// with no local file. Resolved once at startup — resolving it per request
+    /// re-read two TOML files and, on macOS, hit the keychain. Credentials
+    /// rather than a `SubsonicClient`: that builds blocking `reqwest` clients,
+    /// which panics when constructed inside the tokio runtime.
+    upstream: Option<SubsonicAuth>,
+    /// Async client for proxying those streams. `reqwest::Client` owns a
+    /// connection pool, so it is built once and cloned.
+    http: reqwest::Client,
+    cover_cache: Mutex<LruCache<CoverKey, Arc<CachedCover>>>,
+}
+
+/// A cover image keyed by the entity it belongs to and the size asked for.
+type CoverKey = (String, Option<u32>);
+
+struct CachedCover {
+    content_type: &'static str,
+    bytes: Vec<u8>,
 }
 
 impl AppState {
@@ -77,10 +107,24 @@ impl SubsonicError {
         }
     }
 
+    fn bad_param(name: &str) -> Self {
+        Self {
+            code: SubsonicErrorCode::MissingParameter,
+            message: format!("Invalid value for parameter '{}'", name),
+        }
+    }
+
     fn not_found(what: &str) -> Self {
         Self {
             code: SubsonicErrorCode::NotFound,
             message: format!("{} not found", what),
+        }
+    }
+
+    fn unsupported(endpoint: &str) -> Self {
+        Self {
+            code: SubsonicErrorCode::NotFound,
+            message: format!("Endpoint '{}' is not supported by this server", endpoint),
         }
     }
 
@@ -112,7 +156,7 @@ impl IntoResponse for SubsonicError {
 // Query params (common to all endpoints)
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 struct SubsonicParams {
     u: Option<String>,
     t: Option<String>,
@@ -128,6 +172,53 @@ struct SubsonicParams {
 impl SubsonicParams {
     fn wants_json(&self) -> bool {
         self.f.as_deref() == Some("json")
+    }
+}
+
+/// Query parameters kept as an ordered list of pairs.
+///
+/// `serde_urlencoded`, which axum's `Query` uses, cannot deserialise a repeated
+/// key into a `Vec`. `createPlaylist` repeats `songId` once per track, so under
+/// `Query` the extractor rejected the request with a bare HTTP 400 and the
+/// handler never ran.
+struct RawParams(Vec<(String, String)>);
+
+impl RawParams {
+    fn parse(query: Option<&str>) -> Self {
+        Self(
+            form_urlencoded::parse(query.unwrap_or_default().as_bytes())
+                .map(|(k, v)| (k.into_owned(), v.into_owned()))
+                .collect(),
+        )
+    }
+
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.as_str())
+    }
+
+    /// Every value for `key`. Clients spell repeated parameters either
+    /// `songId=1&songId=2` or `songId[]=1&songId[]=2`; both are accepted.
+    fn all<'a>(&'a self, key: &'a str) -> impl Iterator<Item = &'a str> {
+        let bracketed = format!("{}[]", key);
+        self.0
+            .iter()
+            .filter(move |(k, _)| k == key || *k == bracketed)
+            .map(|(_, v)| v.as_str())
+    }
+
+    fn auth(&self) -> SubsonicParams {
+        SubsonicParams {
+            u: self.get("u").map(String::from),
+            t: self.get("t").map(String::from),
+            s: self.get("s").map(String::from),
+            p: self.get("p").map(String::from),
+            v: self.get("v").map(String::from),
+            c: self.get("c").map(String::from),
+            f: self.get("f").map(String::from),
+        }
     }
 }
 
@@ -193,10 +284,46 @@ struct XmlBuilder {
     children: Vec<XmlNode>,
 }
 
+/// An attribute value with its wire type preserved.
+///
+/// XML has only text, so every variant renders identically there. JSON is
+/// typed, and the OpenSubsonic schema says `duration`/`track`/`bitRate`/`year`
+/// are ints, `size` is a long and `isDir` is a boolean. Clients with generated
+/// deserialisers abort a library sync on the first song when those arrive
+/// quoted.
+#[derive(Clone)]
+enum AttrValue {
+    Str(String),
+    Int(i64),
+    Bool(bool),
+}
+
+impl AttrValue {
+    fn to_xml_text(&self) -> String {
+        match self {
+            AttrValue::Str(s) => s.clone(),
+            AttrValue::Int(n) => n.to_string(),
+            AttrValue::Bool(b) => b.to_string(),
+        }
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        match self {
+            AttrValue::Str(s) => serde_json::Value::String(s.clone()),
+            AttrValue::Int(n) => serde_json::Value::Number((*n).into()),
+            AttrValue::Bool(b) => serde_json::Value::Bool(*b),
+        }
+    }
+}
+
 #[derive(Clone)]
 struct XmlNode {
     tag: String,
-    attrs: Vec<(String, String)>,
+    attrs: Vec<(String, AttrValue)>,
+    /// Element text. The XSD carries a few values this way
+    /// (`<genre songCount="6">Noise</genre>`); the JSON mapping spells the same
+    /// thing as a `value` member.
+    text: Option<String>,
     children: Vec<XmlNode>,
     is_array: bool,
     array_child_tag: Option<String>,
@@ -207,6 +334,7 @@ impl XmlNode {
         Self {
             tag: tag.into(),
             attrs: Vec::new(),
+            text: None,
             children: Vec::new(),
             is_array: false,
             array_child_tag: None,
@@ -214,7 +342,17 @@ impl XmlNode {
     }
 
     fn attr(mut self, key: &str, value: &str) -> Self {
-        self.attrs.push((key.into(), value.into()));
+        self.attrs.push((key.into(), AttrValue::Str(value.into())));
+        self
+    }
+
+    fn attr_int(mut self, key: &str, value: i64) -> Self {
+        self.attrs.push((key.into(), AttrValue::Int(value)));
+        self
+    }
+
+    fn attr_bool(mut self, key: &str, value: bool) -> Self {
+        self.attrs.push((key.into(), AttrValue::Bool(value)));
         self
     }
 
@@ -225,18 +363,16 @@ impl XmlNode {
         }
     }
 
-    fn attr_opt_i32(self, key: &str, value: Option<i32>) -> Self {
+    fn attr_opt_int(self, key: &str, value: Option<i64>) -> Self {
         match value {
-            Some(v) => self.attr(key, &v.to_string()),
+            Some(v) => self.attr_int(key, v),
             None => self,
         }
     }
 
-    fn attr_opt_i64(self, key: &str, value: Option<i64>) -> Self {
-        match value {
-            Some(v) => self.attr(key, &v.to_string()),
-            None => self,
-        }
+    fn text(mut self, value: &str) -> Self {
+        self.text = Some(value.into());
+        self
     }
 
     fn child(mut self, node: XmlNode) -> Self {
@@ -254,11 +390,13 @@ impl XmlNode {
         let pad = "  ".repeat(indent);
         let mut s = format!("<{}", self.tag);
         for (k, v) in &self.attrs {
-            s.push_str(&format!(" {}=\"{}\"", k, xml_escape(v)));
+            s.push_str(&format!(" {}=\"{}\"", k, xml_escape(&v.to_xml_text())));
         }
         if self.children.is_empty() {
-            s.push_str("/>");
-            return format!("{}{}", pad, s);
+            return match &self.text {
+                Some(t) => format!("{}{}>{}</{}>", pad, s, xml_escape(t), self.tag),
+                None => format!("{}{}/>", pad, s),
+            };
         }
         s.push('>');
         let mut out = format!("{}{}\n", pad, s);
@@ -273,7 +411,10 @@ impl XmlNode {
     fn to_json_value(&self) -> serde_json::Value {
         let mut obj = serde_json::Map::new();
         for (k, v) in &self.attrs {
-            obj.insert(k.clone(), serde_json::Value::String(v.clone()));
+            obj.insert(k.clone(), v.to_json());
+        }
+        if let Some(text) = &self.text {
+            obj.insert("value".into(), serde_json::Value::String(text.clone()));
         }
         if self.is_array {
             let child_tag = self.array_child_tag.as_deref().unwrap_or("item");
@@ -353,7 +494,7 @@ fn xml_escape(s: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Auth — MD5+salt token *and* legacy plaintext password
+// Auth
 // ---------------------------------------------------------------------------
 
 /// Validate `u` + `t` + `s` against the configured `[subsonic]` credentials.
@@ -395,25 +536,121 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<(), Subson
 }
 
 // ---------------------------------------------------------------------------
-// Helpers: track/album → XmlNode
+// Request prologue
 // ---------------------------------------------------------------------------
 
-fn track_to_xml_node(track: &queries::TrackRow) -> XmlNode {
+/// Authenticate, open the database, and render — the prologue every browsing
+/// endpoint shares. Errors come back in the format the request asked for.
+fn respond_db(
+    state: &AppState,
+    auth: &SubsonicParams,
+    f: impl FnOnce(&Database, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
+) -> Response {
+    let json = auth.wants_json();
+    let result = validate_auth(auth, state)
+        .and_then(|()| state.open_db())
+        .and_then(|db| f(&db, SubsonicResponse::ok(json)));
+    match result {
+        Ok(builder) => builder.build(),
+        Err(e) => SubsonicResponse::error(json, &e),
+    }
+}
+
+/// As `respond_db`, for endpoints that never touch the database.
+fn respond(
+    state: &AppState,
+    auth: &SubsonicParams,
+    f: impl FnOnce(XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
+) -> Response {
+    let json = auth.wants_json();
+    match validate_auth(auth, state).and_then(|()| f(SubsonicResponse::ok(json))) {
+        Ok(builder) => builder.build(),
+        Err(e) => SubsonicResponse::error(json, &e),
+    }
+}
+
+/// Prologue for the two endpoints that answer with bytes rather than a
+/// document, and so cannot go through `respond_db`.
+fn authed_db(state: &AppState, auth: &SubsonicParams) -> Result<Database, SubsonicError> {
+    validate_auth(auth, state)?;
+    state.open_db()
+}
+
+// ---------------------------------------------------------------------------
+// Entity ids
+// ---------------------------------------------------------------------------
+
+/// Artists, albums and songs all draw their ids from the same `i64` space, so
+/// any id a client can hand back to a *different* endpoint carries a type
+/// prefix — without one, `getCoverArt?id=5` meaning "album 5" silently served
+/// track 5's art. Navidrome spells these the same way.
+const ARTIST_PREFIX: &str = "ar-";
+const ALBUM_PREFIX: &str = "al-";
+const SONG_PREFIX: &str = "mf-";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntityKind {
+    Artist,
+    Album,
+    Song,
+}
+
+/// Parse `ar-3`, `al-3`, `mf-3`, or a bare `3`.
+///
+/// The ID3 endpoints (`getArtists`, `getAlbum`, `getSong`) still publish bare
+/// ids, so both spellings arrive and both have to resolve.
+fn parse_entity_id(raw: &str) -> Option<(Option<EntityKind>, i64)> {
+    for (prefix, kind) in [
+        (ARTIST_PREFIX, EntityKind::Artist),
+        (ALBUM_PREFIX, EntityKind::Album),
+        (SONG_PREFIX, EntityKind::Song),
+    ] {
+        if let Some(rest) = raw.strip_prefix(prefix) {
+            return rest.parse().ok().map(|id| (Some(kind), id));
+        }
+    }
+    raw.parse().ok().map(|id| (None, id))
+}
+
+/// The `id` parameter as a plain row id, ignoring any type prefix.
+fn require_id(raw: Option<&str>) -> Result<i64, SubsonicError> {
+    let raw = raw.ok_or_else(|| SubsonicError::missing_param("id"))?;
+    parse_entity_id(raw)
+        .map(|(_, id)| id)
+        .ok_or_else(|| SubsonicError::bad_param("id"))
+}
+
+/// The `id` parameter with its type prefix, for endpoints that serve more than
+/// one kind of entity.
+fn require_entity(raw: Option<&str>) -> Result<(Option<EntityKind>, i64), SubsonicError> {
+    let raw = raw.ok_or_else(|| SubsonicError::missing_param("id"))?;
+    parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param("id"))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers: track/album/artist → XmlNode
+// ---------------------------------------------------------------------------
+
+/// A track as a `Child` element.
+///
+/// The tag varies by context — `song` in most responses, `entry` inside a
+/// playlist, `child` inside a music directory — while the attributes do not.
+fn track_node(track: &queries::TrackRow, tag: &str) -> XmlNode {
     let duration_secs = track.duration_ms.map(|ms| ms / 1000);
     let (suffix, content_type) = track
         .codec
         .as_deref()
         .map(codec_to_mime)
         .unwrap_or(("bin", "application/octet-stream"));
-    XmlNode::new("song")
+    XmlNode::new(tag)
         .attr("id", &track.id.to_string())
         .attr("title", &track.title)
         .attr("album", &track.album_title)
         .attr("artist", &track.artist_name)
-        .attr_opt_i32("track", track.track_number)
-        .attr_opt_i32("discNumber", track.disc)
-        .attr_opt_i64("duration", duration_secs)
-        .attr_opt_i32("bitRate", track.bitrate)
+        .attr_opt_int("track", track.track_number.map(i64::from))
+        .attr_opt_int("discNumber", track.disc.map(i64::from))
+        .attr_opt_int("duration", duration_secs)
+        .attr_opt_int("bitRate", track.bitrate.map(i64::from))
         .attr_opt("suffix", Some(suffix))
         .attr_opt("contentType", Some(content_type))
         .attr_opt("genre", track.genre.as_deref())
@@ -425,37 +662,103 @@ fn track_to_xml_node(track: &queries::TrackRow) -> XmlNode {
             "artistId",
             track.artist_id.map(|id| id.to_string()).as_deref(),
         )
+        .attr_opt(
+            "parent",
+            track
+                .album_id
+                .map(|id| format!("{}{}", ALBUM_PREFIX, id))
+                .as_deref(),
+        )
+        .attr("coverArt", &format!("{}{}", SONG_PREFIX, track.id))
+        .attr("type", "music")
+        .attr_bool("isDir", false)
 }
 
-fn year_from_date(date: Option<&str>) -> Option<String> {
-    date.and_then(|d| {
-        if d.len() >= 4 {
-            Some(d[..4].to_string())
-        } else {
-            None
-        }
-    })
+fn track_to_xml_node(track: &queries::TrackRow) -> XmlNode {
+    track_node(track, "song")
 }
 
+fn year_from_date(date: Option<&str>) -> Option<i64> {
+    date.and_then(|d| d.get(..4)).and_then(|y| y.parse().ok())
+}
+
+/// An album as an `AlbumID3` element. `title` rides alongside `name` because
+/// the file-browse half of the protocol spells it that way and clients mix the
+/// two freely.
 fn album_to_xml_node(album: &queries::AlbumRow, track_count: Option<i32>) -> XmlNode {
-    let year_str = year_from_date(album.date.as_deref());
-    let count = track_count.unwrap_or(0);
     XmlNode::new("album")
         .attr("id", &album.id.to_string())
         .attr("name", &album.title)
+        .attr("title", &album.title)
         .attr("artist", &album.artist_name)
         .attr("artistId", &album.artist_id.to_string())
-        .attr("songCount", &count.to_string())
-        .attr_opt("year", year_str.as_deref())
+        .attr("parent", &format!("{}{}", ARTIST_PREFIX, album.artist_id))
+        .attr("coverArt", &format!("{}{}", ALBUM_PREFIX, album.id))
+        .attr_int("songCount", i64::from(track_count.unwrap_or(0)))
+        .attr_opt_int("year", year_from_date(album.date.as_deref()))
+        .attr_bool("isDir", true)
 }
 
-fn album_counts_by_artist(db: &Database) -> BTreeMap<i64, i64> {
-    let albums = queries::all_albums(&db.conn).unwrap_or_default();
+/// An album as a directory `child`, for the file-browse endpoints. The id is
+/// prefixed here because it comes straight back as `getMusicDirectory?id=`.
+fn album_child_node(album: &queries::AlbumRow) -> XmlNode {
+    XmlNode::new("child")
+        .attr("id", &format!("{}{}", ALBUM_PREFIX, album.id))
+        .attr("parent", &format!("{}{}", ARTIST_PREFIX, album.artist_id))
+        .attr("title", &album.title)
+        .attr("album", &album.title)
+        .attr("artist", &album.artist_name)
+        .attr("coverArt", &format!("{}{}", ALBUM_PREFIX, album.id))
+        .attr_opt_int("year", year_from_date(album.date.as_deref()))
+        .attr_bool("isDir", true)
+}
+
+fn album_counts_by_artist(db: &Database) -> Result<BTreeMap<i64, i64>, SubsonicError> {
+    let albums =
+        queries::all_albums(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
     let mut map: BTreeMap<i64, i64> = BTreeMap::new();
     for album in albums {
         *map.entry(album.artist_id).or_insert(0) += 1;
     }
-    map
+    Ok(map)
+}
+
+/// Artists bucketed by first letter, plus each artist's album count — the shape
+/// `getArtists` (ID3) and `getIndexes` (file-browse) both hang off.
+type ArtistIndex = (
+    BTreeMap<String, Vec<queries::ArtistRow>>,
+    BTreeMap<i64, i64>,
+);
+
+fn artist_index(db: &Database) -> Result<ArtistIndex, SubsonicError> {
+    let artists =
+        queries::all_artists(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
+
+    let mut index_map: BTreeMap<String, Vec<queries::ArtistRow>> = BTreeMap::new();
+    for artist in artists {
+        let letter = artist
+            .sort_name
+            .as_deref()
+            .unwrap_or(&artist.name)
+            .chars()
+            .next()
+            .map(|c| {
+                let upper = c.to_uppercase().to_string();
+                if upper
+                    .chars()
+                    .next()
+                    .is_some_and(|ch| ch.is_ascii_alphabetic())
+                {
+                    upper
+                } else {
+                    "#".to_string()
+                }
+            })
+            .unwrap_or_else(|| "#".to_string());
+        index_map.entry(letter).or_default().push(artist);
+    }
+
+    Ok((index_map, album_counts_by_artist(db)?))
 }
 
 fn codec_to_mime(codec: &str) -> (&str, &str) {
@@ -527,26 +830,11 @@ struct Search3Params {
 }
 
 #[derive(Debug, Deserialize)]
-struct StreamParams {
-    #[serde(flatten)]
-    auth: SubsonicParams,
-    id: Option<i64>,
-}
-
-#[derive(Debug, Deserialize)]
 struct CoverArtParams {
     #[serde(flatten)]
     auth: SubsonicParams,
-    id: Option<i64>,
+    id: Option<String>,
     size: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct StarParams {
-    #[serde(flatten)]
-    auth: SubsonicParams,
-    id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -554,7 +842,7 @@ struct StarParams {
 struct ScrobbleParams {
     #[serde(flatten)]
     auth: SubsonicParams,
-    id: Option<i64>,
+    id: Option<String>,
     time: Option<i64>,
 }
 
@@ -572,7 +860,7 @@ struct RandomSongsParams {
 struct SimilarSongs2Params {
     #[serde(flatten)]
     auth: SubsonicParams,
-    id: Option<i64>,
+    id: Option<String>,
     count: Option<usize>,
 }
 
@@ -584,190 +872,202 @@ async fn ping(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params, &state) {
-        return SubsonicResponse::error(params.wants_json(), &e);
-    }
-    SubsonicResponse::ok(params.wants_json()).build()
+    respond(&state, &params, Ok)
 }
 
 async fn get_license(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params, &state) {
-        return SubsonicResponse::error(params.wants_json(), &e);
-    }
-    SubsonicResponse::ok(params.wants_json())
-        .child(
+    respond(&state, &params, |b| {
+        Ok(b.child(
             XmlNode::new("license")
-                .attr("valid", "true")
+                .attr_bool("valid", true)
                 .attr("email", "koan@localhost"),
-        )
-        .build()
+        ))
+    })
 }
 
 async fn get_artists(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params, &state) {
-        return SubsonicResponse::error(params.wants_json(), &e);
-    }
-    let json = params.wants_json();
+    respond_db(&state, &params, |db, b| {
+        let (index_map, album_counts) = artist_index(db)?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
-
-    let artists = match queries::all_artists(&db.conn) {
-        Ok(a) => a,
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
-
-    // Group by first letter.
-    let mut index_map: BTreeMap<String, Vec<&queries::ArtistRow>> = BTreeMap::new();
-    for artist in &artists {
-        let letter = artist
-            .sort_name
-            .as_deref()
-            .unwrap_or(&artist.name)
-            .chars()
-            .next()
-            .map(|c| {
-                let upper = c.to_uppercase().to_string();
-                if upper
-                    .chars()
-                    .next()
-                    .is_some_and(|ch| ch.is_ascii_alphabetic())
-                {
-                    upper
-                } else {
-                    "#".to_string()
-                }
-            })
-            .unwrap_or_else(|| "#".to_string());
-        index_map.entry(letter).or_default().push(artist);
-    }
-
-    let album_counts = album_counts_by_artist(&db);
-
-    let mut artists_node = XmlNode::new("artists").array_of("index");
-    for (letter, group) in &index_map {
-        let mut index_node = XmlNode::new("index")
-            .attr("name", letter)
-            .array_of("artist");
-        for artist in group {
-            let count = album_counts.get(&artist.id).copied().unwrap_or(0);
-            index_node = index_node.child(
-                XmlNode::new("artist")
-                    .attr("id", &artist.id.to_string())
-                    .attr("name", &artist.name)
-                    .attr("albumCount", &count.to_string()),
-            );
+        let mut artists_node = XmlNode::new("artists")
+            .attr("ignoredArticles", IGNORED_ARTICLES)
+            .array_of("index");
+        for (letter, group) in &index_map {
+            let mut index_node = XmlNode::new("index")
+                .attr("name", letter)
+                .array_of("artist");
+            for artist in group {
+                let count = album_counts.get(&artist.id).copied().unwrap_or(0);
+                index_node = index_node.child(
+                    XmlNode::new("artist")
+                        .attr("id", &artist.id.to_string())
+                        .attr("name", &artist.name)
+                        .attr("coverArt", &format!("{}{}", ARTIST_PREFIX, artist.id))
+                        .attr_int("albumCount", count),
+                );
+            }
+            artists_node = artists_node.child(index_node);
         }
-        artists_node = artists_node.child(index_node);
-    }
 
-    SubsonicResponse::ok(json).child(artists_node).build()
+        Ok(b.child(artists_node))
+    })
+}
+
+/// The file-browse counterpart of `getArtists`. DSub and every folder-oriented
+/// client enumerate the library through this and `getMusicDirectory`, so
+/// without them they see an empty server.
+async fn get_indexes(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    respond_db(&state, &params, |db, b| {
+        let (index_map, _) = artist_index(db)?;
+        let last_modified: i64 = db
+            .conn
+            .query_row(
+                "SELECT COALESCE(MAX(mtime), 0) * 1000 FROM tracks",
+                [],
+                |r| r.get(0),
+            )
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+
+        let mut indexes_node = XmlNode::new("indexes")
+            .attr_int("lastModified", last_modified)
+            .attr("ignoredArticles", IGNORED_ARTICLES)
+            .array_of("index");
+        for (letter, group) in &index_map {
+            let mut index_node = XmlNode::new("index")
+                .attr("name", letter)
+                .array_of("artist");
+            for artist in group {
+                index_node = index_node.child(
+                    XmlNode::new("artist")
+                        .attr("id", &format!("{}{}", ARTIST_PREFIX, artist.id))
+                        .attr("name", &artist.name),
+                );
+            }
+            indexes_node = indexes_node.child(index_node);
+        }
+
+        Ok(b.child(indexes_node))
+    })
+}
+
+/// One level of the browse tree: an artist directory lists its albums, an album
+/// directory lists its songs.
+async fn get_music_directory(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<IdParam>,
+) -> Response {
+    respond_db(&state, &params.auth, |db, b| {
+        let (kind, id) = require_entity(params.id.as_deref())?;
+
+        // A bare id is ambiguous — artists and albums share the number space —
+        // so try the artist table first and fall through. Clients that arrived
+        // via `getIndexes` always send a prefix and never hit this.
+        if kind != Some(EntityKind::Album) {
+            let artists = queries::all_artists(&db.conn)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            if let Some(artist) = artists.into_iter().find(|a| a.id == id) {
+                let albums = queries::albums_for_artist(&db.conn, id)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                let mut dir = XmlNode::new("directory")
+                    .attr("id", &format!("{}{}", ARTIST_PREFIX, artist.id))
+                    .attr("name", &artist.name)
+                    .array_of("child");
+                for album in &albums {
+                    dir = dir.child(album_child_node(album));
+                }
+                return Ok(b.child(dir));
+            }
+        }
+
+        let album = queries::get_album(&db.conn, id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+            .ok_or_else(|| SubsonicError::not_found("Directory"))?;
+        let tracks = queries::tracks_for_album(&db.conn, id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+
+        let mut dir = XmlNode::new("directory")
+            .attr("id", &format!("{}{}", ALBUM_PREFIX, album.id))
+            .attr("parent", &format!("{}{}", ARTIST_PREFIX, album.artist_id))
+            .attr("name", &album.title)
+            .array_of("child");
+        for track in &tracks {
+            dir = dir.child(track_node(track, "child"));
+        }
+        Ok(b.child(dir))
+    })
 }
 
 async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
+    respond_db(&state, &params.auth, |db, b| {
+        let artist_id = require_id(params.id.as_deref())?;
 
-    let artist_id: i64 = match params.id.as_deref().and_then(|s| s.parse().ok()) {
-        Some(id) => id,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
-    };
+        let all =
+            queries::all_artists(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
+        let artist = all
+            .into_iter()
+            .find(|a| a.id == artist_id)
+            .ok_or_else(|| SubsonicError::not_found("Artist"))?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
+        let albums = queries::albums_for_artist(&db.conn, artist_id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-    let all = match queries::all_artists(&db.conn) {
-        Ok(a) => a,
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
-    let artist = match all.into_iter().find(|a| a.id == artist_id) {
-        Some(a) => a,
-        None => return SubsonicResponse::error(json, &SubsonicError::not_found("Artist")),
-    };
+        let mut artist_node = XmlNode::new("artist")
+            .attr("id", &artist.id.to_string())
+            .attr("name", &artist.name)
+            .attr("coverArt", &format!("{}{}", ARTIST_PREFIX, artist.id))
+            .attr_int("albumCount", albums.len() as i64)
+            .array_of("album");
 
-    let albums = match queries::albums_for_artist(&db.conn, artist_id) {
-        Ok(a) => a,
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
+        for album in &albums {
+            artist_node = artist_node.child(album_to_xml_node(album, album.total_tracks));
+        }
 
-    let mut artist_node = XmlNode::new("artist")
-        .attr("id", &artist.id.to_string())
-        .attr("name", &artist.name)
-        .attr("albumCount", &albums.len().to_string())
-        .array_of("album");
-
-    for album in &albums {
-        artist_node = artist_node.child(album_to_xml_node(album, album.total_tracks));
-    }
-
-    SubsonicResponse::ok(json).child(artist_node).build()
+        Ok(b.child(artist_node))
+    })
 }
 
 async fn get_album(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
+    respond_db(&state, &params.auth, |db, b| {
+        let album_id = require_id(params.id.as_deref())?;
 
-    let album_id: i64 = match params.id.as_deref().and_then(|s| s.parse().ok()) {
-        Some(id) => id,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
-    };
+        let album = queries::get_album(&db.conn, album_id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+            .ok_or_else(|| SubsonicError::not_found("Album"))?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
+        let tracks = queries::tracks_for_album(&db.conn, album_id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        let mut album_node = album_to_xml_node(&album, Some(tracks.len() as i32)).array_of("song");
 
-    let album = match queries::get_album(&db.conn, album_id) {
-        Ok(Some(a)) => a,
-        _ => return SubsonicResponse::error(json, &SubsonicError::not_found("Album")),
-    };
+        for track in &tracks {
+            album_node = album_node.child(track_to_xml_node(track));
+        }
 
-    let tracks = queries::tracks_for_album(&db.conn, album_id).unwrap_or_default();
-    let mut album_node = album_to_xml_node(&album, Some(tracks.len() as i32)).array_of("song");
-
-    for track in &tracks {
-        album_node = album_node.child(track_to_xml_node(track));
-    }
-
-    SubsonicResponse::ok(json).child(album_node).build()
+        Ok(b.child(album_node))
+    })
 }
 
-async fn get_album_list2(
-    State(state): State<Arc<AppState>>,
-    Query(params): Query<AlbumListParams>,
-) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
-
+/// Albums ordered by `type`, paged. Shared by `getAlbumList` and
+/// `getAlbumList2`, which differ only in the element they hang the list off.
+fn album_list(
+    db: &Database,
+    params: &AlbumListParams,
+    tag: &str,
+) -> Result<XmlNode, SubsonicError> {
     let list_type = params.list_type.as_deref().unwrap_or("alphabeticalByName");
-    let size = params.size.unwrap_or(20).min(500) as usize;
+    let size = params.size.unwrap_or(20).clamp(0, 500) as usize;
     let offset = params.offset.unwrap_or(0).max(0) as usize;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
-
-    let mut albums = match queries::all_albums(&db.conn) {
-        Ok(a) => a,
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
+    let mut albums =
+        queries::all_albums(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
 
     match list_type {
         "alphabeticalByName" => albums.sort_by(|a, b| a.title.cmp(&b.title)),
@@ -795,40 +1095,39 @@ async fn get_album_list2(
         _ => {}
     }
 
-    let page: Vec<_> = albums.into_iter().skip(offset).take(size).collect();
-
-    let mut list_node = XmlNode::new("albumList2").array_of("album");
-    for album in &page {
-        list_node = list_node.child(album_to_xml_node(album, album.total_tracks));
+    let mut list_node = XmlNode::new(tag).array_of("album");
+    for album in albums.into_iter().skip(offset).take(size) {
+        list_node = list_node.child(album_to_xml_node(&album, album.total_tracks));
     }
+    Ok(list_node)
+}
 
-    SubsonicResponse::ok(json).child(list_node).build()
+async fn get_album_list(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<AlbumListParams>,
+) -> Response {
+    respond_db(&state, &params.auth, |db, b| {
+        Ok(b.child(album_list(db, &params, "albumList")?))
+    })
+}
+
+async fn get_album_list2(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<AlbumListParams>,
+) -> Response {
+    respond_db(&state, &params.auth, |db, b| {
+        Ok(b.child(album_list(db, &params, "albumList2")?))
+    })
 }
 
 async fn get_song(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
-
-    let track_id: i64 = match params.id.as_deref().and_then(|s| s.parse().ok()) {
-        Some(id) => id,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
-    };
-
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
-
-    let track = match queries::get_track_row(&db.conn, track_id) {
-        Ok(Some(t)) => t,
-        _ => return SubsonicResponse::error(json, &SubsonicError::not_found("Song")),
-    };
-
-    SubsonicResponse::ok(json)
-        .child(track_to_xml_node(&track))
-        .build()
+    respond_db(&state, &params.auth, |db, b| {
+        let track_id = require_id(params.id.as_deref())?;
+        let track = queries::get_track_row(&db.conn, track_id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+            .ok_or_else(|| SubsonicError::not_found("Song"))?;
+        Ok(b.child(track_to_xml_node(&track)))
+    })
 }
 
 // ===========================================================================
@@ -839,96 +1138,108 @@ async fn search3(
     State(state): State<Arc<AppState>>,
     Query(params): Query<Search3Params>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
+    respond_db(&state, &params.auth, |db, b| {
+        let query = params
+            .query
+            .as_deref()
+            .ok_or_else(|| SubsonicError::missing_param("query"))?;
 
-    let query = match params.query.as_deref() {
-        Some(q) => q,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("query")),
-    };
+        let artist_count = params.artist_count.unwrap_or(20);
+        let album_count = params.album_count.unwrap_or(20);
+        let song_count = params.song_count.unwrap_or(20);
 
-    let artist_count = params.artist_count.unwrap_or(20);
-    let album_count = params.album_count.unwrap_or(20);
-    let song_count = params.song_count.unwrap_or(20);
+        let total_needed = (artist_count + album_count + song_count).max(100);
+        let tracks = queries::search_tracks_paged(&db.conn, query, total_needed, 0)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
+        let mut result_node = XmlNode::new("searchResult3");
 
-    let total_needed = (artist_count + album_count + song_count).max(100);
-    let tracks = match queries::search_tracks_paged(&db.conn, query, total_needed, 0) {
-        Ok(t) => t,
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
-
-    let mut result_node = XmlNode::new("searchResult3");
-
-    // Unique artists.
-    let mut seen_artists = std::collections::HashSet::new();
-    let mut artist_n = 0u32;
-    for t in &tracks {
-        if artist_n >= artist_count {
-            break;
+        // Unique artists.
+        let mut seen_artists = std::collections::HashSet::new();
+        let mut artist_n = 0u32;
+        for t in &tracks {
+            if artist_n >= artist_count {
+                break;
+            }
+            if let Some(aid) = t.artist_id
+                && seen_artists.insert(aid)
+            {
+                result_node = result_node.child(
+                    XmlNode::new("artist")
+                        .attr("id", &aid.to_string())
+                        .attr("name", &t.artist_name)
+                        .attr("coverArt", &format!("{}{}", ARTIST_PREFIX, aid)),
+                );
+                artist_n += 1;
+            }
         }
-        if let Some(aid) = t.artist_id
-            && seen_artists.insert(aid)
-        {
-            result_node = result_node.child(
-                XmlNode::new("artist")
-                    .attr("id", &aid.to_string())
-                    .attr("name", &t.artist_name),
-            );
-            artist_n += 1;
-        }
-    }
 
-    // Unique albums.
-    let mut seen_albums = std::collections::HashSet::new();
-    let mut album_n = 0u32;
-    for t in &tracks {
-        if album_n >= album_count {
-            break;
+        // Unique albums.
+        let mut seen_albums = std::collections::HashSet::new();
+        let mut album_n = 0u32;
+        for t in &tracks {
+            if album_n >= album_count {
+                break;
+            }
+            if let Some(alid) = t.album_id
+                && seen_albums.insert(alid)
+            {
+                result_node = result_node.child(
+                    XmlNode::new("album")
+                        .attr("id", &alid.to_string())
+                        .attr("name", &t.album_title)
+                        .attr("title", &t.album_title)
+                        .attr("artist", &t.album_artist_name)
+                        .attr("coverArt", &format!("{}{}", ALBUM_PREFIX, alid))
+                        .attr_bool("isDir", true),
+                );
+                album_n += 1;
+            }
         }
-        if let Some(alid) = t.album_id
-            && seen_albums.insert(alid)
-        {
-            result_node = result_node.child(
-                XmlNode::new("album")
-                    .attr("id", &alid.to_string())
-                    .attr("name", &t.album_title)
-                    .attr("artist", &t.album_artist_name),
-            );
-            album_n += 1;
+
+        // Songs.
+        for t in tracks.iter().take(song_count as usize) {
+            result_node = result_node.child(track_to_xml_node(t));
         }
-    }
 
-    // Songs.
-    for t in tracks.iter().take(song_count as usize) {
-        result_node = result_node.child(track_to_xml_node(t));
-    }
-
-    SubsonicResponse::ok(json).child(result_node).build()
+        Ok(b.child(result_node))
+    })
 }
 
 // ===========================================================================
 // Endpoints — streaming
 // ===========================================================================
 
+#[derive(Debug, Deserialize)]
+struct StreamParams {
+    #[serde(flatten)]
+    auth: SubsonicParams,
+    /// A `String`, not an `i64`: axum's `Query` rejects a value it cannot
+    /// deserialise with a plain-text HTTP 400 *before* the handler runs, which
+    /// is neither a Subsonic envelope nor something a client can report.
+    id: Option<String>,
+}
+
 async fn stream(
     State(state): State<Arc<AppState>>,
     Query(params): Query<StreamParams>,
     headers: HeaderMap,
+) -> Response {
+    let json = params.auth.wants_json();
+    match stream_inner(&state, &params, &headers).await {
+        Ok(resp) => resp,
+        Err(e) => SubsonicResponse::error(json, &e),
+    }
+}
+
+async fn stream_inner(
+    state: &AppState,
+    params: &StreamParams,
+    headers: &HeaderMap,
 ) -> Result<Response, SubsonicError> {
-    validate_auth(&params.auth, &state)?;
+    let db = authed_db(state, &params.auth)?;
+    let track_id = require_id(params.id.as_deref())?;
 
-    let track_id = params
-        .id
-        .ok_or_else(|| SubsonicError::missing_param("id"))?;
-
-    let db = state.open_db()?;
     let track = queries::get_track_row(&db.conn, track_id)
         .map_err(|e| SubsonicError::internal(e.to_string()))?
         .ok_or_else(|| SubsonicError::not_found("Track"))?;
@@ -944,7 +1255,7 @@ async fn stream(
     if !local_exists {
         // Proxy from upstream Navidrome/Subsonic server.
         if let Some(ref remote_id) = track.remote_id {
-            return proxy_stream_from_upstream(remote_id, &track, &headers).await;
+            return proxy_stream_from_upstream(state, remote_id, &track, headers).await;
         }
         return Err(SubsonicError::not_found(
             "Track has no local file and no remote source",
@@ -973,30 +1284,42 @@ async fn stream(
             .to_str()
             .map_err(|_| SubsonicError::internal("invalid range header"))?;
 
-        if let Some((start, end)) = parse_range(range_str, total_size) {
-            let length = end - start + 1;
+        match parse_range(range_str, total_size) {
+            RangeRequest::Satisfiable { start, end } => {
+                let length = end - start + 1;
 
-            let mut file = tokio::fs::File::open(&path)
-                .await
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            tokio::io::AsyncSeekExt::seek(&mut file, std::io::SeekFrom::Start(start))
-                .await
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                let mut file = tokio::fs::File::open(&path)
+                    .await
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                tokio::io::AsyncSeekExt::seek(&mut file, std::io::SeekFrom::Start(start))
+                    .await
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-            let stream = tokio_util::io::ReaderStream::new(file.take(length));
-            let body = axum::body::Body::from_stream(stream);
+                let stream = tokio_util::io::ReaderStream::new(file.take(length));
+                let body = axum::body::Body::from_stream(stream);
 
-            return Response::builder()
-                .status(StatusCode::PARTIAL_CONTENT)
-                .header(header::CONTENT_TYPE, content_type)
-                .header(header::CONTENT_LENGTH, length)
-                .header(
-                    header::CONTENT_RANGE,
-                    format!("bytes {}-{}/{}", start, end, total_size),
-                )
-                .header(header::ACCEPT_RANGES, "bytes")
-                .body(body)
-                .map_err(|e| SubsonicError::internal(e.to_string()));
+                return Response::builder()
+                    .status(StatusCode::PARTIAL_CONTENT)
+                    .header(header::CONTENT_TYPE, content_type)
+                    .header(header::CONTENT_LENGTH, length)
+                    .header(
+                        header::CONTENT_RANGE,
+                        format!("bytes {}-{}/{}", start, end, total_size),
+                    )
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .body(body)
+                    .map_err(|e| SubsonicError::internal(e.to_string()));
+            }
+            RangeRequest::Unsatisfiable => {
+                return Response::builder()
+                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                    .header(header::CONTENT_RANGE, format!("bytes */{}", total_size))
+                    .header(header::ACCEPT_RANGES, "bytes")
+                    .body(axum::body::Body::empty())
+                    .map_err(|e| SubsonicError::internal(e.to_string()));
+            }
+            // A header that does not parse is ignored and the whole body sent.
+            RangeRequest::Malformed => {}
         }
     }
 
@@ -1019,25 +1342,19 @@ async fn stream(
 /// Proxy a stream from the upstream Navidrome/Subsonic server.
 /// Forwards the audio bytes through to the client, passing along Range headers.
 async fn proxy_stream_from_upstream(
+    state: &AppState,
     remote_id: &str,
     track: &queries::TrackRow,
     client_headers: &HeaderMap,
 ) -> Result<Response, SubsonicError> {
-    let cfg = Config::load().unwrap_or_default();
-    let client = match koan_core::helpers::subsonic_client(&cfg) {
-        Some(c) => c,
-        None => return Err(SubsonicError::not_found("Remote server not configured")),
-    };
-    let upstream_url = client
+    let upstream_url = state
+        .upstream
+        .as_ref()
+        .ok_or_else(|| SubsonicError::not_found("Remote server not configured"))?
         .stream_url(remote_id)
         .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-    // Use reqwest async to proxy the stream.
-    let http = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()
-        .unwrap();
-    let mut req = http.get(&upstream_url);
+    let mut req = state.http.get(&upstream_url);
 
     // Forward Range header if present.
     if let Some(range) = client_headers.get(header::RANGE)
@@ -1076,31 +1393,58 @@ async fn proxy_stream_from_upstream(
         .map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
-fn parse_range(range: &str, total: u64) -> Option<(u64, u64)> {
-    if total == 0 {
-        return None;
-    }
-    let bytes_prefix = range.strip_prefix("bytes=")?;
-    let mut parts = bytes_prefix.splitn(2, '-');
-    let start_str = parts.next()?.trim();
-    let end_str = parts.next()?.trim();
+/// What a `Range` header asks for.
+///
+/// RFC 9110 draws a line a bare `Option` could not: a header that does not
+/// parse is ignored and the whole body sent, while a well-formed range outside
+/// the file is a 416 carrying `Content-Range: bytes */<total>`.
+#[derive(Debug, PartialEq, Eq)]
+enum RangeRequest {
+    Satisfiable { start: u64, end: u64 },
+    Unsatisfiable,
+    Malformed,
+}
+
+fn parse_range(range: &str, total: u64) -> RangeRequest {
+    let Some(spec) = range.strip_prefix("bytes=") else {
+        return RangeRequest::Malformed;
+    };
+    let Some((start_str, end_str)) = spec.split_once('-') else {
+        return RangeRequest::Malformed;
+    };
+    let (start_str, end_str) = (start_str.trim(), end_str.trim());
 
     if start_str.is_empty() {
-        let suffix: u64 = end_str.parse().ok()?;
-        let start = total.saturating_sub(suffix);
-        Some((start, total - 1))
-    } else {
-        let start: u64 = start_str.parse().ok()?;
-        let end = if end_str.is_empty() {
-            total - 1
-        } else {
-            end_str.parse::<u64>().ok()?.min(total - 1)
+        let Ok(suffix) = end_str.parse::<u64>() else {
+            return RangeRequest::Malformed;
         };
-        if start > end || start >= total {
-            return None;
+        if total == 0 || suffix == 0 {
+            return RangeRequest::Unsatisfiable;
         }
-        Some((start, end))
+        return RangeRequest::Satisfiable {
+            start: total.saturating_sub(suffix),
+            end: total - 1,
+        };
     }
+
+    let Ok(start) = start_str.parse::<u64>() else {
+        return RangeRequest::Malformed;
+    };
+    if total == 0 {
+        return RangeRequest::Unsatisfiable;
+    }
+    let end = if end_str.is_empty() {
+        total - 1
+    } else {
+        let Ok(end) = end_str.parse::<u64>() else {
+            return RangeRequest::Malformed;
+        };
+        end.min(total - 1)
+    };
+    if start > end || start >= total {
+        return RangeRequest::Unsatisfiable;
+    }
+    RangeRequest::Satisfiable { start, end }
 }
 
 // ===========================================================================
@@ -1110,22 +1454,33 @@ fn parse_range(range: &str, total: u64) -> Option<(u64, u64)> {
 async fn get_cover_art(
     State(state): State<Arc<AppState>>,
     Query(params): Query<CoverArtParams>,
-) -> Result<Response, SubsonicError> {
-    validate_auth(&params.auth, &state)?;
+) -> Response {
+    let json = params.auth.wants_json();
+    match cover_art_inner(&state, &params) {
+        Ok(resp) => resp,
+        Err(e) => SubsonicResponse::error(json, &e),
+    }
+}
 
-    let track_id = params
-        .id
-        .ok_or_else(|| SubsonicError::missing_param("id"))?;
+fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response, SubsonicError> {
+    let db = authed_db(state, &params.auth)?;
+    let (kind, id) = require_entity(params.id.as_deref())?;
+    let size = params.size.map(|s| s.clamp(MIN_COVER_SIZE, MAX_COVER_SIZE));
 
-    let db = state.open_db()?;
-    let track = queries::get_track_row(&db.conn, track_id)
-        .map_err(|e| SubsonicError::internal(e.to_string()))?
-        .ok_or_else(|| SubsonicError::not_found("Track"))?;
+    let key = (
+        match kind {
+            Some(EntityKind::Artist) => format!("{}{}", ARTIST_PREFIX, id),
+            Some(EntityKind::Album) => format!("{}{}", ALBUM_PREFIX, id),
+            Some(EntityKind::Song) | None => format!("{}{}", SONG_PREFIX, id),
+        },
+        size,
+    );
 
-    let file_path = track_file_path(&track)
-        .ok_or_else(|| SubsonicError::not_found("Track has no local file"))?;
+    if let Some(hit) = state.cover_cache.lock().unwrap().get(&key).cloned() {
+        return Ok(cover_response(&hit));
+    }
 
-    let path = PathBuf::from(file_path);
+    let path = cover_source_path(&db, kind, id)?;
     let art_bytes = extract_cover_art(&path)
         .ok_or_else(|| SubsonicError::not_found("No cover art embedded"))?;
 
@@ -1135,25 +1490,69 @@ async fn get_cover_art(
         ("image/jpeg", false)
     };
 
-    let final_bytes = if let Some(size) = params.size {
-        resize_image(
-            &art_bytes,
-            size.clamp(MIN_COVER_SIZE, MAX_COVER_SIZE),
-            is_png,
-        )?
-    } else {
-        art_bytes
+    let bytes = match size {
+        Some(size) => resize_image(&art_bytes, size, is_png)?,
+        None => art_bytes,
     };
 
-    Ok((
+    let entry = Arc::new(CachedCover {
+        content_type,
+        bytes,
+    });
+    state
+        .cover_cache
+        .lock()
+        .unwrap()
+        .put(key, Arc::clone(&entry));
+    Ok(cover_response(&entry))
+}
+
+fn cover_response(cover: &CachedCover) -> Response {
+    (
         StatusCode::OK,
         [
-            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_TYPE, cover.content_type),
             (header::CACHE_CONTROL, "max-age=86400"),
         ],
-        final_bytes,
+        cover.bytes.clone(),
     )
-        .into_response())
+        .into_response()
+}
+
+/// The media file whose embedded art answers a `getCoverArt` id. Album and
+/// artist ids resolve through their first track — koan stores no standalone
+/// cover images.
+fn cover_source_path(
+    db: &Database,
+    kind: Option<EntityKind>,
+    id: i64,
+) -> Result<PathBuf, SubsonicError> {
+    let track = match kind {
+        Some(EntityKind::Album) => queries::tracks_for_album(&db.conn, id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+            .into_iter()
+            .next()
+            .ok_or_else(|| SubsonicError::not_found("Album"))?,
+        Some(EntityKind::Artist) => {
+            let albums = queries::albums_for_artist(&db.conn, id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            albums
+                .iter()
+                .find_map(|album| {
+                    queries::tracks_for_album(&db.conn, album.id)
+                        .ok()
+                        .and_then(|tracks| tracks.into_iter().next())
+                })
+                .ok_or_else(|| SubsonicError::not_found("Artist"))?
+        }
+        Some(EntityKind::Song) | None => queries::get_track_row(&db.conn, id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+            .ok_or_else(|| SubsonicError::not_found("Track"))?,
+    };
+
+    track_file_path(&track)
+        .map(PathBuf::from)
+        .ok_or_else(|| SubsonicError::not_found("Track has no local file"))
 }
 
 /// `image`'s `resize` upscales, and the allocation for the result is not fallible
@@ -1183,294 +1582,257 @@ fn resize_image(data: &[u8], size: u32, output_png: bool) -> Result<Vec<u8>, Sub
 // Endpoints — interaction (star, unstar, scrobble, etc.)
 // ===========================================================================
 
-async fn star(State(state): State<Arc<AppState>>, Query(params): Query<StarParams>) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
-    toggle_star(&state, params.id, json, queries::add_favourite)
+async fn star(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
+    respond_db(&state, &params.auth, |db, b| {
+        toggle_star(db, params.id.as_deref(), queries::add_favourite)?;
+        Ok(b)
+    })
 }
 
-async fn unstar(State(state): State<Arc<AppState>>, Query(params): Query<StarParams>) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
-    toggle_star(&state, params.id, json, queries::remove_favourite)
+async fn unstar(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
+    respond_db(&state, &params.auth, |db, b| {
+        toggle_star(db, params.id.as_deref(), queries::remove_favourite)?;
+        Ok(b)
+    })
 }
 
 fn toggle_star(
-    state: &AppState,
-    id: Option<i64>,
-    json: bool,
+    db: &Database,
+    id: Option<&str>,
     op: fn(&rusqlite::Connection, &std::path::Path) -> rusqlite::Result<()>,
-) -> Response {
-    let track_id = match id {
-        Some(id) => id,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
-    };
+) -> Result<(), SubsonicError> {
+    let track_id = require_id(id)?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
-
-    let track = match queries::get_track_row(&db.conn, track_id) {
-        Ok(Some(t)) => t,
-        Ok(None) => return SubsonicResponse::error(json, &SubsonicError::not_found("Track")),
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
+    let track = queries::get_track_row(&db.conn, track_id)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .ok_or_else(|| SubsonicError::not_found("Track"))?;
 
     let path_str = track_file_path(&track).unwrap_or("");
-    if let Err(e) = op(&db.conn, std::path::Path::new(path_str)) {
-        return SubsonicResponse::error(json, &SubsonicError::from(e.to_string()));
-    }
-
-    SubsonicResponse::ok(json).build()
+    op(&db.conn, std::path::Path::new(path_str)).map_err(|e| SubsonicError::internal(e.to_string()))
 }
 
 async fn get_starred2(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params, &state) {
-        return SubsonicResponse::error(params.wants_json(), &e);
-    }
-    let json = params.wants_json();
+    respond_db(&state, &params, |db, b| {
+        let favourites = queries::load_favourites(&db.conn)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
-
-    let favourites = match queries::load_favourites(&db.conn) {
-        Ok(f) => f,
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
-
-    let mut starred_node = XmlNode::new("starred2").array_of("song");
-    for fav_path in &favourites {
-        let path_str = fav_path.to_string_lossy();
-        if let Ok(Some(track_id)) = queries::track_id_by_path(&db.conn, &path_str)
-            && let Ok(Some(track)) = queries::get_track_row(&db.conn, track_id)
-        {
-            starred_node = starred_node.child(track_to_xml_node(&track));
+        let mut starred_node = XmlNode::new("starred2").array_of("song");
+        for fav_path in &favourites {
+            let path_str = fav_path.to_string_lossy();
+            if let Ok(Some(track_id)) = queries::track_id_by_path(&db.conn, &path_str)
+                && let Ok(Some(track)) = queries::get_track_row(&db.conn, track_id)
+            {
+                starred_node = starred_node.child(track_to_xml_node(&track));
+            }
         }
-    }
 
-    SubsonicResponse::ok(json).child(starred_node).build()
+        Ok(b.child(starred_node))
+    })
 }
 
 async fn scrobble(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ScrobbleParams>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
+    respond_db(&state, &params.auth, |db, b| {
+        let track_id = require_id(params.id.as_deref())?;
 
-    let track_id = match params.id {
-        Some(id) => id,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
-    };
+        queries::get_track_row(&db.conn, track_id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+            .ok_or_else(|| SubsonicError::not_found("Track"))?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
+        let result = if let Some(time_ms) = params.time {
+            db.conn
+                .execute(
+                    "INSERT INTO play_history (track_id, played_at, duration_ms) VALUES (?1, ?2, NULL)",
+                    rusqlite::params![track_id, time_ms / 1000],
+                )
+                .map(|_| ())
+                .map_err(|e| e.into())
+        } else {
+            queries::record_play(&db.conn, track_id, None)
+        };
 
-    match queries::get_track_row(&db.conn, track_id) {
-        Ok(Some(_)) => {}
-        Ok(None) => return SubsonicResponse::error(json, &SubsonicError::not_found("Track")),
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    }
-
-    let result = if let Some(time_ms) = params.time {
-        db.conn
-            .execute(
-                "INSERT INTO play_history (track_id, played_at, duration_ms) VALUES (?1, ?2, NULL)",
-                rusqlite::params![track_id, time_ms / 1000],
-            )
-            .map(|_| ())
-            .map_err(|e| e.into())
-    } else {
-        queries::record_play(&db.conn, track_id, None)
-    };
-
-    if let Err(e) = result {
-        return SubsonicResponse::error(
-            json,
-            &SubsonicError::from(format!("Database error: {}", e)),
-        );
-    }
-
-    SubsonicResponse::ok(json).build()
+        result.map_err(|e| SubsonicError::from(format!("Database error: {}", e)))?;
+        Ok(b)
+    })
 }
 
 async fn get_random_songs(
     State(state): State<Arc<AppState>>,
     Query(params): Query<RandomSongsParams>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
+    respond_db(&state, &params.auth, |db, b| {
+        let size = params.size.unwrap_or(10);
+        let genre = params.genre.as_deref();
+        let fetch_count = if genre.is_some() { size * 5 } else { size };
 
-    let size = params.size.unwrap_or(10);
-    let genre = params.genre.as_deref();
-    let fetch_count = if genre.is_some() { size * 5 } else { size };
+        let tracks = queries::random_tracks(&db.conn, fetch_count, None)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
-
-    let tracks = match queries::random_tracks(&db.conn, fetch_count, None) {
-        Ok(t) => t,
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
-
-    let mut node = XmlNode::new("randomSongs").array_of("song");
-    let mut count = 0u32;
-    for t in &tracks {
-        if count >= size {
-            break;
+        let mut node = XmlNode::new("randomSongs").array_of("song");
+        let mut count = 0u32;
+        for t in &tracks {
+            if count >= size {
+                break;
+            }
+            if genre.is_some_and(|g| t.genre.as_deref() != Some(g)) {
+                continue;
+            }
+            node = node.child(track_to_xml_node(t));
+            count += 1;
         }
-        if genre.is_some_and(|g| t.genre.as_deref() != Some(g)) {
-            continue;
-        }
-        node = node.child(track_to_xml_node(t));
-        count += 1;
-    }
 
-    SubsonicResponse::ok(json).child(node).build()
+        Ok(b.child(node))
+    })
 }
 
 async fn get_similar_songs2(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SimilarSongs2Params>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
+    respond_db(&state, &params.auth, |db, b| {
+        let track_id = require_id(params.id.as_deref())?;
+        let count = params.count.unwrap_or(50);
 
-    let track_id = match params.id {
-        Some(id) => id,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
-    };
-    let count = params.count.unwrap_or(50);
+        let track = queries::get_track_row(&db.conn, track_id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+            .ok_or_else(|| SubsonicError::not_found("Track"))?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
-
-    let track = match queries::get_track_row(&db.conn, track_id) {
-        Ok(Some(t)) => t,
-        Ok(None) => return SubsonicResponse::error(json, &SubsonicError::not_found("Track")),
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
-
-    let artist_id = match track.artist_id {
-        Some(id) => id,
-        None => {
-            return SubsonicResponse::ok(json)
-                .child(XmlNode::new("similarSongs2"))
-                .build();
-        }
-    };
-
-    let similar = match queries::get_similar_artists(&db.conn, artist_id) {
-        Ok(s) => s,
-        Err(e) => return SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    };
-
-    let mut node = XmlNode::new("similarSongs2").array_of("song");
-    let mut total = 0usize;
-    for (artist_row, _score) in &similar {
-        if total >= count {
-            break;
-        }
-        let artist_tracks = match queries::tracks_for_artist(&db.conn, artist_row.id) {
-            Ok(t) => t,
-            Err(_) => continue,
+        let Some(artist_id) = track.artist_id else {
+            return Ok(b.child(XmlNode::new("similarSongs2")));
         };
-        for t in &artist_tracks {
+
+        let similar = queries::get_similar_artists(&db.conn, artist_id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+
+        let mut node = XmlNode::new("similarSongs2").array_of("song");
+        let mut total = 0usize;
+        for (artist_row, _score) in &similar {
             if total >= count {
                 break;
             }
-            node = node.child(track_to_xml_node(t));
-            total += 1;
+            let Ok(artist_tracks) = queries::tracks_for_artist(&db.conn, artist_row.id) else {
+                continue;
+            };
+            for t in &artist_tracks {
+                if total >= count {
+                    break;
+                }
+                node = node.child(track_to_xml_node(t));
+                total += 1;
+            }
         }
-    }
 
-    SubsonicResponse::ok(json).child(node).build()
+        Ok(b.child(node))
+    })
 }
 
 // ---------------------------------------------------------------------------
-// Endpoint: getMusicFolders (stub — clients call this on first connect)
+// Endpoints — server/user metadata
 // ---------------------------------------------------------------------------
 
 async fn get_music_folders(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params, &state) {
-        return SubsonicResponse::error(params.wants_json(), &e);
-    }
-    let json = params.wants_json();
-
-    SubsonicResponse::ok(json)
-        .child(
+    respond(&state, &params, |b| {
+        Ok(b.child(
             XmlNode::new("musicFolders").child(
                 XmlNode::new("musicFolder")
                     .attr("id", "1")
                     .attr("name", "Music"),
             ),
-        )
-        .build()
+        ))
+    })
 }
 
-// ---------------------------------------------------------------------------
-// Endpoint: getGenres
-// ---------------------------------------------------------------------------
+/// Clients call this during setup to decide which features to offer. koan has
+/// exactly one user — the `[subsonic]` credentials — and no admin surface.
+async fn get_user(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    respond(&state, &params, |b| {
+        Ok(b.child(
+            XmlNode::new("user")
+                .attr("username", &state.username)
+                .attr_bool("scrobblingEnabled", true)
+                .attr_bool("adminRole", false)
+                .attr_bool("settingsRole", false)
+                .attr_bool("downloadRole", true)
+                .attr_bool("uploadRole", false)
+                .attr_bool("playlistRole", true)
+                .attr_bool("coverArtRole", true)
+                .attr_bool("commentRole", false)
+                .attr_bool("podcastRole", false)
+                .attr_bool("streamRole", true)
+                .attr_bool("jukeboxRole", false)
+                .attr_bool("shareRole", false)
+                .attr_bool("videoConversionRole", false),
+        ))
+    })
+}
+
+/// Scans are driven by `koan scan`, never by a client, so this only ever
+/// reports the library size. Clients poll it after a connection test.
+async fn get_scan_status(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    respond_db(&state, &params, |db, b| {
+        let stats =
+            queries::library_stats(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
+        Ok(b.child(
+            XmlNode::new("scanStatus")
+                .attr_bool("scanning", false)
+                .attr_int("count", stats.total_tracks),
+        ))
+    })
+}
 
 async fn get_genres(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params, &state) {
-        return SubsonicResponse::error(params.wants_json(), &e);
-    }
-    let json = params.wants_json();
+    respond_db(&state, &params, |db, b| {
+        let mut stmt = db
+            .conn
+            .prepare(
+                "SELECT genre, COUNT(*), COUNT(DISTINCT album_id)
+                 FROM tracks WHERE genre IS NOT NULL AND genre != ''
+                 GROUP BY genre ORDER BY genre",
+            )
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, i64>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            })
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
-
-    let tracks = queries::all_tracks(&db.conn).unwrap_or_default();
-    let mut genre_counts: std::collections::BTreeMap<String, usize> =
-        std::collections::BTreeMap::new();
-    for t in &tracks {
-        if let Some(ref g) = t.genre {
-            *genre_counts.entry(g.clone()).or_default() += 1;
+        let mut genres_node = XmlNode::new("genres").array_of("genre");
+        for row in rows {
+            let (name, song_count, album_count) =
+                row.map_err(|e| SubsonicError::internal(e.to_string()))?;
+            genres_node = genres_node.child(
+                XmlNode::new("genre")
+                    .attr_int("songCount", song_count)
+                    .attr_int("albumCount", album_count)
+                    // The XSD carries the name as element text; `value` is the
+                    // JSON spelling of the same thing.
+                    .text(&name),
+            );
         }
-    }
 
-    let mut genres_node = XmlNode::new("genres").array_of("genre");
-    for (name, count) in &genre_counts {
-        genres_node = genres_node.child(
-            XmlNode::new("genre")
-                .attr("songCount", &count.to_string())
-                .attr("albumCount", "0")
-                .attr("value", name),
-        );
-    }
-
-    SubsonicResponse::ok(json).child(genres_node).build()
+        Ok(b.child(genres_node))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1481,176 +1843,152 @@ async fn get_playlists(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params, &state) {
-        return SubsonicResponse::error(params.wants_json(), &e);
-    }
-    let json = params.wants_json();
+    respond_db(&state, &params, |db, b| {
+        let snaps = queries::list_snapshots(&db.conn)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
+        let mut playlists_node = XmlNode::new("playlists").array_of("playlist");
+        for snap in &snaps {
+            playlists_node = playlists_node.child(
+                XmlNode::new("playlist")
+                    .attr("id", &snap.name)
+                    .attr("name", &snap.name)
+                    .attr_int("songCount", snap.track_count as i64)
+                    .attr("owner", &state.username)
+                    .attr_bool("public", false)
+                    .attr("created", &snap.created_at),
+            );
+        }
 
-    let snaps = queries::list_snapshots(&db.conn).unwrap_or_default();
-
-    let mut playlists_node = XmlNode::new("playlists").array_of("playlist");
-    for snap in &snaps {
-        playlists_node = playlists_node.child(
-            XmlNode::new("playlist")
-                .attr("id", &snap.name)
-                .attr("name", &snap.name)
-                .attr("songCount", &snap.track_count.to_string())
-                .attr("owner", &state.username)
-                .attr("public", "false")
-                .attr("created", &snap.created_at),
-        );
-    }
-
-    SubsonicResponse::ok(json).child(playlists_node).build()
+        Ok(b.child(playlists_node))
+    })
 }
 
-#[derive(Debug, Deserialize)]
-struct PlaylistIdParam {
-    id: Option<String>,
-    #[serde(flatten)]
-    auth: SubsonicParams,
-}
+/// A saved snapshot as a `<playlist>` with its members resolved.
+fn playlist_node(db: &Database, name: &str, owner: &str) -> Result<XmlNode, SubsonicError> {
+    let snap = queries::load_snapshot(&db.conn, name)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+        .ok_or_else(|| SubsonicError::not_found("Playlist"))?;
 
-async fn get_playlist(
-    State(state): State<Arc<AppState>>,
-    Query(params): Query<PlaylistIdParam>,
-) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
-
-    let name = match params.id.as_deref() {
-        Some(n) => n,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
-    };
-
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
-
-    let snap = match queries::load_snapshot(&db.conn, name) {
-        Ok(Some(s)) => s,
-        _ => return SubsonicResponse::error(json, &SubsonicError::not_found("Playlist")),
-    };
-
-    let mut playlist_node = XmlNode::new("playlist")
+    let mut node = XmlNode::new("playlist")
         .attr("id", &snap.name)
         .attr("name", &snap.name)
-        .attr("songCount", &snap.items.len().to_string())
-        .attr("owner", &state.username)
-        .attr("public", "false")
+        .attr_int("songCount", snap.items.len() as i64)
+        .attr("owner", owner)
+        .attr_bool("public", false)
         .attr("created", &snap.created_at)
         .array_of("entry");
 
-    // Resolve snapshot items to track entries.
+    // Playlist members are `<entry>`, not `<song>` — an XML client shown
+    // `<song>` sees an empty playlist.
     for item in &snap.items {
         if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &item.path)
             && let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
         {
-            playlist_node = playlist_node.child(track_to_xml_node(&track));
+            node = node.child(track_node(&track, "entry"));
         }
     }
 
-    SubsonicResponse::ok(json).child(playlist_node).build()
+    Ok(node)
 }
 
-#[derive(Debug, Deserialize)]
-struct CreatePlaylistParams {
-    name: Option<String>,
-    #[serde(rename = "playlistId")]
-    playlist_id: Option<String>,
-    #[serde(rename = "songId")]
-    song_id: Option<Vec<String>>,
-    #[serde(flatten)]
-    auth: SubsonicParams,
-}
-
-async fn create_playlist(
+async fn get_playlist(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<CreatePlaylistParams>,
+    Query(params): Query<IdParam>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
+    respond_db(&state, &params.auth, |db, b| {
+        let name = params
+            .id
+            .as_deref()
+            .ok_or_else(|| SubsonicError::missing_param("id"))?;
+        Ok(b.child(playlist_node(db, name, &state.username)?))
+    })
+}
 
-    let name = match params.name.as_deref().or(params.playlist_id.as_deref()) {
-        Some(n) => n,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("name")),
-    };
+async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    let params = RawParams::parse(raw.as_deref());
+    let auth = params.auth();
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
+    respond_db(&state, &auth, |db, b| {
+        let name = params
+            .get("name")
+            .or_else(|| params.get("playlistId"))
+            .ok_or_else(|| SubsonicError::missing_param("name"))?;
 
-    // Build persisted items from song IDs.
-    let mut items = Vec::new();
-    if let Some(ref ids) = params.song_id {
-        for id_str in ids {
-            if let Ok(tid) = id_str.parse::<i64>()
-                && let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
-            {
-                let path = track
-                    .path
-                    .as_deref()
-                    .or(track.cached_path.as_deref())
-                    .unwrap_or("");
-                items.push(koan_core::db::queries::playback_state::PersistedQueueItem {
-                    path: path.to_string(),
-                    title: track.title,
-                    artist: track.artist_name,
-                    album_artist: track.album_artist_name,
-                    album: track.album_title,
-                    year: None,
-                    codec: track.codec,
-                    track_number: track.track_number.map(|n| n as i64),
-                    disc: track.disc.map(|n| n as i64),
-                    duration_ms: track.duration_ms.map(|d| d as u64),
-                    db_id: Some(tid),
-                });
-            }
+        let mut items = Vec::new();
+        for id_str in params.all("songId") {
+            let Ok(tid) = id_str.parse::<i64>() else {
+                continue;
+            };
+            let Some(track) = queries::get_track_row(&db.conn, tid)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+            else {
+                continue;
+            };
+            let path = track
+                .path
+                .as_deref()
+                .or(track.cached_path.as_deref())
+                .unwrap_or("");
+            items.push(koan_core::db::queries::playback_state::PersistedQueueItem {
+                path: path.to_string(),
+                title: track.title,
+                artist: track.artist_name,
+                album_artist: track.album_artist_name,
+                album: track.album_title,
+                year: None,
+                codec: track.codec,
+                track_number: track.track_number.map(|n| n as i64),
+                disc: track.disc.map(|n| n as i64),
+                duration_ms: track.duration_ms.map(|d| d as u64),
+                db_id: Some(tid),
+            });
         }
-    }
 
-    if let Err(e) = queries::save_snapshot(&db.conn, name, &items, None, 0) {
-        return SubsonicResponse::error(json, &SubsonicError::from(e.to_string()));
-    }
+        queries::save_snapshot(&db.conn, name, &items, None, 0)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-    SubsonicResponse::ok(json).build()
+        // Since 1.14.0 the response carries the playlist that was created;
+        // clients read the id back off it rather than guessing.
+        Ok(b.child(playlist_node(db, name, &state.username)?))
+    })
 }
 
 async fn delete_playlist(
     State(state): State<Arc<AppState>>,
-    Query(params): Query<PlaylistIdParam>,
+    Query(params): Query<IdParam>,
 ) -> Response {
-    if let Err(e) = validate_auth(&params.auth, &state) {
-        return SubsonicResponse::error(params.auth.wants_json(), &e);
-    }
-    let json = params.auth.wants_json();
+    respond_db(&state, &params.auth, |db, b| {
+        let name = params
+            .id
+            .as_deref()
+            .ok_or_else(|| SubsonicError::missing_param("id"))?;
 
-    let name = match params.id.as_deref() {
-        Some(n) => n,
-        None => return SubsonicResponse::error(json, &SubsonicError::missing_param("id")),
-    };
+        match queries::delete_snapshot(&db.conn, name) {
+            Ok(true) => Ok(b),
+            Ok(false) => Err(SubsonicError::not_found("Playlist")),
+            Err(e) => Err(SubsonicError::internal(e.to_string())),
+        }
+    })
+}
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err(e) => return SubsonicResponse::error(json, &e),
-    };
+// ---------------------------------------------------------------------------
+// Unimplemented endpoints
+// ---------------------------------------------------------------------------
 
-    match queries::delete_snapshot(&db.conn, name) {
-        Ok(true) => SubsonicResponse::ok(json).build(),
-        Ok(false) => SubsonicResponse::error(json, &SubsonicError::not_found("Playlist")),
-        Err(e) => SubsonicResponse::error(json, &SubsonicError::from(e.to_string())),
-    }
+/// Anything under `/rest/` with no handler.
+///
+/// Registered as a wildcard route rather than a router fallback: this router is
+/// merged into the GraphQL app, and a fallback there would swallow every 404 in
+/// the process. A body-less 404 reads to a client as a broken server, and
+/// several abort the connection test on one.
+async fn unsupported_endpoint(UrlPath(path): UrlPath<String>, RawQuery(raw): RawQuery) -> Response {
+    let params = RawParams::parse(raw.as_deref());
+    let endpoint = path.trim_end_matches(".view");
+    SubsonicResponse::error(
+        params.auth().wants_json(),
+        &SubsonicError::unsupported(endpoint),
+    )
 }
 
 // ===========================================================================
@@ -1660,7 +1998,7 @@ async fn delete_playlist(
 /// Register all Subsonic REST routes on the given router.
 fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router<Arc<AppState>> {
     router
-        // Browsing
+        // Browsing (ID3)
         .route("/rest/ping", get(ping))
         .route("/rest/ping.view", get(ping))
         .route("/rest/getLicense", get(get_license))
@@ -1671,10 +2009,17 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/getArtist.view", get(get_artist))
         .route("/rest/getAlbum", get(get_album))
         .route("/rest/getAlbum.view", get(get_album))
+        .route("/rest/getAlbumList", get(get_album_list))
+        .route("/rest/getAlbumList.view", get(get_album_list))
         .route("/rest/getAlbumList2", get(get_album_list2))
         .route("/rest/getAlbumList2.view", get(get_album_list2))
         .route("/rest/getSong", get(get_song))
         .route("/rest/getSong.view", get(get_song))
+        // Browsing (file tree)
+        .route("/rest/getIndexes", get(get_indexes))
+        .route("/rest/getIndexes.view", get(get_indexes))
+        .route("/rest/getMusicDirectory", get(get_music_directory))
+        .route("/rest/getMusicDirectory.view", get(get_music_directory))
         // Search
         .route("/rest/search3", get(search3))
         .route("/rest/search3.view", get(search3))
@@ -1696,11 +2041,15 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/getRandomSongs.view", get(get_random_songs))
         .route("/rest/getSimilarSongs2", get(get_similar_songs2))
         .route("/rest/getSimilarSongs2.view", get(get_similar_songs2))
-        // Stubs + extras
+        // Server + user metadata
         .route("/rest/getMusicFolders", get(get_music_folders))
         .route("/rest/getMusicFolders.view", get(get_music_folders))
         .route("/rest/getGenres", get(get_genres))
         .route("/rest/getGenres.view", get(get_genres))
+        .route("/rest/getUser", get(get_user))
+        .route("/rest/getUser.view", get(get_user))
+        .route("/rest/getScanStatus", get(get_scan_status))
+        .route("/rest/getScanStatus.view", get(get_scan_status))
         // Playlists (mapped to koan snapshots)
         .route("/rest/getPlaylists", get(get_playlists))
         .route("/rest/getPlaylists.view", get(get_playlists))
@@ -1710,6 +2059,8 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/createPlaylist.view", get(create_playlist))
         .route("/rest/deletePlaylist", get(delete_playlist))
         .route("/rest/deletePlaylist.view", get(delete_playlist))
+        // Everything else under /rest/
+        .route("/rest/{*endpoint}", get(unsupported_endpoint))
 }
 
 /// Build a Subsonic-compatible REST API router.
@@ -1740,6 +2091,14 @@ pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
         db_path,
         username: cfg.subsonic.username.clone(),
         password,
+        upstream: koan_core::helpers::subsonic_auth(&cfg),
+        http: reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_default(),
+        cover_cache: Mutex::new(LruCache::new(
+            NonZeroUsize::new(COVER_CACHE_ENTRIES).unwrap(),
+        )),
     });
 
     Some(register_subsonic_routes(axum::Router::new()).with_state(state))
@@ -1767,6 +2126,11 @@ mod tests {
             db_path,
             username: "testuser".into(),
             password: "testpass".into(),
+            upstream: None,
+            http: reqwest::Client::new(),
+            cover_cache: Mutex::new(LruCache::new(
+                NonZeroUsize::new(COVER_CACHE_ENTRIES).unwrap(),
+            )),
         });
         (state, dir)
     }
@@ -1786,14 +2150,13 @@ mod tests {
         }
     }
 
-    fn seed_data(state: &AppState) {
-        let db = Database::open(&state.db_path).unwrap();
-        let meta = TrackMeta {
-            title: "Test Song".into(),
+    fn track_meta(path: &str, title: &str, album: &str, track_number: i32) -> TrackMeta {
+        TrackMeta {
+            title: title.into(),
             artist: "Test Artist".into(),
-            album: "Test Album".into(),
+            album: album.into(),
             album_artist: Some("Test Artist".into()),
-            track_number: Some(1),
+            track_number: Some(track_number),
             disc: Some(1),
             duration_ms: Some(240_000),
             codec: Some("FLAC".into()),
@@ -1802,7 +2165,7 @@ mod tests {
             channels: Some(2),
             bitrate: Some(1411),
             genre: Some("Rock".into()),
-            path: Some("/music/test.flac".into()),
+            path: Some(path.into()),
             date: Some("2020".into()),
             label: None,
             size_bytes: None,
@@ -1810,8 +2173,32 @@ mod tests {
             source: "local".into(),
             remote_id: None,
             remote_url: None,
-        };
-        queries::upsert_track(&db.conn, &meta).unwrap();
+        }
+    }
+
+    fn seed_data(state: &AppState) {
+        let db = Database::open(&state.db_path).unwrap();
+        queries::upsert_track(
+            &db.conn,
+            &track_meta("/music/test.flac", "Test Song", "Test Album", 1),
+        )
+        .unwrap();
+    }
+
+    /// Seed a track backed by a file that actually exists, for the paths that
+    /// read bytes off disk.
+    fn seed_local_file(state: &AppState, dir: &std::path::Path, bytes: &[u8]) -> i64 {
+        let path = dir.join("real.flac");
+        std::fs::write(&path, bytes).unwrap();
+        let db = Database::open(&state.db_path).unwrap();
+        queries::upsert_track(
+            &db.conn,
+            &track_meta(path.to_str().unwrap(), "Test Song", "Test Album", 1),
+        )
+        .unwrap();
+        queries::track_id_by_path(&db.conn, path.to_str().unwrap())
+            .unwrap()
+            .unwrap()
     }
 
     async fn get_response(app: axum::Router, uri: &str) -> (StatusCode, String) {
@@ -1823,7 +2210,30 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
             .unwrap();
-        (status, String::from_utf8(body.to_vec()).unwrap())
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    async fn get_with_range(
+        app: axum::Router,
+        uri: &str,
+        range: &str,
+    ) -> (StatusCode, HeaderMap, Vec<u8>) {
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri(uri)
+                    .header(header::RANGE, range)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let status = resp.status();
+        let headers = resp.headers().clone();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, headers, body.to_vec())
     }
 
     // --- Unit tests ---
@@ -1853,27 +2263,81 @@ mod tests {
 
     #[test]
     fn test_parse_range_full() {
-        assert_eq!(parse_range("bytes=0-999", 5000), Some((0, 999)));
+        assert_eq!(
+            parse_range("bytes=0-999", 5000),
+            RangeRequest::Satisfiable { start: 0, end: 999 }
+        );
     }
 
     #[test]
     fn test_parse_range_open_end() {
-        assert_eq!(parse_range("bytes=1000-", 5000), Some((1000, 4999)));
+        assert_eq!(
+            parse_range("bytes=1000-", 5000),
+            RangeRequest::Satisfiable {
+                start: 1000,
+                end: 4999
+            }
+        );
     }
 
     #[test]
     fn test_parse_range_suffix() {
-        assert_eq!(parse_range("bytes=-500", 5000), Some((4500, 4999)));
+        assert_eq!(
+            parse_range("bytes=-500", 5000),
+            RangeRequest::Satisfiable {
+                start: 4500,
+                end: 4999
+            }
+        );
     }
 
     #[test]
     fn test_parse_range_out_of_bounds() {
-        assert_eq!(parse_range("bytes=5000-6000", 5000), None);
+        assert_eq!(
+            parse_range("bytes=5000-6000", 5000),
+            RangeRequest::Unsatisfiable
+        );
     }
 
     #[test]
     fn test_parse_range_clamps_end() {
-        assert_eq!(parse_range("bytes=4000-9999", 5000), Some((4000, 4999)));
+        assert_eq!(
+            parse_range("bytes=4000-9999", 5000),
+            RangeRequest::Satisfiable {
+                start: 4000,
+                end: 4999
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_range_on_empty_file() {
+        assert_eq!(parse_range("bytes=0-", 0), RangeRequest::Unsatisfiable);
+        assert_eq!(parse_range("bytes=-100", 0), RangeRequest::Unsatisfiable);
+    }
+
+    #[test]
+    fn test_parse_range_malformed_is_ignored() {
+        assert_eq!(parse_range("seconds=0-10", 5000), RangeRequest::Malformed);
+        assert_eq!(parse_range("bytes=abc-def", 5000), RangeRequest::Malformed);
+        // Multipart ranges are unsupported; serving the whole body is legal.
+        assert_eq!(parse_range("bytes=0-1,5-6", 5000), RangeRequest::Malformed);
+    }
+
+    #[test]
+    fn test_parse_entity_id() {
+        assert_eq!(parse_entity_id("5"), Some((None, 5)));
+        assert_eq!(parse_entity_id("mf-5"), Some((Some(EntityKind::Song), 5)));
+        assert_eq!(parse_entity_id("al-5"), Some((Some(EntityKind::Album), 5)));
+        assert_eq!(parse_entity_id("ar-5"), Some((Some(EntityKind::Artist), 5)));
+        assert_eq!(parse_entity_id("not-an-id"), None);
+    }
+
+    #[test]
+    fn test_raw_params_repeated_keys() {
+        let p = RawParams::parse(Some("name=mix&songId=1&songId=2&songId%5B%5D=3"));
+        assert_eq!(p.get("name"), Some("mix"));
+        assert_eq!(p.all("songId").collect::<Vec<_>>(), vec!["1", "2", "3"]);
     }
 
     // --- Integration tests ---
@@ -1967,12 +2431,6 @@ mod tests {
         assert_eq!(decoded.dimensions(), (1, 1));
     }
 
-    #[test]
-    fn test_parse_range_on_empty_file() {
-        assert_eq!(parse_range("bytes=0-", 0), None);
-        assert_eq!(parse_range("bytes=-100", 0), None);
-    }
-
     #[tokio::test]
     async fn test_get_license() {
         let (state, _dir) = test_state();
@@ -2058,6 +2516,113 @@ mod tests {
         assert!(body.contains("Test Artist"));
     }
 
+    /// The typed-attribute rewrite must not change the XML wire format: every
+    /// attribute is still a quoted string, spelled exactly as before.
+    #[tokio::test]
+    async fn test_song_xml_is_unchanged_by_typed_attributes() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getSong?{}&id={}", auth_query(""), track_id),
+        )
+        .await;
+
+        let song = body
+            .lines()
+            .find(|l| l.trim_start().starts_with("<song "))
+            .expect("no <song> element")
+            .trim()
+            .to_string();
+        assert_eq!(
+            song,
+            format!(
+                concat!(
+                    r#"<song id="{id}" title="Test Song" album="Test Album" artist="Test Artist" "#,
+                    r#"track="1" discNumber="1" duration="240" bitRate="1411" suffix="flac" "#,
+                    r#"contentType="audio/flac" genre="Rock" albumId="1" artistId="1" "#,
+                    r#"parent="al-1" coverArt="mf-{id}" type="music" isDir="false"/>"#
+                ),
+                id = track_id
+            )
+        );
+    }
+
+    /// The failure that stopped Symfonium, Substreamer and Feishin dead: a
+    /// strictly-typed deserialiser rejects `"duration": "240"`.
+    #[tokio::test]
+    async fn test_song_json_field_types() {
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase")]
+        struct StrictSong {
+            id: String,
+            title: String,
+            duration: i64,
+            track: i64,
+            bit_rate: i64,
+            disc_number: i64,
+            is_dir: bool,
+            #[serde(rename = "type")]
+            kind: String,
+            cover_art: String,
+        }
+
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getSong?{}&id={}", auth_query("f=json"), track_id),
+        )
+        .await;
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let song: StrictSong =
+            serde_json::from_value(parsed["subsonic-response"]["song"].clone()).unwrap();
+
+        assert_eq!(song.id, track_id.to_string());
+        assert_eq!(song.title, "Test Song");
+        assert_eq!(song.duration, 240);
+        assert_eq!(song.track, 1);
+        assert_eq!(song.bit_rate, 1411);
+        assert_eq!(song.disc_number, 1);
+        assert!(!song.is_dir);
+        assert_eq!(song.kind, "music");
+        assert_eq!(song.cover_art, format!("mf-{}", track_id));
+    }
+
+    #[tokio::test]
+    async fn test_album_json_field_types() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let album_id = queries::all_albums(&db.conn).unwrap()[0].id;
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getAlbum?{}&id={}", auth_query("f=json"), album_id),
+        )
+        .await;
+
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let album = &parsed["subsonic-response"]["album"];
+        assert_eq!(album["songCount"], serde_json::json!(1));
+        assert_eq!(album["year"], serde_json::json!(2020));
+        assert_eq!(album["isDir"], serde_json::json!(true));
+        assert_eq!(album["coverArt"], format!("al-{}", album_id));
+    }
+
     #[tokio::test]
     async fn test_get_album_list2() {
         let (state, _dir) = test_state();
@@ -2076,6 +2641,21 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_album_list_v1() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getAlbumList?{}&type=newest", auth_query("")),
+        )
+        .await;
+        assert!(body.contains("<albumList"));
+        assert!(body.contains("Test Album"));
+    }
+
+    #[tokio::test]
     async fn test_get_song_not_found() {
         let (state, _dir) = test_state();
         let app = build_test_router(state);
@@ -2083,6 +2663,22 @@ mod tests {
             get_response(app, &format!("/rest/getSong?{}&id=99999", auth_query(""))).await;
         assert!(body.contains("status=\"failed\""));
         assert!(body.contains("code=\"70\""));
+    }
+
+    /// A malformed id used to reach axum's `Query` extractor and come back as a
+    /// bare HTTP 400 with a plain-text body — unparseable by any client.
+    #[tokio::test]
+    async fn test_bad_id_is_a_subsonic_error() {
+        let (state, _dir) = test_state();
+        let app = build_test_router(state);
+        let (status, body) = get_response(
+            app,
+            &format!("/rest/stream?{}&id=not-a-number", auth_query("")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("status=\"failed\""));
+        assert!(body.contains("code=\"10\""));
     }
 
     #[tokio::test]
@@ -2119,6 +2715,27 @@ mod tests {
         assert!(body.contains("status=\"ok\""));
     }
 
+    #[tokio::test]
+    async fn test_unknown_endpoint_is_subsonic_error_70() {
+        let (state, _dir) = test_state();
+        let app = build_test_router(state.clone());
+        let (status, body) =
+            get_response(app, &format!("/rest/getPodcasts?{}", auth_query(""))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("status=\"failed\""));
+        assert!(body.contains("code=\"70\""));
+        assert!(body.contains("getPodcasts"));
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getBookmarks.view?{}", auth_query("f=json")),
+        )
+        .await;
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(parsed["subsonic-response"]["error"]["code"], 70);
+    }
+
     // --- New endpoint tests ---
 
     #[tokio::test]
@@ -2132,12 +2749,85 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_genres() {
+    async fn test_get_user_and_scan_status() {
         let (state, _dir) = test_state();
         seed_data(&state);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/getUser?{}", auth_query(""))).await;
+        assert!(body.contains("username=\"testuser\""));
+        assert!(body.contains("streamRole=\"true\""));
+
         let app = build_test_router(state);
+        let (_, body) = get_response(app, &format!("/rest/getScanStatus?{}", auth_query(""))).await;
+        assert!(body.contains("scanning=\"false\""));
+        assert!(body.contains("count=\"1\""));
+    }
+
+    #[tokio::test]
+    async fn test_get_indexes_and_music_directory() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let artist_id = queries::all_artists(&db.conn).unwrap()[0].id;
+        let album_id = queries::all_albums(&db.conn).unwrap()[0].id;
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/getIndexes?{}", auth_query(""))).await;
+        assert!(body.contains("<indexes"));
+        assert!(body.contains(&format!("id=\"ar-{}\"", artist_id)));
+
+        // Artist directory lists albums.
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/getMusicDirectory?{}&id=ar-{}",
+                auth_query(""),
+                artist_id
+            ),
+        )
+        .await;
+        assert!(body.contains(&format!("id=\"al-{}\"", album_id)));
+        assert!(body.contains("isDir=\"true\""));
+
+        // Album directory lists songs.
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/getMusicDirectory?{}&id=al-{}",
+                auth_query(""),
+                album_id
+            ),
+        )
+        .await;
+        assert!(body.contains("Test Song"));
+        assert!(body.contains("<child"));
+    }
+
+    #[tokio::test]
+    async fn test_get_genres_xml_carries_name_as_text() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let app = build_test_router(state.clone());
         let (_, body) = get_response(app, &format!("/rest/getGenres?{}", auth_query(""))).await;
-        assert!(body.contains("Rock"));
+        assert!(
+            body.contains(">Rock</genre>"),
+            "genre name must be element text: {}",
+            body
+        );
+
+        // JSON spells the same value as a `value` member.
+        let app = build_test_router(state);
+        let (_, body) =
+            get_response(app, &format!("/rest/getGenres?{}", auth_query("f=json"))).await;
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let genre = &parsed["subsonic-response"]["genres"]["genre"][0];
+        assert_eq!(genre["value"], "Rock");
+        assert_eq!(genre["songCount"], serde_json::json!(1));
     }
 
     #[tokio::test]
@@ -2174,11 +2864,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_create_playlist_with_songs() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+
+        // Two `songId` values — the shape every client sends, and the one
+        // `serde_urlencoded` turned into a bare HTTP 400.
+        let app = build_test_router(state.clone());
+        let (status, body) = get_response(
+            app,
+            &format!(
+                "/rest/createPlaylist?{}&name=testmix&songId={}&songId={}",
+                auth_query(""),
+                track_id,
+                track_id
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("status=\"ok\""), "createPlaylist: {}", body);
+        // The response carries the playlist itself, per 1.14.0.
+        assert!(body.contains("<playlist id=\"testmix\""), "{}", body);
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/getPlaylist?{}&id=testmix", auth_query("")),
+        )
+        .await;
+        assert!(body.contains("songCount=\"2\""), "{}", body);
+        // Playlist members are `<entry>`, never `<song>`.
+        assert_eq!(body.matches("<entry ").count(), 2, "{}", body);
+        assert!(!body.contains("<song "));
+    }
+
+    #[tokio::test]
     async fn test_playlists_crud() {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        // Create (empty playlist first — songId[] parsing needs special handling)
         let app = build_test_router(state.clone());
         let (_, body) = get_response(
             app,
@@ -2252,5 +2979,129 @@ mod tests {
         )
         .await;
         assert!(body.contains("randomSongs"));
+    }
+
+    // --- Streaming ---
+
+    #[tokio::test]
+    async fn test_stream_partial_content() {
+        let (state, dir) = test_state();
+        let track_id = seed_local_file(&state, dir.path(), &[0u8; 1000]);
+
+        let app = build_test_router(state);
+        let (status, headers, body) = get_with_range(
+            app,
+            &format!("/rest/stream?{}&id={}", auth_query(""), track_id),
+            "bytes=100-199",
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(headers[header::CONTENT_RANGE], "bytes 100-199/1000");
+        assert_eq!(body.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn test_stream_unsatisfiable_range_is_416() {
+        let (state, dir) = test_state();
+        let track_id = seed_local_file(&state, dir.path(), &[0u8; 1000]);
+
+        let app = build_test_router(state);
+        let (status, headers, body) = get_with_range(
+            app,
+            &format!("/rest/stream?{}&id={}", auth_query(""), track_id),
+            "bytes=5000-6000",
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(headers[header::CONTENT_RANGE], "bytes */1000");
+        assert!(body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_stream_malformed_range_serves_whole_body() {
+        let (state, dir) = test_state();
+        let track_id = seed_local_file(&state, dir.path(), &[0u8; 1000]);
+
+        let app = build_test_router(state);
+        let (status, _, body) = get_with_range(
+            app,
+            &format!("/rest/stream?{}&id={}", auth_query(""), track_id),
+            "seconds=0-10",
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body.len(), 1000);
+    }
+
+    // --- Cover art ---
+
+    /// `getCoverArt` resolved every id as a track id, so `id=5` meaning
+    /// "album 5" served track 5's art. Seeded so the two number spaces cross:
+    /// album 2 holds track 3, so `al-2` and `mf-2` must land on different files.
+    #[test]
+    fn test_cover_art_id_namespacing() {
+        let (state, dir) = test_state();
+        let db = Database::open(&state.db_path).unwrap();
+        for (n, album) in [(1, "Album One"), (2, "Album One"), (3, "Album Two")] {
+            let path = dir.path().join(format!("t{}.flac", n));
+            queries::upsert_track(
+                &db.conn,
+                &track_meta(path.to_str().unwrap(), &format!("Song {}", n), album, n),
+            )
+            .unwrap();
+        }
+
+        let track3 =
+            queries::track_id_by_path(&db.conn, dir.path().join("t3.flac").to_str().unwrap())
+                .unwrap()
+                .unwrap();
+        let track2 =
+            queries::track_id_by_path(&db.conn, dir.path().join("t2.flac").to_str().unwrap())
+                .unwrap()
+                .unwrap();
+        let album_two = queries::get_track_row(&db.conn, track3)
+            .unwrap()
+            .unwrap()
+            .album_id
+            .unwrap();
+        assert_eq!(album_two, track2, "test needs the id spaces to overlap");
+
+        // `al-2` is Album Two — track 3's file, not track 2's.
+        assert_eq!(
+            cover_source_path(&db, Some(EntityKind::Album), album_two).unwrap(),
+            dir.path().join("t3.flac")
+        );
+        // `mf-2` and a bare `2` are both track 2.
+        assert_eq!(
+            cover_source_path(&db, Some(EntityKind::Song), track2).unwrap(),
+            dir.path().join("t2.flac")
+        );
+        assert_eq!(
+            cover_source_path(&db, None, track2).unwrap(),
+            dir.path().join("t2.flac")
+        );
+        // An artist resolves through their first album's first track.
+        let artist_id = queries::all_artists(&db.conn).unwrap()[0].id;
+        assert!(
+            cover_source_path(&db, Some(EntityKind::Artist), artist_id)
+                .unwrap()
+                .starts_with(dir.path())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_cover_art_missing_album_is_error_70() {
+        let (state, _dir) = test_state();
+        let app = build_test_router(state);
+        let (status, body) = get_response(
+            app,
+            &format!("/rest/getCoverArt?{}&id=al-9999", auth_query("")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(body.contains("code=\"70\""));
     }
 }

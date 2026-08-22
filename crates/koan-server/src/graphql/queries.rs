@@ -371,6 +371,7 @@ impl QueryRoot {
             let (items, _cursor) = state.snapshot_playlist();
             let playlist_item = items.iter().find(|i| i.id == info.id);
             let track = GqlNowPlayingTrack {
+                track_id: playlist_item.and_then(|i| i.db_id),
                 title: playlist_item.map(|i| i.title.clone()).unwrap_or_default(),
                 artist: playlist_item.map(|i| i.artist.clone()).unwrap_or_default(),
                 album: playlist_item.map(|i| i.album.clone()).unwrap_or_default(),
@@ -426,6 +427,7 @@ impl QueryRoot {
 
                 GqlQueueEntry {
                     queue_item_id: entry.id.0.to_string(),
+                    track_id: entry.db_id,
                     title: entry.title.clone(),
                     artist: entry.artist.clone(),
                     album: entry.album.clone(),

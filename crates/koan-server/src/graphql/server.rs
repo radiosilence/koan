@@ -210,8 +210,11 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // dedicated `--subsonic <port>` listener, which broke `koan play
         // --server <url>` because the remote TUI bridge builds its stream
         // URL off the GraphQL base.
-        let subsonic_merged = crate::subsonic::subsonic_router(db_path.clone());
+        // Built once and cloned: each build re-read the config and, on macOS,
+        // prompted the keychain for the Subsonic secret.
+        let subsonic_merged = crate::subsonic::subsonic_router(db_path);
         let subsonic_on_main = subsonic_merged.is_some();
+        let subsonic_dedicated = subsonic_merged.clone();
 
         let mut app = auth_app.merge(gql_app);
         if let Some(sub) = subsonic_merged {
@@ -280,7 +283,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // behavior for users who want Subsonic on its own port.
         let extra_sub_port = subsonic_port.filter(|p| *p != port);
         if let Some(sub_port) = extra_sub_port
-            && let Some(sub_app) = crate::subsonic::subsonic_router(db_path)
+            && let Some(sub_app) = subsonic_dedicated
         {
             let sub_addr = std::net::SocketAddr::new(bind, sub_port);
             match tokio::net::TcpListener::bind(sub_addr).await {

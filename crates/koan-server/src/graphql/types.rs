@@ -341,6 +341,10 @@ pub(super) struct GqlNowPlaying {
 #[derive(SimpleObject)]
 #[graphql(name = "NowPlayingTrack")]
 pub(super) struct GqlNowPlayingTrack {
+    /// Library row id, when the queue entry came from the database. The remote
+    /// bridge streams `/rest/stream?id=<trackId>`; without it a client had no
+    /// way to name the track the server is playing.
+    pub track_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -354,6 +358,7 @@ pub(super) struct GqlNowPlayingTrack {
 
 pub(super) struct GqlQueueEntry {
     pub queue_item_id: String,
+    pub track_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -370,6 +375,11 @@ pub(super) struct GqlQueueEntry {
 impl GqlQueueEntry {
     async fn queue_item_id(&self) -> &str {
         &self.queue_item_id
+    }
+
+    /// Library row id — see `NowPlayingTrack::trackId`.
+    async fn track_id(&self) -> Option<i64> {
+        self.track_id
     }
 
     async fn title(&self) -> &str {

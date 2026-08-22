@@ -19,6 +19,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
 };
+use koan_core::remote::client::SubsonicClient;
 use koan_core::remote::download;
 
 /// Disk budget for streamed-from-server tracks. These files belong to no local
@@ -56,7 +57,7 @@ pub fn spawn_remote_bridge(
     let (cmd_tx, cmd_rx) = bounded::<PlayerCommand>(16);
 
     let client = GraphQLClient::new(server_url);
-    let stream_base = format!("{}/rest/stream", server_url.trim_end_matches('/'));
+    let streamer = stream_client(server_url).map(Arc::new);
 
     // Poller thread: syncs remote state → local SharedPlayerState.
     // In client mode also triggers downloads. In jukebox mode, display only.
@@ -64,11 +65,11 @@ pub fn spawn_remote_bridge(
         let state = state.clone();
         let local_tx = local_tx.clone();
         let client = client.clone();
-        let stream_base = stream_base.clone();
+        let streamer = streamer.clone();
         std::thread::Builder::new()
             .name("koan-remote-poll".into())
             .spawn(move || {
-                poll_and_stream_loop(client, state, local_tx, stream_base, jukebox);
+                poll_and_stream_loop(client, state, local_tx, streamer, jukebox);
             })
             .expect("failed to spawn remote poller");
     }
@@ -86,6 +87,32 @@ pub fn spawn_remote_bridge(
     }
 
     (state, timeline, viz, cmd_tx)
+}
+
+/// Client for the server's `/rest/*` endpoints.
+///
+/// `koan serve` guards those with the `[subsonic]` credentials, not the JWT the
+/// GraphQL side uses, so the bridge signs its stream requests the Subsonic way
+/// — `u` + `t=md5(secret + salt)` + `s`. The credentials come from *this*
+/// machine's config: pointing at someone else's server means copying its
+/// `[subsonic]` username and secret locally.
+fn stream_client(server_url: &str) -> Option<SubsonicClient> {
+    let cfg = koan_core::config::Config::load().unwrap_or_default();
+    let secret = koan_core::helpers::get_subsonic_password(&cfg);
+    match secret {
+        Some(secret) if !cfg.subsonic.username.is_empty() => Some(SubsonicClient::new(
+            server_url,
+            &cfg.subsonic.username,
+            &secret,
+        )),
+        _ => {
+            log::warn!(
+                "no [subsonic] credentials configured — cannot stream audio from the server. \
+                 Run `koan subsonic setup` and copy the secret from the server's config."
+            );
+            None
+        }
+    }
 }
 
 /// Cache path for a track streamed from a koan server.
@@ -142,8 +169,8 @@ fn prune_stream_cache(cache_dir: &Path, budget: u64, keep: &Path) {
 
 /// Downloads a track from the server and plays it via the local player.
 fn download_and_play(
-    http: &reqwest::blocking::Client,
-    stream_url: &str,
+    streamer: &SubsonicClient,
+    track_id: i64,
     dest: &Path,
     queue_id: QueueItemId,
     state: &Arc<SharedPlayerState>,
@@ -163,30 +190,25 @@ fn download_and_play(
     let bytes_written = Arc::new(AtomicU64::new(0));
     let stream_ready_sent = std::sync::atomic::AtomicBool::new(false);
 
-    let result = download::download_with_retries(
-        dest,
-        download::DEFAULT_ATTEMPTS,
-        || Ok(http.get(stream_url)),
-        |downloaded, total| {
-            bytes_written.store(downloaded, Ordering::Release);
-            state.update_load_state(
-                queue_id,
-                LoadState::Downloading {
-                    downloaded,
-                    total,
-                    bytes_written: bytes_written.clone(),
-                },
-            );
-            if !stream_ready_sent.load(Ordering::Relaxed)
-                && downloaded >= koan_core::player::state::STREAM_THRESHOLD
-            {
-                stream_ready_sent.store(true, Ordering::Relaxed);
-                local_tx
-                    .send(PlayerCommand::TrackStreamReady(queue_id))
-                    .ok();
-            }
-        },
-    );
+    let result = streamer.stream_to_file(&track_id.to_string(), dest, |downloaded, total| {
+        bytes_written.store(downloaded, Ordering::Release);
+        state.update_load_state(
+            queue_id,
+            LoadState::Downloading {
+                downloaded,
+                total,
+                bytes_written: bytes_written.clone(),
+            },
+        );
+        if !stream_ready_sent.load(Ordering::Relaxed)
+            && downloaded >= koan_core::player::state::STREAM_THRESHOLD
+        {
+            stream_ready_sent.store(true, Ordering::Relaxed);
+            local_tx
+                .send(PlayerCommand::TrackStreamReady(queue_id))
+                .ok();
+        }
+    });
 
     if let Err(e) = result {
         log::warn!("failed to stream {} from server: {}", dest.display(), e);
@@ -203,16 +225,12 @@ fn poll_and_stream_loop(
     client: GraphQLClient,
     state: Arc<SharedPlayerState>,
     local_tx: Sender<PlayerCommand>,
-    stream_base: String,
+    streamer: Option<Arc<SubsonicClient>>,
     jukebox: bool,
 ) {
     let mut last_track_id: Option<String> = None;
     let mut connected = true;
     let cache_dir = koan_core::config::config_dir().join("cache/remote-stream");
-    let http = download::download_client().unwrap_or_else(|e| {
-        log::warn!("falling back to default HTTP client: {}", e);
-        reqwest::blocking::Client::new()
-    });
 
     loop {
         // Poll now playing from server.
@@ -275,31 +293,43 @@ fn poll_and_stream_loop(
                             local_tx.send(PlayerCommand::ClearPlaylist).ok();
                             local_tx.send(PlayerCommand::AddToPlaylist(vec![item])).ok();
 
-                            let stream_url = format!("{}?id={}", stream_base, qid_str);
-                            let state_dl = state.clone();
-                            let tx_dl = local_tx.clone();
-                            let http_dl = http.clone();
-                            let cache_dir_dl = cache_dir.clone();
-                            if let Err(e) = std::thread::Builder::new()
-                                .name("koan-remote-dl".into())
-                                .spawn(move || {
-                                    prune_stream_cache(
-                                        &cache_dir_dl,
-                                        STREAM_CACHE_BUDGET_BYTES,
-                                        &dest,
-                                    );
-                                    download_and_play(
-                                        &http_dl,
-                                        &stream_url,
-                                        &dest,
-                                        queue_id,
-                                        &state_dl,
-                                        &tx_dl,
-                                    );
-                                })
-                            {
-                                log::error!("failed to spawn stream download: {}", e);
-                                state.update_load_state(queue_id, LoadState::Failed(e.to_string()));
+                            // `/rest/stream` takes the server's library row id.
+                            // The queue item id was a UUIDv7 the endpoint could
+                            // never resolve, so every request 400'd.
+                            match (streamer.clone(), track.track_id) {
+                                (Some(streamer), Some(track_id)) => {
+                                    let state_dl = state.clone();
+                                    let tx_dl = local_tx.clone();
+                                    let cache_dir_dl = cache_dir.clone();
+                                    if let Err(e) = std::thread::Builder::new()
+                                        .name("koan-remote-dl".into())
+                                        .spawn(move || {
+                                            prune_stream_cache(
+                                                &cache_dir_dl,
+                                                STREAM_CACHE_BUDGET_BYTES,
+                                                &dest,
+                                            );
+                                            download_and_play(
+                                                &streamer, track_id, &dest, queue_id, &state_dl,
+                                                &tx_dl,
+                                            );
+                                        })
+                                    {
+                                        log::error!("failed to spawn stream download: {}", e);
+                                        state.update_load_state(
+                                            queue_id,
+                                            LoadState::Failed(e.to_string()),
+                                        );
+                                    }
+                                }
+                                (None, _) => state.update_load_state(
+                                    queue_id,
+                                    LoadState::Failed("no [subsonic] credentials".into()),
+                                ),
+                                (_, None) => state.update_load_state(
+                                    queue_id,
+                                    LoadState::Failed("server track has no library id".into()),
+                                ),
                             }
                         }
                     }

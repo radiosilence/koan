@@ -16,9 +16,11 @@ async-stream = "0.3"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.23"
 crossbeam-channel = "0.5"
+form_urlencoded = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 koan-core = { workspace = true }
 log = "0.4"
+lru = "0.18"
 nucleo = "0.5"
 md5 = "0.8"
 reqwest = { workspace = true, features = ["stream"] }
