@@ -1,11 +1,19 @@
 import KoanFFI
 import SwiftUI
 
-/// Sidebar, stage, optional lyrics drawer, transport pinned to the bottom.
+/// Sidebar, stage, optional lyrics inspector, transport pinned to the bottom.
 ///
 /// The stage defaults to the queue rather than the library — koan is a player
 /// you build a queue in, and the TUI opens the same way. The library is
 /// somewhere you go to feed it.
+///
+/// `NavigationSplitView` is the root and stays the root. Wrapping it in a stack
+/// or putting an `HSplitView` in its detail column breaks width propagation:
+/// `HSplitView` sizes children to their minimum, so the stage would sit at
+/// whatever `minWidth` it declared no matter how large the window got, and an
+/// adaptive grid inside it would be stuck at two columns. The transport is a
+/// `safeAreaInset` and the lyrics panel an `inspector` for the same reason —
+/// both add chrome without taking the detail column's width away.
 struct RootView: View {
     @Binding var showingPicker: Bool
 
@@ -15,42 +23,40 @@ struct RootView: View {
     @AppStorage("showLyrics") private var showLyrics = false
 
     var body: some View {
-        @Bindable var library = library
-
-        VStack(spacing: 0) {
-            NavigationSplitView {
-                SidebarView()
-                    .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
-            } detail: {
-                HSplitView {
-                    stage
-                        .frame(minWidth: 460)
-
-                    if showLyrics {
-                        LyricsPanel()
-                            .frame(minWidth: 260, idealWidth: 320, maxWidth: 440)
-                    }
+        NavigationSplitView {
+            SidebarView()
+                .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
+        } detail: {
+            stage
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .inspector(isPresented: $showLyrics) {
+                    LyricsPanel()
+                        .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
                 }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                Divider()
+                TransportBar()
             }
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        showingPicker = true
-                    } label: {
-                        Label("Add Music", systemImage: "plus.magnifyingglass")
-                    }
-                    .help("Find tracks, albums and artists (⌘K)")
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Button {
+                    showingPicker = true
+                } label: {
+                    Label("Add Music", systemImage: "plus.magnifyingglass")
                 }
-                ToolbarItem(placement: .primaryAction) {
-                    Toggle(isOn: $showLyrics) {
-                        Label("Lyrics", systemImage: "text.quote")
-                    }
-                    .help("Lyrics panel")
-                }
+                .help("Find tracks, albums and artists (⌘K)")
             }
-
-            Divider()
-            TransportBar()
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    showLyrics.toggle()
+                } label: {
+                    Label("Lyrics", systemImage: "text.quote")
+                }
+                .help("Lyrics panel")
+            }
         }
         .sheet(isPresented: $showingPicker) {
             PickerSheet(isPresented: $showingPicker)
@@ -58,7 +64,7 @@ struct RootView: View {
         .overlay(alignment: .bottom) {
             if let error = player.lastError {
                 ErrorToast(message: error) { player.lastError = nil }
-                    .padding(.bottom, 96)
+                    .padding(.bottom, 24)
             }
         }
     }

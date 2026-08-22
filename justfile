@@ -106,8 +106,21 @@ macos-bundle: macos-build
     echo "built $app"
 
 # Build and launch the app bundle.
+#
+# Quits any running instance first — `open` on a live app just focuses it, so
+# without this you get the old binary back and none of your changes.
 macos-run: macos-bundle
+    #!/usr/bin/env bash
+    set -euo pipefail
+    osascript -e 'quit app "Koan"' 2>/dev/null || true
+    # Wait for it to actually go before replacing it.
+    for _ in $(seq 20); do
+        pgrep -qf 'Koan.app/Contents/MacOS/koan-app' || break
+        sleep 0.2
+    done
+    pkill -f 'Koan.app/Contents/MacOS/koan-app' 2>/dev/null || true
     open {{app_dir}}/.build/pkg/Koan.app
+    echo "launched $(date +%H:%M:%S)"
 
 # Package the app as a DMG for release.
 macos-dmg: macos-bundle
