@@ -229,6 +229,7 @@ pub fn download_track(
     log_buf: &Arc<Mutex<Vec<String>>>,
     state: &Arc<SharedPlayerState>,
     cfg: &Config,
+    client: &SubsonicClient,
 ) {
     let db = match Database::open_default() {
         Ok(db) => db,
@@ -295,20 +296,9 @@ pub fn download_track(
         return;
     }
 
-    // 3. Download from remote.
-    let part_path = dest.with_extension("part");
-    state.update_paths(&[(queue_id, part_path)]);
-
-    let client = match subsonic_client(cfg) {
-        Some(c) => c,
-        None => {
-            log::warn!(
-                "remote not configured -- skipping download for {}",
-                remote_id
-            );
-            return;
-        }
-    };
+    // 3. Download from remote. The queue item points at the in-progress file so
+    // the streaming pump reads bytes as they land; it flips to `dest` on success.
+    state.update_paths(&[(queue_id, crate::remote::download::part_path(&dest))]);
 
     let bytes_written: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
@@ -340,21 +330,38 @@ pub fn download_track(
 
     if let Err(e) = result {
         state.update_load_state(queue_id, LoadState::Failed(e.to_string()));
-        let msg = format!("x {} — {}", track.title, e);
-        log_buf.lock().unwrap().push(msg);
+        push_log(log_buf, format!("x {} — {}", track.title, e));
         return;
     }
 
     // Download succeeded.
     state.update_paths(&[(queue_id, dest.clone())]);
     state.update_load_state(queue_id, LoadState::Ready);
-    let _ = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy());
+    // Without this row the file is invisible to cache eviction and never reclaimed.
+    if let Err(e) = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy()) {
+        log::warn!(
+            "cached {} but failed to record it ({}) — it will not be evicted",
+            dest.display(),
+            e
+        );
+    }
 
-    let msg = format!("+ {} — {}", track.title, track.artist_name);
-    log_buf.lock().unwrap().push(msg);
+    push_log(
+        log_buf,
+        format!("+ {} — {}", track.title, track.artist_name),
+    );
 
     if state.is_cursor(queue_id) {
         tx.send(PlayerCommand::TrackReady(queue_id)).ok();
+    }
+}
+
+/// Append to the TUI log pane, tolerating a poisoned lock — a download worker
+/// must not die because some other thread panicked while holding it.
+fn push_log(log_buf: &Arc<Mutex<Vec<String>>>, msg: String) {
+    match log_buf.lock() {
+        Ok(mut buf) => buf.push(msg),
+        Err(_) => log::info!("{}", msg),
     }
 }
 
@@ -365,13 +372,22 @@ pub fn spawn_downloads(
     state: Arc<SharedPlayerState>,
 ) {
     let log_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    std::thread::Builder::new()
+    if let Err(e) = std::thread::Builder::new()
         .name("koan-download".into())
         .spawn(move || {
             let cfg = Config::load().unwrap_or_default();
+            let Some(client) = subsonic_client(&cfg) else {
+                log::warn!(
+                    "remote not configured -- skipping {} downloads",
+                    pending.len()
+                );
+                return;
+            };
             for (db_id, queue_id) in pending {
-                download_track(db_id, queue_id, &tx, &log_buf, &state, &cfg);
+                download_track(db_id, queue_id, &tx, &log_buf, &state, &cfg, &client);
             }
         })
-        .ok();
+    {
+        log::error!("failed to spawn download thread: {}", e);
+    }
 }

@@ -2186,6 +2186,7 @@ dependencies = [
  "log",
  "nucleo",
  "owo-colors",
+ "parking_lot",
  "ratatui",
  "rayon",
  "reqwest",

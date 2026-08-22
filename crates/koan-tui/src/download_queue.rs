@@ -1,28 +1,106 @@
-use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex};
+use std::collections::{HashSet, VecDeque};
+use std::panic::AssertUnwindSafe;
+use std::sync::{Arc, Mutex as StdMutex};
+
+use parking_lot::{Condvar, Mutex};
 
 use koan_core::config;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{LoadState, QueueItemId, SharedPlayerState};
+use koan_core::remote::client::SubsonicClient;
 
 use koan_core::helpers::download_track;
 
+/// Concurrent downloads the priority lane may run outside the worker pool.
+/// Small on purpose: its job is to get the track under the cursor playing, and
+/// every extra request competes with it for the same link.
+const PRIORITY_PERMITS: usize = 2;
+
+/// How often the cursor is sampled for priority reordering.
+const CURSOR_POLL: std::time::Duration = std::time::Duration::from_millis(30);
+
 /// Persistent download queue — lives for the app's lifetime.
 ///
-/// Items are submitted via `enqueue()`, downloaded by a pool of worker threads.
-/// Cursor changes trigger priority reordering so the current track downloads
-/// first, followed by same-album tracks for gapless playback.
+/// Items are submitted via `enqueue()` and downloaded by a fixed pool of worker
+/// threads. Cursor changes reorder the queue so the current track downloads
+/// first, followed by same-album tracks for gapless playback; those jump the
+/// queue through a permit-limited priority lane rather than by spawning
+/// unbounded threads.
 #[derive(Clone)]
 pub struct DownloadQueue {
     inner: Arc<Inner>,
 }
 
 struct Inner {
-    work: Mutex<VecDeque<(i64, QueueItemId)>>,
+    queue: Mutex<Queue>,
     has_work: Condvar,
     state: Arc<SharedPlayerState>,
     cmd_tx: crossbeam_channel::Sender<PlayerCommand>,
-    log_buf: Arc<Mutex<Vec<String>>>,
+    log_buf: Arc<StdMutex<Vec<String>>>,
+    cfg: config::Config,
+    /// `None` when remote is not configured — nothing is downloadable.
+    client: Option<SubsonicClient>,
+}
+
+/// Queue state and the in-flight bookkeeping that keeps a track from being
+/// downloaded by two threads at once.
+#[derive(Default)]
+struct Queue {
+    pending: VecDeque<(i64, QueueItemId)>,
+    in_flight: HashSet<QueueItemId>,
+    priority_active: usize,
+}
+
+/// What a priority request should do, given the state of the lane.
+#[derive(Debug, PartialEq, Eq)]
+enum Dispatch {
+    /// A permit was taken and the item claimed — spawn a thread for it.
+    Spawn,
+    /// No permit free; the item now sits at the head of the work queue.
+    Requeued,
+    /// Some thread is already downloading it.
+    AlreadyRunning,
+}
+
+/// Claim `item` for the priority lane, or push it to the front of the queue if
+/// every permit is taken. On `Spawn` the caller owns the claim and must release
+/// it via `release_priority` when the download ends.
+fn claim_priority(q: &mut Queue, item: (i64, QueueItemId)) -> Dispatch {
+    q.pending.retain(|(_, qid)| *qid != item.1);
+
+    if q.in_flight.contains(&item.1) {
+        return Dispatch::AlreadyRunning;
+    }
+    if q.priority_active >= PRIORITY_PERMITS {
+        q.pending.push_front(item);
+        return Dispatch::Requeued;
+    }
+    q.priority_active += 1;
+    q.in_flight.insert(item.1);
+    Dispatch::Spawn
+}
+
+fn release_priority(q: &mut Queue, id: QueueItemId) {
+    q.in_flight.remove(&id);
+    q.priority_active = q.priority_active.saturating_sub(1);
+}
+
+/// Releases an in-flight claim however the download ends — including a panic.
+struct Claim {
+    inner: Arc<Inner>,
+    id: QueueItemId,
+    priority: bool,
+}
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        let mut q = self.inner.queue.lock();
+        if self.priority {
+            release_priority(&mut q, self.id);
+        } else {
+            q.in_flight.remove(&self.id);
+        }
+    }
 }
 
 impl DownloadQueue {
@@ -30,34 +108,44 @@ impl DownloadQueue {
     pub fn spawn(
         cmd_tx: crossbeam_channel::Sender<PlayerCommand>,
         state: Arc<SharedPlayerState>,
-        log_buf: Arc<Mutex<Vec<String>>>,
+        log_buf: Arc<StdMutex<Vec<String>>>,
     ) -> Self {
         let cfg = config::Config::load().unwrap_or_default();
         let num_workers = cfg.remote.download_workers.max(1);
+        // One client for the app's lifetime: rebuilding it per track threw away
+        // the connection pool and re-ran the TLS handshake on every download.
+        let client = koan_core::helpers::subsonic_client(&cfg);
+        if client.is_none() {
+            log::info!("remote not configured — download queue will idle");
+        }
 
         let inner = Arc::new(Inner {
-            work: Mutex::new(VecDeque::new()),
+            queue: Mutex::new(Queue::default()),
             has_work: Condvar::new(),
             state,
             cmd_tx,
             log_buf,
+            cfg,
+            client,
         });
 
-        // Spawn worker threads that drain the queue.
         for i in 0..num_workers {
             let inner = inner.clone();
-            std::thread::Builder::new()
+            if let Err(e) = std::thread::Builder::new()
                 .name(format!("koan-dl-{}", i))
                 .spawn(move || worker_loop(inner))
-                .ok();
+            {
+                log::error!("failed to spawn download worker {}: {}", i, e);
+            }
         }
 
-        // Spawn watcher thread: monitors cursor changes, reprioritizes.
         let watcher_inner = inner.clone();
-        std::thread::Builder::new()
+        if let Err(e) = std::thread::Builder::new()
             .name("koan-dl-watch".into())
             .spawn(move || cursor_watcher(watcher_inner))
-            .ok();
+        {
+            log::error!("failed to spawn download cursor watcher: {}", e);
+        }
 
         Self { inner }
     }
@@ -67,93 +155,125 @@ impl DownloadQueue {
         if items.is_empty() {
             return;
         }
-        let mut q = self.inner.work.lock().unwrap();
-        q.extend(items);
-        // Wake all workers — there's new work.
+        self.inner.queue.lock().pending.extend(items);
         self.inner.has_work.notify_all();
     }
 
-    /// Submit a single item for priority download (e.g. user clicked a Pending track).
-    /// Also enqueues same-album pending tracks for gapless playback.
+    /// Submit a single item for priority download (e.g. user clicked a Pending
+    /// track). Also bumps same-album pending tracks for gapless playback.
     pub fn prioritize(&self, db_id: i64, queue_id: QueueItemId) {
-        // Yank this item from the queue if it's already there (avoid duplicate download).
-        {
-            let mut q = self.inner.work.lock().unwrap();
-            q.retain(|(_, qid)| *qid != queue_id);
-        }
+        dispatch_priority(&self.inner, (db_id, queue_id));
 
-        // Spawn a dedicated priority download thread for immediate start.
-        let inner = self.inner.clone();
-        std::thread::Builder::new()
-            .name("koan-dl-prio".into())
-            .spawn(move || {
-                let cfg = config::Config::load().unwrap_or_default();
-                download_track(
-                    db_id,
-                    queue_id,
-                    &inner.cmd_tx,
-                    &inner.log_buf,
-                    &inner.state,
-                    &cfg,
-                );
-            })
-            .ok();
-
-        // Bump same-album pending tracks to front of the queue.
         let album_mates = self.inner.state.same_album_item_ids(queue_id);
         if !album_mates.is_empty() {
-            let mate_set: std::collections::HashSet<QueueItemId> =
-                album_mates.into_iter().collect();
-            let mut q = self.inner.work.lock().unwrap();
-            let mut front = VecDeque::new();
-            let mut rest = VecDeque::new();
-            for item in q.drain(..) {
-                if mate_set.contains(&item.1) {
-                    front.push_back(item);
-                } else {
-                    rest.push_back(item);
-                }
-            }
-            front.extend(rest);
-            *q = front;
+            let mate_set: HashSet<QueueItemId> = album_mates.into_iter().collect();
+            bump_to_front(&mut self.inner.queue.lock().pending, &mate_set);
             self.inner.has_work.notify_all();
         }
     }
 }
 
-/// Worker loop: wait for work, download, repeat.
-fn worker_loop(inner: Arc<Inner>) {
-    let cfg = config::Config::load().unwrap_or_default();
-    loop {
-        let item = {
-            let mut q = inner.work.lock().unwrap();
-            loop {
-                if let Some(item) = q.pop_front() {
-                    break item;
-                }
-                // Wait for new work — condvar releases lock while sleeping.
-                q = inner.has_work.wait(q).unwrap();
+/// Move every item whose id is in `ids` ahead of the rest, preserving order.
+fn bump_to_front(pending: &mut VecDeque<(i64, QueueItemId)>, ids: &HashSet<QueueItemId>) {
+    let (front, rest): (VecDeque<_>, VecDeque<_>) =
+        pending.drain(..).partition(|(_, qid)| ids.contains(qid));
+    *pending = front;
+    pending.extend(rest);
+}
+
+/// Start a priority download, or queue it at the front when the lane is full.
+fn dispatch_priority(inner: &Arc<Inner>, item: (i64, QueueItemId)) {
+    let dispatch = claim_priority(&mut inner.queue.lock(), item);
+    match dispatch {
+        Dispatch::AlreadyRunning => {}
+        Dispatch::Requeued => {
+            inner.has_work.notify_one();
+        }
+        Dispatch::Spawn => {
+            let spawn_inner = inner.clone();
+            let spawned = std::thread::Builder::new()
+                .name("koan-dl-prio".into())
+                .spawn(move || {
+                    let _claim = Claim {
+                        inner: spawn_inner.clone(),
+                        id: item.1,
+                        priority: true,
+                    };
+                    run_download(&spawn_inner, item);
+                });
+            if let Err(e) = spawned {
+                log::error!("failed to spawn priority download: {}", e);
+                let mut q = inner.queue.lock();
+                release_priority(&mut q, item.1);
+                q.pending.push_front(item);
+                drop(q);
+                inner.has_work.notify_one();
             }
-        };
-        let (db_id, queue_id) = item;
+        }
+    }
+}
+
+/// Run one download, containing any panic so the worker pool never shrinks.
+fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
+    let Some(client) = inner.client.as_ref() else {
+        inner
+            .state
+            .update_load_state(queue_id, LoadState::Failed("remote not configured".into()));
+        return;
+    };
+
+    let outcome = std::panic::catch_unwind(AssertUnwindSafe(|| {
         download_track(
             db_id,
             queue_id,
             &inner.cmd_tx,
             &inner.log_buf,
             &inner.state,
-            &cfg,
+            &inner.cfg,
+            client,
         );
+    }));
+
+    if outcome.is_err() {
+        log::error!("download panicked for {:?}", queue_id);
+        inner
+            .state
+            .update_load_state(queue_id, LoadState::Failed("download panicked".into()));
     }
 }
 
-/// Cursor watcher: when the cursor moves to a pending track, yank it from the
-/// work queue and spawn a priority download thread. Also bumps same-album
-/// tracks to front for gapless playback.
+/// Worker loop: wait for work, download, repeat.
+fn worker_loop(inner: Arc<Inner>) {
+    loop {
+        let item = {
+            let mut q = inner.queue.lock();
+            loop {
+                match q.pending.pop_front() {
+                    Some(item) => {
+                        // A duplicate entry for a track already downloading is dropped.
+                        if q.in_flight.insert(item.1) {
+                            break item;
+                        }
+                    }
+                    None => inner.has_work.wait(&mut q),
+                }
+            }
+        };
+        let _claim = Claim {
+            inner: inner.clone(),
+            id: item.1,
+            priority: false,
+        };
+        run_download(&inner, item);
+    }
+}
+
+/// Cursor watcher: when the cursor moves to a pending track, hand it and the
+/// next track to the priority lane and bump same-album tracks to the front.
 fn cursor_watcher(inner: Arc<Inner>) {
     let mut last_cursor: Option<QueueItemId> = None;
     loop {
-        std::thread::sleep(std::time::Duration::from_millis(30));
+        std::thread::sleep(CURSOR_POLL);
 
         let current = inner.state.cursor();
         if current == last_cursor {
@@ -165,7 +285,6 @@ fn cursor_watcher(inner: Arc<Inner>) {
             continue;
         };
 
-        // Only act if the cursor track is pending and in our queue.
         let is_pending = inner
             .state
             .item_load_state(cursor_id)
@@ -174,60 +293,132 @@ fn cursor_watcher(inner: Arc<Inner>) {
             continue;
         }
 
-        // Build set of same-album QueueItemIds for gapless prioritization.
-        let album_mate_ids: std::collections::HashSet<QueueItemId> = inner
+        let album_mate_ids: HashSet<QueueItemId> = inner
             .state
             .same_album_item_ids(cursor_id)
             .into_iter()
             .collect();
 
-        // Pull cursor track from the queue and spawn priority download.
         let mut priority_items = Vec::new();
         {
-            let mut q = inner.work.lock().unwrap();
-            if let Some(pos) = q.iter().position(|(_, qid)| *qid == cursor_id) {
-                priority_items.push(q.remove(pos).unwrap());
+            let mut q = inner.queue.lock();
+            if let Some(pos) = q.pending.iter().position(|(_, qid)| *qid == cursor_id) {
+                priority_items.push(q.pending.remove(pos).expect("position just found"));
 
-                // Bump same-album tracks to front.
                 if !album_mate_ids.is_empty() {
-                    let mut album_items = VecDeque::new();
-                    let mut other_items = VecDeque::new();
-                    for item in q.drain(..) {
-                        if album_mate_ids.contains(&item.1) {
-                            album_items.push_back(item);
-                        } else {
-                            other_items.push_back(item);
-                        }
-                    }
-                    album_items.extend(other_items);
-                    *q = album_items;
+                    bump_to_front(&mut q.pending, &album_mate_ids);
                 }
 
-                // Also grab the next track for gapless lookahead.
-                if q.front().is_some() {
-                    priority_items.push(q.pop_front().unwrap());
+                // Grab the next track too, for gapless lookahead.
+                if let Some(next) = q.pending.pop_front() {
+                    priority_items.push(next);
                 }
             }
         }
 
-        // Fire off immediate download threads for priority items.
-        for (db_id, queue_id) in priority_items {
-            log::info!("priority: spawning immediate download for {:?}", queue_id);
-            let inner = inner.clone();
-            std::thread::Builder::new()
-                .name("koan-dl-prio".into())
-                .spawn(move || {
-                    let cfg = config::Config::load().unwrap_or_default();
-                    download_track(
-                        db_id,
-                        queue_id,
-                        &inner.cmd_tx,
-                        &inner.log_buf,
-                        &inner.state,
-                        &cfg,
-                    );
-                })
-                .ok();
+        for item in priority_items {
+            dispatch_priority(&inner, item);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn qid() -> QueueItemId {
+        QueueItemId::new()
+    }
+
+    #[test]
+    fn priority_lane_never_exceeds_its_permits() {
+        let mut q = Queue::default();
+
+        // Rapid cursor movement: a fresh track lands on the lane every poll.
+        let mut spawned = 0;
+        for i in 0..500 {
+            if claim_priority(&mut q, (i, qid())) == Dispatch::Spawn {
+                spawned += 1;
+            }
+            assert!(
+                q.priority_active <= PRIORITY_PERMITS,
+                "priority lane over its permit count at iteration {}",
+                i
+            );
+        }
+
+        assert_eq!(spawned, PRIORITY_PERMITS, "only permitted claims may spawn");
+        assert_eq!(
+            q.pending.len(),
+            500 - PRIORITY_PERMITS,
+            "everything else must be queued, not dropped"
+        );
+    }
+
+    #[test]
+    fn released_permits_are_reusable() {
+        let mut q = Queue::default();
+        let a = qid();
+        assert_eq!(claim_priority(&mut q, (1, a)), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, (2, qid())), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, (3, qid())), Dispatch::Requeued);
+
+        release_priority(&mut q, a);
+        assert_eq!(claim_priority(&mut q, (4, qid())), Dispatch::Spawn);
+        assert!(q.priority_active <= PRIORITY_PERMITS);
+    }
+
+    #[test]
+    fn an_in_flight_track_is_never_claimed_twice() {
+        let mut q = Queue::default();
+        let id = qid();
+        assert_eq!(claim_priority(&mut q, (1, id)), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, (1, id)), Dispatch::AlreadyRunning);
+        assert_eq!(q.priority_active, 1);
+        assert!(
+            q.pending.is_empty(),
+            "a duplicate request must not re-queue the track"
+        );
+    }
+
+    #[test]
+    fn requeued_priority_item_goes_to_the_head_of_the_queue() {
+        let mut q = Queue::default();
+        q.pending.push_back((9, qid()));
+        for i in 0..PRIORITY_PERMITS {
+            claim_priority(&mut q, (i as i64, qid()));
+        }
+
+        let wanted = qid();
+        assert_eq!(claim_priority(&mut q, (7, wanted)), Dispatch::Requeued);
+        assert_eq!(q.pending.front().map(|(_, id)| *id), Some(wanted));
+    }
+
+    #[test]
+    fn claiming_removes_a_duplicate_queue_entry() {
+        let mut q = Queue::default();
+        let id = qid();
+        q.pending.push_back((1, id));
+        q.pending.push_back((2, qid()));
+
+        assert_eq!(claim_priority(&mut q, (1, id)), Dispatch::Spawn);
+        assert_eq!(
+            q.pending.len(),
+            1,
+            "the pool must not also pick up the claimed track"
+        );
+    }
+
+    #[test]
+    fn bump_to_front_preserves_relative_order() {
+        let (a, b, c, d) = (qid(), qid(), qid(), qid());
+        let mut pending: VecDeque<(i64, QueueItemId)> =
+            [(1, a), (2, b), (3, c), (4, d)].into_iter().collect();
+        let mates: HashSet<QueueItemId> = [b, d].into_iter().collect();
+
+        bump_to_front(&mut pending, &mates);
+
+        let order: Vec<QueueItemId> = pending.iter().map(|(_, id)| *id).collect();
+        assert_eq!(order, vec![b, d, a, c]);
     }
 }

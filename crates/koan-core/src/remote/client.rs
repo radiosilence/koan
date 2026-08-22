@@ -4,6 +4,8 @@ use std::path::Path;
 use serde::Deserialize;
 use thiserror::Error;
 
+use super::download::{self, DownloadError};
+
 const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "koan";
 
@@ -17,14 +19,22 @@ pub enum SubsonicError {
     BadResponse,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("download error: {0}")]
+    Download(#[from] DownloadError),
 }
 
 /// Subsonic/Navidrome API client.
+///
+/// Holds two HTTP clients with different timeout semantics: `http` bounds a
+/// whole JSON request, which is right for small API responses read in one go;
+/// `downloader` bounds only connect and per-read stalls, so a large track on a
+/// slow link is never cut off for taking too long overall.
 pub struct SubsonicClient {
     base_url: String,
     username: String,
     password: String,
     http: reqwest::blocking::Client,
+    downloader: reqwest::blocking::Client,
 }
 
 impl SubsonicClient {
@@ -34,10 +44,14 @@ impl SubsonicClient {
             base_url,
             username: username.to_string(),
             password: password.to_string(),
-            http: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("failed to build HTTP client"),
+            http: download::api_client().unwrap_or_else(|e| {
+                log::warn!("falling back to default HTTP client: {}", e);
+                reqwest::blocking::Client::new()
+            }),
+            downloader: download::download_client().unwrap_or_else(|e| {
+                log::warn!("falling back to default download client: {}", e);
+                reqwest::blocking::Client::new()
+            }),
         }
     }
 
@@ -154,62 +168,28 @@ impl SubsonicClient {
     }
 
     /// Download a track with progress reporting.
-    /// The callback receives (bytes_downloaded, total_bytes). Total may be 0
-    /// if the server doesn't send Content-Length.
+    ///
+    /// The callback receives `(bytes_downloaded, total_bytes)`; total is 0 when
+    /// the server sends no Content-Length, and the count restarts from zero if
+    /// an attempt is retried. `dest` only appears once the file is complete.
     pub fn download_with_progress(
         &self,
         track_id: &str,
         dest: &Path,
         on_progress: impl Fn(u64, u64),
     ) -> Result<(), SubsonicError> {
-        use std::io::Write;
-
         let url = format!("{}/rest/download", self.base_url);
-        let mut params = self.auth_params();
-        params.insert("id".into(), track_id.to_string());
-
-        let mut resp = self.http.get(&url).query(&params).send()?;
-        let total = resp.content_length().unwrap_or(0);
-
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        // Write to a temp file first — only rename to dest on success.
-        // This prevents incomplete downloads from being treated as cached.
-        let tmp = dest.with_extension("part");
-        let mut file = std::fs::File::create(&tmp)?;
-        let mut downloaded: u64 = 0;
-        let mut buf = [0u8; 64 * 1024]; // 64KB chunks
-        let result = loop {
-            let n = match std::io::Read::read(&mut resp, &mut buf) {
-                Ok(0) => break Ok(()),
-                Ok(n) => n,
-                Err(e) => break Err(SubsonicError::Io(e)),
-            };
-            file.write_all(&buf[..n])?;
-            downloaded += n as u64;
-            on_progress(downloaded, total);
-        };
-        file.flush()?;
-        drop(file);
-
-        if let Err(e) = result {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e);
-        }
-
-        // Verify size if server reported Content-Length.
-        if total > 0 && downloaded != total {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(SubsonicError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                format!("incomplete download: got {} of {} bytes", downloaded, total),
-            )));
-        }
-
-        // Atomic rename — dest only appears when the file is complete.
-        std::fs::rename(&tmp, dest)?;
+        download::download_with_retries(
+            dest,
+            download::DEFAULT_ATTEMPTS,
+            || {
+                // Fresh auth params per attempt — the salt must not be replayed.
+                let mut params = self.auth_params();
+                params.insert("id".into(), track_id.to_string());
+                self.downloader.get(&url).query(&params)
+            },
+            on_progress,
+        )?;
         Ok(())
     }
 
@@ -461,9 +441,29 @@ pub struct SubsonicShare {
 }
 
 /// Generate a random hex salt string for Subsonic auth.
+///
+/// Falls back to a monotonic clock + counter mix if the OS entropy source is
+/// unavailable: the salt only has to be unique per request, and a download
+/// worker must not die because `getrandom` hiccupped.
 fn random_salt() -> String {
     let mut buf = [0u8; 12];
-    getrandom::getrandom(&mut buf).expect("failed to generate random salt");
+    if let Err(e) = getrandom::getrandom(&mut buf) {
+        log::warn!(
+            "entropy source unavailable ({}), using clock-derived salt",
+            e
+        );
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+        let n = nanos
+            ^ COUNTER
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .rotate_left(32);
+        buf[..8].copy_from_slice(&n.to_le_bytes());
+        buf[8..].copy_from_slice(&(n as u32).to_be_bytes());
+    }
     buf.iter().map(|b| format!("{:02x}", b)).collect()
 }
 

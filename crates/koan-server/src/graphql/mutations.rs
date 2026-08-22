@@ -658,7 +658,7 @@ impl MutationRoot {
         let cfg = Config::load().unwrap_or_default();
         let client = koan_core::helpers::subsonic_client(&cfg)
             .ok_or_else(|| async_graphql::Error::new("remote not configured"))?;
-        koan_core::remote::sync::sync_library(
+        let result = koan_core::remote::sync::sync_library(
             &db,
             &client,
             false,
@@ -666,7 +666,14 @@ impl MutationRoot {
             &cfg.remote.username,
         )
         .map_err(|e| async_graphql::Error::new(format!("sync error: {}", e)))?;
-        Ok(GqlStatus::success("remote sync complete"))
+        if result.is_complete() {
+            Ok(GqlStatus::success("remote sync complete"))
+        } else {
+            Ok(GqlStatus::success(format!(
+                "remote sync incomplete: {} album(s) failed and will be retried next sync",
+                result.albums_failed
+            )))
+        }
     }
 
     // -- Sharing --

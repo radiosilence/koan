@@ -410,7 +410,12 @@ impl App {
     }
 
     /// Toggle favourite status for a track path. Returns true if now favourite.
+    ///
+    /// A track mid-download sits at its `.part` path, which matches no track row
+    /// and stops existing the moment the download finishes; favourites are keyed
+    /// on the final path so the star survives.
     pub fn toggle_favourite(&mut self, path: &std::path::Path) -> bool {
+        let path = &koan_core::remote::download::strip_part_suffix(path);
         if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
             && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(&db.conn, path)
         {

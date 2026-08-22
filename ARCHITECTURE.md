@@ -226,8 +226,9 @@ fb2k-compatible template engine.
 
 | File | Purpose |
 |---|---|
-| `client.rs` | Subsonic/Navidrome HTTP client. Token auth (MD5+salt). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, download |
-| `sync.rs` | Parallel library sync: paginate albums (500/page) → rayon fetch full details → batch DB write per page |
+| `client.rs` | Subsonic/Navidrome HTTP client. Token auth (MD5+salt). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, download. Two HTTP clients: total-deadline for JSON, stall-bounded for downloads |
+| `download.rs` | The one place bytes are streamed to disk: `.part` temp file → verify → atomic rename, progress callback, retry with backoff. Shared by `client.rs` and the TUI remote bridge |
+| `sync.rs` | Library sync: stable `alphabeticalByName` pagination (500/page) → rayon fetch full details → batch DB write per page. `last_sync` only advances on a run with zero failures |
 | `lrclib.rs` | LRCLIB API client for lyrics fetching (synced LRC + plain text) |
 
 ### Other
