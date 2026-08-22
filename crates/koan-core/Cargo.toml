@@ -2,6 +2,7 @@
 name = "koan-core"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Core library for koan — bit-perfect music player. Audio engine, player, database, format strings."
@@ -10,12 +11,11 @@ categories = ["multimedia::audio"]
 
 [dependencies]
 # Acoustic analysis
-bliss-audio = { version = "0.11", default-features = false, features = ["aubio-static", "symphonia-all"] }
-bliss-audio-aubio-rs = { version = "0.2", features = ["bindgen"] }
+bliss-audio = { version = "0.13", default-features = false, features = ["symphonia-all"] }
 # Auth
 argon2 = "0.5"
-jsonwebtoken = "9"
-pem = "3"
+jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+pem = "4"
 ring = "0.17"
 crossbeam-channel = "0.5"
 chrono = "0.4"
@@ -24,24 +24,19 @@ dirs = "6"
 figment = { version = "0.10", features = ["toml", "env"] }
 ebur128 = "0.1"
 # Credentials (cross-platform: macOS Keychain, Linux secret-service)
-keyring = { version = "3", features = ["apple-native", "sync-secret-service"] }
+keyring = "4"
 # Metadata
-lofty = "0.23"
+lofty = "0.25"
 log = "0.4"
 # Subsonic/Navidrome
-getrandom = "0.2"
+getrandom = "0.4"
 md5 = "0.8"
 # Async/threading
 parking_lot = "0.12"
 rayon = "1"
-reqwest = { version = "0.13", default-features = false, features = [
-  "blocking",
-  "json",
-  "query",
-  "rustls",
-] }
+reqwest = { workspace = true }
 realfft = "3"
-rtrb = "0.3"
+rtrb = "0.4"
 # Database
 rusqlite = { workspace = true }
 # Serialization
@@ -57,7 +52,7 @@ symphonia = { version = "0.6", default-features = false, features = [
 # Utilities
 thiserror = "2"
 uuid = { version = "1", features = ["v7"] }
-toml = "0.9"
+toml = "1.1"
 walkdir = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -66,10 +61,10 @@ libc = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 coreaudio-sys = "0.2"
-core-foundation = "0.9"
+core-foundation = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-cpal = "0.15"
+cpal = "0.18"
 
 [dev-dependencies]
 serde_json = "1"

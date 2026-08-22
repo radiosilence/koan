@@ -16,7 +16,7 @@ pub enum MetadataError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
     #[error("tag error: {0}")]
-    Tag(#[from] lofty::error::LoftyError),
+    Tag(#[from] lofty::error::FileParseError),
 }
 
 /// Audio file extensions we care about.
@@ -87,7 +87,7 @@ fn read_metadata_lofty(
                 tag.artist().map(|s| s.to_string()),
                 tag.get_string(ItemKey::AlbumArtist).map(|s| s.to_string()),
                 tag.album().map(|s| s.to_string()),
-                // lofty 0.23 removed year() — use TrackDate or RecordingDate.
+                // Prefer the track date, falling back to the recording date.
                 tag.get_string(ItemKey::Year)
                     .or_else(|| tag.get_string(ItemKey::RecordingDate))
                     .map(|s| s.to_string()),
@@ -385,9 +385,9 @@ fn mp4_codec(path: &Path) -> String {
     let mut reader = std::io::BufReader::new(file);
     match Mp4File::read_from(&mut reader, ParseOptions::new()) {
         Ok(mp4) => match mp4.properties().codec() {
-            Mp4Codec::ALAC => "ALAC".to_string(),
-            Mp4Codec::MP3 => "MP3".to_string(),
-            Mp4Codec::FLAC => "FLAC".to_string(),
+            Some(Mp4Codec::ALAC) => "ALAC".to_string(),
+            Some(Mp4Codec::MP3) => "MP3".to_string(),
+            Some(Mp4Codec::FLAC) => "FLAC".to_string(),
             _ => "AAC".to_string(),
         },
         Err(_) => "AAC".to_string(),

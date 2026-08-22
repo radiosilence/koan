@@ -9,7 +9,7 @@ Bit-perfect music player (macOS + Linux). Pure Rust, Ratatui TUI. Four crates:
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
-Dependency rules (compiler-enforced): koan-tui and koan-server cannot import each other. Future iOS app imports only koan-core.
+Dependency rules: koan-server must not depend on koan-tui. koan-tui declares an unused koan-server dep (`crates/koan-tui/Cargo.toml`) — removing it makes the boundary compiler-enforced. Future iOS app imports only koan-core.
 
 ## Architecture overview
 
@@ -24,7 +24,7 @@ Main Thread (TUI, 60fps)   ──crossbeam channel──►  Player Thread ("koa
                                                        │
                                                        └──controls──►  Audio RT Thread (CoreAudio/cpal, system-managed)
 
-Analyzer Thread ("koan-analyzer") ◄──VizBuffer──  Decode Thread
+Analyzer Thread ("viz-analyzer") ◄──VizBuffer──  Decode Thread
                                   ──VizSnapshot──►  Main Thread (TUI)
 ```
 
@@ -70,7 +70,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 ```bash
 just check    # cargo test + clippy -D warnings
 just fmt      # cargo fmt
-just cli      # cargo run --release -p koan-music -- <args>
+just cli      # cargo run --release -p koan-cli -- <args>
 just build    # cargo build --release
 ```
 
@@ -198,10 +198,8 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 
 Active plans live in `.claude/plans/`. Key upcoming work:
 
-1. **Decoupled backends** (plan 06) — trait-based audio/credentials abstraction. Foundational, unblocks everything.
-2. **Linux support** (plan 01) — ALSA/PipeWire backends via `AudioBackend` trait.
-3. **Tag editing** (plan 04) — vimv-style (TSV + $EDITOR) first, TUI inline editor second.
-4. **DSP pipeline** (plan 02) — EQ, headphone profiles, crossfeed. Inserts between decode and ring buffer.
-5. **Artist metadata** (plan 09) — bios, images, similar artists from MusicBrainz/Last.fm.
+1. **Tag editing** (plan 04) — vimv-style (TSV + $EDITOR) first, TUI inline editor second.
+2. **DSP pipeline** (plan 02) — EQ, headphone profiles, crossfeed. Inserts between decode and ring buffer.
+3. **Artist metadata** (plan 09) — bios, images, similar artists from MusicBrainz/Last.fm.
 
 See `.claude/plans/README.md` for dependency graph and status.
