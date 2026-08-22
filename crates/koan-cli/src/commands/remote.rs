@@ -61,14 +61,27 @@ pub fn cmd_remote_sync(full: bool) {
     ) {
         Ok(result) => {
             let elapsed = start.elapsed();
+            let headline = if result.is_complete() {
+                "sync complete".green().bold().to_string()
+            } else {
+                "sync incomplete".yellow().bold().to_string()
+            };
             println!(
                 "{} {} {} artists, {} albums, {} tracks",
-                "sync complete".green().bold(),
+                headline,
                 format!("({:.1}s)", elapsed.as_secs_f64()).dimmed(),
                 result.artists_synced.to_string().bold(),
                 result.albums_synced.to_string().bold(),
                 result.tracks_synced.to_string().bold(),
             );
+            if !result.is_complete() {
+                eprintln!(
+                    "{} {} album(s) could not be fetched — the sync watermark was left \
+                     unchanged, so the next sync will retry them",
+                    "warning:".yellow().bold(),
+                    result.albums_failed.to_string().bold(),
+                );
+            }
         }
         Err(e) => {
             eprintln!("{} {}", "sync failed:".red().bold(), e);

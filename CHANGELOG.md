@@ -36,6 +36,15 @@
 - **`ScanResult::updated` was always zero** — every upsert counted as `added`, so `koan scan` printed "0 updated" every run and GraphQL returned the same through `tracksUpdated`. `upsert_track_status` reports whether a row was inserted, which also makes `ScanEvent::is_new` truthful.
 - **A failed `scan_cache` write was swallowed** — the track was indexed but uncached, so every future scan re-read its tags with no diagnostic.
 
+- **Failed album fetches no longer become permanent library holes** — a sync that lost albums to network errors still reported success and advanced `last_sync`, so the next incremental sync skipped straight past them. `last_sync` now only advances when every album fetch succeeded, and `SyncResult` carries the failure count so `koan remote sync` and `triggerRemoteSync` report an incomplete run.
+- **Sync pagination can no longer skip albums** — the offset walk used `type=newest`, whose ordering shifts whenever the server reorders or adds an album mid-sync. It now walks `alphabeticalByName`, de-duplicates album ids for the run, and uses `created` only to decide which albums need a detail fetch.
+- **Truncated downloads can no longer masquerade as cached tracks** — the TUI remote bridge wrote straight to its destination and only checked completeness when the server sent a Content-Length, so a dropped connection on a chunked stream (Navidrome's transcoded output) left a truncated file that played as a stub for the rest of the session. Every remote download now goes through one implementation that writes a `.part` file and renames only on a verified-complete transfer.
+- **The remote-stream cache is bounded** — bridge downloads were keyed on a per-session queue id, so nothing was ever reused and every play left a full-size file behind forever. They are now keyed on track identity and the directory is pruned to a 2GB budget.
+- **Priority downloads respect `download_workers`** — cursor movement spawned an unbounded thread per landing, so scrolling a large remote queue fired hundreds of concurrent requests at the server. Priority downloads now run on a two-permit lane, tracks already downloading are never started twice, and anything over the limit goes to the head of the worker queue.
+- **Favouriting a track mid-download sticks** — the star was keyed on the in-progress `.part` path, which stops existing when the download completes, so it silently disappeared and was never pushed to the server.
+- **Download workers survive panics** — a panicking download permanently shrank the worker pool for the process lifetime.
+- **Lost server connections are visible** — the remote bridge swallowed poll errors and froze on the last known state while retrying at 10Hz. Connection loss and recovery are now logged.
+
 ### Added
 
 - **`koan scan --force-remove`** — deletes stale tracks even when the proportion missing trips the mount-failure brake, for the case where the files really were deleted. It lifts that one check and nothing else: a folder yielding no audio files is still left alone, and a path that cannot be stat'd is still not "gone". The run announces itself up front and lists what it removed.
@@ -45,6 +54,11 @@
 - **The library scan commits in 1000-file chunks** instead of one transaction spanning the whole run. Ctrl-C at 90% used to discard everything and restart from zero; committed chunks now land in `scan_cache` so the next run resumes. Peak memory drops to one chunk rather than the whole library's metadata, and other writers — favourites, queue save on quit, play counts, GraphQL mutations — no longer sit behind a minutes-long write lock. `busy_timeout` raised from 5s to 30s to match.
 - **Stale removal runs in its own transaction** and propagates failures instead of logging them and committing anyway. Its refusal message names the folder, how many tracks are missing, out of how many, and the percentage, so an ambiguous case is diagnosable from the error alone.
 - **`scan_folder` and `full_scan` take a `ScanOptions`** instead of a bare `force` flag, and `remove_stale_tracks` returns the paths it removed rather than a count.
+
+- **Download timeouts are per-stall, not per-transfer** — the download client bounds connect (10s) and time between bytes (30s) with no total deadline, and retries transient failures three times with backoff. JSON API calls keep a separate client with a 30s total deadline, which is correct for a small body read in one go.
+- **One `SubsonicClient` per app, not per download** — the client was rebuilt inside `download_track`, re-reading config and redoing the TLS handshake for every track.
+- **`SubsonicClient::stream_url` and the auth path are fallible** — the salt is generated from OS entropy and a request without it now fails instead of falling back to anything predictable. The salt is sent alongside `md5(password + salt)`, so a guessable one would make the token precomputable from a captured exchange.
+- **All remote downloads share one implementation** (`koan-core/src/remote/download.rs`) — there were three copies of "stream bytes to disk with progress" and only one wrote to a temp file and verified the result.
 
 ### Removed
 

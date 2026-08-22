@@ -1028,7 +1028,9 @@ async fn proxy_stream_from_upstream(
         Some(c) => c,
         None => return Err(SubsonicError::not_found("Remote server not configured")),
     };
-    let upstream_url = client.stream_url(remote_id);
+    let upstream_url = client
+        .stream_url(remote_id)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
     // Use reqwest async to proxy the stream.
     let http = reqwest::Client::builder()
