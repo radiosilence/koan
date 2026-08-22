@@ -90,7 +90,6 @@ Running `koan config init` on an existing setup is safe -- it merges new default
 
 ```toml
 [playback]
-software_volume = false     # volume control in software (vs hardware/DAC)
 replaygain = "off"          # off | track | album
 pre_amp_db = 0.0            # dB gain on top of ReplayGain (default: 0.0)
 target_fps = 60             # TUI render rate in Hz (default: 60)
