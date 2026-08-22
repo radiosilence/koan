@@ -83,6 +83,8 @@ koan scan
 
 Scanning runs in parallel -- fast even for large collections (tens of thousands of tracks). koan reads metadata from FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF, CAF, Ogg, MKV/WebM, and MP4 files.
 
+A scan also removes tracks whose files have gone, taking their play history with them -- so it refuses to do that when the pattern looks like a mount failure rather than a deletion: a folder that yields no audio files at all, a path it cannot stat, or more than 20% of a folder disappearing at once. If you really did delete that much, `koan scan --force-remove` lifts the last of those (only the last -- an empty or unreadable folder is still left alone).
+
 ### Option B: Remote server (Navidrome/Subsonic)
 
 If you run [Navidrome](https://www.navidrome.org/), Subsonic, or anything with a Subsonic-compatible API:
