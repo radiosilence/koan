@@ -21,7 +21,7 @@ use state::{LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerS
 use undo::{UndoEntry, UndoStack};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
-const RING_BUFFER_SIZE: usize = 192_000 * 2;
+pub(crate) const RING_BUFFER_SIZE: usize = 192_000 * 2;
 
 #[derive(Debug, Error)]
 pub enum PlayerError {
@@ -73,18 +73,20 @@ impl Player {
     pub fn new() -> Self {
         let viz_buffer = VizBuffer::new();
         let viz_snapshot = VizSnapshot::new();
+        let timeline = PlaybackTimeline::new();
         let cfg = crate::config::Config::load_or_default();
         let viz_analyzer = VizAnalyzer::spawn_with_snapshot(
             Arc::clone(&viz_buffer),
             &cfg.visualizer,
             Arc::clone(&viz_snapshot),
+            timeline.samples_played_counter(),
         );
 
         Self {
             shared_state: SharedPlayerState::new(),
             commands: CommandChannel::new(),
             active_playback: None,
-            timeline: PlaybackTimeline::new(),
+            timeline,
             viz_buffer,
             viz_snapshot,
             _viz_analyzer: viz_analyzer,
