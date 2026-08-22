@@ -1,11 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use rusqlite::params;
+use rusqlite::{Connection, params};
 
 use crate::db::connection::{Database, DbError};
-use crate::db::queries::{self, TrackRow};
+use crate::db::queries::{self, PersistedQueueItem, TrackRow};
 use crate::format::{self, FormatError, MetadataProvider};
+use crate::helpers::{sanitise_filename, truncate_bytes};
 
 /// Ancillary file patterns we move alongside audio files.
 const ANCILLARY_PATTERNS: &[&str] = &[
@@ -19,6 +22,10 @@ const ANCILLARY_PATTERNS: &[&str] = &[
 ];
 
 const ANCILLARY_EXTENSIONS: &[&str] = &["cue", "log", "m3u", "m3u8"];
+
+/// Byte ceiling for a destination file name, extension included. Filesystems we
+/// target cap a single name at 255 bytes.
+const MAX_FILE_NAME_BYTES: usize = 250;
 
 #[derive(Debug, thiserror::Error)]
 pub enum OrganizeError {
@@ -34,6 +41,16 @@ pub enum OrganizeError {
     NoLocalTracks,
     #[error("no organize batches to undo")]
     NothingToUndo,
+    #[error("destination already exists: {0}")]
+    DestinationExists(PathBuf),
+    #[error("copied {copied} of {expected} bytes from {path}")]
+    ShortCopy {
+        path: PathBuf,
+        expected: u64,
+        copied: u64,
+    },
+    #[error("not enough free space: {needed} bytes needed, {available} available")]
+    NotEnoughSpace { needed: u64, available: u64 },
 }
 
 #[derive(Debug)]
@@ -45,10 +62,43 @@ pub struct OrganizeResult {
 
 #[derive(Debug)]
 pub struct FileMove {
-    pub track_id: i64,
+    /// The library track this file belongs to, or `None` for a file the library
+    /// doesn't know about. Either way the move is logged and can be undone.
+    pub track_id: Option<i64>,
     pub from: PathBuf,
     pub to: PathBuf,
     pub ancillary: Vec<(PathBuf, PathBuf)>,
+}
+
+/// One `organize_log` row: id, original path, moved-to path, and the size and
+/// modification time the file had when it was moved.
+type UndoEntry = (i64, String, String, Option<i64>, Option<i64>);
+
+#[derive(Debug, Default)]
+pub struct UndoResult {
+    pub restored: usize,
+    pub errors: Vec<(PathBuf, String)>,
+}
+
+/// Which files an organize run covers.
+enum Selection<'a> {
+    All,
+    TrackIds(&'a [i64]),
+    Paths(&'a [PathBuf]),
+}
+
+/// Album fields a track inherits: both come from the album row, not the track row.
+#[derive(Default, Clone)]
+struct AlbumFacts {
+    date: Option<String>,
+    label: Option<String>,
+}
+
+/// A source file with the metadata its destination will be built from.
+struct ResolvedTrack {
+    source: PathBuf,
+    track_id: Option<i64>,
+    metadata: Result<TrackMetadata, String>,
 }
 
 /// Metadata provider backed by a HashMap, for evaluating format strings against track data.
@@ -57,10 +107,10 @@ struct TrackMetadata {
 }
 
 impl TrackMetadata {
-    fn from_track_row(track: &TrackRow, album_date: Option<&str>) -> Self {
+    fn from_track_row(track: &TrackRow, album: &AlbumFacts) -> Self {
         let mut fields = HashMap::new();
         // Sanitize all field values so they can't inject path separators or illegal chars.
-        let s = sanitize_path_component;
+        let s = sanitise_filename;
         fields.insert("title".into(), s(&track.title));
         fields.insert("artist".into(), s(&track.artist_name));
         fields.insert("album artist".into(), s(&track.album_artist_name));
@@ -71,12 +121,14 @@ impl TrackMetadata {
         if let Some(d) = track.disc {
             fields.insert("discnumber".into(), d.to_string());
         }
-        if let Some(date) = album_date {
-            // Date is safe (digits + hyphens) but sanitize anyway for consistency.
-            fields.insert("date".into(), date.to_string());
+        if let Some(ref date) = album.date {
+            fields.insert("date".into(), s(date));
+        }
+        if let Some(ref label) = album.label {
+            fields.insert("label".into(), s(label));
         }
         if let Some(ref codec) = track.codec {
-            fields.insert("codec".into(), codec.clone());
+            fields.insert("codec".into(), s(codec));
         }
         if let Some(ref genre) = track.genre {
             fields.insert("genre".into(), s(genre));
@@ -84,10 +136,12 @@ impl TrackMetadata {
         Self { fields }
     }
 
-    /// Build metadata directly from file tags (no DB required).
+    /// Build metadata directly from file tags, for files the library doesn't know about.
+    /// Populates exactly the same field set as `from_track_row` so a preview and the
+    /// move it authorises can never resolve to different paths.
     fn from_file_meta(meta: &queries::TrackMeta) -> Self {
         let mut fields = HashMap::new();
-        let s = sanitize_path_component;
+        let s = sanitise_filename;
         fields.insert("title".into(), s(&meta.title));
         fields.insert("artist".into(), s(&meta.artist));
         fields.insert(
@@ -102,16 +156,16 @@ impl TrackMetadata {
             fields.insert("discnumber".into(), d.to_string());
         }
         if let Some(ref date) = meta.date {
-            fields.insert("date".into(), date.clone());
-        }
-        if let Some(ref codec) = meta.codec {
-            fields.insert("codec".into(), codec.clone());
-        }
-        if let Some(ref genre) = meta.genre {
-            fields.insert("genre".into(), s(genre));
+            fields.insert("date".into(), s(date));
         }
         if let Some(ref label) = meta.label {
             fields.insert("label".into(), s(label));
+        }
+        if let Some(ref codec) = meta.codec {
+            fields.insert("codec".into(), s(codec));
+        }
+        if let Some(ref genre) = meta.genre {
+            fields.insert("genre".into(), s(genre));
         }
         Self { fields }
     }
@@ -123,55 +177,52 @@ impl MetadataProvider for TrackMetadata {
     }
 }
 
-/// Replace characters that are illegal in file/directory names.
-fn sanitize_path_component(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
-            _ => c,
-        })
-        .collect::<String>()
-        .trim()
-        .to_string()
-}
-
 /// Sanitize each component of a relative path independently.
-/// Rejects `..` and `.` components to prevent path traversal attacks
-/// (e.g. malicious metadata containing `../../../../etc/passwd`).
-fn sanitize_relative_path(rel: &str) -> PathBuf {
-    let parts: Vec<&str> = if rel.contains('/') {
-        rel.split('/')
-    } else {
-        rel.split(std::path::MAIN_SEPARATOR)
-    }
-    .collect();
-
+///
+/// An empty, `.` or `..` component is an error, not something to skip: dropping one
+/// silently collapses a whole album onto a single filename, and the tracks that land
+/// there overwrite each other.
+fn sanitize_relative_path(rel: &str) -> Result<PathBuf, String> {
     let mut result = PathBuf::new();
-    for part in parts {
-        let sanitized = sanitize_path_component(part);
-        if sanitized.is_empty() || sanitized == "." || sanitized == ".." {
-            continue;
+    for part in rel.split(['/', std::path::MAIN_SEPARATOR]) {
+        let sanitized = sanitise_filename(part);
+        if sanitized.is_empty() {
+            return Err(format!(
+                "format string produced an empty path component: {rel:?}"
+            ));
+        }
+        if sanitized == "." || sanitized == ".." {
+            return Err(format!(
+                "format string produced a relative path component: {rel:?}"
+            ));
         }
         result.push(sanitized);
     }
-    result
+    if result.as_os_str().is_empty() {
+        return Err("format string produced an empty path".into());
+    }
+    Ok(result)
 }
 
-/// Get the album date for a track via its album_id.
-fn album_date_for_track(
-    db: &Database,
-    track: &TrackRow,
-) -> Result<Option<String>, rusqlite::Error> {
-    let Some(album_id) = track.album_id else {
-        return Ok(None);
-    };
-    db.conn
-        .query_row(
-            "SELECT date FROM albums WHERE id = ?1",
-            params![album_id],
-            |row| row.get::<_, Option<String>>(0),
-        )
-        .or(Ok(None))
+/// Load every album's date and label in one query — both are fields a format string
+/// can reference, and both live on the album row.
+fn load_album_facts(conn: &Connection) -> Result<HashMap<i64, AlbumFacts>, OrganizeError> {
+    let mut stmt = conn.prepare("SELECT id, date, label FROM albums")?;
+    let rows = stmt.query_map([], |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            AlbumFacts {
+                date: row.get(1)?,
+                label: row.get(2)?,
+            },
+        ))
+    })?;
+    let mut map = HashMap::new();
+    for row in rows {
+        let (id, facts) = row?;
+        map.insert(id, facts);
+    }
+    Ok(map)
 }
 
 /// Find ancillary files in the same directory as a track.
@@ -206,7 +257,33 @@ fn find_ancillary_files(track_dir: &Path) -> Vec<PathBuf> {
             files.push(path);
         }
     }
+    files.sort();
     files
+}
+
+/// The destination names a run has already committed to, so two files can never be
+/// planned onto the same path.
+#[derive(Default)]
+struct DestinationLedger {
+    taken: HashSet<String>,
+}
+
+impl DestinationLedger {
+    /// macOS and Windows filesystems are case-insensitive by default, so `Rain.flac`
+    /// and `RAIN.flac` are one file there and must collide here too.
+    fn key(path: &Path) -> String {
+        let key = path.to_string_lossy().into_owned();
+        if cfg!(any(target_os = "macos", target_os = "windows")) {
+            key.to_lowercase()
+        } else {
+            key
+        }
+    }
+
+    /// Returns false if this destination is already spoken for.
+    fn claim(&mut self, path: &Path) -> bool {
+        self.taken.insert(Self::key(path))
+    }
 }
 
 /// Plan a single file move: format pattern, sanitize path, build dest, find ancillary files.
@@ -215,11 +292,12 @@ fn find_ancillary_files(track_dir: &Path) -> Vec<PathBuf> {
 /// or `Err(String)` for errors that should be collected by the caller.
 fn plan_single_move(
     source: &Path,
-    track_id: i64,
+    track_id: Option<i64>,
     metadata: &TrackMetadata,
     pattern: &str,
     base_dir: &Path,
-    planned_ancillary: &mut std::collections::HashSet<PathBuf>,
+    dests: &mut DestinationLedger,
+    planned_ancillary: &mut HashSet<PathBuf>,
 ) -> Result<Option<FileMove>, String> {
     let relative = format::format(pattern, metadata).map_err(|e| format!("format error: {e}"))?;
 
@@ -227,11 +305,7 @@ fn plan_single_move(
         return Err("format string produced empty path".into());
     }
 
-    let sanitized = sanitize_relative_path(&relative);
-
-    if sanitized.as_os_str().is_empty() {
-        return Err("format string produced empty path after sanitization".into());
-    }
+    let sanitized = sanitize_relative_path(&relative)?;
 
     // Preserve the original file extension.
     // Don't use with_extension() — it replaces after the LAST dot, which
@@ -240,9 +314,21 @@ fn plan_single_move(
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("flac");
-    let mut dest = base_dir.join(sanitized);
-    let stem = dest.as_os_str().to_os_string();
-    dest = PathBuf::from(format!("{}.{}", stem.to_string_lossy(), ext));
+    let stem = sanitized
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "format string produced an unusable file name".to_string())?;
+    // Leave room for the extension, so a long title is shortened rather than
+    // previewing cleanly and failing with ENAMETOOLONG at move time.
+    let stem = truncate_bytes(stem, MAX_FILE_NAME_BYTES.saturating_sub(ext.len() + 1)).trim_end();
+    if stem.is_empty() {
+        return Err("format string produced an empty file name".into());
+    }
+    let mut dest = base_dir.to_path_buf();
+    if let Some(parent) = sanitized.parent() {
+        dest.push(parent);
+    }
+    dest.push(format!("{stem}.{ext}"));
 
     // Safety: verify dest stays under base_dir (defense-in-depth against path traversal).
     if !dest.starts_with(base_dir) {
@@ -253,8 +339,26 @@ fn plan_single_move(
         ));
     }
 
-    if paths_equal(source, &dest) {
+    if source == dest {
+        // Already in place — claim the name anyway so nothing else targets it.
+        dests.claim(&dest);
         return Ok(None);
+    }
+
+    if !dests.claim(&dest) {
+        return Err(format!(
+            "two files resolve to the same destination: {}",
+            dest.display()
+        ));
+    }
+
+    // A destination that resolves to the source itself is a case-only rename, which
+    // is a real move; anything else already there would be overwritten.
+    if dest.exists() && !paths_equal(source, &dest) {
+        return Err(format!(
+            "destination already exists: {} (moving here would overwrite it)",
+            dest.display()
+        ));
     }
 
     // Plan ancillary moves — move files in source dir to dest dir.
@@ -271,6 +375,11 @@ fn plan_single_move(
                 continue;
             };
             let anc_dest = dest_dir.join(anc_name);
+            // Artwork already at the destination is left alone rather than
+            // overwritten; the audio file is what matters here.
+            if anc_dest.exists() || !dests.claim(&anc_dest) {
+                continue;
+            }
             planned_ancillary.insert(anc_path.clone());
             ancillary.push((anc_path, anc_dest));
         }
@@ -284,64 +393,136 @@ fn plan_single_move(
     }))
 }
 
-/// Build the list of moves for all local tracks (or a filtered subset).
-fn plan_moves(
+fn resolve_from_rows(rows: Vec<TrackRow>, albums: &HashMap<i64, AlbumFacts>) -> Vec<ResolvedTrack> {
+    let fallback = AlbumFacts::default();
+    rows.into_iter()
+        .filter_map(|track| {
+            let source = PathBuf::from(track.path.as_ref()?);
+            if !source.exists() {
+                return None; // file gone, skip
+            }
+            let facts = track
+                .album_id
+                .and_then(|id| albums.get(&id))
+                .unwrap_or(&fallback);
+            Some(ResolvedTrack {
+                source,
+                track_id: Some(track.id),
+                metadata: Ok(TrackMetadata::from_track_row(&track, facts)),
+            })
+        })
+        .collect()
+}
+
+fn read_tag_metadata(source: &Path) -> Result<TrackMetadata, String> {
+    if !source.exists() {
+        return Err("file not found".to_string());
+    }
+    crate::index::metadata::read_metadata(source)
+        .map(|m| TrackMetadata::from_file_meta(&m))
+        .map_err(|e| format!("metadata error: {e}"))
+}
+
+/// Resolve arbitrary paths: library rows where we have them, file tags otherwise.
+/// Preview and execute both come through here, so both see the same metadata.
+fn resolve_from_paths(
     db: &Database,
+    paths: &[PathBuf],
+    albums: &HashMap<i64, AlbumFacts>,
+) -> Result<Vec<ResolvedTrack>, OrganizeError> {
+    use rayon::prelude::*;
+
+    let path_strings: Vec<String> = paths
+        .iter()
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect();
+    let known = queries::tracks_by_paths(&db.conn, &path_strings)?;
+
+    // Tag reads are the expensive part, so only the unknown files pay for them.
+    let mut tagged: HashMap<PathBuf, Result<TrackMetadata, String>> = paths
+        .par_iter()
+        .filter(|p| !known.contains_key(p.to_string_lossy().as_ref()))
+        .map(|p| (p.clone(), read_tag_metadata(p)))
+        .collect();
+
+    let fallback = AlbumFacts::default();
+    let mut resolved = Vec::with_capacity(paths.len());
+    for (path, path_str) in paths.iter().zip(&path_strings) {
+        let entry = match known.get(path_str) {
+            Some(track) => {
+                let facts = track
+                    .album_id
+                    .and_then(|id| albums.get(&id))
+                    .unwrap_or(&fallback);
+                ResolvedTrack {
+                    source: path.clone(),
+                    track_id: Some(track.id),
+                    metadata: Ok(TrackMetadata::from_track_row(track, facts)),
+                }
+            }
+            None => ResolvedTrack {
+                source: path.clone(),
+                track_id: None,
+                metadata: tagged
+                    .remove(path)
+                    .unwrap_or_else(|| Err("duplicate path in selection".to_string())),
+            },
+        };
+        resolved.push(entry);
+    }
+    Ok(resolved)
+}
+
+/// Build the list of moves. Every entry point plans through here, so a preview and the
+/// execute that follows it produce the same destinations from the same metadata.
+fn plan(
+    db: &Database,
+    selection: Selection<'_>,
     pattern: &str,
     base_dir: &Path,
-    track_ids: Option<&[i64]>,
 ) -> Result<OrganizeResult, OrganizeError> {
-    let tracks = match track_ids {
-        Some(ids) => {
-            let mut tracks = Vec::with_capacity(ids.len());
+    let albums = load_album_facts(&db.conn)?;
+
+    let resolved = match selection {
+        Selection::All => resolve_from_rows(queries::all_tracks(&db.conn)?, &albums),
+        Selection::TrackIds(ids) => {
+            let mut rows = Vec::with_capacity(ids.len());
             for &id in ids {
                 if let Some(row) = queries::get_track_row(&db.conn, id)? {
-                    tracks.push(row);
+                    rows.push(row);
                 }
             }
-            tracks
+            resolve_from_rows(rows, &albums)
         }
-        None => queries::all_tracks(&db.conn)?,
+        Selection::Paths(paths) => resolve_from_paths(db, paths, &albums)?,
     };
+
     let mut moves = Vec::new();
     let mut errors = Vec::new();
     let mut skipped = 0;
+    let mut dests = DestinationLedger::default();
+    let mut planned_ancillary: HashSet<PathBuf> = HashSet::new();
 
-    // Track which ancillary files we've already planned to move (dedup across tracks in same dir).
-    let mut planned_ancillary: std::collections::HashSet<PathBuf> =
-        std::collections::HashSet::new();
-
-    for track in &tracks {
-        let Some(ref path_str) = track.path else {
-            continue; // remote-only, skip
-        };
-
-        let source = PathBuf::from(path_str);
-        if !source.exists() {
-            continue; // file gone, skip
-        }
-
-        let album_date = match album_date_for_track(db, track) {
-            Ok(d) => d,
-            Err(e) => {
-                errors.push((source, format!("failed to get album date: {e}")));
+    for entry in resolved {
+        let metadata = match entry.metadata {
+            Ok(m) => m,
+            Err(msg) => {
+                errors.push((entry.source, msg));
                 continue;
             }
         };
-
-        let metadata = TrackMetadata::from_track_row(track, album_date.as_deref());
-
         match plan_single_move(
-            &source,
-            track.id,
+            &entry.source,
+            entry.track_id,
             &metadata,
             pattern,
             base_dir,
+            &mut dests,
             &mut planned_ancillary,
         ) {
             Ok(Some(file_move)) => moves.push(file_move),
             Ok(None) => skipped += 1,
-            Err(msg) => errors.push((source, msg)),
+            Err(msg) => errors.push((entry.source, msg)),
         }
     }
 
@@ -352,188 +533,29 @@ fn plan_moves(
     })
 }
 
-/// Build the list of moves from file paths directly (no DB required).
-/// Reads metadata from tags in parallel (rayon), then plans moves serially
-/// (ancillary dedup requires ordered processing).
-fn plan_moves_from_paths(
-    paths: &[PathBuf],
+/// Plan, then carry out the moves: each file's database rows and its rename land
+/// together or not at all.
+fn run(
+    db: &Database,
+    selection: Selection<'_>,
     pattern: &str,
     base_dir: &Path,
 ) -> Result<OrganizeResult, OrganizeError> {
-    use rayon::prelude::*;
-
-    // Phase 1: Read metadata in parallel — this is the expensive part (disk I/O + tag parsing).
-    let meta_results: Vec<_> = paths
-        .par_iter()
-        .map(|source| {
-            if !source.exists() {
-                return (source.clone(), Err("file not found".to_string()));
-            }
-            match crate::index::metadata::read_metadata(source) {
-                Ok(m) => (source.clone(), Ok(TrackMetadata::from_file_meta(&m))),
-                Err(e) => (source.clone(), Err(format!("metadata error: {e}"))),
-            }
-        })
-        .collect();
-
-    // Phase 2: Plan moves serially (ancillary dedup needs ordered HashSet access).
-    let mut moves = Vec::new();
-    let mut errors = Vec::new();
-    let mut skipped = 0;
-    let mut planned_ancillary: std::collections::HashSet<PathBuf> =
-        std::collections::HashSet::new();
-
-    for (source, meta_result) in meta_results {
-        let metadata = match meta_result {
-            Ok(m) => m,
-            Err(msg) => {
-                errors.push((source, msg));
-                continue;
-            }
-        };
-
-        match plan_single_move(
-            &source,
-            0,
-            &metadata,
-            pattern,
-            base_dir,
-            &mut planned_ancillary,
-        ) {
-            Ok(Some(file_move)) => moves.push(file_move),
-            Ok(None) => skipped += 1,
-            Err(msg) => errors.push((source, msg)),
-        }
-    }
-
-    Ok(OrganizeResult {
-        moves,
-        errors,
-        skipped,
-    })
-}
-
-/// Preview organize for file paths. Uses the DB for metadata when available
-/// (instant), falls back to parallel disk reads for files not in the DB.
-pub fn preview_for_paths(
-    paths: &[PathBuf],
-    pattern: &str,
-    base_dir: Option<&Path>,
-) -> Result<OrganizeResult, OrganizeError> {
-    use rayon::prelude::*;
-
-    let base = resolve_base_dir(base_dir)?;
-
-    // Try to load metadata from the DB (single query, instant for 50k+ tracks).
-    let db_cache: std::collections::HashMap<String, TrackRow> = Database::open_default()
-        .ok()
-        .and_then(|db| queries::all_tracks_by_path(&db.conn).ok())
-        .unwrap_or_default();
-
-    // Build album date cache from DB to avoid per-track queries.
-    let album_dates: std::collections::HashMap<i64, Option<String>> = if !db_cache.is_empty() {
-        let db = Database::open_default().ok();
-        db.map(|db| {
-            let mut dates = std::collections::HashMap::new();
-            for track in db_cache.values() {
-                if let Some(album_id) = track.album_id {
-                    dates
-                        .entry(album_id)
-                        .or_insert_with(|| queries::album_date(&db.conn, album_id).ok().flatten());
-                }
-            }
-            dates
-        })
-        .unwrap_or_default()
-    } else {
-        std::collections::HashMap::new()
-    };
-
-    // Phase 1: Resolve metadata — DB hits are instant, misses go to disk in parallel.
-    let meta_results: Vec<_> = paths
-        .par_iter()
-        .map(|source| {
-            let path_str = source.to_string_lossy();
-
-            // Try DB first.
-            if let Some(track) = db_cache.get(path_str.as_ref()) {
-                let album_date = track
-                    .album_id
-                    .and_then(|aid| album_dates.get(&aid).and_then(|d| d.as_deref()));
-                return (
-                    source.clone(),
-                    track.id,
-                    Ok(TrackMetadata::from_track_row(track, album_date)),
-                );
-            }
-
-            // Fallback: read from disk.
-            if !source.exists() {
-                return (source.clone(), 0, Err("file not found".to_string()));
-            }
-            match crate::index::metadata::read_metadata(source) {
-                Ok(m) => (source.clone(), 0, Ok(TrackMetadata::from_file_meta(&m))),
-                Err(e) => (source.clone(), 0, Err(format!("metadata error: {e}"))),
-            }
-        })
-        .collect();
-
-    // Phase 2: Plan moves serially (ancillary dedup needs ordered HashSet access).
-    let mut moves = Vec::new();
-    let mut errors = Vec::new();
-    let mut skipped = 0;
-    let mut planned_ancillary: std::collections::HashSet<PathBuf> =
-        std::collections::HashSet::new();
-
-    for (source, track_id, meta_result) in meta_results {
-        let metadata = match meta_result {
-            Ok(m) => m,
-            Err(msg) => {
-                errors.push((source, msg));
-                continue;
-            }
-        };
-
-        match plan_single_move(
-            &source,
-            track_id,
-            &metadata,
-            pattern,
-            &base,
-            &mut planned_ancillary,
-        ) {
-            Ok(Some(file_move)) => moves.push(file_move),
-            Ok(None) => skipped += 1,
-            Err(msg) => errors.push((source, msg)),
-        }
-    }
-
-    Ok(OrganizeResult {
-        moves,
-        errors,
-        skipped,
-    })
-}
-
-/// Execute organize for file paths (no DB required — reads tags, moves files).
-/// Does NOT log to organize_log or update DB paths (since tracks may not be in DB).
-pub fn execute_for_paths(
-    paths: &[PathBuf],
-    pattern: &str,
-    base_dir: Option<&Path>,
-) -> Result<OrganizeResult, OrganizeError> {
-    let base = resolve_base_dir(base_dir)?;
-    let mut result = plan_moves_from_paths(paths, pattern, &base)?;
+    let mut result = plan(db, selection, pattern, base_dir)?;
 
     if result.moves.is_empty() {
         return Ok(result);
     }
 
+    check_free_space(&result.moves, base_dir)?;
+
+    let batch_id = batch_id();
+    let floors = cleanup_floors(Some(base_dir));
     let mut completed_moves = Vec::new();
     let mut new_errors = Vec::new();
 
     for file_move in result.moves.drain(..) {
-        match execute_single_move_no_db(&file_move) {
+        match execute_single_move(db, &file_move, &batch_id, &floors) {
             Ok(()) => match verify_move(&file_move) {
                 Ok(()) => completed_moves.push(file_move),
                 Err(msg) => new_errors.push((file_move.from, msg)),
@@ -547,6 +569,71 @@ pub fn execute_for_paths(
     result.moves = completed_moves;
     result.errors.extend(new_errors);
     Ok(result)
+}
+
+/// Preview what would happen without moving files.
+pub fn preview(
+    db: &Database,
+    pattern: &str,
+    base_dir: Option<&Path>,
+) -> Result<OrganizeResult, OrganizeError> {
+    let base = resolve_base_dir(base_dir)?;
+    plan(db, Selection::All, pattern, &base)
+}
+
+/// Execute the moves: rename files, update DB, log for undo.
+pub fn execute(
+    db: &Database,
+    pattern: &str,
+    base_dir: Option<&Path>,
+) -> Result<OrganizeResult, OrganizeError> {
+    let base = resolve_base_dir(base_dir)?;
+    run(db, Selection::All, pattern, &base)
+}
+
+/// Preview organize for a specific set of tracks.
+pub fn preview_for_tracks(
+    db: &Database,
+    track_ids: &[i64],
+    pattern: &str,
+    base_dir: Option<&Path>,
+) -> Result<OrganizeResult, OrganizeError> {
+    let base = resolve_base_dir(base_dir)?;
+    plan(db, Selection::TrackIds(track_ids), pattern, &base)
+}
+
+/// Execute organize for a specific set of tracks.
+pub fn execute_for_tracks(
+    db: &Database,
+    track_ids: &[i64],
+    pattern: &str,
+    base_dir: Option<&Path>,
+) -> Result<OrganizeResult, OrganizeError> {
+    let base = resolve_base_dir(base_dir)?;
+    run(db, Selection::TrackIds(track_ids), pattern, &base)
+}
+
+/// Preview organize for file paths, which may or may not be in the library.
+pub fn preview_for_paths(
+    paths: &[PathBuf],
+    pattern: &str,
+    base_dir: Option<&Path>,
+) -> Result<OrganizeResult, OrganizeError> {
+    let db = Database::open_default()?;
+    let base = resolve_base_dir(base_dir)?;
+    plan(&db, Selection::Paths(paths), pattern, &base)
+}
+
+/// Execute organize for file paths. Requires the library database: without it there is
+/// nowhere to record the moves, and an organize that can't be undone isn't offered.
+pub fn execute_for_paths(
+    paths: &[PathBuf],
+    pattern: &str,
+    base_dir: Option<&Path>,
+) -> Result<OrganizeResult, OrganizeError> {
+    let db = Database::open_default()?;
+    let base = resolve_base_dir(base_dir)?;
+    run(&db, Selection::Paths(paths), pattern, &base)
 }
 
 /// Verify a move actually happened — dest exists and source is gone.
@@ -566,309 +653,552 @@ fn verify_move(file_move: &FileMove) -> Result<(), String> {
     Ok(())
 }
 
-/// Execute a single file move without DB logging (for non-library tracks).
-fn execute_single_move_no_db(file_move: &FileMove) -> Result<(), OrganizeError> {
-    if let Some(parent) = file_move.to.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    move_file(&file_move.from, &file_move.to)?;
-
-    // Move ancillary files (best-effort).
-    for (anc_from, anc_to) in &file_move.ancillary {
-        if let Some(parent) = anc_to.parent() {
-            std::fs::create_dir_all(parent).ok();
-        }
-        if let Err(e) = move_file(anc_from, anc_to) {
-            log::warn!(
-                "failed to move ancillary file {}: {}",
-                anc_from.display(),
-                e
-            );
-        }
-    }
-
-    if let Some(source_dir) = file_move.from.parent() {
-        remove_empty_dirs(source_dir);
-    }
-
+fn log_move(
+    conn: &Connection,
+    batch_id: &str,
+    track_id: Option<i64>,
+    from: &Path,
+    to: &Path,
+    size: Option<u64>,
+    mtime: Option<i64>,
+) -> Result<(), OrganizeError> {
+    conn.execute(
+        "INSERT INTO organize_log (batch_id, track_id, from_path, to_path, size_bytes, mtime)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            batch_id,
+            track_id,
+            from.to_string_lossy().as_ref(),
+            to.to_string_lossy().as_ref(),
+            size.map(|s| s as i64),
+            mtime,
+        ],
+    )?;
     Ok(())
 }
 
-/// Preview what would happen without moving files.
-pub fn preview(
-    db: &Database,
-    pattern: &str,
-    base_dir: Option<&Path>,
-) -> Result<OrganizeResult, OrganizeError> {
-    let base = resolve_base_dir(base_dir)?;
-    plan_moves(db, pattern, &base, None)
+/// Point every path-keyed row at the file's new location.
+///
+/// `tracks.path` and `scan_cache.path` are UNIQUE, so a move onto a path another row
+/// already claims fails here — inside the caller's transaction, before the file itself
+/// is touched.
+fn rewrite_path_references(conn: &Connection, old: &Path, new: &Path) -> Result<(), OrganizeError> {
+    let old_lossy = old.to_string_lossy();
+    let new_lossy = new.to_string_lossy();
+    let old_path = old_lossy.as_ref();
+    let new_path = new_lossy.as_ref();
+
+    conn.execute(
+        "UPDATE tracks SET path = ?1 WHERE path = ?2",
+        params![new_path, old_path],
+    )?;
+    conn.execute(
+        "UPDATE tracks SET cached_path = ?1 WHERE cached_path = ?2",
+        params![new_path, old_path],
+    )?;
+    conn.execute(
+        "UPDATE scan_cache SET path = ?1 WHERE path = ?2",
+        params![new_path, old_path],
+    )?;
+    // The destination may already be starred from an earlier move; OR REPLACE
+    // leaves exactly one favourite row rather than failing on the primary key.
+    conn.execute(
+        "UPDATE OR REPLACE favourites SET track_path = ?1 WHERE track_path = ?2",
+        params![new_path, old_path],
+    )?;
+    conn.execute(
+        "UPDATE queue_snapshots SET cursor_path = ?1 WHERE cursor_path = ?2",
+        params![new_path, old_path],
+    )?;
+    conn.execute(
+        "UPDATE playback_state SET cursor_id = ?1 WHERE cursor_id = ?2",
+        params![new_path, old_path],
+    )?;
+    rewrite_queue_json(conn, "queue_snapshots", old_path, new_path)?;
+    rewrite_queue_json(conn, "playback_state", old_path, new_path)?;
+    Ok(())
 }
 
-/// Execute the moves: rename files, update DB, log for undo.
-pub fn execute(
-    db: &Database,
-    pattern: &str,
-    base_dir: Option<&Path>,
-) -> Result<OrganizeResult, OrganizeError> {
-    let base = resolve_base_dir(base_dir)?;
-    let mut result = plan_moves(db, pattern, &base, None)?;
+/// Rewrite paths inside a table's serialized queue.
+fn rewrite_queue_json(
+    conn: &Connection,
+    table: &str,
+    old_path: &str,
+    new_path: &str,
+) -> Result<(), OrganizeError> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT id, queue_json FROM {table} WHERE instr(queue_json, ?1) > 0"
+    ))?;
+    let rows: Vec<(i64, String)> = stmt
+        .query_map(params![old_path], |row| Ok((row.get(0)?, row.get(1)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
 
-    if result.moves.is_empty() {
-        return Ok(result);
-    }
-
-    // Generate a batch ID from timestamp.
-    let batch_id = chrono_batch_id();
-
-    let mut completed_moves = Vec::new();
-    let mut new_errors = Vec::new();
-
-    for file_move in result.moves.drain(..) {
-        match execute_single_move(db, &file_move, &batch_id) {
-            Ok(()) => match verify_move(&file_move) {
-                Ok(()) => completed_moves.push(file_move),
-                Err(msg) => new_errors.push((file_move.from, msg)),
-            },
-            Err(e) => {
-                new_errors.push((file_move.from, e.to_string()));
+    for (id, json) in rows {
+        let Ok(mut items) = serde_json::from_str::<Vec<PersistedQueueItem>>(&json) else {
+            continue;
+        };
+        let mut changed = false;
+        for item in &mut items {
+            if item.path == old_path {
+                item.path = new_path.to_string();
+                changed = true;
             }
         }
-    }
-
-    result.moves = completed_moves;
-    result.errors.extend(new_errors);
-    Ok(result)
-}
-
-/// Preview organize for a specific set of tracks.
-pub fn preview_for_tracks(
-    db: &Database,
-    track_ids: &[i64],
-    pattern: &str,
-    base_dir: Option<&Path>,
-) -> Result<OrganizeResult, OrganizeError> {
-    let base = resolve_base_dir(base_dir)?;
-    plan_moves(db, pattern, &base, Some(track_ids))
-}
-
-/// Execute organize for a specific set of tracks.
-pub fn execute_for_tracks(
-    db: &Database,
-    track_ids: &[i64],
-    pattern: &str,
-    base_dir: Option<&Path>,
-) -> Result<OrganizeResult, OrganizeError> {
-    let base = resolve_base_dir(base_dir)?;
-    let mut result = plan_moves(db, pattern, &base, Some(track_ids))?;
-
-    if result.moves.is_empty() {
-        return Ok(result);
-    }
-
-    let batch_id = chrono_batch_id();
-    let mut completed_moves = Vec::new();
-    let mut new_errors = Vec::new();
-
-    for file_move in result.moves.drain(..) {
-        match execute_single_move(db, &file_move, &batch_id) {
-            Ok(()) => match verify_move(&file_move) {
-                Ok(()) => completed_moves.push(file_move),
-                Err(msg) => new_errors.push((file_move.from, msg)),
-            },
-            Err(e) => {
-                new_errors.push((file_move.from, e.to_string()));
-            }
+        if !changed {
+            continue;
         }
+        let Ok(updated) = serde_json::to_string(&items) else {
+            continue;
+        };
+        conn.execute(
+            &format!("UPDATE {table} SET queue_json = ?1 WHERE id = ?2"),
+            params![updated, id],
+        )?;
     }
-
-    result.moves = completed_moves;
-    result.errors.extend(new_errors);
-    Ok(result)
+    Ok(())
 }
 
-/// Execute a single file move: create dirs, move file + ancillary, update DB, write log.
+/// Execute a single file move: write the database rows first, then move the file.
+/// A constraint violation therefore aborts before anything on disk changes, and a
+/// failed rename rolls the rows back.
 fn execute_single_move(
     db: &Database,
     file_move: &FileMove,
     batch_id: &str,
+    floors: &[PathBuf],
 ) -> Result<(), OrganizeError> {
-    // Create destination directory.
     if let Some(parent) = file_move.to.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Move the audio file (falls back to copy+delete across filesystems).
+    let source_meta = std::fs::metadata(&file_move.from)?;
+    let size = source_meta.len();
+    let mtime = mtime_secs(&source_meta);
+
+    let tx = db.conn.unchecked_transaction()?;
+    log_move(
+        &tx,
+        batch_id,
+        file_move.track_id,
+        &file_move.from,
+        &file_move.to,
+        Some(size),
+        mtime,
+    )?;
+    rewrite_path_references(&tx, &file_move.from, &file_move.to)?;
+
+    // Dropping `tx` on the way out of this `?` rolls the rows back.
     move_file(&file_move.from, &file_move.to)?;
 
-    // Log the move.
-    db.conn.execute(
-        "INSERT INTO organize_log (batch_id, track_id, from_path, to_path) VALUES (?1, ?2, ?3, ?4)",
-        params![
-            batch_id,
-            file_move.track_id,
-            file_move.from.to_string_lossy().as_ref(),
-            file_move.to.to_string_lossy().as_ref(),
-        ],
-    )?;
-
-    // Update the track's path in the database.
-    db.conn.execute(
-        "UPDATE tracks SET path = ?1 WHERE id = ?2",
-        params![file_move.to.to_string_lossy().as_ref(), file_move.track_id],
-    )?;
-
-    // Update scan_cache if it exists for the old path.
-    db.conn.execute(
-        "UPDATE scan_cache SET path = ?1 WHERE path = ?2",
-        params![
-            file_move.to.to_string_lossy().as_ref(),
-            file_move.from.to_string_lossy().as_ref(),
-        ],
-    )?;
-
-    // Move ancillary files.
+    let mut moved_ancillary: Vec<(&PathBuf, &PathBuf)> = Vec::new();
+    let mut failure = None;
     for (anc_from, anc_to) in &file_move.ancillary {
-        if let Some(parent) = anc_to.parent() {
-            std::fs::create_dir_all(parent)?;
+        if let Some(parent) = anc_to.parent()
+            && std::fs::create_dir_all(parent).is_err()
+        {
+            continue;
         }
-        // Best-effort — don't fail the whole move if ancillary fails.
-        if move_file(anc_from, anc_to).is_ok() {
-            db.conn.execute(
-                "INSERT INTO organize_log (batch_id, track_id, from_path, to_path) VALUES (?1, NULL, ?2, ?3)",
-                params![
+        // Best-effort — artwork that won't move doesn't hold up the audio file.
+        match move_file(anc_from, anc_to) {
+            Ok(()) => {
+                moved_ancillary.push((anc_from, anc_to));
+                let meta = std::fs::metadata(anc_to).ok();
+                if let Err(e) = log_move(
+                    &tx,
                     batch_id,
-                    anc_from.to_string_lossy().as_ref(),
-                    anc_to.to_string_lossy().as_ref(),
-                ],
-            )?;
+                    None,
+                    anc_from,
+                    anc_to,
+                    meta.as_ref().map(|m| m.len()),
+                    meta.as_ref().and_then(mtime_secs),
+                ) {
+                    failure = Some(e);
+                    break;
+                }
+            }
+            Err(e) => log::warn!(
+                "failed to move ancillary file {}: {}",
+                anc_from.display(),
+                e
+            ),
         }
     }
 
-    // Try to remove empty source directories.
+    let outcome = match failure {
+        Some(e) => Err(e),
+        None => tx.commit().map_err(OrganizeError::from),
+    };
+
+    if let Err(e) = outcome {
+        // The rows rolled back, so nothing records these files as moved and nothing
+        // could undo them. Put them back.
+        for (anc_from, anc_to) in moved_ancillary {
+            let _ = move_file(anc_to, anc_from);
+        }
+        let _ = move_file(&file_move.to, &file_move.from);
+        return Err(e);
+    }
+
     if let Some(source_dir) = file_move.from.parent() {
-        remove_empty_dirs(source_dir);
+        remove_empty_dirs(source_dir, floors);
     }
 
     Ok(())
 }
 
 /// Undo the most recent organize batch.
-pub fn undo(db: &Database) -> Result<usize, OrganizeError> {
-    // Find the most recent batch.
+///
+/// Each entry is restored only when the original path is still free and the moved file
+/// is still the one that was logged. Anything else is reported and left in the log, so
+/// a single blocked file doesn't strand the rest of the batch.
+pub fn undo(db: &Database) -> Result<UndoResult, OrganizeError> {
+    // Newest batch by primary key: created_at only has one-second resolution, so two
+    // batches in the same second would tie.
     let batch_id: String = db
         .conn
         .query_row(
-            "SELECT batch_id FROM organize_log ORDER BY created_at DESC LIMIT 1",
+            "SELECT batch_id FROM organize_log ORDER BY id DESC LIMIT 1",
             [],
             |row| row.get(0),
         )
         .map_err(|_| OrganizeError::NothingToUndo)?;
 
-    // Get all moves in this batch, in reverse order.
     let mut stmt = db.conn.prepare(
-        "SELECT id, track_id, from_path, to_path FROM organize_log
+        "SELECT id, from_path, to_path, size_bytes, mtime FROM organize_log
          WHERE batch_id = ?1 ORDER BY id DESC",
     )?;
 
-    let entries: Vec<(i64, Option<i64>, String, String)> = stmt
+    let entries: Vec<UndoEntry> = stmt
         .query_map(params![batch_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            Ok((
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })?
         .collect::<Result<Vec<_>, _>>()?;
+    drop(stmt);
 
-    let mut count = 0;
+    let floors = cleanup_floors(None);
+    let mut result = UndoResult::default();
 
-    for (log_id, track_id, from_path, to_path) in &entries {
+    for (log_id, from_path, to_path, size, mtime) in &entries {
         let to = Path::new(to_path);
         let from = Path::new(from_path);
 
         if !to.exists() {
-            // Already moved back or deleted — skip.
+            // Already moved back or deleted — drop the log row.
             db.conn
                 .execute("DELETE FROM organize_log WHERE id = ?1", params![log_id])?;
             continue;
         }
 
-        // Create original parent dir.
-        if let Some(parent) = from.parent() {
-            std::fs::create_dir_all(parent)?;
+        if from.exists() && !paths_equal(from, to) {
+            result.errors.push((
+                from.to_path_buf(),
+                format!(
+                    "another file now occupies the original path; {} left in place",
+                    to.display()
+                ),
+            ));
+            continue;
         }
 
-        // Move back (falls back to copy+delete across filesystems).
-        move_file(to, from)?;
-
-        // Update track path in DB if this was a track (not ancillary).
-        if let Some(tid) = track_id {
-            db.conn.execute(
-                "UPDATE tracks SET path = ?1 WHERE id = ?2",
-                params![from_path, tid],
-            )?;
-            db.conn.execute(
-                "UPDATE scan_cache SET path = ?1 WHERE path = ?2",
-                params![from_path, to_path],
-            )?;
+        if let Err(msg) = matches_logged_file(to, *size, *mtime) {
+            result.errors.push((to.to_path_buf(), msg));
+            continue;
         }
 
-        // Remove empty dirs at the (now old) destination.
+        if let Some(parent) = from.parent()
+            && let Err(e) = std::fs::create_dir_all(parent)
+        {
+            result.errors.push((from.to_path_buf(), e.to_string()));
+            continue;
+        }
+
+        let tx = db.conn.unchecked_transaction()?;
+        if let Err(e) = rewrite_path_references(&tx, to, from) {
+            result.errors.push((to.to_path_buf(), e.to_string()));
+            continue;
+        }
+        if let Err(e) = move_file(to, from) {
+            result.errors.push((to.to_path_buf(), e.to_string()));
+            continue;
+        }
+        if let Err(e) = tx.execute("DELETE FROM organize_log WHERE id = ?1", params![log_id]) {
+            let _ = move_file(from, to);
+            result.errors.push((to.to_path_buf(), e.to_string()));
+            continue;
+        }
+        if let Err(e) = tx.commit() {
+            let _ = move_file(from, to);
+            result.errors.push((to.to_path_buf(), e.to_string()));
+            continue;
+        }
+
         if let Some(parent) = to.parent() {
-            remove_empty_dirs(parent);
+            remove_empty_dirs(parent, &floors);
         }
 
-        db.conn
-            .execute("DELETE FROM organize_log WHERE id = ?1", params![log_id])?;
-
-        count += 1;
+        result.restored += 1;
     }
 
-    Ok(count)
+    Ok(result)
 }
 
-/// Walk up directories removing empty ones, stopping at first non-empty.
-fn remove_empty_dirs(dir: &Path) {
-    let mut current = dir.to_path_buf();
+/// Confirm the file at a logged destination is still the file that was moved there.
+/// Rows written before size/mtime were recorded carry neither and are accepted.
+fn matches_logged_file(path: &Path, size: Option<i64>, mtime: Option<i64>) -> Result<(), String> {
+    let (Some(size), Some(mtime)) = (size, mtime) else {
+        return Ok(());
+    };
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    if meta.len() != size as u64 {
+        return Err(format!(
+            "{} has changed since it was moved (size differs); left in place",
+            path.display()
+        ));
+    }
+    if mtime_secs(&meta).is_some_and(|current| current != mtime) {
+        return Err(format!(
+            "{} has changed since it was moved (modification time differs); left in place",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+fn mtime_secs(meta: &std::fs::Metadata) -> Option<i64> {
+    meta.modified()
+        .ok()?
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|d| d.as_secs() as i64)
+}
+
+/// Directories an empty-directory sweep must never remove or climb past.
+fn cleanup_floors(base: Option<&Path>) -> Vec<PathBuf> {
+    let mut floors: Vec<PathBuf> = base.map(Path::to_path_buf).into_iter().collect();
+    if let Ok(config) = crate::config::Config::load() {
+        floors.extend(config.library.folders);
+    }
+    floors
+}
+
+/// Remove the directory a file just left, and its now-empty parents — but never a
+/// configured library root, and never anything above one.
+fn remove_empty_dirs(start: &Path, floors: &[PathBuf]) {
+    let mut current = start.to_path_buf();
     loop {
-        if std::fs::read_dir(&current)
-            .map(|mut d| d.next().is_none())
-            .unwrap_or(false)
-        {
-            if std::fs::remove_dir(&current).is_err() {
-                break;
-            }
-            match current.parent() {
-                Some(p) => current = p.to_path_buf(),
-                None => break,
-            }
-        } else {
+        if floors.iter().any(|floor| floor == &current) {
             break;
         }
+        let empty = std::fs::read_dir(&current)
+            .map(|mut d| d.next().is_none())
+            .unwrap_or(false);
+        if !empty || std::fs::remove_dir(&current).is_err() {
+            break;
+        }
+        let Some(parent) = current.parent() else {
+            break;
+        };
+        // Only keep climbing inside a directory the run was told about.
+        if !floors
+            .iter()
+            .any(|floor| parent.starts_with(floor) && parent != floor.as_path())
+        {
+            break;
+        }
+        current = parent.to_path_buf();
     }
 }
 
-/// Move a file, falling back to copy+delete if rename fails (cross-device).
+/// Move a file, never overwriting whatever is already at the destination.
 fn move_file(from: &Path, to: &Path) -> Result<(), OrganizeError> {
+    if from == to {
+        return Ok(());
+    }
+    if paths_equal(from, to) {
+        // Same file under a different spelling — a case-only rename on a
+        // case-insensitive filesystem. Reserving the destination would land on
+        // the source itself, so it goes via a temporary name.
+        return rename_via_temp(from, to);
+    }
+
+    // Claim the name atomically: nothing can slip into the destination between
+    // this check and the rename below.
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)
+    {
+        Ok(_) => {}
+        Err(e) if e.kind() == ErrorKind::AlreadyExists => {
+            return Err(OrganizeError::DestinationExists(to.to_path_buf()));
+        }
+        Err(e) => return Err(e.into()),
+    }
+
+    match transfer(from, to) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // Don't leave the empty placeholder behind.
+            let _ = std::fs::remove_file(to);
+            Err(e)
+        }
+    }
+}
+
+fn rename_via_temp(from: &Path, to: &Path) -> Result<(), OrganizeError> {
+    let temp = temp_sibling(to);
+    std::fs::rename(from, &temp)?;
+    match std::fs::rename(&temp, to) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::rename(&temp, from);
+            Err(e.into())
+        }
+    }
+}
+
+/// Rename, falling back to a verified copy when the destination is on another filesystem.
+fn transfer(from: &Path, to: &Path) -> Result<(), OrganizeError> {
     match std::fs::rename(from, to) {
         Ok(()) => Ok(()),
-        Err(e) if e.raw_os_error() == Some(18) => {
-            // EXDEV (18): cross-device link — copy then delete original.
-            std::fs::copy(from, to)?;
-            std::fs::remove_file(from)?;
-            Ok(())
-        }
+        // EXDEV (18): cross-device link.
+        Err(e) if e.raw_os_error() == Some(18) => copy_across_devices(from, to),
         Err(e) => Err(e.into()),
     }
 }
 
-/// Compare paths for equality, canonicalizing if possible (handles macOS case-insensitive FS).
+/// Copy to a temporary file, flush it to disk, verify its length, and only then
+/// drop the original. A crash at any point leaves the source intact.
+fn copy_across_devices(from: &Path, to: &Path) -> Result<(), OrganizeError> {
+    let source_meta = std::fs::metadata(from)?;
+    let expected = source_meta.len();
+    let temp = temp_sibling(to);
+
+    let copied = {
+        let mut reader = std::fs::File::open(from)?;
+        let mut writer = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        let copied = std::io::copy(&mut reader, &mut writer)?;
+        // std::io::copy returning Ok only means the bytes reached the page cache.
+        writer.sync_all()?;
+        if let Ok(modified) = source_meta.modified() {
+            let _ = writer.set_modified(modified);
+        }
+        copied
+    };
+
+    let written = std::fs::metadata(&temp).map(|m| m.len()).unwrap_or(0);
+    if copied != expected || written != expected {
+        let _ = std::fs::remove_file(&temp);
+        return Err(OrganizeError::ShortCopy {
+            path: from.to_path_buf(),
+            expected,
+            copied: copied.min(written),
+        });
+    }
+
+    if let Err(e) = std::fs::rename(&temp, to) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e.into());
+    }
+    std::fs::remove_file(from)?;
+    Ok(())
+}
+
+fn temp_sibling(path: &Path) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    path.with_file_name(format!(".koan-{}-{}.tmp", std::process::id(), nanos))
+}
+
+/// Compare paths for equality, including two spellings of one file on a
+/// case-insensitive filesystem.
 fn paths_equal(a: &Path, b: &Path) -> bool {
     if a == b {
         return true;
     }
-    // Try canonicalizing both — handles symlinks, case differences, etc.
-    if let (Ok(ca), Ok(cb)) = (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
-        return ca == cb;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let (Ok(ma), Ok(mb)) = (std::fs::metadata(a), std::fs::metadata(b)) {
+            return ma.dev() == mb.dev() && ma.ino() == mb.ino();
+        }
     }
     false
+}
+
+/// Refuse a run that can't fit, rather than discovering it partway through.
+/// Only files landing on a different filesystem need space.
+fn check_free_space(moves: &[FileMove], base_dir: &Path) -> Result<(), OrganizeError> {
+    let Some(target) = existing_ancestor(base_dir) else {
+        return Ok(());
+    };
+    let Some(target_device) = device_id(&target) else {
+        return Ok(());
+    };
+
+    let mut needed = 0u64;
+    for file_move in moves {
+        if device_id(&file_move.from).is_some_and(|d| d == target_device) {
+            continue;
+        }
+        if let Ok(meta) = std::fs::metadata(&file_move.from) {
+            needed = needed.saturating_add(meta.len());
+        }
+    }
+    if needed == 0 {
+        return Ok(());
+    }
+
+    match available_bytes(&target) {
+        Some(available) if available < needed => {
+            Err(OrganizeError::NotEnoughSpace { needed, available })
+        }
+        _ => Ok(()),
+    }
+}
+
+fn existing_ancestor(path: &Path) -> Option<PathBuf> {
+    path.ancestors().find(|p| p.exists()).map(Path::to_path_buf)
+}
+
+#[cfg(unix)]
+fn device_id(path: &Path) -> Option<u64> {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|m| m.dev())
+}
+
+#[cfg(not(unix))]
+fn device_id(_path: &Path) -> Option<u64> {
+    None
+}
+
+#[cfg(unix)]
+fn available_bytes(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c_path.as_ptr(), &mut stat) } != 0 {
+        return None;
+    }
+    // Widths of these fields differ between macOS and Linux.
+    (stat.f_bavail as u64).checked_mul(stat.f_frsize as u64)
+}
+
+#[cfg(not(unix))]
+fn available_bytes(_path: &Path) -> Option<u64> {
+    None
 }
 
 fn resolve_base_dir(base_dir: Option<&Path>) -> Result<PathBuf, OrganizeError> {
@@ -887,9 +1217,9 @@ fn resolve_base_dir(base_dir: Option<&Path>) -> Result<PathBuf, OrganizeError> {
     })
 }
 
-fn chrono_batch_id() -> String {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
+fn batch_id() -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
     format!("batch-{}", now.as_nanos())
 }
@@ -897,9 +1227,9 @@ fn chrono_batch_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::connection::Database;
     use crate::db::queries::TrackMeta;
     use crate::db::schema;
+    use tempfile::TempDir;
 
     fn test_db() -> Database {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -934,32 +1264,75 @@ mod tests {
         }
     }
 
-    #[test]
-    fn track_metadata_provider_fields() {
-        let track = TrackRow {
+    fn sample_track_row(title: &str, artist: &str, album: &str) -> TrackRow {
+        TrackRow {
             id: 1,
             album_id: Some(1),
             artist_id: Some(1),
-            artist_name: "Radiohead".into(),
-            album_artist_name: "Radiohead".into(),
-            album_title: "OK Computer".into(),
+            artist_name: artist.into(),
+            album_artist_name: artist.into(),
+            album_title: album.into(),
             disc: Some(1),
-            track_number: Some(3),
-            title: "Subterranean Homesick Alien".into(),
+            track_number: Some(1),
+            title: title.into(),
             duration_ms: Some(240_000),
-            path: Some("/music/ok_computer/03.flac".into()),
+            path: Some("/music/test.flac".into()),
             codec: Some("FLAC".into()),
             sample_rate: Some(44100),
             bit_depth: Some(16),
             channels: Some(2),
             bitrate: Some(1000),
-            genre: Some("Alternative".into()),
+            genre: None,
             source: "local".into(),
             remote_id: None,
             cached_path: None,
-        };
+        }
+    }
 
-        let meta = TrackMetadata::from_track_row(&track, Some("1997-06-16"));
+    /// Write a file with recognisable contents and register it in the library.
+    fn add_track(db: &Database, path: &Path, title: &str, track_number: i32) -> i64 {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, format!("audio bytes for {title}")).unwrap();
+        let mut meta = sample_meta(title, "Radiohead", "OK Computer");
+        meta.track_number = Some(track_number);
+        meta.path = Some(path.to_string_lossy().into_owned());
+        queries::upsert_track(&db.conn, &meta).unwrap()
+    }
+
+    fn db_path_of(db: &Database, track_id: i64) -> Option<String> {
+        db.conn
+            .query_row(
+                "SELECT path FROM tracks WHERE id = ?1",
+                params![track_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn log_rows(db: &Database) -> Vec<(Option<i64>, String, String)> {
+        let mut stmt = db
+            .conn
+            .prepare("SELECT track_id, from_path, to_path FROM organize_log ORDER BY id")
+            .unwrap();
+        let rows = stmt
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap();
+        rows.map(|r| r.unwrap()).collect()
+    }
+
+    // ---- Metadata + sanitisation ----
+
+    #[test]
+    fn track_metadata_provider_fields() {
+        let mut track = sample_track_row("Subterranean Homesick Alien", "Radiohead", "OK Computer");
+        track.track_number = Some(3);
+        track.genre = Some("Alternative".into());
+
+        let album = AlbumFacts {
+            date: Some("1997-06-16".into()),
+            label: Some("Parlophone".into()),
+        };
+        let meta = TrackMetadata::from_track_row(&track, &album);
         assert_eq!(
             meta.get_field("title").as_deref(),
             Some("Subterranean Homesick Alien")
@@ -970,75 +1343,71 @@ mod tests {
         assert_eq!(meta.get_field("tracknumber").as_deref(), Some("03"));
         assert_eq!(meta.get_field("discnumber").as_deref(), Some("1"));
         assert_eq!(meta.get_field("date").as_deref(), Some("1997-06-16"));
+        assert_eq!(meta.get_field("label").as_deref(), Some("Parlophone"));
         assert_eq!(meta.get_field("codec").as_deref(), Some("FLAC"));
         assert_eq!(meta.get_field("genre").as_deref(), Some("Alternative"));
         assert_eq!(meta.get_field("nonexistent"), None);
     }
 
+    /// Both providers must populate the same field names, or a preview taken from one
+    /// authorises a move planned by the other.
+    #[test]
+    fn both_metadata_sources_expose_the_same_fields() {
+        let mut track = sample_track_row("Airbag", "Radiohead", "OK Computer");
+        track.genre = Some("Rock".into());
+        let album = AlbumFacts {
+            date: Some("1997-06-16".into()),
+            label: Some("Parlophone".into()),
+        };
+        let from_db = TrackMetadata::from_track_row(&track, &album);
+
+        let mut meta = sample_meta("Airbag", "Radiohead", "OK Computer");
+        meta.label = Some("Parlophone".into());
+        let from_tags = TrackMetadata::from_file_meta(&meta);
+
+        let mut db_fields: Vec<&String> = from_db.fields.keys().collect();
+        let mut tag_fields: Vec<&String> = from_tags.fields.keys().collect();
+        db_fields.sort();
+        tag_fields.sort();
+        assert_eq!(db_fields, tag_fields);
+    }
+
     #[test]
     fn sanitize_replaces_illegal_chars() {
-        assert_eq!(sanitize_path_component("AC/DC"), "AC_DC");
-        assert_eq!(sanitize_path_component("What?"), "What_");
-        assert_eq!(sanitize_path_component("a:b*c"), "a_b_c");
-        assert_eq!(sanitize_path_component("normal"), "normal");
+        assert_eq!(sanitise_filename("AC/DC"), "AC_DC");
+        assert_eq!(sanitise_filename("What?"), "What_");
+        assert_eq!(sanitise_filename("a:b*c"), "a_b_c");
+        assert_eq!(sanitise_filename("normal"), "normal");
     }
 
     #[test]
     fn sanitize_relative_path_splits() {
-        let result = sanitize_relative_path("Artist/Album/Track");
-        assert_eq!(result, PathBuf::from("Artist/Album/Track"));
-
-        let result = sanitize_relative_path("Radiohead/(1997) OK Computer/01. Airbag");
         assert_eq!(
-            result,
+            sanitize_relative_path("Artist/Album/Track").unwrap(),
+            PathBuf::from("Artist/Album/Track")
+        );
+        assert_eq!(
+            sanitize_relative_path("Radiohead/(1997) OK Computer/01. Airbag").unwrap(),
             PathBuf::from("Radiohead/(1997) OK Computer/01. Airbag")
         );
     }
 
     #[test]
-    fn sanitize_relative_path_rejects_traversal() {
-        // ".." components should be stripped to prevent path traversal.
-        let result = sanitize_relative_path("../../../../etc/passwd");
-        assert_eq!(result, PathBuf::from("etc/passwd"));
-
-        let result = sanitize_relative_path("Artist/../../../outside");
-        assert_eq!(result, PathBuf::from("Artist/outside"));
-
-        // "." components should also be stripped.
-        let result = sanitize_relative_path("./Artist/./Album");
-        assert_eq!(result, PathBuf::from("Artist/Album"));
-
-        // Normal paths remain unchanged.
-        let result = sanitize_relative_path("Artist/Album/Track");
-        assert_eq!(result, PathBuf::from("Artist/Album/Track"));
+    fn sanitize_relative_path_refuses_traversal_and_gaps() {
+        // Reinterpreting these silently is what turns one bad pattern into a
+        // directory full of overwritten files.
+        assert!(sanitize_relative_path("../../../../etc/passwd").is_err());
+        assert!(sanitize_relative_path("Artist/../../../outside").is_err());
+        assert!(sanitize_relative_path("./Artist/./Album").is_err());
+        assert!(sanitize_relative_path("Radiohead/OK Computer/").is_err());
+        assert!(sanitize_relative_path("Radiohead//Airbag").is_err());
+        assert!(sanitize_relative_path("   /Airbag").is_err());
     }
 
     #[test]
     fn acdc_artist_name_sanitized() {
-        // "AC/DC" should become "AC_DC" through field sanitization.
-        let track = TrackRow {
-            id: 1,
-            album_id: Some(1),
-            artist_id: Some(1),
-            artist_name: "AC/DC".into(),
-            album_artist_name: "AC/DC".into(),
-            album_title: "Highway to Hell".into(),
-            disc: Some(1),
-            track_number: Some(1),
-            title: "Highway to Hell".into(),
-            duration_ms: None,
-            path: Some("/music/test.flac".into()),
-            codec: None,
-            sample_rate: None,
-            bit_depth: None,
-            channels: None,
-            bitrate: None,
-            genre: None,
-            source: "local".into(),
-            remote_id: None,
-            cached_path: None,
-        };
-        let meta = TrackMetadata::from_track_row(&track, Some("1979"));
+        let track = sample_track_row("Highway to Hell", "AC/DC", "Highway to Hell");
+        let meta = TrackMetadata::from_track_row(&track, &AlbumFacts::default());
         assert_eq!(meta.get_field("album artist").as_deref(), Some("AC_DC"));
         let result = format::format("%album artist%/%album%/%title%", &meta).unwrap();
         assert_eq!(result, "AC_DC/Highway to Hell/Highway to Hell");
@@ -1046,182 +1415,678 @@ mod tests {
 
     #[test]
     fn format_string_evaluation() {
-        let track = TrackRow {
-            id: 1,
-            album_id: Some(1),
-            artist_id: Some(1),
-            artist_name: "Radiohead".into(),
-            album_artist_name: "Radiohead".into(),
-            album_title: "OK Computer".into(),
-            disc: Some(1),
-            track_number: Some(1),
-            title: "Airbag".into(),
-            duration_ms: Some(240_000),
-            path: Some("/music/test.flac".into()),
-            codec: Some("FLAC".into()),
-            sample_rate: Some(44100),
-            bit_depth: Some(16),
-            channels: Some(2),
-            bitrate: Some(1000),
-            genre: None,
-            source: "local".into(),
-            remote_id: None,
-            cached_path: None,
+        let track = sample_track_row("Airbag", "Radiohead", "OK Computer");
+        let album = AlbumFacts {
+            date: Some("1997-06-16".into()),
+            label: None,
         };
-
-        let meta = TrackMetadata::from_track_row(&track, Some("1997-06-16"));
+        let meta = TrackMetadata::from_track_row(&track, &album);
         let pattern =
             "%album artist%/['('$left(%date%,4)')' ]%album%/$num(%tracknumber%,2). %title%";
-        let result = format::format(pattern, &meta).unwrap();
-        assert_eq!(result, "Radiohead/(1997) OK Computer/01. Airbag");
-    }
-
-    #[test]
-    fn preview_does_not_move_files() {
-        let db = test_db();
-        let tmp = std::env::temp_dir().join(format!("koan-organize-test-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
-
-        // Create a test file.
-        let test_file = tmp.join("test.flac");
-        std::fs::write(&test_file, b"fake audio data").unwrap();
-
-        let mut meta = sample_meta("Airbag", "Radiohead", "OK Computer");
-        meta.path = Some(test_file.to_string_lossy().into());
-        queries::upsert_track(&db.conn, &meta).unwrap();
-
-        let result = preview(&db, "%album artist%/%album%/%title%", Some(&tmp)).unwrap();
-        // The file should still be at the original path.
-        assert!(test_file.exists());
-        assert!(!result.moves.is_empty());
-
-        // Cleanup.
-        std::fs::remove_dir_all(&tmp).ok();
-    }
-
-    #[test]
-    fn execute_moves_files_and_undo_reverts() {
-        let db = test_db();
-        let tmp = std::env::temp_dir().join(format!("koan-organize-exec-{}", std::process::id()));
-        let src_dir = tmp.join("src");
-        std::fs::create_dir_all(&src_dir).unwrap();
-
-        // Create test files.
-        let test_file = src_dir.join("test.flac");
-        std::fs::write(&test_file, b"fake audio data").unwrap();
-
-        let mut meta = sample_meta("Airbag", "Radiohead", "OK Computer");
-        meta.path = Some(test_file.to_string_lossy().into());
-        queries::upsert_track(&db.conn, &meta).unwrap();
-
-        // Execute.
-        let result = execute(&db, "%album artist%/%album%/%title%", Some(&tmp)).unwrap();
-        assert_eq!(result.moves.len(), 1);
-        assert!(!test_file.exists()); // original gone
-        let dest = &result.moves[0].to;
-        assert!(dest.exists()); // new location exists
-
-        // Undo.
-        let undone = undo(&db).unwrap();
-        assert_eq!(undone, 1);
-        assert!(test_file.exists()); // back to original
-        assert!(!dest.exists()); // new location gone
-
-        // Cleanup.
-        std::fs::remove_dir_all(&tmp).ok();
+        assert_eq!(
+            format::format(pattern, &meta).unwrap(),
+            "Radiohead/(1997) OK Computer/01. Airbag"
+        );
     }
 
     #[test]
     fn ancillary_file_detection() {
-        let tmp = std::env::temp_dir().join(format!("koan-organize-anc-{}", std::process::id()));
-        std::fs::create_dir_all(&tmp).unwrap();
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path();
+        std::fs::write(dir.join("cover.jpg"), b"img").unwrap();
+        std::fs::write(dir.join("cover.png"), b"img").unwrap();
+        std::fs::write(dir.join("album.cue"), b"cue").unwrap();
+        std::fs::write(dir.join("rip.log"), b"log").unwrap();
+        std::fs::write(dir.join("track.flac"), b"audio").unwrap();
 
-        std::fs::write(tmp.join("cover.jpg"), b"img").unwrap();
-        std::fs::write(tmp.join("cover.png"), b"img").unwrap();
-        std::fs::write(tmp.join("album.cue"), b"cue").unwrap();
-        std::fs::write(tmp.join("rip.log"), b"log").unwrap();
-        std::fs::write(tmp.join("track.flac"), b"audio").unwrap(); // not ancillary
-
-        let found = find_ancillary_files(&tmp);
+        let found = find_ancillary_files(dir);
         assert!(found.iter().any(|p| p.file_name().unwrap() == "cover.jpg"));
         assert!(found.iter().any(|p| p.file_name().unwrap() == "cover.png"));
         assert!(found.iter().any(|p| p.file_name().unwrap() == "album.cue"));
         assert!(found.iter().any(|p| p.file_name().unwrap() == "rip.log"));
         assert!(!found.iter().any(|p| p.file_name().unwrap() == "track.flac"));
-
-        std::fs::remove_dir_all(&tmp).ok();
     }
+
+    // ---- Preview / execute ----
+
+    #[test]
+    fn preview_does_not_move_files() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        add_track(&db, &source, "Airbag", 1);
+
+        let result = preview(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        assert!(source.exists());
+        assert_eq!(result.moves.len(), 1);
+    }
+
+    #[test]
+    fn execute_moves_files_and_undo_reverts() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        let id = add_track(&db, &source, "Airbag", 1);
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        assert_eq!(result.moves.len(), 1);
+        assert!(result.errors.is_empty());
+        assert!(!source.exists());
+        let dest = result.moves[0].to.clone();
+        assert!(dest.exists());
+        assert_eq!(db_path_of(&db, id).as_deref(), Some(dest.to_str().unwrap()));
+
+        let undone = undo(&db).unwrap();
+        assert_eq!(undone.restored, 1);
+        assert!(undone.errors.is_empty());
+        assert!(source.exists());
+        assert!(!dest.exists());
+        assert_eq!(
+            db_path_of(&db, id).as_deref(),
+            Some(source.to_str().unwrap())
+        );
+    }
+
+    /// The preview a user confirms and the moves that follow must agree. They read
+    /// metadata through the same resolver, so a pattern using an album-level field
+    /// (here `%label%`) resolves identically in both.
+    #[test]
+    fn preview_and_execute_agree_on_destinations() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let pattern = "$if2(%label%,%album artist%)/%album%/[$num(%tracknumber%,2). ]%title%";
+
+        let source = tmp.path().join("src/aphex.flac");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"audio").unwrap();
+        let mut meta = sample_meta("Xtal", "Aphex Twin", "Selected Ambient Works");
+        meta.label = Some("Warp Records".into());
+        meta.path = Some(source.to_string_lossy().into_owned());
+        queries::upsert_track(&db.conn, &meta).unwrap();
+
+        let previewed = preview(&db, pattern, Some(tmp.path())).unwrap();
+        assert_eq!(previewed.moves.len(), 1);
+        let expected = previewed.moves[0].to.clone();
+        assert!(expected.starts_with(tmp.path().join("Warp Records")));
+
+        let executed = execute(&db, pattern, Some(tmp.path())).unwrap();
+        assert_eq!(executed.moves.len(), 1);
+        assert_eq!(executed.moves[0].to, expected);
+        assert!(expected.exists());
+    }
+
+    // ---- Collisions ----
+
+    #[test]
+    fn colliding_destinations_leave_both_files_intact() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let first = tmp.path().join("src/a.flac");
+        let second = tmp.path().join("src/b.flac");
+        // Same title, different track numbers: two library rows, one destination.
+        let first_id = add_track(&db, &first, "Airbag", 1);
+        let second_id = add_track(&db, &second, "Airbag", 2);
+        let second_bytes = std::fs::read(&second).unwrap();
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+
+        assert_eq!(result.moves.len(), 1);
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].1.contains("same destination"));
+
+        // The loser stays exactly where it was, byte for byte.
+        assert!(second.exists());
+        assert_eq!(std::fs::read(&second).unwrap(), second_bytes);
+        assert_eq!(
+            db_path_of(&db, second_id).as_deref(),
+            Some(second.to_str().unwrap())
+        );
+
+        let dest = &result.moves[0].to;
+        assert_eq!(
+            std::fs::read(dest).unwrap(),
+            b"audio bytes for Airbag".to_vec()
+        );
+        assert_eq!(
+            db_path_of(&db, first_id).as_deref(),
+            Some(dest.to_str().unwrap())
+        );
+    }
+
+    #[test]
+    fn existing_destination_is_never_overwritten() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/new.flac");
+        add_track(&db, &source, "Airbag", 1);
+
+        // Something unrelated is already sitting at the destination.
+        let dest = tmp.path().join("Radiohead/OK Computer/Airbag.flac");
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&dest, b"the good rip").unwrap();
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        assert!(result.moves.is_empty());
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(std::fs::read(&dest).unwrap(), b"the good rip".to_vec());
+        assert!(source.exists());
+    }
+
+    /// `move_file` is the last line of defence: even handed a destination that exists,
+    /// it refuses rather than replacing it.
+    #[test]
+    fn move_file_refuses_an_occupied_destination() {
+        let tmp = TempDir::new().unwrap();
+        let from = tmp.path().join("a.flac");
+        let to = tmp.path().join("b.flac");
+        std::fs::write(&from, b"source").unwrap();
+        std::fs::write(&to, b"keep me").unwrap();
+
+        let err = move_file(&from, &to).unwrap_err();
+        assert!(matches!(err, OrganizeError::DestinationExists(_)));
+        assert_eq!(std::fs::read(&to).unwrap(), b"keep me".to_vec());
+        assert_eq!(std::fs::read(&from).unwrap(), b"source".to_vec());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn case_only_difference_collides_on_a_case_insensitive_filesystem() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let first = tmp.path().join("src/1.flac");
+        let second = tmp.path().join("src/2.flac");
+        std::fs::create_dir_all(first.parent().unwrap()).unwrap();
+        for (path, title, number) in [(&first, "Rain", 1i32), (&second, "RAIN", 2)] {
+            std::fs::write(path, format!("audio bytes for {title}")).unwrap();
+            let mut meta = sample_meta(title, "Radiohead", "OK Computer");
+            meta.track_number = Some(number);
+            meta.path = Some(path.to_string_lossy().into_owned());
+            queries::upsert_track(&db.conn, &meta).unwrap();
+        }
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        assert_eq!(result.moves.len(), 1);
+        assert_eq!(result.errors.len(), 1);
+        assert!(second.exists());
+        assert_eq!(
+            std::fs::read(&second).unwrap(),
+            b"audio bytes for RAIN".to_vec()
+        );
+    }
+
+    /// A rename that only changes case has to go via a temporary name: reserving the
+    /// destination would otherwise open the source file itself.
+    #[test]
+    fn case_only_rename_keeps_the_file() {
+        let tmp = TempDir::new().unwrap();
+        let from = tmp.path().join("rain.flac");
+        let to = tmp.path().join("Rain.flac");
+        std::fs::write(&from, b"audio bytes").unwrap();
+
+        move_file(&from, &to).unwrap();
+
+        assert_eq!(std::fs::read(&to).unwrap(), b"audio bytes".to_vec());
+        let names: Vec<String> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["Rain.flac".to_string()]);
+    }
+
+    /// The cross-device path copies, flushes and verifies before unlinking the
+    /// original, so an interrupted move can never leave a truncated file and no source.
+    #[test]
+    fn cross_device_copy_verifies_before_dropping_the_source() {
+        let tmp = TempDir::new().unwrap();
+        let from = tmp.path().join("a.flac");
+        let to = tmp.path().join("b.flac");
+        let bytes: Vec<u8> = (0..64_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&from, &bytes).unwrap();
+        let mtime = std::fs::metadata(&from).unwrap().modified().unwrap();
+
+        copy_across_devices(&from, &to).unwrap();
+
+        assert!(!from.exists());
+        assert_eq!(std::fs::read(&to).unwrap(), bytes);
+        // Preserved, so scan_cache entries stay valid across a cross-device move.
+        assert_eq!(std::fs::metadata(&to).unwrap().modified().unwrap(), mtime);
+        // No temporary left behind.
+        let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(".koan-")
+            })
+            .collect();
+        assert!(leftovers.is_empty());
+    }
+
+    #[test]
+    fn free_space_check_ignores_same_device_moves() {
+        let tmp = TempDir::new().unwrap();
+        let from = tmp.path().join("a.flac");
+        std::fs::write(&from, b"audio").unwrap();
+        let moves = vec![FileMove {
+            track_id: None,
+            from,
+            to: tmp.path().join("b.flac"),
+            ancillary: Vec::new(),
+        }];
+        // A rename within one filesystem consumes no space.
+        assert!(check_free_space(&moves, tmp.path()).is_ok());
+    }
+
+    // ---- Bad patterns ----
+
+    #[test]
+    fn unknown_function_refuses_the_move() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        add_track(&db, &source, "Airbag", 1);
+
+        // $nun instead of $num.
+        let result = execute(
+            &db,
+            "%album artist%/%album%/$nun(%tracknumber%,2). %title%",
+            Some(tmp.path()),
+        )
+        .unwrap();
+        assert!(result.moves.is_empty());
+        assert_eq!(result.errors.len(), 1);
+        assert!(result.errors[0].1.contains("unknown function"));
+        assert!(source.exists());
+    }
+
+    /// An empty last component used to append the extension to the parent directory,
+    /// pointing every track on an album at one file.
+    #[test]
+    fn empty_final_component_refuses_the_move() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let first = tmp.path().join("src/a.flac");
+        let second = tmp.path().join("src/b.flac");
+        add_track(&db, &first, "Airbag", 1);
+        add_track(&db, &second, "Karma Police", 2);
+
+        // The conditional resolves to nothing, leaving a trailing separator.
+        let result = execute(
+            &db,
+            "%album artist%/%album%/[%nonexistent field%]",
+            Some(tmp.path()),
+        )
+        .unwrap();
+
+        assert!(result.moves.is_empty());
+        assert_eq!(result.errors.len(), 2);
+        assert!(first.exists());
+        assert!(second.exists());
+        assert!(!tmp.path().join("Radiohead/OK Computer.flac").exists());
+    }
+
+    #[test]
+    fn long_title_is_truncated_rather_than_failing() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        let title = "a".repeat(300);
+        add_track(&db, &source, &title, 1);
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        assert_eq!(result.moves.len(), 1, "errors: {:?}", result.errors);
+        let name = result.moves[0].to.file_name().unwrap().to_string_lossy();
+        assert!(name.len() <= MAX_FILE_NAME_BYTES);
+        assert!(name.ends_with(".flac"));
+        assert!(result.moves[0].to.exists());
+    }
+
+    // ---- Directory cleanup ----
+
+    #[test]
+    fn remove_empty_dirs_never_climbs_past_a_floor() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("library");
+        let nested = root.join("artist/album");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        remove_empty_dirs(&nested, std::slice::from_ref(&root));
+
+        assert!(!nested.exists());
+        assert!(!root.join("artist").exists());
+        assert!(root.exists(), "the library root must survive");
+    }
+
+    #[test]
+    fn remove_empty_dirs_stays_put_outside_any_floor() {
+        let tmp = TempDir::new().unwrap();
+        let outside = tmp.path().join("incoming/rip");
+        std::fs::create_dir_all(&outside).unwrap();
+
+        remove_empty_dirs(&outside, &[tmp.path().join("library")]);
+
+        assert!(!outside.exists());
+        assert!(
+            tmp.path().join("incoming").exists(),
+            "no floor means no climbing"
+        );
+    }
+
+    #[test]
+    fn remove_empty_dirs_never_removes_a_floor_itself() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("library");
+        std::fs::create_dir_all(&root).unwrap();
+
+        remove_empty_dirs(&root, std::slice::from_ref(&root));
+
+        assert!(root.exists());
+    }
+
+    // ---- Undo ----
+
+    #[test]
+    fn undo_refuses_when_the_original_path_is_occupied() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        add_track(&db, &source, "Airbag", 1);
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        let dest = result.moves[0].to.clone();
+
+        // A different rip lands at the vacated path before the undo.
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"a completely different rip").unwrap();
+
+        let undone = undo(&db).unwrap();
+        assert_eq!(undone.restored, 0);
+        assert_eq!(undone.errors.len(), 1);
+        assert_eq!(
+            std::fs::read(&source).unwrap(),
+            b"a completely different rip".to_vec()
+        );
+        assert!(dest.exists());
+        // The entry stays in the log so it can be undone once the path is free.
+        assert_eq!(log_rows(&db).len(), 1);
+    }
+
+    #[test]
+    fn undo_refuses_when_the_moved_file_has_been_replaced() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        add_track(&db, &source, "Airbag", 1);
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        let dest = result.moves[0].to.clone();
+        std::fs::write(&dest, b"replaced with something else entirely").unwrap();
+
+        let undone = undo(&db).unwrap();
+        assert_eq!(undone.restored, 0);
+        assert_eq!(undone.errors.len(), 1);
+        assert!(!source.exists());
+        assert!(dest.exists());
+    }
+
+    /// `created_at` has one-second resolution, so batches are ordered by primary key.
+    #[test]
+    fn undo_takes_the_newest_batch_when_timestamps_tie() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let older = tmp.path().join("older.flac");
+        let newer = tmp.path().join("newer.flac");
+        std::fs::write(&older, b"older").unwrap();
+        std::fs::write(&newer, b"newer").unwrap();
+        let moved_older = tmp.path().join("moved-older.flac");
+        let moved_newer = tmp.path().join("moved-newer.flac");
+        std::fs::rename(&older, &moved_older).unwrap();
+        std::fs::rename(&newer, &moved_newer).unwrap();
+
+        for (batch, from, to) in [
+            ("batch-1", &older, &moved_older),
+            ("batch-2", &newer, &moved_newer),
+        ] {
+            db.conn
+                .execute(
+                    "INSERT INTO organize_log (batch_id, track_id, from_path, to_path, created_at)
+                     VALUES (?1, NULL, ?2, ?3, '2025-01-01 00:00:00')",
+                    params![
+                        batch,
+                        from.to_string_lossy().as_ref(),
+                        to.to_string_lossy().as_ref()
+                    ],
+                )
+                .unwrap();
+        }
+
+        let undone = undo(&db).unwrap();
+        assert_eq!(undone.restored, 1);
+        assert!(newer.exists(), "the newest batch is the one undone");
+        assert!(!older.exists());
+    }
+
+    // ---- Database consistency ----
+
+    #[test]
+    fn favourites_and_queue_state_follow_the_move() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        add_track(&db, &source, "Airbag", 1);
+        let source_str = source.to_string_lossy().into_owned();
+
+        queries::add_favourite(&db.conn, &source).unwrap();
+        let item = PersistedQueueItem {
+            path: source_str.clone(),
+            title: "Airbag".into(),
+            artist: "Radiohead".into(),
+            album_artist: "Radiohead".into(),
+            album: "OK Computer".into(),
+            year: None,
+            codec: None,
+            track_number: Some(1),
+            disc: Some(1),
+            duration_ms: None,
+            db_id: None,
+        };
+        queries::save_snapshot(
+            &db.conn,
+            "mine",
+            std::slice::from_ref(&item),
+            Some(&source_str),
+            0,
+        )
+        .unwrap();
+        queries::save_playback_state(&db.conn, &[item], Some(&source_str), 0).unwrap();
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        let dest = result.moves[0].to.clone();
+        let dest_str = dest.to_string_lossy().into_owned();
+
+        let favourites = queries::load_favourites(&db.conn).unwrap();
+        assert!(favourites.contains(&dest));
+        assert!(!favourites.contains(&source));
+
+        let snapshot = queries::load_snapshot(&db.conn, "mine").unwrap().unwrap();
+        assert_eq!(snapshot.items[0].path, dest_str);
+        assert_eq!(snapshot.cursor_path.as_deref(), Some(dest_str.as_str()));
+
+        let state = queries::load_playback_state(&db.conn).unwrap().unwrap();
+        assert_eq!(state.items[0].path, dest_str);
+        assert_eq!(state.cursor_path.as_deref(), Some(dest_str.as_str()));
+
+        assert_eq!(undo(&db).unwrap().restored, 1);
+
+        let favourites = queries::load_favourites(&db.conn).unwrap();
+        assert!(favourites.contains(&source));
+        assert!(!favourites.contains(&dest));
+        let snapshot = queries::load_snapshot(&db.conn, "mine").unwrap().unwrap();
+        assert_eq!(snapshot.items[0].path, source_str);
+        assert_eq!(snapshot.cursor_path.as_deref(), Some(source_str.as_str()));
+    }
+
+    #[test]
+    fn scan_cache_follows_the_move() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        let id = add_track(&db, &source, "Airbag", 1);
+        db.conn
+            .execute(
+                "INSERT INTO scan_cache (path, mtime, size, track_id) VALUES (?1, 1, 1, ?2)",
+                params![source.to_string_lossy().as_ref(), id],
+            )
+            .unwrap();
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        let dest = result.moves[0].to.to_string_lossy().into_owned();
+
+        let cached: String = db
+            .conn
+            .query_row(
+                "SELECT path FROM scan_cache WHERE track_id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(cached, dest);
+    }
+
+    /// A failure partway through a batch must leave the rest of the run truthful: the
+    /// files that moved are in the result and the log, the one that didn't is in neither.
+    #[test]
+    fn partial_failure_leaves_the_database_and_result_consistent() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let first = tmp.path().join("src/a.flac");
+        let clash = tmp.path().join("src/b.flac");
+        let third = tmp.path().join("src/c.flac");
+        let first_id = add_track(&db, &first, "Airbag", 1);
+        let clash_id = add_track(&db, &clash, "Airbag", 2);
+        let third_id = add_track(&db, &third, "Karma Police", 3);
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+
+        assert_eq!(result.moves.len(), 2);
+        assert_eq!(result.errors.len(), 1);
+
+        let logged = log_rows(&db);
+        assert_eq!(logged.len(), 2);
+        for file_move in &result.moves {
+            assert!(file_move.to.exists());
+            assert!(
+                logged
+                    .iter()
+                    .any(|(_, _, to)| Path::new(to) == file_move.to)
+            );
+        }
+
+        // The failed file is untouched, in the filesystem and in the database.
+        assert!(clash.exists());
+        assert_eq!(
+            db_path_of(&db, clash_id).as_deref(),
+            Some(clash.to_str().unwrap())
+        );
+        assert_ne!(db_path_of(&db, first_id).as_deref(), first.to_str());
+        assert_ne!(db_path_of(&db, third_id).as_deref(), third.to_str());
+    }
+
+    /// The TUI organizes a selection of paths. Files the library doesn't know about
+    /// still get a log entry, so the whole run can be undone.
+    #[test]
+    fn unknown_paths_are_logged_and_undoable() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let known = tmp.path().join("src/known.flac");
+        add_track(&db, &known, "Airbag", 1);
+
+        let result = run(
+            &db,
+            Selection::Paths(std::slice::from_ref(&known)),
+            "%album artist%/%album%/%title%",
+            tmp.path(),
+        )
+        .unwrap();
+
+        assert_eq!(result.moves.len(), 1);
+        let logged = log_rows(&db);
+        assert_eq!(logged.len(), 1);
+        assert!(logged[0].0.is_some());
+
+        assert_eq!(undo(&db).unwrap().restored, 1);
+        assert!(known.exists());
+    }
+
+    #[test]
+    fn ancillary_files_move_with_the_album() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/test.flac");
+        add_track(&db, &source, "Airbag", 1);
+        std::fs::write(source.parent().unwrap().join("cover.jpg"), b"art").unwrap();
+
+        let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        assert_eq!(result.moves.len(), 1);
+        let dest_dir = result.moves[0].to.parent().unwrap();
+        assert!(dest_dir.join("cover.jpg").exists());
+
+        // Both the audio and the artwork are in the log, so undo restores both.
+        assert_eq!(log_rows(&db).len(), 2);
+        assert_eq!(undo(&db).unwrap().restored, 2);
+        assert!(source.parent().unwrap().join("cover.jpg").exists());
+    }
+
+    // ---- Extension handling ----
 
     #[test]
     fn extension_not_clobbered_by_dots_in_title() {
         // Regression: with_extension() replaces after the LAST dot,
         // destroying titles with dots ("0111. Bicep - TANGZ II" → "0111.flac").
         let db = test_db();
-        let tmp = std::env::temp_dir().join(format!("koan-organize-dots-{}", std::process::id()));
-        let src_dir = tmp.join("src");
-        std::fs::create_dir_all(&src_dir).unwrap();
-
-        // Track with dots in title (A.L.O.E II) + tracknumber dot.
-        let test_file = src_dir.join("CHROMA 011 A.L.O.E II.flac");
-        std::fs::write(&test_file, b"fake").unwrap();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/CHROMA 011 A.L.O.E II.flac");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"fake").unwrap();
 
         let mut meta = sample_meta("CHROMA 011 A.L.O.E II", "Bicep", "CHROMA 000");
         meta.track_number = Some(10);
-        meta.disc = Some(1);
         meta.date = Some("2025-11-21".into());
-        meta.codec = Some("FLAC".into());
-        meta.album_artist = Some("Bicep".into());
-        meta.path = Some(test_file.to_string_lossy().into());
+        meta.path = Some(source.to_string_lossy().into_owned());
         queries::upsert_track(&db.conn, &meta).unwrap();
 
         let pattern = "%album artist%/['('$left(%date%,4)')' ]%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%";
-        let result = preview(&db, pattern, Some(&tmp)).unwrap();
+        let result = preview(&db, pattern, Some(tmp.path())).unwrap();
         assert_eq!(result.moves.len(), 1);
-
-        let dest_name = result.moves[0]
-            .to
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        // Must preserve full title including dots — NOT truncated by set_extension.
-        assert_eq!(dest_name, "0110. Bicep - CHROMA 011 A.L.O.E II.flac");
-
-        std::fs::remove_dir_all(&tmp).ok();
+        assert_eq!(
+            result.moves[0].to.file_name().unwrap().to_string_lossy(),
+            "0110. Bicep - CHROMA 011 A.L.O.E II.flac"
+        );
     }
 
     #[test]
     fn extension_preserved_for_tracknumber_dot() {
         // "0111. Bicep - TANGZ II" must not become "0111.flac"
         let db = test_db();
-        let tmp = std::env::temp_dir().join(format!("koan-organize-trkdot-{}", std::process::id()));
-        let src_dir = tmp.join("src");
-        std::fs::create_dir_all(&src_dir).unwrap();
-
-        let test_file = src_dir.join("CHROMA 012 TANGZ II.flac");
-        std::fs::write(&test_file, b"fake").unwrap();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/CHROMA 012 TANGZ II.flac");
+        std::fs::create_dir_all(source.parent().unwrap()).unwrap();
+        std::fs::write(&source, b"fake").unwrap();
 
         let mut meta = sample_meta("CHROMA 012 TANGZ II", "Bicep", "CHROMA 000");
         meta.track_number = Some(11);
-        meta.disc = Some(1);
         meta.date = Some("2025-11-21".into());
-        meta.codec = Some("FLAC".into());
-        meta.album_artist = Some("Bicep".into());
-        meta.path = Some(test_file.to_string_lossy().into());
+        meta.path = Some(source.to_string_lossy().into_owned());
         queries::upsert_track(&db.conn, &meta).unwrap();
 
         let pattern = "%album artist%/['('$left(%date%,4)')' ]%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%";
-        let result = preview(&db, pattern, Some(&tmp)).unwrap();
+        let result = preview(&db, pattern, Some(tmp.path())).unwrap();
         assert_eq!(result.moves.len(), 1);
-
-        let dest_name = result.moves[0]
-            .to
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
-        assert_eq!(dest_name, "0111. Bicep - CHROMA 012 TANGZ II.flac");
-
-        std::fs::remove_dir_all(&tmp).ok();
+        assert_eq!(
+            result.moves[0].to.file_name().unwrap().to_string_lossy(),
+            "0111. Bicep - CHROMA 012 TANGZ II.flac"
+        );
     }
 }
