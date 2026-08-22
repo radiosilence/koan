@@ -792,17 +792,19 @@ fn execute_single_move(
     move_file(&file_move.from, &file_move.to)?;
 
     let mut moved_ancillary: Vec<(&PathBuf, &PathBuf)> = Vec::new();
+    let mut failure = None;
     for (anc_from, anc_to) in &file_move.ancillary {
         if let Some(parent) = anc_to.parent()
             && std::fs::create_dir_all(parent).is_err()
         {
             continue;
         }
-        // Best-effort — artwork failing doesn't undo the audio move.
+        // Best-effort — artwork that won't move doesn't hold up the audio file.
         match move_file(anc_from, anc_to) {
             Ok(()) => {
+                moved_ancillary.push((anc_from, anc_to));
                 let meta = std::fs::metadata(anc_to).ok();
-                log_move(
+                if let Err(e) = log_move(
                     &tx,
                     batch_id,
                     None,
@@ -810,8 +812,10 @@ fn execute_single_move(
                     anc_to,
                     meta.as_ref().map(|m| m.len()),
                     meta.as_ref().and_then(mtime_secs),
-                )?;
-                moved_ancillary.push((anc_from, anc_to));
+                ) {
+                    failure = Some(e);
+                    break;
+                }
             }
             Err(e) => log::warn!(
                 "failed to move ancillary file {}: {}",
@@ -821,13 +825,19 @@ fn execute_single_move(
         }
     }
 
-    if let Err(e) = tx.commit() {
-        // No log rows means no undo, so put the files back where they were.
+    let outcome = match failure {
+        Some(e) => Err(e),
+        None => tx.commit().map_err(OrganizeError::from),
+    };
+
+    if let Err(e) = outcome {
+        // The rows rolled back, so nothing records these files as moved and nothing
+        // could undo them. Put them back.
         for (anc_from, anc_to) in moved_ancillary {
             let _ = move_file(anc_to, anc_from);
         }
         let _ = move_file(&file_move.to, &file_move.from);
-        return Err(e.into());
+        return Err(e);
     }
 
     if let Some(source_dir) = file_move.from.parent() {
