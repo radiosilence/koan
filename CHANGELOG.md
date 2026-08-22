@@ -74,6 +74,15 @@
 
 ### Fixed
 
+- **The Linux audio callback took a mutex on every buffer.** The rtrb consumer was wrapped in a
+  `std::sync::Mutex` so it could move into cpal's `FnMut` callback — but `rtrb::Consumer` is already
+  `Send` and the callback bound is `FnMut + Send`, so a by-value capture was always enough. The lock
+  cost an atomic read-modify-write per callback on the real-time thread, and its `try_lock` failure
+  path filled the buffer with silence: an audible dropout reachable only through a contention that
+  could not occur.
+- **A panicking background job poisoned the job registry** for every later lookup, and a poisoned
+  decode cursor silently stopped the gapless lookahead — stalling the queue with no error rather than
+  failing loudly. Both now use `parking_lot`, which the project's own primitive table specifies.
 - **A GraphQL query could stall audio in every connected Subsonic client.** rusqlite is blocking and
   nothing in the server ran it off the async runtime, so resolvers occupied tokio workers directly.
   Four concurrent `fuzzySearch` calls on a 4-core box took every worker, the `ReaderStream` feeding
