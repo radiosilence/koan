@@ -1,0 +1,29 @@
+[package]
+name = "koan-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "uniffi bindings for koan-core — drives native GUI clients in-process."
+keywords = ["audio", "music", "ffi", "uniffi"]
+categories = ["multimedia::audio"]
+publish = false
+
+[lib]
+name = "koan_ffi"
+crate-type = ["staticlib", "cdylib", "lib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+
+[dependencies]
+koan-core = { path = "../koan-core" }
+crossbeam-channel = "0.5"
+log = "0.4"
+nucleo = "0.5"
+parking_lot = "0.12"
+rusqlite = { workspace = true }
+thiserror = "2"
+uniffi = { version = "0.32", features = ["cli"] }
+uuid = { version = "1", features = ["v7"] }

@@ -886,6 +886,45 @@ pub fn favourite_artist_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbE
     Ok(ids)
 }
 
+/// The path a track is favourited under.
+///
+/// Favourites are keyed by path, but which path depends on the track: a local
+/// file has one, a cached remote track has a cache path, and a remote track
+/// that has never been downloaded only has its URL. Without this, remote
+/// tracks can't be favourited at all.
+pub fn track_favourite_key(conn: &Connection, track_id: i64) -> Result<Option<String>, DbError> {
+    let result = conn.query_row(
+        "SELECT COALESCE(path, cached_path, remote_url) FROM tracks WHERE id = ?1",
+        params![track_id],
+        |row| row.get::<_, Option<String>>(0),
+    );
+    match result {
+        Ok(key) => Ok(key),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Get all favourited track IDs in a single query.
+///
+/// Matches the same three columns as [`track_id_by_path`], `remote_url`
+/// included — a remote track that has never been cached is favourited by its
+/// remote URL, and comparing only local paths misses every one of them.
+pub fn favourite_track_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT t.id FROM tracks t
+         JOIN favourites f ON (t.path = f.track_path
+                            OR t.cached_path = f.track_path
+                            OR t.remote_url = f.track_path)",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    let mut ids = HashSet::new();
+    for row in rows {
+        ids.insert(row?);
+    }
+    Ok(ids)
+}
+
 /// Get all album IDs that have at least one favourited track, in a single query.
 pub fn favourite_album_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbError> {
     let mut stmt = conn.prepare(

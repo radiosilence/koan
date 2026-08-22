@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Native macOS app** — a SwiftUI front-end in `apps/macos`, built on a new `koan-ffi` crate that exposes `koan-core` to Swift via uniffi. In-process: no daemon, no port, no auth surface, and CoreAudio output stays in Rust so playback is bit-perfect. Queue-centric like the TUI, with album-grouped queue, a multi-select picker (add / add-and-play / replace queue), library and artist browsing, favourites, snapshots and synced lyrics. Visualizers are out of scope. Ships as `brew install --cask radiosilence/koan/koan-app`.
+- **`SubsonicClient::get_cover_art`** — fetches artwork from the remote server. Libraries synced from Navidrome have no local files to read embedded tags out of, so every album was previously blank in any client that relied on tag extraction.
+- **`queries::favourite_track_ids_batch`** — favourited track IDs in one query.
+
+### Fixed
+
+- **Subsonic error bodies were cached as audio** — Subsonic reports failure with HTTP 200 and a JSON body, and the download path checked neither status nor content type. A failed download (e.g. Navidrome's `data not found` for a stale ID) wrote a few hundred bytes of JSON to the cache, marked the track Ready, and then failed to decode forever — the track silently never played and never retried. Downloads now reject non-binary responses before creating a file, and cache entries too small or too document-shaped to be audio are discarded and re-fetched.
+- **Favourites were invisible on remote-only libraries** — `track_id_by_path` matches `path`, `cached_path` *or* `remote_url`, but the favourite check compared only the two local paths. A never-cached remote track could therefore be favourited and never show as one. Toggling a favourite on such a track failed outright, since it has no local path to key on.
+
 ## v0.23.3 (2026-04-19)
 
 ### Fixed

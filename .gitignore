@@ -21,3 +21,8 @@
 .vscode/
 *.swp
 *.swo
+
+# Generated uniffi bindings — produced by `just macos-ffi`
+apps/macos/Sources/KoanFFI/koan_ffi.swift
+apps/macos/Sources/koan_ffiFFI/koan_ffiFFI.h
+apps/macos/.build/

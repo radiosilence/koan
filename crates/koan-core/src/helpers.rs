@@ -130,10 +130,21 @@ pub fn resolve_item_path(
 ) -> (PathBuf, LoadState) {
     match queries::resolve_playback_path(&db.conn, id) {
         Ok(Some(queries::PlaybackSource::Local(p))) => (p, LoadState::Ready),
-        Ok(Some(queries::PlaybackSource::Cached(p))) => (p, LoadState::Ready),
+        // A cache entry is only as good as its contents. Older builds could
+        // store a Subsonic error body here, which reports Ready and then fails
+        // to decode forever; treating it as Pending sends it back through the
+        // download path, which discards it and re-fetches.
+        Ok(Some(queries::PlaybackSource::Cached(p))) => {
+            let state = if is_cached_audio(&p) {
+                LoadState::Ready
+            } else {
+                LoadState::Pending
+            };
+            (p, state)
+        }
         Ok(Some(queries::PlaybackSource::Remote(_))) => {
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
-            if dest.exists() {
+            if dest.exists() && is_cached_audio(&dest) {
                 (dest, LoadState::Ready)
             } else {
                 (dest, LoadState::Pending)
@@ -216,6 +227,28 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
 // Download
 // ---------------------------------------------------------------------------
 
+/// Whether a cached file plausibly holds audio.
+///
+/// A stored Subsonic error is a few hundred bytes of JSON or XML; no real
+/// encoded track comes close to that, so the size check alone settles almost
+/// every case and the leading byte covers the rest.
+fn is_cached_audio(path: &std::path::Path) -> bool {
+    const MIN_PLAUSIBLE_BYTES: u64 = 4096;
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.len() >= MIN_PLAUSIBLE_BYTES => true,
+        Ok(_) => {
+            let mut first = [0u8; 1];
+            match std::fs::File::open(path)
+                .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut first).map(|_| first[0]))
+            {
+                Ok(b) => b != b'{' && b != b'<',
+                Err(_) => false,
+            }
+        }
+        Err(_) => false,
+    }
+}
+
 /// Resolve a track to a playable file, downloading from remote if needed.
 ///
 /// Resolution order:
@@ -286,6 +319,17 @@ pub fn download_track(
     let dest = cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
 
     // 2. Already cached.
+    //
+    // Older builds could write a Subsonic error body here as if it were audio,
+    // leaving a tiny JSON file that reports Ready and then fails to decode
+    // forever. Treat those as absent so they get re-fetched.
+    if dest.exists() && !is_cached_audio(&dest) {
+        log::warn!(
+            "discarding non-audio cache entry {} (likely a stored server error)",
+            dest.display()
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
     if dest.exists() {
         state.update_paths(&[(queue_id, dest)]);
         state.update_load_state(queue_id, LoadState::Ready);
