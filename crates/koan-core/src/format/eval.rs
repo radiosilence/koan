@@ -51,8 +51,11 @@ fn eval_inner(tokens: &[Token], provider: &dyn MetadataProvider) -> (String, boo
                 if !func_resolved {
                     all_resolved = false;
                 }
-                if let Some(result) = call_function(name, &eval_args) {
-                    output.push_str(&result);
+                // A function that can't produce a value (wrong arity, out-of-range
+                // argument) leaves the expression unresolved rather than vanishing.
+                match call_function(name, &eval_args) {
+                    Some(result) => output.push_str(&result),
+                    None => all_resolved = false,
                 }
             }
         }
@@ -64,7 +67,21 @@ fn eval_inner(tokens: &[Token], provider: &dyn MetadataProvider) -> (String, boo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::format::parse;
     use std::collections::HashMap;
+
+    /// A function that can't produce a value leaves its conditional unresolved,
+    /// rather than emitting the surrounding literals with a hole where it should be.
+    #[test]
+    fn unresolvable_function_suppresses_its_conditional() {
+        let provider = make_provider(&[("artist", "Radiohead"), ("title", "Airbag")]);
+        // $left needs two arguments.
+        let tokens = parse("[%artist% - $left(%title%)]").unwrap();
+        assert_eq!(evaluate(&tokens, &provider), "");
+
+        let tokens = parse("[%artist% - $left(%title%,3)]").unwrap();
+        assert_eq!(evaluate(&tokens, &provider), "Radiohead - Air");
+    }
 
     fn make_provider(data: &[(&str, &str)]) -> HashMap<String, String> {
         data.iter()
