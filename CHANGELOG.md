@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **ratatui 0.29 → 0.30, crossterm 0.28 → 0.29** — the two move together because ratatui 0.30 builds on crossterm 0.29; a split would pull in two crossterm versions and break at the backend boundary. No source changes were needed: koan only touches `Buffer`, `Rect`, `Style`, `Line`/`Span`, `Widget` and simple `Layout` constraints, none of which changed shape. The 0.30 breaking changes (`Alignment` → `HorizontalAlignment`, `block::Title` removal, `Layout::init_cache`, `List::highlight_symbol`, `Flex::SpaceAround`) all land on APIs koan does not use.
+
+  ratatui 0.30 splits into `ratatui-core`/`ratatui-widgets`/`ratatui-crossterm` and swaps the layout solver from cassowary to kasuari; the termwiz and termina backends appear in `Cargo.lock` as optional deps but are not built. Layout output was verified unchanged against the old solver, and the rendered frames are byte-identical to 0.29.
+
 ## v0.23.3 (2026-04-19)
 
 ### Fixed
