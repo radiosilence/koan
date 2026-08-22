@@ -83,6 +83,14 @@ pub fn cmd_scan(path: Option<&Path>, force: bool) {
         result.skipped.to_string().dimmed(),
     );
 
+    if result.unreadable > 0 {
+        eprintln!(
+            "  {} {}",
+            format!("{} unreadable entries", result.unreadable).yellow(),
+            "(permissions or symlink loops — their contents were not scanned)".dimmed(),
+        );
+    }
+
     if !result.errors.is_empty() {
         eprintln!();
         eprintln!(
