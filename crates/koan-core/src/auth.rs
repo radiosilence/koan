@@ -176,10 +176,9 @@ fn public_key_path() -> PathBuf {
     keypair_dir().join("ed25519.pub.pem")
 }
 
-/// Generate an Ed25519 keypair without touching the filesystem.
+/// Derive a new Ed25519 keypair as PEM. Touches no filesystem state.
 /// Returns (private_pem, public_pem).
-pub fn generate_keypair_in_memory() -> Result<(String, String), AuthError> {
-    // Generate Ed25519 keypair using ring (via jsonwebtoken's internal ring dep).
+pub fn generate_keypair_pem() -> Result<(String, String), AuthError> {
     // jsonwebtoken's EncodingKey::from_ed_pem expects PKCS8 PEM.
     let rng = ring::rand::SystemRandom::new();
     let pkcs8_doc = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng)
@@ -209,6 +208,8 @@ pub fn generate_keypair_in_memory() -> Result<(String, String), AuthError> {
 /// Generate a new Ed25519 keypair and write PEM files to the config dir.
 /// Returns (private_pem, public_pem).
 pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
+    let (private_pem, public_pem) = generate_keypair_pem()?;
+
     let dir = keypair_dir();
     fs::create_dir_all(&dir)?;
 
@@ -217,8 +218,6 @@ pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     if !gitignore.exists() {
         let _ = fs::write(&gitignore, "*\n");
     }
-
-    let (private_pem, public_pem) = generate_keypair_in_memory()?;
 
     // Write key files with restrictive permissions set BEFORE writing content
     // to avoid a window where the file exists with default (world-readable) mode.
@@ -395,10 +394,11 @@ mod tests {
 
     #[test]
     fn keypair_generate_and_jwt_roundtrip() {
-        let (priv_pem, pub_pem) = generate_keypair().unwrap();
+        let (priv_pem, pub_pem) = generate_keypair_pem().unwrap();
 
-        let token = mint_access_token(&priv_pem, 42, "testuser", Role::Admin, 3600).unwrap();
-        let claims = validate_access_token(&pub_pem, &token).unwrap();
+        let token =
+            mint_access_token(priv_pem.as_bytes(), 42, "testuser", Role::Admin, 3600).unwrap();
+        let claims = validate_access_token(pub_pem.as_bytes(), &token).unwrap();
 
         assert_eq!(claims.sub, 42);
         assert_eq!(claims.username, "testuser");
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn expired_token_rejected() {
-        let (priv_pem, pub_pem) = generate_keypair().unwrap();
+        let (priv_pem, pub_pem) = generate_keypair_pem().unwrap();
         // Manually create a token that expired 10 minutes ago.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -420,10 +420,10 @@ mod tests {
             iat: now - 1200,
             exp: now - 600, // expired 10 min ago
         };
-        let key = jsonwebtoken::EncodingKey::from_ed_pem(&priv_pem).unwrap();
+        let key = jsonwebtoken::EncodingKey::from_ed_pem(priv_pem.as_bytes()).unwrap();
         let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::EdDSA);
         let token = jsonwebtoken::encode(&header, &claims, &key).unwrap();
-        let result = validate_access_token(&pub_pem, &token);
+        let result = validate_access_token(pub_pem.as_bytes(), &token);
         assert!(result.is_err());
     }
 

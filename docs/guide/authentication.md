@@ -156,6 +156,12 @@ koan auth regenerate-keys
 auth_enabled = false
 ```
 
+> **Warning:** with auth disabled, anything that can reach the port is an admin — it can read your
+> entire library, control playback and rewrite config. The `Origin` and `Host` checks keep a web page
+> you visit from being that "anything", but they are not a substitute for auth: any other machine on
+> the network still gets in. Only disable auth on a host you control, bound to `127.0.0.1`, and never
+> with the port forwarded.
+
 **Nuclear option (start fresh):**
 ```bash
 koan auth reset

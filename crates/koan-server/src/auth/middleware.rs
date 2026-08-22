@@ -152,7 +152,7 @@ mod tests {
 
     /// A live keypair plus a matching token for `role`.
     fn keys_and_token(role: Role) -> (Vec<u8>, String) {
-        let (private_pem, public_pem) = auth::generate_keypair_in_memory().unwrap();
+        let (private_pem, public_pem) = auth::generate_keypair_pem().unwrap();
         let token = auth::mint_access_token(private_pem.as_bytes(), 7, "alice", role, 900).unwrap();
         (public_pem.into_bytes(), token)
     }
@@ -277,7 +277,7 @@ mod tests {
 
     #[tokio::test]
     async fn unparseable_role_claim_falls_back_to_readonly() {
-        let (private_pem, public_pem) = auth::generate_keypair_in_memory().unwrap();
+        let (private_pem, public_pem) = auth::generate_keypair_pem().unwrap();
         let token = auth::mint_access_token_with_role_str(
             private_pem.as_bytes(),
             7,
