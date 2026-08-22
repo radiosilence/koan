@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.24.0 (2026-08-22)
 
 ### Breaking
 
@@ -25,23 +25,6 @@
 - **Default CORS no longer allows any origin.** With `cors_origins` empty the server emits no `Access-Control-Allow-Origin` at all. List the origins your web client is served from.
 
 - **The MCP `graphql` tool executes at `user` role**, not admin. It could previously invoke `organizeExecute`, `organizeUndo`, `updateConfig`, `triggerScan` and `createShare` — none of which its tool description advertised. `KOAN_MCP_ADMIN=1` restores admin; `setDevice`/`clearDevice`/`triggerScan` need it.
-### Fixed
-
-- **No modern Subsonic client could finish a library sync.** The JSON serialiser emitted every attribute as a string, so `getSong?f=json` returned `"duration": "240"` where the OpenSubsonic `Child` schema says int. Symfonium, Substreamer and Feishin all default to `f=json` with generated deserialisers and aborted on the first song; `isDir` was never emitted at all. Attribute values now carry their wire type — `duration`/`track`/`bitRate`/`year`/`songCount`/`albumCount` are ints, `isDir`/`public`/the `getUser` roles are booleans — and only JSON changes. **The XML wire format is byte-for-byte what it was**, plus the newly added attributes.
-- **No client showed cover art anywhere.** Neither songs nor albums carried a `coverArt` id. They now do (`mf-<id>` and `al-<id>`), and `getCoverArt` resolves the prefix: it previously read every id as a *track* id, so `getCoverArt?id=5` meaning "album 5" silently served track 5's art. A bare numeric id still means a track. Rendered covers are cached (256 entries, keyed on id and size) — painting a 200-album grid used to decode 200 media files.
-- **`createPlaylist` with any song returned a bare HTTP 400.** `serde_urlencoded`, which axum's `Query` extractor uses, cannot deserialise the repeated `songId` parameter into a `Vec`, so the request was rejected with a plain-text body before the handler ran and only empty playlists could be created. The query is now parsed directly. The response also carries the created playlist, as it has since Subsonic 1.14.0.
-- **Playlist contents were invisible to XML clients.** `getPlaylist` emitted members as `<song>` where the schema says `<entry>`.
-- **Unimplemented endpoints returned an empty HTTP 404** instead of a Subsonic error, which several clients read as a broken server and fail their connection test on. Anything unhandled under `/rest/` now answers with error code 70. `getIndexes`, `getMusicDirectory`, `getAlbumList`, `getUser` and `getScanStatus` are implemented rather than refused — the first two are how DSub and every file-browse client enumerate a library.
-- **`koan play --server` never played audio.** The bridge built `/rest/stream?id=<queue-item UUID>` with no auth parameters, against a handler expecting a library row id, so every request was rejected before it ran. `NowPlayingTrack` and `QueueEntry` now expose `trackId`, and the bridge signs its requests with the `[subsonic]` credentials from the machine it runs on — set those to match the server's, or client mode has nothing to stream with.
-- **`getGenres` returned blank genre names to XML clients** — the name was written as a `value` attribute, which is the JSON spelling; the XSD carries it as element text. It also loaded the entire tracks table to count genres, now one `GROUP BY`.
-- **An unsatisfiable `Range` served the whole file with a 200** instead of a 416 with `Content-Range: bytes */<total>`. A `Range` header that does not parse is still ignored, per RFC 9110.
-- **A malformed `id` came back as a bare HTTP 400** from axum's extractor rather than a Subsonic error 10.
-- **Database errors read as an empty library.** `getAlbum`, `getGenres`, `getPlaylists` and the artist album counts swallowed failures and answered `status="ok"` with zero rows, which tells a client to drop its cached library.
-- **The Subsonic router was built twice at startup**, each build re-reading two config files and, on macOS, prompting the keychain. Proxied upstream streams also built a fresh HTTP client and re-read the config on every request; both are now resolved once.
-
-### Changed
-
-- `koan-core`: `SubsonicAuth` splits the credentials and URL signing out of `SubsonicClient`, which constructs blocking `reqwest` clients and so cannot be built inside a tokio runtime. `SubsonicClient::stream_to_file` fetches through `/rest/stream` for servers that implement only that. `GraphQLClient::stream_url` is gone — it was unused and omitted the auth parameters `/rest/*` requires.
 
 ### Security
 
@@ -67,11 +50,66 @@
 - **jsonwebtoken now uses the aws-lc-rs backend**, shared with rustls rather than pulling a second crypto stack. Token verification is stricter than under 9.x: the signature check can no longer be disabled, and the `alg` header is matched against the pinned `EdDSA` unconditionally.
 - **keyring on Linux talks to secret-service over zbus** instead of dbus-secret-service. macOS Keychain access is unchanged — same generic-password service/account attributes and the same user keychain — so existing credentials still resolve.
 - **bliss-audio no longer needs the aubio C library**; upstream replaced it with a Rust implementation, so `bliss-audio-aubio-rs` and its bindgen build are gone. The feature vector is unchanged (`FeaturesVersion::Version2`), so stored embeddings stay valid, though decoded values may shift marginally after bliss's Symphonia/Rubato update.
+
+### Added
+
+- **`koan scan --force-remove`** — deletes stale tracks even when the proportion missing trips the mount-failure brake, for the case where the files really were deleted. It lifts that one check and nothing else: a folder yielding no audio files is still left alone, and a path that cannot be stat'd is still not "gone". The run announces itself up front and lists what it removed.
+
+
+- **Render tests for the TUI** (`crates/koan-tui/tests/render.rs`) — the widget layer had no test coverage, and layout and unicode regressions compile cleanly while rendering wrong. Pins the main layout split at every terminal height, asserts the seek bar's click hit-test agrees with the columns actually painted, and sweeps every widget across terminal sizes from 1×1 upward with titles containing CJK, emoji, ZWJ sequences, combining marks and RTL text.
+
+Seven ways `koan organize` could destroy music files, every one of which was reported as a successful move.
+
+- **Destinations are never overwritten.** `move_file` was a bare `fs::rename`, which silently replaces whatever is at the destination. Two rips of the same track, a case-only difference on macOS (`Rain` vs `RAIN`), or a download landing in the library mid-run all destroyed a file and reported success. Planning now refuses a destination claimed twice in one run or already occupied on disk, and `move_file` reserves the name atomically with `create_new` so nothing can slip into the gap. A case-only rename goes via a temporary name, since reserving the destination would otherwise open the source itself.
+- **An empty path component no longer collapses an album onto one filename.** An unresolvable function was dropped from the output without marking the expression unresolved, and the path sanitiser skipped empty components — so `%artist%/%album%/$nun(%tracknumber%,2). %title%`, one typo, renamed every track on the album to `Artist/Album.flac`, each overwriting the last. Unknown function names are now a parse error, an unresolvable function marks its expression unresolved, and an empty, `.` or `..` component is refused instead of skipped.
+- **Preview and execute read the same metadata.** Preview resolved fields from the database and execute from file tags, and the two didn't populate the same fields: `%label%` existed only in the tag path, so the shipped `$if2(%label%,%album artist%)` pattern previewed one tree and wrote another. Both now go through one resolver, with `label` and `date` coming off the album row.
+- **The TUI's organize updates the database and can be undone.** It used a path-only code path that wrote no `organize_log` rows and left `tracks.path` pointing at the old locations — the queue looked right until the next launch, and a 5,000-file organize could not be undone. It now runs the same database-backed path as the GraphQL API; files the library has no row for are logged with a null `track_id` so undo still covers them.
+- **Empty-directory cleanup can't delete a library root.** It walked up from the source directory with no floor, so organizing out of a configured library folder removed the folder itself. It now stops at the directories it was given.
+- **Undo refuses rather than clobbers.** It never checked whether the original path had been re-occupied, picked its batch by a one-second timestamp that two batches could share, and aborted the whole run on the first failure while deleting the rows it had already processed. Batches are now chosen by primary key, each entry is restored only when its original path is free and the moved file still matches the size and modification time recorded for it, and per-entry failures are reported with their log rows left in place.
+- **Path-keyed state follows the file.** Only `tracks.path` and `scan_cache.path` were rewritten, orphaning favourites (keyed by path), queue snapshots, saved playback state and cached paths. All of them are now rewritten in the same transaction as the move — and the database work happens first, so a `UNIQUE(path)` violation aborts before the file is touched instead of after.
+
+Also hardened, same blast radius:
+
+- **Cross-filesystem moves are durable.** `fs::copy` followed by `remove_file` meant power loss between the two left a zero-length destination and no source. The copy now goes to a temporary file, is flushed with `sync_all`, has its length verified and its modification time restored, and only then replaces the destination and unlinks the original. A run that won't fit on the target filesystem is refused before it starts.
+- **The format parser can't be made to abort the process.** Nesting is capped at 64 levels (a few thousand nested `[` was a stack overflow, uncatchable, terminal left in raw mode), length-driven functions (`$repeat`, `$pad`, `$num`, `$tab`) cap their allocations, and `$add`/`$sub`/`$mul` use checked arithmetic.
+- **A `)` inside a quoted argument no longer truncates a call.** The end of a function call is now found by the argument parser, which understands quoting, instead of a naive paren count that ended mid-expression and re-parsed the tail as a literal — silently appending garbage to the path.
+- **Path components are length-capped** at the same 240 bytes as the rest of the codebase, so a long title is shortened rather than previewing cleanly and failing with `ENAMETOOLONG`.
+- **Release pipeline could not recover from a partial crates.io publish.** The idempotency guard used
+  `curl -sf` against the crates.io API, which returns 403 to curl's default User-Agent under its
+  data-access policy — so the guard never fired and a retry after a partial publish always failed on
+  "crate version already uploaded". The only escape was another version bump, which is what v0.23.2 and
+  v0.23.3 were. Replaced the hand-rolled loop with `cargo publish --workspace`, which orders by
+  dependency and waits for the index itself, and dropped `--no-verify` so the packaged crate is
+  actually built.
+- **The git tag was cut before crates.io.** Once tagged, `check-version` saw the release as done and
+  set `should_release=false` forever, so crates.io could never be retried. crates.io now publishes
+  first and the tag marks a release that actually shipped.
+- Documented `auth_enabled` default was wrong in four places (it defaults to **true**), and the v0.22.0
+  changelog entry contradicted itself. The guides that show how to disable auth now warn that
+  doing so leaves the API open to anything that can reach the port.
+- `ARCHITECTURE.md` and `CLAUDE.md` claimed the koan-tui/koan-server boundary was compiler-enforced. It
+  is not — koan-tui declares an (unused) dependency on koan-server.
+
+
+- MSRV declared (`rust-version = "1.89"`, set by async-graphql) and enforced by a CI job.
+- `cargo audit` job and Dependabot for both cargo and GitHub Actions.
+- Release gate that fails if the internal path-dep versions drift from the workspace version — the
+  drift that `--no-verify` was hiding.
+- Job timeouts, and `.gitignore` entries for local secrets and state.
+
+
+- `koan subsonic setup|status|disable`.
+- `[graphql] allowed_hosts`, `cookie_secure`, `allow_organize`.
+- `[subsonic] enabled`, `username`, `password`.
+- Tests for `auth/middleware.rs`, which previously had none: the cookie/Bearer/query-param precedence chain, the `auth_enabled = false` admin bypass, the introspection-key bypass and its constant-time mismatch, the `unwrap_or(Role::Readonly)` fallback on an unparseable role claim, tokens signed by another key. Plus the WebSocket `Origin` check (foreign rejected, absent allowed, same-origin and configured allowed), the `text/plain` POST rejection, the `Host` allowlist, cover-art size clamping, the empty-file range guard, cookie flags, and the login rate limiter.
+
 ### Changed
+
+- `koan-core`: `SubsonicAuth` splits the credentials and URL signing out of `SubsonicClient`, which constructs blocking `reqwest` clients and so cannot be built inside a tokio runtime. `SubsonicClient::stream_to_file` fetches through `/rest/stream` for servers that implement only that. `GraphQLClient::stream_url` is gone — it was unused and omitted the auth parameters `/rest/*` requires.
+
 
 - **Symphonia 0.5 → 0.6.1** — 0.6 rebuilt the format/codec registry, audio primitives, and metadata types around multi-track (audio/video/subtitle) media. Track timing moved off `CodecParameters` onto `Track`, which is where the audible wins come from: 24-bit/96 kHz ALAC now reports 96 kHz instead of 48 kHz (it previously played at half speed, and switched the output device to the wrong rate — fatal for a bit-perfect player), and ALAC-in-CAF decodes at all instead of erroring out. Playback frame counts are byte-identical across every other format.
 
-### Changed
 
 - **GraphQL collections default to 50 rows and cap at 500.** A query with no `first` used to return
   the entire collection, so `{ tracks { edges { node { title } } } }` materialised a whole library as
@@ -89,7 +127,47 @@
   everyone slowly instead of telling the excess to come back. Subscriptions are exempt from the
   timeout.
 
+
+- **Dependency refresh across the workspace.** Notable majors: rusqlite 0.40, keyring 4, jsonwebtoken 11, rtrb 0.4, cpal 0.18, rmcp 3.1, bliss-audio 0.13, lofty 0.25, base64 0.23, tower-http 0.7, pem 4, getrandom 0.4, toml 1.1, jwalk 0.9, core-foundation 0.10, clap 4.6.
+- **jsonwebtoken now uses the aws-lc-rs backend**, shared with rustls rather than pulling a second crypto stack. Token verification is stricter than under 9.x: the signature check can no longer be disabled, and the `alg` header is matched against the pinned `EdDSA` unconditionally.
+- **keyring on Linux talks to secret-service over zbus** instead of dbus-secret-service. macOS Keychain access is unchanged — same generic-password service/account attributes and the same user keychain — so existing credentials still resolve.
+- **bliss-audio no longer needs the aubio C library**; upstream replaced it with a Rust implementation, so `bliss-audio-aubio-rs` and its bindgen build are gone. The feature vector is unchanged (`FeaturesVersion::Version2`), so stored embeddings stay valid, though decoded values may shift marginally after bliss's Symphonia/Rubato update.
+
+- **The library scan commits in 1000-file chunks** instead of one transaction spanning the whole run. Ctrl-C at 90% used to discard everything and restart from zero; committed chunks now land in `scan_cache` so the next run resumes. Peak memory drops to one chunk rather than the whole library's metadata, and other writers — favourites, queue save on quit, play counts, GraphQL mutations — no longer sit behind a minutes-long write lock. `busy_timeout` raised from 5s to 30s to match.
+- **Stale removal runs in its own transaction** and propagates failures instead of logging them and committing anyway. Its refusal message names the folder, how many tracks are missing, out of how many, and the percentage, so an ambiguous case is diagnosable from the error alone.
+- **`scan_folder` and `full_scan` take a `ScanOptions`** instead of a bare `force` flag, and `remove_stale_tracks` returns the paths it removed rather than a count.
+
+- **Download timeouts are per-stall, not per-transfer** — the download client bounds connect (10s) and time between bytes (30s) with no total deadline, and retries transient failures three times with backoff. JSON API calls keep a separate client with a 30s total deadline, which is correct for a small body read in one go.
+- **One `SubsonicClient` per app, not per download** — the client was rebuilt inside `download_track`, re-reading config and redoing the TLS handshake for every track.
+- **`SubsonicClient::stream_url` and the auth path are fallible** — the salt is generated from OS entropy and a request without it now fails instead of falling back to anything predictable. The salt is sent alongside `md5(password + salt)`, so a guessable one would make the token precomputable from a captured exchange.
+- **All remote downloads share one implementation** (`koan-core/src/remote/download.rs`) — there were three copies of "stream bytes to disk with progress" and only one wrote to a temp file and verified the result.
+
+
+- **ratatui 0.29 → 0.30, crossterm 0.28 → 0.29** — the two move together because `ratatui-crossterm` defaults to crossterm 0.29; bumping ratatui alone resolves two crossterm versions and breaks at the backend boundary. No source changes: koan's ratatui surface is `Buffer`, `Rect`, `Style`, `Line`/`Span`, `Widget` and `Length`/`Min`/`Percentage` constraints, and every 0.30 breaking change lands elsewhere.
+
+  0.30 splits into `ratatui-core`/`ratatui-widgets`/`ratatui-crossterm` and replaces the cassowary layout solver with kasuari. Solver output is unchanged for koan's constraint sets, and `Buffer`'s out-of-bounds policy still panics rather than clamping, so nothing that used to render now renders differently or silently truncates. The one behavioural change is that halfwidth katakana dakuten/handakuten (`U+FF9E`/`U+FF9F`) now measure one cell instead of zero, matching how terminals actually draw them.
+
+  The optional `termwiz`/`termina` backends appear in `Cargo.lock` but stay out of the build graph.
+
+
+- The pre-push hook no longer runs `git add -A && git commit --amend` when `cargo fmt` changes files —
+  it swept unrelated working-tree changes into the user's commit. It now fails and asks. It also runs
+  `--all-targets`, matching CI, so warnings in test code stop passing the hook and failing CI.
+
 ### Fixed
+
+- **No modern Subsonic client could finish a library sync.** The JSON serialiser emitted every attribute as a string, so `getSong?f=json` returned `"duration": "240"` where the OpenSubsonic `Child` schema says int. Symfonium, Substreamer and Feishin all default to `f=json` with generated deserialisers and aborted on the first song; `isDir` was never emitted at all. Attribute values now carry their wire type — `duration`/`track`/`bitRate`/`year`/`songCount`/`albumCount` are ints, `isDir`/`public`/the `getUser` roles are booleans — and only JSON changes. **The XML wire format is byte-for-byte what it was**, plus the newly added attributes.
+- **No client showed cover art anywhere.** Neither songs nor albums carried a `coverArt` id. They now do (`mf-<id>` and `al-<id>`), and `getCoverArt` resolves the prefix: it previously read every id as a *track* id, so `getCoverArt?id=5` meaning "album 5" silently served track 5's art. A bare numeric id still means a track. Rendered covers are cached (256 entries, keyed on id and size) — painting a 200-album grid used to decode 200 media files.
+- **`createPlaylist` with any song returned a bare HTTP 400.** `serde_urlencoded`, which axum's `Query` extractor uses, cannot deserialise the repeated `songId` parameter into a `Vec`, so the request was rejected with a plain-text body before the handler ran and only empty playlists could be created. The query is now parsed directly. The response also carries the created playlist, as it has since Subsonic 1.14.0.
+- **Playlist contents were invisible to XML clients.** `getPlaylist` emitted members as `<song>` where the schema says `<entry>`.
+- **Unimplemented endpoints returned an empty HTTP 404** instead of a Subsonic error, which several clients read as a broken server and fail their connection test on. Anything unhandled under `/rest/` now answers with error code 70. `getIndexes`, `getMusicDirectory`, `getAlbumList`, `getUser` and `getScanStatus` are implemented rather than refused — the first two are how DSub and every file-browse client enumerate a library.
+- **`koan play --server` never played audio.** The bridge built `/rest/stream?id=<queue-item UUID>` with no auth parameters, against a handler expecting a library row id, so every request was rejected before it ran. `NowPlayingTrack` and `QueueEntry` now expose `trackId`, and the bridge signs its requests with the `[subsonic]` credentials from the machine it runs on — set those to match the server's, or client mode has nothing to stream with.
+- **`getGenres` returned blank genre names to XML clients** — the name was written as a `value` attribute, which is the JSON spelling; the XSD carries it as element text. It also loaded the entire tracks table to count genres, now one `GROUP BY`.
+- **An unsatisfiable `Range` served the whole file with a 200** instead of a 416 with `Content-Range: bytes */<total>`. A `Range` header that does not parse is still ignored, per RFC 9110.
+- **A malformed `id` came back as a bare HTTP 400** from axum's extractor rather than a Subsonic error 10.
+- **Database errors read as an empty library.** `getAlbum`, `getGenres`, `getPlaylists` and the artist album counts swallowed failures and answered `status="ok"` with zero rows, which tells a client to drop its cached library.
+- **The Subsonic router was built twice at startup**, each build re-reading two config files and, on macOS, prompting the keychain. Proxied upstream streams also built a fresh HTTP client and re-read the config on every request; both are now resolved once.
+
 
 - **The Linux audio callback took a mutex on every buffer.** The rtrb consumer was wrapped in a
   `std::sync::Mutex` so it could move into cpal's `FnMut` callback — but `rtrb::Consumer` is already
@@ -153,90 +231,6 @@
 - **Download workers survive panics** — a panicking download permanently shrank the worker pool for the process lifetime.
 - **Lost server connections are visible** — the remote bridge swallowed poll errors and froze on the last known state while retrying at 10Hz. Connection loss and recovery are now logged.
 
-### Added
-
-- **`koan scan --force-remove`** — deletes stale tracks even when the proportion missing trips the mount-failure brake, for the case where the files really were deleted. It lifts that one check and nothing else: a folder yielding no audio files is still left alone, and a path that cannot be stat'd is still not "gone". The run announces itself up front and lists what it removed.
-
-
-- **Render tests for the TUI** (`crates/koan-tui/tests/render.rs`) — the widget layer had no test coverage, and layout and unicode regressions compile cleanly while rendering wrong. Pins the main layout split at every terminal height, asserts the seek bar's click hit-test agrees with the columns actually painted, and sweeps every widget across terminal sizes from 1×1 upward with titles containing CJK, emoji, ZWJ sequences, combining marks and RTL text.
-
-Seven ways `koan organize` could destroy music files, every one of which was reported as a successful move.
-
-- **Destinations are never overwritten.** `move_file` was a bare `fs::rename`, which silently replaces whatever is at the destination. Two rips of the same track, a case-only difference on macOS (`Rain` vs `RAIN`), or a download landing in the library mid-run all destroyed a file and reported success. Planning now refuses a destination claimed twice in one run or already occupied on disk, and `move_file` reserves the name atomically with `create_new` so nothing can slip into the gap. A case-only rename goes via a temporary name, since reserving the destination would otherwise open the source itself.
-- **An empty path component no longer collapses an album onto one filename.** An unresolvable function was dropped from the output without marking the expression unresolved, and the path sanitiser skipped empty components — so `%artist%/%album%/$nun(%tracknumber%,2). %title%`, one typo, renamed every track on the album to `Artist/Album.flac`, each overwriting the last. Unknown function names are now a parse error, an unresolvable function marks its expression unresolved, and an empty, `.` or `..` component is refused instead of skipped.
-- **Preview and execute read the same metadata.** Preview resolved fields from the database and execute from file tags, and the two didn't populate the same fields: `%label%` existed only in the tag path, so the shipped `$if2(%label%,%album artist%)` pattern previewed one tree and wrote another. Both now go through one resolver, with `label` and `date` coming off the album row.
-- **The TUI's organize updates the database and can be undone.** It used a path-only code path that wrote no `organize_log` rows and left `tracks.path` pointing at the old locations — the queue looked right until the next launch, and a 5,000-file organize could not be undone. It now runs the same database-backed path as the GraphQL API; files the library has no row for are logged with a null `track_id` so undo still covers them.
-- **Empty-directory cleanup can't delete a library root.** It walked up from the source directory with no floor, so organizing out of a configured library folder removed the folder itself. It now stops at the directories it was given.
-- **Undo refuses rather than clobbers.** It never checked whether the original path had been re-occupied, picked its batch by a one-second timestamp that two batches could share, and aborted the whole run on the first failure while deleting the rows it had already processed. Batches are now chosen by primary key, each entry is restored only when its original path is free and the moved file still matches the size and modification time recorded for it, and per-entry failures are reported with their log rows left in place.
-- **Path-keyed state follows the file.** Only `tracks.path` and `scan_cache.path` were rewritten, orphaning favourites (keyed by path), queue snapshots, saved playback state and cached paths. All of them are now rewritten in the same transaction as the move — and the database work happens first, so a `UNIQUE(path)` violation aborts before the file is touched instead of after.
-
-Also hardened, same blast radius:
-
-- **Cross-filesystem moves are durable.** `fs::copy` followed by `remove_file` meant power loss between the two left a zero-length destination and no source. The copy now goes to a temporary file, is flushed with `sync_all`, has its length verified and its modification time restored, and only then replaces the destination and unlinks the original. A run that won't fit on the target filesystem is refused before it starts.
-- **The format parser can't be made to abort the process.** Nesting is capped at 64 levels (a few thousand nested `[` was a stack overflow, uncatchable, terminal left in raw mode), length-driven functions (`$repeat`, `$pad`, `$num`, `$tab`) cap their allocations, and `$add`/`$sub`/`$mul` use checked arithmetic.
-- **A `)` inside a quoted argument no longer truncates a call.** The end of a function call is now found by the argument parser, which understands quoting, instead of a naive paren count that ended mid-expression and re-parsed the tail as a literal — silently appending garbage to the path.
-- **Path components are length-capped** at the same 240 bytes as the rest of the codebase, so a long title is shortened rather than previewing cleanly and failing with `ENAMETOOLONG`.
-- **Release pipeline could not recover from a partial crates.io publish.** The idempotency guard used
-  `curl -sf` against the crates.io API, which returns 403 to curl's default User-Agent under its
-  data-access policy — so the guard never fired and a retry after a partial publish always failed on
-  "crate version already uploaded". The only escape was another version bump, which is what v0.23.2 and
-  v0.23.3 were. Replaced the hand-rolled loop with `cargo publish --workspace`, which orders by
-  dependency and waits for the index itself, and dropped `--no-verify` so the packaged crate is
-  actually built.
-- **The git tag was cut before crates.io.** Once tagged, `check-version` saw the release as done and
-  set `should_release=false` forever, so crates.io could never be retried. crates.io now publishes
-  first and the tag marks a release that actually shipped.
-- Documented `auth_enabled` default was wrong in four places (it defaults to **true**), and the v0.22.0
-  changelog entry contradicted itself. The guides that show how to disable auth now warn that
-  doing so leaves the API open to anything that can reach the port.
-- `ARCHITECTURE.md` and `CLAUDE.md` claimed the koan-tui/koan-server boundary was compiler-enforced. It
-  is not — koan-tui declares an (unused) dependency on koan-server.
-
-
-- MSRV declared (`rust-version = "1.89"`, set by async-graphql) and enforced by a CI job.
-- `cargo audit` job and Dependabot for both cargo and GitHub Actions.
-- Release gate that fails if the internal path-dep versions drift from the workspace version — the
-  drift that `--no-verify` was hiding.
-- Job timeouts, and `.gitignore` entries for local secrets and state.
-
-
-- `koan subsonic setup|status|disable`.
-- `[graphql] allowed_hosts`, `cookie_secure`, `allow_organize`.
-- `[subsonic] enabled`, `username`, `password`.
-- Tests for `auth/middleware.rs`, which previously had none: the cookie/Bearer/query-param precedence chain, the `auth_enabled = false` admin bypass, the introspection-key bypass and its constant-time mismatch, the `unwrap_or(Role::Readonly)` fallback on an unparseable role claim, tokens signed by another key. Plus the WebSocket `Origin` check (foreign rejected, absent allowed, same-origin and configured allowed), the `text/plain` POST rejection, the `Host` allowlist, cover-art size clamping, the empty-file range guard, cookie flags, and the login rate limiter.
-
-### Changed
-
-- **Dependency refresh across the workspace.** Notable majors: rusqlite 0.40, keyring 4, jsonwebtoken 11, rtrb 0.4, cpal 0.18, rmcp 3.1, bliss-audio 0.13, lofty 0.25, base64 0.23, tower-http 0.7, pem 4, getrandom 0.4, toml 1.1, jwalk 0.9, core-foundation 0.10, clap 4.6.
-- **jsonwebtoken now uses the aws-lc-rs backend**, shared with rustls rather than pulling a second crypto stack. Token verification is stricter than under 9.x: the signature check can no longer be disabled, and the `alg` header is matched against the pinned `EdDSA` unconditionally.
-- **keyring on Linux talks to secret-service over zbus** instead of dbus-secret-service. macOS Keychain access is unchanged — same generic-password service/account attributes and the same user keychain — so existing credentials still resolve.
-- **bliss-audio no longer needs the aubio C library**; upstream replaced it with a Rust implementation, so `bliss-audio-aubio-rs` and its bindgen build are gone. The feature vector is unchanged (`FeaturesVersion::Version2`), so stored embeddings stay valid, though decoded values may shift marginally after bliss's Symphonia/Rubato update.
-
-- **Symphonia 0.5 → 0.6.1** — 0.6 rebuilt the format/codec registry, audio primitives, and metadata types around multi-track (audio/video/subtitle) media. Track timing moved off `CodecParameters` onto `Track`, which is where the audible wins come from: 24-bit/96 kHz ALAC now reports 96 kHz instead of 48 kHz (it previously played at half speed, and switched the output device to the wrong rate — fatal for a bit-perfect player), and ALAC-in-CAF decodes at all instead of erroring out. Playback frame counts are byte-identical across every other format.
-
-
-- **The library scan commits in 1000-file chunks** instead of one transaction spanning the whole run. Ctrl-C at 90% used to discard everything and restart from zero; committed chunks now land in `scan_cache` so the next run resumes. Peak memory drops to one chunk rather than the whole library's metadata, and other writers — favourites, queue save on quit, play counts, GraphQL mutations — no longer sit behind a minutes-long write lock. `busy_timeout` raised from 5s to 30s to match.
-- **Stale removal runs in its own transaction** and propagates failures instead of logging them and committing anyway. Its refusal message names the folder, how many tracks are missing, out of how many, and the percentage, so an ambiguous case is diagnosable from the error alone.
-- **`scan_folder` and `full_scan` take a `ScanOptions`** instead of a bare `force` flag, and `remove_stale_tracks` returns the paths it removed rather than a count.
-
-- **Download timeouts are per-stall, not per-transfer** — the download client bounds connect (10s) and time between bytes (30s) with no total deadline, and retries transient failures three times with backoff. JSON API calls keep a separate client with a 30s total deadline, which is correct for a small body read in one go.
-- **One `SubsonicClient` per app, not per download** — the client was rebuilt inside `download_track`, re-reading config and redoing the TLS handshake for every track.
-- **`SubsonicClient::stream_url` and the auth path are fallible** — the salt is generated from OS entropy and a request without it now fails instead of falling back to anything predictable. The salt is sent alongside `md5(password + salt)`, so a guessable one would make the token precomputable from a captured exchange.
-- **All remote downloads share one implementation** (`koan-core/src/remote/download.rs`) — there were three copies of "stream bytes to disk with progress" and only one wrote to a temp file and verified the result.
-
-
-- **ratatui 0.29 → 0.30, crossterm 0.28 → 0.29** — the two move together because `ratatui-crossterm` defaults to crossterm 0.29; bumping ratatui alone resolves two crossterm versions and breaks at the backend boundary. No source changes: koan's ratatui surface is `Buffer`, `Rect`, `Style`, `Line`/`Span`, `Widget` and `Length`/`Min`/`Percentage` constraints, and every 0.30 breaking change lands elsewhere.
-
-  0.30 splits into `ratatui-core`/`ratatui-widgets`/`ratatui-crossterm` and replaces the cassowary layout solver with kasuari. Solver output is unchanged for koan's constraint sets, and `Buffer`'s out-of-bounds policy still panics rather than clamping, so nothing that used to render now renders differently or silently truncates. The one behavioural change is that halfwidth katakana dakuten/handakuten (`U+FF9E`/`U+FF9F`) now measure one cell instead of zero, matching how terminals actually draw them.
-
-  The optional `termwiz`/`termina` backends appear in `Cargo.lock` but stay out of the build graph.
-
-
-- The pre-push hook no longer runs `git add -A && git commit --amend` when `cargo fmt` changes files —
-  it swept unrelated working-tree changes into the user's commit. It now fails and asks. It also runs
-  `--all-targets`, matching CI, so warnings in test code stop passing the hook and failing CI.
-
-### Fixed
 
 - **Deleting the playing track jumped back to the top of the queue** — removing an item clears the cursor, and an unset cursor means "start from the beginning", so deleting track 25 of 40 resumed at track 1. The removed track's predecessor is now pinned before advancing, so playback continues at its successor. Reachable from the TUI, GraphQL and MCP.
 - **Deleting an upcoming track replayed the whole queue** — the decode thread's gapless lookahead runs up to ~4 seconds ahead of what is audible, and its reference item vanishing was read as "start of queue". Track 6 would run gaplessly into track 1. A missing reference now ends the lookahead so the audible track's own successor is used.
@@ -286,7 +280,6 @@ Also hardened, same blast radius:
 - **Download workers survive panics** — a panicking download permanently shrank the worker pool for the process lifetime.
 - **Lost server connections are visible** — the remote bridge swallowed poll errors and froze on the last known state while retrying at 10Hz. Connection loss and recovery are now logged.
 
-### Removed
 
 - **`remove_track_by_path` and `remove_tracks_by_source`** — unused outside their own tests, and both left orphaned foreign-key rows behind that would fail a later delete.
 
