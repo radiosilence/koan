@@ -176,10 +176,6 @@ pub struct SharedPlayerState {
     /// Bumped on every playlist mutation so UI can skip redundant redraws.
     playlist_version: AtomicU64,
 
-    /// Playback generation — incremented each start_playback so stale decode
-    /// thread callbacks can detect they're outdated and skip state mutations.
-    playback_generation: AtomicU64,
-
     /// Set by external signals (e.g. souvlaki Quit event) to request clean shutdown.
     quit_requested: AtomicBool,
 
@@ -200,7 +196,6 @@ impl SharedPlayerState {
             track_info: parking_lot::RwLock::new(None),
             playlist: parking_lot::RwLock::new(Playlist::default()),
             playlist_version: AtomicU64::new(0),
-            playback_generation: AtomicU64::new(0),
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
             radio_mode: AtomicBool::new(false),
@@ -236,8 +231,9 @@ impl SharedPlayerState {
     /// Download fraction (0.0..1.0) for the currently playing track, if streaming.
     /// Returns `None` for fully-downloaded or non-playing tracks.
     pub fn current_download_fraction(&self) -> Option<f64> {
-        let track_info = self.track_info.read();
-        let id = track_info.as_ref()?.id;
+        // Released before the playlist lock is taken: derive_visible_queue takes
+        // these two in the opposite order, so holding both would close a cycle.
+        let id = self.track_info.read().as_ref()?.id;
         let pl = self.playlist.read();
         pl.items
             .iter()
@@ -257,16 +253,6 @@ impl SharedPlayerState {
                 }
                 _ => None,
             })
-    }
-
-    // --- Playback generation ---
-
-    pub fn bump_generation(&self) -> u64 {
-        self.playback_generation.fetch_add(1, Ordering::AcqRel) + 1
-    }
-
-    pub fn generation(&self) -> u64 {
-        self.playback_generation.load(Ordering::Acquire)
     }
 
     // --- Quit ---
@@ -447,32 +433,34 @@ impl SharedPlayerState {
 
     // --- Called from decode thread (gapless) ---
 
-    /// Advance cursor to the next Ready item. Returns (id, path) if found.
-    /// Moves the cursor. Used for explicit next-track commands.
-    pub fn advance_cursor(&self) -> Option<(QueueItemId, PathBuf)> {
+    /// Move the cursor to the next item that can still play — the first item
+    /// after the cursor that is not `Failed` — and return its ID.
+    ///
+    /// An item that is still downloading parks the cursor rather than being
+    /// skipped, so playback resumes from it when its data lands. Skipping it
+    /// would drop it from the queue for good.
+    ///
+    /// With no cursor set, starts from the top. A cursor pointing at an item
+    /// that is no longer in the playlist yields `None` — restarting from the
+    /// top would silently replay the queue.
+    pub fn advance_cursor_loadable(&self) -> Option<QueueItemId> {
         let mut pl = self.playlist.write();
-        let cursor_pos = match pl.cursor {
-            Some(cid) => pl.items.iter().position(|item| item.id == cid),
-            None => None,
-        };
-
-        let start = match cursor_pos {
-            Some(pos) => pos + 1,
+        let start = match pl.cursor {
+            Some(cid) => pl.items.iter().position(|item| item.id == cid)? + 1,
             None => 0,
         };
 
-        // Find next Ready item after cursor.
-        for i in start..pl.items.len() {
-            if matches!(pl.items[i].load_state, LoadState::Ready) {
-                let item = &pl.items[i];
-                let result = (item.id, item.path.clone());
-                pl.cursor = Some(item.id);
-                drop(pl);
-                self.bump_version();
-                return Some(result);
-            }
-        }
-        None
+        let next = pl
+            .items
+            .get(start..)?
+            .iter()
+            .find(|item| !matches!(item.load_state, LoadState::Failed(_)))
+            .map(|item| item.id)?;
+
+        pl.cursor = Some(next);
+        drop(pl);
+        self.bump_version();
+        Some(next)
     }
 
     /// Peek at the next Ready item after a given item ID WITHOUT moving the cursor.
@@ -480,12 +468,9 @@ impl SharedPlayerState {
     /// later by update_playback_state when playback actually reaches the track.
     pub fn peek_next_ready_after(&self, after_id: QueueItemId) -> Option<(QueueItemId, PathBuf)> {
         let pl = self.playlist.read();
-        let pos = pl.items.iter().position(|item| item.id == after_id);
-
-        let start = match pos {
-            Some(p) => p + 1,
-            None => 0,
-        };
+        // A reference item that has been removed means the lookahead has nothing
+        // to follow; starting from the top would gaplessly replay the queue.
+        let start = pl.items.iter().position(|item| item.id == after_id)? + 1;
 
         for i in start..pl.items.len() {
             if matches!(pl.items[i].load_state, LoadState::Ready) {
@@ -677,21 +662,48 @@ impl SharedPlayerState {
         }
     }
 
-    /// For each ID, get the ID of the item before it (or None if first).
-    /// Used to snapshot positions before a batch move for undo.
+    /// For each ID, the ID of the item before it (or None if first), returned in
+    /// playlist order regardless of the order `ids` arrives in.
+    ///
+    /// Undo replays these left to right, so an item whose recorded predecessor is
+    /// also in `ids` must come after it — otherwise the predecessor is missing at
+    /// replay time and the item lands at the end of the playlist instead.
     pub fn items_before(&self, ids: &[QueueItemId]) -> Vec<(QueueItemId, Option<QueueItemId>)> {
+        use std::collections::HashSet;
+        let wanted: HashSet<QueueItemId> = ids.iter().copied().collect();
         let pl = self.playlist.read();
-        ids.iter()
-            .filter_map(|&id| {
-                let pos = pl.items.iter().position(|item| item.id == id)?;
+        pl.items
+            .iter()
+            .enumerate()
+            .filter(|(_, item)| wanted.contains(&item.id))
+            .map(|(pos, item)| {
                 let before = if pos == 0 {
                     None
                 } else {
                     Some(pl.items[pos - 1].id)
                 };
-                Some((id, before))
+                (item.id, before)
             })
             .collect()
+    }
+
+    /// The nearest item before `id` that is not itself being removed — where
+    /// playback resumes from after a batch delete that takes out the cursor.
+    /// `None` means resume from the top of what survives.
+    pub fn surviving_item_before(
+        &self,
+        id: QueueItemId,
+        removed: &[QueueItemId],
+    ) -> Option<QueueItemId> {
+        use std::collections::HashSet;
+        let removed: HashSet<QueueItemId> = removed.iter().copied().collect();
+        let pl = self.playlist.read();
+        let pos = pl.items.iter().position(|item| item.id == id)?;
+        pl.items[..pos]
+            .iter()
+            .rev()
+            .find(|item| !removed.contains(&item.id))
+            .map(|item| item.id)
     }
 
     /// Restore a full playlist from snapshot (for redo of ClearPlaylist undo).
@@ -767,8 +779,9 @@ impl SharedPlayerState {
     /// Derive the visible queue from the playlist + cursor. O(n).
     /// Called once per UI tick.
     pub fn derive_visible_queue(&self) -> VisibleQueueSnapshot {
+        // Read before the playlist lock — see current_download_fraction.
+        let playing_duration_ms = self.track_info.read().as_ref().map(|ti| ti.duration_ms);
         let pl = self.playlist.read();
-        let track_info = self.track_info.read();
 
         let cursor_pos = match pl.cursor {
             Some(cid) => pl.items.iter().position(|item| item.id == cid),
@@ -822,7 +835,7 @@ impl SharedPlayerState {
             let duration_ms =
                 if has_playing && status == QueueEntryStatus::Playing && item.duration_ms.is_none()
                 {
-                    track_info.as_ref().map(|ti| ti.duration_ms)
+                    playing_duration_ms
                 } else {
                     item.duration_ms
                 };
@@ -886,73 +899,131 @@ mod tests {
         make_item(title, LoadState::Pending)
     }
 
-    // --- advance_cursor ---
+    fn failed_item(title: &str) -> PlaylistItem {
+        make_item(title, LoadState::Failed("nope".into()))
+    }
+
+    // --- advance_cursor_loadable ---
 
     #[test]
-    fn test_advance_cursor_skips_non_ready() {
-        // playlist: Ready, Pending, Ready
-        // advance from None should land on index 0 (first Ready).
-        // advance again should skip Pending at index 1 and land on index 2.
+    fn advance_parks_on_a_still_downloading_track() {
+        // A track that has not arrived yet must hold the cursor, not be skipped:
+        // skipping it drops it from the queue for good, and it is the item whose
+        // TrackReady has to resume playback.
         let state = SharedPlayerState::new();
         let item0 = ready_item("track-0");
         let item1 = pending_item("track-1");
         let item2 = ready_item("track-2");
-        let id0 = item0.id;
-        let id2 = item2.id;
+        let (id0, id1) = (item0.id, item1.id);
 
         state.add_items(vec![item0, item1, item2]);
 
-        // First advance — no cursor set yet, starts from beginning.
-        let result = state.advance_cursor();
-        assert!(result.is_some(), "expected to find first Ready item");
-        assert_eq!(result.unwrap().0, id0, "should land on first Ready item");
-
-        // Second advance — cursor is at index 0; Pending at index 1 must be skipped.
-        let result = state.advance_cursor();
-        assert!(
-            result.is_some(),
-            "expected to find next Ready item after skipping Pending"
-        );
-        assert_eq!(
-            result.unwrap().0,
-            id2,
-            "should skip Pending and land on third item"
-        );
+        assert_eq!(state.advance_cursor_loadable(), Some(id0));
+        assert_eq!(state.advance_cursor_loadable(), Some(id1));
+        assert_eq!(state.cursor(), Some(id1));
     }
 
     #[test]
-    fn test_advance_cursor_stops_at_end_of_playlist() {
-        // With cursor already on the last Ready item, advance should return None.
+    fn advance_skips_failed_items() {
+        let state = SharedPlayerState::new();
+        let item0 = ready_item("track-0");
+        let item1 = failed_item("track-1");
+        let item2 = ready_item("track-2");
+        let (id0, id2) = (item0.id, item2.id);
+
+        state.add_items(vec![item0, item1, item2]);
+        state.set_cursor(Some(id0));
+
+        assert_eq!(state.advance_cursor_loadable(), Some(id2));
+    }
+
+    #[test]
+    fn advance_stops_at_end_of_playlist() {
         let state = SharedPlayerState::new();
         let item0 = ready_item("track-0");
         let item1 = ready_item("track-1");
         let id1 = item1.id;
 
         state.add_items(vec![item0, item1]);
-
-        // Move cursor to last item.
         state.set_cursor(Some(id1));
 
-        let result = state.advance_cursor();
-        assert!(
-            result.is_none(),
-            "advance past last item should return None"
+        assert_eq!(state.advance_cursor_loadable(), None);
+        assert_eq!(
+            state.cursor(),
+            Some(id1),
+            "cursor unchanged on a failed advance"
         );
-
-        // Cursor should remain unchanged after a failed advance.
-        assert_eq!(state.cursor(), Some(id1));
     }
 
     #[test]
-    fn test_advance_cursor_with_no_ready_items_returns_none() {
+    fn advance_with_only_failed_items_returns_none() {
         let state = SharedPlayerState::new();
-        state.add_items(vec![pending_item("pending-0"), pending_item("pending-1")]);
+        state.add_items(vec![failed_item("bad-0"), failed_item("bad-1")]);
 
-        let result = state.advance_cursor();
-        assert!(
-            result.is_none(),
-            "should return None when no Ready items exist"
+        assert_eq!(state.advance_cursor_loadable(), None);
+    }
+
+    #[test]
+    fn advance_from_a_vanished_cursor_does_not_restart_the_queue() {
+        let state = SharedPlayerState::new();
+        let item0 = ready_item("track-0");
+        let item1 = ready_item("track-1");
+        let id0 = item0.id;
+
+        state.add_items(vec![item0, item1]);
+        let ghost = QueueItemId::new();
+        state.set_cursor(Some(ghost));
+
+        assert_eq!(state.advance_cursor_loadable(), None);
+        assert_ne!(state.cursor(), Some(id0));
+    }
+
+    // --- peek_next_ready_after ---
+
+    #[test]
+    fn peek_after_a_removed_item_returns_none() {
+        // The decode thread's lookahead runs seconds ahead of what is audible.
+        // Removing the track it is pre-decoding must end the lookahead, not send
+        // it back to the top of the queue.
+        let state = SharedPlayerState::new();
+        let item0 = ready_item("track-0");
+        let item1 = ready_item("track-1");
+        let item2 = ready_item("track-2");
+        let (id0, id1, id2) = (item0.id, item1.id, item2.id);
+
+        state.add_items(vec![item0, item1, item2]);
+        assert_eq!(
+            state.peek_next_ready_after(id1).map(|(id, _)| id),
+            Some(id2)
         );
+
+        state.remove_item(id2);
+        assert!(
+            state.peek_next_ready_after(id2).is_none(),
+            "a vanished reference must not resolve to the head of the queue"
+        );
+        assert_ne!(
+            state.peek_next_ready_after(id2).map(|(id, _)| id),
+            Some(id0)
+        );
+    }
+
+    // --- surviving_item_before ---
+
+    #[test]
+    fn surviving_predecessor_skips_items_being_removed() {
+        let state = SharedPlayerState::new();
+        let items: Vec<_> = (0..4).map(|i| ready_item(&format!("track-{i}"))).collect();
+        let ids: Vec<_> = items.iter().map(|i| i.id).collect();
+        state.add_items(items);
+
+        // Deleting 1..=3 leaves 0 as the resume point for a cursor on 3.
+        assert_eq!(
+            state.surviving_item_before(ids[3], &ids[1..4]),
+            Some(ids[0])
+        );
+        // Deleting everything from the top leaves nothing to resume after.
+        assert_eq!(state.surviving_item_before(ids[2], &ids), None);
     }
 
     // --- retreat_cursor ---
