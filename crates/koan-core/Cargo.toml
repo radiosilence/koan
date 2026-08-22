@@ -33,12 +33,7 @@ md5 = "0.8"
 # Async/threading
 parking_lot = "0.12"
 rayon = "1"
-reqwest = { version = "0.13", default-features = false, features = [
-  "blocking",
-  "json",
-  "query",
-  "rustls",
-] }
+reqwest = { workspace = true }
 realfft = "3"
 rtrb = "0.4"
 # Database

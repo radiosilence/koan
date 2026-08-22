@@ -9,21 +9,16 @@ keywords = ["audio", "music", "player", "tui"]
 categories = ["multimedia::audio"]
 
 [dependencies]
-chrono = "0.4"
 crossbeam-channel = "0.5"
 crossterm = "0.28"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 jwalk = "0.9"
-koan-core = { path = "../koan-core", version = "0.23.2" }
-koan-server = { path = "../koan-server", version = "0.23.2" }
+koan-core = { workspace = true }
 log = "0.4"
-reqwest = { version = "0.13.2", default-features = false, features = ["blocking", "json", "rustls"] }
+reqwest = { workspace = true }
 nucleo = "0.5"
-owo-colors = "4"
 ratatui = "0.29"
-rayon = "1"
 souvlaki = "0.8"
-toml = "1.1"
 uuid = { version = "1.22.0", features = ["v7"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

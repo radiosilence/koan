@@ -2397,8 +2397,6 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
- "core-foundation 0.10.1",
- "crossbeam-channel",
  "crossterm",
  "ctrlc",
  "jwalk",
@@ -2483,30 +2481,24 @@ dependencies = [
  "tower",
  "tower-http 0.7.0",
  "uuid",
- "walkdir",
 ]
 
 [[package]]
 name = "koan-tui"
 version = "0.23.3"
 dependencies = [
- "chrono",
  "core-foundation 0.10.1",
  "crossbeam-channel",
  "crossterm",
  "image",
  "jwalk",
  "koan-core",
- "koan-server",
  "log",
  "nucleo",
- "owo-colors",
  "ratatui",
- "rayon",
  "reqwest",
  "souvlaki",
  "tempfile",
- "toml 1.1.4+spec-1.1.0",
  "uuid",
 ]
 

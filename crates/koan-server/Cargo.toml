@@ -16,11 +16,11 @@ axum = { version = "0.8", features = ["ws"] }
 base64 = "0.23"
 crossbeam-channel = "0.5"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
-koan-core = { path = "../koan-core", version = "0.23.2" }
+koan-core = { workspace = true }
 log = "0.4"
 nucleo = "0.5"
 md5 = "0.8"
-reqwest = { version = "0.13.2", features = ["stream"] }
+reqwest = { workspace = true, features = ["stream"] }
 rmcp = { version = "3.1", features = ["server", "macros", "transport-async-rw", "transport-io"] }
 rusqlite = { workspace = true }
 subtle = "2"
@@ -32,7 +32,6 @@ tokio-util = { version = "0.7", features = ["io"] }
 tower = { version = "0.5", features = ["util", "limit", "load-shed"] }
 tower-http = { version = "0.7", features = ["cors"] }
 uuid = { version = "1.22.0", features = ["v7"] }
-walkdir = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"
