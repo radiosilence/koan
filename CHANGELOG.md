@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **`cargo test` overwrote the user's real JWT signing key.** `auth`'s keypair tests called
+  `generate_keypair()`, which writes to `~/.config/koan/auth/`, so running the test suite rotated the
+  live Ed25519 key and invalidated every issued token. Keypair derivation is now split from the
+  filesystem write and the tests use the pure form.
 - **MP3s at unusual sample rates played at the wrong speed** — the audio engine was configured with the rate the *device* settled on, not the rate the PCM actually is. Output devices reject the MPEG-2/2.5 rates that only MP3 uses (8/11.025/12/16/22.05/24 kHz, and 32 kHz on many DACs), so a 22.05 kHz MP3 on a 44.1 kHz device played at exactly double speed. The engine is now always configured from the source format and the device switch is a best-effort bit-perfect optimisation; when it fails the platform resamples instead. FLAC never hit this because it is only ever ripped at rates every device supports. ([#181](https://github.com/radiosilence/koan/pull/181))
 - **Mixed-format queues played the second track at the wrong speed** — every track in a gapless session shares one ring buffer and therefore one engine, but the decode thread would happily push a 48 kHz track in behind a 44.1 kHz one. A track whose rate or channel count differs now ends the decode session so the player can restart it on a correctly configured engine.
 - **Tail of the last decoded track was cut off** — the decode thread signalled completion as soon as it had *written* the last sample, up to 4 seconds before the audio engine had played it. It now waits for the ring buffer to drain first.
