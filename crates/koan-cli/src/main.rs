@@ -220,6 +220,9 @@ enum Commands {
     /// Manage authentication (users, tokens)
     #[command(subcommand)]
     Auth(AuthCommands),
+    /// Manage koan's own Subsonic REST API
+    #[command(subcommand)]
+    Subsonic(SubsonicCommands),
     /// Generate shell completions
     Completions {
         /// Shell to generate for
@@ -264,6 +267,20 @@ enum CacheCommands {
     },
     /// Evict least-recently-played albums until cache is within limit
     Evict,
+}
+
+#[derive(Subcommand)]
+enum SubsonicCommands {
+    /// Enable the Subsonic API and generate its own secret
+    Setup {
+        /// Username Subsonic clients authenticate as
+        #[arg(long, default_value = "koan")]
+        username: String,
+    },
+    /// Show whether the Subsonic API is enabled and configured
+    Status,
+    /// Disable the Subsonic API and delete its secret
+    Disable,
 }
 
 #[derive(Subcommand)]
@@ -436,6 +453,11 @@ fn main() {
             }
             AuthCommands::RegenerateKeys => commands::cmd_auth_regenerate_keys(),
             AuthCommands::Reset => commands::cmd_auth_reset(),
+        },
+        Some(Commands::Subsonic(sub)) => match sub {
+            SubsonicCommands::Setup { username } => commands::cmd_subsonic_setup(&username),
+            SubsonicCommands::Status => commands::cmd_subsonic_status(),
+            SubsonicCommands::Disable => commands::cmd_subsonic_disable(),
         },
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());

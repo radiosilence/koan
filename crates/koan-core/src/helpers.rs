@@ -27,6 +27,21 @@ pub fn get_remote_password(cfg: &Config) -> Option<String> {
     crate::credentials::get_password(&cfg.remote.url).ok()
 }
 
+/// Keychain account holding the Subsonic API shared secret.
+pub const SUBSONIC_CREDENTIAL_ACCOUNT: &str = "koan-subsonic";
+
+/// Shared secret for koan's own Subsonic API. Config first, then the keychain.
+///
+/// Deliberately not `get_remote_password` — see `SubsonicConfig`.
+pub fn get_subsonic_password(cfg: &Config) -> Option<String> {
+    if !cfg.subsonic.password.is_empty() {
+        return Some(cfg.subsonic.password.clone());
+    }
+    crate::credentials::get_password(SUBSONIC_CREDENTIAL_ACCOUNT)
+        .ok()
+        .filter(|p| !p.is_empty())
+}
+
 /// Build a `SubsonicClient` from the merged config, returning `None` if remote
 /// is disabled or has no URL configured.
 pub fn subsonic_client(cfg: &Config) -> Option<SubsonicClient> {

@@ -10,6 +10,7 @@ mod probe;
 mod remote;
 mod scan;
 mod search;
+mod subsonic;
 
 pub use analyze::cmd_analyze;
 pub use auth::{
@@ -25,6 +26,7 @@ pub use probe::{cmd_devices, cmd_probe};
 pub use remote::{cmd_remote_login, cmd_remote_status, cmd_remote_sync};
 pub use scan::cmd_scan;
 pub use search::cmd_search;
+pub use subsonic::{cmd_subsonic_disable, cmd_subsonic_setup, cmd_subsonic_status};
 
 use std::path::{Path, PathBuf};
 
