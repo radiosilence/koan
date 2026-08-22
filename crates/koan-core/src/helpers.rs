@@ -60,6 +60,18 @@ pub fn subsonic_client(cfg: &Config) -> Option<SubsonicClient> {
 // Path utilities
 // ---------------------------------------------------------------------------
 
+/// Truncate a string to at most `max` bytes, cutting on a char boundary.
+pub fn truncate_bytes(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Sanitise and truncate a string for use as a path component.
 /// Strips illegal chars and caps at 240 bytes (macOS 255-byte filename limit minus room for ext).
 pub fn sanitise_filename(s: &str) -> String {
@@ -73,15 +85,7 @@ pub fn sanitise_filename(s: &str) -> String {
         .trim()
         .to_string();
 
-    // Truncate on a char boundary to stay under 240 bytes.
-    if cleaned.len() <= 240 {
-        return cleaned;
-    }
-    let mut end = 240;
-    while !cleaned.is_char_boundary(end) && end > 0 {
-        end -= 1;
-    }
-    cleaned[..end].trim_end().to_string()
+    truncate_bytes(&cleaned, 240).trim_end().to_string()
 }
 
 /// Build a structured cache path for a track:

@@ -516,7 +516,8 @@ pub(super) struct GqlOrganizePreview {
 #[derive(SimpleObject)]
 #[graphql(name = "FileMove")]
 pub(super) struct GqlFileMove {
-    pub track_id: i64,
+    /// Null for a file the library doesn't hold a row for.
+    pub track_id: Option<i64>,
     pub from_path: String,
     pub to_path: String,
 }

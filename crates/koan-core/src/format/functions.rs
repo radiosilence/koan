@@ -1,5 +1,83 @@
 use std::path::Path;
 
+/// Every function the engine implements. Parsing rejects anything not listed here,
+/// so a typo is a clear error rather than a silently mangled path.
+pub const KNOWN_FUNCTIONS: &[&str] = &[
+    "left",
+    "right",
+    "pad",
+    "pad_right",
+    "padcut",
+    "padcut_right",
+    "replace",
+    "trim",
+    "lower",
+    "upper",
+    "caps",
+    "caps2",
+    "abbr",
+    "substr",
+    "insert",
+    "repeat",
+    "stripprefix",
+    "swapprefix",
+    "rot13",
+    "fix_eol",
+    "strchr",
+    "strrchr",
+    "strstr",
+    "strcmp",
+    "stricmp",
+    "longer",
+    "longest",
+    "shortest",
+    "if",
+    "if2",
+    "if3",
+    "ifequal",
+    "ifgreater",
+    "iflonger",
+    "select",
+    "not",
+    "and",
+    "or",
+    "xor",
+    "greater",
+    "num",
+    "add",
+    "sub",
+    "mul",
+    "muldiv",
+    "div",
+    "mod",
+    "max",
+    "min",
+    "hex",
+    "directory",
+    "directory_path",
+    "ext",
+    "filename",
+    "tab",
+    "crlf",
+    "char",
+    "info",
+    "len",
+];
+
+pub fn is_known_function(name: &str) -> bool {
+    KNOWN_FUNCTIONS.contains(&name)
+}
+
+/// Ceiling on length-driven allocations (`$pad`, `$repeat`, `$num`, `$tab`), so a
+/// runaway count in a format string can't exhaust memory.
+const MAX_GENERATED_LEN: usize = 4096;
+
+/// Parse a length argument, rejecting anything that would allocate without bound.
+fn bounded_len(arg: &str) -> Option<usize> {
+    let n: usize = arg.parse().ok()?;
+    (n <= MAX_GENERATED_LEN).then_some(n)
+}
+
 /// fb2k boolean: truthy = "1", falsy = ""
 fn bool_str(v: bool) -> String {
     if v { "1".into() } else { String::new() }
@@ -22,23 +100,23 @@ pub fn call_function(name: &str, args: &[String]) -> Option<String> {
         }
         "pad" => {
             let s = args.first()?;
-            let n: usize = args.get(1)?.parse().ok()?;
+            let n = bounded_len(args.get(1)?)?;
             Some(format!("{s:>n$}"))
         }
         "pad_right" => {
             let s = args.first()?;
-            let n: usize = args.get(1)?.parse().ok()?;
+            let n = bounded_len(args.get(1)?)?;
             Some(format!("{s:<n$}"))
         }
         "padcut" => {
             let s = args.first()?;
-            let n: usize = args.get(1)?.parse().ok()?;
+            let n = bounded_len(args.get(1)?)?;
             let padded = format!("{s:>n$}");
             Some(padded.chars().take(n).collect())
         }
         "padcut_right" => {
             let s = args.first()?;
-            let n: usize = args.get(1)?.parse().ok()?;
+            let n = bounded_len(args.get(1)?)?;
             let padded = format!("{s:<n$}");
             Some(padded.chars().take(n).collect())
         }
@@ -89,8 +167,8 @@ pub fn call_function(name: &str, args: &[String]) -> Option<String> {
         }
         "repeat" => {
             let s = args.first()?;
-            let n: usize = args.get(1)?.parse().ok()?;
-            Some(s.repeat(n))
+            let n = bounded_len(args.get(1)?)?;
+            (s.len().checked_mul(n)? <= MAX_GENERATED_LEN).then(|| s.repeat(n))
         }
         "stripprefix" => {
             let s = args.first()?;
@@ -264,23 +342,23 @@ pub fn call_function(name: &str, args: &[String]) -> Option<String> {
         // --- Numeric functions ---
         "num" => {
             let n = args.first()?;
-            let digits: usize = args.get(1)?.parse().ok()?;
+            let digits = bounded_len(args.get(1)?)?;
             Some(format!("{n:0>digits$}"))
         }
         "add" => {
             let a: i64 = args.first()?.parse().ok()?;
             let b: i64 = args.get(1)?.parse().ok()?;
-            Some((a + b).to_string())
+            Some(a.checked_add(b)?.to_string())
         }
         "sub" => {
             let a: i64 = args.first()?.parse().ok()?;
             let b: i64 = args.get(1)?.parse().ok()?;
-            Some((a - b).to_string())
+            Some(a.checked_sub(b)?.to_string())
         }
         "mul" => {
             let a: i64 = args.first()?.parse().ok()?;
             let b: i64 = args.get(1)?.parse().ok()?;
-            Some((a * b).to_string())
+            Some(a.checked_mul(b)?.to_string())
         }
         "muldiv" => {
             let a: i64 = args.first()?.parse().ok()?;
@@ -294,18 +372,12 @@ pub fn call_function(name: &str, args: &[String]) -> Option<String> {
         "div" => {
             let a: i64 = args.first()?.parse().ok()?;
             let b: i64 = args.get(1)?.parse().ok()?;
-            if b == 0 {
-                return Some(String::new());
-            }
-            Some((a / b).to_string())
+            Some(a.checked_div(b).map_or(String::new(), |v| v.to_string()))
         }
         "mod" => {
             let a: i64 = args.first()?.parse().ok()?;
             let b: i64 = args.get(1)?.parse().ok()?;
-            if b == 0 {
-                return Some(String::new());
-            }
-            Some((a % b).to_string())
+            Some(a.checked_rem(b).map_or(String::new(), |v| v.to_string()))
         }
         "max" => {
             let a: i64 = args.first()?.parse().ok()?;
@@ -319,10 +391,10 @@ pub fn call_function(name: &str, args: &[String]) -> Option<String> {
         }
         "hex" => {
             let n: i64 = args.first()?.parse().ok()?;
-            let digits = args
-                .get(1)
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(0);
+            let digits = match args.get(1) {
+                Some(a) => bounded_len(a)?,
+                None => 0,
+            };
             if digits > 0 {
                 Some(format!("{n:0>width$X}", width = digits))
             } else {
@@ -353,10 +425,10 @@ pub fn call_function(name: &str, args: &[String]) -> Option<String> {
 
         // --- Special character functions ---
         "tab" => {
-            let n = args
-                .first()
-                .and_then(|s| s.parse::<usize>().ok())
-                .unwrap_or(1);
+            let n = match args.first() {
+                Some(a) => bounded_len(a)?,
+                None => 1,
+            };
             Some("\t".repeat(n))
         }
         "crlf" => Some("\r\n".into()),
@@ -426,6 +498,59 @@ fn abbreviate(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The parser rejects anything not in `KNOWN_FUNCTIONS`, so a name in the list
+    /// that no arm implements would be accepted at parse time and vanish at eval time.
+    #[test]
+    fn every_listed_function_is_implemented() {
+        let arg_sets = [
+            vec!["a/b/c.flac", "2", "1", "1"],
+            vec!["65", "2", "1", "1"],
+            vec!["The Beatles", "The ", "A ", "1"],
+        ];
+        for name in KNOWN_FUNCTIONS {
+            assert!(
+                arg_sets
+                    .iter()
+                    .any(|args| call_function(name, &s(args)).is_some()),
+                "{name} is listed but not implemented"
+            );
+        }
+        assert!(!is_known_function("nun"));
+    }
+
+    #[test]
+    fn length_driven_allocations_are_capped() {
+        assert_eq!(call_function("repeat", &s(&["a", "99999999999"])), None);
+        assert_eq!(call_function("pad", &s(&["a", "99999999999"])), None);
+        assert_eq!(call_function("padcut", &s(&["a", "99999999999"])), None);
+        assert_eq!(call_function("num", &s(&["1", "99999999999"])), None);
+        assert_eq!(call_function("tab", &s(&["99999999999"])), None);
+        // A repeat whose product overflows the cap is refused too.
+        assert_eq!(call_function("repeat", &s(&["abcdefghij", "4000"])), None);
+        assert_eq!(
+            call_function("repeat", &s(&["ab", "3"])),
+            Some("ababab".into())
+        );
+    }
+
+    #[test]
+    fn arithmetic_overflow_yields_no_value() {
+        assert_eq!(
+            call_function("add", &s(&["9223372036854775807", "1"])),
+            None
+        );
+        assert_eq!(
+            call_function("sub", &s(&["-9223372036854775808", "1"])),
+            None
+        );
+        assert_eq!(
+            call_function("mul", &s(&["9223372036854775807", "2"])),
+            None
+        );
+        assert_eq!(call_function("div", &s(&["1", "0"])), Some(String::new()));
+        assert_eq!(call_function("mod", &s(&["1", "0"])), Some(String::new()));
+    }
 
     // ---- String functions ----
 
