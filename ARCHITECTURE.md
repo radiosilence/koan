@@ -203,13 +203,13 @@ struct Playlist {
 | `queries/favourites.rs` | Favourite/star status (syncs with Navidrome) |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
 
-**Track dedup:** `upsert_track` tries three match strategies in order: (1) exact path match, (2) remote_id match, (3) content match (artist + album + title + track#). First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows.
+**Track dedup:** `upsert_track` tries three match strategies in order: (1) exact path match, (2) remote_id match, (3) content match (artist + album + disc + track# + title, and only where one side has no local path and one side has no remote_id). First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows, while keeping two files on disk as two tracks however identical their tags: multi-disc releases repeat title and track number across discs. A merge fills gaps only — it never overwrites a populated column with NULL, so a remote sync that knows nothing about sample rate cannot erase what the local scan measured.
 
 ### `index/`
 
 | File | Purpose |
 |---|---|
-| `scanner.rs` | Parallel library scan: walkdir → rayon metadata extraction → sequential DB upsert in one transaction |
+| `scanner.rs` | Parallel library scan: walkdir → rayon metadata extraction → sequential DB upsert, one transaction per 1000-file chunk |
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
 
 ### `format/`
@@ -331,6 +331,8 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 **Figment-layered config:** Four layers (defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars) merged by [figment](https://docs.rs/figment). Env vars use `KOAN_SECTION__FIELD` naming (double underscore splits into nested keys). `Config::load()` returns the fully merged result. **`Config::update_base()`** is the safe way to programmatically modify `config.toml` — it reads only the base file, applies a mutation closure, and writes back. **`patch_local(section, values)`** writes targeted updates to `config.local.toml` with `0o600` permissions — used for machine-specific values like remote credentials and library paths.
 
 **Track dedup across sources:** Local file + Subsonic remote entry for the same song = one DB row. Local path always wins for playback.
+
+**Stale removal is guarded, not eager:** deleting a track takes its play history, lyrics and embedding with it, so an unmounted volume must never look like a deletion. A folder that yields zero audio files is skipped entirely; an IO error while stat-ing a path counts as "cannot tell", not "gone"; and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright. `koan scan --force-remove` lifts that last brake and only that one.
 
 ## Dependencies
 

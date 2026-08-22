@@ -181,6 +181,10 @@ enum Commands {
         /// Force re-scan of all files
         #[arg(long)]
         force: bool,
+        /// Delete stale tracks even when so many are missing that it looks like an
+        /// unmounted volume. Takes their play history, lyrics and embeddings too.
+        #[arg(long)]
+        force_remove: bool,
         /// Also run acoustic analysis after scanning
         #[arg(long)]
         analyze: bool,
@@ -379,9 +383,10 @@ fn main() {
         Some(Commands::Scan {
             path,
             force,
+            force_remove,
             analyze,
         }) => {
-            commands::cmd_scan(path.as_deref(), force);
+            commands::cmd_scan(path.as_deref(), force, force_remove);
             if analyze {
                 commands::cmd_analyze();
             }

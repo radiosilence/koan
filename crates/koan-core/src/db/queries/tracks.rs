@@ -40,18 +40,46 @@ fn row_to_track_row(row: &rusqlite::Row) -> rusqlite::Result<TrackRow> {
     })
 }
 
+/// Column values already on a row that is being merged into. The incoming
+/// `TrackMeta` fills gaps from here; it never overwrites a populated column with NULL.
+struct ExistingTrack {
+    path: Option<String>,
+    remote_id: Option<String>,
+    remote_url: Option<String>,
+    codec: Option<String>,
+    sample_rate: Option<i32>,
+    bit_depth: Option<i32>,
+    channels: Option<i32>,
+    bitrate: Option<i32>,
+    duration_ms: Option<i64>,
+    size_bytes: Option<i64>,
+    mtime: Option<i64>,
+    genre: Option<String>,
+}
+
 /// Insert or update a track. Deduplicates local+remote: one row per logical track.
 ///
 /// Matching priority:
 /// 1. By path (local tracks)
 /// 2. By remote_id (remote tracks)
-/// 3. By content match: same artist_id + album_id + title + track# (cross-source merge)
+/// 3. By content match: same artist_id + album_id + disc + track# + title.
+///    Cross-source only — two rows that both carry a local path, or that both
+///    carry a remote_id, are two tracks, not one. `disc` is part of the identity
+///    because multi-disc releases repeat both title and track number across discs.
 ///
-/// When merging, local metadata (codec, sample_rate, etc.) wins over remote.
+/// A merge never replaces a populated column with NULL: a remote sync that knows
+/// nothing about sample rate or bit depth leaves the locally-scanned values alone.
+/// An existing path is only repointed at a different file once the old one is gone.
 /// The `source` field reflects what's available: "local" if path exists, "remote" if remote-only.
 pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError> {
+    upsert_track_status(conn, meta).map(|(id, _)| id)
+}
+
+/// `upsert_track`, additionally reporting whether a new row was inserted (`true`)
+/// or an existing one updated (`false`).
+pub fn upsert_track_status(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool), DbError> {
     // Use a savepoint so this works both standalone and inside an existing
-    // transaction (e.g. the batch transaction in scan_folder).
+    // transaction (e.g. the chunk transactions in scan_folder).
     conn.execute_batch("SAVEPOINT upsert_track")?;
 
     let result = upsert_track_inner(conn, meta);
@@ -62,7 +90,7 @@ pub fn upsert_track(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError>
     result
 }
 
-fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbError> {
+fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool), DbError> {
     let album_artist_name = meta.album_artist.as_deref().unwrap_or(&meta.artist);
     let album_artist_id = get_or_create_artist(conn, album_artist_name, None)?;
     // Track artist — may differ from album artist (e.g. compilations, VA albums).
@@ -107,37 +135,88 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbErro
         })
     });
 
-    // 3. Content match: same artist + album + title + track# (cross-source dedup).
+    // 3. Content match: same artist + album + disc + track# + title (cross-source dedup).
+    // The two NULL clauses keep this to genuine local<->remote merges: two files on
+    // disk are two tracks however identical their tags, and so are two entries on the
+    // same server. A server that rotates its IDs now yields visible duplicates rather
+    // than silently swallowing one of them — losing beats confusing.
     let track_id = track_id.or_else(|| {
         conn.query_row(
             "SELECT id FROM tracks
              WHERE artist_id = ?1 AND album_id = ?2 AND title = ?3
-               AND COALESCE(track_number, -1) = COALESCE(?4, -1)",
-            params![track_artist_id, album_id, meta.title, meta.track_number],
+               AND COALESCE(track_number, -1) = COALESCE(?4, -1)
+               AND COALESCE(disc, -1) = COALESCE(?5, -1)
+               AND (path IS NULL OR ?6 IS NULL)
+               AND (remote_id IS NULL OR ?7 IS NULL)",
+            params![
+                track_artist_id,
+                album_id,
+                meta.title,
+                meta.track_number,
+                meta.disc,
+                meta.path,
+                meta.remote_id
+            ],
             |row| row.get(0),
         )
         .ok()
     });
 
     if let Some(id) = track_id {
-        // Merge: preserve existing fields that the incoming meta doesn't have.
-        // Local scan provides path + high-quality metadata.
-        // Remote sync provides remote_id + remote_url.
-        let (existing_path, existing_remote_id, existing_remote_url): (
-            Option<String>,
-            Option<String>,
-            Option<String>,
-        ) = conn
-            .query_row(
-                "SELECT path, remote_id, remote_url FROM tracks WHERE id = ?1",
-                params![id],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .unwrap_or((None, None, None));
+        // Merge: the incoming meta fills gaps, it never blanks what is already there.
+        // A local scan supplies path + audio properties; a remote sync supplies
+        // remote_id + remote_url and knows nothing about sample rate or bit depth.
+        let existing = conn.query_row(
+            "SELECT path, remote_id, remote_url, codec, sample_rate, bit_depth,
+                    channels, bitrate, duration_ms, size_bytes, mtime, genre
+             FROM tracks WHERE id = ?1",
+            params![id],
+            |row| {
+                Ok(ExistingTrack {
+                    path: row.get(0)?,
+                    remote_id: row.get(1)?,
+                    remote_url: row.get(2)?,
+                    codec: row.get(3)?,
+                    sample_rate: row.get(4)?,
+                    bit_depth: row.get(5)?,
+                    channels: row.get(6)?,
+                    bitrate: row.get(7)?,
+                    duration_ms: row.get(8)?,
+                    size_bytes: row.get(9)?,
+                    mtime: row.get(10)?,
+                    genre: row.get(11)?,
+                })
+            },
+        )?;
 
-        let merged_path = meta.path.as_ref().or(existing_path.as_ref());
-        let merged_remote_id = meta.remote_id.as_ref().or(existing_remote_id.as_ref());
-        let merged_remote_url = meta.remote_url.as_ref().or(existing_remote_url.as_ref());
+        // Only repoint at a different file once the old one is gone, so an upsert
+        // can never make a file that still exists unreachable.
+        let merged_path = match (meta.path.as_ref(), existing.path.as_ref()) {
+            (Some(incoming), Some(current))
+                if incoming != current && Path::new(current).exists() =>
+            {
+                log::warn!(
+                    "track {} already points at {}; not repointing it at {}",
+                    id,
+                    current,
+                    incoming
+                );
+                Some(current)
+            }
+            (Some(incoming), _) => Some(incoming),
+            (None, current) => current,
+        };
+        let merged_remote_id = meta.remote_id.as_ref().or(existing.remote_id.as_ref());
+        let merged_remote_url = meta.remote_url.as_ref().or(existing.remote_url.as_ref());
+        let merged_codec = meta.codec.as_ref().or(existing.codec.as_ref());
+        let merged_genre = meta.genre.as_ref().or(existing.genre.as_ref());
+        let merged_sample_rate = meta.sample_rate.or(existing.sample_rate);
+        let merged_bit_depth = meta.bit_depth.or(existing.bit_depth);
+        let merged_channels = meta.channels.or(existing.channels);
+        let merged_bitrate = meta.bitrate.or(existing.bitrate);
+        let merged_duration_ms = meta.duration_ms.or(existing.duration_ms);
+        let merged_size_bytes = meta.size_bytes.or(existing.size_bytes);
+        let merged_mtime = meta.mtime.or(existing.mtime);
 
         // Source reflects what's available: local path wins.
         let source = if merged_path.is_some() {
@@ -158,15 +237,15 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbErro
                 meta.disc,
                 meta.track_number,
                 meta.title,
-                meta.duration_ms,
-                meta.codec,
-                meta.sample_rate,
-                meta.bit_depth,
-                meta.channels,
-                meta.bitrate,
-                meta.size_bytes,
-                meta.mtime,
-                meta.genre,
+                merged_duration_ms,
+                merged_codec,
+                merged_sample_rate,
+                merged_bit_depth,
+                merged_channels,
+                merged_bitrate,
+                merged_size_bytes,
+                merged_mtime,
+                merged_genre,
                 source,
                 merged_remote_id,
                 merged_remote_url,
@@ -185,10 +264,10 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbErro
         conn.execute(
             "INSERT INTO tracks_fts (rowid, title, artist_name, album_title, genre)
              VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id, meta.title, fts_artist, meta.album, meta.genre],
+            params![id, meta.title, fts_artist, meta.album, merged_genre],
         )?;
 
-        Ok(id)
+        Ok((id, false))
     } else {
         let source = if meta.path.is_some() {
             "local"
@@ -235,38 +314,17 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<i64, DbErro
             params![id, meta.title, fts_artist, meta.album, meta.genre],
         )?;
 
-        Ok(id)
+        Ok((id, true))
     }
 }
 
-/// Remove a track by local path.
-pub fn remove_track_by_path(conn: &Connection, path: &str) -> Result<(), DbError> {
-    let track_id: Option<i64> = conn
-        .query_row(
-            "SELECT id FROM tracks WHERE path = ?1",
-            params![path],
-            |row| row.get(0),
-        )
-        .ok();
+/// A folder holding fewer tracks than this is exempt from the removal-fraction
+/// check, where one deleted track out of three is already 33%.
+const STALE_CHECK_MIN_ROWS: i64 = 100;
 
-    if let Some(id) = track_id {
-        conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![id])?;
-        conn.execute("DELETE FROM scan_cache WHERE track_id = ?1", params![id])?;
-        conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
-    }
-    Ok(())
-}
-
-/// Remove all tracks with a given source (e.g., 'remote' before re-sync).
-pub fn remove_tracks_by_source(conn: &Connection, source: &str) -> Result<usize, DbError> {
-    // Delete FTS entries first.
-    conn.execute(
-        "DELETE FROM tracks_fts WHERE rowid IN (SELECT id FROM tracks WHERE source = ?1)",
-        params![source],
-    )?;
-    let count = conn.execute("DELETE FROM tracks WHERE source = ?1", params![source])?;
-    Ok(count)
-}
+/// Share of a folder's tracks that may vanish in a single scan before the removal
+/// is treated as a mount failure rather than a deletion.
+const MAX_STALE_FRACTION: f64 = 0.2;
 
 /// Remove scan cache entries and tracks for paths that no longer exist in the given folder.
 ///
@@ -276,10 +334,38 @@ pub fn remove_tracks_by_source(conn: &Connection, source: &str) -> Result<usize,
 /// fallback when a local drive is unplugged. When the drive comes back,
 /// `upsert_track` content-match (strategy 3) re-merges the path automatically.
 ///
-/// Pure-local tracks (no `remote_id`) are deleted as before.
-pub fn remove_stale_tracks(conn: &Connection, folder: &Path) -> Result<usize, DbError> {
+/// Pure-local tracks (no `remote_id`) are deleted outright, taking their play
+/// history, lyrics and embedding with them, so a folder that is present but
+/// unreadable must never look like a folder whose files were deleted. Two brakes
+/// enforce that: an IO error is not read as "gone", and a run that would clear
+/// more than [`MAX_STALE_FRACTION`] of a folder holding at least
+/// [`STALE_CHECK_MIN_ROWS`] tracks is refused with [`DbError::UnsafeBulkDelete`].
+///
+/// `force_remove` lifts the second brake only, for the case where the files really
+/// were deleted. The IO-error check still applies, and the caller is still
+/// responsible for not calling this at all when the folder yielded no files.
+///
+/// Returns the paths removed or demoted, so a caller can show what it did.
+pub fn remove_stale_tracks(
+    conn: &Connection,
+    folder: &Path,
+    force_remove: bool,
+) -> Result<Vec<String>, DbError> {
+    // Match on the folder plus a separator: without it, scanning `/Volumes/Music`
+    // also sweeps `/Volumes/Music Backup`.
     let folder_str = folder.to_string_lossy();
-    let prefix = format!("{}%", escape_like(&folder_str));
+    let with_sep = format!(
+        "{}{}",
+        folder_str.trim_end_matches(std::path::MAIN_SEPARATOR),
+        std::path::MAIN_SEPARATOR
+    );
+    let prefix = format!("{}%", escape_like(&with_sep));
+
+    let total: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tracks WHERE path LIKE ?1 ESCAPE '\\'",
+        params![prefix],
+        |row| row.get(0),
+    )?;
 
     // Find tracks in this folder that no longer exist on disk.
     // Use `path IS NOT NULL` instead of `source = 'local'` to catch all tracks
@@ -298,12 +384,43 @@ pub fn remove_stale_tracks(conn: &Connection, folder: &Path) -> Result<usize, Db
             ))
         })?
         .filter_map(|r| r.ok())
-        .filter(|(_, path, _)| !Path::new(path).exists())
+        // `Ok(false)` only: a permission error or an ailing mount reports Err,
+        // which is "cannot tell", not "deleted".
+        .filter(|(_, path, _)| matches!(Path::new(path).try_exists(), Ok(false)))
         .collect();
 
     let count = stale.len();
+    if !force_remove
+        && total >= STALE_CHECK_MIN_ROWS
+        && count as f64 > total as f64 * MAX_STALE_FRACTION
+    {
+        return Err(DbError::UnsafeBulkDelete(format!(
+            "{} of {} tracks under {} are missing ({:.0}% of the folder) — that reads as an \
+             unmounted or unreadable folder rather than a deletion, so nothing was removed. \
+             If the files really are gone, re-run with `koan scan --force-remove`.",
+            count,
+            total,
+            folder.display(),
+            count as f64 / total as f64 * 100.0
+        )));
+    }
+
+    if force_remove && count > 0 {
+        log::warn!(
+            "--force-remove: deleting {} of {} tracks under {} along with their play history",
+            count,
+            total,
+            folder.display()
+        );
+    }
+
     for (id, path, remote_id) in &stale {
-        conn.execute("DELETE FROM scan_cache WHERE path = ?1", params![path])?;
+        // Match on track_id as well as path: a row whose path changed since it was
+        // cached leaves an orphan that would otherwise block the delete below.
+        conn.execute(
+            "DELETE FROM scan_cache WHERE track_id = ?1 OR path = ?2",
+            params![id, path],
+        )?;
 
         if remote_id.is_some() {
             // Demote to remote-only: null out local fields, keep the row for streaming.
@@ -322,7 +439,7 @@ pub fn remove_stale_tracks(conn: &Connection, folder: &Path) -> Result<usize, Db
         }
     }
 
-    Ok(count)
+    Ok(stale.into_iter().map(|(_, path, _)| path).collect())
 }
 
 /// Get all tracks for an artist, ordered chronologically (album date, disc, track#).
@@ -905,7 +1022,7 @@ pub fn favourite_album_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbEr
 mod tests {
     use super::*;
     use crate::db::connection::Database;
-    use crate::db::queries::{library_stats, sample_meta, search_tracks};
+    use crate::db::queries::{library_stats, sample_meta};
 
     fn test_db() -> Database {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
@@ -930,39 +1047,309 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_track_by_path() {
+    fn test_dedup_keeps_discs_apart() {
         let db = test_db();
-        upsert_track(&db.conn, &sample_meta("Track1", "Artist1", "Album1")).unwrap();
-        upsert_track(&db.conn, &sample_meta("Track2", "Artist1", "Album1")).unwrap();
 
+        // A 2-CD box set: same album, same title, both track 1, differing only in disc.
+        let mut cd1 = sample_meta("Overture", "Wagner", "Ring Cycle");
+        cd1.disc = Some(1);
+        cd1.path = Some("/music/Ring Cycle/CD1/01 - Overture.flac".into());
+        let mut cd2 = cd1.clone();
+        cd2.disc = Some(2);
+        cd2.path = Some("/music/Ring Cycle/CD2/01 - Overture.flac".into());
+
+        let id1 = upsert_track(&db.conn, &cd1).unwrap();
+        let id2 = upsert_track(&db.conn, &cd2).unwrap();
+
+        assert_ne!(id1, id2, "discs 1 and 2 must not collapse into one row");
         assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 2);
 
-        remove_track_by_path(&db.conn, "/music/Album1/Track1.flac").unwrap();
-        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
-
-        // Search should no longer find it.
-        let results = search_tracks(&db.conn, "Track1").unwrap();
-        assert!(results.is_empty());
+        let paths: Vec<String> = db
+            .conn
+            .prepare("SELECT path FROM tracks ORDER BY disc")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        assert_eq!(paths, vec![cd1.path.unwrap(), cd2.path.unwrap()]);
     }
 
     #[test]
-    fn test_remove_tracks_by_source() {
+    fn test_dedup_never_merges_two_local_files() {
         let db = test_db();
-        upsert_track(&db.conn, &sample_meta("Local", "Artist", "Album")).unwrap();
 
-        let mut remote = sample_meta("Remote", "Artist", "Album");
+        // Identical tags including disc — two files on disk are two tracks.
+        let mut a = sample_meta("Intro", "Various", "Compilation");
+        a.path = Some("/music/Compilation/a.flac".into());
+        let mut b = a.clone();
+        b.path = Some("/music/Compilation/b.flac".into());
+
+        let id_a = upsert_track(&db.conn, &a).unwrap();
+        let id_b = upsert_track(&db.conn, &b).unwrap();
+
+        assert_ne!(id_a, id_b);
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 2);
+    }
+
+    #[test]
+    fn test_dedup_never_merges_two_remote_entries() {
+        let db = test_db();
+
+        // Two entries on the same server, no disc reported — identical but for
+        // their remote ids. Strategy 2 misses, and strategy 3 must not catch them.
+        let mut first = sample_meta("Untitled", "Artist", "Album");
+        first.source = "remote".into();
+        first.path = None;
+        first.disc = None;
+        first.remote_id = Some("sub-1".into());
+        let mut second = first.clone();
+        second.remote_id = Some("sub-2".into());
+
+        let id1 = upsert_track(&db.conn, &first).unwrap();
+        let id2 = upsert_track(&db.conn, &second).unwrap();
+
+        assert_ne!(
+            id1, id2,
+            "two server entries must not collapse into one row"
+        );
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 2);
+    }
+
+    #[test]
+    fn test_force_remove_lifts_the_fraction_brake_only() {
+        let db = test_db();
+        for i in 0..STALE_CHECK_MIN_ROWS + 20 {
+            let mut meta = sample_meta(&format!("Track{}", i), "Artist", "Album");
+            meta.track_number = Some(i as i32);
+            meta.path = Some(format!("/music/Album/{}.flac", i));
+            upsert_track(&db.conn, &meta).unwrap();
+        }
+        let total = library_stats(&db.conn).unwrap().total_tracks as usize;
+
+        let removed = remove_stale_tracks(&db.conn, Path::new("/music"), true).unwrap();
+        assert_eq!(removed.len(), total, "every missing file should go");
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 0);
+        assert!(
+            removed.iter().all(|p| p.starts_with("/music/Album/")),
+            "the removed paths should be reported back"
+        );
+    }
+
+    #[test]
+    fn test_remote_upsert_preserves_local_audio_properties() {
+        let db = test_db();
+
+        // Local scan: full audio properties.
+        let local = sample_meta("Song", "Artist", "Album");
+        let id = upsert_track(&db.conn, &local).unwrap();
+
+        // Remote sync knows the codec suffix and nothing else about the file.
+        let mut remote = sample_meta("Song", "Artist", "Album");
         remote.source = "remote".into();
         remote.path = None;
-        remote.remote_id = Some("r1".into());
-        remote.remote_url = Some("https://example.com/stream/r1".into());
-        upsert_track(&db.conn, &remote).unwrap();
+        remote.remote_id = Some("sub-1".into());
+        remote.sample_rate = None;
+        remote.bit_depth = None;
+        remote.channels = None;
+        remote.size_bytes = None;
+        remote.mtime = None;
+        remote.codec = None;
+        assert_eq!(upsert_track(&db.conn, &remote).unwrap(), id);
 
+        let codec: Option<String> = db
+            .conn
+            .query_row("SELECT codec FROM tracks WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        let num = |col: &str| -> Option<i64> {
+            db.conn
+                .query_row(
+                    &format!("SELECT {} FROM tracks WHERE id = ?1", col),
+                    params![id],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+
+        assert_eq!(codec.as_deref(), Some("FLAC"));
+        assert_eq!(num("sample_rate"), Some(44100));
+        assert_eq!(num("bit_depth"), Some(16));
+        assert_eq!(num("channels"), Some(2));
+        assert_eq!(num("size_bytes"), Some(30_000_000));
+        assert_eq!(num("mtime"), Some(1700000000));
+    }
+
+    #[test]
+    fn test_upsert_does_not_repoint_at_a_different_live_file() {
+        let db = test_db();
+        let tmp = tempfile::tempdir().unwrap();
+        let existing = tmp.path().join("original.flac");
+        std::fs::write(&existing, b"x").unwrap();
+
+        let mut first = sample_meta("Song", "Artist", "Album");
+        first.path = Some(existing.to_string_lossy().into_owned());
+        let id = upsert_track(&db.conn, &first).unwrap();
+
+        // A remote_id match carrying a different path must not steal the row from
+        // a file that is still on disk.
+        let mut second = first.clone();
+        second.path = Some(tmp.path().join("other.flac").to_string_lossy().into_owned());
+        second.remote_id = None;
+        db.conn
+            .execute(
+                "UPDATE tracks SET remote_id = 'r1' WHERE id = ?1",
+                params![id],
+            )
+            .unwrap();
+        second.remote_id = Some("r1".into());
+        assert_eq!(upsert_track(&db.conn, &second).unwrap(), id);
+
+        let path: String = db
+            .conn
+            .query_row("SELECT path FROM tracks WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(path, existing.to_string_lossy());
+    }
+
+    #[test]
+    fn test_stale_removal_clears_all_foreign_keys() {
+        let db = test_db();
+        let id = upsert_track(&db.conn, &sample_meta("Gone", "Artist", "Album")).unwrap();
+
+        db.conn
+            .execute(
+                "INSERT INTO lyrics_cache (track_id, source, content, fetched_at)
+                 VALUES (?1, 'lrclib', 'la la', 1)",
+                params![id],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO play_history (track_id, played_at) VALUES (?1, 1)",
+                params![id],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO track_vectors (track_id, embedding) VALUES (?1, x'00')",
+                params![id],
+            )
+            .unwrap();
+        crate::db::queries::update_scan_cache(&db.conn, "/music/Album/Gone.flac", 1, 2, id)
+            .unwrap();
+
+        assert_eq!(
+            remove_stale_tracks(&db.conn, Path::new("/music"), false)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 0);
+    }
+
+    #[test]
+    fn test_stale_removal_survives_orphaned_scan_cache_row() {
+        let db = test_db();
+        let id = upsert_track(&db.conn, &sample_meta("Gone", "Artist", "Album")).unwrap();
+
+        // A scan_cache row left behind under a path the track no longer has.
+        crate::db::queries::update_scan_cache(&db.conn, "/music/Album/old-name.flac", 1, 2, id)
+            .unwrap();
+
+        assert_eq!(
+            remove_stale_tracks(&db.conn, Path::new("/music"), false)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 0);
+
+        let orphans: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM scan_cache", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(orphans, 0);
+    }
+
+    #[test]
+    fn test_stale_removal_ignores_sibling_folder_with_shared_prefix() {
+        let db = test_db();
+
+        let mut main = sample_meta("Song", "Artist", "Album");
+        main.path = Some("/Volumes/Music/Album/Song.flac".into());
+        upsert_track(&db.conn, &main).unwrap();
+
+        let mut backup = sample_meta("Song", "Artist", "Album");
+        backup.path = Some("/Volumes/Music Backup/Album/Song.flac".into());
+        backup.disc = Some(2);
+        upsert_track(&db.conn, &backup).unwrap();
         assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 2);
 
-        let removed = remove_tracks_by_source(&db.conn, "remote").unwrap();
-        assert_eq!(removed, 1);
-        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
-        assert_eq!(library_stats(&db.conn).unwrap().local_tracks, 1);
+        // Scanning /Volumes/Music must not reach into /Volumes/Music Backup.
+        assert_eq!(
+            remove_stale_tracks(&db.conn, Path::new("/Volumes/Music"), false)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let survivor: String = db
+            .conn
+            .query_row("SELECT path FROM tracks", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(survivor, "/Volumes/Music Backup/Album/Song.flac");
+    }
+
+    #[test]
+    fn test_stale_removal_refuses_wholesale_disappearance() {
+        let db = test_db();
+        for i in 0..STALE_CHECK_MIN_ROWS + 20 {
+            let mut meta = sample_meta(&format!("Track{}", i), "Artist", "Album");
+            meta.track_number = Some(i as i32);
+            meta.path = Some(format!("/music/Album/{}.flac", i));
+            upsert_track(&db.conn, &meta).unwrap();
+        }
+        let before = library_stats(&db.conn).unwrap().total_tracks;
+
+        let err = remove_stale_tracks(&db.conn, Path::new("/music"), false).unwrap_err();
+        assert!(
+            matches!(err, DbError::UnsafeBulkDelete(_)),
+            "expected refusal, got {:?}",
+            err
+        );
+        assert_eq!(library_stats(&db.conn).unwrap().total_tracks, before);
+    }
+
+    #[test]
+    fn test_stale_removal_allows_a_normal_deletion() {
+        let db = test_db();
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path();
+
+        // 120 tracks on disk, one of them deleted.
+        for i in 0..STALE_CHECK_MIN_ROWS + 20 {
+            let file = folder.join(format!("{}.flac", i));
+            if i > 0 {
+                std::fs::write(&file, b"x").unwrap();
+            }
+            let mut meta = sample_meta(&format!("Track{}", i), "Artist", "Album");
+            meta.track_number = Some(i as i32);
+            meta.path = Some(file.to_string_lossy().into_owned());
+            upsert_track(&db.conn, &meta).unwrap();
+        }
+
+        assert_eq!(
+            remove_stale_tracks(&db.conn, folder, false).unwrap().len(),
+            1
+        );
+        assert_eq!(
+            library_stats(&db.conn).unwrap().total_tracks,
+            STALE_CHECK_MIN_ROWS + 19
+        );
     }
 
     #[test]
@@ -1108,8 +1495,9 @@ mod tests {
         assert_eq!(source, "local");
 
         // Remove stale tracks in the folder — file doesn't exist on disk.
-        let removed = remove_stale_tracks(&db.conn, Path::new("/nonexistent/SAW 85-92")).unwrap();
-        assert_eq!(removed, 1);
+        let removed =
+            remove_stale_tracks(&db.conn, Path::new("/nonexistent/SAW 85-92"), false).unwrap();
+        assert_eq!(removed.len(), 1);
 
         // Track should still exist (not deleted), demoted to remote-only.
         let row: (
@@ -1159,8 +1547,8 @@ mod tests {
 
         assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 1);
 
-        let removed = remove_stale_tracks(&db.conn, Path::new("/music/Album")).unwrap();
-        assert_eq!(removed, 1);
+        let removed = remove_stale_tracks(&db.conn, Path::new("/music/Album"), false).unwrap();
+        assert_eq!(removed.len(), 1);
 
         // Track should be fully deleted.
         assert_eq!(library_stats(&db.conn).unwrap().total_tracks, 0);
@@ -1189,7 +1577,7 @@ mod tests {
         let original_id = upsert_track(&db.conn, &meta).unwrap();
 
         // Simulate stale removal (drive unplugged).
-        remove_stale_tracks(&db.conn, Path::new("/nonexistent/SAW 85-92")).unwrap();
+        remove_stale_tracks(&db.conn, Path::new("/nonexistent/SAW 85-92"), false).unwrap();
 
         // Verify demoted to remote-only.
         let source: String = db

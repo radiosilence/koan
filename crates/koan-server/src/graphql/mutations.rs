@@ -644,7 +644,12 @@ impl MutationRoot {
         require_role(ctx, Role::Admin)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let cfg = Config::load().unwrap_or_default();
-        let result = koan_core::index::scanner::full_scan(&db, &cfg.library.folders, false, None);
+        let result = koan_core::index::scanner::full_scan(
+            &db,
+            &cfg.library.folders,
+            koan_core::index::scanner::ScanOptions::default(),
+            None,
+        );
         Ok(GqlScanResult {
             tracks_added: result.added as i64,
             tracks_updated: result.updated as i64,
