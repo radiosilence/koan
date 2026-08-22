@@ -2,6 +2,7 @@
 name = "koan-tui"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Ratatui TUI for koan music player. Visualizers, media keys, transport."
