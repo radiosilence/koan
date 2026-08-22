@@ -12,6 +12,10 @@ pub enum DbError {
     Sqlite(#[from] rusqlite::Error),
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    /// A bulk delete looked like a mount failure rather than an intentional
+    /// deletion, so it was refused. The library is untouched.
+    #[error("refused unsafe bulk delete: {0}")]
+    UnsafeBulkDelete(String),
 }
 
 /// Wrapper around a SQLite connection with koan's schema applied.
@@ -37,7 +41,9 @@ impl Database {
         // WAL mode for concurrent reads + single writer.
         conn.pragma_update(None, "journal_mode", "wal")?;
         conn.pragma_update(None, "foreign_keys", "on")?;
-        conn.pragma_update(None, "busy_timeout", 5000)?;
+        // Long enough to outlast a scan chunk: a writer that gives up mid-scan
+        // silently loses favourites, queue state and play counts.
+        conn.pragma_update(None, "busy_timeout", 30000)?;
         // Slightly faster at the cost of durability on power loss (acceptable for a media DB).
         conn.pragma_update(None, "synchronous", "normal")?;
 
