@@ -7,14 +7,26 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::{Arc, Condvar, Mutex};
+use std::time::Duration;
+
+/// Longest a read may block waiting for bytes before the stream counts as dead.
+/// A download that stops advancing must surface as an error, not park the decode
+/// thread forever holding the ring buffer producer and the whole buffered track.
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// State shared between the download writer and the decoder reader.
 struct Inner {
     data: Vec<u8>,
     /// Total expected byte length. `None` if not yet known (no Content-Length).
     total_len: Option<u64>,
-    /// Set to true when the download thread has finished (EOF or error).
+    /// Set to true when the download thread has finished cleanly — the buffer
+    /// holds the whole source and readers see EOF past its end.
     done: bool,
+    /// Set to true when the download died before delivering everything.
+    /// Reads past the buffered bytes fail rather than reporting EOF.
+    failed: bool,
+    /// How long a read blocks for new bytes before giving up.
+    read_timeout: Duration,
 }
 
 /// A shared, growable byte buffer that the download thread writes into.
@@ -28,12 +40,18 @@ pub struct StreamBuffer {
 impl StreamBuffer {
     /// Create a new empty buffer. `total_len` may be provided once Content-Length is known.
     pub fn new(total_len: Option<u64>) -> Self {
+        Self::with_read_timeout(total_len, READ_TIMEOUT)
+    }
+
+    fn with_read_timeout(total_len: Option<u64>, read_timeout: Duration) -> Self {
         Self {
             inner: Arc::new((
                 Mutex::new(Inner {
                     data: Vec::new(),
                     total_len,
                     done: false,
+                    failed: false,
+                    read_timeout,
                 }),
                 Condvar::new(),
             )),
@@ -48,12 +66,28 @@ impl StreamBuffer {
         cvar.notify_all();
     }
 
-    /// Signal that the download is complete (or failed). No more bytes will arrive.
+    /// Signal that the download delivered everything. Readers see EOF past the
+    /// buffered bytes.
     pub fn finish(&self) {
         let (lock, cvar) = &*self.inner;
         let mut inner = lock.lock().unwrap();
         inner.done = true;
         cvar.notify_all();
+    }
+
+    /// Signal that the download died. Readers past the buffered bytes get a
+    /// broken-pipe error — reporting EOF here would silently truncate the track.
+    pub fn fail(&self) {
+        let (lock, cvar) = &*self.inner;
+        let mut inner = lock.lock().unwrap();
+        inner.failed = true;
+        cvar.notify_all();
+    }
+
+    /// True when this is the last handle: nothing can read what is written from
+    /// here on, so a writer holding it has no reason to keep going.
+    pub fn is_abandoned(&self) -> bool {
+        Arc::strong_count(&self.inner) == 1
     }
 
     /// Total bytes received so far.
@@ -94,15 +128,29 @@ impl Read for StreamingSource {
 
         let (lock, cvar) = &*self.inner;
 
-        // Wait until there is data at `pos`, or the download is done.
-        let inner = cvar
-            .wait_while(lock.lock().unwrap(), |s| {
-                s.data.len() as u64 <= self.pos && !s.done
+        // Wait until there is data at `pos`, or the download ends one way or another.
+        let guard = lock.lock().unwrap();
+        let timeout = guard.read_timeout;
+        let (inner, wait) = cvar
+            .wait_timeout_while(guard, timeout, |s| {
+                s.data.len() as u64 <= self.pos && !s.done && !s.failed
             })
             .unwrap();
 
         let available = inner.data.len() as u64;
         if available <= self.pos {
+            if inner.failed {
+                return Err(io::Error::new(
+                    io::ErrorKind::BrokenPipe,
+                    "stream download failed before delivering the whole track",
+                ));
+            }
+            if wait.timed_out() {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "stream download stalled",
+                ));
+            }
             // Done and no more data — EOF.
             return Ok(0);
         }
@@ -160,7 +208,7 @@ impl symphonia::core::io::MediaSource for StreamingSource {
 
 #[cfg(test)]
 mod tests {
-    use std::io::{Read, Seek, SeekFrom};
+    use std::io::{self, Read, Seek, SeekFrom};
 
     use super::*;
 
@@ -325,6 +373,63 @@ mod tests {
         let mut out2 = [0u8; 3];
         r2.read_exact(&mut out2).unwrap();
         assert_eq!(&out2, b"012");
+    }
+
+    #[test]
+    fn failed_download_errors_instead_of_reporting_eof() {
+        let buf = StreamBuffer::new(Some(1000));
+        buf.push(b"partial");
+        buf.fail();
+
+        let mut src = buf.reader();
+        let mut out = [0u8; 7];
+        src.read_exact(&mut out).unwrap();
+        assert_eq!(&out, b"partial");
+
+        // Past the buffered bytes: an error, never a clean EOF — Ok(0) here
+        // would end the track early and look like a short file.
+        let err = src.read(&mut out).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn failed_download_wakes_a_blocked_reader() {
+        let buf = StreamBuffer::new(Some(1000));
+        let mut src = buf.reader();
+
+        let writer = buf.clone();
+        let waiter = std::thread::spawn(move || {
+            let mut out = [0u8; 8];
+            src.read(&mut out).map(|_| ()).map_err(|e| e.kind())
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        writer.fail();
+
+        assert_eq!(waiter.join().unwrap(), Err(io::ErrorKind::BrokenPipe));
+    }
+
+    #[test]
+    fn stalled_download_times_out() {
+        // A download with a Content-Length that never arrives: the read must
+        // give up rather than park the decode thread forever.
+        let buf = StreamBuffer::with_read_timeout(Some(1000), std::time::Duration::from_millis(20));
+        let mut src = buf.reader();
+        let mut out = [0u8; 8];
+        let err = src.read(&mut out).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+    }
+
+    #[test]
+    fn abandoned_when_no_other_handles_remain() {
+        let buf = StreamBuffer::new(None);
+        assert!(buf.is_abandoned());
+
+        let reader = buf.reader();
+        assert!(!buf.is_abandoned());
+
+        drop(reader);
+        assert!(buf.is_abandoned());
     }
 
     #[test]
