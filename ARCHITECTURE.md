@@ -12,7 +12,7 @@ crates/
 │
 ├── koan-tui/      Library crate. Ratatui TUI, visualizers, media keys,
 │                  transport, download queue. Exports `run_tui()`.
-│                  Depends on koan-core and koan-server.
+│                  Depends on koan-core.
 │
 ├── koan-server/   Library crate. GraphQL (async-graphql + axum),
 │                  Subsonic REST API, MCP server.
