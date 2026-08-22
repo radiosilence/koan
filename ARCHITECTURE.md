@@ -20,10 +20,10 @@ crates/
 │
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
-                   Depends on koan-core, koan-tui, koan-server.
+                   Depends on koan-core, koan-tui and koan-server.
 ```
 
-Four crates, one workspace. `koan-core` is the engine, `koan-tui` is the terminal UI, `koan-server` is the API layer, and `koan-cli` is the binary that ties them together. Dependency rule: `koan-server` must not depend on `koan-tui`. `koan-tui` currently declares an unused `koan-server` dependency; removing it makes the boundary compiler-enforced. If you wanted a different UI, write a new crate against `koan-core` -- the CLI owns zero business logic.
+Four crates, one workspace. `koan-core` is the engine, `koan-tui` is the terminal UI, `koan-server` is the API layer, and `koan-cli` is the binary that ties them together. Dependency rule, enforced by Cargo: `koan-tui` and `koan-server` cannot import each other -- both depend only on `koan-core`. If you wanted a different UI, write a new crate against `koan-core` -- the CLI owns zero business logic.
 
 ## Threading model
 
@@ -220,7 +220,7 @@ fb2k-compatible template engine.
 |---|---|
 | `parser.rs` | Recursive descent tokenizer: `%field%`, `[conditional]`, `$function(args)`, `'quoted'` |
 | `eval.rs` | Evaluates token tree against a `MetadataProvider` trait. Conditionals omit block if any field missing. |
-| `functions.rs` | 55 built-in functions: string ops (`left`, `right`, `pad`, `replace`, `trim`, `caps`, `abbr`, `substr`, `insert`, `repeat`, `rot13`, etc.), logic (`if`, `if2`, `if3`, `ifequal`, `ifgreater`, `iflonger`, `select`, `not`, `and`, `or`, `xor`), numeric (`num`, `add`, `sub`, `mul`, `div`, `mod`, `max`, `min`, `hex`), path (`directory`, `directory_path`, `ext`, `filename`), info (`len`, `info`), special (`tab`, `crlf`, `char`) |
+| `functions.rs` | 59 built-in functions: string ops (`left`, `right`, `pad`, `replace`, `trim`, `caps`, `abbr`, `substr`, `insert`, `repeat`, `rot13`, etc.), logic (`if`, `if2`, `if3`, `ifequal`, `ifgreater`, `iflonger`, `select`, `not`, `and`, `or`, `xor`), numeric (`num`, `add`, `sub`, `mul`, `div`, `mod`, `max`, `min`, `hex`), path (`directory`, `directory_path`, `ext`, `filename`), info (`len`, `info`), special (`tab`, `crlf`, `char`) |
 
 ### `remote/`
 
