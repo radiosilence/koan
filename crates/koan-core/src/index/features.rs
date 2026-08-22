@@ -47,8 +47,8 @@ pub fn bytes_to_embedding(bytes: &[u8]) -> Option<Vec<f32>> {
     }
     let count = bytes.len() / 4;
     let mut embedding = Vec::with_capacity(count);
-    for chunk in bytes.chunks_exact(4) {
-        embedding.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    for chunk in bytes.as_chunks::<4>().0 {
+        embedding.push(f32::from_le_bytes(*chunk));
     }
     Some(embedding)
 }
