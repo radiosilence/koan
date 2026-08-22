@@ -104,10 +104,8 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Advisory-only until the existing backlog is cleared (h2, rustls-webpki,
-    # aws-lc-sys, quinn-proto, crossbeam-epoch). Flip to blocking once
-    # `cargo audit` is clean, or the gate trains everyone to ignore it.
-    continue-on-error: true
+    # Blocking. The advisories already in the lockfile are acknowledged in
+    # .cargo/audit.toml so this fails on anything new.
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
       - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
