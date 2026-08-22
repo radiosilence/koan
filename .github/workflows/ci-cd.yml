@@ -117,7 +117,10 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           key: msrv
-      - run: cargo check --workspace --all-targets
+      # koan-ffi is excluded deliberately: it is unpublished, built only as part
+      # of the macOS app, and uniffi's bindgen floors it at 1.91. The MSRV that
+      # matters is the one the published crates promise.
+      - run: cargo check --workspace --all-targets --exclude koan-ffi
 
   audit:
     name: Security Audit

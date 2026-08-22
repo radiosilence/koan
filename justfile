@@ -61,6 +61,8 @@ macos-ffi *TARGETS:
     # Bindings are generated from the dylib's embedded metadata, not the sources.
     cargo run --release -q -p koan-ffi --bin uniffi-bindgen -- \
         generate --library "$dylib" --language swift --out-dir target/uniffi
+    # These directories hold only generated files, so git doesn't carry them.
+    mkdir -p {{app_dir}}/Sources/KoanFFI {{app_dir}}/Sources/koan_ffiFFI
     cp target/uniffi/koan_ffi.swift {{app_dir}}/Sources/KoanFFI/
     cp target/uniffi/koan_ffiFFI.h {{app_dir}}/Sources/koan_ffiFFI/
     echo "koan-ffi ready: $lib"
