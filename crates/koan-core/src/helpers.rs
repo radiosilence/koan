@@ -27,6 +27,21 @@ pub fn get_remote_password(cfg: &Config) -> Option<String> {
     crate::credentials::get_password(&cfg.remote.url).ok()
 }
 
+/// Keychain account holding the Subsonic API shared secret.
+pub const SUBSONIC_CREDENTIAL_ACCOUNT: &str = "koan-subsonic";
+
+/// Shared secret for koan's own Subsonic API. Config first, then the keychain.
+///
+/// Deliberately not `get_remote_password` — see `SubsonicConfig`.
+pub fn get_subsonic_password(cfg: &Config) -> Option<String> {
+    if !cfg.subsonic.password.is_empty() {
+        return Some(cfg.subsonic.password.clone());
+    }
+    crate::credentials::get_password(SUBSONIC_CREDENTIAL_ACCOUNT)
+        .ok()
+        .filter(|p| !p.is_empty())
+}
+
 /// Build a `SubsonicClient` from the merged config, returning `None` if remote
 /// is disabled or has no URL configured.
 pub fn subsonic_client(cfg: &Config) -> Option<SubsonicClient> {
@@ -45,6 +60,18 @@ pub fn subsonic_client(cfg: &Config) -> Option<SubsonicClient> {
 // Path utilities
 // ---------------------------------------------------------------------------
 
+/// Truncate a string to at most `max` bytes, cutting on a char boundary.
+pub fn truncate_bytes(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 /// Sanitise and truncate a string for use as a path component.
 /// Strips illegal chars and caps at 240 bytes (macOS 255-byte filename limit minus room for ext).
 pub fn sanitise_filename(s: &str) -> String {
@@ -58,15 +85,7 @@ pub fn sanitise_filename(s: &str) -> String {
         .trim()
         .to_string();
 
-    // Truncate on a char boundary to stay under 240 bytes.
-    if cleaned.len() <= 240 {
-        return cleaned;
-    }
-    let mut end = 240;
-    while !cleaned.is_char_boundary(end) && end > 0 {
-        end -= 1;
-    }
-    cleaned[..end].trim_end().to_string()
+    truncate_bytes(&cleaned, 240).trim_end().to_string()
 }
 
 /// Build a structured cache path for a track:
@@ -262,6 +281,7 @@ pub fn download_track(
     log_buf: &Arc<Mutex<Vec<String>>>,
     state: &Arc<SharedPlayerState>,
     cfg: &Config,
+    client: &SubsonicClient,
 ) {
     let db = match Database::open_default() {
         Ok(db) => db,
@@ -339,20 +359,9 @@ pub fn download_track(
         return;
     }
 
-    // 3. Download from remote.
-    let part_path = dest.with_extension("part");
-    state.update_paths(&[(queue_id, part_path)]);
-
-    let client = match subsonic_client(cfg) {
-        Some(c) => c,
-        None => {
-            log::warn!(
-                "remote not configured -- skipping download for {}",
-                remote_id
-            );
-            return;
-        }
-    };
+    // 3. Download from remote. The queue item points at the in-progress file so
+    // the streaming pump reads bytes as they land; it flips to `dest` on success.
+    state.update_paths(&[(queue_id, crate::remote::download::part_path(&dest))]);
 
     let bytes_written: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
@@ -384,21 +393,38 @@ pub fn download_track(
 
     if let Err(e) = result {
         state.update_load_state(queue_id, LoadState::Failed(e.to_string()));
-        let msg = format!("x {} — {}", track.title, e);
-        log_buf.lock().unwrap().push(msg);
+        push_log(log_buf, format!("x {} — {}", track.title, e));
         return;
     }
 
     // Download succeeded.
     state.update_paths(&[(queue_id, dest.clone())]);
     state.update_load_state(queue_id, LoadState::Ready);
-    let _ = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy());
+    // Without this row the file is invisible to cache eviction and never reclaimed.
+    if let Err(e) = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy()) {
+        log::warn!(
+            "cached {} but failed to record it ({}) — it will not be evicted",
+            dest.display(),
+            e
+        );
+    }
 
-    let msg = format!("+ {} — {}", track.title, track.artist_name);
-    log_buf.lock().unwrap().push(msg);
+    push_log(
+        log_buf,
+        format!("+ {} — {}", track.title, track.artist_name),
+    );
 
     if state.is_cursor(queue_id) {
         tx.send(PlayerCommand::TrackReady(queue_id)).ok();
+    }
+}
+
+/// Append to the TUI log pane, tolerating a poisoned lock — a download worker
+/// must not die because some other thread panicked while holding it.
+fn push_log(log_buf: &Arc<Mutex<Vec<String>>>, msg: String) {
+    match log_buf.lock() {
+        Ok(mut buf) => buf.push(msg),
+        Err(_) => log::info!("{}", msg),
     }
 }
 
@@ -409,13 +435,22 @@ pub fn spawn_downloads(
     state: Arc<SharedPlayerState>,
 ) {
     let log_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    std::thread::Builder::new()
+    if let Err(e) = std::thread::Builder::new()
         .name("koan-download".into())
         .spawn(move || {
             let cfg = Config::load().unwrap_or_default();
+            let Some(client) = subsonic_client(&cfg) else {
+                log::warn!(
+                    "remote not configured -- skipping {} downloads",
+                    pending.len()
+                );
+                return;
+            };
             for (db_id, queue_id) in pending {
-                download_track(db_id, queue_id, &tx, &log_buf, &state, &cfg);
+                download_track(db_id, queue_id, &tx, &log_buf, &state, &cfg, &client);
             }
         })
-        .ok();
+    {
+        log::error!("failed to spawn download thread: {}", e);
+    }
 }

@@ -22,6 +22,14 @@
 *.swp
 *.swo
 
+# Secrets & local state
+config.local.toml
+.env
+*.pem
+*.db
+*.sqlite*
+*.log
+
 # Generated uniffi bindings — produced by `just macos-ffi`
 apps/macos/Sources/KoanFFI/koan_ffi.swift
 apps/macos/Sources/koan_ffiFFI/koan_ffiFFI.h

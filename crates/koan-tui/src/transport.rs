@@ -30,13 +30,12 @@ pub fn format_quality(info: &TrackInfo) -> String {
         _ => format!("{}Hz", rate),
     };
 
-    // Quality label for well-known configurations.
-    let label = match (info.codec.as_str(), rate, info.bit_depth, ch) {
-        (_, 44100, Some(16), 2) => return format!("{} · CD quality", info.codec),
-        (_, 44100, Some(16), 1) => return format!("{} · CD quality (mono)", info.codec),
-        _ => None::<&str>,
-    };
-    let _ = label; // Unused — matched above return early.
+    // Red-book audio gets its own name.
+    match (rate, info.bit_depth, ch) {
+        (44100, Some(16), 2) => return format!("{} · CD quality", info.codec),
+        (44100, Some(16), 1) => return format!("{} · CD quality (mono)", info.codec),
+        _ => {}
+    }
 
     // Detail: bit depth for lossless, bitrate for lossy.
     let detail = if let Some(b) = info.bit_depth {

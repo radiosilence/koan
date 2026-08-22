@@ -12,7 +12,7 @@ crates/
 │
 ├── koan-tui/      Library crate. Ratatui TUI, visualizers, media keys,
 │                  transport, download queue. Exports `run_tui()`.
-│                  Depends on koan-core and koan-server.
+│                  Depends on koan-core.
 │
 ├── koan-server/   Library crate. GraphQL (async-graphql + axum),
 │                  Subsonic REST API, MCP server.
@@ -23,14 +23,14 @@ crates/
 │
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
-                   Depends on koan-core, koan-tui, koan-server.
+                   Depends on koan-core, koan-tui and koan-server.
 
 apps/
 └── macos/         SwiftUI app (SwiftPM, Swift 6, macOS 14+).
                    Links koan-ffi. No Rust of its own.
 ```
 
-Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rules are enforced by Cargo: none of the three front doors can import each other. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: none of the three front doors can import each other -- all depend only on `koan-core`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
 
 ### Two front doors for UIs, and when to use which
 
@@ -44,7 +44,7 @@ Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server`
 | Auth | None needed | JWT, cookies, CORS |
 | For | macOS app, future iOS app | Web SPA, jukebox remotes |
 
-**A UI that can link the core should.** The macOS app sits directly on top of the audio engine, so routing its own commands through localhost HTTP would add a daemon, a port, an auth surface and a second process contending for the same SQLite file, and buy nothing. It links `koan-ffi` and CoreAudio output never leaves Rust, so playback stays bit-perfect.
+**A UI that can link the core should.** The macOS app sits directly on top of the audio engine, so routing its own commands through localhost HTTP would add a daemon, a port, an auth surface and a second process contending for the same SQLite file, and buy nothing. It links `koan-ffi`, and CoreAudio output never leaves Rust, so playback stays bit-perfect.
 
 GraphQL earns its keep for clients that genuinely *cannot* link the core -- a browser, or a phone controlling playback on a different machine.
 
@@ -81,7 +81,7 @@ Five threads at steady state during playback:
 └─────────────────┘  └──────────────────────────┘
 
 ┌─────────────────────────────────────────────────┐
-│ Analyzer Thread ("koan-analyzer")               │
+│ Analyzer Thread ("viz-analyzer")               │
 │ Always spawned. Reads VizBuffer, runs FFT,      │
 │ writes VizSnapshot. Configurable fps (default   │
 │ 60). Never blocks audio or UI.                  │
@@ -228,13 +228,13 @@ struct Playlist {
 | `queries/favourites.rs` | Favourite/star status (syncs with Navidrome) |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
 
-**Track dedup:** `upsert_track` tries three match strategies in order: (1) exact path match, (2) remote_id match, (3) content match (artist + album + title + track#). First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows.
+**Track dedup:** `upsert_track` tries three match strategies in order: (1) exact path match, (2) remote_id match, (3) content match (artist + album + disc + track# + title, and only where one side has no local path and one side has no remote_id). First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows, while keeping two files on disk as two tracks however identical their tags: multi-disc releases repeat title and track number across discs. A merge fills gaps only — it never overwrites a populated column with NULL, so a remote sync that knows nothing about sample rate cannot erase what the local scan measured.
 
 ### `index/`
 
 | File | Purpose |
 |---|---|
-| `scanner.rs` | Parallel library scan: walkdir → rayon metadata extraction → sequential DB upsert in one transaction |
+| `scanner.rs` | Parallel library scan: walkdir → rayon metadata extraction → sequential DB upsert, one transaction per 1000-file chunk |
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
 
 ### `format/`
@@ -245,14 +245,15 @@ fb2k-compatible template engine.
 |---|---|
 | `parser.rs` | Recursive descent tokenizer: `%field%`, `[conditional]`, `$function(args)`, `'quoted'` |
 | `eval.rs` | Evaluates token tree against a `MetadataProvider` trait. Conditionals omit block if any field missing. |
-| `functions.rs` | 55 built-in functions: string ops (`left`, `right`, `pad`, `replace`, `trim`, `caps`, `abbr`, `substr`, `insert`, `repeat`, `rot13`, etc.), logic (`if`, `if2`, `if3`, `ifequal`, `ifgreater`, `iflonger`, `select`, `not`, `and`, `or`, `xor`), numeric (`num`, `add`, `sub`, `mul`, `div`, `mod`, `max`, `min`, `hex`), path (`directory`, `directory_path`, `ext`, `filename`), info (`len`, `info`), special (`tab`, `crlf`, `char`) |
+| `functions.rs` | 59 built-in functions: string ops (`left`, `right`, `pad`, `replace`, `trim`, `caps`, `abbr`, `substr`, `insert`, `repeat`, `rot13`, etc.), logic (`if`, `if2`, `if3`, `ifequal`, `ifgreater`, `iflonger`, `select`, `not`, `and`, `or`, `xor`), numeric (`num`, `add`, `sub`, `mul`, `div`, `mod`, `max`, `min`, `hex`), path (`directory`, `directory_path`, `ext`, `filename`), info (`len`, `info`), special (`tab`, `crlf`, `char`) |
 
 ### `remote/`
 
 | File | Purpose |
 |---|---|
-| `client.rs` | Subsonic/Navidrome HTTP client. Token auth (MD5+salt). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, download |
-| `sync.rs` | Parallel library sync: paginate albums (500/page) → rayon fetch full details → batch DB write per page |
+| `client.rs` | Subsonic/Navidrome HTTP client. Token auth (MD5+salt). Endpoints: ping, getArtists, getAlbumList2, getAlbum, search3, scrobble, download. Two HTTP clients: total-deadline for JSON, stall-bounded for downloads |
+| `download.rs` | The one place bytes are streamed to disk: `.part` temp file → verify → atomic rename, progress callback, retry with backoff. Shared by `client.rs` and the TUI remote bridge |
+| `sync.rs` | Library sync: stable `alphabeticalByName` pagination (500/page) → rayon fetch full details → batch DB write per page. `last_sync` only advances on a run with zero failures |
 | `lrclib.rs` | LRCLIB API client for lyrics fetching (synced LRC + plain text) |
 
 ### Other
@@ -261,7 +262,7 @@ fb2k-compatible template engine.
 |---|---|
 | `config.rs` | Figment-based layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Playback, library, remote, graphql, radio, visualizer, organize, discovery settings. See `Config::update_base()` for safe writes. |
 | `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
-| `organize.rs` | File renaming using format strings. Preview/execute/undo. Scoped operations via `preview_for_tracks()`/`execute_for_tracks()` (used by TUI modal). Moves ancillary files (cover art, cue sheets). Logs moves for undo. |
+| `organize.rs` | File renaming using format strings. Preview/execute/undo, all planned by one `plan()` so a preview and the execute that follows it agree. Scoped by track id or by path. Refuses to overwrite; database rows (track paths, scan cache, favourites, snapshots, playback state) are rewritten in the same transaction as the move. Every move is logged for undo. Moves ancillary files (cover art, cue sheets). |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
 
 ## koan-cli modules
@@ -356,18 +357,20 @@ Mouse works in every mode — modality is keyboard-only. Double-click a queue tr
 
 **Track dedup across sources:** Local file + Subsonic remote entry for the same song = one DB row. Local path always wins for playback.
 
+**Stale removal is guarded, not eager:** deleting a track takes its play history, lyrics and embedding with it, so an unmounted volume must never look like a deletion. A folder that yields zero audio files is skipped entirely; an IO error while stat-ing a path counts as "cannot tell", not "gone"; and a run that would clear more than 20% of a folder holding at least 100 tracks is refused outright. `koan scan --force-remove` lifts that last brake and only that one.
+
 ## Dependencies
 
-All deps are current as of March 2026. Key choices:
+Key choices:
 
 | Dep | Why |
 |---|---|
-| `symphonia` | Rust-native audio decoder. All codecs via `features = ["all"]`. Gapless support built in. |
+| `symphonia` | Rust-native audio decoder. Explicit codec feature list with `default-features = false` (flac, mp3, aac, vorbis, alac, pcm, adpcm, isomp4, ogg, mkv, caf, wav, aiff, opt-simd). Gapless support built in. |
 | `rtrb` | Lock-free SPSC ring buffer. The only thing connecting decode → audio output. |
 | `coreaudio-sys` | Raw CoreAudio bindings for AUHAL output unit (macOS only). |
 | `cpal` | Cross-platform audio I/O — ALSA/PipeWire/PulseAudio backend (Linux only). |
 | `keyring` | Cross-platform credential storage (macOS Keychain, Linux secret-service). |
-| `rusqlite` | SQLite with `bundled-full` (portable, includes FTS5). |
+| `rusqlite` | SQLite via `bundled` (portable, includes FTS5) (portable, includes FTS5). |
 | `lofty` | Tag reading/writing across ID3, Vorbis, MP4, APE. |
 | `ratatui` + `crossterm` | TUI framework + terminal backend. |
 | `nucleo` | Fuzzy matching engine (same as used by Helix editor). |

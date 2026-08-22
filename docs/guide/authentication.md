@@ -156,6 +156,12 @@ koan auth regenerate-keys
 auth_enabled = false
 ```
 
+> **Warning:** with auth disabled, anything that can reach the port is an admin — it can read your
+> entire library, control playback and rewrite config. The `Origin` and `Host` checks keep a web page
+> you visit from being that "anything", but they are not a substitute for auth: any other machine on
+> the network still gets in. Only disable auth on a host you control, bound to `127.0.0.1`, and never
+> with the port forwarded.
+
 **Nuclear option (start fresh):**
 ```bash
 koan auth reset
@@ -176,8 +182,26 @@ refresh_token_ttl = "30d" # refresh token lifetime
 
 ## In-process access
 
-The TUI and MCP server run in the same process as the player. They bypass auth entirely (injected as anonymous admin). Auth only applies to HTTP API clients (GraphQL, Subsonic REST, web UI).
+The TUI runs in the same process as the player and bypasses auth entirely. The MCP server does too, but executes at `user` role rather than admin — its transport carries no credential, so anything it can reach is reachable by whoever can talk to the MCP process. That leaves out the mutations that move files (`organize*`), rewrite config, trigger scans, or change the output device. Set `KOAN_MCP_ADMIN=1` to opt back in.
+
+Auth otherwise applies to HTTP API clients (GraphQL, web UI). The Subsonic REST API is separate — see below.
+
+## Cookies
+
+`/auth/login` sets two `HttpOnly` cookies: `koan_access` (the JWT, `Path=/`) and `koan_refresh` (`Path=/auth/refresh`, so it is never attached to an API call). Both are `SameSite=Lax`, which is what keeps them off cross-site requests — a foreign page cannot use them to open a WebSocket or fire a mutation.
+
+The refresh token is also returned in the login response body, because the CLI and other non-browser clients have no cookie jar and keep it in the keychain.
+
+Refresh tokens are stored in the database as `sha256(token)`, so a database read yields nothing usable.
 
 ## Subsonic API
 
-Subsonic REST endpoints use the standard Subsonic auth mechanism (username + token/salt or plain password) for compatibility with existing clients (play:Sub, DSub, Symfonium, etc.). Under the hood, credentials are verified against the same `users` table — same users, same passwords, same roles. The auth mechanism is different (Subsonic's MD5+salt scheme vs JWT) but the identity system is shared.
+koan's Subsonic REST API has **its own credentials**, configured under `[subsonic]` and unrelated to the `users` table and to `[remote]`. See [Configuration](../reference/configuration.md#subsonic).
+
+```bash
+koan subsonic setup           # generate a secret, enable /rest/*
+koan subsonic status
+koan subsonic disable
+```
+
+Only token auth (`u` + `t` + `s`) is accepted. Plaintext `p=` — and its `enc:` hex form — is refused: the protocol offers no transport guarantee, so accepting it hands the secret to anyone watching the network. Every current client (play:Sub, DSub, Symfonium) uses token auth.

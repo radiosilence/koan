@@ -68,16 +68,13 @@ pub fn make_album_picker_items(albums: &[queries::AlbumRow]) -> Vec<PickerItem> 
     albums
         .iter()
         .map(|a| {
-            let year = a
-                .date
-                .as_deref()
-                .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None });
+            let year = crate::library::album_year(a.date.as_deref());
             let codec = a.codec.as_deref();
             let mut parts = vec![
                 (a.artist_name.clone(), PickerPartKind::Artist),
                 (" - ".into(), PickerPartKind::Separator),
             ];
-            if let Some(y) = year {
+            if let Some(ref y) = year {
                 parts.push((format!("({}) ", y), PickerPartKind::Date));
             }
             parts.push((a.title.clone(), PickerPartKind::Album));
@@ -106,4 +103,37 @@ pub fn make_artist_picker_items(artists: &[queries::ArtistRow]) -> Vec<PickerIte
             parts: vec![(a.name.clone(), PickerPartKind::Artist)],
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn album(date: &str) -> queries::AlbumRow {
+        queries::AlbumRow {
+            id: 1,
+            title: "album".into(),
+            artist_id: 1,
+            artist_name: "artist".into(),
+            date: Some(date.into()),
+            total_discs: None,
+            total_tracks: None,
+            codec: None,
+            label: None,
+            remote_id: None,
+        }
+    }
+
+    #[test]
+    fn multibyte_album_dates_do_not_split_a_char() {
+        for date in [
+            "\u{65e5}\u{672c}\u{8a9e}",
+            "\u{ff12}\u{ff10}\u{ff12}\u{ff14}",
+            "",
+            "20",
+            "2024-05-01",
+        ] {
+            make_album_picker_items(&[album(date)]);
+        }
+    }
 }

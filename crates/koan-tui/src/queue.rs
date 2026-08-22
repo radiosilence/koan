@@ -195,6 +195,11 @@ impl Widget for QueueView<'_> {
         let inner = block.inner(area);
         block.render(area, buf);
 
+        // The top border can consume the only row there is.
+        if inner.height == 0 {
+            return;
+        }
+
         if self.entries.is_empty() {
             let line = Line::from(Span::styled(" empty", self.theme.hint_desc));
             buf.set_line(inner.x, inner.y, &line, inner.width);
@@ -232,24 +237,10 @@ impl Widget for QueueView<'_> {
             }
         }
 
-        // Find which display line the cursor is on for scroll.
-        let cursor_display_line = display_lines
-            .iter()
-            .position(|(idx, _)| *idx == Some(self.cursor))
-            .unwrap_or(0);
-
         let visible_height = inner.height as usize;
-        let start = if is_edit {
-            let mut s = self.scroll_offset;
-            if cursor_display_line < s {
-                s = cursor_display_line;
-            } else if cursor_display_line >= s + visible_height {
-                s = cursor_display_line.saturating_sub(visible_height) + 1;
-            }
-            s
-        } else {
-            self.scroll_offset
-        };
+        let start = self
+            .scroll_offset
+            .min(display_lines.len().saturating_sub(1));
         let end = (start + visible_height).min(display_lines.len());
 
         for (row, (_idx, line)) in display_lines
@@ -555,4 +546,129 @@ pub fn scroll_cursor_to_top(entries: &[QueueEntry], cursor: usize, visible_heigh
     // Don't overscroll past the end.
     let max_scroll = display_lines.len().saturating_sub(visible_height);
     top.min(max_scroll)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use koan_core::player::state::QueueItemId;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn entry(n: usize, album: &str) -> QueueEntry {
+        QueueEntry {
+            id: QueueItemId::new(),
+            db_id: None,
+            path: PathBuf::from(format!("/music/{}.flac", n)),
+            title: format!("track {}", n),
+            artist: "artist".into(),
+            album_artist: "artist".into(),
+            album: album.into(),
+            year: None,
+            codec: None,
+            track_number: Some(n as i64 + 1),
+            disc: None,
+            duration_ms: Some(200_000),
+            status: QueueEntryStatus::Queued,
+            download_progress: None,
+        }
+    }
+
+    fn draw(
+        entries: &[QueueEntry],
+        mode: &Mode,
+        cursor: usize,
+        offset: usize,
+        w: u16,
+        h: u16,
+    ) -> Terminal<TestBackend> {
+        let theme = Theme::default();
+        let selected = HashSet::new();
+        let mut terminal = Terminal::new(TestBackend::new(w, h)).unwrap();
+        terminal
+            .draw(|f| {
+                let view = QueueView::new(entries, mode, cursor, offset, &theme, &selected, 0);
+                f.render_widget(view, f.area());
+            })
+            .unwrap();
+        terminal
+    }
+
+    /// The top border can leave no room for the empty-state line.
+    #[test]
+    fn empty_queue_renders_in_a_single_row() {
+        for (w, h) in [(1, 1), (2, 1), (3, 1), (1, 2), (80, 1), (80, 24)] {
+            draw(&[], &Mode::Normal, 0, 0, w, h);
+        }
+    }
+
+    #[test]
+    fn renders_with_a_scroll_offset_past_the_end() {
+        let entries: Vec<_> = (0..5).map(|n| entry(n, "album")).collect();
+        draw(&entries, &Mode::Normal, 0, 9_999, 40, 10);
+    }
+
+    /// Find the row holding the edit-mode cursor marker.
+    fn cursor_row(terminal: &Terminal<TestBackend>, w: u16, h: u16) -> u16 {
+        let buf = terminal.backend().buffer();
+        (0..h)
+            .find(|&y| (0..w).any(|x| buf[(x, y)].symbol() == ">"))
+            .expect("cursor marker is on screen")
+    }
+
+    /// The renderer and the hit-test must agree on which row a track occupies,
+    /// including the step where moving the cursor down forces a scroll.
+    #[test]
+    fn clicked_row_is_the_drawn_row_across_an_edit_scroll_boundary() {
+        // 40 tracks over two albums, so header lines shift the mapping.
+        let entries: Vec<_> = (0..40)
+            .map(|n| entry(n, if n < 17 { "first" } else { "second" }))
+            .collect();
+        let (w, h) = (60u16, 20u16);
+        let area = Rect::new(0, 0, w, h);
+        let visible_height = (h - 1) as usize;
+
+        let mut offset = 0usize;
+        for cursor in 0..entries.len() {
+            offset = scroll_for_cursor(&entries, cursor, offset, visible_height);
+            let terminal = draw(&entries, &Mode::QueueEdit, cursor, offset, w, h);
+            let row = cursor_row(&terminal, w, h);
+            assert_eq!(
+                QueueView::queue_index_at_y(&entries, area, offset, row),
+                Some(cursor),
+                "cursor {} drawn on row {} with offset {}",
+                cursor,
+                row,
+                offset
+            );
+        }
+    }
+
+    /// The widget renders exactly the offset it is handed. Scrolling to follow
+    /// the cursor is `App`'s job — doing it here too desynced every hit-test.
+    #[test]
+    fn edit_mode_widget_does_not_scroll_itself() {
+        let entries: Vec<_> = (0..40).map(|n| entry(n, "")).collect();
+        let (w, h) = (60u16, 20u16);
+        // Cursor far below the window: a self-scrolling widget would jump to it.
+        let terminal = draw(&entries, &Mode::QueueEdit, 39, 0, w, h);
+        let buf = terminal.backend().buffer();
+        let first_row: String = (0..w).map(|x| buf[(x, 1)].symbol()).collect();
+        assert!(first_row.contains("track 0"), "drew {:?}", first_row);
+    }
+
+    #[test]
+    fn album_headers_are_not_clickable_as_tracks() {
+        let entries: Vec<_> = (0..6)
+            .map(|n| entry(n, if n < 3 { "first" } else { "second" }))
+            .collect();
+        let area = Rect::new(0, 0, 60, 20);
+        // Row 1 is the first album header.
+        assert_eq!(QueueView::queue_index_at_y(&entries, area, 0, 1), None);
+        assert_eq!(
+            QueueView::album_group_at_y(&entries, area, 0, 1),
+            Some((0, 2))
+        );
+        assert_eq!(QueueView::queue_index_at_y(&entries, area, 0, 2), Some(0));
+    }
 }

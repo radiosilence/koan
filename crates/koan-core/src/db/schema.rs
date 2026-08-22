@@ -90,6 +90,8 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             track_id   INTEGER,
             from_path  TEXT NOT NULL,
             to_path    TEXT NOT NULL,
+            size_bytes INTEGER,
+            mtime      INTEGER,
             created_at TEXT DEFAULT (datetime('now'))
         );
 
@@ -179,6 +181,10 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         "ALTER TABLE tracks ADD COLUMN cache_size_bytes INTEGER",
         "ALTER TABLE tracks ADD COLUMN cache_download_date INTEGER",
         "ALTER TABLE similar_artists ADD COLUMN relationship TEXT NOT NULL DEFAULT 'similar'",
+        // Undo checks these against the file before moving it back, so a file that
+        // was replaced since the organize is left alone.
+        "ALTER TABLE organize_log ADD COLUMN size_bytes INTEGER",
+        "ALTER TABLE organize_log ADD COLUMN mtime INTEGER",
     ];
     for sql in &migrations {
         match conn.execute(sql, []) {
@@ -195,6 +201,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::connection::Database;
 
     #[test]
     fn migrates_similar_artists_relationship_column() {
@@ -242,5 +249,108 @@ mod tests {
             )
             .unwrap();
         assert_eq!(rel, "similar");
+    }
+
+    /// `create_tables` runs its ALTER TABLE migrations unconditionally and
+    /// detects the already-migrated case from SQLite's "duplicate column" error
+    /// text. On an existing database that is the *normal* path, taken on every
+    /// open, so a change in SQLite's wording would stop koan starting.
+    #[test]
+    fn sqlite_still_reports_duplicate_column() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE t (a INTEGER, b INTEGER);")
+            .unwrap();
+        let err = conn
+            .execute("ALTER TABLE t ADD COLUMN b INTEGER", [])
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("duplicate column"),
+            "SQLite error wording moved, create_tables no longer detects \
+             already-applied migrations: {err}"
+        );
+    }
+
+    #[test]
+    fn reopening_a_migrated_database_succeeds() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        Database::open(&path).unwrap();
+        Database::open(&path).unwrap();
+        Database::open(&path).unwrap();
+    }
+
+    #[test]
+    fn pre_migration_database_gains_the_new_columns() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            // Build the current schema, then strip the migrated columns back off
+            // to reproduce a database written by an older koan.
+            let db = Database::open(&path).unwrap();
+            db.conn
+                .execute_batch(
+                    "ALTER TABLE tracks DROP COLUMN cache_size_bytes;
+                     ALTER TABLE tracks DROP COLUMN cache_download_date;
+                     ALTER TABLE similar_artists DROP COLUMN relationship;",
+                )
+                .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        for (table, column) in [
+            ("tracks", "cache_size_bytes"),
+            ("tracks", "cache_download_date"),
+            ("similar_artists", "relationship"),
+        ] {
+            let found: i64 = db
+                .conn
+                .query_row(
+                    &format!(
+                        "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name = '{column}'"
+                    ),
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(found, 1, "{table}.{column} was not migrated");
+        }
+    }
+
+    #[test]
+    fn foreign_keys_are_enforced() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let db = Database::open(&path).unwrap();
+
+        db.conn
+            .execute(
+                "INSERT INTO users (id, username, password_hash) VALUES (1, 'u', 'h')",
+                [],
+            )
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO refresh_tokens (id, user_id, expires_at) VALUES ('t', 1, 9999)",
+                [],
+            )
+            .unwrap();
+        assert!(
+            db.conn
+                .execute(
+                    "INSERT INTO refresh_tokens (id, user_id, expires_at) VALUES ('t2', 999, 9999)",
+                    [],
+                )
+                .is_err(),
+            "foreign key constraint did not fire"
+        );
+
+        db.conn
+            .execute("DELETE FROM users WHERE id = 1", [])
+            .unwrap();
+        let remaining: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM refresh_tokens", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(remaining, 0, "ON DELETE CASCADE did not fire");
     }
 }

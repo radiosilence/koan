@@ -167,7 +167,8 @@ pub fn admin_count(conn: &Connection) -> Result<i64, rusqlite::Error> {
 // Refresh tokens
 // ---------------------------------------------------------------------------
 
-/// Store a refresh token.
+/// Store a refresh token. Only `sha256(token)` is persisted — the raw token is
+/// a bearer credential and read access to the database must not yield one.
 pub fn store_refresh_token(
     conn: &Connection,
     token_id: &str,
@@ -176,7 +177,7 @@ pub fn store_refresh_token(
 ) -> Result<(), rusqlite::Error> {
     conn.execute(
         "INSERT INTO refresh_tokens (id, user_id, expires_at) VALUES (?1, ?2, ?3)",
-        params![token_id, user_id, expires_at],
+        params![auth::sha256_hex(token_id), user_id, expires_at],
     )?;
     Ok(())
 }
@@ -192,7 +193,7 @@ pub fn get_valid_refresh_token(
          FROM refresh_tokens
          WHERE id = ?1 AND revoked = 0 AND expires_at > ?2",
     )?;
-    let mut rows = stmt.query_map(params![token_id, now], |row| {
+    let mut rows = stmt.query_map(params![auth::sha256_hex(token_id), now], |row| {
         Ok(RefreshTokenRow {
             id: row.get(0)?,
             user_id: row.get(1)?,
@@ -221,7 +222,7 @@ pub fn consume_refresh_token(
          WHERE id = ?1 AND revoked = 0 AND expires_at > ?2
          RETURNING id, user_id, expires_at, revoked, created_at",
     )?;
-    let mut rows = stmt.query_map(params![token_id, now], |row| {
+    let mut rows = stmt.query_map(params![auth::sha256_hex(token_id), now], |row| {
         Ok(RefreshTokenRow {
             id: row.get(0)?,
             user_id: row.get(1)?,
@@ -241,7 +242,7 @@ pub fn consume_refresh_token(
 pub fn revoke_refresh_token(conn: &Connection, token_id: &str) -> Result<bool, rusqlite::Error> {
     let count = conn.execute(
         "UPDATE refresh_tokens SET revoked = 1 WHERE id = ?1",
-        params![token_id],
+        params![auth::sha256_hex(token_id)],
     )?;
     Ok(count > 0)
 }

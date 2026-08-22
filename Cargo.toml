@@ -5,10 +5,27 @@ members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-server", "crates/
 [workspace.package]
 version = "0.23.3"
 edition = "2024"
+rust-version = "1.89"
 homepage = "https://github.com/radiosilence/koan"
 repository = "https://github.com/radiosilence/koan"
 license = "MIT"
 
 [workspace.dependencies]
-rusqlite = { version = "0.38", features = ["bundled"] }
+# Internal crates. Keep the version in step with [workspace.package] above —
+# a stale pin here publishes members that resolve against the wrong sibling.
+koan-core = { path = "crates/koan-core", version = "0.23.3" }
+koan-server = { path = "crates/koan-server", version = "0.23.3" }
+koan-tui = { path = "crates/koan-tui", version = "0.23.3" }
+# Feature set is the union every member needs; `default-tls` is an alias for
+# `rustls`, so there is exactly one TLS stack.
+reqwest = { version = "0.13", default-features = false, features = [
+  "blocking",
+  "charset",
+  "http2",
+  "json",
+  "query",
+  "rustls",
+  "system-proxy",
+] }
+rusqlite = { version = "0.40", features = ["bundled"] }
 walkdir = "2.5"

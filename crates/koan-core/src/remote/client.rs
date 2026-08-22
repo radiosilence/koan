@@ -4,6 +4,8 @@ use std::path::Path;
 use serde::Deserialize;
 use thiserror::Error;
 
+use super::download::{self, DownloadError};
+
 const API_VERSION: &str = "1.16.1";
 const CLIENT_NAME: &str = "koan";
 
@@ -17,14 +19,24 @@ pub enum SubsonicError {
     BadResponse,
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+    #[error("download error: {0}")]
+    Download(#[from] DownloadError),
+    #[error("entropy source unavailable: {0}")]
+    Entropy(#[from] getrandom::Error),
 }
 
 /// Subsonic/Navidrome API client.
+///
+/// Holds two HTTP clients with different timeout semantics: `http` bounds a
+/// whole JSON request, which is right for small API responses read in one go;
+/// `downloader` bounds only connect and per-read stalls, so a large track on a
+/// slow link is never cut off for taking too long overall.
 pub struct SubsonicClient {
     base_url: String,
     username: String,
     password: String,
     http: reqwest::blocking::Client,
+    downloader: reqwest::blocking::Client,
 }
 
 impl SubsonicClient {
@@ -34,16 +46,20 @@ impl SubsonicClient {
             base_url,
             username: username.to_string(),
             password: password.to_string(),
-            http: reqwest::blocking::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .build()
-                .expect("failed to build HTTP client"),
+            http: download::api_client().unwrap_or_else(|e| {
+                log::warn!("falling back to default HTTP client: {}", e);
+                reqwest::blocking::Client::new()
+            }),
+            downloader: download::download_client().unwrap_or_else(|e| {
+                log::warn!("falling back to default download client: {}", e);
+                reqwest::blocking::Client::new()
+            }),
         }
     }
 
     /// Build auth query params: u, t (token), s (salt), v, c, f.
-    fn auth_params(&self) -> HashMap<String, String> {
-        let salt = random_salt();
+    fn auth_params(&self) -> Result<HashMap<String, String>, SubsonicError> {
+        let salt = random_salt()?;
 
         let token = format!("{:x}", md5::compute(format!("{}{}", self.password, salt)));
 
@@ -54,7 +70,7 @@ impl SubsonicClient {
         params.insert("v".into(), API_VERSION.into());
         params.insert("c".into(), CLIENT_NAME.into());
         params.insert("f".into(), "json".into());
-        params
+        Ok(params)
     }
 
     /// Make a GET request to a Subsonic API endpoint.
@@ -68,7 +84,7 @@ impl SubsonicClient {
         extra: &[(&str, &str)],
     ) -> Result<SubsonicResponse, SubsonicError> {
         let url = format!("{}/rest/{}", self.base_url, endpoint);
-        let mut params = self.auth_params();
+        let mut params = self.auth_params()?;
         for (k, v) in extra {
             params.insert((*k).to_string(), (*v).to_string());
         }
@@ -117,7 +133,7 @@ impl SubsonicClient {
     /// `size` requests a square thumbnail; omit it for the original.
     pub fn get_cover_art(&self, id: &str, size: Option<u32>) -> Result<Vec<u8>, SubsonicError> {
         let url = format!("{}/rest/getCoverArt", self.base_url);
-        let mut params = self.auth_params();
+        let mut params = self.auth_params()?;
         params.insert("id".into(), id.to_string());
         if let Some(px) = size {
             params.insert("size".into(), px.to_string());
@@ -172,14 +188,17 @@ impl SubsonicClient {
     }
 
     /// Build the streaming URL for a track (doesn't make a request).
-    pub fn stream_url(&self, track_id: &str) -> String {
-        let params = self.auth_params();
-        let query: String = params
+    pub fn stream_url(&self, track_id: &str) -> Result<String, SubsonicError> {
+        let query: String = self
+            .auth_params()?
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
             .join("&");
-        format!("{}/rest/stream?id={}&{}", self.base_url, track_id, query)
+        Ok(format!(
+            "{}/rest/stream?id={}&{}",
+            self.base_url, track_id, query
+        ))
     }
 
     /// Stream URL without auth params — safe for database storage.
@@ -193,65 +212,30 @@ impl SubsonicClient {
     }
 
     /// Download a track with progress reporting.
-    /// The callback receives (bytes_downloaded, total_bytes). Total may be 0
-    /// if the server doesn't send Content-Length.
+    ///
+    /// The callback receives `(bytes_downloaded, total_bytes)`; total is 0 when
+    /// the server sends no Content-Length, and the count restarts from zero if
+    /// an attempt is retried. `dest` only appears once the file is complete.
     pub fn download_with_progress(
         &self,
         track_id: &str,
         dest: &Path,
         on_progress: impl Fn(u64, u64),
     ) -> Result<(), SubsonicError> {
-        use std::io::Write;
-
         let url = format!("{}/rest/download", self.base_url);
-        let mut params = self.auth_params();
-        params.insert("id".into(), track_id.to_string());
-
-        let mut resp = self.http.get(&url).query(&params).send()?;
-        // Bail before creating any file — a failed download must not leave a
-        // JSON error body behind masquerading as a cached track.
-        Self::reject_error_body(&resp)?;
-        let total = resp.content_length().unwrap_or(0);
-
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        // Write to a temp file first — only rename to dest on success.
-        // This prevents incomplete downloads from being treated as cached.
-        let tmp = dest.with_extension("part");
-        let mut file = std::fs::File::create(&tmp)?;
-        let mut downloaded: u64 = 0;
-        let mut buf = [0u8; 64 * 1024]; // 64KB chunks
-        let result = loop {
-            let n = match std::io::Read::read(&mut resp, &mut buf) {
-                Ok(0) => break Ok(()),
-                Ok(n) => n,
-                Err(e) => break Err(SubsonicError::Io(e)),
-            };
-            file.write_all(&buf[..n])?;
-            downloaded += n as u64;
-            on_progress(downloaded, total);
-        };
-        file.flush()?;
-        drop(file);
-
-        if let Err(e) = result {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(e);
-        }
-
-        // Verify size if server reported Content-Length.
-        if total > 0 && downloaded != total {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(SubsonicError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                format!("incomplete download: got {} of {} bytes", downloaded, total),
-            )));
-        }
-
-        // Atomic rename — dest only appears when the file is complete.
-        std::fs::rename(&tmp, dest)?;
+        download::download_with_retries(
+            dest,
+            download::DEFAULT_ATTEMPTS,
+            || {
+                // Fresh auth params per attempt — the salt must not be replayed.
+                let mut params = self
+                    .auth_params()
+                    .map_err(|e| download::DownloadError::Request(e.to_string()))?;
+                params.insert("id".into(), track_id.to_string());
+                Ok(self.downloader.get(&url).query(&params))
+            },
+            on_progress,
+        )?;
         Ok(())
     }
 
@@ -293,7 +277,7 @@ impl SubsonicClient {
         description: Option<&str>,
     ) -> Result<SubsonicShare, SubsonicError> {
         let url = format!("{}/rest/createShare", self.base_url);
-        let mut params = self.auth_params();
+        let mut params = self.auth_params()?;
         if let Some(desc) = description {
             params.insert("description".into(), desc.to_string());
         }
@@ -503,10 +487,15 @@ pub struct SubsonicShare {
 }
 
 /// Generate a random hex salt string for Subsonic auth.
-fn random_salt() -> String {
+///
+/// The salt goes on the wire next to `md5(password + salt)`, so it has to be
+/// unpredictable — a clock- or counter-derived fallback would make the token
+/// precomputable from a captured exchange. A request without OS entropy fails
+/// rather than authenticating weakly.
+fn random_salt() -> Result<String, getrandom::Error> {
     let mut buf = [0u8; 12];
-    getrandom::getrandom(&mut buf).expect("failed to generate random salt");
-    buf.iter().map(|b| format!("{:02x}", b)).collect()
+    getrandom::fill(&mut buf)?;
+    Ok(buf.iter().map(|b| format!("{:02x}", b)).collect())
 }
 
 #[cfg(test)]
@@ -632,7 +621,7 @@ mod tests {
     #[test]
     fn test_auth_params_format() {
         let client = SubsonicClient::new("http://localhost:4533", "alice", "secret");
-        let params = client.auth_params();
+        let params = client.auth_params().unwrap();
 
         // Must contain exactly these six keys.
         assert!(params.contains_key("u"), "missing 'u' param");
@@ -652,7 +641,7 @@ mod tests {
     #[test]
     fn test_auth_params_token_is_md5_of_password_plus_salt() {
         let client = SubsonicClient::new("http://localhost:4533", "bob", "letmein");
-        let params = client.auth_params();
+        let params = client.auth_params().unwrap();
 
         let salt = &params["s"];
         let token = &params["t"];
@@ -665,8 +654,8 @@ mod tests {
     #[test]
     fn test_auth_params_salt_is_different_each_call() {
         let client = SubsonicClient::new("http://localhost:4533", "user", "pass");
-        let params1 = client.auth_params();
-        let params2 = client.auth_params();
+        let params1 = client.auth_params().unwrap();
+        let params2 = client.auth_params().unwrap();
 
         // Salts should differ across calls (random); tokens will differ too.
         // There is a negligible probability they collide — acceptable in tests.
@@ -678,7 +667,7 @@ mod tests {
     #[test]
     fn test_stream_url_has_auth() {
         let client = SubsonicClient::new("http://myserver:4533", "user", "pass");
-        let url = client.stream_url("track-123");
+        let url = client.stream_url("track-123").unwrap();
 
         assert!(url.contains("track-123"), "url must include the track id");
         assert!(url.contains("u=user"), "url must include username param");
@@ -698,8 +687,8 @@ mod tests {
         let client_with_slash = SubsonicClient::new("http://myserver:4533/", "u", "p");
         let client_no_slash = SubsonicClient::new("http://myserver:4533", "u", "p");
 
-        let url_with = client_with_slash.stream_url("1");
-        let url_without = client_no_slash.stream_url("1");
+        let url_with = client_with_slash.stream_url("1").unwrap();
+        let url_without = client_no_slash.stream_url("1").unwrap();
 
         // Both should produce the same path prefix (no double slash).
         assert!(

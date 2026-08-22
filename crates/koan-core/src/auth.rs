@@ -132,6 +132,35 @@ pub fn verify_password(password: &str, hash: &str) -> Result<(), AuthError> {
 }
 
 // ---------------------------------------------------------------------------
+// Random secrets
+// ---------------------------------------------------------------------------
+
+/// Generate a 256-bit random secret, hex encoded.
+///
+/// Used for bearer-style secrets that are compared verbatim rather than hashed
+/// (introspection key, Subsonic shared secret), so the entropy has to carry the
+/// whole security argument.
+pub fn random_token() -> Result<String, AuthError> {
+    use ring::rand::SecureRandom;
+
+    let mut bytes = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| AuthError::Hash("rng failure".into()))?;
+    Ok(bytes.iter().map(|b| format!("{:02x}", b)).collect())
+}
+
+/// SHA-256 of `input`, hex encoded. Refresh tokens are stored under this so a
+/// database read does not yield usable credentials.
+pub fn sha256_hex(input: &str) -> String {
+    ring::digest::digest(&ring::digest::SHA256, input.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Ed25519 Keypair management
 // ---------------------------------------------------------------------------
 
@@ -147,19 +176,9 @@ fn public_key_path() -> PathBuf {
     keypair_dir().join("ed25519.pub.pem")
 }
 
-/// Generate a new Ed25519 keypair and write PEM files to the config dir.
+/// Derive a new Ed25519 keypair as PEM. Touches no filesystem state.
 /// Returns (private_pem, public_pem).
-pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
-    let dir = keypair_dir();
-    fs::create_dir_all(&dir)?;
-
-    // Ensure the auth directory is gitignored — keys must never be committed.
-    let gitignore = dir.join(".gitignore");
-    if !gitignore.exists() {
-        let _ = fs::write(&gitignore, "*\n");
-    }
-
-    // Generate Ed25519 keypair using ring (via jsonwebtoken's internal ring dep).
+pub fn generate_keypair_pem() -> Result<(String, String), AuthError> {
     // jsonwebtoken's EncodingKey::from_ed_pem expects PKCS8 PEM.
     let rng = ring::rand::SystemRandom::new();
     let pkcs8_doc = ring::signature::Ed25519KeyPair::generate_pkcs8(&rng)
@@ -182,6 +201,23 @@ pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
     ];
     spki.extend_from_slice(pub_bytes);
     let public_pem = pem::encode(&pem::Pem::new("PUBLIC KEY", spki));
+
+    Ok((private_pem, public_pem))
+}
+
+/// Generate a new Ed25519 keypair and write PEM files to the config dir.
+/// Returns (private_pem, public_pem).
+pub fn generate_keypair() -> Result<(Vec<u8>, Vec<u8>), AuthError> {
+    let (private_pem, public_pem) = generate_keypair_pem()?;
+
+    let dir = keypair_dir();
+    fs::create_dir_all(&dir)?;
+
+    // Ensure the auth directory is gitignored — keys must never be committed.
+    let gitignore = dir.join(".gitignore");
+    if !gitignore.exists() {
+        let _ = fs::write(&gitignore, "*\n");
+    }
 
     // Write key files with restrictive permissions set BEFORE writing content
     // to avoid a window where the file exists with default (world-readable) mode.
@@ -255,6 +291,20 @@ pub fn mint_access_token(
     role: Role,
     ttl_secs: u64,
 ) -> Result<String, AuthError> {
+    mint_access_token_with_role_str(private_pem, user_id, username, role.as_str(), ttl_secs)
+}
+
+/// Mint an access token carrying an arbitrary `role` claim.
+///
+/// The claim is a free-text string on the wire; this is the seam that lets the
+/// consumers of a token be tested against role values they cannot parse.
+pub fn mint_access_token_with_role_str(
+    private_pem: &[u8],
+    user_id: i64,
+    username: &str,
+    role: &str,
+    ttl_secs: u64,
+) -> Result<String, AuthError> {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -263,7 +313,7 @@ pub fn mint_access_token(
     let claims = Claims {
         sub: user_id,
         username: username.to_string(),
-        role: role.as_str().to_string(),
+        role: role.to_string(),
         iat: now,
         exp: now + ttl_secs,
     };
@@ -344,10 +394,11 @@ mod tests {
 
     #[test]
     fn keypair_generate_and_jwt_roundtrip() {
-        let (priv_pem, pub_pem) = generate_keypair().unwrap();
+        let (priv_pem, pub_pem) = generate_keypair_pem().unwrap();
 
-        let token = mint_access_token(&priv_pem, 42, "testuser", Role::Admin, 3600).unwrap();
-        let claims = validate_access_token(&pub_pem, &token).unwrap();
+        let token =
+            mint_access_token(priv_pem.as_bytes(), 42, "testuser", Role::Admin, 3600).unwrap();
+        let claims = validate_access_token(pub_pem.as_bytes(), &token).unwrap();
 
         assert_eq!(claims.sub, 42);
         assert_eq!(claims.username, "testuser");
@@ -356,7 +407,7 @@ mod tests {
 
     #[test]
     fn expired_token_rejected() {
-        let (priv_pem, pub_pem) = generate_keypair().unwrap();
+        let (priv_pem, pub_pem) = generate_keypair_pem().unwrap();
         // Manually create a token that expired 10 minutes ago.
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -369,10 +420,10 @@ mod tests {
             iat: now - 1200,
             exp: now - 600, // expired 10 min ago
         };
-        let key = jsonwebtoken::EncodingKey::from_ed_pem(&priv_pem).unwrap();
+        let key = jsonwebtoken::EncodingKey::from_ed_pem(priv_pem.as_bytes()).unwrap();
         let header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::EdDSA);
         let token = jsonwebtoken::encode(&header, &claims, &key).unwrap();
-        let result = validate_access_token(&pub_pem, &token);
+        let result = validate_access_token(pub_pem.as_bytes(), &token);
         assert!(result.is_err());
     }
 

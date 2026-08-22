@@ -12,7 +12,7 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus a native 
 
 Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 14+). Links koan-ffi.
 
-Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other. Native clients import only koan-core, through koan-ffi.
+Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
 
 **Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web SPA, iOS, jukebox remotes. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
@@ -29,7 +29,7 @@ Main Thread (TUI, 60fps)   ──crossbeam channel──►  Player Thread ("koa
                                                        │
                                                        └──controls──►  Audio RT Thread (CoreAudio/cpal, system-managed)
 
-Analyzer Thread ("koan-analyzer") ◄──VizBuffer──  Decode Thread
+Analyzer Thread ("viz-analyzer") ◄──VizBuffer──  Decode Thread
                                   ──VizSnapshot──►  Main Thread (TUI)
 ```
 
@@ -112,8 +112,9 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats, snapshots |
 | `index/scanner.rs` | Parallel library scan: walkdir → rayon → sequential DB upsert |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
-| `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 55 built-in functions |
+| `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 59 built-in functions |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
+| `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
 | `remote/sync.rs` | Parallel library sync: paginate → rayon fetch → batch DB write |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
@@ -229,10 +230,8 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 
 Active plans live in `.claude/plans/`. Key upcoming work:
 
-1. **Decoupled backends** (plan 06) — trait-based audio/credentials abstraction. Foundational, unblocks everything.
-2. **Linux support** (plan 01) — ALSA/PipeWire backends via `AudioBackend` trait.
-3. **Tag editing** (plan 04) — vimv-style (TSV + $EDITOR) first, TUI inline editor second.
-4. **DSP pipeline** (plan 02) — EQ, headphone profiles, crossfeed. Inserts between decode and ring buffer.
-5. **Artist metadata** (plan 09) — bios, images, similar artists from MusicBrainz/Last.fm.
+1. **Tag editing** (plan 04) — vimv-style (TSV + $EDITOR) first, TUI inline editor second.
+2. **DSP pipeline** (plan 02) — EQ, headphone profiles, crossfeed. Inserts between decode and ring buffer.
+3. **Artist metadata** (plan 09) — bios, images, similar artists from MusicBrainz/Last.fm.
 
 See `.claude/plans/README.md` for dependency graph and status.

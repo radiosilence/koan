@@ -680,8 +680,14 @@ impl KoanEngine {
             skipped: 0,
             errors: Vec::new(),
         };
+        // `force_remove` stays off: it lifts the brake that stops a failed mount
+        // from deleting the library, which is not a call a GUI button should make.
+        let opts = koan_core::index::scanner::ScanOptions {
+            force,
+            force_remove: false,
+        };
         for folder in &cfg.library.folders {
-            let r = koan_core::index::scanner::scan_folder(&db, folder, force, None);
+            let r = koan_core::index::scanner::scan_folder(&db, folder, opts, None);
             summary.added += r.added as u32;
             summary.updated += r.updated as u32;
             summary.removed += r.removed as u32;

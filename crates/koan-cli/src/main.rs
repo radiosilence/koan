@@ -181,6 +181,10 @@ enum Commands {
         /// Force re-scan of all files
         #[arg(long)]
         force: bool,
+        /// Delete stale tracks even when so many are missing that it looks like an
+        /// unmounted volume. Takes their play history, lyrics and embeddings too.
+        #[arg(long)]
+        force_remove: bool,
         /// Also run acoustic analysis after scanning
         #[arg(long)]
         analyze: bool,
@@ -216,6 +220,9 @@ enum Commands {
     /// Manage authentication (users, tokens)
     #[command(subcommand)]
     Auth(AuthCommands),
+    /// Manage koan's own Subsonic REST API
+    #[command(subcommand)]
+    Subsonic(SubsonicCommands),
     /// Generate shell completions
     Completions {
         /// Shell to generate for
@@ -260,6 +267,20 @@ enum CacheCommands {
     },
     /// Evict least-recently-played albums until cache is within limit
     Evict,
+}
+
+#[derive(Subcommand)]
+enum SubsonicCommands {
+    /// Enable the Subsonic API and generate its own secret
+    Setup {
+        /// Username Subsonic clients authenticate as
+        #[arg(long, default_value = "koan")]
+        username: String,
+    },
+    /// Show whether the Subsonic API is enabled and configured
+    Status,
+    /// Disable the Subsonic API and delete its secret
+    Disable,
 }
 
 #[derive(Subcommand)]
@@ -379,9 +400,10 @@ fn main() {
         Some(Commands::Scan {
             path,
             force,
+            force_remove,
             analyze,
         }) => {
-            commands::cmd_scan(path.as_deref(), force);
+            commands::cmd_scan(path.as_deref(), force, force_remove);
             if analyze {
                 commands::cmd_analyze();
             }
@@ -431,6 +453,11 @@ fn main() {
             }
             AuthCommands::RegenerateKeys => commands::cmd_auth_regenerate_keys(),
             AuthCommands::Reset => commands::cmd_auth_reset(),
+        },
+        Some(Commands::Subsonic(sub)) => match sub {
+            SubsonicCommands::Setup { username } => commands::cmd_subsonic_setup(&username),
+            SubsonicCommands::Status => commands::cmd_subsonic_status(),
+            SubsonicCommands::Disable => commands::cmd_subsonic_disable(),
         },
         Some(Commands::Completions { shell }) => {
             clap_complete::generate(shell, &mut Cli::command(), "koan", &mut io::stdout());
