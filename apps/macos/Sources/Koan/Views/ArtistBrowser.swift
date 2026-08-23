@@ -4,25 +4,34 @@ import SwiftUI
 struct ArtistBrowser: View {
     @Environment(LibraryModel.self) private var library
     @State private var hovered: Int64?
+    /// Without a selection binding a List row has nothing to do with a click —
+    /// which is why this list felt completely dead.
+    @State private var selection: Set<Int64> = []
 
     var body: some View {
-        List(library.visibleArtists, id: \.id) { artist in
+        List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             HStack(spacing: 10) {
-                Image(systemName: "music.mic")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 18)
+                Group {
+                    if hovered == artist.id {
+                        RowPlayButton(
+                            playable: .artist(id: artist.id, name: artist.name),
+                            visible: true
+                        )
+                    } else {
+                        Image(systemName: "music.mic")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(width: 18, height: 18)
                 Text(artist.name)
+                    .draggablePlayable(.artist(id: artist.id, name: artist.name))
                 Spacer()
-                RowPlayButton(
-                    playable: .artist(id: artist.id, name: artist.name),
-                    visible: hovered == artist.id
-                )
             }
             .onHover { inside in
                 if inside { hovered = artist.id } else if hovered == artist.id { hovered = nil }
             }
-            .padding(.vertical, 2)
+            .frame(height: 24)
             .rowBehaviour(playable: .artist(id: artist.id, name: artist.name)) {
                 library.reveal(artist: artist.id)
             }

@@ -172,6 +172,12 @@ private struct TrackRow: View {
                     font: .caption
                 )
             }
+            // Drag starts from the title, not the whole row. `.onDrag` across
+            // the full row claims every press and leaves selection unreliable;
+            // scoped to the text, clicking anywhere else selects normally.
+            // A table that owned both would not need this, but SwiftUI's List
+            // does not hand that over.
+            .draggablePlayable(.track(track))
 
             Spacer(minLength: 8)
 

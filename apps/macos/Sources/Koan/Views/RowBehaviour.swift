@@ -37,9 +37,12 @@ struct RowBehaviour: ViewModifier {
                 }
                 extraMenu()
             }
-            // Never a tap gesture: SwiftUI holds the first click back to see if
-            // a second follows, which leaves selection feeling dead.
-            .onRowDoubleClick(perform: onOpen)
+            // SwiftUI has no double-click API, so this is the gesture — and it
+            // does hold the first click for the system double-click interval
+            // before letting it through. That delay is accepted deliberately:
+            // the alternative is an AppKit recogniser on the backing table,
+            // which is a lot of machinery to avoid half a second.
+            .onTapGesture(count: 2, perform: onOpen)
     }
 }
 
