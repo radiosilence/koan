@@ -18,13 +18,101 @@ use crate::remote::client::{SubsonicAuth, SubsonicClient};
 // Subsonic client builder
 // ---------------------------------------------------------------------------
 
-/// Get the remote password from config, falling back to Keychain for backwards compat.
+/// Get the remote password. Keychain first, config second.
+///
+/// The config copy is only a migration path now: `set_remote_credentials` writes
+/// to the keychain and clears it, so a plaintext password survives exactly until
+/// the next sign-in.
 pub fn get_remote_password(cfg: &Config) -> Option<String> {
+    if let Ok(pw) = crate::credentials::get_password(&cfg.remote.url)
+        && !pw.is_empty()
+    {
+        return Some(pw);
+    }
     if !cfg.remote.password.is_empty() {
         return Some(cfg.remote.password.clone());
     }
-    // Fallback to Keychain for users who set up before the config change.
-    crate::credentials::get_password(&cfg.remote.url).ok()
+    None
+}
+
+/// Push a favourite to the remote server, if this track came from one.
+///
+/// Fire and forget on its own thread: starring is a courtesy to the server, and
+/// a slow or unreachable one should not hold up the click that caused it. The
+/// local favourite is already written by the time this runs.
+///
+/// Silently does nothing for a track with no `remote_id` — including a local
+/// file whose copy on the server failed to merge with it (#221), which is the
+/// one case where the silence is wrong.
+///
+/// Shared by the TUI, the server and the app, which each had their own copy.
+pub fn sync_favourite_to_remote(db: &Database, path: &Path, star: bool) {
+    let cfg = Config::load().unwrap_or_default();
+    if !cfg.remote.enabled {
+        return;
+    }
+    let Ok(Some(remote_id)) = queries::remote_id_for_path(&db.conn, path) else {
+        return;
+    };
+    let Some(client) = subsonic_client(&cfg) else {
+        return;
+    };
+    std::thread::Builder::new()
+        .name("koan-fav-sync".into())
+        .spawn(move || {
+            let result = if star {
+                client.star(&remote_id)
+            } else {
+                client.unstar(&remote_id)
+            };
+            if let Err(e) = result {
+                log::warn!("failed to sync favourite to remote: {e}");
+            }
+        })
+        .ok();
+}
+
+/// Why signing in to a remote server failed.
+#[derive(Debug, thiserror::Error)]
+pub enum SignInError {
+    #[error("the server did not accept those credentials: {0}")]
+    Rejected(#[from] crate::remote::client::SubsonicError),
+    #[error("could not save the password: {0}")]
+    Credentials(#[from] crate::credentials::CredentialError),
+    #[error("could not write the configuration: {0}")]
+    Config(#[from] crate::config::ConfigError),
+}
+
+/// Sign in to a Subsonic/Navidrome server and remember it.
+///
+/// The password goes to the platform credential store — Keychain on macOS,
+/// secret-service on Linux — and never to `config.local.toml`, which is a plain
+/// file on disk. Any plaintext password already there is cleared, so signing in
+/// again migrates an older setup.
+///
+/// The credentials are checked against the server before anything is written; a
+/// stored password that does not work is worse than none.
+///
+/// Shared by the CLI and the app so the two cannot disagree about where
+/// credentials live.
+pub fn set_remote_credentials(
+    url: &str,
+    username: &str,
+    password: &str,
+) -> Result<(), SignInError> {
+    let url = url.trim_end_matches('/');
+    SubsonicClient::new(url, username, password).ping()?;
+    crate::credentials::store_password(url, password)?;
+
+    let mut values = toml::map::Map::new();
+    values.insert("enabled".into(), toml::Value::Boolean(true));
+    values.insert("url".into(), toml::Value::String(url.to_string()));
+    values.insert("username".into(), toml::Value::String(username.to_string()));
+    // Explicitly emptied: a password left here would keep being read by anything
+    // still preferring the config copy.
+    values.insert("password".into(), toml::Value::String(String::new()));
+    Config::patch_local("remote", &values)?;
+    Ok(())
 }
 
 /// Keychain account holding the Subsonic API shared secret.

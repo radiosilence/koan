@@ -603,7 +603,7 @@ impl KoanEngine {
 
         let now_favourite =
             queries::toggle_favourite(&db.conn, Path::new(&path)).map_err(fav_err)?;
-        sync_favourite_to_remote(&db, &path, now_favourite);
+        koan_core::helpers::sync_favourite_to_remote(&db, Path::new(&path), now_favourite);
         Ok(now_favourite)
     }
 
@@ -1154,32 +1154,6 @@ fn sort_rows(mut rows: Vec<queries::TrackRow>, sort: TrackSort) -> Vec<queries::
 
 /// Mirrors the GraphQL layer's behaviour: star/unstar on the remote server in a
 /// detached thread so the UI never waits on the network.
-fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
-    let cfg = Config::load().unwrap_or_default();
-    if !cfg.remote.enabled {
-        return;
-    }
-    let Ok(Some(remote_id)) = queries::remote_id_for_path(&db.conn, Path::new(path)) else {
-        return;
-    };
-    let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-        return;
-    };
-    std::thread::Builder::new()
-        .name("koan-fav-sync".into())
-        .spawn(move || {
-            let result = if star {
-                client.star(&remote_id)
-            } else {
-                client.unstar(&remote_id)
-            };
-            if let Err(e) = result {
-                log::warn!("failed to sync favourite to remote: {e}");
-            }
-        })
-        .ok();
-}
-
 fn sniff_mime(data: &[u8]) -> &'static str {
     if data.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png"

@@ -117,12 +117,12 @@ macos-build: macos-ffi
     done
     cd {{app_dir}} && swift build -c release
 
-# Assemble Koan.app.
+# Assemble kōan.app.
 macos-bundle: macos-build
     #!/usr/bin/env bash
     set -euo pipefail
     version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
-    app="{{app_dir}}/.build/pkg/Koan.app"
+    app="{{app_dir}}/.build/pkg/kōan.app"
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     # A multi-arch `swift build --arch a --arch b` puts its lipo'd product under
@@ -160,8 +160,8 @@ macos-bundle: macos-build
     <dict>
         <key>CFBundleExecutable</key><string>koan-app</string>
         <key>CFBundleIdentifier</key><string>{{bundle_id}}</string>
-        <key>CFBundleName</key><string>Koan</string>
-        <key>CFBundleDisplayName</key><string>koan</string>
+        <key>CFBundleName</key><string>kōan</string>
+        <key>CFBundleDisplayName</key><string>kōan</string>
         <key>CFBundlePackageType</key><string>APPL</string>
         <key>CFBundleShortVersionString</key><string>${version}</string>
         <key>CFBundleVersion</key><string>${version}</string>
@@ -259,7 +259,7 @@ macos-signing-cert:
     echo "created. add this to your shell profile:"
     echo "    export KOAN_SIGN_IDENTITY=\"$name\""
 
-# Check a built Koan.app is actually shippable.
+# Check a built kōan.app is actually shippable.
 #
 # Two ways the bundle has gone out broken, both of which built and signed
 # cleanly and neither of which showed until someone downloaded it:
@@ -271,7 +271,7 @@ macos-signing-cert:
 macos-verify *ARCHES:
     #!/usr/bin/env bash
     set -euo pipefail
-    bin="{{app_dir}}/.build/pkg/Koan.app/Contents/MacOS/koan-app"
+    bin="{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app"
     [ -f "$bin" ] || { echo "no app bundle at $bin"; exit 1; }
 
     if otool -L "$bin" | grep -q koan_ffi; then
@@ -296,14 +296,14 @@ macos-verify *ARCHES:
 macos-run: macos-bundle
     #!/usr/bin/env bash
     set -euo pipefail
-    osascript -e 'quit app "Koan"' 2>/dev/null || true
+    osascript -e 'quit app "kōan"' 2>/dev/null || true
     # Wait for it to actually go before replacing it.
     for _ in $(seq 20); do
-        pgrep -qf 'Koan.app/Contents/MacOS/koan-app' || break
+        pgrep -qf 'kōan.app/Contents/MacOS/koan-app' || break
         sleep 0.2
     done
-    pkill -f 'Koan.app/Contents/MacOS/koan-app' 2>/dev/null || true
-    open {{app_dir}}/.build/pkg/Koan.app
+    pkill -f 'kōan.app/Contents/MacOS/koan-app' 2>/dev/null || true
+    open {{app_dir}}/.build/pkg/kōan.app
     echo "launched $(date +%H:%M:%S)"
 
 # Run the app from the terminal: logs on stderr, and no local library folders,
@@ -312,10 +312,10 @@ macos-run: macos-bundle
 macos-dev *ARGS: macos-bundle
     #!/usr/bin/env bash
     set -euo pipefail
-    osascript -e 'quit app "Koan"' 2>/dev/null || true
+    osascript -e 'quit app "kōan"' 2>/dev/null || true
     KOAN_LIBRARY__FOLDERS='[]' \
     RUST_LOG="${RUST_LOG:-info}" \
-        {{app_dir}}/.build/pkg/Koan.app/Contents/MacOS/koan-app {{ARGS}}
+        {{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app {{ARGS}}
 
 # Package the app as a DMG for release.
 macos-dmg: macos-bundle
@@ -323,7 +323,7 @@ macos-dmg: macos-bundle
     set -euo pipefail
     out={{app_dir}}/.build/pkg
     rm -f "$out/Koan.dmg"
-    hdiutil create -volname "koan" -srcfolder "$out/Koan.app" -ov -format UDZO "$out/Koan.dmg"
+    hdiutil create -volname "koan" -srcfolder "$out/kōan.app" -ov -format UDZO "$out/Koan.dmg"
     echo "built $out/Koan.dmg"
 
 # Run the macOS app's tests.
