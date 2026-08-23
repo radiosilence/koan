@@ -286,7 +286,20 @@ jobs:
         # for each crate to appear in the index before publishing its dependents.
         # The verification build is what catches an internal version pin that no
         # longer resolves, so it must not be skipped.
-        run: cargo publish --workspace
+        #
+        # Publishing is not idempotent — it errors on a version that already
+        # exists — and this job gates the GitHub release. So a re-run after a
+        # *downstream* failure would fail here and take the release with it,
+        # which is exactly what happened when the universal DMG failed to link.
+        # koan-cli publishes last, so its presence means the whole set went out.
+        run: |
+          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          if curl -sf https://index.crates.io/ko/an/koan-cli \
+             | grep -q "\"vers\":\"${VERSION}\""; then
+            echo "koan-cli ${VERSION} is already on crates.io — nothing to publish"
+            exit 0
+          fi
+          cargo publish --workspace
 
   update-homebrew:
     name: Update Homebrew Tap

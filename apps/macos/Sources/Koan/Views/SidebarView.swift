@@ -82,9 +82,6 @@ struct SidebarView: View {
         }
     }
 
-    /// Library size and scan state. The counts are the quickest way to tell
-    /// whether a scan actually picked anything up.
-    @ViewBuilder
     /// What radio is about to do, rather than that it is switched on.
     private var radioStatus: String {
         guard let cursor = player.currentItemId,
@@ -98,6 +95,9 @@ struct SidebarView: View {
             : "Radio — \(Format.count(Int64(ahead), "track")) ahead"
     }
 
+    /// Library size and scan state. The counts are the quickest way to tell
+    /// whether a scan actually picked anything up.
+    @ViewBuilder
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
