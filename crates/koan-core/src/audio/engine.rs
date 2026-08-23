@@ -182,6 +182,12 @@ impl AudioEngine {
         check(unsafe { AudioOutputUnitStop(self.audio_unit) })
     }
 
+    /// `stop`, reporting the raw OSStatus — teardown wants to log it.
+    fn stop_status(&self) -> i32 {
+        self.running.store(false, Ordering::Release);
+        unsafe { AudioOutputUnitStop(self.audio_unit) }
+    }
+
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
     }
@@ -189,7 +195,8 @@ impl AudioEngine {
 
 impl Drop for AudioEngine {
     fn drop(&mut self) {
-        let _ = self.stop();
+        let stop_status = self.stop_status();
+        log::info!("engine teardown: AudioOutputUnitStop -> {}", stop_status);
 
         // Wait for any in-flight render callback to finish. AudioOutputUnitStop
         // is documented as synchronous, but during sample rate switches the
@@ -206,6 +213,7 @@ impl Drop for AudioEngine {
                 break;
             }
         }
+        log::info!("engine teardown: callback drained after {} spins", spins);
 
         // Then ask the unit itself. The flag above only proves *our* callback
         // body is not executing; CoreAudio's IO proc can still be mid-cycle
@@ -213,6 +221,8 @@ impl Drop for AudioEngine {
         // it is holding — which is what trapped inside caulk's deallocator, in
         // `AudioUnitUninitialize` and, before this teardown was reordered, in
         // `AudioUnitSetProperty` (#89).
+        let mut waited = 0u32;
+        let mut last = (0i32, 1u32);
         for _ in 0..200 {
             let mut running: UInt32 = 0;
             let mut size = mem::size_of::<UInt32>() as u32;
@@ -227,11 +237,19 @@ impl Drop for AudioEngine {
                     &mut size,
                 )
             };
+            last = (status, running);
             if status != 0 || running == 0 {
                 break;
             }
+            waited += 1;
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        log::info!(
+            "engine teardown: IsRunning query -> status {} running {} after {}ms; uninitializing",
+            last.0,
+            last.1,
+            waited
+        );
 
         // Deliberately no `AudioUnitSetProperty` here.
         //

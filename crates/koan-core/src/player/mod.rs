@@ -677,30 +677,27 @@ impl Player {
     /// a background thread so the player command loop never blocks — preventing
     /// UI freezes when CoreAudio or the decode thread is slow to shut down.
     fn stop_engine(&mut self) {
-        if let Some(playback) = self.active_playback.take() {
-            // Stop audio output immediately.
-            let _ = playback.engine.stop();
-            // Signal decode thread to exit (non-blocking).
-            playback.decode_handle.signal_stop();
+        let Some(playback) = self.active_playback.take() else {
+            return;
+        };
+        let ActivePlayback {
+            engine,
+            mut decode_handle,
+        } = playback;
 
-            // Drop the audio engine synchronously. AudioUnitUninitialize must
-            // complete before any device sample rate change, otherwise CoreAudio's
-            // internal ExtendedAudioBufferList can be freed mid-teardown (crash
-            // in caulk::alloc::tiered_allocator::deallocate — GitHub #89).
-            let ActivePlayback {
-                engine,
-                decode_handle,
-            } = playback;
-            drop(engine);
-
-            // The decode handle join is the heavy part (waits for the decode
-            // thread to exit) — run it on a background thread so we don't block
-            // the player command loop.
-            thread::Builder::new()
-                .name("koan-cleanup".into())
-                .spawn(move || drop(decode_handle))
-                .ok();
-        }
+        // Stop audio output first, then get the decode thread gone *before* the
+        // engine is dropped.
+        //
+        // The old order signalled the decode thread and dropped the engine
+        // immediately, joining the thread afterwards on a background thread —
+        // so the engine's teardown ran while the decode thread was still alive
+        // and still writing into the ring buffer that the render callback
+        // reads. Tearing CoreAudio down underneath a live producer is exactly
+        // the shape of the end-of-queue crash (#89), and the overlap buys
+        // nothing: `stop()` has already silenced the output.
+        let _ = engine.stop();
+        decode_handle.stop();
+        drop(engine);
     }
 
     /// Full stop: tear down engine + clear all display state.

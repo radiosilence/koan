@@ -54,6 +54,9 @@ struct Candidate {
 /// Context extracted from the current queue and play history to guide radio picks.
 #[derive(Debug, Default)]
 pub struct RadioContext {
+    /// Whether the slow, network-backed signals may run. False when the queue
+    /// is about to run dry and a pick is needed this instant.
+    pub allow_network: bool,
     /// Artist IDs from the seed window, with recency weight (more recent = higher).
     pub seed_artists: HashMap<i64, f64>,
     /// Paths already in the queue (to avoid duplicates).
@@ -82,7 +85,12 @@ impl RadioContext {
         seed_window: usize,
         history_window: usize,
     ) -> Self {
-        let mut ctx = Self::default();
+        let mut ctx = Self {
+            // Enrichment on by default; the caller turns it off when it cannot
+            // wait for it.
+            allow_network: true,
+            ..Self::default()
+        };
 
         // Add queued paths for duplicate prevention.
         for (_aid, path) in queue_items {
@@ -210,15 +218,23 @@ pub fn pick_tracks(
         ctx.current_artist_name.as_deref().unwrap_or("none"),
     );
 
-    // --- Signal 1: ListenBrainz similar artists ---
-    gather_listenbrainz_candidates(conn, ctx, &mut candidates);
+    // Signals 1-3 go to the network, and ListenBrainz and MusicBrainz each
+    // rate-limit themselves to one request a second per seed artist. That is
+    // fine while there is queue left to play and useless when there is not: the
+    // caller that needs a track *now* gets the local signals, which are a
+    // database read, and the enrichment happens on a later pass while there is
+    // time for it.
+    if ctx.allow_network {
+        // --- Signal 1: ListenBrainz similar artists ---
+        gather_listenbrainz_candidates(conn, ctx, &mut candidates);
 
-    // --- Signal 2: MusicBrainz relationships ---
-    gather_musicbrainz_candidates(conn, ctx, &mut candidates);
+        // --- Signal 2: MusicBrainz relationships ---
+        gather_musicbrainz_candidates(conn, ctx, &mut candidates);
 
-    // --- Signal 3: Subsonic similar songs ---
-    if let Some(client) = client {
-        gather_subsonic_candidates(conn, ctx, client, &mut candidates);
+        // --- Signal 3: Subsonic similar songs ---
+        if let Some(client) = client {
+            gather_subsonic_candidates(conn, ctx, client, &mut candidates);
+        }
     }
 
     // --- Signal 4: Genre + era match ---
@@ -1076,19 +1092,26 @@ pub fn spawn_autoqueue(
                     ctx.current_remote_id = row.remote_id.clone();
                     ctx.current_artist_name = Some(row.artist_name.clone());
                 }
+                // Local signals only.
+                //
+                // ListenBrainz and MusicBrainz each rate-limit to one request a
+                // second per seed artist, and both are called in line before a
+                // single pick comes back — so a queue that needs a track in the
+                // next few seconds gets one long after the music has stopped.
+                // Genre/era, same-artist, acoustic similarity and plain random
+                // are all database reads and answer immediately, which is worth
+                // more than a better-chosen track that arrives too late.
+                //
+                // The network signals stay in `pick_tracks` for whenever they
+                // can be moved off this path and into a background pass that
+                // fills the similar-artists cache.
+                ctx.allow_network = false;
 
-                let client = if cfg.radio.use_subsonic {
-                    crate::helpers::subsonic_client(&cfg)
-                } else {
-                    None
-                };
-                if let Some(ref client) = client {
-                    for &artist_id in ctx.seed_artists.keys().take(5) {
-                        let _ = fetch_and_cache_similar_artists(&db.conn, client, artist_id);
-                    }
-                }
-
-                let picks = pick_tracks(&db.conn, &ctx, client.as_ref(), &cfg.radio);
+                // No client, and no similar-artist prefetch: both are HTTP
+                // round trips in front of a pick that is needed now. Cached
+                // similar artists are still read from the database by the local
+                // signals; only the fetching is gone.
+                let picks = pick_tracks(&db.conn, &ctx, None, &cfg.radio);
                 if picks.is_empty() {
                     log::warn!("radio: the picker returned nothing for this seed");
                     continue;
