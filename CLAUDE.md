@@ -83,6 +83,10 @@ just macos-dmg  # package the app for release
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
 
+Development builds are signed with a self-signed certificate — `just macos-signing-cert` creates it, once. Without it the app is ad-hoc signed, which derives its identity from the binary's own hash: every rebuild is a different application to macOS, so keychain grants and TCC permissions are forgotten each time and the keychain prompts on every launch. It buys nothing against Gatekeeper, which wants Developer ID and notarisation.
+
+`just check` exports `KOAN_NO_KEYCHAIN=1`. Test binaries are unsigned and rebuilt under a fresh hash, so no keychain ACL can ever match one and "Always Allow" grants access to a binary about to stop existing — the prompt would come back every run.
+
 Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy --workspace -- -D warnings` before any `git push`. If clippy fails, fix before pushing.
 
 **Zero warnings policy.** Fix all clippy/compiler/lint warnings immediately. Run fmt after every change.
@@ -110,14 +114,15 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |
 | `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats, snapshots, `batch` (SQL-side track filtering, batched parent→child reads) |
-| `index/scanner.rs` | Parallel library scan: walkdir → rayon → sequential DB upsert |
+| `index/scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → batched DB transactions. `ScanOptions` carries a cancel flag and an optional progress sink |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
 | `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 59 built-in functions |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
 | `remote/sync.rs` | Parallel library sync: paginate → rayon fetch → batch DB write |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
-| `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
+| `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service). Answers are cached per process, and `KOAN_NO_KEYCHAIN` opts out entirely |
+| `helpers.rs` | Shared by every front end: sign-in, favourite reconciliation, sharing, auto-sync and folder watching, forget-folder/forget-remote, cache and index maintenance |
 | `organize.rs` | File rename using format strings. Preview/execute/undo. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
 
@@ -155,6 +160,8 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | Module | What |
 |--------|------|
 | `KoanApp.swift` | `@main`, `AppState`, menu commands, keyboard shortcuts |
+| `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Library tasks are exclusive — they queue behind SQLite's single writer — and each is cancellable |
+| `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
 | `Support/PlayerModel.swift` | Polls `now_playing()` at 10 Hz; refetches the queue only when `playlistVersion` moves |
 | `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale |
 | `Support/CoverArtCache.swift` | Album-keyed art cache. Each miss is an HTTP round trip on remote libraries |
@@ -162,6 +169,9 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Views/PickerSheet.swift` | ⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |
+| `Views/SettingsView.swift` | Library / Server / Playback / Radio — everything needed to set koan up without a terminal |
+| `Views/ActivityIndicator.swift` | The running-task rows at the foot of the sidebar |
+| `Views/FavouriteButton.swift` | The heart, wherever something can be favourited |
 
 ### koan-server (`crates/koan-server/src/`)
 
