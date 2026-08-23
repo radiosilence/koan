@@ -10,16 +10,19 @@ keywords = ["audio", "music", "graphql", "subsonic"]
 categories = ["multimedia::audio"]
 
 [dependencies]
-async-graphql = "7"
+async-graphql = { version = "7", features = ["dataloader"] }
 async-graphql-axum = "7"
 async-stream = "0.3"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.23"
 crossbeam-channel = "0.5"
+form_urlencoded = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 koan-core = { workspace = true }
 log = "0.4"
+lru = "0.18"
 nucleo = "0.5"
+parking_lot = "0.12"
 md5 = "0.8"
 reqwest = { workspace = true, features = ["stream"] }
 rmcp = { version = "3.1", features = ["server", "macros", "transport-async-rw", "transport-io"] }
@@ -31,7 +34,7 @@ tokio = { version = "1.50.0", features = ["rt-multi-thread", "net", "macros", "s
 tokio-stream = "0.1"
 tokio-util = { version = "0.7", features = ["io"] }
 tower = { version = "0.5", features = ["util", "limit", "load-shed"] }
-tower-http = { version = "0.7", features = ["cors"] }
+tower-http = { version = "0.7", features = ["catch-panic", "cors", "timeout"] }
 uuid = { version = "1.22.0", features = ["v7"] }
 
 [dev-dependencies]

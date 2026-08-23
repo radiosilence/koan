@@ -61,5 +61,4 @@ Config fields that exist but aren't wired into anything:
 | Field | Config Location | Library Code | Wired In? |
 |-------|----------------|-------------|-----------|
 | `playback.replaygain` | config.rs | replaygain.rs (full impl) | **Yes** -- wired into decode pipeline |
-| `playback.software_volume` | config.rs | N/A | **No** -- needs sample scaling in decode |
 | `remote.transcode_quality` | config.rs | N/A | **No** -- needs stream URL parameter |

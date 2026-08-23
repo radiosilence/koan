@@ -1,34 +1,15 @@
-use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use lofty::prelude::*;
-use lofty::tag::{ItemValue, Tag};
-use symphonia::core::codecs::audio::AudioDecoderOptions;
-use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
-use symphonia::core::formats::probe::Hint;
-use symphonia::core::formats::{FormatOptions, TrackType};
-use symphonia::core::io::MediaSourceStream;
-use symphonia::core::meta::MetadataOptions;
+use lofty::tag::ItemValue;
 use thiserror::Error;
 
-use crate::audio::opus::OpusBridge;
 use crate::config::ReplayGainMode;
-
-/// Reference loudness for ReplayGain 2 (EBU R128): -18 LUFS.
-const RG2_REFERENCE_LUFS: f64 = -18.0;
 
 #[derive(Debug, Error)]
 pub enum ReplayGainError {
-    #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
-    #[error("no audio track found")]
-    NoTrack,
-    #[error("decode error: {0}")]
-    Decode(String),
     #[error("tag error: {0}")]
     Tag(String),
-    #[error("ebur128 error: {0}")]
-    Ebur128(String),
 }
 
 /// ReplayGain values extracted from file tags.
@@ -47,9 +28,15 @@ const TAG_ALBUM_GAIN: &str = "REPLAYGAIN_ALBUM_GAIN";
 const TAG_ALBUM_PEAK: &str = "REPLAYGAIN_ALBUM_PEAK";
 
 /// Parse a ReplayGain gain string like "+3.21 dB" or "-1.50 dB" into f64.
+///
+/// Taggers are inconsistent about the suffix's case, and a value that fails to
+/// parse silently disables ReplayGain for the file.
 fn parse_gain(s: &str) -> Option<f64> {
     let s = s.trim();
-    let s = s.strip_suffix("dB").or(Some(s))?;
+    let s = match s.get(s.len().saturating_sub(2)..) {
+        Some(suffix) if suffix.eq_ignore_ascii_case("db") => &s[..s.len() - 2],
+        _ => s,
+    };
     s.trim().parse::<f64>().ok()
 }
 
@@ -125,21 +112,28 @@ fn find_rg_value(tag: &lofty::tag::Tag, key_name: &str) -> Option<String> {
 /// `gain_db`: the gain to apply in decibels.
 /// `peak`: optional peak value for clipping prevention.
 /// `pre_amp_db`: additional pre-amplification in dB (from user config).
+///
+/// Nothing downstream of here clamps — the samples go to the ring buffer and
+/// out to the DAC — so this is the last chance to keep a badly tagged file
+/// (missing, zero, negative or absurd peak; unbounded pre-amp) from being sent
+/// out of range.
 pub fn apply_gain(samples: &mut [f32], gain_db: f64, peak: Option<f64>, pre_amp_db: f64) {
-    let total_gain_db = gain_db + pre_amp_db;
-    let linear_gain = 10f64.powf(total_gain_db / 20.0);
+    let linear_gain = 10f64.powf((gain_db + pre_amp_db) / 20.0);
 
-    // If we know the peak, limit gain so it won't clip.
-    let limited_gain = if let Some(peak) = peak {
-        let max_gain = 1.0 / peak;
-        linear_gain.min(max_gain)
+    // Only a finite, positive peak says anything about the file's headroom.
+    let limited_gain = match peak {
+        Some(peak) if peak.is_finite() && peak > 0.0 => linear_gain.min(1.0 / peak),
+        _ => linear_gain,
+    };
+    // A non-finite gain would put NaN through the clamp untouched.
+    let gain_f32 = if limited_gain.is_finite() {
+        limited_gain as f32
     } else {
-        linear_gain
+        1.0
     };
 
-    let gain_f32 = limited_gain as f32;
     for sample in samples.iter_mut() {
-        *sample *= gain_f32;
+        *sample = (*sample * gain_f32).clamp(-1.0, 1.0);
     }
 }
 
@@ -156,263 +150,6 @@ pub fn select_gain(info: &ReplayGainInfo, mode: ReplayGainMode) -> Option<(f64, 
     }
 }
 
-/// Scan a single track and compute its ReplayGain values (track gain + peak).
-pub fn scan_track(path: &Path) -> Result<ReplayGainInfo, ReplayGainError> {
-    let (sample_rate, channels, all_samples) = decode_to_samples(path)?;
-
-    let mut ebu = ebur128::EbuR128::new(channels as u32, sample_rate, ebur128::Mode::all())
-        .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-
-    // Feed interleaved f32 samples.
-    ebu.add_frames_f32(&all_samples)
-        .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-
-    let loudness = ebu
-        .loudness_global()
-        .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-    let gain_db = RG2_REFERENCE_LUFS - loudness;
-
-    // Peak across all channels.
-    let mut peak = 0.0f64;
-    for ch in 0..channels as u32 {
-        let ch_peak = ebu
-            .sample_peak(ch)
-            .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-        if ch_peak > peak {
-            peak = ch_peak;
-        }
-    }
-
-    Ok(ReplayGainInfo {
-        track_gain_db: Some(gain_db),
-        track_peak: Some(peak),
-        album_gain_db: None,
-        album_peak: None,
-    })
-}
-
-/// Scan multiple tracks as an album. Returns per-track info with album gain/peak filled in.
-pub fn scan_album(paths: &[PathBuf]) -> Result<Vec<ReplayGainInfo>, ReplayGainError> {
-    if paths.is_empty() {
-        return Ok(vec![]);
-    }
-
-    // First pass: scan each track individually and collect decoded data for album pass.
-    let mut track_infos = Vec::with_capacity(paths.len());
-    let mut album_ebu: Option<ebur128::EbuR128> = None;
-
-    for path in paths {
-        let (sample_rate, channels, all_samples) = decode_to_samples(path)?;
-
-        // Per-track analysis.
-        let mut track_ebu =
-            ebur128::EbuR128::new(channels as u32, sample_rate, ebur128::Mode::all())
-                .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-        track_ebu
-            .add_frames_f32(&all_samples)
-            .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-
-        let loudness = track_ebu
-            .loudness_global()
-            .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-        let gain_db = RG2_REFERENCE_LUFS - loudness;
-
-        let mut peak = 0.0f64;
-        for ch in 0..channels as u32 {
-            let ch_peak = track_ebu
-                .sample_peak(ch)
-                .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-            if ch_peak > peak {
-                peak = ch_peak;
-            }
-        }
-
-        track_infos.push(ReplayGainInfo {
-            track_gain_db: Some(gain_db),
-            track_peak: Some(peak),
-            album_gain_db: None,
-            album_peak: None,
-        });
-
-        // Album-level: feed same samples into a shared EbuR128 instance.
-        if album_ebu.is_none() {
-            album_ebu = Some(
-                ebur128::EbuR128::new(channels as u32, sample_rate, ebur128::Mode::all())
-                    .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?,
-            );
-        }
-        let ebu = album_ebu.as_mut().expect("just initialized above");
-        ebu.add_frames_f32(&all_samples)
-            .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-    }
-
-    // Album-level loudness and peak.
-    if let Some(ref ebu) = album_ebu {
-        let album_loudness = ebu
-            .loudness_global()
-            .map_err(|e| ReplayGainError::Ebur128(e.to_string()))?;
-        let album_gain = RG2_REFERENCE_LUFS - album_loudness;
-
-        // Album peak = max of all track peaks.
-        let album_peak = track_infos
-            .iter()
-            .filter_map(|i| i.track_peak)
-            .fold(0.0f64, f64::max);
-
-        for info in &mut track_infos {
-            info.album_gain_db = Some(album_gain);
-            info.album_peak = Some(album_peak);
-        }
-    }
-
-    Ok(track_infos)
-}
-
-/// Write ReplayGain tags to a file using lofty.
-pub fn write_tags(path: &Path, info: &ReplayGainInfo) -> Result<(), ReplayGainError> {
-    let mut tagged_file =
-        lofty::read_from_path(path).map_err(|e| ReplayGainError::Tag(e.to_string()))?;
-
-    // Write to the format's own tag, creating it if the file has none — never
-    // to whatever tag happens to be there first. An MP3 carrying only an ID3v1
-    // tag would otherwise take the gain into a fixed 128-byte struct with no
-    // field to put it in, and the write would vanish.
-    if tagged_file.primary_tag().is_none() {
-        let primary = tagged_file.file_type().primary_tag_type();
-        tagged_file.insert_tag(Tag::new(primary));
-    }
-    let tag = tagged_file
-        .primary_tag_mut()
-        .ok_or_else(|| ReplayGainError::Tag("no tag container found".into()))?;
-
-    if let Some(gain) = info.track_gain_db {
-        tag.insert_text(ItemKey::ReplayGainTrackGain, format_gain(gain));
-    }
-    if let Some(peak) = info.track_peak {
-        tag.insert_text(ItemKey::ReplayGainTrackPeak, format_peak(peak));
-    }
-    if let Some(gain) = info.album_gain_db {
-        tag.insert_text(ItemKey::ReplayGainAlbumGain, format_gain(gain));
-    }
-    if let Some(peak) = info.album_peak {
-        tag.insert_text(ItemKey::ReplayGainAlbumPeak, format_peak(peak));
-    }
-
-    tag.save_to_path(path, lofty::config::WriteOptions::default())
-        .map_err(|e| ReplayGainError::Tag(e.to_string()))?;
-
-    Ok(())
-}
-
-/// Format gain as "+X.XX dB" / "-X.XX dB".
-fn format_gain(db: f64) -> String {
-    format!("{:+.2} dB", db)
-}
-
-/// Format peak as "X.XXXXXX".
-fn format_peak(peak: f64) -> String {
-    format!("{:.6}", peak)
-}
-
-/// Decode a file to interleaved f32 samples using Symphonia.
-/// Returns (sample_rate, channels, samples).
-fn decode_to_samples(path: &Path) -> Result<(u32, u16, Vec<f32>), ReplayGainError> {
-    let file = File::open(path)?;
-    let mss = MediaSourceStream::new(Box::new(file), Default::default());
-
-    let mut hint = Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
-    }
-
-    let mut reader = symphonia::default::get_probe()
-        .probe(
-            &hint,
-            mss,
-            FormatOptions::default(),
-            MetadataOptions::default(),
-        )
-        .map_err(|e| ReplayGainError::Decode(e.to_string()))?;
-
-    let track = reader
-        .default_track(TrackType::Audio)
-        .ok_or(ReplayGainError::NoTrack)?;
-    let track_id = track.id;
-    let codec_params = track
-        .codec_params
-        .as_ref()
-        .and_then(|p| p.audio())
-        .ok_or(ReplayGainError::NoTrack)?;
-    let is_opus = codec_params.codec == CODEC_ID_OPUS;
-    let sample_rate = if is_opus {
-        48000
-    } else {
-        codec_params.sample_rate.unwrap_or(44100)
-    };
-    let channels = codec_params
-        .channels
-        .as_ref()
-        .map(|c| c.count() as u16)
-        .unwrap_or(2);
-
-    let mut symphonia_decoder = if is_opus {
-        None
-    } else {
-        Some(
-            symphonia::default::get_codecs()
-                .make_audio_decoder(codec_params, &AudioDecoderOptions::default())
-                .map_err(|e| ReplayGainError::Decode(e.to_string()))?,
-        )
-    };
-    let mut opus_bridge = if is_opus {
-        Some(OpusBridge::new(codec_params).map_err(|e| ReplayGainError::Decode(e.to_string()))?)
-    } else {
-        None
-    };
-
-    let mut all_samples = Vec::new();
-    let mut sample_buf: Vec<f32> = Vec::new();
-
-    loop {
-        let packet = match reader.next_packet() {
-            Ok(Some(p)) => p,
-            Ok(None) => break,
-            Err(e) => return Err(ReplayGainError::Decode(e.to_string())),
-        };
-
-        if packet.track_id != track_id {
-            continue;
-        }
-
-        if let Some(ref mut opus) = opus_bridge {
-            match opus.decode_packet(&packet.data) {
-                Ok(samples) if !samples.is_empty() => {
-                    all_samples.extend_from_slice(samples);
-                }
-                Ok(_) => {} // header/comment packet
-                Err(e) => {
-                    log::warn!("opus decode error (skipping packet): {}", e);
-                }
-            }
-        } else {
-            let decoder = symphonia_decoder.as_mut().unwrap();
-            let decoded = match decoder.decode(&packet) {
-                Ok(d) => d,
-                Err(symphonia::core::errors::Error::DecodeError(e)) => {
-                    log::warn!("decode error (skipping packet): {}", e);
-                    continue;
-                }
-                Err(e) => return Err(ReplayGainError::Decode(e.to_string())),
-            };
-
-            decoded.copy_to_vec_interleaved(&mut sample_buf);
-            all_samples.extend_from_slice(&sample_buf);
-        }
-    }
-
-    Ok((sample_rate, channels, all_samples))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -422,6 +159,13 @@ mod tests {
         assert_eq!(parse_gain("+3.21 dB"), Some(3.21));
         assert_eq!(parse_gain("-1.50 dB"), Some(-1.50));
         assert_eq!(parse_gain("0.00 dB"), Some(0.0));
+    }
+
+    #[test]
+    fn test_parse_gain_suffix_is_case_insensitive() {
+        assert_eq!(parse_gain("+3.21 db"), Some(3.21));
+        assert_eq!(parse_gain("-1.50 DB"), Some(-1.50));
+        assert_eq!(parse_gain("2.00Db"), Some(2.0));
     }
 
     #[test]
@@ -484,6 +228,45 @@ mod tests {
         // -6 dB ~ 0.5
         assert!(samples[0] > 0.49 && samples[0] < 0.52);
         assert!(samples[1] < -0.49 && samples[1] > -0.52);
+    }
+
+    #[test]
+    fn test_apply_gain_without_peak_never_clips() {
+        // A quiet recording tagged +20 dB with no peak tag: ~10x gain, which
+        // would previously have gone to the DAC unbounded.
+        let mut samples = vec![0.9f32, -0.9];
+        apply_gain(&mut samples, 20.0, None, 0.0);
+        assert!(samples.iter().all(|s| (-1.0..=1.0).contains(s)));
+        assert_eq!(samples, vec![1.0, -1.0]);
+    }
+
+    #[test]
+    fn test_apply_gain_negative_peak_does_not_invert_phase() {
+        // A malformed peak tag must not turn 1/peak into a negative gain.
+        let mut samples = vec![0.5f32, -0.5];
+        apply_gain(&mut samples, 0.0, Some(-0.8), 0.0);
+        assert!(samples[0] > 0.0 && samples[1] < 0.0);
+    }
+
+    #[test]
+    fn test_apply_gain_ignores_useless_peaks() {
+        // Zero and NaN peaks say nothing about headroom; the clamp still holds.
+        for peak in [Some(0.0), Some(f64::NAN), Some(f64::INFINITY)] {
+            let mut samples = vec![0.9f32];
+            apply_gain(&mut samples, 12.0, peak, 0.0);
+            assert_eq!(samples[0], 1.0, "peak {:?} let the output run away", peak);
+        }
+    }
+
+    #[test]
+    fn test_apply_gain_survives_absurd_preamp() {
+        let mut samples = vec![0.5f32, -0.5];
+        apply_gain(&mut samples, 0.0, None, 1000.0);
+        assert!(
+            samples
+                .iter()
+                .all(|s| s.is_finite() && (-1.0..=1.0).contains(s))
+        );
     }
 
     #[test]
@@ -566,18 +349,5 @@ mod tests {
         let info = ReplayGainInfo::default();
         assert!(select_gain(&info, ReplayGainMode::Track).is_none());
         assert!(select_gain(&info, ReplayGainMode::Album).is_none());
-    }
-
-    #[test]
-    fn test_format_gain() {
-        assert_eq!(format_gain(3.21), "+3.21 dB");
-        assert_eq!(format_gain(-1.5), "-1.50 dB");
-        assert_eq!(format_gain(0.0), "+0.00 dB");
-    }
-
-    #[test]
-    fn test_format_peak() {
-        assert_eq!(format_peak(1.0), "1.000000");
-        assert_eq!(format_peak(0.987654), "0.987654");
     }
 }

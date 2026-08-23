@@ -6,14 +6,15 @@ use koan_core::config::Config;
 use koan_core::db::queries;
 use koan_core::db::queries::playback_state::PersistedQueueItem;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{PlaybackState, QueueItemId, SharedPlayerState};
-use uuid::Uuid;
+use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState};
 
 use koan_core::auth::Role;
 
 use super::helpers::{spawn_downloads, sync_favourite_to_remote};
+use super::jobs::{JobRegistry, JobState};
 use super::types::*;
-use super::{DbHandle, parse_queue_item_id, require_role, send_cmd};
+use super::{DbHandle, parse_queue_item_id, require_role, send_cmd, send_cmd_via, with_db};
+use koan_core::helpers::track_to_playlist_item;
 
 /// The `organize*` mutations physically move files, so admin alone is not the
 /// bar — the deployment has to have opted in.
@@ -25,6 +26,40 @@ fn require_organize() -> async_graphql::Result<()> {
             "organize is disabled — set [graphql] allow_organize = true to enable it",
         ))
     }
+}
+
+/// Tracks resolved into queue items, plus the remote ones needing a download.
+struct ResolvedQueue {
+    items: Vec<PlaylistItem>,
+    pending_downloads: Vec<(i64, QueueItemId)>,
+}
+
+/// Resolve track IDs into playlist items on the blocking pool.
+async fn resolve_tracks(
+    ctx: &Context<'_>,
+    track_ids: Vec<i64>,
+) -> async_graphql::Result<ResolvedQueue> {
+    with_db(ctx, move |db| {
+        let mut items = Vec::new();
+        let mut pending_downloads = Vec::new();
+        for tid in track_ids {
+            if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid) {
+                let item = track_to_playlist_item(&track, db);
+                if matches!(
+                    item.load_state,
+                    koan_core::player::state::LoadState::Pending
+                ) {
+                    pending_downloads.push((tid, item.id));
+                }
+                items.push(item);
+            }
+        }
+        Ok(ResolvedQueue {
+            items,
+            pending_downloads,
+        })
+    })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -92,38 +127,28 @@ impl MutationRoot {
         track_ids: Vec<i64>,
     ) -> async_graphql::Result<GqlQueueMutationResult> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
+        let resolved = resolve_tracks(ctx, track_ids).await?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
-        // One query for the rows and one config load for the batch: building
-        // items per track re-read config.toml every time, which is what made a
-        // large queue add crawl.
-        let rows = queries::tracks_by_ids(&db.conn, &track_ids).unwrap_or_default();
-        let items = koan_core::helpers::playlist_items_for_tracks(&db, &rows);
-        let queue_item_ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
-        let pending_downloads: Vec<(i64, QueueItemId)> = items
-            .iter()
-            .filter(|i| matches!(i.load_state, koan_core::player::state::LoadState::Pending))
-            .filter_map(|i| i.db_id.map(|id| (id, i.id)))
-            .collect();
+        let queue_item_ids: Vec<String> =
+            resolved.items.iter().map(|i| i.id.0.to_string()).collect();
+        let first_id = resolved.items.first().map(|i| i.id);
+        let count = resolved.items.len() as i32;
 
-        let count = items.len() as i32;
-        if !items.is_empty() {
-            tx.send(PlayerCommand::AddToPlaylist(items))
-                .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
+        if !resolved.items.is_empty() {
+            send_cmd_via(tx, PlayerCommand::AddToPlaylist(resolved.items))?;
 
             // Auto-play if stopped
             if state.playback_state() == PlaybackState::Stopped
-                && let Some(first_id) = queue_item_ids.first()
-                && let Ok(id) = Uuid::parse_str(first_id).map(QueueItemId)
+                && let Some(id) = first_id
             {
-                let _ = tx.send(PlayerCommand::Play(id));
+                send_cmd_via(tx, PlayerCommand::Play(id))?;
             }
 
             // Kick off downloads for remote tracks.
-            if !pending_downloads.is_empty() {
-                spawn_downloads(pending_downloads, tx.clone(), state.clone());
+            if !resolved.pending_downloads.is_empty() {
+                spawn_downloads(resolved.pending_downloads, tx.clone(), state.clone());
             }
         }
 
@@ -137,8 +162,9 @@ impl MutationRoot {
 
     /// Replace the queue, starting at `start_at` (default: the first track).
     ///
-    /// One command rather than clear-then-add-then-play, so the first track
-    /// never starts before the cursor lands on the one that was asked for.
+    /// One command rather than clear-then-add-then-play: three commands down a
+    /// bounded channel are acted on as each arrives, so the first track starts
+    /// before the cursor reaches the one that was asked for.
     async fn replace_queue(
         &self,
         ctx: &Context<'_>,
@@ -146,35 +172,27 @@ impl MutationRoot {
         start_at: Option<i32>,
     ) -> async_graphql::Result<GqlQueueMutationResult> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let tx = ctx.data::<Sender<PlayerCommand>>()?;
+        let resolved = resolve_tracks(ctx, track_ids).await?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
-        // One query for the rows and one config load for the batch: building
-        // items per track re-read config.toml every time, which is what made a
-        // large queue add crawl.
-        let rows = queries::tracks_by_ids(&db.conn, &track_ids).unwrap_or_default();
-        let items = koan_core::helpers::playlist_items_for_tracks(&db, &rows);
-        let queue_item_ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
-        let pending_downloads: Vec<(i64, QueueItemId)> = items
-            .iter()
-            .filter(|i| matches!(i.load_state, koan_core::player::state::LoadState::Pending))
-            .filter_map(|i| i.db_id.map(|id| (id, i.id)))
-            .collect();
-        let count = items.len() as i32;
+        let queue_item_ids: Vec<String> =
+            resolved.items.iter().map(|i| i.id.0.to_string()).collect();
+        let count = resolved.items.len() as i32;
 
-        if items.is_empty() {
-            tx.send(PlayerCommand::ClearPlaylist)
-                .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
+        if resolved.items.is_empty() {
+            send_cmd_via(tx, PlayerCommand::ClearPlaylist)?;
         } else {
-            tx.send(PlayerCommand::ReplacePlaylist {
-                items,
-                start: start_at.unwrap_or(0).max(0) as usize,
-            })
-            .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
+            send_cmd_via(
+                tx,
+                PlayerCommand::ReplacePlaylist {
+                    items: resolved.items,
+                    start: start_at.unwrap_or(0).max(0) as usize,
+                },
+            )?;
 
-            if !pending_downloads.is_empty() {
-                spawn_downloads(pending_downloads, tx.clone(), state.clone());
+            if !resolved.pending_downloads.is_empty() {
+                spawn_downloads(resolved.pending_downloads, tx.clone(), state.clone());
             }
         }
 
@@ -264,19 +282,7 @@ impl MutationRoot {
 
     async fn favourite(&self, ctx: &Context<'_>, track_id: i64) -> async_graphql::Result<GqlTrack> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| super::internal_error("db", e))?
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
-        let path = track
-            .path
-            .as_ref()
-            .or(track.cached_path.as_ref())
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
-        queries::add_favourite(&db.conn, std::path::Path::new(path))
-            .map_err(|e| super::internal_error("db", e))?;
-        sync_favourite_to_remote(&db, path, true);
-        Ok(GqlTrack { row: track })
+        set_favourite(ctx, track_id, Some(true)).await
     }
 
     async fn unfavourite(
@@ -285,19 +291,7 @@ impl MutationRoot {
         track_id: i64,
     ) -> async_graphql::Result<GqlTrack> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| super::internal_error("db", e))?
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
-        let path = track
-            .path
-            .as_ref()
-            .or(track.cached_path.as_ref())
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
-        queries::remove_favourite(&db.conn, std::path::Path::new(path))
-            .map_err(|e| super::internal_error("db", e))?;
-        sync_favourite_to_remote(&db, path, false);
-        Ok(GqlTrack { row: track })
+        set_favourite(ctx, track_id, Some(false)).await
     }
 
     async fn toggle_favourite(
@@ -306,35 +300,20 @@ impl MutationRoot {
         track_id: i64,
     ) -> async_graphql::Result<GqlTrack> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| super::internal_error("db", e))?
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
-        let path = track
-            .path
-            .as_ref()
-            .or(track.cached_path.as_ref())
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
-        let is_now_fav = queries::toggle_favourite(&db.conn, std::path::Path::new(path))
-            .map_err(|e| super::internal_error("db", e))?;
-        sync_favourite_to_remote(&db, path, is_now_fav);
-        Ok(GqlTrack { row: track })
+        set_favourite(ctx, track_id, None).await
     }
 
     // -- Playback state persistence --
 
     async fn save_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
 
         let (items, cursor) = state.snapshot_playlist();
-        if items.is_empty() {
-            queries::playback_state::clear_playback_state(&db.conn)
-                .map_err(|e| super::internal_error("db", e))?;
-            return Ok(GqlStatus::success("playback state cleared (empty queue)"));
-        }
-
+        let position_ms = state.position_ms();
+        let was_playing =
+            state.playback_state() == koan_core::player::state::PlaybackState::Playing;
+        let radio_enabled = state.radio_mode();
         let persisted: Vec<PersistedQueueItem> = items
             .iter()
             .map(PersistedQueueItem::from_playlist_item)
@@ -345,27 +324,35 @@ impl MutationRoot {
                 .find(|i| i.id == cid)
                 .map(|i| i.path.to_string_lossy().into_owned())
         });
-        let position_ms = state.position_ms();
 
-        queries::playback_state::save_playback_state(
-            &db.conn,
-            &persisted,
-            cursor_path.as_deref(),
-            position_ms,
-            state.playback_state() == koan_core::player::state::PlaybackState::Playing,
-            state.radio_mode(),
-        )
-        .map_err(|e| super::internal_error("db", e))?;
-
-        Ok(GqlStatus::success("playback state saved"))
+        with_db(ctx, move |db| {
+            if persisted.is_empty() {
+                queries::playback_state::clear_playback_state(&db.conn)
+                    .map_err(|e| super::internal_error("db", e))?;
+                return Ok(GqlStatus::success("playback state cleared (empty queue)"));
+            }
+            queries::playback_state::save_playback_state(
+                &db.conn,
+                &persisted,
+                cursor_path.as_deref(),
+                position_ms,
+                was_playing,
+                radio_enabled,
+            )
+            .map_err(|e| super::internal_error("db", e))?;
+            Ok(GqlStatus::success("playback state saved"))
+        })
+        .await
     }
 
     async fn clear_playback_state(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        queries::playback_state::clear_playback_state(&db.conn)
-            .map_err(|e| super::internal_error("db", e))?;
-        Ok(GqlStatus::success("playback state cleared"))
+        with_db(ctx, |db| {
+            queries::playback_state::clear_playback_state(&db.conn)
+                .map_err(|e| super::internal_error("db", e))?;
+            Ok(GqlStatus::success("playback state cleared"))
+        })
+        .await
     }
 
     // -- Snapshots --
@@ -376,7 +363,6 @@ impl MutationRoot {
         name: String,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let (items, cursor) = state.snapshot_playlist();
         let position_ms = state.position_ms();
@@ -392,16 +378,18 @@ impl MutationRoot {
                 .map(|i| i.path.to_string_lossy().into_owned())
         });
 
-        queries::save_snapshot(
-            &db.conn,
-            &name,
-            &persisted,
-            cursor_path.as_deref(),
-            position_ms,
-        )
-        .map_err(|e| super::internal_error("db", e))?;
-
-        Ok(GqlStatus::success(format!("saved snapshot '{}'", name)))
+        with_db(ctx, move |db| {
+            queries::save_snapshot(
+                &db.conn,
+                &name,
+                &persisted,
+                cursor_path.as_deref(),
+                position_ms,
+            )
+            .map_err(|e| super::internal_error("db", e))?;
+            Ok(GqlStatus::success(format!("saved snapshot '{}'", name)))
+        })
+        .await
     }
 
     async fn restore_snapshot(
@@ -410,76 +398,75 @@ impl MutationRoot {
         name: String,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let tx = ctx.data::<Sender<PlayerCommand>>()?;
-
-        let snap = queries::load_snapshot(&db.conn, &name)
-            .map_err(|e| super::internal_error("db", e))?
-            .ok_or_else(|| async_graphql::Error::new(format!("snapshot '{}' not found", name)))?;
-
-        let state = ctx.data::<Arc<SharedPlayerState>>()?;
 
         // Resolve each snapshot item through the same path resolution as
         // addToQueue — ensures correct cache paths and triggers downloads.
-        // Resolve every path to an id first, then fetch the rows in one query:
-        // per-track resolution re-read the config for each one.
-        let ids: Vec<Option<i64>> = snap
-            .items
-            .iter()
-            .map(|item| {
-                queries::track_id_by_path(&db.conn, &item.path)
-                    .ok()
-                    .flatten()
-            })
-            .collect();
-        let known: Vec<i64> = ids.iter().flatten().copied().collect();
-        let rows = queries::tracks_by_ids(&db.conn, &known).unwrap_or_default();
-        let mut resolved = koan_core::helpers::playlist_items_for_tracks(&db, &rows).into_iter();
+        let label = name.clone();
+        let (resolved, cursor_path, position_ms) = with_db(ctx, move |db| {
+            let snap = queries::load_snapshot(&db.conn, &name)
+                .map_err(|e| super::internal_error("db", e))?
+                .ok_or_else(|| {
+                    async_graphql::Error::new(format!("snapshot '{}' not found", name))
+                })?;
 
-        let mut items = Vec::with_capacity(snap.items.len());
-        let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
-        for (snap_item, id) in snap.items.iter().zip(ids) {
-            match id.and_then(|_| resolved.next()) {
-                Some(item) => {
+            let mut items = Vec::new();
+            let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
+            for snap_item in &snap.items {
+                if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &snap_item.path)
+                    && let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
+                {
+                    let item = track_to_playlist_item(&track, db);
                     if matches!(
                         item.load_state,
                         koan_core::player::state::LoadState::Pending
-                    ) && let Some(db_id) = item.db_id
-                    {
-                        pending_downloads.push((db_id, item.id));
+                    ) {
+                        pending_downloads.push((tid, item.id));
                     }
                     items.push(item);
+                } else {
+                    // Track not in DB — use snapshot's stored data.
+                    items.push(snap_item.to_playlist_item());
                 }
-                // Track no longer in the library — keep what the snapshot stored.
-                None => items.push(snap_item.to_playlist_item()),
             }
-        }
 
-        tx.send(PlayerCommand::ClearPlaylist)
-            .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
+            Ok((
+                ResolvedQueue {
+                    items,
+                    pending_downloads,
+                },
+                snap.cursor_path,
+                snap.position_ms,
+            ))
+        })
+        .await?;
 
-        let cursor_item_id = snap.cursor_path.as_ref().and_then(|cp| {
-            items
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        let tx = ctx.data::<Sender<PlayerCommand>>()?;
+
+        let cursor_item_id = cursor_path.as_ref().and_then(|cp| {
+            resolved
+                .items
                 .iter()
                 .find(|i| i.path.to_string_lossy() == cp.as_str())
                 .map(|i| i.id)
         });
 
-        if !items.is_empty() {
-            let first_id = cursor_item_id.unwrap_or(items[0].id);
-            tx.send(PlayerCommand::AddToPlaylist(items))
-                .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
-            let _ = tx.send(PlayerCommand::Play(first_id));
-            if snap.position_ms > 0 {
-                let _ = tx.send(PlayerCommand::Seek(snap.position_ms));
+        send_cmd_via(tx, PlayerCommand::ClearPlaylist)?;
+
+        if !resolved.items.is_empty() {
+            let first_id = cursor_item_id.unwrap_or(resolved.items[0].id);
+            send_cmd_via(tx, PlayerCommand::AddToPlaylist(resolved.items))?;
+            send_cmd_via(tx, PlayerCommand::Play(first_id))?;
+            if position_ms > 0 {
+                send_cmd_via(tx, PlayerCommand::Seek(position_ms))?;
             }
 
-            if !pending_downloads.is_empty() {
-                spawn_downloads(pending_downloads, tx.clone(), state.clone());
+            if !resolved.pending_downloads.is_empty() {
+                spawn_downloads(resolved.pending_downloads, tx.clone(), state.clone());
             }
         }
 
-        Ok(GqlStatus::success(format!("restored snapshot '{}'", name)))
+        Ok(GqlStatus::success(format!("restored snapshot '{}'", label)))
     }
 
     async fn delete_snapshot(
@@ -488,17 +475,19 @@ impl MutationRoot {
         name: String,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let deleted = queries::delete_snapshot(&db.conn, &name)
-            .map_err(|e| super::internal_error("db", e))?;
-        if deleted {
-            Ok(GqlStatus::success(format!("deleted snapshot '{}'", name)))
-        } else {
-            Err(async_graphql::Error::new(format!(
-                "snapshot '{}' not found",
-                name
-            )))
-        }
+        with_db(ctx, move |db| {
+            let deleted = queries::delete_snapshot(&db.conn, &name)
+                .map_err(|e| super::internal_error("db", e))?;
+            if deleted {
+                Ok(GqlStatus::success(format!("deleted snapshot '{}'", name)))
+            } else {
+                Err(async_graphql::Error::new(format!(
+                    "snapshot '{}' not found",
+                    name
+                )))
+            }
+        })
+        .await
     }
 
     // -- Radio --
@@ -526,32 +515,34 @@ impl MutationRoot {
         track_ids: Option<Vec<i64>>,
     ) -> async_graphql::Result<GqlOrganizePreview> {
         require_role(ctx, Role::Admin)?;
-        require_organize()?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let result = if let Some(ids) = track_ids {
-            koan_core::organize::preview_for_tracks(&db, &ids, &pattern, None)
-        } else {
-            koan_core::organize::preview(&db, &pattern, None)
-        }
-        .map_err(|e| super::internal_error("organize", e))?;
+        with_db(ctx, move |db| {
+            require_organize()?;
+            let result = if let Some(ids) = track_ids {
+                koan_core::organize::preview_for_tracks(db, &ids, &pattern, None)
+            } else {
+                koan_core::organize::preview(db, &pattern, None)
+            }
+            .map_err(|e| super::internal_error("organize", e))?;
 
-        Ok(GqlOrganizePreview {
-            moves: result
-                .moves
-                .iter()
-                .map(|m| GqlFileMove {
-                    track_id: m.track_id,
-                    from_path: m.from.to_string_lossy().into_owned(),
-                    to_path: m.to.to_string_lossy().into_owned(),
-                })
-                .collect(),
-            errors: result
-                .errors
-                .iter()
-                .map(|(p, e)| format!("{}: {}", p.display(), e))
-                .collect(),
-            skipped: result.skipped as i32,
+            Ok(GqlOrganizePreview {
+                moves: result
+                    .moves
+                    .iter()
+                    .map(|m| GqlFileMove {
+                        track_id: m.track_id,
+                        from_path: m.from.to_string_lossy().into_owned(),
+                        to_path: m.to.to_string_lossy().into_owned(),
+                    })
+                    .collect(),
+                errors: result
+                    .errors
+                    .iter()
+                    .map(|(p, e)| format!("{}: {}", p.display(), e))
+                    .collect(),
+                skipped: result.skipped as i32,
+            })
         })
+        .await
     }
 
     async fn organize_execute(
@@ -561,46 +552,50 @@ impl MutationRoot {
         track_ids: Option<Vec<i64>>,
     ) -> async_graphql::Result<GqlOrganizeResult> {
         require_role(ctx, Role::Admin)?;
-        require_organize()?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let result = if let Some(ids) = track_ids {
-            koan_core::organize::execute_for_tracks(&db, &ids, &pattern, None)
-        } else {
-            koan_core::organize::execute(&db, &pattern, None)
-        }
-        .map_err(|e| super::internal_error("organize", e))?;
+        with_db(ctx, move |db| {
+            require_organize()?;
+            let result = if let Some(ids) = track_ids {
+                koan_core::organize::execute_for_tracks(db, &ids, &pattern, None)
+            } else {
+                koan_core::organize::execute(db, &pattern, None)
+            }
+            .map_err(|e| super::internal_error("organize", e))?;
 
-        Ok(GqlOrganizeResult {
-            moved_count: result.moves.len() as i32,
-            errors: result
-                .errors
-                .iter()
-                .map(|(p, e)| format!("{}: {}", p.display(), e))
-                .collect(),
-            skipped: result.skipped as i32,
+            Ok(GqlOrganizeResult {
+                moved_count: result.moves.len() as i32,
+                errors: result
+                    .errors
+                    .iter()
+                    .map(|(p, e)| format!("{}: {}", p.display(), e))
+                    .collect(),
+                skipped: result.skipped as i32,
+            })
         })
+        .await
     }
 
     async fn organize_undo(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::Admin)?;
-        require_organize()?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let result =
-            koan_core::organize::undo(&db).map_err(|e| super::internal_error("organize", e))?;
-        let mut message = format!("undone {} moves", result.restored);
-        if !result.errors.is_empty() {
-            message.push_str(&format!(
-                "; {} left in place: {}",
-                result.errors.len(),
-                result
-                    .errors
-                    .iter()
-                    .map(|(p, e)| format!("{}: {}", p.display(), e))
-                    .collect::<Vec<_>>()
-                    .join("; ")
-            ));
-        }
-        Ok(GqlStatus::success(message))
+        with_db(ctx, |db| {
+            require_organize()?;
+            let result =
+                koan_core::organize::undo(db).map_err(|e| super::internal_error("organize", e))?;
+            let mut message = format!("undone {} moves", result.restored);
+            if !result.errors.is_empty() {
+                message.push_str(&format!(
+                    "; {} left in place: {}",
+                    result.errors.len(),
+                    result
+                        .errors
+                        .iter()
+                        .map(|(p, e)| format!("{}: {}", p.display(), e))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                ));
+            }
+            Ok(GqlStatus::success(message))
+        })
+        .await
     }
 
     // -- Config --
@@ -629,102 +624,112 @@ impl MutationRoot {
             ));
         }
 
-        Config::update_base(|cfg| {
-            if let Some(ref mode) = input.replaygain_mode {
-                cfg.playback.replaygain = match mode.to_lowercase().as_str() {
-                    "track" => ReplayGainMode::Track,
-                    "album" => ReplayGainMode::Album,
-                    _ => ReplayGainMode::Off,
-                };
-            }
-            if let Some(pre_amp) = input.pre_amp_db {
-                cfg.playback.pre_amp_db = pre_amp;
-            }
-            if let Some(ref device) = input.output_device {
-                cfg.playback.output_device = if device.is_empty() {
-                    None
-                } else {
-                    Some(device.clone())
-                };
-            }
-            if let Some(fps) = input.target_fps {
-                cfg.playback.target_fps = fps as u8;
-            }
-            if let Some(size) = input.art_size {
-                cfg.playback.art_size = size as u16;
-            }
-            if let Some(enabled) = input.remote_enabled {
-                cfg.remote.enabled = enabled;
-            }
-            if let Some(ref username) = input.remote_username {
-                cfg.remote.username = username.clone();
-            }
-            if let Some(ref quality) = input.transcode_quality {
-                cfg.remote.transcode_quality = quality.clone();
-            }
-            if let Some(ref limit) = input.cache_limit {
-                cfg.remote.cache_limit = if limit.is_empty() {
-                    None
-                } else {
-                    Some(limit.clone())
-                };
-            }
-            if let Some(fps) = input.visualizer_fps {
-                cfg.visualizer.fps = fps as u8;
-            }
-            if let Some(port) = input.graphql_port {
-                cfg.graphql.port = port as u16;
-            }
-            if let Some(pg) = input.graphql_playground {
-                cfg.graphql.playground = pg;
-            }
-        })
-        .map_err(|e| super::internal_error("config write", e))?;
+        super::blocking(move || {
+            Config::update_base(|cfg| {
+                if let Some(ref mode) = input.replaygain_mode {
+                    cfg.playback.replaygain = match mode.to_lowercase().as_str() {
+                        "track" => ReplayGainMode::Track,
+                        "album" => ReplayGainMode::Album,
+                        _ => ReplayGainMode::Off,
+                    };
+                }
+                if let Some(pre_amp) = input.pre_amp_db {
+                    cfg.playback.pre_amp_db = pre_amp;
+                }
+                if let Some(ref device) = input.output_device {
+                    cfg.playback.output_device = if device.is_empty() {
+                        None
+                    } else {
+                        Some(device.clone())
+                    };
+                }
+                if let Some(fps) = input.target_fps {
+                    cfg.playback.target_fps = fps as u8;
+                }
+                if let Some(size) = input.art_size {
+                    cfg.playback.art_size = size as u16;
+                }
+                if let Some(enabled) = input.remote_enabled {
+                    cfg.remote.enabled = enabled;
+                }
+                if let Some(ref username) = input.remote_username {
+                    cfg.remote.username = username.clone();
+                }
+                if let Some(ref quality) = input.transcode_quality {
+                    cfg.remote.transcode_quality = quality.clone();
+                }
+                if let Some(ref limit) = input.cache_limit {
+                    cfg.remote.cache_limit = if limit.is_empty() {
+                        None
+                    } else {
+                        Some(limit.clone())
+                    };
+                }
+                if let Some(fps) = input.visualizer_fps {
+                    cfg.visualizer.fps = fps as u8;
+                }
+                if let Some(port) = input.graphql_port {
+                    cfg.graphql.port = port as u16;
+                }
+                if let Some(pg) = input.graphql_playground {
+                    cfg.graphql.playground = pg;
+                }
+            })
+            .map_err(|e| super::internal_error("config write", e))?;
 
-        Ok(GqlStatus::success("config updated"))
+            Ok(GqlStatus::success("config updated"))
+        })
+        .await
     }
 
     // -- Library management --
 
-    async fn trigger_scan(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlScanResult> {
+    /// Start a library scan and return immediately.
+    ///
+    /// A full scan walks the filesystem and writes for minutes. Run inline it
+    /// held a runtime worker for the whole time, which stalled every in-flight
+    /// audio stream on the same process.
+    async fn trigger_scan(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let cfg = Config::load().unwrap_or_default();
-        let result = koan_core::index::scanner::full_scan(
-            &db,
-            &cfg.library.folders,
-            koan_core::index::scanner::ScanOptions::default(),
-            None,
-        );
-        Ok(GqlScanResult {
-            tracks_added: result.added as i64,
-            tracks_updated: result.updated as i64,
-            tracks_unchanged: result.skipped as i64,
+        spawn_job(ctx, "scan", |db| {
+            let cfg = Config::load().unwrap_or_default();
+            let result = koan_core::index::scanner::full_scan(
+                &db,
+                &cfg.library.folders,
+                koan_core::index::scanner::ScanOptions::default(),
+                None,
+            );
+            Ok(format!(
+                "{} added, {} updated, {} unchanged",
+                result.added, result.updated, result.skipped
+            ))
         })
     }
 
-    async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
+    /// Start a remote library sync and return immediately.
+    async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let cfg = Config::load().unwrap_or_default();
-        let client = koan_core::helpers::subsonic_client(&cfg)
-            .ok_or_else(|| async_graphql::Error::new("remote not configured"))?;
-        let result = koan_core::remote::sync::sync_library(
-            &db,
-            &client,
-            false,
-            &cfg.remote.url,
-            &cfg.remote.username,
-        )
-        .map_err(|e| super::internal_error("remote sync", e))?;
-        if result.is_complete() {
-            Ok(GqlStatus::success("remote sync complete"))
-        } else {
-            Ok(GqlStatus::success(format!(
-                "remote sync incomplete: {} album(s) failed and will be retried next sync",
-                result.albums_failed
-            )))
-        }
+        spawn_job(ctx, "remoteSync", |db| {
+            let cfg = Config::load().unwrap_or_default();
+            let client = koan_core::helpers::subsonic_client(&cfg)
+                .ok_or_else(|| "remote not configured".to_string())?;
+            let result = koan_core::remote::sync::sync_library(
+                &db,
+                &client,
+                false,
+                &cfg.remote.url,
+                &cfg.remote.username,
+            )
+            .map_err(|e| e.to_string())?;
+            if result.is_complete() {
+                Ok("remote sync complete".to_string())
+            } else {
+                Ok(format!(
+                    "remote sync incomplete: {} album(s) failed and will be retried next sync",
+                    result.albums_failed
+                ))
+            }
+        })
     }
 
     // -- Sharing --
@@ -736,18 +741,108 @@ impl MutationRoot {
         description: Option<String>,
     ) -> async_graphql::Result<GqlShare> {
         require_role(ctx, Role::User)?;
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let cfg = Config::load().unwrap_or_default();
+        with_db(ctx, move |db| {
+            let cfg = Config::load().unwrap_or_default();
+            // One query for the remote ids rather than one per track, a link
+            // built from the share id when the server returns no URL, and a
+            // distinct error for each way this can fail — all shared with the
+            // FFI and the TUI so the three cannot drift.
+            let outcome =
+                koan_core::helpers::create_share(db, &cfg, &track_ids, description.as_deref())
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
-        let outcome =
-            koan_core::helpers::create_share(&db, &cfg, &track_ids, description.as_deref())
-                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-
-        Ok(GqlShare {
-            url: Some(outcome.url),
-            id: outcome.id,
-            shared: outcome.shared as i32,
-            skipped: outcome.skipped as i32,
+            Ok(GqlShare {
+                url: Some(outcome.url),
+                id: outcome.id,
+                shared: outcome.shared as i32,
+                skipped: outcome.skipped as i32,
+            })
         })
+        .await
     }
+}
+
+/// Star, unstar, or toggle — the three differ only in which write they run.
+async fn set_favourite(
+    ctx: &Context<'_>,
+    track_id: i64,
+    star: Option<bool>,
+) -> async_graphql::Result<GqlTrack> {
+    with_db(ctx, move |db| {
+        let track = queries::get_track_row(&db.conn, track_id)
+            .map_err(|e| super::internal_error("db", e))?
+            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
+        let path = track
+            .path
+            .as_ref()
+            .or(track.cached_path.as_ref())
+            .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
+        let fs_path = std::path::Path::new(path);
+
+        let now_starred = match star {
+            Some(true) => {
+                queries::add_favourite(&db.conn, fs_path)
+                    .map_err(|e| super::internal_error("db", e))?;
+                true
+            }
+            Some(false) => {
+                queries::remove_favourite(&db.conn, fs_path)
+                    .map_err(|e| super::internal_error("db", e))?;
+                false
+            }
+            None => queries::toggle_favourite(&db.conn, fs_path)
+                .map_err(|e| super::internal_error("db", e))?,
+        };
+
+        sync_favourite_to_remote(db, path, now_starred);
+        Ok(GqlTrack { row: track })
+    })
+    .await
+}
+
+/// Run `work` on a detached thread with its own connection, returning a job
+/// handle. A job of the same kind already running is returned as-is rather than
+/// started twice.
+fn spawn_job<F>(ctx: &Context<'_>, kind: &'static str, work: F) -> async_graphql::Result<GqlJob>
+where
+    F: FnOnce(koan_core::db::connection::Database) -> Result<String, String> + Send + 'static,
+{
+    let registry = ctx.data::<JobRegistry>()?.clone();
+    let handle = ctx.data::<DbHandle>()?.clone();
+
+    let job = match registry.start(kind) {
+        Ok(job) => job,
+        Err(running) => return Ok(running.into()),
+    };
+
+    let id = job.id.clone();
+    let finisher = registry.clone();
+    let spawned = std::thread::Builder::new()
+        .name(format!("koan-job-{}", kind))
+        .spawn(move || {
+            // Deliberately outside the pool: this connection is held for
+            // minutes and must not deny one to request-path resolvers.
+            let outcome = match handle.open_detached() {
+                Ok(db) => work(db),
+                Err(e) => Err(e.to_string()),
+            };
+            match outcome {
+                Ok(message) => registry.finish(&id, JobState::Succeeded, message),
+                Err(message) => {
+                    log::error!("{} job failed: {}", kind, message);
+                    registry.finish(&id, JobState::Failed, message)
+                }
+            }
+        });
+
+    if spawned.is_err() {
+        finisher.finish(
+            &job.id,
+            JobState::Failed,
+            "failed to spawn worker thread".into(),
+        );
+        return Err(async_graphql::Error::new("failed to start job"));
+    }
+
+    Ok(job.into())
 }

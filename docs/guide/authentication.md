@@ -205,3 +205,5 @@ koan subsonic disable
 ```
 
 Only token auth (`u` + `t` + `s`) is accepted. Plaintext `p=` — and its `enc:` hex form — is refused: the protocol offers no transport guarantee, so accepting it hands the secret to anyone watching the network. Every current client (play:Sub, DSub, Symfonium) uses token auth.
+
+`koan play --server` is one of those clients: it streams audio over `/rest/stream` and signs those requests with the `[subsonic]` credentials from the machine it runs on, so they have to match the server's.

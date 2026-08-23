@@ -2,46 +2,22 @@ use std::sync::Arc;
 
 use parking_lot::{Mutex, RwLock};
 
-/// Default buffer size: 4096 samples covers ~93ms at 44.1kHz,
-/// enough for a 2048-point FFT window with room to spare.
-const DEFAULT_BUFFER_SIZE: usize = 4096;
-
 /// Number of spectrum bars produced by the analyzer.
 pub const NUM_BARS: usize = 48;
 
-// ── Analysis output types (used by both analyzer.rs and visualizer.rs) ───────
+/// Number of waveform frames carried in each VizFrame for oscilloscope/lissajous modes.
+/// 2048 frames (~46ms at 44.1kHz) matches the FFT window size — enough for smooth waveform display.
+pub const WAVEFORM_SAMPLES: usize = 2048;
 
-/// The output of one analysis pass: spectrum bars, peak holds, and VU levels.
-/// Written by `VizAnalyzer` on its background thread; read by the TUI thread.
-#[derive(Clone)]
-pub struct AnalysisOutput {
-    /// Spectrum bar heights (0.0..1.0), one per bar.
-    pub spectrum: [f32; NUM_BARS],
-    /// Peak hold values (slowly decaying maxima), one per bar.
-    pub peaks: [f32; NUM_BARS],
-    /// RMS VU levels: [left, right], each 0.0..1.0.
-    pub vu_levels: [f32; 2],
-}
-
-impl Default for AnalysisOutput {
-    fn default() -> Self {
-        Self {
-            spectrum: [0.0; NUM_BARS],
-            peaks: [0.0; NUM_BARS],
-            vu_levels: [0.0; 2],
-        }
-    }
-}
-
-/// Shared, lock-protected analysis output.
-/// The background analysis thread writes here; the TUI reads a clone each frame.
-pub type SharedAnalysisOutput = Arc<Mutex<AnalysisOutput>>;
+/// Delay-line capacity in interleaved samples.
+///
+/// The decode thread writes here at the moment it writes into the ring buffer,
+/// which is up to a full ring ahead of what the DAC is playing. To show what is
+/// being *heard*, the buffer must reach back one whole ring plus the longest
+/// window the analyzer asks for.
+const DELAY_LINE_SIZE: usize = crate::player::RING_BUFFER_SIZE + WAVEFORM_SAMPLES * 2;
 
 // ── VizFrame / VizSnapshot (high-level UI-facing snapshot API) ────────────────
-
-/// Number of waveform samples carried in each VizFrame for oscilloscope/lissajous modes.
-/// 2048 samples (~46ms at 44.1kHz) matches the FFT window size — enough for smooth waveform display.
-pub const WAVEFORM_SAMPLES: usize = 2048;
 
 /// A single frame of analysis output, ready for the UI thread.
 ///
@@ -112,18 +88,11 @@ impl VizSnapshot {
     }
 }
 
-impl Default for VizSnapshot {
-    fn default() -> Self {
-        Self {
-            inner: RwLock::new(VizFrame::default()),
-        }
-    }
-}
+// ── Raw sample window (used internally by VizBuffer and VizAnalyzer) ──────────
 
-// ── Raw sample snapshot (used internally by VizBuffer and VizAnalyzer) ────────
-
-/// A point-in-time snapshot of VizBuffer contents, bundling raw samples with
-/// the metadata needed to interpret them. Produced by `VizBuffer::snapshot_with_meta`.
+/// A window of `VizBuffer` contents, bundling raw samples with the metadata
+/// needed to interpret them. Filled by `VizBuffer::snapshot_at`.
+#[derive(Default)]
 pub struct RawVizSnapshot {
     /// Interleaved f32 samples, oldest first.
     pub samples: Vec<f32>,
@@ -135,50 +104,62 @@ pub struct RawVizSnapshot {
 
 // ── VizBuffer ────────────────────────────────────────────────────────────────
 
-/// Internal sample storage for the visualization buffer.
+/// Internal sample storage for the visualization delay line.
 struct VizSamples {
     /// Circular buffer of interleaved f32 samples.
     buf: Vec<f32>,
     /// Current write position (wraps around).
     write_pos: usize,
+    /// Cumulative interleaved samples ever pushed. Compared against the audio
+    /// engine's played counter to find how far back in the buffer "now" is.
+    head_offset: u64,
     /// Channel count for de-interleaving.
     channels: u16,
     /// Sample rate for frequency calculations.
     sample_rate: u32,
 }
 
-/// Shared visualization sample buffer.
+/// Shared visualization delay line.
 ///
 /// Written by the decode thread, read by the analysis thread at ~60fps.
 /// Uses `parking_lot::Mutex` — contention is near-zero because the decode
 /// thread holds the lock for <50us per write and the analysis thread reads
 /// at 16ms intervals.
+///
+/// The decode thread runs far ahead of the DAC — a local FLAC decodes 50-100x
+/// realtime, so the ring buffer saturates within a second of pressing play and
+/// stays that way — which means the newest sample here is not the sample being
+/// heard. Reads are therefore keyed on the engine's played counter rather than
+/// on the write head: see `snapshot_at`. Feeding the buffer from the render
+/// callback would sidestep the delay, but that thread may never lock.
 pub struct VizBuffer {
     samples: Mutex<VizSamples>,
 }
 
 impl VizBuffer {
-    /// Create a new visualization buffer with the default size.
+    /// Create a new visualization buffer.
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             samples: Mutex::new(VizSamples {
-                buf: vec![0.0; DEFAULT_BUFFER_SIZE],
+                buf: vec![0.0; DELAY_LINE_SIZE],
                 write_pos: 0,
+                head_offset: 0,
                 channels: 2,
                 sample_rate: 44100,
             }),
         })
     }
 
-    /// Push interleaved samples into the circular buffer.
+    /// Push interleaved samples into the delay line.
     ///
-    /// Called by the decode thread after each packet decode.
+    /// Called by the decode thread as it writes into the ring buffer.
     /// Updates channel count and sample rate if they differ from the
     /// current values (happens on track boundaries).
     pub fn push_samples(&self, samples: &[f32], channels: u16, sample_rate: u32) {
         let mut inner = self.samples.lock();
         inner.channels = channels;
         inner.sample_rate = sample_rate;
+        inner.head_offset += samples.len() as u64;
 
         let buf_len = inner.buf.len();
         if samples.len() >= buf_len {
@@ -201,75 +182,54 @@ impl VizBuffer {
         }
     }
 
-    /// Take a snapshot of the current buffer contents, ordered oldest to newest.
+    /// Clear the delay line and restart its offset at zero.
     ///
-    /// Returns a contiguous `Vec<f32>` with the most recent samples in chronological order.
-    ///
-    /// Allocates a new Vec on every call. For hot paths (e.g. 60fps analysis),
-    /// prefer `snapshot_into` to reuse an existing buffer.
-    pub fn snapshot(&self) -> Vec<f32> {
-        let mut out = Vec::new();
-        self.snapshot_into(&mut out);
-        out
+    /// Called at the start of a decode session, when the engine's played
+    /// counter also restarts at zero.
+    pub fn reset(&self) {
+        let mut inner = self.samples.lock();
+        inner.buf.fill(0.0);
+        inner.write_pos = 0;
+        inner.head_offset = 0;
     }
 
-    /// Take a snapshot into a caller-provided buffer, avoiding allocation when
-    /// the buffer already has sufficient capacity.
+    /// Fill `out` with the `frames` frames ending at `played` cumulative
+    /// interleaved samples having left the audio engine.
     ///
-    /// The buffer is cleared and filled with the most recent samples in
-    /// chronological order (oldest to newest).
-    pub fn snapshot_into(&self, out: &mut Vec<f32>) {
+    /// `played` is the counter the render callback publishes, so the window
+    /// ends on the sample currently reaching the DAC rather than on whatever
+    /// the decode thread wrote last. History older than the delay line is gone,
+    /// so the lookback is clamped to what the buffer still holds.
+    pub fn snapshot_at(&self, played: u64, frames: usize, out: &mut RawVizSnapshot) {
         let inner = self.samples.lock();
         let buf_len = inner.buf.len();
-        let pos = inner.write_pos;
-        out.clear();
-        out.reserve(buf_len);
-        // Write position is where the *next* sample goes, so the oldest
-        // sample is at write_pos and the newest is at write_pos - 1.
-        out.extend_from_slice(&inner.buf[pos..]);
-        out.extend_from_slice(&inner.buf[..pos]);
-    }
 
-    /// Take a snapshot bundled with metadata (channels, sample_rate).
-    ///
-    /// Acquires the lock once to copy both samples and metadata atomically,
-    /// so the caller never sees mismatched channel/rate values.
-    pub fn snapshot_with_meta(&self) -> RawVizSnapshot {
-        let inner = self.samples.lock();
-        let buf_len = inner.buf.len();
-        let pos = inner.write_pos;
-        let mut samples = Vec::with_capacity(buf_len);
-        samples.extend_from_slice(&inner.buf[pos..]);
-        samples.extend_from_slice(&inner.buf[..pos]);
-        RawVizSnapshot {
-            samples,
-            channels: inner.channels,
-            sample_rate: inner.sample_rate,
+        out.channels = inner.channels;
+        out.sample_rate = inner.sample_rate;
+        out.samples.clear();
+
+        let wanted = frames
+            .saturating_mul(inner.channels.max(1) as usize)
+            .min(buf_len);
+        if wanted == 0 {
+            return;
         }
-    }
 
-    /// Current channel count.
-    pub fn channels(&self) -> u16 {
-        self.samples.lock().channels
-    }
+        // How far the write head has run ahead of the play head, capped so the
+        // window itself still fits behind it.
+        let delay = inner
+            .head_offset
+            .saturating_sub(played)
+            .min((buf_len - wanted) as u64) as usize;
+        let end = (inner.write_pos + buf_len - delay) % buf_len;
+        let start = (end + buf_len - wanted) % buf_len;
 
-    /// Current sample rate.
-    pub fn sample_rate(&self) -> u32 {
-        self.samples.lock().sample_rate
-    }
-}
-
-impl Default for VizBuffer {
-    fn default() -> Self {
-        // Cannot return Arc<Self> from Default, so this creates the inner value.
-        // Callers should prefer VizBuffer::new() which returns Arc<VizBuffer>.
-        Self {
-            samples: Mutex::new(VizSamples {
-                buf: vec![0.0; DEFAULT_BUFFER_SIZE],
-                write_pos: 0,
-                channels: 2,
-                sample_rate: 44100,
-            }),
+        out.samples.reserve(wanted);
+        if start < end {
+            out.samples.extend_from_slice(&inner.buf[start..end]);
+        } else {
+            out.samples.extend_from_slice(&inner.buf[start..]);
+            out.samples.extend_from_slice(&inner.buf[..end]);
         }
     }
 }
@@ -278,66 +238,95 @@ impl Default for VizBuffer {
 mod tests {
     use super::*;
 
-    #[test]
-    fn push_and_snapshot_basic() {
-        let buf = VizBuffer::new();
-        let samples: Vec<f32> = (0..100).map(|i| i as f32).collect();
+    /// Fill the delay line with a ramp so every sample identifies its own index.
+    fn push_ramp(buf: &VizBuffer, count: usize) {
+        let samples: Vec<f32> = (0..count).map(|i| i as f32).collect();
         buf.push_samples(&samples, 2, 44100);
+    }
 
-        let snap = buf.snapshot();
-        assert_eq!(snap.len(), DEFAULT_BUFFER_SIZE);
-        // Last 100 samples should be 0..100, preceded by zeros.
-        let tail = &snap[DEFAULT_BUFFER_SIZE - 100..];
-        for (i, &val) in tail.iter().enumerate() {
-            assert_eq!(val, i as f32);
+    #[test]
+    fn snapshot_at_head_returns_newest_samples() {
+        let buf = VizBuffer::new();
+        push_ramp(&buf, 1000);
+
+        // Everything pushed has also been played — the window ends at the head.
+        let mut snap = RawVizSnapshot::default();
+        buf.snapshot_at(1000, 100, &mut snap);
+        assert_eq!(snap.samples.len(), 200);
+        for (i, &val) in snap.samples.iter().enumerate() {
+            assert_eq!(val, (800 + i) as f32);
         }
     }
 
     #[test]
-    fn push_wraps_around() {
+    fn snapshot_at_walks_back_to_the_play_head() {
         let buf = VizBuffer::new();
-        // Fill the buffer completely.
-        let samples: Vec<f32> = (0..DEFAULT_BUFFER_SIZE as u32).map(|i| i as f32).collect();
-        buf.push_samples(&samples, 2, 44100);
+        push_ramp(&buf, 100_000);
 
-        // Push more to wrap.
-        let extra: Vec<f32> = (0..10).map(|i| (i + 1000) as f32).collect();
-        buf.push_samples(&extra, 2, 44100);
-
-        let snap = buf.snapshot();
-        // Newest 10 samples should be 1000..1010.
-        let tail = &snap[DEFAULT_BUFFER_SIZE - 10..];
-        for (i, &val) in tail.iter().enumerate() {
-            assert_eq!(val, (i + 1000) as f32);
-        }
+        // The decode thread is 40_000 samples ahead of the DAC, so the window
+        // must end on sample 60_000, not on the newest sample written.
+        let mut snap = RawVizSnapshot::default();
+        buf.snapshot_at(60_000, 512, &mut snap);
+        assert_eq!(snap.samples.len(), 1024);
+        assert_eq!(*snap.samples.last().unwrap(), 59_999.0);
+        assert_eq!(snap.samples[0], (60_000 - 1024) as f32);
     }
 
     #[test]
-    fn push_larger_than_buffer() {
+    fn snapshot_at_tracks_the_play_head_across_wraps() {
         let buf = VizBuffer::new();
-        let big: Vec<f32> = (0..(DEFAULT_BUFFER_SIZE + 500) as u32)
-            .map(|i| i as f32)
-            .collect();
-        buf.push_samples(&big, 2, 48000);
+        // Push more than the delay line holds so the write position wraps.
+        let total = DELAY_LINE_SIZE + 5_000;
+        push_ramp(&buf, total);
 
-        let snap = buf.snapshot();
-        assert_eq!(snap.len(), DEFAULT_BUFFER_SIZE);
-        // Should contain the last DEFAULT_BUFFER_SIZE samples.
-        for (i, &val) in snap.iter().enumerate() {
-            assert_eq!(val, (i + 500) as f32);
-        }
-        assert_eq!(buf.sample_rate(), 48000);
+        let played = (total - 2_000) as u64;
+        let mut snap = RawVizSnapshot::default();
+        buf.snapshot_at(played, 256, &mut snap);
+        assert_eq!(snap.samples.len(), 512);
+        assert_eq!(*snap.samples.last().unwrap(), (played - 1) as f32);
+        assert_eq!(snap.samples[0], (played - 512) as f32);
     }
 
     #[test]
-    fn channels_and_sample_rate() {
+    fn snapshot_at_clamps_lookback_to_buffer_length() {
         let buf = VizBuffer::new();
-        assert_eq!(buf.channels(), 2);
-        assert_eq!(buf.sample_rate(), 44100);
+        push_ramp(&buf, DELAY_LINE_SIZE * 2);
 
+        // A play head further back than the delay line reaches: the oldest
+        // retained samples are returned rather than a window that runs past
+        // the write head into the future.
+        let mut snap = RawVizSnapshot::default();
+        buf.snapshot_at(0, 64, &mut snap);
+        assert_eq!(snap.samples.len(), 128);
+        assert_eq!(snap.samples[0], DELAY_LINE_SIZE as f32);
+    }
+
+    #[test]
+    fn reset_clears_samples_and_offset() {
+        let buf = VizBuffer::new();
+        push_ramp(&buf, 10_000);
+        buf.reset();
+
+        let mut snap = RawVizSnapshot::default();
+        buf.snapshot_at(0, 32, &mut snap);
+        assert!(snap.samples.iter().all(|&s| s == 0.0));
+
+        // Offset restarted, so a fresh push is back in phase with played = 0.
+        push_ramp(&buf, 500);
+        buf.snapshot_at(500, 10, &mut snap);
+        assert_eq!(*snap.samples.last().unwrap(), 499.0);
+    }
+
+    #[test]
+    fn snapshot_at_reports_metadata() {
+        let buf = VizBuffer::new();
         buf.push_samples(&[1.0, 2.0], 1, 96000);
-        assert_eq!(buf.channels(), 1);
-        assert_eq!(buf.sample_rate(), 96000);
+
+        let mut snap = RawVizSnapshot::default();
+        buf.snapshot_at(2, 2, &mut snap);
+        assert_eq!(snap.channels, 1);
+        assert_eq!(snap.sample_rate, 96000);
+        assert_eq!(snap.samples, vec![1.0, 2.0]);
     }
 
     #[test]

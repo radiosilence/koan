@@ -1,10 +1,24 @@
 use rusqlite::Connection;
 
 /// Create all tables. Idempotent — safe to call on every startup.
+/// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
+/// older build refuses a database it does not understand rather than writing to it.
+pub const SCHEMA_VERSION: i64 = 1;
+
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
     // connection without it fails them rather than sorting differently.
     super::connection::register_library_collation(conn)?;
+    let found: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if found > SCHEMA_VERSION {
+        return Err(rusqlite::Error::SqliteFailure(
+            rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
+            Some(format!(
+                "database schema version {found} is newer than this build understands \
+                 ({SCHEMA_VERSION}) — upgrade koan rather than downgrading the library"
+            )),
+        ));
+    }
 
     conn.execute_batch(
         "
@@ -180,45 +194,82 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
         ",
     )?;
-    // --- Migrations: add columns that didn't exist in earlier versions ---
-    // SQLite has no ADD COLUMN IF NOT EXISTS, so we catch the "duplicate column" error.
-    let migrations = [
-        "ALTER TABLE tracks ADD COLUMN cache_size_bytes INTEGER",
-        "ALTER TABLE tracks ADD COLUMN cache_download_date INTEGER",
-        "ALTER TABLE similar_artists ADD COLUMN relationship TEXT NOT NULL DEFAULT 'similar'",
-        // Undo checks these against the file before moving it back, so a file that
-        // was replaced since the organize is left alone.
-        "ALTER TABLE organize_log ADD COLUMN size_bytes INTEGER",
-        "ALTER TABLE organize_log ADD COLUMN mtime INTEGER",
-        // When the album entered the library, so clients can offer a
-        // recently-added ordering. Remote sync supplies the server's own
-        // `created`; a local scan the earliest mtime among the album's files.
-        "ALTER TABLE albums ADD COLUMN added_at TEXT",
-        // Locally-scanned albums were briefly stamped with the time the scan
-        // ran, which pinned every one of them to the top of recently-added and
-        // buried what the server actually considered new. Clearing the
-        // scan-time values lets the next scan refill them from the files
-        // themselves; the server's own ISO 8601 dates are left alone.
-        // Whether playback was running when the session was saved, so
-        // reopening can pick up where it left off rather than always in a
-        // paused state.
-        "ALTER TABLE playback_state ADD COLUMN was_playing INTEGER NOT NULL DEFAULT 0",
-        // Radio is a mode you leave on, not a per-session choice: having it
-        // switch itself off every launch is a setting that will not stay set.
-        "ALTER TABLE playback_state ADD COLUMN radio_enabled INTEGER NOT NULL DEFAULT 0",
-        "UPDATE albums SET added_at = NULL
-           WHERE added_at IS NOT NULL AND added_at NOT LIKE '%T%Z'",
-    ];
-    for sql in &migrations {
-        match conn.execute(sql, []) {
-            Ok(_) => {}
-            Err(rusqlite::Error::ExecuteReturnedResults) => {}
-            Err(e) if e.to_string().contains("duplicate column") => {}
-            Err(e) => return Err(e),
+    apply_migrations(conn)?;
+    conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+
+    Ok(())
+}
+
+/// Columns added after the initial schema. Applied when absent, so a database
+/// created by any earlier version converges on the current shape.
+///
+/// `organize_log.size_bytes`/`mtime` are checked against the file before undo
+/// moves it back, so a file replaced since the organize is left alone.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("tracks", "cache_size_bytes", "INTEGER"),
+    ("tracks", "cache_download_date", "INTEGER"),
+    (
+        "similar_artists",
+        "relationship",
+        "TEXT NOT NULL DEFAULT 'similar'",
+    ),
+    ("organize_log", "size_bytes", "INTEGER"),
+    ("organize_log", "mtime", "INTEGER"),
+    // When the album entered the library, so clients can offer a
+    // recently-added ordering. Remote sync supplies the server's own `created`;
+    // a local scan the earliest mtime among the album's files.
+    ("albums", "added_at", "TEXT"),
+    // Whether playback was running when the session was saved, so reopening can
+    // pick up where it left off rather than always paused.
+    (
+        "playback_state",
+        "was_playing",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    // Radio is a mode you leave on, not a per-session choice: switching itself
+    // off every launch makes it a setting that will not stay set.
+    (
+        "playback_state",
+        "radio_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+];
+
+fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
+    for (table, column, ty) in ADDED_COLUMNS {
+        if !column_exists(conn, table, column)? {
+            conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"), [])?;
         }
     }
 
+    // Locally-scanned albums were briefly stamped with the time the scan ran,
+    // which pinned every one of them to the top of recently-added and buried
+    // whatever the server actually considered new. Clearing the scan-time
+    // values lets the next scan refill them from the files themselves; the
+    // server's own ISO 8601 dates are left alone.
+    conn.execute(
+        "UPDATE albums SET added_at = NULL
+           WHERE added_at IS NOT NULL AND added_at NOT LIKE '%T%Z'",
+        [],
+    )?;
+
     Ok(())
+}
+
+/// Whether `table` already has `column`.
+///
+/// PRAGMA cannot take a bound parameter for the table name, so the name is
+/// interpolated — every caller passes a literal from `ADDED_COLUMNS`, never
+/// user input.
+fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        if row.get::<_, String>(1)? == column {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 #[cfg(test)]
@@ -406,5 +457,75 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM refresh_tokens", [], |row| row.get(0))
             .unwrap();
         assert_eq!(remaining, 0, "ON DELETE CASCADE did not fire");
+    }
+    #[test]
+    fn fresh_database_is_stamped_with_the_current_version() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        let v: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(v, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn create_tables_is_idempotent_across_repeated_opens() {
+        let conn = Connection::open_in_memory().unwrap();
+        for _ in 0..3 {
+            create_tables(&conn).unwrap();
+        }
+        assert!(column_exists(&conn, "tracks", "cache_size_bytes").unwrap());
+        assert!(column_exists(&conn, "organize_log", "mtime").unwrap());
+    }
+
+    #[test]
+    fn a_database_missing_added_columns_is_migrated() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        // Rebuild `organize_log` without the columns added after the initial
+        // schema, so the file looks like one written by an earlier version.
+        conn.execute_batch(
+            "DROP TABLE organize_log;
+             CREATE TABLE organize_log (
+                 id         INTEGER PRIMARY KEY,
+                 batch_id   TEXT NOT NULL,
+                 track_id   INTEGER,
+                 from_path  TEXT NOT NULL,
+                 to_path    TEXT NOT NULL,
+                 created_at TEXT DEFAULT (datetime('now'))
+             );
+             PRAGMA user_version = 0;",
+        )
+        .unwrap();
+        assert!(!column_exists(&conn, "organize_log", "size_bytes").unwrap());
+
+        create_tables(&conn).unwrap();
+
+        assert!(column_exists(&conn, "organize_log", "size_bytes").unwrap());
+        assert!(column_exists(&conn, "organize_log", "mtime").unwrap());
+    }
+
+    #[test]
+    fn migration_does_not_depend_on_sqlite_error_text() {
+        // The previous implementation swallowed a duplicate-column ALTER by
+        // string-matching SQLite's message, so a wording change in a bundled
+        // SQLite upgrade would have failed every open. Adding a column that is
+        // already present must now be a no-op decided by schema inspection.
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn).unwrap();
+    }
+
+    #[test]
+    fn a_newer_database_is_refused_rather_than_written_to() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+            .unwrap();
+
+        let err = create_tables(&conn).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("newer than this build"), "unexpected: {msg}");
     }
 }

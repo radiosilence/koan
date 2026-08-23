@@ -43,7 +43,6 @@ pub struct LibraryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlaybackConfig {
-    pub software_volume: bool,
     pub replaygain: ReplayGainMode,
     /// Ticker scroll speed in frames-per-second (default: 8).
     /// The title scrolls one character per frame. Higher = faster scroll.
@@ -110,7 +109,6 @@ impl Default for LibraryConfig {
 impl Default for PlaybackConfig {
     fn default() -> Self {
         Self {
-            software_volume: false,
             replaygain: ReplayGainMode::Off,
             ticker_fps: 8,
             target_fps: 60,
@@ -676,10 +674,11 @@ replaygain = "track"
     fn test_partial_toml_uses_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("partial.toml");
-        fs::write(&path, "[playback]\nsoftware_volume = true\n").unwrap();
+        fs::write(&path, "[playback]\nticker_fps = 12\n").unwrap();
 
         let cfg = Config::load_from(&path).unwrap();
-        assert!(cfg.playback.software_volume);
+        assert_eq!(cfg.playback.ticker_fps, 12);
+        assert_eq!(cfg.playback.replaygain, ReplayGainMode::Off);
     }
 
     #[test]
@@ -1138,7 +1137,6 @@ cache_limit = "50GB"
 replaygain = "track"
 output_device = "My Fancy DAC"
 pre_amp_db = -3.5
-software_volume = true
 target_fps = 30
 art_size = 32
 
@@ -1166,10 +1164,6 @@ fps = 30
         assert!(
             (cfg.playback.pre_amp_db - (-3.5)).abs() < f64::EPSILON,
             "pre_amp_db should be -3.5"
-        );
-        assert!(
-            cfg.playback.software_volume,
-            "software_volume should be true"
         );
         assert_eq!(cfg.playback.target_fps, 30, "target_fps should be 30");
         assert_eq!(cfg.playback.art_size, 32, "art_size should be 32");

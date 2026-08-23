@@ -12,7 +12,7 @@ use crate::db::connection::Database;
 use crate::db::queries;
 use crate::player::commands::PlayerCommand;
 use crate::player::state::{LoadState, PlaylistItem, QueueItemId, SharedPlayerState};
-use crate::remote::client::SubsonicClient;
+use crate::remote::client::{SubsonicAuth, SubsonicClient};
 
 // ---------------------------------------------------------------------------
 // Subsonic client builder
@@ -42,18 +42,27 @@ pub fn get_subsonic_password(cfg: &Config) -> Option<String> {
         .filter(|p| !p.is_empty())
 }
 
-/// Build a `SubsonicClient` from the merged config, returning `None` if remote
-/// is disabled or has no URL configured.
-pub fn subsonic_client(cfg: &Config) -> Option<SubsonicClient> {
+/// Upstream Subsonic credentials from the merged config, returning `None` if
+/// remote is disabled or has no URL configured.
+///
+/// Prefer this over `subsonic_client` when only a signed URL is needed:
+/// building a client constructs blocking `reqwest` clients, which panics from
+/// inside a tokio runtime.
+pub fn subsonic_auth(cfg: &Config) -> Option<SubsonicAuth> {
     if !cfg.remote.enabled || cfg.remote.url.is_empty() {
         return None;
     }
     let password = get_remote_password(cfg)?;
-    Some(SubsonicClient::new(
+    Some(SubsonicAuth::new(
         &cfg.remote.url,
         &cfg.remote.username,
         &password,
     ))
+}
+
+/// Build a `SubsonicClient` from the merged config. Never call from async code.
+pub fn subsonic_client(cfg: &Config) -> Option<SubsonicClient> {
+    subsonic_auth(cfg).map(SubsonicClient::from_auth)
 }
 
 // ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ use symphonia::core::formats::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader, SeekMode, SeekTo, Track, TrackType};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::units::{Duration, Time, TimeBase};
+use symphonia::core::units::{Duration, Time, TimeBase, Timestamp};
 use thiserror::Error;
 
 use crate::audio::opus::OpusBridge;
@@ -115,6 +115,9 @@ pub struct PlaybackTimeline {
     /// Total interleaved samples consumed (played) by the audio engine.
     /// Written by CoreAudio render callback, read by UI.
     pub samples_played: Arc<AtomicU64>,
+    /// Incremented by every `reset()`. A decode thread writes only while the
+    /// generation it started in is still the current one.
+    generation: AtomicU64,
 }
 
 impl PlaybackTimeline {
@@ -123,27 +126,34 @@ impl PlaybackTimeline {
             boundaries: parking_lot::RwLock::new(Vec::new()),
             samples_written: AtomicU64::new(0),
             samples_played: Arc::new(AtomicU64::new(0)),
+            generation: AtomicU64::new(0),
         })
     }
 
-    /// Called by decode thread when starting a new track.
-    fn push_boundary(&self, boundary: TrackBoundary) {
-        self.boundaries.write().push(boundary);
+    /// The current session's generation, to be handed to `writer`.
+    ///
+    /// Read on the player thread between `reset()` and spawning the decode
+    /// thread, so a session can never capture a generation newer than its own.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
     }
 
-    /// Called by decode thread after pushing samples.
-    fn add_written(&self, count: u64) {
-        self.samples_written.fetch_add(count, Ordering::Relaxed);
-        // Also update the last boundary's samples_written.
-        let mut bounds = self.boundaries.write();
-        if let Some(last) = bounds.last_mut() {
-            last.samples_written += count;
+    /// Open a write handle for the session identified by `generation`.
+    pub fn writer(&self, generation: u64) -> TimelineWriter<'_> {
+        TimelineWriter {
+            timeline: self,
+            generation,
         }
     }
 
     /// Reset for a new playback session.
     pub fn reset(&self) {
-        self.boundaries.write().clear();
+        // The generation bump happens under the boundary lock, which is the
+        // same lock every guarded write takes — so a write either lands wholly
+        // before this reset or sees the new generation and is dropped.
+        let mut bounds = self.boundaries.write();
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        bounds.clear();
         self.samples_written.store(0, Ordering::Relaxed);
         self.samples_played.store(0, Ordering::Relaxed);
     }
@@ -202,6 +212,61 @@ impl PlaybackTimeline {
             current.info.clone(),
             position_ms,
         ))
+    }
+}
+
+/// One decode session's write access to the timeline.
+///
+/// `stop_engine` signals the decode thread and hands the join to a cleanup
+/// thread, so the outgoing thread can still be mid-packet when `reset()` runs
+/// and the next session starts. Without a guard its final `add_written` lands
+/// on the fresh timeline and the first boundary of the new track gets stamped
+/// at that offset instead of 0 — `current_playback()` then finds nothing at
+/// `samples_played = 0` and the transport goes blank for ~50-100ms on every
+/// skip and seek. A late `push_boundary` is worse: the wrong track's metadata
+/// for the rest of the session.
+///
+/// Carrying the generation in the handle rather than passing it per call means
+/// a write cannot be made with the wrong one.
+pub struct TimelineWriter<'a> {
+    timeline: &'a PlaybackTimeline,
+    generation: u64,
+}
+
+impl TimelineWriter<'_> {
+    /// False once another session has started. The decode thread polls this
+    /// alongside its stop flag as a second abort signal.
+    pub fn is_current(&self) -> bool {
+        self.timeline.generation.load(Ordering::Acquire) == self.generation
+    }
+
+    /// Cumulative samples written to the ring buffer this session.
+    fn samples_written(&self) -> u64 {
+        self.timeline.samples_written.load(Ordering::Relaxed)
+    }
+
+    /// Called by decode thread when starting a new track.
+    fn push_boundary(&self, boundary: TrackBoundary) {
+        let mut bounds = self.timeline.boundaries.write();
+        if !self.is_current() {
+            return;
+        }
+        bounds.push(boundary);
+    }
+
+    /// Called by decode thread after pushing samples.
+    fn add_written(&self, count: u64) {
+        let mut bounds = self.timeline.boundaries.write();
+        if !self.is_current() {
+            return;
+        }
+        self.timeline
+            .samples_written
+            .fetch_add(count, Ordering::Relaxed);
+        // Also update the last boundary's samples_written.
+        if let Some(last) = bounds.last_mut() {
+            last.samples_written += count;
+        }
     }
 }
 
@@ -362,6 +427,10 @@ where
 {
     let stop = Arc::new(AtomicBool::new(false));
     let stop_clone = stop.clone();
+    // Captured here rather than on the decode thread: the player has just
+    // reset the timeline, and reading it before the spawn means this session
+    // cannot pick up a generation belonging to a later one.
+    let generation = timeline.generation();
 
     let thread = thread::Builder::new()
         .name("koan-decode".into())
@@ -372,7 +441,7 @@ where
                 &stop_clone,
                 seek_ms,
                 &next_track,
-                &timeline,
+                &timeline.writer(generation),
                 viz_buffer.as_deref(),
                 rg_mode,
                 pre_amp_db,
@@ -455,12 +524,21 @@ where
 // Internal decode loop
 // ---------------------------------------------------------------------------
 
+/// Sources that may fail to open or decode in a row before the session is
+/// abandoned. One bad file must not end the queue, but a queue of nothing but
+/// bad files still has to terminate.
+const MAX_CONSECUTIVE_FAILURES: u32 = 32;
+
 /// Gapless decode loop: decode first entry, then call next_track on EOF.
 ///
 /// Every track in a session shares one ring buffer, and therefore the audio
 /// engine configured for it. A track whose PCM format differs from the first
 /// ends the session rather than being written at the wrong format; the player
 /// restarts it on a correctly configured engine.
+///
+/// An unreadable source is skipped, not fatal — the decode head runs up to a
+/// full ring buffer ahead of the DAC, so tearing down here would truncate the
+/// track still being heard as well as dropping the rest of the queue.
 #[allow(clippy::too_many_arguments)]
 fn decode_queue_loop<N>(
     first: SourceEntry,
@@ -468,92 +546,80 @@ fn decode_queue_loop<N>(
     stop: &AtomicBool,
     initial_seek_ms: u64,
     next_track: &N,
-    timeline: &PlaybackTimeline,
+    timeline: &TimelineWriter<'_>,
     viz_buffer: Option<&VizBuffer>,
     rg_mode: ReplayGainMode,
     pre_amp_db: f64,
 ) where
     N: Fn() -> Option<SourceEntry>,
 {
-    'session: {
-        let path = first.path.clone();
-        let hint = first.hint.clone();
-        let mss = match (first.make_mss)() {
-            Ok(mss) => mss,
-            Err(e) => {
-                if !stop.load(Ordering::Relaxed) {
-                    log::error!("failed to open {}: {}", path.display(), e);
-                }
-                break 'session;
-            }
-        };
+    // The delay line is indexed against the engine's played counter, which the
+    // player has just reset for this session.
+    if let Some(viz) = viz_buffer {
+        viz.reset();
+    }
 
-        let format = match decode_single(
-            first.id,
-            &path,
-            &hint,
-            mss,
-            &mut producer,
-            stop,
-            initial_seek_ms,
-            timeline,
-            viz_buffer,
-            rg_mode,
-            pre_amp_db,
-            None,
-        ) {
-            Ok(Decoded::Complete(format)) => format,
-            Ok(Decoded::FormatMismatch) => break 'session,
-            Err(e) => {
-                if !stop.load(Ordering::Relaxed) {
-                    log::error!("decode error on {}: {}", path.display(), e);
-                }
-                break 'session;
-            }
-        };
+    let mut pending = Some(first);
+    let mut seek_ms = initial_seek_ms;
+    let mut format: Option<PcmFormat> = None;
+    let mut failures: u32 = 0;
 
-        while !stop.load(Ordering::Relaxed) {
-            let Some(entry) = (next_track)() else {
-                log::info!("playlist exhausted, decode thread finishing");
-                break;
-            };
+    while let Some(entry) = pending.take() {
+        if stop.load(Ordering::Relaxed) || !timeline.is_current() {
+            break;
+        }
 
-            log::info!("gapless transition → {}", entry.path.display());
-            let next_path = entry.path.clone();
-            let next_hint = entry.hint.clone();
-            let next_mss = match (entry.make_mss)() {
-                Ok(mss) => mss,
-                Err(e) => {
-                    if !stop.load(Ordering::Relaxed) {
-                        log::error!("failed to open {}: {}", next_path.display(), e);
-                    }
-                    break;
-                }
-            };
+        let SourceEntry {
+            id,
+            path,
+            hint,
+            make_mss,
+        } = entry;
 
-            match decode_single(
-                entry.id,
-                &next_path,
-                &next_hint,
-                next_mss,
+        let outcome = make_mss().map_err(DecodeError::Io).and_then(|mss| {
+            decode_single(
+                id,
+                &path,
+                &hint,
+                mss,
                 &mut producer,
                 stop,
-                0,
+                seek_ms,
                 timeline,
                 viz_buffer,
                 rg_mode,
                 pre_amp_db,
-                Some(format),
-            ) {
-                Ok(Decoded::Complete(_)) => {}
-                Ok(Decoded::FormatMismatch) => break,
-                Err(e) => {
-                    if !stop.load(Ordering::Relaxed) {
-                        log::error!("decode error on {}: {}", next_path.display(), e);
-                    }
+                format,
+            )
+        });
+
+        match outcome {
+            Ok(Decoded::Complete(decoded_format)) => {
+                format = Some(decoded_format);
+                failures = 0;
+            }
+            Ok(Decoded::FormatMismatch) => break,
+            Err(e) => {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                failures += 1;
+                log::error!("skipping {}: {}", path.display(), e);
+                if failures >= MAX_CONSECUTIVE_FAILURES {
+                    log::error!(
+                        "{} sources failed in a row, decode thread giving up",
+                        failures
+                    );
                     break;
                 }
             }
+        }
+
+        seek_ms = 0;
+        pending = (next_track)();
+        match pending {
+            Some(ref next) => log::info!("gapless transition → {}", next.path.display()),
+            None => log::info!("playlist exhausted, decode thread finishing"),
         }
     }
 
@@ -606,7 +672,7 @@ fn decode_single(
     producer: &mut rtrb::Producer<f32>,
     stop: &AtomicBool,
     seek_ms: u64,
-    timeline: &PlaybackTimeline,
+    timeline: &TimelineWriter<'_>,
     viz_buffer: Option<&VizBuffer>,
     rg_mode: ReplayGainMode,
     pre_amp_db: f64,
@@ -625,6 +691,7 @@ fn decode_single(
         .default_track(TrackType::Audio)
         .ok_or(DecodeError::NoTrack)?;
     let track_id = track.id;
+    let time_base = track.time_base;
     let codec_params = track
         .codec_params
         .as_ref()
@@ -683,19 +750,6 @@ fn decode_single(
         return Ok(Decoded::FormatMismatch);
     }
 
-    let seek_samples = seek_ms * sample_rate as u64 * channels as u64 / 1000;
-
-    // Record this track's boundary in the timeline.
-    let write_offset = timeline.samples_written.load(Ordering::Relaxed);
-    timeline.push_boundary(TrackBoundary {
-        id: queue_item_id,
-        path: path.to_path_buf(),
-        info,
-        sample_offset: write_offset,
-        samples_written: 0,
-        seek_samples,
-    });
-
     // Build either a Symphonia decoder or our Opus bridge.
     let mut symphonia_decoder = if is_opus_codec {
         None
@@ -713,16 +767,27 @@ fn decode_single(
     };
 
     // Seek if requested (only for the first track usually).
+    //
+    // Accurate rather than coarse: a coarse seek picks a byte offset by
+    // interpolating linearly over the file and then derives its reported
+    // timestamp from that same guess, so on VBR MP3 it lands seconds from the
+    // request *and* reports a position it never reached. Accurate mode walks
+    // frame headers and is truthful about both, for 1.5-3ms on files up to
+    // 79MB. The timeline records where playback actually resumed, so the
+    // transport shows the position being heard.
+    let mut seek_samples = 0;
     if seek_ms > 0 {
-        reader
+        let seeked = reader
             .seek(
-                SeekMode::Coarse,
+                SeekMode::Accurate,
                 SeekTo::Time {
                     time: Time::from_millis_u64(seek_ms),
                     track_id: Some(track_id),
                 },
             )
             .map_err(|e| DecodeError::Decode(format!("seek failed: {}", e)))?;
+        seek_samples = landing_samples(time_base, seeked.actual_ts, sample_rate, channels)
+            .unwrap_or(seek_ms * sample_rate as u64 * channels as u64 / 1000);
         if let Some(ref mut dec) = symphonia_decoder {
             dec.reset();
         }
@@ -730,6 +795,17 @@ fn decode_single(
             opus.reset();
         }
     }
+
+    // Record this track's boundary in the timeline.
+    let write_offset = timeline.samples_written();
+    timeline.push_boundary(TrackBoundary {
+        id: queue_item_id,
+        path: path.to_path_buf(),
+        info,
+        sample_offset: write_offset,
+        samples_written: 0,
+        seek_samples,
+    });
 
     // Read ReplayGain tags and select the active gain for this track.
     let rg_gain = if rg_mode != ReplayGainMode::Off {
@@ -759,7 +835,7 @@ fn decode_single(
     let mut sample_buf: Vec<f32> = Vec::new();
 
     loop {
-        if stop.load(Ordering::Relaxed) {
+        if stop.load(Ordering::Relaxed) || !timeline.is_current() {
             return Ok(Decoded::Complete((sample_rate, channels)));
         }
 
@@ -836,7 +912,9 @@ fn decode_single(
         // viz buffer only ~11 times/sec, making waveform modes visibly choppy.
         let mut offset = 0;
         while offset < samples.len() {
-            if stop.load(Ordering::Relaxed) {
+            // Also drops out on a stale generation, which keeps a dying thread
+            // from pushing into the viz delay line the next session just reset.
+            if stop.load(Ordering::Relaxed) || !timeline.is_current() {
                 return Ok(Decoded::Complete((sample_rate, channels)));
             }
 
@@ -875,6 +953,23 @@ fn decode_single(
 
         timeline.add_written(samples.len() as u64);
     }
+}
+
+/// Interleaved sample offset of a seek's landing point.
+///
+/// `actual_ts` is in the track's timebase, which is not always the reciprocal
+/// of the sample rate (Matroska ticks in milliseconds), so it is converted
+/// through `Time` rather than assumed to be a frame count.
+fn landing_samples(
+    time_base: Option<TimeBase>,
+    actual_ts: Timestamp,
+    sample_rate: u32,
+    channels: u16,
+) -> Option<u64> {
+    let (seconds, nanos) = time_base?.calc_time(actual_ts)?.parts();
+    let rate = sample_rate as u64;
+    let frames = seconds.max(0) as u64 * rate + (nanos as u64 * rate) / 1_000_000_000;
+    Some(frames * channels as u64)
 }
 
 /// Duration of a track in milliseconds.
@@ -984,6 +1079,11 @@ mod tests {
         }
     }
 
+    /// A writer for the timeline's current generation.
+    fn writer(timeline: &PlaybackTimeline) -> TimelineWriter<'_> {
+        timeline.writer(timeline.generation())
+    }
+
     // --- PlaybackTimeline tests ---
 
     #[test]
@@ -992,10 +1092,11 @@ mod tests {
         // After simulating 44100 frames (88200 interleaved samples) played,
         // current_playback() should report track index 0 at position 1000 ms.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id = QueueItemId::new();
         // sample_offset=0, seek_samples=0, channels=2, sample_rate=44100
-        timeline.push_boundary(make_boundary(id, 0, 0, 2, 44100));
-        timeline.add_written(88200); // 1 second of audio
+        tl.push_boundary(make_boundary(id, 0, 0, 2, 44100));
+        tl.add_written(88200); // 1 second of audio
 
         // Simulate 1 second played: 44100 frames * 2 channels = 88200 interleaved samples
         timeline.samples_played.store(88200, Ordering::Relaxed);
@@ -1019,16 +1120,17 @@ mod tests {
         // Track 2 begins at sample_offset 88200. When playback head is at 100000 (past the boundary),
         // current_playback() should report track 2.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id1 = QueueItemId::new();
         let id2 = QueueItemId::new();
 
         // Track 1: starts at offset 0
-        timeline.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
-        timeline.add_written(88200);
+        tl.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
+        tl.add_written(88200);
 
         // Track 2: starts at offset 88200 (immediately after track 1's samples)
-        timeline.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
-        timeline.add_written(44100); // half a second of track 2
+        tl.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
+        tl.add_written(44100); // half a second of track 2
 
         // Set playback head past the track 1/2 boundary
         timeline.samples_played.store(90000, Ordering::Relaxed);
@@ -1049,9 +1151,10 @@ mod tests {
         // With 0 samples played and a boundary at offset 0, current_playback() should
         // still return the first track at position 0 ms.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id = QueueItemId::new();
-        timeline.push_boundary(make_boundary(id, 0, 0, 2, 44100));
-        timeline.add_written(1000);
+        tl.push_boundary(make_boundary(id, 0, 0, 2, 44100));
+        tl.add_written(1000);
         timeline.samples_played.store(0, Ordering::Relaxed);
 
         let result = timeline.current_playback();
@@ -1069,13 +1172,14 @@ mod tests {
         // When samples_played exceeds all boundaries, the last track should be reported.
         // The binary search finds the last boundary whose sample_offset <= played.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id1 = QueueItemId::new();
         let id2 = QueueItemId::new();
 
-        timeline.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
-        timeline.add_written(88200);
-        timeline.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
-        timeline.add_written(88200);
+        tl.push_boundary(make_boundary(id1, 0, 0, 2, 44100));
+        tl.add_written(88200);
+        tl.push_boundary(make_boundary(id2, 88200, 0, 2, 44100));
+        tl.add_written(88200);
 
         // Simulate playback far past both tracks
         timeline
@@ -1097,10 +1201,11 @@ mod tests {
         // seek_samples = 88200 means playback started 1 second into the track.
         // With 0 additional samples played past the boundary, position should be 1000 ms.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id = QueueItemId::new();
         let seek_samples = 88200u64; // 1 second at 44100 Hz stereo
-        timeline.push_boundary(make_boundary(id, 0, seek_samples, 2, 44100));
-        timeline.add_written(44100); // half a second written so far
+        tl.push_boundary(make_boundary(id, 0, seek_samples, 2, 44100));
+        tl.add_written(44100); // half a second written so far
         // samples_played at the track boundary (0 frames past the track start)
         timeline.samples_played.store(0, Ordering::Relaxed);
 
@@ -1118,9 +1223,10 @@ mod tests {
     fn test_timeline_reset() {
         // After reset(), current_playback() returns None and all counters are cleared.
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let id = QueueItemId::new();
-        timeline.push_boundary(make_boundary(id, 0, 0, 2, 44100));
-        timeline.add_written(88200);
+        tl.push_boundary(make_boundary(id, 0, 0, 2, 44100));
+        tl.add_written(88200);
         timeline.samples_played.store(44100, Ordering::Relaxed);
 
         // Sanity check: playback is live before reset
@@ -1179,6 +1285,7 @@ mod tests {
         let (mut producer, mut consumer) = rtrb::RingBuffer::new(44100 * 2);
 
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let stop = Arc::new(AtomicBool::new(false));
 
         let id = QueueItemId::new();
@@ -1194,7 +1301,7 @@ mod tests {
             &mut producer,
             &stop,
             0,
-            &timeline,
+            &tl,
             None,
             crate::config::ReplayGainMode::Off,
             0.0,
@@ -1240,6 +1347,7 @@ mod tests {
     fn run_queue(paths: &[PathBuf]) -> Vec<TrackBoundary> {
         let (producer, mut consumer) = rtrb::RingBuffer::new(1 << 16);
         let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
         let stop = Arc::new(AtomicBool::new(false));
 
         let drain_stop = Arc::new(AtomicBool::new(false));
@@ -1271,7 +1379,7 @@ mod tests {
             &stop,
             0,
             &next_track,
-            &timeline,
+            &tl,
             None,
             crate::config::ReplayGainMode::Off,
             0.0,
@@ -1359,5 +1467,285 @@ mod tests {
         let stop = Arc::new(AtomicBool::new(true));
         wait_for_drain(&producer, &stop);
         drop(consumer);
+    }
+
+    // --- Generation guard on timeline writes ---
+
+    #[test]
+    fn a_writer_knows_when_its_session_has_ended() {
+        let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
+        assert!(tl.is_current());
+
+        timeline.reset();
+        assert!(!tl.is_current(), "reset must retire the outgoing writer");
+        assert!(writer(&timeline).is_current());
+    }
+
+    #[test]
+    fn stale_writes_are_dropped_after_reset() {
+        let timeline = PlaybackTimeline::new();
+        let dying = writer(&timeline);
+        dying.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
+        dying.add_written(88200);
+
+        timeline.reset();
+
+        // The outgoing decode thread checks `stop` only at the top of its chunk
+        // loop, so its last packet lands after the reset.
+        dying.add_written(4608);
+        dying.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
+
+        assert_eq!(timeline.samples_written.load(Ordering::Relaxed), 0);
+        assert!(timeline.boundaries.read().is_empty());
+    }
+
+    #[test]
+    fn a_dying_decode_thread_cannot_blank_the_transport() {
+        let timeline = PlaybackTimeline::new();
+        let dying = writer(&timeline);
+        dying.push_boundary(make_boundary(QueueItemId::new(), 0, 0, 2, 44100));
+        dying.add_written(88200);
+
+        // A skip: reset, then the old thread's final packet, then the new
+        // session stamps its first boundary at whatever the counter now says.
+        timeline.reset();
+        dying.add_written(4608);
+
+        let fresh = writer(&timeline);
+        let id = QueueItemId::new();
+        let write_offset = fresh.samples_written();
+        fresh.push_boundary(make_boundary(id, write_offset, 0, 2, 44100));
+
+        assert_eq!(write_offset, 0, "first boundary must start at 0");
+        let (playing, _, _, position_ms) = timeline
+            .current_playback()
+            .expect("transport must not go blank at samples_played = 0");
+        assert_eq!(playing, id);
+        assert_eq!(position_ms, 0);
+    }
+
+    // --- Failure handling in the gapless queue ---
+
+    /// A file that exists and has an audio extension but no audio in it.
+    fn write_garbage(path: &Path) {
+        std::fs::write(path, b"this is not a wav file").unwrap();
+    }
+
+    #[test]
+    fn an_unreadable_track_is_skipped_and_the_queue_continues() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.wav");
+        let bad = dir.path().join("bad.wav");
+        let c = dir.path().join("c.wav");
+        crate::test_utils::generate_wav(&a, 44100, 2, 0.1, 16);
+        write_garbage(&bad);
+        crate::test_utils::generate_wav(&c, 44100, 2, 0.1, 16);
+
+        let bounds = run_queue(&[a.clone(), bad, c.clone()]);
+        let decoded: Vec<_> = bounds.iter().map(|b| b.path.clone()).collect();
+        assert_eq!(
+            decoded,
+            vec![a, c],
+            "one bad file must not take the rest of the queue with it"
+        );
+    }
+
+    #[test]
+    fn a_missing_track_is_skipped_and_the_queue_continues() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("gone.wav");
+        let b = dir.path().join("b.wav");
+        crate::test_utils::generate_wav(&b, 44100, 2, 0.1, 16);
+
+        let bounds = run_queue(&[missing, b.clone()]);
+        assert_eq!(bounds.len(), 1);
+        assert_eq!(
+            bounds[0].path, b,
+            "a bad first track must not end the session"
+        );
+    }
+
+    #[test]
+    fn an_entirely_unreadable_queue_terminates() {
+        let dir = tempfile::tempdir().unwrap();
+        let bad = dir.path().join("bad.wav");
+        write_garbage(&bad);
+
+        // Nothing decodes, so the ring stays empty; the consumer only has to
+        // outlive the producer.
+        let (producer, _consumer) = rtrb::RingBuffer::<f32>::new(1 << 12);
+        let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = calls.clone();
+        let bad_path = bad.clone();
+        let next_track = move || {
+            counter.fetch_add(1, Ordering::Relaxed);
+            Some(SourceEntry::from_file(QueueItemId::new(), bad_path.clone()))
+        };
+
+        decode_queue_loop(
+            SourceEntry::from_file(QueueItemId::new(), bad),
+            producer,
+            &stop,
+            0,
+            &next_track,
+            &tl,
+            None,
+            crate::config::ReplayGainMode::Off,
+            0.0,
+        );
+
+        // The first source plus one per next_track call, capped.
+        assert_eq!(
+            calls.load(Ordering::Relaxed) + 1,
+            MAX_CONSECUTIVE_FAILURES as usize
+        );
+        assert!(timeline.boundaries.read().is_empty());
+    }
+
+    // --- Seek landing position ---
+
+    #[test]
+    fn landing_samples_converts_frame_timebases() {
+        // The usual audio case: one tick per frame.
+        let tb = TimeBase::try_from_recip(44100).unwrap();
+        assert_eq!(
+            landing_samples(Some(tb), Timestamp::from(44100u32), 44100, 2),
+            Some(88_200)
+        );
+    }
+
+    #[test]
+    fn landing_samples_converts_millisecond_timebases() {
+        // Matroska ticks in milliseconds, not frames.
+        let tb = TimeBase::try_new(1, 1000).unwrap();
+        assert_eq!(
+            landing_samples(Some(tb), Timestamp::from(1500u32), 48000, 2),
+            Some(48000 * 3 / 2 * 2)
+        );
+    }
+
+    #[test]
+    fn landing_samples_needs_a_timebase() {
+        assert_eq!(
+            landing_samples(None, Timestamp::from(1000u32), 44100, 2),
+            None
+        );
+    }
+
+    /// Build a 300s VBR MP3: 30s of near-silence then a loud tone, which gives
+    /// lame a wide enough bitrate spread to make coarse seeking miss badly.
+    #[cfg(test)]
+    fn make_vbr_mp3(dir: &Path) -> PathBuf {
+        let wav = dir.join("source.wav");
+        let mp3 = dir.join("source.mp3");
+        let ok = std::process::Command::new("sox")
+            .args(["-n", "-r", "44100", "-c", "2"])
+            .arg(&wav)
+            .args([
+                "synth", "30", "sine", "200", "vol", "0.02", ":", "synth", "270", "sine", "880",
+                "vol", "0.9",
+            ])
+            .status()
+            .expect("sox not installed")
+            .success();
+        assert!(ok, "sox failed");
+        let ok = std::process::Command::new("lame")
+            .args(["-V", "2", "--quiet"])
+            .arg(&wav)
+            .arg(&mp3)
+            .status()
+            .expect("lame not installed")
+            .success();
+        assert!(ok, "lame failed");
+        mp3
+    }
+
+    /// A VBR seek must report where playback actually resumed: the reported
+    /// start plus the audio that actually followed has to add back up to the
+    /// file's duration. Under a coarse seek this file lands 3.7s late while
+    /// reporting 83ms early — a 3.8s lie for the rest of the track.
+    #[test]
+    #[ignore = "generates a fixture with sox + lame; run with cargo test -- --ignored"]
+    fn seek_on_vbr_reports_where_it_landed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = make_vbr_mp3(dir.path());
+        let info = probe_file(&path).unwrap();
+        let channels = info.channels as u64;
+        let rate = info.sample_rate as u64;
+
+        let seek_ms = 150_000u64;
+        let (mut producer, mut consumer) = rtrb::RingBuffer::<f32>::new(1 << 16);
+        let stop = Arc::new(AtomicBool::new(false));
+        let timeline = PlaybackTimeline::new();
+        let tl = writer(&timeline);
+
+        let drain_stop = stop.clone();
+        let drained = std::thread::spawn(move || {
+            let mut total = 0u64;
+            while !drain_stop.load(Ordering::Relaxed) {
+                let slots = consumer.slots();
+                if slots == 0 {
+                    std::thread::sleep(std::time::Duration::from_micros(200));
+                    continue;
+                }
+                let chunk = consumer.read_chunk(slots).unwrap();
+                total += slots as u64;
+                chunk.commit_all();
+            }
+            total
+        });
+
+        let file = File::open(&path).unwrap();
+        let mss = MediaSourceStream::new(Box::new(file), Default::default());
+        let mut hint = Hint::new();
+        hint.with_extension("mp3");
+        decode_single(
+            QueueItemId::new(),
+            &path,
+            &hint,
+            mss,
+            &mut producer,
+            &stop,
+            seek_ms,
+            &tl,
+            None,
+            ReplayGainMode::Off,
+            0.0,
+            None,
+        )
+        .unwrap();
+
+        let written = timeline.samples_written.load(Ordering::Relaxed);
+        stop.store(true, Ordering::Relaxed);
+        drained.join().unwrap();
+
+        let reported_start_ms = {
+            let bounds = timeline.boundaries.read();
+            (bounds[0].seek_samples / channels) * 1000 / rate
+        };
+        let decoded_ms = (written / channels) * 1000 / rate;
+
+        // Where playback started plus how much audio followed is the whole file.
+        let total_ms = reported_start_ms + decoded_ms;
+        assert!(
+            total_ms.abs_diff(info.duration_ms) < 500,
+            "reported start {}ms + {}ms decoded = {}ms, but the file is {}ms",
+            reported_start_ms,
+            decoded_ms,
+            total_ms,
+            info.duration_ms
+        );
+        // Landing is frame-granular, never sample-exact.
+        assert!(
+            reported_start_ms.abs_diff(seek_ms) < 100,
+            "seek to {}ms reported {}ms",
+            seek_ms,
+            reported_start_ms
+        );
     }
 }

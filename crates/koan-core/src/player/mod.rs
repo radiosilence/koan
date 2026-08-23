@@ -21,7 +21,7 @@ use state::{LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerS
 use undo::{UndoEntry, UndoStack};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
-const RING_BUFFER_SIZE: usize = 192_000 * 2;
+pub(crate) const RING_BUFFER_SIZE: usize = 192_000 * 2;
 
 #[derive(Debug, Error)]
 pub enum PlayerError {
@@ -51,6 +51,10 @@ pub struct Player {
     backend: Box<dyn AudioBackend>,
     /// Debounce: timestamp of last NextTrack/PrevTrack to suppress key repeat.
     last_skip: std::time::Instant,
+    /// Playback sessions started — lets tests assert how many engine restarts
+    /// an operation costs.
+    #[cfg(test)]
+    playback_starts: usize,
 }
 
 /// Holds the resources for an active playback session.
@@ -69,18 +73,20 @@ impl Player {
     pub fn new() -> Self {
         let viz_buffer = VizBuffer::new();
         let viz_snapshot = VizSnapshot::new();
+        let timeline = PlaybackTimeline::new();
         let cfg = crate::config::Config::load_or_default();
         let viz_analyzer = VizAnalyzer::spawn_with_snapshot(
             Arc::clone(&viz_buffer),
             &cfg.visualizer,
             Arc::clone(&viz_snapshot),
+            timeline.samples_played_counter(),
         );
 
         Self {
             shared_state: SharedPlayerState::new(),
             commands: CommandChannel::new(),
             active_playback: None,
-            timeline: PlaybackTimeline::new(),
+            timeline,
             viz_buffer,
             viz_snapshot,
             _viz_analyzer: viz_analyzer,
@@ -89,6 +95,8 @@ impl Player {
             output_device_name: cfg.playback.output_device.clone(),
             backend: crate::audio::platform_backend(),
             last_skip: std::time::Instant::now(),
+            #[cfg(test)]
+            playback_starts: 0,
         }
     }
 
@@ -260,10 +268,9 @@ impl Player {
                 total,
             }) => {
                 if let Err(e) = self.start_streaming_playback(id, &path, bytes_written, total) {
+                    // The cursor stays here, so TrackReady starts it once the
+                    // whole file has landed.
                     log::error!("streaming play failed, waiting for full download: {}", e);
-                    // Fall back to waiting for TrackReady.
-                    self.stop_engine();
-                    self.shared_state.set_playback_state(PlaybackState::Stopped);
                 }
             }
             None => {
@@ -276,7 +283,27 @@ impl Player {
     }
 
     /// Internal: start playback of a file.
+    ///
+    /// A failure leaves the player cleanly stopped. Displaying a track that no
+    /// engine is playing freezes the position and makes the transport lie.
     fn start_playback(
+        &mut self,
+        id: QueueItemId,
+        path: &Path,
+        seek_ms: u64,
+    ) -> Result<(), PlayerError> {
+        #[cfg(test)]
+        {
+            self.playback_starts += 1;
+        }
+        let result = self.open_playback(id, path, seek_ms);
+        if result.is_err() {
+            self.stop_playback_and_clear_state();
+        }
+        result
+    }
+
+    fn open_playback(
         &mut self,
         id: QueueItemId,
         path: &Path,
@@ -317,8 +344,6 @@ impl Player {
 
         let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
 
-        let _generation = self.shared_state.bump_generation();
-
         // Reset timeline for new playback session and start decode.
         self.timeline.reset();
 
@@ -326,13 +351,12 @@ impl Player {
         // (separate from the UI cursor) so it can look ahead through the
         // playlist without affecting what the UI shows as "now playing".
         let advance_state = self.shared_state.clone();
-        let decode_cursor = std::sync::Mutex::new(Some(id));
+        let decode_cursor = parking_lot::Mutex::new(Some(id));
         let next_track = move || {
-            let current = decode_cursor.lock().ok()?.take()?;
+            let current = decode_cursor.lock().take()?;
             let next = advance_state.peek_next_ready_after(current);
-            if let Some((next_id, _)) = &next
-                && let Ok(mut guard) = decode_cursor.lock()
-            {
+            if let Some((next_id, _)) = &next {
+                let mut guard = decode_cursor.lock();
                 *guard = Some(*next_id);
             }
             next
@@ -385,6 +409,20 @@ impl Player {
         bytes_written: Arc<AtomicU64>,
         total: u64,
     ) -> Result<(), PlayerError> {
+        let result = self.open_streaming_playback(id, path, bytes_written, total);
+        if result.is_err() {
+            self.stop_playback_and_clear_state();
+        }
+        result
+    }
+
+    fn open_streaming_playback(
+        &mut self,
+        id: QueueItemId,
+        path: &Path,
+        bytes_written: Arc<AtomicU64>,
+        total: u64,
+    ) -> Result<(), PlayerError> {
         self.stop_engine();
 
         // Create a StreamBuffer with known total length.
@@ -400,28 +438,74 @@ impl Player {
         let pump_path = path.to_path_buf();
         let pump_buf = stream_buf.clone();
         let pump_written = bytes_written.clone();
+        let pump_state = self.shared_state.clone();
         thread::Builder::new()
             .name("koan-stream-pump".into())
             .spawn(move || {
                 use std::fs::File;
                 use std::io::Read;
+                use std::time::{Duration, Instant};
+
+                /// No new bytes for this long and the download is treated as dead.
+                /// `bytes_written` simply stops advancing when one dies, so without
+                /// a deadline the pump spins and the decode thread parks forever.
+                const STALL_LIMIT: Duration = Duration::from_secs(30);
+
                 let mut file = match File::open(&pump_path) {
                     Ok(f) => f,
                     Err(e) => {
                         log::error!("stream pump: failed to open {}: {}", pump_path.display(), e);
-                        pump_buf.finish();
+                        pump_buf.fail();
                         return;
                     }
                 };
                 let mut buf = vec![0u8; 65536];
                 let mut offset: u64 = 0;
+                let mut last_progress = Instant::now();
                 loop {
+                    // Nothing left to read the bytes, so nothing left to write them for.
+                    if pump_buf.is_abandoned() {
+                        return;
+                    }
+                    match pump_state.item_load_state(id) {
+                        Some(LoadState::Failed(e)) => {
+                            log::warn!("stream pump: download of {:?} failed: {}", id, e);
+                            pump_buf.fail();
+                            return;
+                        }
+                        // The download landed: drain to EOF rather than trusting
+                        // `total`, which is 0 for a chunked transfer.
+                        Some(LoadState::Ready) => match file.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                pump_buf.push(&buf[..n]);
+                                offset += n as u64;
+                                continue;
+                            }
+                            Err(e) => {
+                                log::warn!("stream pump read error: {}", e);
+                                pump_buf.fail();
+                                return;
+                            }
+                        },
+                        _ => {}
+                    }
+
                     let available = pump_written.load(Ordering::Acquire);
                     if offset >= available {
                         if total > 0 && available >= total {
                             break; // Download complete.
                         }
-                        thread::sleep(std::time::Duration::from_millis(10));
+                        if last_progress.elapsed() >= STALL_LIMIT {
+                            log::warn!(
+                                "stream pump: no data for {}s, abandoning {}",
+                                STALL_LIMIT.as_secs(),
+                                pump_path.display()
+                            );
+                            pump_buf.fail();
+                            return;
+                        }
+                        thread::sleep(Duration::from_millis(10));
                         continue;
                     }
                     let to_read = ((available - offset) as usize).min(buf.len());
@@ -437,16 +521,18 @@ impl Player {
                                 break;
                             }
                             // Data not yet visible on disk — back off and retry.
-                            thread::sleep(std::time::Duration::from_millis(1));
+                            thread::sleep(Duration::from_millis(1));
                             continue;
                         }
                         Ok(n) => {
                             pump_buf.push(&buf[..n]);
                             offset += n as u64;
+                            last_progress = Instant::now();
                         }
                         Err(e) => {
                             log::warn!("stream pump read error: {}", e);
-                            break;
+                            pump_buf.fail();
+                            return;
                         }
                     }
                 }
@@ -490,18 +576,16 @@ impl Player {
 
         let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
 
-        let _generation = self.shared_state.bump_generation();
         self.timeline.reset();
 
         // Gapless lookahead after streaming: next track uses normal file path.
         let advance_state = self.shared_state.clone();
-        let decode_cursor = std::sync::Mutex::new(Some(id));
+        let decode_cursor = parking_lot::Mutex::new(Some(id));
         let next_track = move || {
-            let current = decode_cursor.lock().ok()?.take()?;
+            let current = decode_cursor.lock().take()?;
             let next = advance_state.peek_next_ready_after(current);
-            if let Some((next_id, _)) = &next
-                && let Ok(mut guard) = decode_cursor.lock()
-            {
+            if let Some((next_id, _)) = &next {
+                let mut guard = decode_cursor.lock();
                 *guard = Some(*next_id);
             }
             next
@@ -611,13 +695,8 @@ impl Player {
 
     /// Skip to next track in playlist.
     pub fn next_track(&mut self) {
-        // advance_cursor finds the next Ready item after cursor.
-        match self.shared_state.advance_cursor() {
-            Some((id, path)) => {
-                if let Err(e) = self.start_playback(id, &path, 0) {
-                    log::error!("next track failed: {}", e);
-                }
-            }
+        match self.shared_state.advance_cursor_loadable() {
+            Some(id) => self.play(id),
             None => {
                 log::info!("no more tracks in playlist");
                 self.stop_playback_and_clear_state();
@@ -651,7 +730,10 @@ impl Player {
     /// Pause playback.
     pub fn pause(&mut self) {
         if let Some(ref playback) = self.active_playback {
-            let _ = playback.engine.stop();
+            if let Err(e) = playback.engine.stop() {
+                log::error!("pause failed: {}", e);
+                return;
+            }
             self.shared_state.set_playback_state(PlaybackState::Paused);
         }
     }
@@ -659,7 +741,10 @@ impl Player {
     /// Resume playback.
     pub fn resume(&mut self) {
         if let Some(ref playback) = self.active_playback {
-            let _ = playback.engine.start();
+            if let Err(e) = playback.engine.start() {
+                log::error!("resume failed: {}", e);
+                return;
+            }
             self.shared_state.set_playback_state(PlaybackState::Playing);
         }
     }
@@ -709,11 +794,20 @@ impl Player {
         self.shared_state.set_track_info(None);
     }
 
-    /// Remove a track from the playlist. If it was the cursor, skip to next.
+    /// Remove a track from the playlist. If it was the cursor, resume at the
+    /// track that followed it.
+    ///
+    /// `remove_item` clears the cursor, and an unset cursor means "start from the
+    /// top" — so the successor is pinned down by parking the cursor on the removed
+    /// track's predecessor first. `None` is correct only when it was the first item.
     pub fn remove_from_playlist(&mut self, id: QueueItemId) {
         let was_cursor = self.shared_state.is_cursor(id);
+        let resume_after = was_cursor
+            .then(|| self.shared_state.item_before(id))
+            .flatten();
         self.shared_state.remove_item(id);
         if was_cursor {
+            self.shared_state.set_cursor(resume_after);
             self.next_track();
         }
     }
@@ -875,21 +969,34 @@ impl Player {
     }
 
     /// Decode thread naturally finished (playlist exhausted or error).
-    /// Try to advance to the next Ready track; otherwise stop cleanly.
+    /// Advance to the next playable track; otherwise stop cleanly.
+    ///
+    /// A track that has not finished downloading parks the cursor on it, so its
+    /// `TrackReady`/`TrackStreamReady` resumes the queue instead of being
+    /// discarded as "not the cursor".
     fn on_decode_finished(&mut self) {
         log::info!("decode finished, checking for next track");
-        match self.shared_state.advance_cursor() {
-            Some((id, path)) => {
-                if let Err(e) = self.start_playback(id, &path, 0) {
-                    log::error!("auto-advance after decode finished failed: {}", e);
-                    self.stop_playback_and_clear_state();
-                }
-            }
+        match self.shared_state.advance_cursor_loadable() {
+            Some(id) => self.play(id),
             None => {
                 log::info!("no more tracks — stopping");
                 self.stop_playback_and_clear_state();
             }
         }
+    }
+
+    /// Snapshot items with their predecessors for an undo of "these were removed".
+    /// In playlist order, so undo re-inserts each item after a predecessor that
+    /// is already back in place.
+    fn snapshot_for_undo(
+        &self,
+        ids: &[QueueItemId],
+    ) -> Vec<(Box<state::PlaylistItem>, Option<QueueItemId>)> {
+        self.shared_state
+            .items_before(ids)
+            .into_iter()
+            .filter_map(|(id, after)| Some((Box::new(self.shared_state.get_item(id)?), after)))
+            .collect()
     }
 
     /// Route an undo entry to the batch buffer (if batching) or the undo stack.
@@ -984,29 +1091,24 @@ impl Player {
                 }
             }
             PlayerCommand::RemoveFromPlaylistBatch(ids) => {
-                // Snapshot all items with their predecessors before removing any.
-                let items_with_pos: Vec<_> = ids
-                    .iter()
-                    .filter_map(|&id| {
-                        let item = self.shared_state.get_item(id)?;
-                        let after = self.shared_state.item_before(id);
-                        Some((Box::new(item), after))
-                    })
-                    .collect();
-                // One removal, not one per id. Looping `remove_from_playlist`
-                // took the playlist lock and bumped the version for every
-                // track, and re-entered `next_track` each time the cursor
-                // landed on another doomed item — so clearing a large selection
-                // visibly deleted one at a time and restarted playback
-                // repeatedly.
-                let was_cursor = self
-                    .shared_state
-                    .cursor()
-                    .is_some_and(|cursor| ids.contains(&cursor));
+                // Snapshot before removing anything, and resolve the resume point
+                // once: removing one at a time would restart the engine for every
+                // deleted track that the cursor lands on along the way.
+                let items_with_pos = self.snapshot_for_undo(&ids);
+                let resume_after = match self.shared_state.cursor() {
+                    Some(cursor) if ids.contains(&cursor) => {
+                        Some(self.shared_state.surviving_item_before(cursor, &ids))
+                    }
+                    _ => None,
+                };
+
                 self.shared_state.remove_items(&ids);
-                if was_cursor {
+
+                if let Some(resume_after) = resume_after {
+                    self.shared_state.set_cursor(resume_after);
                     self.next_track();
                 }
+
                 if !items_with_pos.is_empty() {
                     self.push_undo(UndoEntry::Removed {
                         items: items_with_pos,
@@ -1051,14 +1153,7 @@ impl Player {
         match entry {
             UndoEntry::Added { ids } => {
                 // Undo of "items were added": snapshot them with positions, then remove.
-                let items_with_pos: Vec<_> = ids
-                    .iter()
-                    .filter_map(|&id| {
-                        let item = self.shared_state.get_item(id)?;
-                        let after = self.shared_state.item_before(id);
-                        Some((Box::new(item), after))
-                    })
-                    .collect();
+                let items_with_pos = self.snapshot_for_undo(&ids);
                 self.shared_state.remove_items(&ids);
                 Some(UndoEntry::Removed {
                     items: items_with_pos,
@@ -1075,14 +1170,7 @@ impl Player {
             }
             UndoEntry::Inserted { ids } => {
                 // Same as Added — snapshot positions, remove items.
-                let items_with_pos: Vec<_> = ids
-                    .iter()
-                    .filter_map(|&id| {
-                        let item = self.shared_state.get_item(id)?;
-                        let after = self.shared_state.item_before(id);
-                        Some((Box::new(item), after))
-                    })
-                    .collect();
+                let items_with_pos = self.snapshot_for_undo(&ids);
                 self.shared_state.remove_items(&ids);
                 Some(UndoEntry::Removed {
                     items: items_with_pos,
@@ -1218,6 +1306,135 @@ mod tests {
     fn playlist_titles(player: &Player) -> Vec<String> {
         let (items, _) = player.shared_state.snapshot_playlist();
         items.iter().map(|i| i.title.clone()).collect()
+    }
+
+    fn pending_item(title: &str) -> PlaylistItem {
+        PlaylistItem {
+            load_state: LoadState::Pending,
+            ..make_item(title)
+        }
+    }
+
+    /// Build `n` ready items, add them, and return their IDs.
+    fn seed(player: &mut Player, n: usize) -> Vec<QueueItemId> {
+        let items: Vec<_> = (0..n).map(|i| make_item(&format!("t{i}"))).collect();
+        let ids = items.iter().map(|i| i.id).collect();
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+        ids
+    }
+
+    // --- cursor transitions ---
+
+    #[test]
+    fn removing_the_playing_track_resumes_at_its_successor() {
+        let mut player = Player::new();
+        let ids = seed(&mut player, 5);
+        player.shared_state.set_cursor(Some(ids[2]));
+
+        player.process_command(PlayerCommand::RemoveFromPlaylist(ids[2]));
+
+        assert_eq!(
+            player.shared_state.cursor(),
+            Some(ids[3]),
+            "playback must continue at the next track, not restart the queue"
+        );
+        assert_eq!(player.playback_starts, 1);
+    }
+
+    #[test]
+    fn removing_the_first_playing_track_resumes_at_the_new_first() {
+        let mut player = Player::new();
+        let ids = seed(&mut player, 3);
+        player.shared_state.set_cursor(Some(ids[0]));
+
+        player.process_command(PlayerCommand::RemoveFromPlaylist(ids[0]));
+
+        assert_eq!(player.shared_state.cursor(), Some(ids[1]));
+    }
+
+    #[test]
+    fn next_track_parks_on_a_track_that_has_not_downloaded_yet() {
+        let mut player = Player::new();
+        let playing = make_item("playing");
+        let waiting = pending_item("waiting");
+        let later = make_item("later");
+        let (playing_id, waiting_id) = (playing.id, waiting.id);
+        player.process_command(PlayerCommand::AddToPlaylist(vec![playing, waiting, later]));
+        player.shared_state.set_cursor(Some(playing_id));
+
+        player.process_command(PlayerCommand::DecodeFinished);
+
+        assert_eq!(
+            player.shared_state.cursor(),
+            Some(waiting_id),
+            "the cursor parks on the track being fetched"
+        );
+        assert_eq!(
+            player.playback_starts, 0,
+            "nothing to play until its bytes land"
+        );
+
+        // The download completes. Because the cursor is parked here, the
+        // TrackReady actually reaches the player and the queue resumes.
+        player
+            .shared_state
+            .update_load_state(waiting_id, LoadState::Ready);
+        player.process_command(PlayerCommand::TrackReady(waiting_id));
+
+        assert_eq!(player.playback_starts, 1);
+        assert_eq!(player.shared_state.cursor(), Some(waiting_id));
+    }
+
+    #[test]
+    fn batch_delete_containing_the_cursor_restarts_the_engine_once() {
+        let mut player = Player::new();
+        let ids = seed(&mut player, 5);
+        player.shared_state.set_cursor(Some(ids[2]));
+
+        player.process_command(PlayerCommand::RemoveFromPlaylistBatch(vec![
+            ids[1], ids[2], ids[3],
+        ]));
+
+        assert_eq!(playlist_titles(&player), vec!["t0", "t4"]);
+        assert_eq!(player.shared_state.cursor(), Some(ids[4]));
+        assert_eq!(
+            player.playback_starts, 1,
+            "one resume for the whole selection, not one per deleted track"
+        );
+    }
+
+    #[test]
+    fn batch_delete_below_the_cursor_leaves_playback_alone() {
+        let mut player = Player::new();
+        let ids = seed(&mut player, 4);
+        player.shared_state.set_cursor(Some(ids[0]));
+
+        player.process_command(PlayerCommand::RemoveFromPlaylistBatch(vec![ids[2], ids[3]]));
+
+        assert_eq!(player.shared_state.cursor(), Some(ids[0]));
+        assert_eq!(player.playback_starts, 0);
+    }
+
+    #[test]
+    fn undo_of_a_batch_delete_restores_the_original_order() {
+        // The TUI collects a selection from a HashSet, so the IDs arrive in
+        // arbitrary order — scrambled here so a snapshot that trusts that order
+        // re-inserts C before B and lands it at the end of the playlist.
+        let mut player = Player::new();
+        let items = vec![
+            make_item("A"),
+            make_item("B"),
+            make_item("C"),
+            make_item("D"),
+        ];
+        let (b_id, c_id) = (items[1].id, items[2].id);
+        player.process_command(PlayerCommand::AddToPlaylist(items));
+
+        player.process_command(PlayerCommand::RemoveFromPlaylistBatch(vec![c_id, b_id]));
+        assert_eq!(playlist_titles(&player), vec!["A", "D"]);
+
+        player.process_command(PlayerCommand::Undo);
+        assert_eq!(playlist_titles(&player), vec!["A", "B", "C", "D"]);
     }
 
     // --- AddToPlaylist undo/redo ---

@@ -1,9 +1,16 @@
+use std::sync::Arc;
+
 use async_graphql::connection::{DisableNodesField, EmptyFields};
+use async_graphql::dataloader::DataLoader;
 use async_graphql::{Context, Enum, InputObject, Object, SimpleObject};
 use koan_core::db::queries;
+use koan_core::player::state::{PlaybackState, QueueEntryStatus, SharedPlayerState};
 
-use super::DbHandle;
 use super::helpers::paginate;
+use super::jobs::{Job, JobState};
+use super::loaders::{
+    AlbumStatsOf, AlbumTracks, ArtistAlbums, ArtistStatsOf, ArtistTracks, DbLoader, FavouritePath,
+};
 
 /// Connection type alias — standard async-graphql Connection with `nodes` field disabled.
 /// Exposes `edges` + `pageInfo` only (proper Relay spec).
@@ -33,6 +40,16 @@ pub(super) enum TrackSource {
     Local,
     Remote,
     Cached,
+}
+
+impl TrackSource {
+    pub(super) fn as_db_value(self) -> &'static str {
+        match self {
+            TrackSource::Local => "local",
+            TrackSource::Remote => "remote",
+            TrackSource::Cached => "cached",
+        }
+    }
 }
 
 #[derive(Enum, Copy, Clone, Eq, PartialEq)]
@@ -114,9 +131,10 @@ impl GqlArtist {
         after: Option<String>,
         first: Option<i32>,
     ) -> async_graphql::Result<Conn<GqlAlbum>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let all = queries::albums_for_artist(&db.conn, self.row.id)
-            .map_err(|e| super::internal_error("db", e))?;
+        let all = loader(ctx)?
+            .load_one(ArtistAlbums(self.row.id))
+            .await?
+            .unwrap_or_default();
         paginate(
             all.into_iter().map(|row| GqlAlbum { row }).collect(),
             after,
@@ -130,9 +148,10 @@ impl GqlArtist {
         after: Option<String>,
         first: Option<i32>,
     ) -> async_graphql::Result<Conn<GqlTrack>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let all = queries::tracks_for_artist(&db.conn, self.row.id)
-            .map_err(|e| super::internal_error("db", e))?;
+        let all = loader(ctx)?
+            .load_one(ArtistTracks(self.row.id))
+            .await?
+            .unwrap_or_default();
         paginate(
             all.into_iter().map(|row| GqlTrack { row }).collect(),
             after,
@@ -141,17 +160,19 @@ impl GqlArtist {
     }
 
     async fn album_count(&self, ctx: &Context<'_>) -> async_graphql::Result<i32> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let albums = queries::albums_for_artist(&db.conn, self.row.id)
-            .map_err(|e| super::internal_error("db", e))?;
-        Ok(albums.len() as i32)
+        let stats = loader(ctx)?
+            .load_one(ArtistStatsOf(self.row.id))
+            .await?
+            .unwrap_or_default();
+        Ok(stats.album_count as i32)
     }
 
     async fn track_count(&self, ctx: &Context<'_>) -> async_graphql::Result<i32> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let tracks = queries::tracks_for_artist(&db.conn, self.row.id)
-            .map_err(|e| super::internal_error("db", e))?;
-        Ok(tracks.len() as i32)
+        let stats = loader(ctx)?
+            .load_one(ArtistStatsOf(self.row.id))
+            .await?
+            .unwrap_or_default();
+        Ok(stats.track_count as i32)
     }
 }
 
@@ -199,9 +220,10 @@ impl GqlAlbum {
         after: Option<String>,
         first: Option<i32>,
     ) -> async_graphql::Result<Conn<GqlTrack>> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let all = queries::tracks_for_album(&db.conn, self.row.id)
-            .map_err(|e| super::internal_error("db", e))?;
+        let all = loader(ctx)?
+            .load_one(AlbumTracks(self.row.id))
+            .await?
+            .unwrap_or_default();
         paginate(
             all.into_iter().map(|row| GqlTrack { row }).collect(),
             after,
@@ -210,17 +232,19 @@ impl GqlAlbum {
     }
 
     async fn track_count(&self, ctx: &Context<'_>) -> async_graphql::Result<i32> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let tracks = queries::tracks_for_album(&db.conn, self.row.id)
-            .map_err(|e| super::internal_error("db", e))?;
-        Ok(tracks.len() as i32)
+        let stats = loader(ctx)?
+            .load_one(AlbumStatsOf(self.row.id))
+            .await?
+            .unwrap_or_default();
+        Ok(stats.track_count as i32)
     }
 
     async fn total_duration_ms(&self, ctx: &Context<'_>) -> async_graphql::Result<i64> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let tracks = queries::tracks_for_album(&db.conn, self.row.id)
-            .map_err(|e| super::internal_error("db", e))?;
-        Ok(tracks.iter().filter_map(|t| t.duration_ms).sum())
+        let stats = loader(ctx)?
+            .load_one(AlbumStatsOf(self.row.id))
+            .await?
+            .unwrap_or_default();
+        Ok(stats.total_duration_ms)
     }
 }
 
@@ -315,17 +339,18 @@ impl GqlTrack {
     }
 
     async fn is_favourite(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
-        let db = ctx.data::<DbHandle>()?.open()?;
-        let favs = queries::load_favourites(&db.conn)
-            .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-        let path = self
-            .row
-            .path
-            .as_ref()
-            .or(self.row.cached_path.as_ref())
-            .map(std::path::PathBuf::from);
-        Ok(path.map(|p| favs.contains(&p)).unwrap_or(false))
+        let Some(path) = self.row.path.as_ref().or(self.row.cached_path.as_ref()) else {
+            return Ok(false);
+        };
+        Ok(loader(ctx)?
+            .load_one(FavouritePath(path.clone()))
+            .await?
+            .unwrap_or(false))
     }
+}
+
+fn loader<'a>(ctx: &'a Context<'_>) -> async_graphql::Result<&'a DataLoader<DbLoader>> {
+    ctx.data::<DataLoader<DbLoader>>()
 }
 
 #[derive(SimpleObject)]
@@ -341,6 +366,10 @@ pub(super) struct GqlNowPlaying {
 #[derive(SimpleObject)]
 #[graphql(name = "NowPlayingTrack")]
 pub(super) struct GqlNowPlayingTrack {
+    /// Library row id, when the queue entry came from the database. The remote
+    /// bridge streams `/rest/stream?id=<trackId>`; without it a client had no
+    /// way to name the track the server is playing.
+    pub track_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -352,8 +381,53 @@ pub(super) struct GqlNowPlayingTrack {
     pub duration_ms: u64,
 }
 
+impl GqlNowPlaying {
+    /// Read the player's current track. Shared by the `nowPlaying` query and
+    /// the subscription of the same name, which must not drift apart.
+    pub(super) fn capture(state: &Arc<SharedPlayerState>) -> Self {
+        let playback_state = match state.playback_state() {
+            PlaybackState::Stopped => PlaybackStateEnum::Stopped,
+            PlaybackState::Playing => PlaybackStateEnum::Playing,
+            PlaybackState::Paused => PlaybackStateEnum::Paused,
+        };
+        let position_ms = state.position_ms();
+
+        let Some(info) = state.track_info() else {
+            return Self {
+                state: playback_state,
+                position_ms,
+                duration_ms: None,
+                track: None,
+                queue_item_id: None,
+            };
+        };
+
+        let (items, _cursor) = state.snapshot_playlist();
+        let playlist_item = items.iter().find(|i| i.id == info.id);
+        Self {
+            state: playback_state,
+            position_ms,
+            duration_ms: Some(info.duration_ms),
+            track: Some(GqlNowPlayingTrack {
+                track_id: playlist_item.and_then(|i| i.db_id),
+                title: playlist_item.map(|i| i.title.clone()).unwrap_or_default(),
+                artist: playlist_item.map(|i| i.artist.clone()).unwrap_or_default(),
+                album: playlist_item.map(|i| i.album.clone()).unwrap_or_default(),
+                codec: info.codec.clone(),
+                sample_rate: info.sample_rate,
+                bit_depth: info.bit_depth,
+                bitrate_kbps: info.bitrate_kbps,
+                channels: info.channels,
+                duration_ms: info.duration_ms,
+            }),
+            queue_item_id: Some(info.id.0.to_string()),
+        }
+    }
+}
+
 pub(super) struct GqlQueueEntry {
     pub queue_item_id: String,
+    pub track_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album: String,
@@ -370,6 +444,11 @@ pub(super) struct GqlQueueEntry {
 impl GqlQueueEntry {
     async fn queue_item_id(&self) -> &str {
         &self.queue_item_id
+    }
+
+    /// Library row id — see `NowPlayingTrack::trackId`.
+    async fn track_id(&self) -> Option<i64> {
+        self.track_id
     }
 
     async fn title(&self) -> &str {
@@ -530,12 +609,27 @@ pub(super) struct GqlOrganizeResult {
     pub skipped: i32,
 }
 
+/// A handle to work running on a detached thread. Poll it with the `job` query.
 #[derive(SimpleObject)]
-#[graphql(name = "ScanResult")]
-pub(super) struct GqlScanResult {
-    pub tracks_added: i64,
-    pub tracks_updated: i64,
-    pub tracks_unchanged: i64,
+#[graphql(name = "Job")]
+pub(super) struct GqlJob {
+    pub id: String,
+    /// What the job is doing — `scan` or `remoteSync`.
+    pub kind: String,
+    pub state: JobState,
+    /// Human-readable progress or outcome.
+    pub message: String,
+}
+
+impl From<Job> for GqlJob {
+    fn from(job: Job) -> Self {
+        Self {
+            id: job.id,
+            kind: job.kind,
+            state: job.state,
+            message: job.message,
+        }
+    }
 }
 
 #[derive(SimpleObject)]
@@ -635,6 +729,54 @@ pub(super) struct GqlQueueSnapshot {
     pub has_playing: bool,
     /// Number of entries after the cursor (queued).
     pub queue_count: i32,
+}
+
+impl GqlQueueSnapshot {
+    /// Read the derived queue. Shared by the `queue` query and the
+    /// `queueUpdated` subscription, which must not drift apart.
+    pub(super) fn capture(state: &Arc<SharedPlayerState>) -> Self {
+        let version = state.playlist_version();
+        let snap = state.derive_visible_queue();
+
+        let entries = snap
+            .entries
+            .iter()
+            .map(|entry| {
+                let status = match entry.status {
+                    QueueEntryStatus::Queued => GqlQueueEntryStatus::Queued,
+                    QueueEntryStatus::Playing => GqlQueueEntryStatus::Playing,
+                    QueueEntryStatus::Played => GqlQueueEntryStatus::Played,
+                    QueueEntryStatus::Downloading => GqlQueueEntryStatus::Downloading,
+                    QueueEntryStatus::PriorityPending => GqlQueueEntryStatus::PriorityPending,
+                    QueueEntryStatus::Failed => GqlQueueEntryStatus::Failed,
+                };
+                GqlQueueEntry {
+                    queue_item_id: entry.id.0.to_string(),
+                    track_id: entry.db_id,
+                    title: entry.title.clone(),
+                    artist: entry.artist.clone(),
+                    album: entry.album.clone(),
+                    codec: entry.codec.clone(),
+                    track_number: entry.track_number,
+                    disc: entry.disc,
+                    duration_ms: entry.duration_ms,
+                    is_current: entry.status == QueueEntryStatus::Playing,
+                    status,
+                    download_progress: entry
+                        .download_progress
+                        .map(|(downloaded, total)| GqlDownloadProgress { downloaded, total }),
+                }
+            })
+            .collect();
+
+        Self {
+            version,
+            entries,
+            finished_count: snap.finished_count as i32,
+            has_playing: snap.has_playing,
+            queue_count: snap.queue_count as i32,
+        }
+    }
 }
 
 /// A single frame of visualizer data.

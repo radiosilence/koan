@@ -50,6 +50,56 @@ pub fn cmd_serve(
 // Shared API server logic — used by both headless and TUI+API modes
 // ---------------------------------------------------------------------------
 
+/// Ceiling on a single GraphQL query. Anything genuinely longer than this —
+/// a library scan, a remote sync — runs as a job instead.
+const REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Queries executing at once. Resolvers now do their SQLite and HTTP work on
+/// the blocking pool, so this bounds concurrent work rather than protecting the
+/// runtime's workers from it.
+const MAX_INFLIGHT_QUERIES: usize = 64;
+
+/// Timeout, panic catch and load shed for the query route.
+///
+/// Not applied to `/graphql/ws`: a subscription is meant to outlive any request
+/// timeout.
+fn load_perimeter<S>(router: axum::Router<S>) -> axum::Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    router
+        // Innermost so it is inside the timeout: a panicking resolver becomes a
+        // 500 rather than a silently dropped connection.
+        .layer(tower_http::catch_panic::CatchPanicLayer::new())
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            REQUEST_TIMEOUT,
+        ))
+        // Shed rather than queue. A concurrency limit on its own parks callers
+        // on a semaphore, so an overloaded server answers every client slowly
+        // instead of telling the surplus to come back.
+        .layer(
+            tower::ServiceBuilder::new()
+                .layer(axum::error_handling::HandleErrorLayer::new(
+                    |err: tower::BoxError| async move {
+                        if err.is::<tower::load_shed::error::Overloaded>() {
+                            (
+                                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                                "server at capacity",
+                            )
+                        } else {
+                            (
+                                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                                "internal error",
+                            )
+                        }
+                    },
+                ))
+                .load_shed()
+                .concurrency_limit(MAX_INFLIGHT_QUERIES),
+        )
+}
+
 /// Options for the API server — avoids too-many-arguments.
 pub struct ApiServerOpts {
     pub state: Arc<SharedPlayerState>,
@@ -163,8 +213,13 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
     let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
     rt.block_on(async {
         // GraphQL routes — protected by auth middleware.
+        //
+        // The query route carries the load perimeter; the WebSocket route does
+        // not, because a subscription is meant to outlive any request timeout.
+        let query_route = load_perimeter(axum::Router::new().route("/graphql", post(graphql_handler)));
+
         let gql_app = axum::Router::new()
-            .route("/graphql", post(graphql_handler))
+            .merge(query_route)
             .route("/graphql/ws", get(graphql_ws_handler))
             .layer(axum::middleware::from_fn_with_state(
                 auth_state.clone(),
@@ -176,7 +231,6 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
                 browser_policy.clone(),
                 browser_guard,
             ))
-            .layer(tower::limit::ConcurrencyLimitLayer::new(10))
             .with_state(schema);
 
         // Auth routes — always accessible (no auth middleware).
@@ -210,8 +264,11 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // dedicated `--subsonic <port>` listener, which broke `koan play
         // --server <url>` because the remote TUI bridge builds its stream
         // URL off the GraphQL base.
-        let subsonic_merged = crate::subsonic::subsonic_router(db_path.clone());
+        // Built once and cloned: each build re-read the config and, on macOS,
+        // prompted the keychain for the Subsonic secret.
+        let subsonic_merged = crate::subsonic::subsonic_router(db_path);
         let subsonic_on_main = subsonic_merged.is_some();
+        let subsonic_dedicated = subsonic_merged.clone();
 
         let mut app = auth_app.merge(gql_app);
         if let Some(sub) = subsonic_merged {
@@ -280,7 +337,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // behavior for users who want Subsonic on its own port.
         let extra_sub_port = subsonic_port.filter(|p| *p != port);
         if let Some(sub_port) = extra_sub_port
-            && let Some(sub_app) = crate::subsonic::subsonic_router(db_path)
+            && let Some(sub_app) = subsonic_dedicated
         {
             let sub_addr = std::net::SocketAddr::new(bind, sub_port);
             match tokio::net::TcpListener::bind(sub_addr).await {
@@ -764,6 +821,34 @@ mod tests {
     async fn post_without_content_type_is_rejected() {
         let req = HttpRequest::post("/graphql").body(Body::empty()).unwrap();
         assert_eq!(run_browser(req).await, StatusCode::UNSUPPORTED_MEDIA_TYPE);
+    }
+
+    // -- Load perimeter --
+
+    #[tokio::test]
+    async fn load_perimeter_passes_requests_and_turns_panics_into_500s() {
+        async fn boom() -> &'static str {
+            panic!("resolver exploded");
+        }
+
+        let app = load_perimeter(
+            axum::Router::new()
+                .route("/graphql", post(ok))
+                .route("/boom", post(boom)),
+        );
+
+        let req = json_post("/graphql").body(Body::empty()).unwrap();
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            StatusCode::OK
+        );
+
+        // Without CatchPanicLayer this drops the connection with nothing logged.
+        let req = json_post("/boom").body(Body::empty()).unwrap();
+        assert_eq!(
+            app.oneshot(req).await.unwrap().status(),
+            StatusCode::INTERNAL_SERVER_ERROR
+        );
     }
 
     #[tokio::test]
