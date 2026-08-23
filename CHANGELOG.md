@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Remote tracks carried no quality figures at all.** Navidrome and any other OpenSubsonic server report `samplingRate`, `bitDepth` and `channelCount` on every song; koan's client did not parse them and the sync hardcoded all three to null. Every remote-only track in a synced library therefore had no sample rate and no bit depth — 5,058 of 5,058 in the library this was found on — so the format badge had nothing to show for them. For a player whose point is bit-perfect output, that is the wrong field to be missing. A full sync fills them in; a plain Subsonic server that does not report them still leaves them absent, because a missing sample rate is not 0 Hz.
+
 ## v0.26.0 (2026-08-23)
 
 ### Added
