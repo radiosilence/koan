@@ -350,12 +350,14 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
     let mut artist = None;
     let mut album = None;
 
-    // Later revisions win. An MP3 carrying both tags surfaces ID3v1 first and
-    // ID3v2 second, and ID3v1 is never the one you want: its fields are a fixed
-    // 30 bytes, so anything longer arrives silently truncated. Taking the first
-    // revision cost this library a set of tracks tagged
-    // "Golden Skans (David E Sugar R" — which then matched nothing on the
-    // server, because the server had the whole title.
+    // Later revisions win. Symphonia's log is time-ordered and `current()` is
+    // the *oldest* revision, not the best one — an MP3 carrying both tags
+    // surfaces ID3v1 first and ID3v2 second. ID3v1 is never the one you want:
+    // its fields are a fixed 30 bytes, so anything longer arrives silently
+    // truncated, and a truncated title then matches nothing on a remote server.
+    //
+    // This walk accumulates rather than calling `skip_to_latest()`, so a field
+    // present only in an older revision still fills a gap the newest one leaves.
     let mut log = reader.metadata();
     loop {
         if let Some(rev) = log.current() {
