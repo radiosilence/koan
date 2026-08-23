@@ -145,7 +145,7 @@ fn read_metadata_lofty(
         source: "local".to_string(),
         remote_id: None,
         remote_url: None,
-        album_added_at: None,
+        album_added_at: mtime.and_then(iso8601_utc),
     })
 }
 
@@ -198,8 +198,16 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         source: "local".to_string(),
         remote_id: None,
         remote_url: None,
-        album_added_at: None,
+        album_added_at: mtime.and_then(iso8601_utc),
     })
+}
+
+/// A unix timestamp as the same ISO 8601 UTC string a Subsonic server uses for
+/// `created`, so a library mixing local files and remote entries can be ordered
+/// by one column without comparing two date formats.
+fn iso8601_utc(unix_secs: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(unix_secs, 0)
+        .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
 }
 
 /// Probed audio properties from Symphonia.

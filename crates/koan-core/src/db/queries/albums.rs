@@ -15,8 +15,9 @@ pub fn get_or_create_album(
     total_tracks: Option<i32>,
     codec: Option<&str>,
     label: Option<&str>,
-    // `added_at`: remote sync passes the server's `created`; a local scan
-    // passes None and the album is stamped with the time it was first seen.
+    // `added_at`: remote sync passes the server's `created`, a local scan the
+    // earliest mtime among the album's files. Both ISO 8601 UTC, so the two
+    // sources sort against each other.
     remote_id: Option<&str>,
     added_at: Option<&str>,
 ) -> Result<i64, DbError> {
@@ -37,9 +38,10 @@ pub fn get_or_create_album(
                 date       = COALESCE(?2, date),
                 label      = COALESCE(?3, label),
                 remote_id  = COALESCE(?4, remote_id),
-                -- Fill only: rewriting on every rescan would leave every
-                -- album looking newly added.
-                added_at   = COALESCE(added_at, ?5)
+                -- Earliest wins. A record acquired over months should date
+                -- from its first file, not its last, and filling only would
+                -- freeze whichever file the first scan happened to reach.
+                added_at   = MIN(COALESCE(added_at, ?5), COALESCE(?5, added_at))
              WHERE id = ?6",
             params![codec, date, label, remote_id, added_at, id],
         )?;
@@ -48,7 +50,7 @@ pub fn get_or_create_album(
 
     conn.execute(
         "INSERT INTO albums (title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, COALESCE(?9, datetime('now')))",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at],
     )?;
     Ok(conn.last_insert_rowid())

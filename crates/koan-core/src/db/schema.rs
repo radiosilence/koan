@@ -188,8 +188,15 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         "ALTER TABLE organize_log ADD COLUMN mtime INTEGER",
         // When the album entered the library, so clients can offer a
         // recently-added ordering. Remote sync supplies the server's own
-        // `created`; a local scan has nothing better than the time it ran.
+        // `created`; a local scan the earliest mtime among the album's files.
         "ALTER TABLE albums ADD COLUMN added_at TEXT",
+        // Locally-scanned albums were briefly stamped with the time the scan
+        // ran, which pinned every one of them to the top of recently-added and
+        // buried what the server actually considered new. Clearing the
+        // scan-time values lets the next scan refill them from the files
+        // themselves; the server's own ISO 8601 dates are left alone.
+        "UPDATE albums SET added_at = NULL
+           WHERE added_at IS NOT NULL AND added_at NOT LIKE '%T%Z'",
     ];
     for sql in &migrations {
         match conn.execute(sql, []) {
@@ -207,6 +214,37 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 mod tests {
     use super::*;
     use crate::db::connection::Database;
+
+    #[test]
+    fn clears_scan_time_added_at_but_keeps_the_servers() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO artists (id, name) VALUES (1, 'Klaxons');
+             INSERT INTO albums (id, title, artist_id, added_at)
+               VALUES (1, 'Local', 1, '2026-08-23 12:14:57'),
+                      (2, 'Remote', 1, '2026-08-06T22:53:14.851697506Z'),
+                      (3, 'Neither', 1, NULL);",
+        )
+        .unwrap();
+
+        // Migrations live inside `create_tables` and are idempotent.
+        create_tables(&conn).unwrap();
+
+        let added = |id: i64| -> Option<String> {
+            conn.query_row("SELECT added_at FROM albums WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(added(1), None, "scan-time stamp cleared");
+        assert_eq!(
+            added(2).as_deref(),
+            Some("2026-08-06T22:53:14.851697506Z"),
+            "the server's own date is left alone"
+        );
+        assert_eq!(added(3), None);
+    }
 
     #[test]
     fn migrates_similar_artists_relationship_column() {
