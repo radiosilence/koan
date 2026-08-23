@@ -233,6 +233,7 @@ jobs:
       # and Apple silicon from a single download.
       - run: just macos-ffi "aarch64-apple-darwin x86_64-apple-darwin"
       - run: cd apps/macos && swift build -c release --arch arm64 --arch x86_64
+      - run: just macos-verify arm64 x86_64
       - run: just macos-dmg
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -263,6 +264,32 @@ jobs:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: v${{ needs.check-version.outputs.version }}
           generate_release_notes: true
+          # Prepended to the generated notes. Every direct download of the app
+          # hits Gatekeeper, and the dialog it shows offers only "Move to Trash"
+          # — so the way out belongs where people are already standing.
+          body: |
+            ## Install
+
+            ```bash
+            brew install radiosilence/koan/koan            # the CLI and TUI
+            brew install --cask radiosilence/koan/koan-app # the macOS app
+            ```
+
+            ### Opening `Koan.dmg` directly
+
+            The app is signed but not notarised, so macOS refuses it on first
+            open with "Apple could not verify koan is free of malware" and
+            offers only **Move to Trash**. Drag it to Applications, then:
+
+            ```bash
+            xattr -dr com.apple.quarantine /Applications/Koan.app
+            ```
+
+            It opens normally from then on. The Homebrew cask does this for you.
+            Notarising properly needs a paid Apple Developer account, which this
+            project does not have.
+
+            ---
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.dmg
@@ -315,13 +342,30 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
         run: |
+          set -euo pipefail
           if [ -z "$GITHUB_TOKEN" ]; then
             echo "RELEASE_TOKEN not set, skipping"
             exit 0
           fi
           VERSION="${{ needs.check-version.outputs.version }}"
-          ARM_SHA=$(sha256sum artifacts/koan-macos-arm64/koan-macos-arm64.tar.gz | awk '{print $1}')
-          INTEL_SHA=$(sha256sum artifacts/koan-macos-x86_64/koan-macos-x86_64.tar.gz | awk '{print $1}')
+          # Locate rather than assume, and stop if anything is missing.
+          #
+          # These were bare `sha256sum <path>` calls whose failure went nowhere:
+          # the DMG landed at a path this did not expect, sha256sum wrote its
+          # error to stderr, and the cask was published with `sha256 ""` — which
+          # Homebrew cannot install and nothing in the run flagged.
+          shasum_of() {
+            local file
+            file=$(find artifacts -type f -name "$1" | head -1)
+            if [ -z "$file" ]; then
+              echo "release artifact $1 not found under artifacts/" >&2
+              find artifacts -type f | sed 's/^/  /' >&2
+              exit 1
+            fi
+            sha256sum "$file" | awk '{print $1}'
+          }
+          ARM_SHA=$(shasum_of koan-macos-arm64.tar.gz)
+          INTEL_SHA=$(shasum_of koan-macos-x86_64.tar.gz)
           git clone "https://x-access-token:${GITHUB_TOKEN}@github.com/radiosilence/homebrew-koan.git" /tmp/tap
           cd /tmp/tap
           cat > Formula/koan.rb <<FORMULA
@@ -349,7 +393,7 @@ jobs:
           sed -i 's/^          //' Formula/koan.rb
           # The GUI ships as a cask beside the CLI formula. Named koan-app so
           # `brew install koan` stays unambiguously the command-line player.
-          DMG_SHA=$(sha256sum artifacts/koan-macos-app/Koan.dmg | awk '{print $1}')
+          DMG_SHA=$(shasum_of Koan.dmg)
           mkdir -p Casks
           cat > Casks/koan-app.rb <<CASK
           cask "koan-app" do
