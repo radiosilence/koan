@@ -215,6 +215,14 @@ final class LibraryModel {
         }
     }
 
+    /// Show the queue. Called after anything that starts playback outright, so
+    /// you end up looking at what you just started. Not called for "add to
+    /// queue" or "play next" — those are things you do while browsing, and
+    /// being thrown across the app for them would be rude.
+    func showQueue() {
+        section = .queue
+    }
+
     /// Jump straight to a thing from search: switch to the section it lives in,
     /// then push its detail view.
     /// The track that search sent you here for, so the album view can single it

@@ -98,6 +98,7 @@ struct PlayableArtwork: View {
             }.value
             loading = false
             player.playNow(trackIds: ids)
+            library.showQueue()
         }
     }
 }

@@ -38,6 +38,7 @@ struct RowPlayButton: View {
         guard !loading else { return }
         if let context = inContext {
             player.playNow(trackIds: context.trackIds, startingAt: context.startAt)
+            library.showQueue()
             return
         }
         loading = true
@@ -49,6 +50,7 @@ struct RowPlayButton: View {
             }.value
             loading = false
             player.playNow(trackIds: ids)
+            library.showQueue()
         }
     }
 }

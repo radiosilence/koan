@@ -50,11 +50,21 @@ struct PlayableMenu: View {
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
-        Button("Play") { act { player.playNow(trackIds: $0) } }
+        Button("Play") {
+            act {
+                player.playNow(trackIds: $0)
+                library.showQueue()
+            }
+        }
         Button("Play Next") { act { player.playNext(trackIds: $0) } }
         Button("Add to Queue") { act { player.enqueue(trackIds: $0) } }
         if playable.hasChildren {
-            Button("Shuffle") { act { player.playNow(trackIds: $0.shuffled()) } }
+            Button("Shuffle") {
+                act {
+                    player.playNow(trackIds: $0.shuffled())
+                    library.showQueue()
+                }
+            }
         }
 
         Divider()
@@ -202,6 +212,7 @@ struct PlayableHeaderButton: View {
                 }.value
                 loading = false
                 player.playNow(trackIds: ids)
+                library.showQueue()
             }
         } label: {
             ZStack {
