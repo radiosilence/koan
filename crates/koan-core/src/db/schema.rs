@@ -203,6 +203,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         // reopening can pick up where it left off rather than always in a
         // paused state.
         "ALTER TABLE playback_state ADD COLUMN was_playing INTEGER NOT NULL DEFAULT 0",
+        // Radio is a mode you leave on, not a per-session choice: having it
+        // switch itself off every launch is a setting that will not stay set.
+        "ALTER TABLE playback_state ADD COLUMN radio_enabled INTEGER NOT NULL DEFAULT 0",
         "UPDATE albums SET added_at = NULL
            WHERE added_at IS NOT NULL AND added_at NOT LIKE '%T%Z'",
     ];

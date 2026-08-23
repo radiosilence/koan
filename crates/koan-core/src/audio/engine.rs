@@ -207,6 +207,32 @@ impl Drop for AudioEngine {
             }
         }
 
+        // Then ask the unit itself. The flag above only proves *our* callback
+        // body is not executing; CoreAudio's IO proc can still be mid-cycle
+        // around it, and tearing down underneath that corrupts the buffer list
+        // it is holding — which is what trapped inside caulk's deallocator, in
+        // `AudioUnitUninitialize` and, before this teardown was reordered, in
+        // `AudioUnitSetProperty` (#89).
+        for _ in 0..200 {
+            let mut running: UInt32 = 0;
+            let mut size = mem::size_of::<UInt32>() as u32;
+            // SAFETY: querying a bool property on a unit we still own.
+            let status = unsafe {
+                AudioUnitGetProperty(
+                    self.audio_unit,
+                    kAudioOutputUnitProperty_IsRunning,
+                    kAudioUnitScope_Global,
+                    0,
+                    &mut running as *mut _ as *mut c_void,
+                    &mut size,
+                )
+            };
+            if status != 0 || running == 0 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+
         // Deliberately no `AudioUnitSetProperty` here.
         //
         // Removing the render callback before teardown looks like the safe

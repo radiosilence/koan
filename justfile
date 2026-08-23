@@ -88,6 +88,20 @@ macos-ffi *TARGETS:
 
 # Compile the SwiftUI app.
 macos-build: macos-ffi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # SwiftPM links libkoan_ffi.a through a systemLibrary target and linker
+    # flags, so it has no idea the library is an input: a Rust change with no
+    # Swift change leaves the previous binary in place and the app silently runs
+    # the old engine. Dropping the product when the library is newer forces the
+    # relink.
+    product={{app_dir}}/.build/release/Koan
+    for lib in target/release/libkoan_ffi.a target/universal/release/libkoan_ffi.a; do
+        if [ -f "$lib" ] && [ -f "$product" ] && [ "$lib" -nt "$product" ]; then
+            echo "koan-ffi is newer than the built app — forcing a relink"
+            rm -f "$product"
+        fi
+    done
     cd {{app_dir}} && swift build -c release
 
 # Assemble Koan.app.

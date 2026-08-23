@@ -353,6 +353,7 @@ impl MutationRoot {
             cursor_path.as_deref(),
             position_ms,
             state.playback_state() == koan_core::player::state::PlaybackState::Playing,
+            state.radio_mode(),
         )
         .map_err(|e| super::internal_error("db", e))?;
 

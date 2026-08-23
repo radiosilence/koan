@@ -709,6 +709,7 @@ impl KoanEngine {
             cursor_path.as_deref(),
             self.state.position_ms(),
             self.state.playback_state() == PlaybackState::Playing,
+            self.state.radio_mode(),
         )
         .map_err(fav_err)
     }
@@ -726,6 +727,9 @@ impl KoanEngine {
         let Some(saved) = queries::load_playback_state(&db.conn).map_err(fav_err)? else {
             return Ok(0);
         };
+
+        // Restored whether or not there is a queue left to play.
+        self.state.set_radio_mode(saved.radio_enabled);
 
         let (items, pending) = restore_items(&db, &saved.items);
         if items.is_empty() {

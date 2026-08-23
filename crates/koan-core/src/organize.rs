@@ -1901,7 +1901,8 @@ mod tests {
             0,
         )
         .unwrap();
-        queries::save_playback_state(&db.conn, &[item], Some(&source_str), 0, false).unwrap();
+        queries::save_playback_state(&db.conn, &[item], Some(&source_str), 0, false, false)
+            .unwrap();
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
         let dest = result.moves[0].to.clone();
