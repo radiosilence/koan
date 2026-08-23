@@ -4,6 +4,14 @@
 
 ### Added
 
+- **File organization in the macOS app.** Dropping a folder of files on the queue indexes them into the library where they lie and queues them; **Organize Files…** in the queue or library context menu then opens a sheet that previews where a pattern puts each one, and moves them when you say so.
+
+  The preview is the feature. Every selected file gets a row showing its destination relative to the library folder, *including the ones that can't move* — a destination already occupied, or two files resolving to the same path, is an orange row next to the path it collided with rather than a number in an error count underneath. Nothing is ever overwritten, so the only way that matters is if you can see it before pressing the button.
+
+  Patterns come from `[organize.patterns]`, shared with the CLI and TUI, with a free-text field for one you only want once. With more than one library folder configured you pick which one to organize into; the CLI's behaviour (the first) is the default.
+
+  Dropped files get library rows *where they are*, not in the music tree — importing and organizing are separate on purpose, so files land in the library only after you have seen where they are going.
+
 - **Play history.** koan never recorded its own plays: `play_history` existed for the radio feature, and its only production writer was the inbound Subsonic scrobble route — i.e. plays arrived when *other* clients scrobbled to koan, and playing a track in koan itself wrote nothing.
 
   A track is now written to history the moment it starts, not once it has been listened to for long enough. History answers "what did I put on, and in what order"; putting something on and skipping two seconds in is still a thing you did, and a log with a threshold on it is a log with holes in it. How long it was actually heard for is filled in afterwards, from position deltas — so a pause adds nothing and a seek does not credit the stretch it skipped.
@@ -11,6 +19,10 @@
   The macOS app gains a **History** section (⌘5) grouped by day. Read-only: rows link through to the album and the artist and carry the usual play/queue menu, but the only thing you can change is the log itself — select and ⌫ to forget entries, the same as queue items.
 
   Plays of tracks that came from a remote server are scrobbled to it. `SubsonicClient::scrobble` had been written and never called.
+
+### Changed
+
+- **`organizePreview` and `organizeExecute` both return `OrganizePlan`** (was `OrganizePreview` / `OrganizeResult`), an ordered list of per-file entries carrying `outcome` (`MOVE` / `UNCHANGED` / `CONFLICT` / `ERROR`), the destination, and the reason where there is one. **Breaking for GraphQL clients**: `moves`, `errors` and `skipped` are gone. A conflict previously arrived as a string in `errors` with the destination buried in the message, which is unusable for the thing a client most needs to render — a file about to be blocked, next to what is blocking it. The TUI's preview gains the same rows.
 
 ### Fixed
 

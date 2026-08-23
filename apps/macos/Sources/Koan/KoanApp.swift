@@ -13,6 +13,7 @@ final class AppState {
     let library: LibraryModel
     let search: SearchModel
     let art: CoverArtCache
+    let organize: OrganizeModel
     private var nowPlaying: NowPlayingCentre?
     private var keys: KeyMonitor?
 
@@ -26,6 +27,7 @@ final class AppState {
         self.search = SearchModel(engine: engine, library: library)
         let art = CoverArtCache(engine: engine)
         self.art = art
+        self.organize = OrganizeModel(engine: engine)
 
         // Control Center and the media keys ride the player's existing poll.
         let centre = NowPlayingCentre(player: player, art: art)
@@ -57,6 +59,7 @@ struct KoanApp: App {
                         .environment(state.library)
                         .environment(state.search)
                         .environment(state.art)
+                        .environment(state.organize)
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)

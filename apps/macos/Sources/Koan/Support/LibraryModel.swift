@@ -461,11 +461,18 @@ final class LibraryModel {
             }.value
             scanSummary = result
             isScanning = false
-            // The library moved underneath us — drop the caches and reload.
-            albums = []
-            artists = []
-            loadStats()
-            load()
+            libraryChanged()
         }
+    }
+
+    /// Rows appeared or vanished underneath us. Albums and artists are loaded
+    /// once and filtered in memory, so they have to be dropped rather than
+    /// merged — anything else leaves the browser showing a library that no
+    /// longer exists.
+    func libraryChanged() {
+        albums = []
+        artists = []
+        loadStats()
+        load()
     }
 }

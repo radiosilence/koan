@@ -182,6 +182,8 @@ GraphQL remains the surface for clients that genuinely *can't* link the core: th
 
 It shares one library and one config with the CLI and TUI, so a queue saved in one shows up in the others. Visualizers are deliberately absent — that is what the TUI is for.
 
+Dropping a folder from Finder onto the queue indexes it into the library and plays it; **Organize Files…** then previews where a pattern puts each file — collisions included — before moving anything. See [File Organization](docs/guide/file-organization.md).
+
 ```bash
 just macos-run     # build and launch
 just macos-dmg     # package for release

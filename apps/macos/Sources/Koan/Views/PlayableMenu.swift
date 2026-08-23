@@ -48,6 +48,7 @@ struct PlayableMenu: View {
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
+    @Environment(OrganizeModel.self) private var organize
 
     var body: some View {
         Button("Play") {
@@ -76,6 +77,9 @@ struct PlayableMenu: View {
             }
         }
         Button("Copy Share Link") { share() }
+        Button("Organize Files…") {
+            act { organize.begin(title: playable.name, trackIds: $0) }
+        }
 
         if case .track(let track) = playable, let albumId = track.albumId {
             Divider()

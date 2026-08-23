@@ -431,6 +431,111 @@ pub struct SyncSummary {
     pub albums_failed: u32,
 }
 
+/// A named pattern from `[organize.patterns]`.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct OrganizePattern {
+    pub name: String,
+    pub pattern: String,
+    /// The one `[organize] default` names. Preselected when the sheet opens.
+    pub is_default: bool,
+}
+
+/// What the pattern means for one file.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanOutcome {
+    /// Will be moved, or was.
+    Move,
+    /// Already exactly where the pattern puts it.
+    Unchanged,
+    /// Something holds the destination. Nothing is ever overwritten, so this
+    /// file stays where it is.
+    Conflict,
+    /// The pattern produced nothing usable, or the move failed.
+    Error,
+}
+
+/// One file's row in the plan: where it is, where the pattern puts it, and
+/// whether that can happen.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct OrganizeEntry {
+    /// `None` for a file the library holds no row for.
+    pub track_id: Option<i64>,
+    pub from_path: String,
+    /// `None` only when the pattern failed before producing a path at all.
+    pub to_path: Option<String>,
+    pub outcome: PlanOutcome,
+    /// Why this file isn't moving. `None` when it is.
+    pub reason: Option<String>,
+    /// Cover art, cue sheets and logs travelling with this file.
+    pub ancillary_count: u32,
+}
+
+/// Every selected file and what happens to it, in plan order.
+///
+/// Preview and execute answer in the same shape, so the table the user
+/// confirmed is the table that reports what happened.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct OrganizePlan {
+    pub entries: Vec<OrganizeEntry>,
+    pub moved_count: u32,
+    pub unchanged_count: u32,
+    pub conflict_count: u32,
+    pub error_count: u32,
+    /// Selected tracks with no local file to move — remote-only, or gone from
+    /// disk. Counted so a selection of 20 yielding 12 rows says why.
+    pub unresolved: u32,
+}
+
+impl OrganizePlan {
+    /// Build from a core result. `requested` is how many tracks were asked
+    /// for, when the caller named a set; the shortfall is what never resolved
+    /// to a local file.
+    pub(crate) fn build(
+        result: koan_core::organize::OrganizeResult,
+        requested: Option<usize>,
+    ) -> Self {
+        use koan_core::organize::PlanOutcome as Core;
+        let conflict_count = result.conflicts().count() as u32;
+        Self {
+            moved_count: result.moved_count() as u32,
+            unchanged_count: result.unchanged_count() as u32,
+            conflict_count,
+            error_count: result.failures().count() as u32 - conflict_count,
+            unresolved: requested
+                .map(|n| n.saturating_sub(result.entries.len()) as u32)
+                .unwrap_or(0),
+            entries: result
+                .entries
+                .into_iter()
+                .map(|e| OrganizeEntry {
+                    track_id: e.track_id,
+                    from_path: e.from.to_string_lossy().into_owned(),
+                    to_path: e.to.map(|t| t.to_string_lossy().into_owned()),
+                    reason: e.outcome.reason().map(str::to_owned),
+                    ancillary_count: e.ancillary.len() as u32,
+                    outcome: match e.outcome {
+                        Core::Move => PlanOutcome::Move,
+                        Core::Unchanged => PlanOutcome::Unchanged,
+                        Core::Conflict(_) => PlanOutcome::Conflict,
+                        Core::Error(_) => PlanOutcome::Error,
+                    },
+                })
+                .collect(),
+        }
+    }
+}
+
+/// What importing files from outside the library produced.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct ImportSummary {
+    /// Library rows for the imported files, in walk order — what the caller
+    /// queues.
+    pub track_ids: Vec<i64>,
+    pub added: u32,
+    pub updated: u32,
+    pub errors: Vec<String>,
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct SimilarArtist {
     pub artist_id: i64,

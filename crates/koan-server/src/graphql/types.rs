@@ -584,29 +584,74 @@ pub(super) struct GqlCoverArt {
     pub mime: String,
 }
 
-#[derive(SimpleObject)]
-#[graphql(name = "OrganizePreview")]
-pub(super) struct GqlOrganizePreview {
-    pub moves: Vec<GqlFileMove>,
-    pub errors: Vec<String>,
-    pub skipped: i32,
+/// What the pattern means for one file.
+#[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
+#[graphql(name = "PlanOutcome")]
+pub(super) enum GqlPlanOutcome {
+    /// Will be moved, or was.
+    Move,
+    /// Already exactly where the pattern puts it.
+    Unchanged,
+    /// Something holds the destination. Nothing is ever overwritten, so the
+    /// file stays where it is.
+    Conflict,
+    /// The pattern produced nothing usable, or the move failed.
+    Error,
 }
 
+/// One file's place in a plan.
 #[derive(SimpleObject)]
 #[graphql(name = "FileMove")]
 pub(super) struct GqlFileMove {
     /// Null for a file the library doesn't hold a row for.
     pub track_id: Option<i64>,
     pub from_path: String,
-    pub to_path: String,
+    /// Null only when the pattern failed before producing a path at all.
+    pub to_path: Option<String>,
+    pub outcome: GqlPlanOutcome,
+    /// Why this file isn't moving. Null when it is.
+    pub reason: Option<String>,
 }
 
+/// Every selected file and what happens to it, in plan order. Preview and
+/// execute answer in the same shape, so one table can render either.
 #[derive(SimpleObject)]
-#[graphql(name = "OrganizeResult")]
-pub(super) struct GqlOrganizeResult {
+#[graphql(name = "OrganizePlan")]
+pub(super) struct GqlOrganizePlan {
+    pub entries: Vec<GqlFileMove>,
     pub moved_count: i32,
-    pub errors: Vec<String>,
-    pub skipped: i32,
+    pub unchanged_count: i32,
+    pub conflict_count: i32,
+    pub error_count: i32,
+}
+
+impl From<koan_core::organize::OrganizeResult> for GqlOrganizePlan {
+    fn from(result: koan_core::organize::OrganizeResult) -> Self {
+        use koan_core::organize::PlanOutcome;
+        let conflict_count = result.conflicts().count() as i32;
+        Self {
+            moved_count: result.moved_count() as i32,
+            unchanged_count: result.unchanged_count() as i32,
+            conflict_count,
+            error_count: result.failures().count() as i32 - conflict_count,
+            entries: result
+                .entries
+                .into_iter()
+                .map(|e| GqlFileMove {
+                    track_id: e.track_id,
+                    from_path: e.from.to_string_lossy().into_owned(),
+                    to_path: e.to.map(|t| t.to_string_lossy().into_owned()),
+                    reason: e.outcome.reason().map(str::to_owned),
+                    outcome: match e.outcome {
+                        PlanOutcome::Move => GqlPlanOutcome::Move,
+                        PlanOutcome::Unchanged => GqlPlanOutcome::Unchanged,
+                        PlanOutcome::Conflict(_) => GqlPlanOutcome::Conflict,
+                        PlanOutcome::Error(_) => GqlPlanOutcome::Error,
+                    },
+                })
+                .collect(),
+        }
+    }
 }
 
 /// A handle to work running on a detached thread. Poll it with the `job` query.

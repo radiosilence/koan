@@ -111,7 +111,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |
 | `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats, snapshots, `batch` (SQL-side track filtering, batched parent→child reads) |
-| `index/scanner.rs` | Parallel library scan: walkdir → rayon → sequential DB upsert |
+| `index/scanner.rs` | Parallel library scan: walkdir → rayon → sequential DB upsert. `import_paths` indexes named files where they lie (Finder drops), removing nothing |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
 | `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 59 built-in functions |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
@@ -119,7 +119,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/sync.rs` | Parallel library sync: paginate → rayon fetch → batch DB write |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
 | `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
-| `organize.rs` | File rename using format strings. Preview/execute/undo. Moves ancillary files |
+| `organize.rs` | File rename using format strings. Preview/execute/undo — one `PlanEntry` per file carrying its destination and outcome. Moves ancillary files |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain) |
 
 ### koan-tui (`crates/koan-tui/src/`)
@@ -164,6 +164,8 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |
 | `Views/HistoryView.swift` | Play history, grouped by day — read-only, select and ⌫ to forget |
+| `Views/OrganizeSheet.swift` | Organize: pattern + destination pickers, preview table with conflicts flagged per row |
+| `Support/OrganizeModel.swift` | Organize sheet state — debounced preview, generation-guarded so a slow plan can't land on a newer one |
 
 ### koan-server (`crates/koan-server/src/`)
 

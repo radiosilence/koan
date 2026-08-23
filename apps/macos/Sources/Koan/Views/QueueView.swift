@@ -10,6 +10,7 @@ import SwiftUI
 struct QueueView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
+    @Environment(OrganizeModel.self) private var organize
 
     @State private var savingSnapshot = false
     @State private var snapshotName = ""
@@ -73,6 +74,12 @@ struct QueueView: View {
                     selection = Set(rows.map(\.id))
                 }
             }
+        }
+        // On the whole stage, not the List: an empty queue is exactly when you
+        // want to drop a folder on it, and it has no rows to land on.
+        .dropDestination(for: URL.self) { urls, _ in
+            player.importFiles(urls) { library.libraryChanged() }
+            return true
         }
         .alert("Save Queue", isPresented: $savingSnapshot) {
             TextField("Name", text: $snapshotName)
@@ -165,6 +172,7 @@ struct QueueView: View {
             player.remove(itemIds: group.items.map(\.queueItemId))
         }
         Divider()
+        organizeButton(trackIds: group.items.compactMap(\.trackId), title: group.album)
         if let trackId = group.items.compactMap(\.trackId).first {
             Button("Show in Library") { showInLibrary(trackId: trackId, highlight: false) }
         }
@@ -203,6 +211,7 @@ struct QueueView: View {
         Button("Remove") { player.remove(itemIds: [item.queueItemId]) }
         if let trackId = item.trackId {
             Divider()
+            organizeButton(trackIds: [trackId], title: item.title)
             Button("Favourite") {
                 player.toggleFavourite(trackId: trackId)
                 library.refreshFavourites()
@@ -256,7 +265,29 @@ struct QueueView: View {
             }
         } else {
             Button("Remove") { player.remove(itemIds: itemIds(in: ids)) }
+            Divider()
+            organizeButton(trackIds: trackIds(in: ids), title: nil)
         }
+    }
+
+    /// Library track IDs behind a set of rows. A queue item with no row — a
+    /// file whose import failed — has no metadata to build a path from.
+    private func trackIds(in rowIds: Set<String>) -> [Int64] {
+        let wanted = Set(itemIds(in: rowIds))
+        return player.queue.filter { wanted.contains($0.queueItemId) }.compactMap(\.trackId)
+    }
+
+    /// `title` names the one thing being organized; a multi-selection has no
+    /// name, so it is described by its size instead.
+    @ViewBuilder
+    private func organizeButton(trackIds: [Int64], title: String?) -> some View {
+        Button("Organize Files…") {
+            organize.begin(
+                title: title ?? Format.count(Int64(trackIds.count), "track"),
+                trackIds: trackIds
+            )
+        }
+        .disabled(trackIds.isEmpty)
     }
 
     // MARK: - Reordering

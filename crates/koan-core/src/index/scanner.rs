@@ -288,6 +288,108 @@ fn isolate_read(
     }
 }
 
+/// What an import of specific files produced.
+#[derive(Debug, Default)]
+pub struct ImportResult {
+    /// Library rows for the imported files, in the order their paths were
+    /// walked. This is what a caller queues.
+    pub track_ids: Vec<i64>,
+    pub added: usize,
+    pub updated: usize,
+    pub errors: Vec<(PathBuf, String)>,
+}
+
+/// Index specific files into the library, wherever they live.
+///
+/// This is the drop-a-folder-on-the-queue path: the files named here are not
+/// under a configured library folder, and organize is what moves them there
+/// afterwards. Nothing is ever removed — the caller named these paths, so there
+/// is no directory listing to reconcile against and nothing to prune, which is
+/// what separates this from `scan_folder`.
+///
+/// Directories are walked recursively. Order is by path, so an album lands in
+/// the order its files are numbered.
+pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
+    let mut result = ImportResult::default();
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for path in paths {
+        let mut found: Vec<PathBuf> = walkdir::WalkDir::new(path)
+            .follow_links(true)
+            .into_iter()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_type().is_file() && is_audio_file(e.path()))
+            .map(|e| e.path().to_path_buf())
+            .collect();
+        found.sort();
+        // A drop can name both a folder and a file inside it.
+        files.extend(found.into_iter().filter(|f| seen.insert(f.clone())));
+    }
+
+    if files.is_empty() {
+        return result;
+    }
+
+    // Tag reads are the slow part and independent per file; the writes are not.
+    let read: Vec<(PathBuf, Result<TrackMeta, String>)> = files
+        .par_iter()
+        .map(|path| (path.clone(), isolate_read(path, metadata::read_metadata)))
+        .collect();
+
+    let tx = match db.conn.unchecked_transaction() {
+        Ok(tx) => tx,
+        Err(e) => {
+            result
+                .errors
+                .push((PathBuf::new(), format!("db error: {e}")));
+            return result;
+        }
+    };
+
+    for (path, meta_result) in read {
+        let meta = match meta_result {
+            Ok(meta) => meta,
+            Err(e) => {
+                result.errors.push((path, e));
+                continue;
+            }
+        };
+        match queries::upsert_track_status(&tx, &meta) {
+            Ok((track_id, is_new)) => {
+                if is_new {
+                    result.added += 1;
+                } else {
+                    result.updated += 1;
+                }
+                result.track_ids.push(track_id);
+                if let Err(e) = queries::update_scan_cache(
+                    &tx,
+                    meta.path.as_deref().unwrap_or(""),
+                    meta.mtime.unwrap_or(0),
+                    meta.size_bytes.unwrap_or(0),
+                    track_id,
+                ) {
+                    // Not fatal, but every future scan re-reads this file's tags.
+                    log::warn!("failed to cache {}: {}", path.display(), e);
+                }
+            }
+            Err(e) => result.errors.push((path, format!("db error: {e}"))),
+        }
+    }
+
+    if let Err(e) = tx.commit() {
+        result.track_ids.clear();
+        result.added = 0;
+        result.updated = 0;
+        result
+            .errors
+            .push((PathBuf::new(), format!("db error: {e}")));
+    }
+
+    result
+}
+
 /// Scan all configured library folders.
 pub fn full_scan(
     db: &Database,
@@ -435,6 +537,65 @@ mod tests {
         // Verify the track exists in the DB.
         let stats = queries::library_stats(&db.conn).unwrap();
         assert_eq!(stats.total_tracks, 1, "expected 1 track in DB");
+    }
+
+    #[test]
+    fn import_paths_indexes_files_where_they_lie() {
+        let dir = tempfile::tempdir().unwrap();
+        // Deliberately nothing to do with a library folder — this is the
+        // drag-a-rip-onto-the-queue case.
+        let drop = dir.path().join("Downloads/rip");
+        std::fs::create_dir_all(&drop).unwrap();
+        test_utils::generate_wav(&drop.join("01.wav"), 44100, 1, 0.2, 16);
+        test_utils::generate_wav(&drop.join("02.wav"), 44100, 1, 0.2, 16);
+        std::fs::write(drop.join("notes.txt"), b"not music").unwrap();
+
+        let db = test_db(dir.path());
+        let result = import_paths(&db, std::slice::from_ref(&drop));
+
+        assert_eq!(result.added, 2);
+        assert_eq!(result.track_ids.len(), 2, "errors: {:?}", result.errors);
+        assert!(result.errors.is_empty(), "errors: {:?}", result.errors);
+
+        // The rows point at where the files still are; organize is what moves them.
+        for id in &result.track_ids {
+            let row = queries::get_track_row(&db.conn, *id).unwrap().unwrap();
+            assert!(row.path.unwrap().starts_with(drop.to_str().unwrap()));
+        }
+    }
+
+    /// Dropping the same rip twice queues it again without duplicating rows.
+    #[test]
+    fn import_paths_is_idempotent() {
+        let dir = tempfile::tempdir().unwrap();
+        let drop = dir.path().join("rip");
+        std::fs::create_dir_all(&drop).unwrap();
+        test_utils::generate_wav(&drop.join("a.wav"), 44100, 1, 0.2, 16);
+
+        let db = test_db(dir.path());
+        let first = import_paths(&db, std::slice::from_ref(&drop));
+        let second = import_paths(&db, std::slice::from_ref(&drop));
+
+        assert_eq!(first.added, 1);
+        assert_eq!(second.added, 0);
+        assert_eq!(second.updated, 1);
+        assert_eq!(first.track_ids, second.track_ids);
+        assert_eq!(queries::library_stats(&db.conn).unwrap().total_tracks, 1);
+    }
+
+    /// A drop can name a folder and a file inside it; the file is imported once.
+    #[test]
+    fn import_paths_deduplicates_overlapping_selections() {
+        let dir = tempfile::tempdir().unwrap();
+        let drop = dir.path().join("rip");
+        std::fs::create_dir_all(&drop).unwrap();
+        let track = drop.join("a.wav");
+        test_utils::generate_wav(&track, 44100, 1, 0.2, 16);
+
+        let db = test_db(dir.path());
+        let result = import_paths(&db, &[drop.clone(), track.clone()]);
+
+        assert_eq!(result.track_ids.len(), 1);
     }
 
     #[test]

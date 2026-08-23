@@ -1,8 +1,18 @@
 # File Organization
 
-koan can rename and reorganize your music library using fb2k-compatible format strings, directly from the TUI. No external tools needed.
+koan can rename and reorganize your music library using fb2k-compatible format strings, from the TUI or the macOS app. No external tools needed.
 
-## Quick start
+## In the macOS app
+
+1. Select tracks in the queue, or an album or artist in the library
+2. **Organize Files…** from the context menu
+3. Pick a pattern, and a library folder if you have more than one
+4. Read the preview
+5. **Move Files**
+
+Dropping a folder of files from Finder onto the queue indexes them into the library where they are and queues them, which is the usual way in: drop a rip, listen to it, then organize it into the tree once you are happy. Importing does not move anything -- files land in the music tree only after you have seen where they are going.
+
+## In the TUI
 
 1. Open the TUI: `koan`
 2. Press `e` to enter queue edit mode
@@ -15,9 +25,22 @@ koan can rename and reorganize your music library using fb2k-compatible format s
 
 Playlist paths update automatically. Playback continues uninterrupted (Unix rename preserves open file descriptors). Ancillary files (cover.jpg, .cue, .log) move with the music. Empty directories are cleaned up.
 
+## Reading the preview
+
+Every selected file gets a row, whatever happens to it:
+
+| | |
+|---|---|
+| **→** | Moving. The destination is shown relative to the library folder. |
+| **✓** | Already exactly where the pattern puts it. Nothing to do. |
+| **⚠** | Blocked. Something already holds that path, or two files in this run resolve to it. The file stays where it is. |
+| **✗** | The pattern produced nothing usable for this file. |
+
+A blocked file keeps its row next to the destination it collided with, rather than being counted up underneath. Nothing is ever overwritten, and that guarantee is only worth something if you can see what it saved you from before you commit.
+
 ## Destination
 
-Files are organized into the **first configured library folder** (from `[library] folders` in your config). If you have multiple library folders, the first one is always the destination. The format pattern generates the relative path within that folder.
+Files are organized into a **configured library folder** (from `[library] folders` in your config). The CLI and TUI use the first one; the macOS app lets you pick when there is more than one. The format pattern generates the relative path within that folder.
 
 For example, with `folders = ["/Volumes/Music/library"]` and the `standard` pattern, a track becomes:
 
@@ -72,7 +95,7 @@ See [Format Strings](../format-strings.md) for the complete syntax reference and
 
 Music files are irreplaceable, so organize refuses anything it can't do without risk rather than doing its best.
 
-- **Nothing is ever overwritten.** Two tracks that resolve to the same destination, or a destination that already holds a file, are reported as errors and skipped -- the second file stays exactly where it is. On macOS the check is case-insensitive, because `Rain.flac` and `RAIN.flac` are one file there.
+- **Nothing is ever overwritten.** Two tracks that resolve to the same destination, or a destination that already holds a file, are flagged as conflicts in the preview -- the second file stays exactly where it is. On macOS the check is case-insensitive, because `Rain.flac` and `RAIN.flac` are one file there.
 - **Preview matches execute.** Both read metadata through the same resolver, so the paths you confirm are the paths that get used.
 - **A pattern that produces an empty path component is refused.** An unknown function (`$nun` for `$num`) is a parse error rather than a silently empty result, and `..` or `.` components are errors, not something to strip.
 - **Long titles are shortened, not rejected.** A destination name is capped below the filesystem's limit, extension included.
