@@ -6,16 +6,20 @@ struct ArtistBrowser: View {
 
     var body: some View {
         List(library.visibleArtists, id: \.id) { artist in
-            NavigationLink(value: ArtistRoute(id: artist.id)) {
-                HStack(spacing: 10) {
-                    Image(systemName: "music.mic")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .frame(width: 18)
-                    Text(artist.name)
-                }
-                .padding(.vertical, 2)
+            HStack(spacing: 10) {
+                Image(systemName: "music.mic")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 18)
+                Text(artist.name)
+                Spacer()
             }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+            // Not a NavigationLink: it consumes the press that starts a drag.
+            .onTapGesture(count: 2) { library.reveal(artist: artist.id) }
+            .contextMenu { PlayableMenu(playable: .artist(id: artist.id, name: artist.name)) }
+            .draggablePlayable(.artist(id: artist.id, name: artist.name))
         }
         .overlay {
             if library.visibleArtists.isEmpty {

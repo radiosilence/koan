@@ -42,8 +42,11 @@ struct TrackListView: View {
                             )
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
-                            .contextMenu { PlayableMenu(playable: .track(track)) }
+                            // Drag before the tap gesture: a tap recogniser
+                            // registered first can claim the press and the drag
+                            // never starts.
                             .draggablePlayable(.track(track))
+                            .contextMenu { PlayableMenu(playable: .track(track)) }
                             // Queues the whole list and starts here, so playing
                             // one track off an album keeps the rest behind it.
                             .onTapGesture(count: 2) {

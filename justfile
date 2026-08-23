@@ -97,6 +97,16 @@ macos-bundle: macos-build
         <key>LSMinimumSystemVersion</key><string>14.0</string>
         <key>NSHighResolutionCapable</key><true/>
         <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
+        <key>UTExportedTypeDeclarations</key>
+        <array>
+            <dict>
+                <key>UTTypeIdentifier</key><string>cc.blit.koan.playable</string>
+                <key>UTTypeDescription</key><string>koan playable</string>
+                <key>UTTypeConformsTo</key>
+                <array><string>public.data</string></array>
+                <key>UTTypeTagSpecification</key><dict/>
+            </dict>
+        </array>
     </dict>
     </plist>
     PLIST
