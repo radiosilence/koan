@@ -13,18 +13,17 @@ struct SidebarView: View {
         @Bindable var library = library
         @Bindable var search = search
 
-        // Not `$library.section` directly: choosing the section you are already
-        // in should take you back to its root, which is otherwise a trip out to
-        // another section and back.
         List(selection: Binding(
-            get: { library.section },
+            get: { library.navSelection },
             set: { chosen in
                 guard let chosen else { return }
-                if chosen == library.section {
-                    library.popToRoot()
-                } else {
-                    library.section = chosen
-                }
+                // Choosing a section always lands on its root — including the
+                // one you are already in, which is otherwise a trip out to
+                // another section and back. `navSelection` follows the detail
+                // stack, so this also covers choosing Albums from inside an
+                // album you reached through Favourites.
+                library.section = chosen
+                library.popToRoot()
             }
         )) {
             Section {
