@@ -31,12 +31,9 @@ struct AlbumArtwork: View {
                         .fill(.quaternary)
                         .overlay {
                             if isLoading {
-                                ProgressView()
-                                    .controlSize(.small)
+                                ProgressView().controlSize(.small)
                             } else {
-                                Image(systemName: "music.note")
-                                    .font(.system(size: 20, weight: .light))
-                                    .foregroundStyle(.tertiary)
+                                EnsoPlaceholder()
                             }
                         }
                 }
@@ -60,5 +57,34 @@ struct AlbumArtwork: View {
         case .album(let id): cache.art(albumId: id)
         case .track(let id): cache.art(trackId: id)
         }
+    }
+}
+
+
+/// Our own stand-in when a record has no artwork.
+///
+/// The app icon's ensō, faded right back — a broken ring drawn in one stroke.
+/// Better than the server's placeholder, which is a branded blue vinyl that
+/// looks like real art until you notice every artless album has the same one,
+/// and better than a music-note glyph, which says nothing about koan.
+///
+/// Drawn rather than shipped as an asset so it stays crisp at any size and
+/// picks up the surrounding colour scheme.
+struct EnsoPlaceholder: View {
+    var body: some View {
+        GeometryReader { geo in
+            let side = min(geo.size.width, geo.size.height)
+            Circle()
+                // The gap is the ensō's: a circle left deliberately unclosed.
+                .trim(from: 0.04, to: 0.96)
+                .stroke(
+                    .tertiary,
+                    style: StrokeStyle(lineWidth: side * 0.09, lineCap: .round)
+                )
+                .rotationEffect(.degrees(125))
+                .padding(side * 0.24)
+                .frame(width: geo.size.width, height: geo.size.height)
+        }
+        .opacity(0.55)
     }
 }

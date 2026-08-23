@@ -96,22 +96,17 @@ impl MutationRoot {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
-        let mut items = Vec::new();
-        let mut queue_item_ids = Vec::new();
-        let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
-        for &tid in &track_ids {
-            if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid) {
-                let item = track_to_playlist_item(&track, &db);
-                queue_item_ids.push(item.id.0.to_string());
-                if matches!(
-                    item.load_state,
-                    koan_core::player::state::LoadState::Pending
-                ) {
-                    pending_downloads.push((tid, item.id));
-                }
-                items.push(item);
-            }
-        }
+        // One query for the rows and one config load for the batch: building
+        // items per track re-read config.toml every time, which is what made a
+        // large queue add crawl.
+        let rows = queries::tracks_by_ids(&db.conn, &track_ids).unwrap_or_default();
+        let items = koan_core::helpers::playlist_items_for_tracks(&db, &rows);
+        let queue_item_ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
+        let pending_downloads: Vec<(i64, QueueItemId)> = items
+            .iter()
+            .filter(|i| matches!(i.load_state, koan_core::player::state::LoadState::Pending))
+            .filter_map(|i| i.db_id.map(|id| (id, i.id)))
+            .collect();
 
         let count = items.len() as i32;
         if !items.is_empty() {
@@ -153,22 +148,17 @@ impl MutationRoot {
             .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
 
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        let mut items = Vec::new();
-        let mut queue_item_ids = Vec::new();
-        let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
-        for &tid in &track_ids {
-            if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid) {
-                let item = track_to_playlist_item(&track, &db);
-                queue_item_ids.push(item.id.0.to_string());
-                if matches!(
-                    item.load_state,
-                    koan_core::player::state::LoadState::Pending
-                ) {
-                    pending_downloads.push((tid, item.id));
-                }
-                items.push(item);
-            }
-        }
+        // One query for the rows and one config load for the batch: building
+        // items per track re-read config.toml every time, which is what made a
+        // large queue add crawl.
+        let rows = queries::tracks_by_ids(&db.conn, &track_ids).unwrap_or_default();
+        let items = koan_core::helpers::playlist_items_for_tracks(&db, &rows);
+        let queue_item_ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
+        let pending_downloads: Vec<(i64, QueueItemId)> = items
+            .iter()
+            .filter(|i| matches!(i.load_state, koan_core::player::state::LoadState::Pending))
+            .filter_map(|i| i.db_id.map(|id| (id, i.id)))
+            .collect();
 
         let count = items.len() as i32;
         let first_id = items.first().map(|i| i.id);

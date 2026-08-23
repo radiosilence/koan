@@ -1016,22 +1016,22 @@ impl KoanEngine {
 
     /// Resolve track IDs into playlist items, collecting the ones that still
     /// need downloading. Skips IDs that aren't in the library.
+    ///
+    /// One query for the rows and one config load for the batch. Doing either
+    /// per track is what made adding an album — never mind an artist — take
+    /// long enough to be worth a progress indicator.
     fn build_items(
         &self,
         db: &Database,
         track_ids: &[i64],
     ) -> (Vec<PlaylistItem>, Vec<(i64, QueueItemId)>) {
-        let mut items = Vec::with_capacity(track_ids.len());
-        let mut pending = Vec::new();
-        for &tid in track_ids {
-            if let Ok(Some(row)) = queries::get_track_row(&db.conn, tid) {
-                let item = track_to_playlist_item(&row, db);
-                if matches!(item.load_state, LoadState::Pending) {
-                    pending.push((tid, item.id));
-                }
-                items.push(item);
-            }
-        }
+        let rows = queries::tracks_by_ids(&db.conn, track_ids).unwrap_or_default();
+        let items = koan_core::helpers::playlist_items_for_tracks(db, &rows);
+        let pending = items
+            .iter()
+            .filter(|item| matches!(item.load_state, LoadState::Pending))
+            .filter_map(|item| item.db_id.map(|id| (id, item.id)))
+            .collect();
         (items, pending)
     }
 

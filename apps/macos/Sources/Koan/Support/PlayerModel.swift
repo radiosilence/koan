@@ -124,6 +124,10 @@ final class PlayerModel {
     private(set) var currentTrackId: Int64?
     private(set) var currentItemId: String?
     private(set) var radioEnabled = false
+    /// Queue mutations in flight. Adding a large selection takes a moment, and
+    /// silence while it happens reads as nothing having happened.
+    private(set) var pendingMutations = 0
+    var isBusy: Bool { pendingMutations > 0 }
     /// What is playing, and in what format. Both change per track, not per tick.
     private(set) var currentEntry: QueueItem?
     private(set) var currentFormat: StreamFormat?
@@ -405,12 +409,14 @@ final class PlayerModel {
     /// event when the queue actually changes.
     private func offMain(_ body: @escaping @Sendable (KoanEngine) throws -> Void) {
         let engine = self.engine
+        pendingMutations += 1
         Task {
             do {
                 try await Task.detached(priority: .userInitiated) { try body(engine) }.value
             } catch {
                 lastError = String(describing: error)
             }
+            pendingMutations -= 1
         }
     }
 }

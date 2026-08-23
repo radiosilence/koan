@@ -208,6 +208,35 @@ pub fn playlist_item_from_track(
     }
 }
 
+/// Build playlist items for many tracks at once.
+///
+/// `track_to_playlist_item` loads the config on every call, which means
+/// reading and parsing `config.toml` and `config.local.toml` once per track —
+/// the reason a large add crawled. This loads it once and memoises album dates,
+/// so a thousand-track add costs one config read instead of a thousand.
+pub fn playlist_items_for_tracks(db: &Database, tracks: &[queries::TrackRow]) -> Vec<PlaylistItem> {
+    use std::collections::HashMap;
+
+    let cfg = Config::load().unwrap_or_default();
+    let mut album_dates: HashMap<i64, Option<String>> = HashMap::new();
+
+    tracks
+        .iter()
+        .map(|track| {
+            let album_date = match track.album_id {
+                Some(aid) => album_dates
+                    .entry(aid)
+                    .or_insert_with(|| queries::album_date(&db.conn, aid).ok().flatten())
+                    .clone(),
+                None => None,
+            };
+            let (path, load_state) =
+                resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
+            playlist_item_from_track(track, album_date.as_deref(), path, load_state)
+        })
+        .collect()
+}
+
 /// Build a PlaylistItem from a TrackRow, resolving its path automatically.
 pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> PlaylistItem {
     let album_date = track

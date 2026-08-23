@@ -11,7 +11,6 @@ struct QueueView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
 
-    @State private var dropTargeted = false
     @State private var savingSnapshot = false
     @State private var snapshotName = ""
 
@@ -50,19 +49,6 @@ struct QueueView: View {
                     .onMove(perform: move)
                 }
                 .listStyle(.inset)
-                // Drop straight onto the queue, not just onto the sidebar row.
-                .dropDestination(for: PlayableTransfer.self) { dropped, _ in
-                    player.acceptDrop(dropped)
-                    return true
-                } isTargeted: { dropTargeted = $0 }
-                .overlay {
-                    if dropTargeted {
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(.tint, lineWidth: 2)
-                            .padding(4)
-                            .allowsHitTesting(false)
-                    }
-                }
                 .onDeleteCommand { removeSelected() }
                 .onChange(of: selection) { _, new in player.queueSelection = new }
                 .onChange(of: player.selectAllToken) { _, _ in
@@ -367,12 +353,13 @@ private struct QueueRow: View {
                 .font(.caption)
                 .frame(width: 16)
 
-            if let n = item.trackNumber {
-                Text("\(n)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 20, alignment: .trailing)
-            }
+            // Always occupies its column, number or not: a missing track
+            // number would otherwise shift the title left and break the
+            // alignment down the list.
+            Text(item.trackNumber.map(String.init) ?? "")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .frame(width: 20, alignment: .trailing)
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)

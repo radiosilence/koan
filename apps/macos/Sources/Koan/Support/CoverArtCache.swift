@@ -21,6 +21,17 @@ final class CoverArtCache {
     private var memory: [String: NSImage?] = [:]
     private(set) var inFlight: Set<String> = []
 
+    /// Which albums produced each image, by content hash.
+    ///
+    /// Navidrome answers with a stock placeholder — a blue vinyl with its own
+    /// logo on it — for anything with no artwork, and it looks like real art
+    /// until you notice every artless record has the same one. There is no flag
+    /// to ask about, but the placeholder gives itself away by being
+    /// byte-identical across albums: the moment one image turns up for a second
+    /// album, it isn't album art.
+    private var hashOwners: [String: Set<String>] = [:]
+    private var placeholderHashes: Set<String> = []
+
     private let engine: KoanEngine
     private let directory: URL?
 
@@ -69,20 +80,40 @@ final class CoverArtCache {
         let engine = self.engine
         let file = directory?.appendingPathComponent(Self.filename(for: key))
         Task {
-            let image = await Task.detached(priority: .utility) { () -> NSImage? in
-                if let file, let data = try? Data(contentsOf: file) {
-                    return NSImage(data: data)
-                }
-                guard let data = fetch(engine) else { return nil }
+            let data = await Task.detached(priority: .utility) { () -> Data? in
+                if let file, let cached = try? Data(contentsOf: file) { return cached }
+                guard let fetched = fetch(engine) else { return nil }
                 if let file {
                     // Best effort: a cache that fails to write is still a cache.
-                    try? data.write(to: file, options: .atomic)
+                    try? fetched.write(to: file, options: .atomic)
                 }
-                return NSImage(data: data)
+                return fetched
             }.value
 
-            memory[key] = image
-            inFlight.remove(key)
+            defer { inFlight.remove(key) }
+            guard let data else {
+                memory[key] = NSImage?.none
+                return
+            }
+            memory[key] = accept(data, for: key)
+        }
+        return nil
+    }
+
+    /// Store the image unless it turns out to be the server's placeholder.
+    private func accept(_ data: Data, for key: String) -> NSImage? {
+        let hash = Self.digest(data)
+        if placeholderHashes.contains(hash) { return nil }
+
+        hashOwners[hash, default: []].insert(key)
+        guard hashOwners[hash]?.count ?? 0 > 1 else {
+            return NSImage(data: data)
+        }
+
+        // Second sighting: it's a placeholder. Forget everyone who got it.
+        placeholderHashes.insert(hash)
+        for owner in hashOwners[hash] ?? [] {
+            memory[owner] = NSImage?.none
         }
         return nil
     }
@@ -100,6 +131,10 @@ final class CoverArtCache {
         } catch {
             return nil
         }
+    }
+
+    private static func digest(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Hashed so the filename can't collide with anything or exceed a path

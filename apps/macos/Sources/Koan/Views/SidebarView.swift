@@ -15,7 +15,13 @@ struct SidebarView: View {
 
         List(selection: $library.section) {
             Section {
-                Label("Queue", systemImage: "list.bullet")
+                HStack {
+                    Label("Queue", systemImage: "list.bullet")
+                    if player.isBusy {
+                        Spacer()
+                        ProgressView().controlSize(.small)
+                    }
+                }
                     .tag(LibraryModel.Section.queue)
                     // Full width, so the target is the row rather than just the
                     // text — dropping onto the empty part of the row should

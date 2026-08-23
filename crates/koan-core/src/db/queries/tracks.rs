@@ -646,6 +646,40 @@ pub fn all_tracks_paged(
     Ok(rows)
 }
 
+/// Fetch many tracks in one query, in the order the ids were given.
+///
+/// Building a queue used to call `get_track_row` per id. That is one round trip
+/// per track, and a thousand-track add felt like it.
+pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, DbError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         WHERE t.id IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params = rusqlite::params_from_iter(ids.iter());
+    let rows = stmt
+        .query_map(params, row_to_track_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // SQL returns them in whatever order it likes; callers care about the order
+    // they asked for, because that is the order they will be queued in.
+    let mut by_id: HashMap<i64, TrackRow> = rows.into_iter().map(|r| (r.id, r)).collect();
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
+}
+
 /// Get a single track by ID with full metadata.
 pub fn get_track_row(conn: &Connection, track_id: i64) -> Result<Option<TrackRow>, DbError> {
     let result = conn.query_row(
