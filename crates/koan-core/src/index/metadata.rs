@@ -350,21 +350,20 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
     let mut artist = None;
     let mut album = None;
 
-    // Metadata found while probing is queued on the reader ahead of the
-    // container's own, so walking the revision log oldest-first keeps the
-    // probe's tags authoritative and fills any gaps from the container.
+    // Later revisions win. An MP3 carrying both tags surfaces ID3v1 first and
+    // ID3v2 second, and ID3v1 is never the one you want: its fields are a fixed
+    // 30 bytes, so anything longer arrives silently truncated. Taking the first
+    // revision cost this library a set of tracks tagged
+    // "Golden Skans (David E Sugar R" — which then matched nothing on the
+    // server, because the server had the whole title.
     let mut log = reader.metadata();
     loop {
         if let Some(rev) = log.current() {
             for tag in &rev.media.tags {
                 match &tag.std {
-                    Some(StandardTag::TrackTitle(v)) if title.is_none() => {
-                        title = Some(v.to_string())
-                    }
-                    Some(StandardTag::Artist(v)) if artist.is_none() => {
-                        artist = Some(v.to_string())
-                    }
-                    Some(StandardTag::Album(v)) if album.is_none() => album = Some(v.to_string()),
+                    Some(StandardTag::TrackTitle(v)) => title = Some(v.to_string()),
+                    Some(StandardTag::Artist(v)) => artist = Some(v.to_string()),
+                    Some(StandardTag::Album(v)) => album = Some(v.to_string()),
                     _ => {}
                 }
             }
@@ -524,6 +523,25 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file carrying both tags must be read from ID3v2. ID3v1's fields are a
+    /// fixed 30 bytes, so preferring it silently truncates every longer title —
+    /// which then matches nothing on a remote server, splitting one record into
+    /// two albums. Symphonia surfaces the v1 tag as the *first* metadata
+    /// revision, so "take the first" is exactly the wrong rule.
+    #[test]
+    fn id3v2_beats_id3v1() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("both.mp3");
+        crate::test_utils::generate_mp3_with_both_tags(
+            &path,
+            "Golden Skans (David E Sugar Remix)",
+            "Golden Skans (David E Sugar R",
+        );
+
+        let (title, _, _) = probe_symphonia_tags(&path);
+        assert_eq!(title.as_deref(), Some("Golden Skans (David E Sugar Remix)"));
+    }
 
     #[test]
     fn test_is_audio_file() {

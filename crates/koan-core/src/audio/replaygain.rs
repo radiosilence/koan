@@ -2,7 +2,7 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 
 use lofty::prelude::*;
-use lofty::tag::ItemValue;
+use lofty::tag::{ItemValue, Tag};
 use symphonia::core::codecs::audio::AudioDecoderOptions;
 use symphonia::core::codecs::audio::well_known::CODEC_ID_OPUS;
 use symphonia::core::formats::probe::Hint;
@@ -273,15 +273,17 @@ pub fn write_tags(path: &Path, info: &ReplayGainInfo) -> Result<(), ReplayGainEr
     let mut tagged_file =
         lofty::read_from_path(path).map_err(|e| ReplayGainError::Tag(e.to_string()))?;
 
-    // Avoid double mutable borrow by checking primary first.
-    let has_primary = tagged_file.primary_tag().is_some();
-    let tag = if has_primary {
-        tagged_file.primary_tag_mut().unwrap()
-    } else {
-        tagged_file
-            .first_tag_mut()
-            .ok_or_else(|| ReplayGainError::Tag("no tag container found".into()))?
-    };
+    // Write to the format's own tag, creating it if the file has none — never
+    // to whatever tag happens to be there first. An MP3 carrying only an ID3v1
+    // tag would otherwise take the gain into a fixed 128-byte struct with no
+    // field to put it in, and the write would vanish.
+    if tagged_file.primary_tag().is_none() {
+        let primary = tagged_file.file_type().primary_tag_type();
+        tagged_file.insert_tag(Tag::new(primary));
+    }
+    let tag = tagged_file
+        .primary_tag_mut()
+        .ok_or_else(|| ReplayGainError::Tag("no tag container found".into()))?;
 
     if let Some(gain) = info.track_gain_db {
         tag.insert_text(ItemKey::ReplayGainTrackGain, format_gain(gain));

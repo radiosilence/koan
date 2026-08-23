@@ -106,3 +106,54 @@ pub fn generate_wav_tone(path: &Path, sample_rate: u32, frequency_hz: f32, durat
 
     file.flush().unwrap();
 }
+
+/// Generate an MP3 carrying both an ID3v2.3 tag and an ID3v1 trailer, with
+/// different titles in each.
+///
+/// The pair is what matters: ID3v1's fields are a fixed 30 bytes, so a real
+/// library is full of files whose v1 title is a truncated copy of the v2 one.
+/// Anything reading tags has to prefer v2, and the way that breaks is silent.
+///
+/// The audio is a run of valid but silent MPEG-1 Layer III frames — enough for
+/// Symphonia to probe the file, which is the path this exercises.
+pub fn generate_mp3_with_both_tags(path: &Path, id3v2_title: &str, id3v1_title: &str) {
+    let mut out: Vec<u8> = Vec::new();
+
+    // -- ID3v2.3 header, then a TIT2 frame holding the full title.
+    let mut frames: Vec<u8> = Vec::new();
+    frames.extend_from_slice(b"TIT2");
+    let body_len = id3v2_title.len() as u32 + 1; // + encoding byte
+    frames.extend_from_slice(&body_len.to_be_bytes());
+    frames.extend_from_slice(&[0, 0]); // flags
+    frames.push(0); // ISO-8859-1
+    frames.extend_from_slice(id3v2_title.as_bytes());
+
+    out.extend_from_slice(b"ID3");
+    out.extend_from_slice(&[3, 0, 0]); // v2.3, no flags
+    let n = frames.len() as u32;
+    // Synchsafe: seven bits per byte.
+    out.extend_from_slice(&[
+        ((n >> 21) & 0x7f) as u8,
+        ((n >> 14) & 0x7f) as u8,
+        ((n >> 7) & 0x7f) as u8,
+        (n & 0x7f) as u8,
+    ]);
+    out.extend_from_slice(&frames);
+
+    // -- Audio: MPEG-1 Layer III, 128 kbps, 44.1 kHz, stereo. 417 bytes a
+    // frame at this rate, header included; a zeroed payload is silence.
+    for _ in 0..40 {
+        out.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
+        out.extend_from_slice(&[0u8; 413]);
+    }
+
+    // -- ID3v1 trailer, whose 30-byte title field is the truncated one.
+    let mut v1 = [0u8; 128];
+    v1[..3].copy_from_slice(b"TAG");
+    let title = id3v1_title.as_bytes();
+    let take = title.len().min(30);
+    v1[3..3 + take].copy_from_slice(&title[..take]);
+    out.extend_from_slice(&v1);
+
+    std::fs::write(path, out).expect("failed to write MP3 file");
+}
