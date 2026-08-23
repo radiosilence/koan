@@ -167,6 +167,19 @@ private struct HistoryRow: View {
             .font(.caption.monospacedDigit())
             .frame(width: 46, alignment: .trailing)
 
+            // The cover is what you recognise a record by, and scanning back
+            // through a week of listening is exactly that job.
+            Group {
+                if let albumId = track.albumId {
+                    AlbumArtwork(source: .album(albumId), cornerRadius: 3)
+                } else {
+                    Image(systemName: "music.note")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .frame(width: 34, height: 34)
+
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title)
                     .lineLimit(1)
@@ -203,7 +216,7 @@ private struct HistoryRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 48, alignment: .trailing)
         }
-        .frame(height: 34)
+        .frame(height: 44)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }
