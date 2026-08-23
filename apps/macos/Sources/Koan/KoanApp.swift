@@ -13,6 +13,7 @@ final class AppState {
     let library: LibraryModel
     let search: SearchModel
     let art: CoverArtCache
+    let activity: ActivityModel
     private var nowPlaying: NowPlayingCentre?
     private var keys: KeyMonitor?
 
@@ -26,6 +27,18 @@ final class AppState {
         self.search = SearchModel(engine: engine, library: library)
         let art = CoverArtCache(engine: engine)
         self.art = art
+        let activity = ActivityModel()
+        self.activity = activity
+        library.activity = activity
+        player.activity = activity
+
+        // The engine syncs and scans on its own — on startup, on a timer, and
+        // when the library folders change. Those are the slow things a user is
+        // most likely to notice and least likely to have asked for, so they get
+        // a row like anything else.
+        activity.mirror("Syncing with server") { engine.isAutoSyncing() }
+        activity.mirror("Scanning library") { engine.isAutoScanning() }
+        activity.cancelLibraryTask = { engine.cancelLibraryTask() }
 
         // Control Center and the media keys ride the player's existing poll.
         let centre = NowPlayingCentre(player: player, art: art)
@@ -57,6 +70,7 @@ struct KoanApp: App {
                         .environment(state.library)
                         .environment(state.search)
                         .environment(state.art)
+                        .environment(state.activity)
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)
@@ -170,12 +184,19 @@ struct KoanApp: App {
             }
 
             CommandMenu("Library") {
-                Button("Rescan Local Folders") { state?.library.scan() }
-                    .keyboardShortcut("r", modifiers: [.command, .shift])
-                Button("Force Rescan") { state?.library.scan(force: true) }
-                Divider()
-                Button("Sync Remote Library") { state?.library.syncRemote() }
-                Button("Full Remote Sync") { state?.library.syncRemote(full: true) }
+                // Disabled while one is running: they all queue behind the same
+                // database writer, so a second only makes both slower. Reads
+                // `isLibraryBusy` rather than the task list, which changes on
+                // every progress tick and would rebuild the menus with it.
+                Group {
+                    Button("Rescan Local Folders") { state?.library.scan() }
+                        .keyboardShortcut("r", modifiers: [.command, .shift])
+                    Button("Force Rescan") { state?.library.scan(force: true) }
+                    Divider()
+                    Button("Sync Remote Library") { state?.library.syncRemote() }
+                    Button("Full Remote Sync") { state?.library.syncRemote(full: true) }
+                }
+                .disabled(state?.activity.isLibraryBusy ?? false)
                 Divider()
                 Button("Clear Artwork Cache") { state?.art.purge() }
             }
@@ -186,6 +207,12 @@ struct KoanApp: App {
                 SettingsView()
                     .environment(state.player)
                     .environment(state.library)
+                    // A separate scene inherits nothing from the WindowGroup, so
+                    // every environment value the settings window reads has to
+                    // be listed here — and a missing one is not a compile error,
+                    // it is a trap the first time the window opens.
+                    .environment(state.activity)
+                    .environment(state.art)
             }
         }
     }

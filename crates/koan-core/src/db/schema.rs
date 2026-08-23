@@ -129,6 +129,21 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             created_at  TEXT DEFAULT (datetime('now'))
         );
 
+        -- Albums and artists are favourited by name, not by row id, for the
+        -- same reason tracks are favourited by path: a rebuilt index assigns
+        -- new ids, and losing every favourite to a reindex is not acceptable.
+        CREATE TABLE IF NOT EXISTS favourite_albums (
+            artist_name TEXT NOT NULL,
+            album_title TEXT NOT NULL,
+            created_at  TEXT DEFAULT (datetime('now')),
+            PRIMARY KEY (artist_name, album_title)
+        );
+
+        CREATE TABLE IF NOT EXISTS favourite_artists (
+            artist_name TEXT PRIMARY KEY,
+            created_at  TEXT DEFAULT (datetime('now'))
+        );
+
         CREATE TABLE IF NOT EXISTS playback_state (
             id          INTEGER PRIMARY KEY CHECK (id = 1),
             queue_json  TEXT NOT NULL DEFAULT '[]',

@@ -91,6 +91,14 @@ pub struct RemoteConfig {
     /// None or empty = unlimited. LRU eviction runs on startup when exceeded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_limit: Option<String>,
+    /// Sync the library from the server on startup and on a timer.
+    ///
+    /// Incremental — it asks the server what changed rather than walking
+    /// everything, so it is cheap enough to run unattended. A full sync stays a
+    /// deliberate action.
+    pub auto_sync: bool,
+    /// Minutes between automatic syncs. 0 runs one at startup and no more.
+    pub auto_sync_interval_mins: u64,
 }
 
 impl Default for LibraryConfig {
@@ -182,6 +190,8 @@ impl Default for RemoteConfig {
             cache_dir: None,
             download_workers: 5,
             cache_limit: None,
+            auto_sync: true,
+            auto_sync_interval_mins: 60,
         }
     }
 }

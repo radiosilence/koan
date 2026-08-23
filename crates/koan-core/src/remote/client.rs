@@ -324,6 +324,37 @@ impl SubsonicClient {
         Ok(resp.starred2.map(|s| s.song).unwrap_or_default())
     }
 
+    /// Everything the server has starred: songs, albums and artists.
+    ///
+    /// Subsonic returns all three from one call, so asking for songs alone
+    /// leaves a starred album invisible to us for no saving.
+    pub fn get_starred_all(&self) -> Result<SubsonicStarred, SubsonicError> {
+        let resp = self.get("getStarred2")?;
+        Ok(resp.starred2.unwrap_or_default())
+    }
+
+    /// Star an album. Subsonic keys this off a different parameter to a song —
+    /// `id` would be read as a track and silently star nothing.
+    pub fn star_album(&self, album_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("star", &[("albumId", album_id)])?;
+        Ok(())
+    }
+
+    pub fn unstar_album(&self, album_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("unstar", &[("albumId", album_id)])?;
+        Ok(())
+    }
+
+    pub fn star_artist(&self, artist_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("star", &[("artistId", artist_id)])?;
+        Ok(())
+    }
+
+    pub fn unstar_artist(&self, artist_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("unstar", &[("artistId", artist_id)])?;
+        Ok(())
+    }
+
     /// Create a sharing link for one or more resources (songs, albums, etc).
     /// Returns the created share including its ID which forms the public URL.
     pub fn create_share(
@@ -511,6 +542,10 @@ pub struct SubsonicSearchResult {
 pub struct SubsonicStarred {
     #[serde(default)]
     pub song: Vec<SubsonicSong>,
+    #[serde(default)]
+    pub album: Vec<SubsonicAlbum>,
+    #[serde(default)]
+    pub artist: Vec<SubsonicArtist>,
 }
 
 #[derive(Debug, Deserialize)]

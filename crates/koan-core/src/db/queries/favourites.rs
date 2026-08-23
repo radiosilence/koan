@@ -52,6 +52,193 @@ pub fn toggle_favourite(conn: &Connection, path: &Path) -> rusqlite::Result<bool
     }
 }
 
+// --- Albums and artists ----------------------------------------------------
+//
+// Keyed by name rather than row id so a reindex does not wipe them. The
+// consequence is that two albums sharing a title and an artist are one
+// favourite, which is the same thing to anyone looking at the library.
+
+/// Toggle an album favourite. Returns true if the album is now a favourite.
+pub fn toggle_favourite_album(
+    conn: &Connection,
+    artist: &str,
+    album: &str,
+) -> rusqlite::Result<bool> {
+    let removed = conn.execute(
+        "DELETE FROM favourite_albums WHERE artist_name = ?1 AND album_title = ?2",
+        [artist, album],
+    )?;
+    if removed > 0 {
+        return Ok(false);
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO favourite_albums (artist_name, album_title) VALUES (?1, ?2)",
+        [artist, album],
+    )?;
+    Ok(true)
+}
+
+/// Toggle an artist favourite. Returns true if the artist is now a favourite.
+pub fn toggle_favourite_artist(conn: &Connection, artist: &str) -> rusqlite::Result<bool> {
+    let removed = conn.execute(
+        "DELETE FROM favourite_artists WHERE artist_name = ?1",
+        [artist],
+    )?;
+    if removed > 0 {
+        return Ok(false);
+    }
+    conn.execute(
+        "INSERT OR IGNORE INTO favourite_artists (artist_name) VALUES (?1)",
+        [artist],
+    )?;
+    Ok(true)
+}
+
+/// Every album id that is a favourite, resolved through the album's title and
+/// artist. One query per listing rather than one per row.
+pub fn favourite_album_id_set(conn: &Connection) -> rusqlite::Result<HashSet<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT al.id FROM albums al
+         JOIN artists ar ON al.artist_id = ar.id
+         JOIN favourite_albums f
+           ON f.artist_name = ar.name AND f.album_title = al.title",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    rows.collect()
+}
+
+/// Every artist id that is a favourite.
+pub fn favourite_artist_id_set(conn: &Connection) -> rusqlite::Result<HashSet<i64>> {
+    let mut stmt = conn.prepare(
+        "SELECT ar.id FROM artists ar
+         JOIN favourite_artists f ON f.artist_name = ar.name",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    rows.collect()
+}
+
+/// The remote id of an album, for starring it on the server.
+pub fn album_remote_id(conn: &Connection, album_id: i64) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT remote_id FROM albums WHERE id = ?1",
+        [album_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map(Option::flatten)
+}
+
+/// The remote id of an artist, for starring it on the server.
+pub fn artist_remote_id(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT remote_id FROM artists WHERE id = ?1",
+        [artist_id],
+        |row| row.get(0),
+    )
+    .optional()
+    .map(Option::flatten)
+}
+
+/// The (artist, title) pair an album is favourited under.
+pub fn album_favourite_key(
+    conn: &Connection,
+    album_id: i64,
+) -> rusqlite::Result<Option<(String, String)>> {
+    conn.query_row(
+        "SELECT ar.name, al.title FROM albums al
+         JOIN artists ar ON al.artist_id = ar.id
+         WHERE al.id = ?1",
+        [album_id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )
+    .optional()
+}
+
+/// The name an artist is favourited under.
+pub fn artist_favourite_key(conn: &Connection, artist_id: i64) -> rusqlite::Result<Option<String>> {
+    conn.query_row(
+        "SELECT name FROM artists WHERE id = ?1",
+        [artist_id],
+        |row| row.get(0),
+    )
+    .optional()
+}
+
+/// Favourited albums that exist on the server, as (album_id, remote_id).
+pub fn favourite_albums_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT al.id, al.remote_id FROM albums al
+         JOIN artists ar ON al.artist_id = ar.id
+         JOIN favourite_albums f
+           ON f.artist_name = ar.name AND f.album_title = al.title
+         WHERE al.remote_id IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
+/// Favourited artists that exist on the server, as (artist_id, remote_id).
+pub fn favourite_artists_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(i64, String)>> {
+    let mut stmt = conn.prepare(
+        "SELECT ar.id, ar.remote_id FROM artists ar
+         JOIN favourite_artists f ON f.artist_name = ar.name
+         WHERE ar.remote_id IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+    rows.collect()
+}
+
+/// Import starred albums from the server, matched by remote id. Returns how
+/// many were new.
+pub fn import_remote_favourite_albums(
+    conn: &Connection,
+    starred_remote_ids: &[String],
+) -> rusqlite::Result<usize> {
+    let mut count = 0;
+    for rid in starred_remote_ids {
+        let names: Option<(String, String)> = conn
+            .query_row(
+                "SELECT ar.name, al.title FROM albums al
+                 JOIN artists ar ON al.artist_id = ar.id
+                 WHERE al.remote_id = ?1",
+                [rid],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?;
+        if let Some((artist, album)) = names {
+            count += conn.execute(
+                "INSERT OR IGNORE INTO favourite_albums (artist_name, album_title) VALUES (?1, ?2)",
+                [&artist, &album],
+            )?;
+        }
+    }
+    Ok(count)
+}
+
+/// Import starred artists from the server, matched by remote id.
+pub fn import_remote_favourite_artists(
+    conn: &Connection,
+    starred_remote_ids: &[String],
+) -> rusqlite::Result<usize> {
+    let mut count = 0;
+    for rid in starred_remote_ids {
+        let name: Option<String> = conn
+            .query_row(
+                "SELECT name FROM artists WHERE remote_id = ?1",
+                [rid],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(name) = name {
+            count += conn.execute(
+                "INSERT OR IGNORE INTO favourite_artists (artist_name) VALUES (?1)",
+                [&name],
+            )?;
+        }
+    }
+    Ok(count)
+}
+
 /// Look up the remote_id for a track by its path. Returns None for local-only tracks.
 pub fn remote_id_for_path(conn: &Connection, path: &Path) -> rusqlite::Result<Option<String>> {
     let path_str = path.to_string_lossy();
@@ -299,6 +486,105 @@ mod tests {
 
         let favs = load_favourites(&conn).unwrap();
         assert!(favs.is_empty());
+    }
+
+    fn insert_album(conn: &Connection, artist: &str, album: &str, remote_id: Option<&str>) -> i64 {
+        conn.execute(
+            "INSERT INTO artists (name) VALUES (?1) ON CONFLICT(name) DO NOTHING",
+            [artist],
+        )
+        .unwrap();
+        let artist_id: i64 = conn
+            .query_row("SELECT id FROM artists WHERE name = ?1", [artist], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        conn.execute(
+            "INSERT INTO albums (title, artist_id, remote_id) VALUES (?1, ?2, ?3)
+             ON CONFLICT(title, artist_id) DO NOTHING",
+            rusqlite::params![album, artist_id, remote_id],
+        )
+        .unwrap();
+        conn.query_row(
+            "SELECT id FROM albums WHERE title = ?1 AND artist_id = ?2",
+            rusqlite::params![album, artist_id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_album_favourite_toggles_on_and_off() {
+        let conn = test_conn();
+        let id = insert_album(&conn, "Russian Circles", "Enter", None);
+
+        assert!(toggle_favourite_album(&conn, "Russian Circles", "Enter").unwrap());
+        assert!(favourite_album_id_set(&conn).unwrap().contains(&id));
+
+        assert!(!toggle_favourite_album(&conn, "Russian Circles", "Enter").unwrap());
+        assert!(favourite_album_id_set(&conn).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_artist_favourite_toggles_on_and_off() {
+        let conn = test_conn();
+        insert_album(&conn, "Godspeed", "Lift Your Skinny Fists", None);
+        let artist_id: i64 = conn
+            .query_row("SELECT id FROM artists WHERE name = 'Godspeed'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+
+        assert!(toggle_favourite_artist(&conn, "Godspeed").unwrap());
+        assert!(favourite_artist_id_set(&conn).unwrap().contains(&artist_id));
+
+        assert!(!toggle_favourite_artist(&conn, "Godspeed").unwrap());
+        assert!(favourite_artist_id_set(&conn).unwrap().is_empty());
+    }
+
+    /// Favourites are keyed by name so a reindex cannot lose them. Rebuilding
+    /// the library assigns new row ids, and resolving through the name has to
+    /// still find the album.
+    #[test]
+    fn an_album_favourite_survives_new_row_ids() {
+        let conn = test_conn();
+        insert_album(&conn, "Boards of Canada", "Geogaddi", None);
+        toggle_favourite_album(&conn, "Boards of Canada", "Geogaddi").unwrap();
+
+        conn.execute("DELETE FROM albums", []).unwrap();
+        conn.execute("DELETE FROM artists", []).unwrap();
+        let new_id = insert_album(&conn, "Boards of Canada", "Geogaddi", None);
+
+        assert!(
+            favourite_album_id_set(&conn).unwrap().contains(&new_id),
+            "the favourite should resolve to the rebuilt album row"
+        );
+    }
+
+    #[test]
+    fn starred_albums_import_by_remote_id() {
+        let conn = test_conn();
+        let id = insert_album(&conn, "Phace", "Mammoth", Some("remote-album-1"));
+
+        let added = import_remote_favourite_albums(&conn, &["remote-album-1".to_string()]).unwrap();
+        assert_eq!(added, 1);
+        assert!(favourite_album_id_set(&conn).unwrap().contains(&id));
+
+        let again = import_remote_favourite_albums(&conn, &["remote-album-1".to_string()]).unwrap();
+        assert_eq!(again, 0, "re-importing should not add a second row");
+    }
+
+    #[test]
+    fn only_favourites_the_server_knows_about_are_pushed() {
+        let conn = test_conn();
+        insert_album(&conn, "Local Only", "Demo", None);
+        insert_album(&conn, "On The Server", "Record", Some("remote-album-2"));
+        toggle_favourite_album(&conn, "Local Only", "Demo").unwrap();
+        toggle_favourite_album(&conn, "On The Server", "Record").unwrap();
+
+        let pushable = favourite_albums_with_remote_id(&conn).unwrap();
+        assert_eq!(pushable.len(), 1);
+        assert_eq!(pushable[0].1, "remote-album-2");
     }
 
     #[test]

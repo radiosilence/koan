@@ -63,6 +63,32 @@ pub fn save_playback_state(
     Ok(())
 }
 
+/// Update only where you are, not what is queued.
+///
+/// The queue is stored as a JSON blob, and re-serialising it every second so a
+/// position survives a crash would mean rewriting megabytes for a library-sized
+/// queue. This touches four columns and leaves the blob alone; the full
+/// `save_playback_state` runs when the queue itself changes.
+///
+/// Does nothing when no state has been saved yet — there is no queue to be
+/// positioned within.
+pub fn save_playback_position(
+    conn: &Connection,
+    cursor_path: Option<&str>,
+    position_ms: u64,
+    was_playing: bool,
+    radio_enabled: bool,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "UPDATE playback_state
+            SET cursor_id = ?1, position_ms = ?2, was_playing = ?3,
+                radio_enabled = ?4, updated_at = datetime('now')
+          WHERE id = 1",
+        rusqlite::params![cursor_path, position_ms as i64, was_playing, radio_enabled],
+    )?;
+    Ok(())
+}
+
 /// Load persisted playback state. Returns None if no state has been saved.
 pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<PersistedPlaybackState>> {
     let result = conn.query_row(

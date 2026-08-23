@@ -152,11 +152,6 @@ struct RootView: View {
                         }
                         .pickerStyle(.inline)
                         .labelsHidden()
-
-                        if library.albumSort == .random {
-                            Divider()
-                            Button("Shuffle Again") { library.reshuffleAlbums() }
-                        }
                     } label: {
                         Label("Sort", systemImage: "arrow.up.arrow.down")
                     }
@@ -164,6 +159,22 @@ struct RootView: View {
                     // A toolbar control that is always there is neither.
                     .tint(.primary)
                     .help("Sort albums — \(library.albumSort.label)")
+                }
+
+                // Its own button rather than an item inside the sort menu:
+                // reshuffling is something you do repeatedly until you like
+                // what you see, and a menu makes that four clicks instead of
+                // one.
+                if library.albumSort == .random {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            library.reshuffleAlbums()
+                        } label: {
+                            Label("Shuffle", systemImage: "shuffle")
+                        }
+                        .tint(.primary)
+                        .help("Shuffle again")
+                    }
                 }
             }
 

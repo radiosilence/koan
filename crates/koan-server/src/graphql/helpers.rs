@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_graphql::connection::Edge;
 use crossbeam_channel::Sender;
-use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
 use koan_core::player::commands::PlayerCommand;
@@ -92,32 +91,10 @@ pub(super) fn album_year(album: &queries::AlbumRow) -> Option<i32> {
 // Favourite sync
 // ---------------------------------------------------------------------------
 
+/// Push a favourite to the remote server. One implementation, in koan-core —
+/// the TUI, the app and this each had their own.
 pub(super) fn sync_favourite_to_remote(db: &Database, path: &str, star: bool) {
-    let cfg = Config::load().unwrap_or_default();
-    if !cfg.remote.enabled {
-        return;
-    }
-    let remote_id = queries::remote_id_for_path(&db.conn, std::path::Path::new(path))
-        .ok()
-        .flatten();
-    if let Some(rid) = remote_id {
-        let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-            return;
-        };
-        std::thread::Builder::new()
-            .name("koan-fav-sync".into())
-            .spawn(move || {
-                let result = if star {
-                    client.star(&rid)
-                } else {
-                    client.unstar(&rid)
-                };
-                if let Err(e) = result {
-                    log::warn!("failed to sync favourite to remote: {}", e);
-                }
-            })
-            .ok();
-    }
+    koan_core::helpers::sync_favourite_to_remote(db, std::path::Path::new(path), star);
 }
 
 // ---------------------------------------------------------------------------

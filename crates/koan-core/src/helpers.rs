@@ -18,13 +18,582 @@ use crate::remote::client::{SubsonicAuth, SubsonicClient};
 // Subsonic client builder
 // ---------------------------------------------------------------------------
 
-/// Get the remote password from config, falling back to Keychain for backwards compat.
+/// Get the remote password. Keychain first, config second.
+///
+/// The config copy is only a migration path now: `set_remote_credentials` writes
+/// to the keychain and clears it, so a plaintext password survives exactly until
+/// the next sign-in.
 pub fn get_remote_password(cfg: &Config) -> Option<String> {
+    if let Ok(pw) = crate::credentials::get_password(&cfg.remote.url)
+        && !pw.is_empty()
+    {
+        return Some(pw);
+    }
     if !cfg.remote.password.is_empty() {
         return Some(cfg.remote.password.clone());
     }
-    // Fallback to Keychain for users who set up before the config change.
-    crate::credentials::get_password(&cfg.remote.url).ok()
+    None
+}
+
+/// Index files that appear in the library folders while koan is running.
+///
+/// One incremental scan shortly after startup — the walk is a fraction of a
+/// second even across fifty thousand files, and everything unchanged is skipped
+/// on its mtime and size — then a rescan whenever the folders change.
+///
+/// Changes are debounced: copying an album in produces a burst of events, and
+/// scanning once per file would be both slow and pointless. The scan is
+/// incremental in every case, so the cost is proportional to what actually
+/// changed rather than to the size of the library.
+///
+/// `on_state` reports whether a scan is running, so a UI can show it.
+pub fn spawn_library_watch(
+    db_path: std::path::PathBuf,
+    on_state: impl Fn(bool) + Send + Sync + 'static,
+) -> Option<std::thread::JoinHandle<()>> {
+    use notify::{RecursiveMode, Watcher};
+
+    std::thread::Builder::new()
+        .name("koan-library-watch".into())
+        .spawn(move || {
+            let scan_now = |reason: &str| {
+                let cfg = Config::load().unwrap_or_default();
+                if cfg.library.folders.is_empty() {
+                    return;
+                }
+                let Ok(db) = Database::open(&db_path) else {
+                    return;
+                };
+                on_state(true);
+                let result = crate::index::scanner::full_scan(
+                    &db,
+                    &cfg.library.folders,
+                    crate::index::scanner::ScanOptions::default(),
+                    None,
+                );
+                on_state(false);
+                log::info!(
+                    "{reason} scan: {} added, {} updated, {} removed, {} unchanged",
+                    result.added,
+                    result.updated,
+                    result.removed,
+                    result.skipped
+                );
+            };
+
+            // After the first frame and the first track, not competing with them.
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            scan_now("startup");
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            let Ok(mut watcher) = notify::recommended_watcher(move |event| {
+                let _ = tx.send(event);
+            }) else {
+                log::warn!("could not watch the library folders");
+                return;
+            };
+
+            let cfg = Config::load().unwrap_or_default();
+            for folder in &cfg.library.folders {
+                if let Err(e) = watcher.watch(folder, RecursiveMode::Recursive) {
+                    log::warn!("could not watch {}: {e}", folder.display());
+                }
+            }
+
+            // Copying an album in is a burst of events. Wait for it to stop
+            // before scanning, rather than scanning per file.
+            const SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
+            while let Ok(first) = rx.recv() {
+                if first.is_err() {
+                    continue;
+                }
+                while rx.recv_timeout(SETTLE).is_ok() {}
+                scan_now("watched change");
+            }
+        })
+        .ok()
+}
+
+/// Keep the library in step with the server, without being asked.
+///
+/// One sync shortly after startup, then every `auto_sync_interval_mins`. Always
+/// incremental: it asks the server what changed rather than walking the whole
+/// library, which is what makes it cheap enough to run unattended. A full sync
+/// stays a deliberate action.
+///
+/// The startup run is delayed a few seconds so it is not competing with the
+/// first frame and the first track for the disk.
+///
+/// `on_state` reports whether a sync is running, so a UI can say so rather than
+/// appearing to do nothing.
+pub fn spawn_auto_sync(
+    db_path: std::path::PathBuf,
+    on_state: impl Fn(bool) + Send + 'static,
+) -> Option<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("koan-auto-sync".into())
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            loop {
+                let cfg = Config::load().unwrap_or_default();
+                if !cfg.remote.enabled || !cfg.remote.auto_sync {
+                    // Re-read rather than exit: the setting can be turned on
+                    // while the app is running.
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+                    continue;
+                }
+
+                if let Some(client) = subsonic_client(&cfg)
+                    && let Ok(db) = Database::open(&db_path)
+                {
+                    on_state(true);
+                    match crate::remote::sync::sync_library(
+                        &db,
+                        &client,
+                        false,
+                        &cfg.remote.url,
+                        &cfg.remote.username,
+                    ) {
+                        Ok(r) => log::info!(
+                            "auto sync: {} artists, {} albums, {} tracks ({} albums failed)",
+                            r.artists_synced,
+                            r.albums_synced,
+                            r.tracks_synced,
+                            r.albums_failed
+                        ),
+                        Err(e) => log::warn!("auto sync failed: {e}"),
+                    }
+                    on_state(false);
+                }
+
+                match cfg.remote.auto_sync_interval_mins {
+                    // Once at startup and no more.
+                    0 => return,
+                    mins => std::thread::sleep(std::time::Duration::from_secs(mins * 60)),
+                }
+            }
+        })
+        .ok()
+}
+
+/// What a library rebuild removed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RebuildSummary {
+    pub tracks: u64,
+    pub albums: u64,
+    pub artists: u64,
+}
+
+/// Drop the index so the next scan rebuilds it from the files.
+///
+/// Favourites are keyed on the file path rather than a row id, so they survive
+/// this and re-attach when the paths come back. Everything keyed on a track id
+/// cannot: lyrics, play history and acoustic embeddings go, and the foreign keys
+/// would refuse the delete otherwise. Lyrics and embeddings are re-derivable;
+/// play counts are not, which is worth saying out loud wherever this is offered.
+///
+/// The remote half of the library comes back on the next sync, the local half on
+/// the next scan.
+pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connection::DbError> {
+    let count = |sql: &str| -> u64 {
+        db.conn
+            .query_row(sql, [], |r| r.get::<_, i64>(0))
+            .unwrap_or(0) as u64
+    };
+    let summary = RebuildSummary {
+        tracks: count("SELECT COUNT(*) FROM tracks"),
+        albums: count("SELECT COUNT(*) FROM albums"),
+        artists: count("SELECT COUNT(*) FROM artists"),
+    };
+
+    // Children before parents; the FTS index has no foreign keys but is derived
+    // from tracks and would otherwise keep answering for rows that are gone.
+    db.conn.execute_batch(
+        "BEGIN;
+         DELETE FROM track_vectors;
+         DELETE FROM lyrics_cache;
+         DELETE FROM play_history;
+         DELETE FROM scan_cache;
+         DELETE FROM tracks_fts;
+         DELETE FROM tracks;
+         DELETE FROM similar_artists;
+         DELETE FROM albums;
+         DELETE FROM artists;
+         COMMIT;",
+    )?;
+    let _ = db.conn.execute_batch("VACUUM");
+    Ok(summary)
+}
+
+/// Bytes currently held in the download cache.
+pub fn cache_size_bytes(cfg: &Config) -> u64 {
+    walkdir::WalkDir::new(cfg.cache_dir())
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum()
+}
+
+/// How many tracks came from this folder.
+///
+/// The trailing separator matters: without it `/Volumes/Music` also counts
+/// `/Volumes/Music Backup`.
+pub fn tracks_under(db: &Database, folder: &Path) -> u64 {
+    let prefix = format!(
+        "{}{}%",
+        folder
+            .to_string_lossy()
+            .trim_end_matches(std::path::MAIN_SEPARATOR),
+        std::path::MAIN_SEPARATOR
+    );
+    db.conn
+        .query_row(
+            "SELECT COUNT(*) FROM tracks WHERE path LIKE ?1",
+            [&prefix],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as u64
+}
+
+/// How many tracks the server accounts for.
+pub fn tracks_from_server(db: &Database) -> u64 {
+    db.conn
+        .query_row(
+            "SELECT COUNT(*) FROM tracks WHERE remote_id IS NOT NULL",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as u64
+}
+
+/// Forget every track under a folder.
+///
+/// Removing a folder from the library should remove what it put there —
+/// otherwise the library keeps showing records whose files it will never look
+/// at again, and there is no way back to an empty library short of clearing the
+/// whole index.
+///
+/// A track that also exists on the server keeps its row and loses only its local
+/// path: it is still playable, just by download rather than from disk.
+///
+/// Albums and artists left holding nothing go too, or the browser fills with
+/// empty shelves.
+pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::connection::DbError> {
+    // Trailing separator, or `/Volumes/Music` also matches `/Volumes/Music Backup`.
+    let prefix = format!(
+        "{}{}%",
+        folder
+            .to_string_lossy()
+            .trim_end_matches(std::path::MAIN_SEPARATOR),
+        std::path::MAIN_SEPARATOR
+    );
+
+    let tx = db.conn.unchecked_transaction()?;
+    // Still on the server: keep the row, drop the local file.
+    tx.execute(
+        "UPDATE tracks SET path = NULL, source = 'remote'
+          WHERE path LIKE ?1 AND remote_id IS NOT NULL",
+        [&prefix],
+    )?;
+
+    let ids: Vec<i64> = {
+        let mut stmt = tx.prepare("SELECT id FROM tracks WHERE path LIKE ?1")?;
+        let rows = stmt.query_map([&prefix], |r| r.get(0))?;
+        rows.filter_map(Result::ok).collect()
+    };
+    for id in &ids {
+        tx.execute("DELETE FROM track_vectors WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM tracks_fts WHERE rowid = ?1", [id])?;
+        tx.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    }
+    prune_empty_albums_and_artists(&tx)?;
+    tx.commit()?;
+    Ok(ids.len() as u64)
+}
+
+/// Forget everything that only existed on the server.
+///
+/// Signing out should leave the library with what is actually on this machine.
+/// A track held both locally and remotely keeps its row and loses its remote id;
+/// one that only ever came from the server goes.
+pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbError> {
+    let tx = db.conn.unchecked_transaction()?;
+
+    let ids: Vec<i64> = {
+        let mut stmt =
+            tx.prepare("SELECT id FROM tracks WHERE remote_id IS NOT NULL AND path IS NULL")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        rows.filter_map(Result::ok).collect()
+    };
+    for id in &ids {
+        tx.execute("DELETE FROM track_vectors WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM tracks_fts WHERE rowid = ?1", [id])?;
+        tx.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    }
+    // Local copies stay, minus the server they were also on.
+    tx.execute(
+        "UPDATE tracks SET remote_id = NULL, remote_url = NULL, source = 'local'
+          WHERE remote_id IS NOT NULL",
+        [],
+    )?;
+    tx.execute("DELETE FROM similar_artists", [])?;
+    prune_empty_albums_and_artists(&tx)?;
+    tx.commit()?;
+    Ok(ids.len() as u64)
+}
+
+/// Albums and artists with nothing left in them.
+fn prune_empty_albums_and_artists(
+    tx: &rusqlite::Transaction<'_>,
+) -> Result<(), crate::db::connection::DbError> {
+    tx.execute(
+        "DELETE FROM albums WHERE NOT EXISTS
+           (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM similar_artists WHERE NOT EXISTS
+           (SELECT 1 FROM albums WHERE albums.artist_id = similar_artists.artist_id)",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM artists WHERE NOT EXISTS
+             (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)
+           AND NOT EXISTS
+             (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)",
+        [],
+    )?;
+    Ok(())
+}
+
+/// What clearing the download cache removed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CacheCleared {
+    pub files: u64,
+    pub bytes: u64,
+}
+
+/// Delete every downloaded remote track and forget where they were.
+///
+/// The rows stay — a remote track is still in the library, it just has to be
+/// fetched again to play.
+pub fn clear_download_cache(db: &Database, cfg: &Config) -> CacheCleared {
+    let dir = cfg.cache_dir();
+    let mut cleared = CacheCleared::default();
+    for entry in walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+    {
+        if let Ok(meta) = entry.metadata() {
+            cleared.bytes += meta.len();
+            cleared.files += 1;
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = queries::clear_cached_paths(&db.conn);
+    cleared
+}
+
+/// Push a favourite to the remote server, if this track came from one.
+///
+/// Fire and forget on its own thread: starring is a courtesy to the server, and
+/// a slow or unreachable one should not hold up the click that caused it. The
+/// local favourite is already written by the time this runs.
+///
+/// Silently does nothing for a track with no `remote_id` — including a local
+/// file whose copy on the server failed to merge with it (#221), which is the
+/// one case where the silence is wrong.
+///
+/// Shared by the TUI, the server and the app, which each had their own copy.
+pub fn sync_favourite_to_remote(db: &Database, path: &Path, star: bool) {
+    let cfg = Config::load().unwrap_or_default();
+    if !cfg.remote.enabled {
+        return;
+    }
+    let Ok(Some(remote_id)) = queries::remote_id_for_path(&db.conn, path) else {
+        log::warn!("not syncing favourite: {} has no remote id", path.display());
+        return;
+    };
+    let Some(client) = subsonic_client(&cfg) else {
+        log::warn!("not syncing favourite: no usable server credentials");
+        return;
+    };
+    std::thread::Builder::new()
+        .name("koan-fav-sync".into())
+        .spawn(move || {
+            let result = if star {
+                client.star(&remote_id)
+            } else {
+                client.unstar(&remote_id)
+            };
+            match result {
+                Ok(()) => log::info!("synced favourite to remote: {remote_id} = {star}"),
+                Err(e) => log::warn!("failed to sync favourite to remote: {e}"),
+            }
+        })
+        .ok();
+}
+
+/// What a favourites reconciliation did.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FavouriteSync {
+    pub pushed: usize,
+    pub imported: usize,
+}
+
+/// Reconcile favourites with the server, both directions.
+///
+/// Pushes every local favourite that the server knows about, then imports
+/// everything the server has starred. Union rather than mirror: neither side
+/// records an unstar, so treating one as authoritative would silently delete
+/// favourites made on the other.
+///
+/// Covers albums and artists as well as tracks — `getStarred2` returns all
+/// three from one request, and reading only songs left a starred album
+/// invisible to koan.
+pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> FavouriteSync {
+    let mut out = FavouriteSync::default();
+
+    let tracks = queries::favourites_with_remote_id(&db.conn).unwrap_or_default();
+    for (_path, remote_id) in &tracks {
+        if client.star(remote_id).is_ok() {
+            out.pushed += 1;
+        }
+    }
+    for (_id, remote_id) in queries::favourite_albums_with_remote_id(&db.conn).unwrap_or_default() {
+        if client.star_album(&remote_id).is_ok() {
+            out.pushed += 1;
+        }
+    }
+    for (_id, remote_id) in queries::favourite_artists_with_remote_id(&db.conn).unwrap_or_default()
+    {
+        if client.star_artist(&remote_id).is_ok() {
+            out.pushed += 1;
+        }
+    }
+
+    let starred = match client.get_starred_all() {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("could not fetch starred items from the server: {e}");
+            return out;
+        }
+    };
+
+    let songs: Vec<String> = starred.song.into_iter().map(|s| s.id).collect();
+    let albums: Vec<String> = starred.album.into_iter().map(|a| a.id).collect();
+    let artists: Vec<String> = starred.artist.into_iter().map(|a| a.id).collect();
+    out.imported += queries::import_remote_favourites(&db.conn, &songs).unwrap_or(0);
+    out.imported += queries::import_remote_favourite_albums(&db.conn, &albums).unwrap_or(0);
+    out.imported += queries::import_remote_favourite_artists(&db.conn, &artists).unwrap_or(0);
+    out
+}
+
+/// What a favourite applies to. Subsonic stars all three, under different
+/// parameter names — passing an album id as `id` silently stars nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FavouriteKind {
+    Track,
+    Album,
+    Artist,
+}
+
+/// Push an album or artist favourite to the server.
+///
+/// Same shape as [`sync_favourite_to_remote`], but the remote id comes from the
+/// album or artist row rather than the track's path.
+pub fn sync_collection_favourite_to_remote(
+    db: &Database,
+    kind: FavouriteKind,
+    id: i64,
+    star: bool,
+) {
+    let cfg = Config::load().unwrap_or_default();
+    if !cfg.remote.enabled {
+        return;
+    }
+    let remote_id = match kind {
+        FavouriteKind::Album => queries::album_remote_id(&db.conn, id),
+        FavouriteKind::Artist => queries::artist_remote_id(&db.conn, id),
+        FavouriteKind::Track => return,
+    };
+    let Ok(Some(remote_id)) = remote_id else {
+        log::warn!("not syncing favourite: {kind:?} {id} has no remote id");
+        return;
+    };
+    let Some(client) = subsonic_client(&cfg) else {
+        log::warn!("not syncing favourite: no usable server credentials");
+        return;
+    };
+    std::thread::Builder::new()
+        .name("koan-fav-sync".into())
+        .spawn(move || {
+            let result = match (kind, star) {
+                (FavouriteKind::Album, true) => client.star_album(&remote_id),
+                (FavouriteKind::Album, false) => client.unstar_album(&remote_id),
+                (FavouriteKind::Artist, true) => client.star_artist(&remote_id),
+                (FavouriteKind::Artist, false) => client.unstar_artist(&remote_id),
+                (FavouriteKind::Track, _) => Ok(()),
+            };
+            match result {
+                Ok(()) => log::info!("synced favourite to remote: {kind:?} {remote_id} = {star}"),
+                Err(e) => log::warn!("failed to sync favourite to remote: {e}"),
+            }
+        })
+        .ok();
+}
+
+/// Why signing in to a remote server failed.
+#[derive(Debug, thiserror::Error)]
+pub enum SignInError {
+    #[error("the server did not accept those credentials: {0}")]
+    Rejected(#[from] crate::remote::client::SubsonicError),
+    #[error("could not save the password: {0}")]
+    Credentials(#[from] crate::credentials::CredentialError),
+    #[error("could not write the configuration: {0}")]
+    Config(#[from] crate::config::ConfigError),
+}
+
+/// Sign in to a Subsonic/Navidrome server and remember it.
+///
+/// The password goes to the platform credential store — Keychain on macOS,
+/// secret-service on Linux — and never to `config.local.toml`, which is a plain
+/// file on disk. Any plaintext password already there is cleared, so signing in
+/// again migrates an older setup.
+///
+/// The credentials are checked against the server before anything is written; a
+/// stored password that does not work is worse than none.
+///
+/// Shared by the CLI and the app so the two cannot disagree about where
+/// credentials live.
+pub fn set_remote_credentials(
+    url: &str,
+    username: &str,
+    password: &str,
+) -> Result<(), SignInError> {
+    let url = url.trim_end_matches('/');
+    SubsonicClient::new(url, username, password).ping()?;
+    crate::credentials::store_password(url, password)?;
+
+    let mut values = toml::map::Map::new();
+    values.insert("enabled".into(), toml::Value::Boolean(true));
+    values.insert("url".into(), toml::Value::String(url.to_string()));
+    values.insert("username".into(), toml::Value::String(username.to_string()));
+    // Explicitly emptied: a password left here would keep being read by anything
+    // still preferring the config copy.
+    values.insert("password".into(), toml::Value::String(String::new()));
+    Config::patch_local("remote", &values)?;
+    Ok(())
 }
 
 /// Keychain account holding the Subsonic API shared secret.
@@ -593,6 +1162,66 @@ pub fn spawn_downloads(
         })
     {
         log::error!("failed to spawn download thread: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod rebuild_tests {
+    use super::*;
+    use crate::db::queries::sample_meta;
+
+    fn test_db() -> Database {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        Database { conn }
+    }
+
+    #[test]
+    fn rebuild_drops_the_index_and_keeps_favourites() {
+        let db = test_db();
+        let mut meta = sample_meta("Windowlicker", "Aphex Twin", "Windowlicker EP");
+        meta.path = Some("/music/windowlicker.flac".into());
+        let track_id = queries::upsert_track(&db.conn, &meta).unwrap();
+
+        // Favourites key on the path; lyrics key on the row id.
+        queries::toggle_favourite(&db.conn, Path::new("/music/windowlicker.flac")).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO lyrics_cache (track_id, source, content, fetched_at)
+                 VALUES (?1, 'test', 'la la la', 0)",
+                [track_id],
+            )
+            .unwrap();
+
+        let summary = rebuild_index(&db).unwrap();
+        assert_eq!(summary.tracks, 1);
+        assert_eq!(summary.albums, 1);
+
+        let tracks: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tracks, 0, "the index is gone");
+
+        let favourites: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM favourites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(favourites, 1, "favourites survive — they key on the path");
+
+        let lyrics: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM lyrics_cache", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(lyrics, 0, "anything keyed on a track id cannot survive");
+    }
+
+    #[test]
+    fn rebuilding_an_empty_library_is_not_an_error() {
+        let db = test_db();
+        let summary = rebuild_index(&db).unwrap();
+        assert_eq!(summary.tracks, 0);
     }
 }
 

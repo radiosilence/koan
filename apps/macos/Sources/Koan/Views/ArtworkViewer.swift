@@ -1,3 +1,4 @@
+import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -12,38 +13,67 @@ struct ArtworkViewer: View {
     let subtitle: String?
 
     @Environment(\.dismiss) private var dismiss
+    @State private var host: CGSize = .zero
+
+    /// Room for the caption below the cover, and the margin around the lot.
+    private static let caption: CGFloat = 76
+    private static let margin: CGFloat = 48
+
+    /// Covers are square, so the sheet has to be too — sized off the host
+    /// window rather than the sheet's own proposal, which AppKit answers with
+    /// a tall narrow box that leaves the cover no wider than a thumbnail.
+    private var side: CGFloat {
+        guard host != .zero else { return 700 }
+        let width = host.width - Self.margin * 2
+        let height = host.height - Self.margin * 2 - Self.caption
+        return max(320, min(width, height))
+    }
 
     var body: some View {
-        ZStack {
-            // Fills the sheet so a click anywhere outside the cover dismisses.
-            Color.black.opacity(0.001)
-                .contentShape(.rect)
-                .onTapGesture { dismiss() }
+        VStack(spacing: 16) {
+            AlbumArtwork(source: source, cornerRadius: 10)
+                .frame(width: side, height: side)
+                .shadow(color: .black.opacity(0.45), radius: 32, y: 14)
 
-            VStack(spacing: 14) {
-                AlbumArtwork(source: source, cornerRadius: 10)
-                    .frame(maxWidth: 760, maxHeight: 760)
-                    .shadow(color: .black.opacity(0.45), radius: 28, y: 12)
-                    .onTapGesture { dismiss() }
-
-                VStack(spacing: 3) {
-                    Text(title)
-                        .font(.title3.weight(.semibold))
+            VStack(spacing: 3) {
+                Text(title)
+                    .font(.title3.weight(.semibold))
+                    .multilineTextAlignment(.center)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-                    if let subtitle {
-                        Text(subtitle)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                    }
                 }
-                .padding(.horizontal, 24)
             }
-            .padding(30)
+            .frame(width: side)
+            .frame(height: Self.caption - 16)
         }
-        .frame(minWidth: 420, minHeight: 420)
-        // Escape, without a visible button cluttering the picture.
+        .padding(Self.margin / 2)
+        .background(HostWindowSize(size: $host))
+        // A click anywhere dismisses; there is no close button on a picture.
+        .contentShape(.rect)
+        .onTapGesture { dismiss() }
         .onExitCommand { dismiss() }
+    }
+}
+
+/// Reports the size of the window the sheet is attached to.
+///
+/// A sheet is bounded by its host window but cannot ask SwiftUI how big that
+/// is — `GeometryReader` only sees the sheet's own proposal. `sheetParent` is
+/// the window the sheet hangs from, which is the constraint that matters.
+private struct HostWindowSize: NSViewRepresentable {
+    @Binding var size: CGSize
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+
+    func updateNSView(_ view: NSView, context: Context) {
+        DispatchQueue.main.async {
+            guard let host = view.window?.sheetParent ?? view.window else { return }
+            let frame = host.contentLayoutRect.size
+            if frame != size { size = frame }
+        }
     }
 }
 
