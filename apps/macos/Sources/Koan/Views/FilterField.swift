@@ -8,9 +8,9 @@ import SwiftUI
 /// I am looking at, the ones with 'live' in the title" without being thrown
 /// into a results page.
 ///
-/// Clears itself when you leave the view — a filter you cannot see is a filter
-/// you will not remember setting, and coming back to an apparently empty
-/// library is a bug report waiting to happen.
+/// Plain `.roundedBorder` rather than a hand-drawn capsule: it sits next to
+/// system controls in the toolbar and anything bespoke reads as a mistake
+/// beside them.
 struct FilterField: View {
     let placeholder: String
 
@@ -20,31 +20,20 @@ struct FilterField: View {
     var body: some View {
         @Bindable var library = library
 
-        HStack(spacing: 5) {
-            Image(systemName: "line.3.horizontal.decrease")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-            TextField(placeholder, text: $library.filter)
-                .textFieldStyle(.plain)
-                .font(.callout)
-                .focused($focused)
-                // Escape is what people press to abandon a filter.
-                .onExitCommand { library.filter = "" }
-            if !library.filter.isEmpty {
-                Button {
-                    library.filter = ""
-                    focused = true
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.tertiary)
-                .help("Clear filter")
+        TextField(placeholder, text: $library.filter)
+            .textFieldStyle(.roundedBorder)
+            .focused($focused)
+            // Escape is what people press to abandon a filter.
+            .onExitCommand { library.filter = "" }
+            .frame(width: 170)
+            .onReceive(NotificationCenter.default.publisher(for: .koanFocusFilter)) { _ in
+                focused = true
             }
-        }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-        .frame(width: 190)
     }
+}
+
+extension Notification.Name {
+    /// ⌘F, from the Edit menu — the field is in the toolbar and the menu item
+    /// has no way to reach into it.
+    static let koanFocusFilter = Notification.Name("koan.focusFilter")
 }

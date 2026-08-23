@@ -415,6 +415,13 @@ fn command_loop(
             PlayerCommand::ClearPlaylist => {
                 client.clear_queue().ok();
             }
+            // The bridge drives a remote server's queue, which is rebuilt from
+            // track ids rather than from items this process built.
+            PlayerCommand::ReplacePlaylist { .. } => {
+                client.clear_queue().ok();
+                local_tx.send(cmd).ok();
+                continue;
+            }
             PlayerCommand::RemoveFromPlaylist(id) => {
                 let _ = client.execute(
                     &format!(

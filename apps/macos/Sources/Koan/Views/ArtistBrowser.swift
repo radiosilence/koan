@@ -82,9 +82,11 @@ struct ArtistDetailView: View {
                             .font(.callout)
                             .foregroundStyle(.secondary)
                         if let artist {
-                            QueueButtons(
-                                playable: .artist(id: artist.id, name: artist.name)
-                            )
+                            let playable = Playable.artist(id: artist.id, name: artist.name)
+                            HStack(spacing: 10) {
+                                QueueButtons(playable: playable)
+                                ShareButton(playable: playable)
+                            }
                             .padding(.top, 4)
                         }
                     }

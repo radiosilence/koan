@@ -135,19 +135,21 @@ impl MutationRoot {
         })
     }
 
+    /// Replace the queue, starting at `start_at` (default: the first track).
+    ///
+    /// One command rather than clear-then-add-then-play, so the first track
+    /// never starts before the cursor lands on the one that was asked for.
     async fn replace_queue(
         &self,
         ctx: &Context<'_>,
         track_ids: Vec<i64>,
+        start_at: Option<i32>,
     ) -> async_graphql::Result<GqlQueueMutationResult> {
         require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
-
-        tx.send(PlayerCommand::ClearPlaylist)
-            .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
-
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
+
         // One query for the rows and one config load for the batch: building
         // items per track re-read config.toml every time, which is what made a
         // large queue add crawl.
@@ -159,16 +161,17 @@ impl MutationRoot {
             .filter(|i| matches!(i.load_state, koan_core::player::state::LoadState::Pending))
             .filter_map(|i| i.db_id.map(|id| (id, i.id)))
             .collect();
-
         let count = items.len() as i32;
-        let first_id = items.first().map(|i| i.id);
-        if !items.is_empty() {
-            tx.send(PlayerCommand::AddToPlaylist(items))
-                .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
 
-            if let Some(id) = first_id {
-                let _ = tx.send(PlayerCommand::Play(id));
-            }
+        if items.is_empty() {
+            tx.send(PlayerCommand::ClearPlaylist)
+                .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
+        } else {
+            tx.send(PlayerCommand::ReplacePlaylist {
+                items,
+                start: start_at.unwrap_or(0).max(0) as usize,
+            })
+            .map_err(|e| async_graphql::Error::new(format!("send error: {}", e)))?;
 
             if !pending_downloads.is_empty() {
                 spawn_downloads(pending_downloads, tx.clone(), state.clone());

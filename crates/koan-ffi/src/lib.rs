@@ -219,20 +219,29 @@ impl KoanEngine {
     }
 
     /// Clear the queue and play `track_ids` from the top.
-    pub fn replace_queue(&self, track_ids: Vec<i64>) -> Result<Vec<String>, KoanError> {
+    /// Replace the queue, starting at `start_at` (default: the first track).
+    ///
+    /// The index is part of the command rather than a follow-up `play` because
+    /// two commands means the first track audibly starts before the jump lands:
+    /// clicking track nine of an album flashed track one as playing first.
+    /// An index past the end starts at the beginning.
+    pub fn replace_queue(
+        &self,
+        track_ids: Vec<i64>,
+        start_at: Option<u32>,
+    ) -> Result<Vec<String>, KoanError> {
         let db = self.db()?;
         let (items, pending) = self.build_items(&db, &track_ids);
-
-        self.send(PlayerCommand::ClearPlaylist)?;
         if items.is_empty() {
+            self.send(PlayerCommand::ClearPlaylist)?;
             return Ok(Vec::new());
         }
 
         let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
-        let first = items[0].id;
-
-        self.send(PlayerCommand::AddToPlaylist(items))?;
-        let _ = self.tx.send(PlayerCommand::Play(first));
+        self.send(PlayerCommand::ReplacePlaylist {
+            items,
+            start: start_at.unwrap_or(0) as usize,
+        })?;
         self.start_downloads(pending);
 
         Ok(ids)

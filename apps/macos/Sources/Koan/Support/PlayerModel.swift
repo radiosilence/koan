@@ -225,22 +225,16 @@ final class PlayerModel {
     // MARK: - Queue
 
     /// Replace the queue and start playing — double-clicking an album.
-    func playNow(trackIds: [Int64]) {
+    /// Queue the whole list, starting at `index` — so clicking track nine of an
+    /// album still leaves the rest queued behind it.
+    ///
+    /// The index goes with the command rather than following it as a separate
+    /// `play`. Two commands meant the first track started before the cursor
+    /// jumped, which showed as track one flashing as playing.
+    func playNow(trackIds: [Int64], startingAt index: Int = 0) {
         guard !trackIds.isEmpty else { return }
-        offMain { _ = try $0.replaceQueue(trackIds: trackIds) }
-    }
-
-    /// Queue the whole list but start at the track that was clicked, so the rest
-    /// of the album still plays after it. `replaceQueue` hands back the new item
-    /// IDs in order, which is what makes the jump addressable.
-    func playNow(trackIds: [Int64], startingAt index: Int) {
-        guard trackIds.indices.contains(index) else { return playNow(trackIds: trackIds) }
-        offMain { engine in
-            let itemIds = try engine.replaceQueue(trackIds: trackIds)
-            if itemIds.indices.contains(index) {
-                try engine.play(queueItemId: itemIds[index])
-            }
-        }
+        let start = trackIds.indices.contains(index) ? index : 0
+        offMain { _ = try $0.replaceQueue(trackIds: trackIds, startAt: UInt32(start)) }
     }
 
     /// Queue immediately after whatever is playing, rather than at the end.

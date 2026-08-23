@@ -39,6 +39,7 @@ struct TrackListView: View {
                                 track: track,
                                 position: index + 1,
                                 isCurrent: player.currentTrackId == track.id,
+                                isSelected: selection.contains(track.id),
                                 allTrackIds: tracks.map(\.id)
                             )
                             .rowBehaviour(playable: .track(track))
@@ -142,8 +143,13 @@ struct TrackListView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                QueueButtons(playable: playable)
-                    .padding(.top, 4)
+                HStack(spacing: 10) {
+                    QueueButtons(playable: playable)
+                    if let playable {
+                        ShareButton(playable: playable)
+                    }
+                }
+                .padding(.top, 4)
             }
             Spacer(minLength: 0)
         }
@@ -154,6 +160,7 @@ private struct TrackRow: View {
     let track: Track
     let position: Int
     let isCurrent: Bool
+    let isSelected: Bool
     /// The whole list, so playing this row keeps the rest queued behind it.
     let allTrackIds: [Int64]
 
@@ -186,7 +193,13 @@ private struct TrackRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title)
                     .lineLimit(1)
-                    .foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                    // Tinted to mark the playing track — but not when the row
+                    // is selected, where accent-on-accent is unreadable.
+                    .foregroundStyle(
+                        isCurrent && !isSelected
+                            ? AnyShapeStyle(.tint)
+                            : AnyShapeStyle(.primary)
+                    )
                 LinkText(
                     text: track.artistName,
                     target: track.artistId.map { .artist($0) },

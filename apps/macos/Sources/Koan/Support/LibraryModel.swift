@@ -37,7 +37,12 @@ final class LibraryModel {
     }
 
     /// Substring filter over whatever the current section is showing.
-    var filter: String = ""
+    var filter: String = "" {
+        didSet {
+            guard filter != oldValue else { return }
+            refilter()
+        }
+    }
 
     /// Newest first by default: the record you just added is the one you're
     /// looking for. Persisted so it survives a relaunch.
@@ -49,9 +54,9 @@ final class LibraryModel {
         }
     }
 
-    private(set) var albums: [Album] = []
-    private(set) var artists: [Artist] = []
-    private(set) var favourites: [Track] = []
+    private(set) var albums: [Album] = [] { didSet { refilter() } }
+    private(set) var artists: [Artist] = [] { didSet { refilter() } }
+    private(set) var favourites: [Track] = [] { didSet { refilter() } }
     private(set) var snapshots: [Snapshot] = []
     private(set) var stats: Stats?
     private(set) var isLoading = false
@@ -60,7 +65,12 @@ final class LibraryModel {
     /// rather than each browser owning a stack nothing else can reach.
     var path = NavigationPath()
 
-    var selectedArtistId: Int64?
+    var selectedArtistId: Int64? {
+        didSet {
+            guard selectedArtistId != oldValue else { return }
+            refilter()
+        }
+    }
     var selectedAlbumId: Int64?
     private(set) var detailTracks: [Track] = []
 
@@ -93,23 +103,33 @@ final class LibraryModel {
 
     // MARK: - Filtered views
 
-    var visibleAlbums: [Album] {
+    /// Stored rather than computed. A `List` reads its collection far more than
+    /// once per update, and re-filtering forty thousand rows on every read
+    /// froze the artist list for a second or two whenever the filter changed.
+    /// The album grid is lazy and never noticed, which is what made it look
+    /// like a bug in the artist view specifically.
+    private(set) var visibleAlbums: [Album] = []
+    private(set) var visibleArtists: [Artist] = []
+    private(set) var visibleFavourites: [Track] = []
+
+    /// Recompute what each section shows. Called whenever the filter or any of
+    /// the underlying collections change.
+    private func refilter() {
         let scoped = selectedArtistId.map { id in albums.filter { $0.artistId == id } } ?? albums
-        guard !filter.isEmpty else { return scoped }
-        return scoped.filter {
+        guard !filter.isEmpty else {
+            visibleAlbums = scoped
+            visibleArtists = artists
+            visibleFavourites = favourites
+            return
+        }
+        visibleAlbums = scoped.filter {
             $0.title.localizedCaseInsensitiveContains(filter)
                 || $0.artistName.localizedCaseInsensitiveContains(filter)
         }
-    }
-
-    var visibleArtists: [Artist] {
-        guard !filter.isEmpty else { return artists }
-        return artists.filter { $0.name.localizedCaseInsensitiveContains(filter) }
-    }
-
-    var visibleFavourites: [Track] {
-        guard !filter.isEmpty else { return favourites }
-        return favourites.filter {
+        visibleArtists = artists.filter {
+            $0.name.localizedCaseInsensitiveContains(filter)
+        }
+        visibleFavourites = favourites.filter {
             $0.title.localizedCaseInsensitiveContains(filter)
                 || $0.artistName.localizedCaseInsensitiveContains(filter)
                 || $0.albumTitle.localizedCaseInsensitiveContains(filter)

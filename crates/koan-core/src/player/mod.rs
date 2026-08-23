@@ -957,6 +957,25 @@ impl Player {
                 self.shared_state.clear_playlist();
                 self.push_undo(UndoEntry::Replaced { items, cursor });
             }
+            PlayerCommand::ReplacePlaylist { items, start } => {
+                // Same order as ClearPlaylist: stop and clear display state
+                // before snapshotting, or the snapshot captures an already
+                // emptied playlist and undo restores nothing.
+                self.stop_playback_and_clear_state();
+                let (old_items, cursor) = self.shared_state.snapshot_playlist();
+                self.shared_state.clear_playlist();
+                self.push_undo(UndoEntry::Replaced {
+                    items: old_items,
+                    cursor,
+                });
+
+                if items.is_empty() {
+                    return;
+                }
+                let start_id = items.get(start).unwrap_or(&items[0]).id;
+                self.shared_state.add_items(items);
+                self.play(start_id);
+            }
             PlayerCommand::RemoveFromPlaylist(id) => {
                 let item = self.shared_state.get_item(id);
                 let after = self.shared_state.item_before(id);

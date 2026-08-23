@@ -82,20 +82,25 @@ struct RootView: View {
                 .help("Forward (⌘])")
             }
 
-            // Filtering what is on screen belongs with it, not in the sidebar
-            // search, which navigates away instead of narrowing.
-            if library.section == .albums || library.section == .artists {
-                ToolbarItem(placement: .principal) {
+            // Everything that acts on the current view lives in one trailing
+            // group. A leading Spacer inside the group is what actually pins it
+            // right: `.primaryAction` alone only lands trailing when something
+            // else already occupies the toolbar, which is why it looked correct
+            // on the albums view and drifted left everywhere else.
+            ToolbarItemGroup(placement: .primaryAction) {
+                Spacer()
+
+                // Filtering what is on screen belongs with it, not in the
+                // sidebar search, which navigates away instead of narrowing.
+                if library.section == .albums || library.section == .artists {
                     FilterField(
                         placeholder: library.section == .albums
                             ? "Filter albums" : "Filter artists"
                     )
                 }
-            }
 
-            // Sort belongs next to what it sorts, so it only appears there.
-            if library.section == .albums {
-                ToolbarItem(placement: .principal) {
+                // Sort belongs next to what it sorts, so it only appears there.
+                if library.section == .albums {
                     Picker("Sort", selection: Binding(
                         get: { library.albumSort },
                         set: { library.albumSort = $0 }
@@ -108,9 +113,8 @@ struct RootView: View {
                     .labelsHidden()
                     .frame(width: 150)
                     .help("Sort albums")
-                }
-                if library.albumSort == .random {
-                    ToolbarItem(placement: .principal) {
+
+                    if library.albumSort == .random {
                         Button {
                             library.reshuffleAlbums()
                         } label: {
@@ -119,14 +123,7 @@ struct RootView: View {
                         .help("Shuffle again")
                     }
                 }
-            }
-            // A leading Spacer inside the group is what actually pins this to
-            // the right. `.primaryAction` alone only lands trailing when
-            // something else already occupies the toolbar — which is why it
-            // looked correct on the albums view, with its sort picker, and
-            // drifted left everywhere else.
-            ToolbarItemGroup(placement: .primaryAction) {
-                Spacer()
+
                 Button {
                     showLyrics.toggle()
                 } label: {
