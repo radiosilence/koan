@@ -267,6 +267,8 @@ fn write_albums(
                 source: "remote".to_string(),
                 remote_id: Some(song.id.clone()),
                 remote_url: Some(client.stream_url_template(&song.id)),
+                album_remote_id: Some(album.id.clone()),
+                artist_remote_id: album.artist_id.clone(),
                 album_added_at: album.created.clone(),
             };
 
@@ -411,8 +413,41 @@ mod tests {
             source: "remote".into(),
             remote_id: Some(remote_id.into()),
             remote_url: Some(format!("https://example.com/stream?id={}", remote_id)),
+            album_remote_id: Some(format!("album-of-{remote_id}")),
+            artist_remote_id: Some(format!("artist-of-{remote_id}")),
             album_added_at: None,
         }
+    }
+
+    /// The server keys stars, shares and cover art off album and artist ids,
+    /// so a sync that only kept the track's left the library unable to refer
+    /// to either — every album row came back with a null remote_id.
+    #[test]
+    fn a_sync_records_the_album_and_artist_ids_too() {
+        let (db, _dir) = test_db();
+
+        let meta = remote_track_meta("remote-100", "Enter", "Russian Circles", "Enter");
+        queries::upsert_track(&db.conn, &meta).unwrap();
+
+        let album: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT remote_id FROM albums WHERE title = 'Enter'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(album.as_deref(), Some("album-of-remote-100"));
+
+        let artist: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT remote_id FROM artists WHERE name = 'Russian Circles'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(artist.as_deref(), Some("artist-of-remote-100"));
     }
 
     #[test]

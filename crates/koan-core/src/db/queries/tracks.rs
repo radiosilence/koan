@@ -92,7 +92,8 @@ pub fn upsert_track_status(conn: &Connection, meta: &TrackMeta) -> Result<(i64, 
 
 fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool), DbError> {
     let album_artist_name = meta.album_artist.as_deref().unwrap_or(&meta.artist);
-    let album_artist_id = get_or_create_artist(conn, album_artist_name, None)?;
+    let album_artist_id =
+        get_or_create_artist(conn, album_artist_name, meta.artist_remote_id.as_deref())?;
     // Track artist — may differ from album artist (e.g. compilations, VA albums).
     let track_artist_id = if meta.artist == album_artist_name {
         album_artist_id
@@ -108,7 +109,7 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
         None,
         meta.codec.as_deref(),
         meta.label.as_deref(),
-        None,
+        meta.album_remote_id.as_deref(),
         meta.album_added_at.as_deref(),
     )?;
 

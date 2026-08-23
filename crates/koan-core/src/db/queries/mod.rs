@@ -128,6 +128,13 @@ pub struct TrackMeta {
     pub source: String,
     pub remote_id: Option<String>,
     pub remote_url: Option<String>,
+    /// The server's ids for the album and its artist.
+    ///
+    /// Carried alongside the track's own, because the server keys stars,
+    /// shares and cover art off them — a library synced without these has
+    /// albums and artists it can name but cannot refer to.
+    pub album_remote_id: Option<String>,
+    pub artist_remote_id: Option<String>,
     /// When the album this track belongs to entered the library. Remote sync
     /// supplies the server's `created`; anything else leaves it and the album
     /// is stamped with the time it was first seen.
@@ -158,6 +165,8 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         path: Some(format!("/music/{}/{}.flac", album, title)),
         source: "local".into(),
         remote_id: None,
+        album_remote_id: None,
+        artist_remote_id: None,
         remote_url: None,
         album_added_at: None,
     }
