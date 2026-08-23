@@ -2,6 +2,10 @@ use rusqlite::Connection;
 
 /// Create all tables. Idempotent — safe to call on every startup.
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
+    // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
+    // connection without it fails them rather than sorting differently.
+    super::connection::register_library_collation(conn)?;
+
     conn.execute_batch(
         "
         CREATE TABLE IF NOT EXISTS artists (

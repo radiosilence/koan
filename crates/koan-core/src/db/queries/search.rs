@@ -42,7 +42,7 @@ pub fn search_tracks_paged(
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE tracks_fts MATCH ?1
-         ORDER BY a.name, al.date, al.title, t.disc, t.track_number
+         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY, t.disc, t.track_number
          LIMIT ?2 OFFSET ?3",
     )?;
 

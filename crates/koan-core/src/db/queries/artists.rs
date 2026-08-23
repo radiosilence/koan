@@ -52,7 +52,7 @@ pub fn find_artists(conn: &Connection, query: &str) -> Result<Vec<ArtistRow>, Db
          FROM artists a
          INNER JOIN albums al ON al.artist_id = a.id
          WHERE a.name LIKE ?1 COLLATE NOCASE ESCAPE '\\'
-         ORDER BY COALESCE(a.sort_name, a.name)",
+         ORDER BY COALESCE(a.sort_name, a.name) COLLATE LIBRARY",
     )?;
     let rows = stmt
         .query_map(params![pattern], |row| {
@@ -76,7 +76,7 @@ pub fn all_artists(conn: &Connection) -> Result<Vec<ArtistRow>, DbError> {
         "SELECT DISTINCT a.id, a.name, a.sort_name, a.remote_id
          FROM artists a
          INNER JOIN albums al ON al.artist_id = a.id
-         ORDER BY COALESCE(a.sort_name, a.name)",
+         ORDER BY COALESCE(a.sort_name, a.name) COLLATE LIBRARY",
     )?;
 
     let rows = stmt

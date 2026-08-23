@@ -100,6 +100,22 @@ macos-bundle: macos-build
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp {{app_dir}}/.build/release/Koan "$app/Contents/MacOS/koan-app"
     [ -f {{app_dir}}/Resources/AppIcon.icns ] && cp {{app_dir}}/Resources/AppIcon.icns "$app/Contents/Resources/" || true
+    # The accent colour. macOS paints list selection, focus rings and controls
+    # from the app's accent, and reads it from a compiled asset catalog — there
+    # is no way to set it from SwiftUI, which is why `.tint` leaves sidebar
+    # selection stubbornly blue. actool ships with Xcode proper, not the command
+    # line tools, so a machine without it gets a working app with the system
+    # accent rather than a failed build.
+    if /usr/bin/actool --version >/dev/null 2>&1; then
+        /usr/bin/actool {{app_dir}}/Resources/Assets.xcassets \
+            --compile "$app/Contents/Resources" \
+            --platform macosx --minimum-deployment-target 14.0 \
+            --output-partial-info-plist /dev/null >/dev/null
+        accent='<key>NSAccentColorName</key><string>AccentColor</string>'
+    else
+        echo "note: actool unavailable (needs full Xcode) — building with the system accent"
+        accent=''
+    fi
     cat > "$app/Contents/Info.plist" <<PLIST
     <?xml version="1.0" encoding="UTF-8"?>
     <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -113,6 +129,7 @@ macos-bundle: macos-build
         <key>CFBundleShortVersionString</key><string>${version}</string>
         <key>CFBundleVersion</key><string>${version}</string>
         <key>CFBundleIconFile</key><string>AppIcon</string>
+        ${accent}
         <key>LSMinimumSystemVersion</key><string>14.0</string>
         <key>NSHighResolutionCapable</key><true/>
         <key>NSSupportsAutomaticGraphicsSwitching</key><true/>

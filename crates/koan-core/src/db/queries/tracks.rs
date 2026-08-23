@@ -455,7 +455,7 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE t.artist_id = ?1 OR al.artist_id = ?1
-         ORDER BY al.date, al.title, t.disc, t.track_number",
+         ORDER BY al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
     )?;
     let rows = stmt
         .query_map(params![artist_id], row_to_track_row)?
@@ -561,7 +561,7 @@ pub fn all_tracks(conn: &Connection) -> Result<Vec<TrackRow>, DbError> {
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         ORDER BY a.name, al.date, al.title, t.disc, t.track_number",
+         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
     )?;
 
     let rows = stmt
@@ -637,7 +637,7 @@ pub fn all_tracks_paged(
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         ORDER BY a.name, al.date, al.title, t.disc, t.track_number
+         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY, t.disc, t.track_number
          LIMIT ?1 OFFSET ?2",
     )?;
     let rows = stmt

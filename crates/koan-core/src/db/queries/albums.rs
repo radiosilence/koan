@@ -65,7 +65,7 @@ pub fn albums_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<AlbumR
          FROM albums al
          LEFT JOIN artists a ON al.artist_id = a.id
          WHERE al.artist_id = ?1
-         ORDER BY al.date, al.title",
+         ORDER BY al.date, al.title COLLATE LIBRARY",
     )?;
     let rows = stmt
         .query_map(params![artist_id], |row| {
@@ -138,7 +138,7 @@ pub fn all_albums(conn: &Connection) -> Result<Vec<AlbumRow>, DbError> {
                 al.added_at
          FROM albums al
          LEFT JOIN artists a ON al.artist_id = a.id
-         ORDER BY a.name, al.date, al.title",
+         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY",
     )?;
 
     let rows = stmt

@@ -207,26 +207,21 @@ impl Drop for AudioEngine {
             }
         }
 
-        // Remove the render callback before tearing down. This ensures no
-        // future callback can race with AudioUnitUninitialize, which
-        // otherwise crashes in CoreAudio's internal allocator (caulk) —
-        // especially during sample rate changes.
-        let silent_cb = AURenderCallbackStruct {
-            inputProc: None,
-            inputProcRefCon: ptr::null_mut(),
-        };
-        // SAFETY: Removing the callback from a valid AudioUnit. Even if the unit
-        // is in a degraded state, setting a null callback is a no-op at worst.
-        unsafe {
-            AudioUnitSetProperty(
-                self.audio_unit,
-                kAudioUnitProperty_SetRenderCallback,
-                kAudioUnitScope_Input,
-                0,
-                &silent_cb as *const _ as *const c_void,
-                mem::size_of::<AURenderCallbackStruct>() as u32,
-            );
-        }
+        // Deliberately no `AudioUnitSetProperty` here.
+        //
+        // Removing the render callback before teardown looks like the safe
+        // move, and it was how this was written — but
+        // `kAudioUnitProperty_SetRenderCallback` may only be set while the unit
+        // is *uninitialized*. Setting it on a live unit makes CoreAudio tear
+        // down and rebuild its internal ExtendedAudioBufferList, and that is
+        // the double free this was meant to prevent: the crash landed inside
+        // `AudioUnitSetProperty` itself, in caulk's deallocator, every time a
+        // queue reached its end (#89, and again at the end of a playlist).
+        //
+        // `AudioUnitUninitialize` releases that buffer list, once, which is all
+        // that is wanted. Nothing can be mid-callback by then: `stop()` has
+        // cleared `running` so the callback only writes silence, and the
+        // spin-wait above has drained anything already executing.
 
         // SAFETY: AudioUnit was successfully created in new(). Uninitialize and
         // Dispose are the documented teardown sequence. callback_data was created
