@@ -64,6 +64,10 @@ macos-ffi *TARGETS:
     set -euo pipefail
     targets="{{TARGETS}}"
     if [ -z "$targets" ]; then
+        # A stale universal library from an earlier release build would shadow
+        # this one: Package.swift searches target/universal/release first, and
+        # the linker takes the first match rather than the newest.
+        rm -rf target/universal/release
         cargo build --release -p koan-ffi
         lib=target/release/libkoan_ffi.a
         dylib=target/release/libkoan_ffi.dylib
