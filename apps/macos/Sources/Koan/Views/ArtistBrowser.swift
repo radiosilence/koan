@@ -27,6 +27,14 @@ struct ArtistBrowser: View {
                 // The name is the way in — a link, so a single click opens the
                 // artist while the rest of the row selects.
                 RowLink(artist.name) { library.reveal(artist: artist.id) }
+                FavouriteButton(
+                    isOn: library.isFavourite(artist: artist.id),
+                    showing: hovered == artist.id,
+                    size: .caption
+                ) {
+                    library.toggleFavourite(artist: artist.id)
+                }
+                .frame(width: 16)
                 Spacer(minLength: 12)
                 Text(Format.count(artist.albumCount, "album"))
                     .font(.caption.monospacedDigit())
@@ -99,6 +107,7 @@ struct ArtistDetailView: View {
                         HStack(spacing: 10) {
                             QueueButtons(playable: playable)
                             ShareButton(playable: playable)
+                            FavouriteHeaderButton(playable: playable)
                         }
                         .padding(.top, 4)
                     }

@@ -414,6 +414,8 @@ pub struct SyncSummary {
     /// Non-zero means the run was incomplete and the next one will retry those
     /// albums — worth saying so rather than reporting a clean sync.
     pub albums_failed: u32,
+    pub favourites_pushed: u32,
+    pub favourites_imported: u32,
 }
 
 #[derive(uniffi::Record, Debug, Clone)]

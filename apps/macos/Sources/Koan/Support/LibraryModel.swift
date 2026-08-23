@@ -57,6 +57,20 @@ final class LibraryModel {
     private(set) var albums: [Album] = [] { didSet { refilter() } }
     private(set) var artists: [Artist] = [] { didSet { refilter() } }
     private(set) var favourites: [Track] = [] { didSet { refilter() } }
+
+    // Favourite state is read from here rather than from the copy baked into
+    // each Track when it was fetched. A track appears in the album view, the
+    // artist view, the queue, the picker and search results, and refetching
+    // every one of those after a heart click is neither cheap nor reliable —
+    // it left the album view showing an unfilled heart on a track that was
+    // already favourited.
+    private(set) var favouriteTrackIds: Set<Int64> = []
+    private(set) var favouriteAlbumIds: Set<Int64> = []
+    private(set) var favouriteArtistIds: Set<Int64> = []
+
+    func isFavourite(track id: Int64) -> Bool { favouriteTrackIds.contains(id) }
+    func isFavourite(album id: Int64) -> Bool { favouriteAlbumIds.contains(id) }
+    func isFavourite(artist id: Int64) -> Bool { favouriteArtistIds.contains(id) }
     private(set) var snapshots: [Snapshot] = []
     private(set) var stats: Stats?
     private(set) var isLoading = false
@@ -92,6 +106,7 @@ final class LibraryModel {
 
     init(engine: KoanEngine) {
         self.engine = engine
+        refreshFavourites()
         if let stored = UserDefaults.standard.string(forKey: "albumSort"),
            let sort = AlbumSort(storageKey: stored) {
             albumSort = sort
@@ -298,6 +313,21 @@ final class LibraryModel {
         case artist(Int64)
     }
 
+    /// What the sidebar should highlight.
+    ///
+    /// Reaching an album from Favourites, from search, or from "Go to Album" in
+    /// the queue pushes a detail view without changing section, so the sidebar
+    /// went on pointing at wherever you started — which is not where you are.
+    /// The row an album lives under is Albums, whichever door you came through.
+    var navSelection: Section {
+        guard !path.isEmpty else { return section }
+        switch history.indices.contains(historyCursor) ? history[historyCursor] : .section(section) {
+        case .album: return .albums
+        case .artist: return .artists
+        case .section(let s): return s
+        }
+    }
+
     private(set) var history: [Destination] = [.section(.queue)]
     private(set) var historyCursor = 0
     /// Set while replaying history, so applying a destination doesn't record it
@@ -365,16 +395,71 @@ final class LibraryModel {
 
     // MARK: - Mutations
 
-    /// Refresh only what a favourite toggle can change, rather than reloading
-    /// the section wholesale.
+    /// Toggle a track favourite and reflect it everywhere at once.
+    ///
+    /// The engine returns the new state, so the id sets are updated from that
+    /// rather than by re-reading the database — the row responds on the click
+    /// rather than a round trip later.
+    func toggleFavourite(track id: Int64) {
+        let engine = self.engine
+        Task {
+            let now = await Task.detached(priority: .userInitiated) {
+                (try? engine.toggleFavourite(trackId: id))
+            }.value
+            guard let now else { return }
+            if now { favouriteTrackIds.insert(id) } else { favouriteTrackIds.remove(id) }
+            reloadFavouritesList()
+        }
+    }
+
+    func toggleFavourite(album id: Int64) {
+        let engine = self.engine
+        Task {
+            let now = await Task.detached(priority: .userInitiated) {
+                (try? engine.toggleFavouriteAlbum(albumId: id))
+            }.value
+            guard let now else { return }
+            if now { favouriteAlbumIds.insert(id) } else { favouriteAlbumIds.remove(id) }
+        }
+    }
+
+    func toggleFavourite(artist id: Int64) {
+        let engine = self.engine
+        Task {
+            let now = await Task.detached(priority: .userInitiated) {
+                (try? engine.toggleFavouriteArtist(artistId: id))
+            }.value
+            guard let now else { return }
+            if now { favouriteArtistIds.insert(id) } else { favouriteArtistIds.remove(id) }
+        }
+    }
+
+    /// Re-read every favourite id from the database. Called after a sync, which
+    /// can change them without going through a toggle.
     func refreshFavourites() {
         let engine = self.engine
         Task {
-            let updated = await Task.detached(priority: .utility) {
+            let sets = await Task.detached(priority: .utility) {
+                (
+                    Set((try? engine.favouriteTrackIds()) ?? []),
+                    Set((try? engine.favouriteAlbumIds()) ?? []),
+                    Set((try? engine.favouriteArtistIds()) ?? [])
+                )
+            }.value
+            favouriteTrackIds = sets.0
+            favouriteAlbumIds = sets.1
+            favouriteArtistIds = sets.2
+            reloadFavouritesList()
+        }
+    }
+
+    private func reloadFavouritesList() {
+        guard section == .favourites else { return }
+        let engine = self.engine
+        Task {
+            favourites = await Task.detached(priority: .utility) {
                 (try? engine.favourites()) ?? []
             }.value
-            favourites = updated
-            if let albumId = selectedAlbumId { loadTracks(albumId: albumId) }
         }
     }
 

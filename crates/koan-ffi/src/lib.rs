@@ -713,6 +713,68 @@ impl KoanEngine {
         Ok(now_favourite)
     }
 
+    /// Every favourited track id, for the UI to read row state from one place
+    /// rather than from a copy baked into each row when it was fetched.
+    pub fn favourite_track_ids(&self) -> Result<Vec<i64>, KoanError> {
+        let db = self.db()?;
+        Ok(queries::favourite_track_ids_batch(&db.conn)
+            .map_err(db_err)?
+            .into_iter()
+            .collect())
+    }
+
+    pub fn favourite_album_ids(&self) -> Result<Vec<i64>, KoanError> {
+        let db = self.db()?;
+        Ok(queries::favourite_album_id_set(&db.conn)
+            .map_err(fav_err)?
+            .into_iter()
+            .collect())
+    }
+
+    pub fn favourite_artist_ids(&self) -> Result<Vec<i64>, KoanError> {
+        let db = self.db()?;
+        Ok(queries::favourite_artist_id_set(&db.conn)
+            .map_err(fav_err)?
+            .into_iter()
+            .collect())
+    }
+
+    /// Toggle an album favourite. Returns the new state.
+    pub fn toggle_favourite_album(&self, album_id: i64) -> Result<bool, KoanError> {
+        let db = self.db()?;
+        let (artist, title) = queries::album_favourite_key(&db.conn, album_id)
+            .map_err(db_err)?
+            .ok_or_else(|| KoanError::NotFound {
+                message: format!("album {album_id}"),
+            })?;
+        let now = queries::toggle_favourite_album(&db.conn, &artist, &title).map_err(fav_err)?;
+        koan_core::helpers::sync_collection_favourite_to_remote(
+            &db,
+            koan_core::helpers::FavouriteKind::Album,
+            album_id,
+            now,
+        );
+        Ok(now)
+    }
+
+    /// Toggle an artist favourite. Returns the new state.
+    pub fn toggle_favourite_artist(&self, artist_id: i64) -> Result<bool, KoanError> {
+        let db = self.db()?;
+        let name = queries::artist_favourite_key(&db.conn, artist_id)
+            .map_err(db_err)?
+            .ok_or_else(|| KoanError::NotFound {
+                message: format!("artist {artist_id}"),
+            })?;
+        let now = queries::toggle_favourite_artist(&db.conn, &name).map_err(fav_err)?;
+        koan_core::helpers::sync_collection_favourite_to_remote(
+            &db,
+            koan_core::helpers::FavouriteKind::Artist,
+            artist_id,
+            now,
+        );
+        Ok(now)
+    }
+
     // --- Snapshots ---------------------------------------------------------
 
     pub fn snapshots(&self) -> Result<Vec<Snapshot>, KoanError> {
@@ -1227,11 +1289,18 @@ impl KoanEngine {
             message: e.to_string(),
         })?;
 
+        // Favourites are part of a sync, not a separate errand. Without this
+        // a star made on the server — or on another machine — never reaches
+        // the app, and one made here only leaves if you happen to run the CLI.
+        let favourites = koan_core::helpers::reconcile_favourites(&db, &client);
+
         Ok(SyncSummary {
             artists: result.artists_synced as u32,
             albums: result.albums_synced as u32,
             tracks: result.tracks_synced as u32,
             albums_failed: result.albums_failed as u32,
+            favourites_pushed: favourites.pushed as u32,
+            favourites_imported: favourites.imported as u32,
         })
     }
 

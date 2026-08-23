@@ -13,6 +13,7 @@ struct AlbumGridCell: View {
     @Environment(LibraryModel.self) private var library
 
     @State private var titleHovering = false
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -31,6 +32,19 @@ struct AlbumGridCell: View {
                             .background(.black.opacity(0.55), in: Capsule())
                             .padding(6)
                     }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    FavouriteButton(
+                        isOn: library.isFavourite(album: album.id),
+                        showing: hovering,
+                        size: .callout
+                    ) {
+                        library.toggleFavourite(album: album.id)
+                    }
+                    // Over artwork, which can be any colour — the plain
+                    // tertiary heart disappears against half of them.
+                    .shadow(color: .black.opacity(0.6), radius: 3)
+                    .padding(7)
                 }
 
             Text(album.title)
@@ -52,6 +66,7 @@ struct AlbumGridCell: View {
                 }
             }
         }
+        .onHover { hovering = $0 }
         .contextMenu { PlayableMenu(playable: .album(album)) }
         .draggablePlayable(.album(album))
     }

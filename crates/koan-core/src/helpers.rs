@@ -421,9 +421,11 @@ pub fn sync_favourite_to_remote(db: &Database, path: &Path, star: bool) {
         return;
     }
     let Ok(Some(remote_id)) = queries::remote_id_for_path(&db.conn, path) else {
+        log::warn!("not syncing favourite: {} has no remote id", path.display());
         return;
     };
     let Some(client) = subsonic_client(&cfg) else {
+        log::warn!("not syncing favourite: no usable server credentials");
         return;
     };
     std::thread::Builder::new()
@@ -434,8 +436,118 @@ pub fn sync_favourite_to_remote(db: &Database, path: &Path, star: bool) {
             } else {
                 client.unstar(&remote_id)
             };
-            if let Err(e) = result {
-                log::warn!("failed to sync favourite to remote: {e}");
+            match result {
+                Ok(()) => log::info!("synced favourite to remote: {remote_id} = {star}"),
+                Err(e) => log::warn!("failed to sync favourite to remote: {e}"),
+            }
+        })
+        .ok();
+}
+
+/// What a favourites reconciliation did.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct FavouriteSync {
+    pub pushed: usize,
+    pub imported: usize,
+}
+
+/// Reconcile favourites with the server, both directions.
+///
+/// Pushes every local favourite that the server knows about, then imports
+/// everything the server has starred. Union rather than mirror: neither side
+/// records an unstar, so treating one as authoritative would silently delete
+/// favourites made on the other.
+///
+/// Covers albums and artists as well as tracks — `getStarred2` returns all
+/// three from one request, and reading only songs left a starred album
+/// invisible to koan.
+pub fn reconcile_favourites(db: &Database, client: &SubsonicClient) -> FavouriteSync {
+    let mut out = FavouriteSync::default();
+
+    let tracks = queries::favourites_with_remote_id(&db.conn).unwrap_or_default();
+    for (_path, remote_id) in &tracks {
+        if client.star(remote_id).is_ok() {
+            out.pushed += 1;
+        }
+    }
+    for (_id, remote_id) in queries::favourite_albums_with_remote_id(&db.conn).unwrap_or_default() {
+        if client.star_album(&remote_id).is_ok() {
+            out.pushed += 1;
+        }
+    }
+    for (_id, remote_id) in queries::favourite_artists_with_remote_id(&db.conn).unwrap_or_default()
+    {
+        if client.star_artist(&remote_id).is_ok() {
+            out.pushed += 1;
+        }
+    }
+
+    let starred = match client.get_starred_all() {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("could not fetch starred items from the server: {e}");
+            return out;
+        }
+    };
+
+    let songs: Vec<String> = starred.song.into_iter().map(|s| s.id).collect();
+    let albums: Vec<String> = starred.album.into_iter().map(|a| a.id).collect();
+    let artists: Vec<String> = starred.artist.into_iter().map(|a| a.id).collect();
+    out.imported += queries::import_remote_favourites(&db.conn, &songs).unwrap_or(0);
+    out.imported += queries::import_remote_favourite_albums(&db.conn, &albums).unwrap_or(0);
+    out.imported += queries::import_remote_favourite_artists(&db.conn, &artists).unwrap_or(0);
+    out
+}
+
+/// What a favourite applies to. Subsonic stars all three, under different
+/// parameter names — passing an album id as `id` silently stars nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FavouriteKind {
+    Track,
+    Album,
+    Artist,
+}
+
+/// Push an album or artist favourite to the server.
+///
+/// Same shape as [`sync_favourite_to_remote`], but the remote id comes from the
+/// album or artist row rather than the track's path.
+pub fn sync_collection_favourite_to_remote(
+    db: &Database,
+    kind: FavouriteKind,
+    id: i64,
+    star: bool,
+) {
+    let cfg = Config::load().unwrap_or_default();
+    if !cfg.remote.enabled {
+        return;
+    }
+    let remote_id = match kind {
+        FavouriteKind::Album => queries::album_remote_id(&db.conn, id),
+        FavouriteKind::Artist => queries::artist_remote_id(&db.conn, id),
+        FavouriteKind::Track => return,
+    };
+    let Ok(Some(remote_id)) = remote_id else {
+        log::warn!("not syncing favourite: {kind:?} {id} has no remote id");
+        return;
+    };
+    let Some(client) = subsonic_client(&cfg) else {
+        log::warn!("not syncing favourite: no usable server credentials");
+        return;
+    };
+    std::thread::Builder::new()
+        .name("koan-fav-sync".into())
+        .spawn(move || {
+            let result = match (kind, star) {
+                (FavouriteKind::Album, true) => client.star_album(&remote_id),
+                (FavouriteKind::Album, false) => client.unstar_album(&remote_id),
+                (FavouriteKind::Artist, true) => client.star_artist(&remote_id),
+                (FavouriteKind::Artist, false) => client.unstar_artist(&remote_id),
+                (FavouriteKind::Track, _) => Ok(()),
+            };
+            match result {
+                Ok(()) => log::info!("synced favourite to remote: {kind:?} {remote_id} = {star}"),
+                Err(e) => log::warn!("failed to sync favourite to remote: {e}"),
             }
         })
         .ok();

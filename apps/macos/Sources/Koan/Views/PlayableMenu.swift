@@ -69,12 +69,7 @@ struct PlayableMenu: View {
 
         Divider()
 
-        Button(favouriteTitle) {
-            act { ids in
-                for id in ids { player.toggleFavourite(trackId: id) }
-                library.refreshFavourites()
-            }
-        }
+        Button(favouriteTitle) { toggleFavourite() }
         Button("Copy Share Link") { share() }
 
         if case .track(let track) = playable, let albumId = track.albumId {
@@ -91,13 +86,26 @@ struct PlayableMenu: View {
         }
     }
 
-    /// A single track can say whether it's already a favourite; a collection
-    /// can't without resolving it, so it stays a plain verb.
+    /// An album or an artist is favourited as itself, not as its tracks.
+    /// Subsonic stars all three, and starring an album's tracks one by one
+    /// would flip the ones already favourited back off.
     private var favouriteTitle: String {
-        if case .track(let track) = playable {
-            return track.isFavourite ? "Remove Favourite" : "Favourite"
+        switch playable {
+        case .track(let t):
+            return library.isFavourite(track: t.id) ? "Remove Favourite" : "Favourite Track"
+        case .album(let a):
+            return library.isFavourite(album: a.id) ? "Remove Favourite" : "Favourite Album"
+        case .artist(let id, _):
+            return library.isFavourite(artist: id) ? "Remove Favourite" : "Favourite Artist"
         }
-        return "Favourite All"
+    }
+
+    private func toggleFavourite() {
+        switch playable {
+        case .track(let t): library.toggleFavourite(track: t.id)
+        case .album(let a): library.toggleFavourite(album: a.id)
+        case .artist(let id, _): library.toggleFavourite(artist: id)
+        }
     }
 
     /// Resolve off the main actor, then act. An artist can be thousands of
@@ -211,6 +219,36 @@ struct ShareButton: View {
             Label("Copy Share Link", systemImage: "link")
         }
         .help("Create a public link on your server and copy it")
+    }
+}
+
+/// The favourite button on a detail page. Labelled, unlike the hover heart on
+/// a row — a header has room and the state is worth stating outright.
+struct FavouriteHeaderButton: View {
+    let playable: Playable
+
+    @Environment(LibraryModel.self) private var library
+
+    private var isOn: Bool {
+        switch playable {
+        case .track(let t): library.isFavourite(track: t.id)
+        case .album(let a): library.isFavourite(album: a.id)
+        case .artist(let id, _): library.isFavourite(artist: id)
+        }
+    }
+
+    var body: some View {
+        Button {
+            switch playable {
+            case .track(let t): library.toggleFavourite(track: t.id)
+            case .album(let a): library.toggleFavourite(album: a.id)
+            case .artist(let id, _): library.toggleFavourite(artist: id)
+            }
+        } label: {
+            Label(isOn ? "Favourited" : "Favourite", systemImage: isOn ? "heart.fill" : "heart")
+                .foregroundStyle(isOn ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+        }
+        .help(isOn ? "Remove from favourites" : "Add to favourites")
     }
 }
 

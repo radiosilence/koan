@@ -17,6 +17,11 @@ final class SettingsModel {
     private let engine: KoanEngine
     private let activity: ActivityModel
 
+    /// A sync changes favourites and the library listing, and the browser is
+    /// the thing that has to show it. Weak so the settings window does not keep
+    /// the browse state alive.
+    weak var library: LibraryModel?
+
     private(set) var settings: Settings
     private(set) var lastError: String?
     private(set) var lastResult: String?
@@ -174,9 +179,12 @@ final class SettingsModel {
             }
             switch result {
             case .success(let s):
+                // A sync reconciles favourites too, so the hearts on screen are
+                // out of date the moment it finishes.
+                library?.refreshFavourites()
                 // Zero is the normal answer for an incremental sync with nothing
                 // new, and "0 tracks across 0 albums" reads as a failure.
-                lastResult = s.tracks == 0
+                lastResult = s.tracks == 0 && s.favouritesImported == 0
                     ? "Already up to date"
                     : "\(s.tracks.formatted(.number)) tracks across \(s.albums.formatted(.number)) albums"
             case .failure(let e):
