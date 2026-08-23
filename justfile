@@ -109,7 +109,7 @@ macos-build: macos-ffi
     # the old engine. Dropping the product when the library is newer forces the
     # relink.
     product={{app_dir}}/.build/release/Koan
-    for lib in target/release/libkoan_ffi.a target/universal/release/libkoan_ffi.a; do
+    for lib in target/swift-link/libkoan_ffi.a; do
         if [ -f "$lib" ] && [ -f "$product" ] && [ "$lib" -nt "$product" ]; then
             echo "koan-ffi is newer than the built app — forcing a relink"
             rm -f "$product"
@@ -125,7 +125,17 @@ macos-bundle: macos-build
     app="{{app_dir}}/.build/pkg/Koan.app"
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    cp {{app_dir}}/.build/release/Koan "$app/Contents/MacOS/koan-app"
+    # A multi-arch `swift build --arch a --arch b` puts its lipo'd product under
+    # .build/apple/Products, and leaves .build/release pointing at a single
+    # slice — so copying the latter shipped an arm64-only app from a build that
+    # had just compiled x86_64 as well.
+    universal={{app_dir}}/.build/apple/Products/Release/Koan
+    if [ -f "$universal" ]; then
+        cp "$universal" "$app/Contents/MacOS/koan-app"
+    else
+        cp {{app_dir}}/.build/release/Koan "$app/Contents/MacOS/koan-app"
+    fi
+    echo "app binary: $(lipo -archs "$app/Contents/MacOS/koan-app")"
     [ -f {{app_dir}}/Resources/AppIcon.icns ] && cp {{app_dir}}/Resources/AppIcon.icns "$app/Contents/Resources/" || true
     # The accent colour. macOS paints list selection, focus rings and controls
     # from the app's accent, and reads it from a compiled asset catalog — there
@@ -186,6 +196,36 @@ macos-bundle: macos-build
     # the Homebrew cask does it in a postflight.
     codesign --force --deep --sign "${KOAN_SIGN_IDENTITY:--}" "$app"
     echo "built $app"
+
+# Check a built Koan.app is actually shippable.
+#
+# Two ways the bundle has gone out broken, both of which built and signed
+# cleanly and neither of which showed until someone downloaded it:
+#   - linked against cargo's dylib by absolute path, so it died in dyld on any
+#     machine but the one that built it
+#   - arm64 only, from a build that had compiled x86_64 as well
+#
+# ARCHES is what the binary must contain, e.g. "arm64 x86_64".
+macos-verify *ARCHES:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    bin="{{app_dir}}/.build/pkg/Koan.app/Contents/MacOS/koan-app"
+    [ -f "$bin" ] || { echo "no app bundle at $bin"; exit 1; }
+
+    if otool -L "$bin" | grep -q koan_ffi; then
+        echo "app links koan_ffi dynamically — it will not run off this machine:"
+        otool -L "$bin" | grep koan_ffi
+        exit 1
+    fi
+
+    have=$(lipo -archs "$bin")
+    for want in {{ARCHES}}; do
+        case " $have " in
+            *" $want "*) ;;
+            *) echo "app binary is [$have], missing $want"; exit 1 ;;
+        esac
+    done
+    echo "app binary: [$have], statically linked"
 
 # Build and launch the app bundle.
 #
