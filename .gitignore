@@ -34,3 +34,6 @@ config.local.toml
 apps/macos/Sources/KoanFFI/koan_ffi.swift
 apps/macos/Sources/koan_ffiFFI/koan_ffiFFI.h
 apps/macos/.build/
+
+# Generated from AppIcon.svg by `just macos-icon`
+apps/macos/Resources/AppIcon.iconset/

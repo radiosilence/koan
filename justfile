@@ -39,6 +39,25 @@ clean:
 bundle_id := "cc.blit.koan"
 app_dir := "apps/macos"
 
+# Regenerate AppIcon.icns from AppIcon.svg.
+#
+# The .icns is committed so a build needs no render tooling; run this after
+# editing the SVG. Needs rsvg-convert (brew install librsvg).
+macos-icon:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    set="{{app_dir}}/Resources/AppIcon.iconset"
+    rm -rf "$set" && mkdir -p "$set"
+    # Each macOS icon slot, and the pixel size it wants.
+    for spec in "16 icon_16x16" "32 icon_16x16@2x" "32 icon_32x32" "64 icon_32x32@2x" \
+                "128 icon_128x128" "256 icon_128x128@2x" "256 icon_256x256" \
+                "512 icon_256x256@2x" "512 icon_512x512" "1024 icon_512x512@2x"; do
+        px="${spec%% *}"; name="${spec##* }"
+        rsvg-convert -w "$px" -h "$px" {{app_dir}}/Resources/AppIcon.svg -o "$set/$name.png"
+    done
+    iconutil -c icns "$set" -o {{app_dir}}/Resources/AppIcon.icns
+    echo "built {{app_dir}}/Resources/AppIcon.icns"
+
 # Build the FFI static library and regenerate the Swift bindings.
 macos-ffi *TARGETS:
     #!/usr/bin/env bash
