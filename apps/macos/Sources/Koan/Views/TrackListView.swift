@@ -191,6 +191,9 @@ private struct TrackRow: View {
                 .frame(width: 48, alignment: .trailing)
         }
         .frame(height: 34)
+        // The row is only clickable where a view sits; the Spacer would
+        // otherwise be a dead zone.
+        .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }
 }

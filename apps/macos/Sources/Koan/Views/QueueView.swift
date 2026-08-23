@@ -339,6 +339,10 @@ private struct QueueRow: View {
         // Fixed height so a row doesn't grow when a download indicator appears
         // and shrink when it finishes, reflowing the list each time.
         .frame(height: 34)
+        // Without this the row is only clickable where a view actually sits —
+        // the Spacer between the title and the duration is a dead zone, and
+        // clicks landing there select nothing.
+        .contentShape(Rectangle())
         .opacity(item.status == .played ? 0.45 : 1)
     }
 
