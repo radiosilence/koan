@@ -106,7 +106,22 @@ pub fn create_share(
 
     // One query, not one per track: sharing an artist is thousands of tracks.
     let rows = queries::tracks_by_ids(&db.conn, track_ids)?;
-    let shared = rows.iter().filter(|t| t.remote_id.is_some()).count();
+
+    // Tracks koan holds no remote ID for are not necessarily absent from the
+    // server — see below.
+    let mut resolved: Vec<Option<String>> = rows.iter().map(|t| t.remote_id.clone()).collect();
+    let missing: Vec<usize> = resolved
+        .iter()
+        .enumerate()
+        .filter(|(_, rid)| rid.is_none())
+        .map(|(i, _)| i)
+        .take(RESOLVE_LIMIT)
+        .collect();
+    for i in missing {
+        resolved[i] = identify_on_server(&client, &rows[i]);
+    }
+
+    let shared = resolved.iter().filter(|r| r.is_some()).count();
     if shared == 0 {
         return Err(ShareError::NothingRemote);
     }
@@ -122,7 +137,7 @@ pub fn create_share(
 
     let remote_ids: Vec<String> = match one_album {
         Some(rid) => vec![rid],
-        None => rows.into_iter().filter_map(|t| t.remote_id).collect(),
+        None => resolved.into_iter().flatten().collect(),
     };
 
     let refs: Vec<&str> = remote_ids.iter().map(String::as_str).collect();
@@ -141,6 +156,52 @@ pub fn create_share(
         shared,
         skipped: track_ids.len().saturating_sub(shared),
     })
+}
+
+/// How many unidentified tracks one share will ask the server about. Each is a
+/// round trip, and a share of a whole artist could otherwise be hundreds.
+const RESOLVE_LIMIT: usize = 50;
+
+/// Ask the server to identify a track koan holds no remote ID for.
+///
+/// A local file and its copy on the server fail to merge whenever the two
+/// disagree about naming — a truncated ID3v1 title, a `(Deluxe)` suffix, a
+/// reissue (#221) — which leaves a record that is plainly on the server looking
+/// local-only, and unshareable. Rather than guess at the naming, ask the server:
+/// its own search is better at this than any heuristic here would be.
+///
+/// A hit counts only when exactly one song comes back matching on artist and
+/// duration, so an ambiguous answer leaves the track out rather than sharing the
+/// wrong one.
+///
+/// The result is deliberately not written back. Two rows would then carry the
+/// same `remote_id`, which is a duplicate rather than the merge #221 actually
+/// wants — repairing the rows properly means reconciling favourites and play
+/// counts too, which is that issue's job, not this one's.
+fn identify_on_server(client: &SubsonicClient, track: &queries::TrackRow) -> Option<String> {
+    let hits = client.search(&track.title).ok()?;
+    sole_match(&hits.song, &track.artist_name, track.duration_ms)
+}
+
+/// The one song that can only be this track. `None` when nothing matches, and
+/// equally when more than one does — an ambiguous answer leaves the track out
+/// rather than sharing the wrong recording.
+fn sole_match(
+    songs: &[crate::remote::client::SubsonicSong],
+    artist: &str,
+    duration_ms: Option<i64>,
+) -> Option<String> {
+    let mut matches = songs.iter().filter(|song| {
+        song.artist
+            .as_deref()
+            .is_some_and(|a| a.eq_ignore_ascii_case(artist))
+            && match (song.duration, duration_ms) {
+                (Some(secs), Some(ms)) => (secs * 1000 - ms).abs() < 2000,
+                _ => false,
+            }
+    });
+    let first = matches.next()?;
+    matches.next().is_none().then(|| first.id.clone())
 }
 
 /// The album's own remote ID, but only when `selected` covers every track on
@@ -623,6 +684,45 @@ mod share_tests {
             )
             .unwrap();
         (album_id, ids)
+    }
+
+    fn song(id: &str, title: &str, artist: &str, secs: i64) -> crate::remote::client::SubsonicSong {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "title": title, "artist": artist, "duration": secs
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn identifies_a_track_the_server_names_differently() {
+        // The local file carries a title truncated to the 30 bytes of an ID3v1
+        // tag; the server has the whole thing. Its own search bridges the gap.
+        let songs = [song(
+            "r1",
+            "Golden Skans (David E Sugar Remix)",
+            "Klaxons",
+            320,
+        )];
+        assert_eq!(
+            sole_match(&songs, "Klaxons", Some(320_026)),
+            Some("r1".into())
+        );
+    }
+
+    #[test]
+    fn two_plausible_songs_identify_neither() {
+        let songs = [
+            song("r1", "Wicked Little Town", "Hedwig", 200),
+            song("r2", "Wicked Little Town (reprise)", "Hedwig", 200),
+        ];
+        assert_eq!(sole_match(&songs, "Hedwig", Some(200_000)), None);
+    }
+
+    #[test]
+    fn a_different_recording_of_the_same_name_is_not_a_match() {
+        let songs = [song("r1", "Untitled", "Interpol", 340)];
+        assert_eq!(sole_match(&songs, "Interpol", Some(200_000)), None);
+        assert_eq!(sole_match(&songs, "Editors", Some(340_000)), None);
     }
 
     #[test]

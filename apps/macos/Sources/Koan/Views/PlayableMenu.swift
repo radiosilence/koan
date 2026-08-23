@@ -208,7 +208,7 @@ struct ShareButton: View {
         Button {
             Share.link(for: playable, engine: library.engine, player: player)
         } label: {
-            Label("Share", systemImage: "square.and.arrow.up")
+            Label("Copy Share Link", systemImage: "link")
         }
         .help("Create a public link on your server and copy it")
     }
@@ -255,3 +255,4 @@ struct PlayableHeaderButton: View {
         .help("Play \(playable.name)")
     }
 }
+

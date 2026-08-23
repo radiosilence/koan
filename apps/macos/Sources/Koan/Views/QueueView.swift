@@ -167,7 +167,7 @@ struct QueueView: View {
         if let trackId = group.items.compactMap(\.trackId).first {
             Button("Show in Library") { showInLibrary(trackId: trackId, highlight: false) }
         }
-        Button("Share Album") {
+        Button("Copy Album Share Link") {
             Share.link(
                 trackIds: group.items.compactMap(\.trackId),
                 named: "\(group.albumArtist) — \(group.album)",
@@ -207,7 +207,7 @@ struct QueueView: View {
                 library.refreshFavourites()
             }
             Button("Show in Library") { showInLibrary(trackId: trackId, highlight: true) }
-            Button("Share") {
+            Button("Copy Share Link") {
                 Share.link(
                     trackIds: [trackId],
                     named: item.title,
