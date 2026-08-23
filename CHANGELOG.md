@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Play history.** koan never recorded its own plays: `play_history` existed for the radio feature, and its only production writer was the inbound Subsonic scrobble route — i.e. plays arrived when *other* clients scrobbled to koan, and playing a track in koan itself wrote nothing.
+
+  A track is now written to history the moment it starts, not once it has been listened to for long enough. History answers "what did I put on, and in what order"; putting something on and skipping two seconds in is still a thing you did, and a log with a threshold on it is a log with holes in it. How long it was actually heard for is filled in afterwards, from position deltas — so a pause adds nothing and a seek does not credit the stretch it skipped.
+
+  The macOS app gains a **History** section (⌘5) grouped by day. Read-only: rows link through to the album and the artist and carry the usual play/queue menu, but the only thing you can change is the log itself — select and ⌫ to forget entries, the same as queue items.
+
+  Plays of tracks that came from a remote server are scrobbled to it. `SubsonicClient::scrobble` had been written and never called.
+
 - **Albums and artists can be favourited, not only tracks.** Subsonic stars all three and koan only ever read songs back, so an album starred in Navidrome was invisible here and there was no way to star one from koan at all. There is a heart on an album tile, on an artist row, and in the header of both detail pages, and the context menu favourites the thing you opened it on rather than looping over its tracks — which would have turned off every track that was already a favourite. Favourites are keyed by name rather than row id, so like track favourites they survive a rebuilt index.
 
 - **A heart on every queue row**, on hover, filled when the track is a favourite.
@@ -27,6 +35,8 @@
 - **Playback position is saved every second**, so a crash costs a second rather than the session. The queue is only rewritten when the queue changes: it is stored as a JSON blob, and re-serialising a library-sized one every second to remember a number is not a trade.
 
 ### Fixed
+
+- **`play_history.track_id` was missing its `ON DELETE CASCADE`.** Under `foreign_keys = ON` a bare `REFERENCES` makes a track with history undeletable unless the caller clears the history first. One caller did; the constraint should not depend on the next one remembering. The table is rebuilt on first open, dropping entries whose track had already gone.
 
 - **A sync never recorded the album's or the artist's id on the server.** The track's was kept and theirs was dropped, so all 5,800 albums in a synced library had a null `remote_id`. The server keys stars, shares and cover art off those ids, which left koan able to name an album but not refer to it. A full sync backfills them.
 

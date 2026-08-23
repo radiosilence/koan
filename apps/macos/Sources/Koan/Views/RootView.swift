@@ -226,6 +226,8 @@ struct RootView: View {
                 subtitle: Format.count(Int64(library.favourites.count), "track"),
                 tracks: library.favourites
             )
+        case .playHistory:
+            HistoryView()
         case .snapshots:
             SnapshotsView()
         }

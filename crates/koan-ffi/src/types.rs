@@ -135,6 +135,21 @@ pub struct Track {
     pub is_favourite: bool,
 }
 
+/// One play, with the track it played.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PlayHistoryEntry {
+    /// Identifies this play, not the track — the same track played twice is
+    /// two entries with two ids.
+    pub id: i64,
+    pub track: Track,
+    /// Unix seconds.
+    pub played_at: i64,
+    /// How long the track was listened to, where that was recorded.
+    pub listened_ms: Option<i64>,
+    /// `local` for koan's own playback, `subsonic` for a client scrobbling in.
+    pub source: String,
+}
+
 impl Track {
     pub(crate) fn from_row(r: TrackRow, is_favourite: bool) -> Self {
         let path = r.path.clone().or_else(|| r.cached_path.clone());

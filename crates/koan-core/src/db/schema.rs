@@ -164,7 +164,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         CREATE TABLE IF NOT EXISTS play_history (
             id          INTEGER PRIMARY KEY,
-            track_id    INTEGER REFERENCES tracks(id),
+            track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
             played_at   INTEGER NOT NULL,
             duration_ms INTEGER,
             source      TEXT DEFAULT 'local'
@@ -268,7 +268,62 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
         [],
     )?;
 
+    cascade_play_history(conn)?;
+
     Ok(())
+}
+
+/// Give `play_history.track_id` its `ON DELETE CASCADE`.
+///
+/// The column shipped as a bare `REFERENCES`, which under `foreign_keys = ON`
+/// makes a track with history undeletable unless the caller remembers to clear
+/// the history first. One caller does; the constraint should not depend on the
+/// next one remembering. SQLite cannot alter a constraint in place, so the
+/// table is rebuilt.
+fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
+    if fk_cascades(conn, "play_history")? {
+        return Ok(());
+    }
+
+    // Pragma changes are no-ops inside a transaction, so this must bracket it.
+    conn.pragma_update(None, "foreign_keys", "off")?;
+    let rebuild = conn.execute_batch(
+        "BEGIN;
+         CREATE TABLE play_history_new (
+             id          INTEGER PRIMARY KEY,
+             track_id    INTEGER REFERENCES tracks(id) ON DELETE CASCADE,
+             played_at   INTEGER NOT NULL,
+             duration_ms INTEGER,
+             source      TEXT DEFAULT 'local'
+         );
+         -- Entries whose track has already gone would violate the new
+         -- constraint the moment it is enforced. They are unreachable anyway.
+         INSERT INTO play_history_new (id, track_id, played_at, duration_ms, source)
+             SELECT id, track_id, played_at, duration_ms, source FROM play_history
+             WHERE track_id IS NULL OR track_id IN (SELECT id FROM tracks);
+         DROP TABLE play_history;
+         ALTER TABLE play_history_new RENAME TO play_history;
+         CREATE INDEX IF NOT EXISTS idx_play_history_track ON play_history(track_id);
+         CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
+         COMMIT;",
+    );
+    conn.pragma_update(None, "foreign_keys", "on")?;
+    rebuild
+}
+
+/// Whether every foreign key on `table` deletes its rows with the parent.
+fn fk_cascades(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
+    let mut stmt = conn.prepare(&format!("PRAGMA foreign_key_list({table})"))?;
+    let mut rows = stmt.query([])?;
+    let mut any = false;
+    while let Some(row) = rows.next()? {
+        any = true;
+        // Column 6 is `on_delete`.
+        if !row.get::<_, String>(6)?.eq_ignore_ascii_case("CASCADE") {
+            return Ok(false);
+        }
+    }
+    Ok(any)
 }
 
 /// Whether `table` already has `column`.
@@ -473,6 +528,66 @@ mod tests {
             .unwrap();
         assert_eq!(remaining, 0, "ON DELETE CASCADE did not fire");
     }
+    #[test]
+    fn play_history_from_before_the_cascade_is_rebuilt_keeping_its_rows() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        // Seeded with enforcement off so the deliberately-orphaned entry lands.
+        conn.pragma_update(None, "foreign_keys", "off").unwrap();
+        // Put back the original constraint-free table and refill it.
+        conn.execute_batch(
+            "DROP TABLE play_history;
+             CREATE TABLE play_history (
+                 id          INTEGER PRIMARY KEY,
+                 track_id    INTEGER REFERENCES tracks(id),
+                 played_at   INTEGER NOT NULL,
+                 duration_ms INTEGER,
+                 source      TEXT DEFAULT 'local'
+             );
+             INSERT INTO artists (id, name) VALUES (1, 'A');
+             INSERT INTO tracks (id, artist_id, title, source) VALUES (7, 1, 'T', 'local');
+             INSERT INTO play_history (id, track_id, played_at, duration_ms, source)
+                 VALUES (1, 7, 100, 5000, 'local'),
+                        (2, 999, 200, NULL, 'local');",
+        )
+        .unwrap();
+        assert!(!fk_cascades(&conn, "play_history").unwrap());
+
+        apply_migrations(&conn).unwrap();
+
+        assert!(fk_cascades(&conn, "play_history").unwrap());
+        let kept: Vec<(i64, i64, Option<i64>)> = conn
+            .prepare("SELECT id, played_at, duration_ms FROM play_history ORDER BY id")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            kept,
+            vec![(1, 100, Some(5000))],
+            "the live entry survives; the one pointing at a track that is gone does not"
+        );
+
+        // And the constraint now does the work the callers were doing by hand.
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        conn.execute("DELETE FROM tracks WHERE id = 7", []).unwrap();
+        let left: i64 = conn
+            .query_row("SELECT COUNT(*) FROM play_history", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(left, 0);
+    }
+
+    #[test]
+    fn cascading_play_history_is_idempotent() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        cascade_play_history(&conn).unwrap();
+        cascade_play_history(&conn).unwrap();
+        assert!(fk_cascades(&conn, "play_history").unwrap());
+    }
+
     #[test]
     fn fresh_database_is_stamped_with_the_current_version() {
         let conn = Connection::open_in_memory().unwrap();

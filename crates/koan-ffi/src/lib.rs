@@ -675,6 +675,59 @@ impl KoanEngine {
         }
     }
 
+    // --- Play history ------------------------------------------------------
+
+    /// Recent plays, most recent first.
+    ///
+    /// A list of events, not of tracks: a track played three times is three
+    /// entries. Entries whose track has left the library are already gone.
+    pub fn play_history(
+        &self,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<PlayHistoryEntry>, KoanError> {
+        let db = self.db()?;
+        let rows = queries::play_history_with_tracks(&db.conn, limit, offset).map_err(db_err)?;
+        let (plays, tracks): (Vec<_>, Vec<_>) = rows
+            .into_iter()
+            .map(|r| ((r.id, r.played_at, r.listened_ms, r.source), r.track))
+            .unzip();
+        Ok(self
+            .decorate(&db, tracks)
+            .into_iter()
+            .zip(plays)
+            .map(
+                |(track, (id, played_at, listened_ms, source))| PlayHistoryEntry {
+                    id,
+                    track,
+                    played_at,
+                    listened_ms,
+                    source,
+                },
+            )
+            .collect())
+    }
+
+    /// How many times a track has been played.
+    pub fn play_count(&self, track_id: i64) -> Result<i64, KoanError> {
+        let db = self.db()?;
+        queries::play_count(&db.conn, track_id).map_err(db_err)
+    }
+
+    /// Forget specific plays. Returns how many entries were removed.
+    pub fn delete_plays(&self, ids: Vec<i64>) -> Result<u32, KoanError> {
+        let db = self.db()?;
+        let removed = queries::delete_plays(&db.conn, &ids).map_err(db_err)?;
+        Ok(removed as u32)
+    }
+
+    /// Forget every play. Returns how many entries were removed.
+    pub fn clear_play_history(&self) -> Result<u32, KoanError> {
+        let db = self.db()?;
+        let removed = queries::clear_play_history(&db.conn).map_err(db_err)?;
+        Ok(removed as u32)
+    }
+
     // --- Favourites --------------------------------------------------------
 
     pub fn favourites(&self) -> Result<Vec<Track>, KoanError> {
