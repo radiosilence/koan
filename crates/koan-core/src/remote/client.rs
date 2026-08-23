@@ -473,6 +473,10 @@ pub struct SubsonicArtist {
     pub id: String,
     pub name: String,
     pub album_count: Option<i32>,
+    // OpenSubsonic. Both arrive in `getArtists`, so keeping them costs no
+    // extra request.
+    pub music_brainz_id: Option<String>,
+    pub sort_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -486,6 +490,19 @@ pub struct SubsonicAlbum {
     pub year: Option<i32>,
     pub genre: Option<String>,
     pub created: Option<String>,
+    // OpenSubsonic. All of these arrive in `getAlbumList2`, which the sync
+    // already pages through.
+    pub music_brainz_id: Option<String>,
+    pub sort_name: Option<String>,
+    #[serde(default)]
+    pub record_labels: Vec<SubsonicName>,
+}
+
+/// A bare `{"name": "..."}` object. The server uses this shape for record
+/// labels, genres and moods alike.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SubsonicName {
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -499,6 +516,10 @@ pub struct SubsonicAlbumFull {
     pub genre: Option<String>,
     pub song_count: Option<i32>,
     pub created: Option<String>,
+    pub music_brainz_id: Option<String>,
+    pub sort_name: Option<String>,
+    #[serde(default)]
+    pub record_labels: Vec<SubsonicName>,
     #[serde(default)]
     pub song: Vec<SubsonicSong>,
 }
@@ -525,6 +546,7 @@ pub struct SubsonicSong {
     pub sampling_rate: Option<i32>,
     pub bit_depth: Option<i32>,
     pub channel_count: Option<i32>,
+    pub music_brainz_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

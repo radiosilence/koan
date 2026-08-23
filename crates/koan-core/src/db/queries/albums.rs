@@ -162,6 +162,35 @@ pub fn all_albums(conn: &Connection) -> Result<Vec<AlbumRow>, DbError> {
     Ok(rows)
 }
 
+/// Record what the server knows about an album beyond what a track carries.
+///
+/// `get_or_create_album` is reached through a track and only ever sees what a
+/// file's tags say. Track totals, the record label and the MusicBrainz id are
+/// properties of the release, and the server hands all three over in the same
+/// response the sync already paged through.
+///
+/// Fills blanks rather than overwriting, so a locally-scanned album keeps what
+/// its tags said.
+pub fn enrich_remote_album(
+    conn: &Connection,
+    remote_id: &str,
+    mbid: Option<&str>,
+    sort_name: Option<&str>,
+    total_tracks: Option<i32>,
+    label: Option<&str>,
+) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE albums SET
+             mbid         = COALESCE(mbid, ?2),
+             sort_name    = COALESCE(sort_name, ?3),
+             total_tracks = COALESCE(total_tracks, ?4),
+             label        = COALESCE(label, ?5)
+         WHERE remote_id = ?1",
+        params![remote_id, mbid, sort_name, total_tracks, label],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **The sync fetched 1,725 artists and threw the list away.** `get_artists` was called, counted, logged as "syncing 1725 artists" and then dropped — artists only ever came into being as a side effect of a track upsert, which saw nothing but a name and an id. That is why not one artist in a synced library had a MusicBrainz id or a sort name, and why the reported artist count was theatre. The list is applied now, and the count is what was actually written.
+
+- **Album and track metadata the server had already sent was discarded.** An album row is reached through a track, so it only ever saw what a file's tags said; track totals, the record label and the MusicBrainz id are properties of the release and came back in the same `getAlbumList2` response the sync already pages through. `songCount` was even parsed into `SubsonicAlbum`, covered by a test, and stored nowhere. Albums and tracks gain `mbid`, albums gain `sort_name`, and `total_tracks` and `label` are filled — all from responses koan was already making, at no extra request. Enrichment fills blanks rather than overwriting, so a locally-scanned album keeps what its tags said.
+
 - **Remote tracks carried no quality figures at all.** Navidrome and any other OpenSubsonic server report `samplingRate`, `bitDepth` and `channelCount` on every song; koan's client did not parse them and the sync hardcoded all three to null. Every remote-only track in a synced library therefore had no sample rate and no bit depth — 5,058 of 5,058 in the library this was found on — so the format badge had nothing to show for them. For a player whose point is bit-perfect output, that is the wrong field to be missing. A full sync fills them in; a plain Subsonic server that does not report them still leaves them absent, because a missing sample rate is not 0 Hz.
 
 ## v0.26.0 (2026-08-23)

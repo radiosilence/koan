@@ -231,8 +231,9 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
             "UPDATE tracks SET album_id=?1, artist_id=?2, disc=?3, track_number=?4,
              title=?5, duration_ms=?6, codec=?7, sample_rate=?8, bit_depth=?9,
              channels=?10, bitrate=?11, size_bytes=?12, mtime=?13, genre=?14,
-             source=?15, remote_id=?16, remote_url=?17, path=?18
-             WHERE id=?19",
+             source=?15, remote_id=?16, remote_url=?17, path=?18,
+             mbid=COALESCE(mbid, ?19)
+             WHERE id=?20",
             params![
                 album_id,
                 track_artist_id,
@@ -252,6 +253,7 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
                 merged_remote_id,
                 merged_remote_url,
                 merged_path,
+                meta.mbid,
                 id
             ],
         )?;
@@ -280,8 +282,8 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
         conn.execute(
             "INSERT INTO tracks (album_id, artist_id, disc, track_number, title,
              duration_ms, path, codec, sample_rate, bit_depth, channels, bitrate,
-             size_bytes, mtime, genre, source, remote_id, remote_url)
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+             size_bytes, mtime, genre, source, remote_id, remote_url, mbid)
+             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
             params![
                 album_id,
                 track_artist_id,
@@ -300,7 +302,8 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
                 meta.genre,
                 source,
                 meta.remote_id,
-                meta.remote_url
+                meta.remote_url,
+                meta.mbid
             ],
         )?;
 
