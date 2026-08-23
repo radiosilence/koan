@@ -37,12 +37,13 @@ struct RootView: View {
         } detail: {
             NavigationStack(path: $library.path) {
                 stage
-                    // The transport sits over the bottom of the detail column.
-                    // Without this the last rows of a list scroll underneath it
-                    // and cannot be reached, and the scrollbar is unusable near
-                    // the end of a long list.
-                    .contentMargins(.bottom, 64, for: .scrollContent)
-                    .contentMargins(.bottom, 64, for: .scrollIndicators)
+                    // The transport is a safeAreaInset on the split view, which
+                    // insets the window but does not reach the detail column's
+                    // own scroll views — a List happily draws its last rows
+                    // underneath it, where they cannot be read or clicked.
+                    // Restating it here gives the column the inset it should
+                    // have inherited.
+                    .safeAreaPadding(.bottom, 64)
                     .navigationDestination(for: AlbumRoute.self) { route in
                         AlbumDetailView(albumId: route.id)
                     }
@@ -79,6 +80,17 @@ struct RootView: View {
                 }
                 .disabled(!library.canGoForward)
                 .help("Forward (⌘])")
+            }
+
+            // Filtering what is on screen belongs with it, not in the sidebar
+            // search, which navigates away instead of narrowing.
+            if library.section == .albums || library.section == .artists {
+                ToolbarItem(placement: .principal) {
+                    FilterField(
+                        placeholder: library.section == .albums
+                            ? "Filter albums" : "Filter artists"
+                    )
+                }
             }
 
             // Sort belongs next to what it sorts, so it only appears there.
@@ -118,7 +130,7 @@ struct RootView: View {
                 Button {
                     showLyrics.toggle()
                 } label: {
-                    Label("Lyrics", systemImage: "sidebar.right")
+                    Label("Lyrics", systemImage: "quote.bubble")
                 }
                 .help("Lyrics panel (⌥⌘L)")
             }

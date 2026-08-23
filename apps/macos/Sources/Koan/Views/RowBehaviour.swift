@@ -89,3 +89,20 @@ struct RowLink: View {
         }
     }
 }
+
+/// Empty space at the end of a list, the height of the transport bar.
+///
+/// The transport floats over the bottom of the detail column, so without this
+/// the last row or two sit underneath it and cannot be read, clicked or
+/// dropped on. `.contentMargins(_:_:for: .scrollContent)` is the modifier for
+/// this and it has no effect on `List` — it applies to `ScrollView`. A row that
+/// takes no selection and draws nothing is unglamorous but it works.
+struct TransportClearance: View {
+    var body: some View {
+        Color.clear
+            .frame(height: 72)
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .selectionDisabled()
+    }
+}

@@ -256,3 +256,47 @@ struct PlayableHeaderButton: View {
     }
 }
 
+
+/// "Play Next" and "Queue", side by side under a page title.
+///
+/// One component rather than a pair written out per page: the album page and
+/// the artist page offer the same two verbs, and hand-rolling them twice is how
+/// the artist page ended up without them.
+struct QueueButtons: View {
+    let playable: Playable?
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
+    @State private var working = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button { act { player.playNext(trackIds: $0) } } label: {
+                Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
+            }
+            Button { act { player.enqueue(trackIds: $0) } } label: {
+                Label("Queue", systemImage: "text.append")
+            }
+            if working {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .disabled(playable == nil || working)
+    }
+
+    /// An artist is thousands of tracks and resolving them is a database read,
+    /// so it happens off the main actor.
+    private func act(_ body: @escaping @MainActor ([Int64]) -> Void) {
+        guard let playable else { return }
+        working = true
+        let engine = library.engine
+        Task {
+            let ids = await Task.detached(priority: .userInitiated) {
+                playable.trackIds(using: engine)
+            }.value
+            working = false
+            guard !ids.isEmpty else { return }
+            body(ids)
+        }
+    }
+}

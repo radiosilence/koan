@@ -49,6 +49,7 @@ struct QueueView: View {
                     .onMove(perform: move)
                 }
                 .listStyle(.inset)
+                .contentMargins(.bottom, 72, for: .scrollIndicators)
                 // Double-click and context menu both come from the List, keyed
                 // on the rows under the pointer rather than on a gesture.
                 .contextMenu(forSelectionType: String.self) { ids in
@@ -149,6 +150,7 @@ struct QueueView: View {
             QueueRow(
                 item: item,
                 isCurrent: item.queueItemId == player.currentItemId,
+                isSelected: selection.contains(item.queueItemId),
                 showArtist: item.artist != item.albumArtist
             )
             .rowBehaviour()
@@ -415,6 +417,7 @@ private struct QueueAlbumHeader: View {
 private struct QueueRow: View {
     let item: QueueItem
     let isCurrent: Bool
+    let isSelected: Bool
     let showArtist: Bool
 
     @Environment(PlayerModel.self) private var player
@@ -436,7 +439,13 @@ private struct QueueRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .lineLimit(1)
-                    .foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
+                    // Tinted to mark the playing track — but not when the row
+                    // is selected, where accent-on-accent is unreadable.
+                    .foregroundStyle(
+                        isCurrent && !isSelected
+                            ? AnyShapeStyle(.tint)
+                            : AnyShapeStyle(.primary)
+                    )
                 // Only worth a second line when it differs from the album
                 // artist — compilations and features, not every track.
                 if showArtist && !item.artist.isEmpty {

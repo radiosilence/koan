@@ -35,6 +35,8 @@ struct ArtistBrowser: View {
             .frame(height: 24)
             .rowBehaviour(playable: .artist(id: artist.id, name: artist.name))
         }
+        .contentMargins(.bottom, 72, for: .scrollContent)
+        .contentMargins(.bottom, 72, for: .scrollIndicators)
         .contextMenu(forSelectionType: Int64.self) { ids in
             if let id = ids.first,
                let artist = library.visibleArtists.first(where: { $0.id == id }) {
@@ -79,6 +81,12 @@ struct ArtistDetailView: View {
                         Text(Format.count(Int64(albums.count), "album"))
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                        if let artist {
+                            QueueButtons(
+                                playable: .artist(id: artist.id, name: artist.name)
+                            )
+                            .padding(.top, 4)
+                        }
                     }
                     Spacer()
                     Button {

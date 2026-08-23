@@ -20,6 +20,13 @@ struct LinkText: View {
     @Environment(LibraryModel.self) private var library
     @State private var hovering = false
 
+    private func transfer(for target: Target) -> PlayableTransfer {
+        switch target {
+        case .artist(let id): PlayableTransfer(kind: .artist, id: id, name: text)
+        case .album(let id): PlayableTransfer(kind: .album, id: id, name: text)
+        }
+    }
+
     var body: some View {
         if let target {
             Text(text)
@@ -35,6 +42,11 @@ struct LinkText: View {
                     case .album(let id): library.reveal(album: id)
                     }
                 }
+                // Dragging the name drags what it names, which is not
+                // necessarily what the surrounding row or tile stands for: the
+                // artist link on an album tile queues the whole artist, while
+                // the artwork beside it queues just that record.
+                .draggableTransfer(transfer(for: target))
                 .help("Go to \(text)")
         } else {
             Text(text)

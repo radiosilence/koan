@@ -32,6 +32,12 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         ProxyRepresentation(exporting: \.name)
     }
 
+    init(kind: Kind, id: Int64, name: String) {
+        self.kind = kind
+        self.id = id
+        self.name = name
+    }
+
     init(_ playable: Playable) {
         switch playable {
         case .track(let track):
@@ -71,8 +77,14 @@ extension View {
     /// Same identifier and same JSON on the wire, so `.dropDestination(for:)`
     /// still decodes it.
     func draggablePlayable(_ playable: Playable) -> some View {
-        let transfer = PlayableTransfer(playable)
-        return onDrag {
+        draggableTransfer(PlayableTransfer(playable))
+    }
+
+    /// The payload directly, for a view that stands for something playable but
+    /// has no `Playable` to hand — an artist name inside an album tile knows an
+    /// id and a name and nothing else.
+    func draggableTransfer(_ transfer: PlayableTransfer) -> some View {
+        onDrag {
             let provider = NSItemProvider()
             provider.registerDataRepresentation(
                 forTypeIdentifier: UTType.koanPlayable.identifier,

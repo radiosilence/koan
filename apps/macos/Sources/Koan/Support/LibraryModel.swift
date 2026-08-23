@@ -28,6 +28,9 @@ final class LibraryModel {
             // Each section is its own stack conceptually; carrying a path
             // across a switch would strand you on an unrelated detail view.
             path = NavigationPath()
+            // A filter you left behind on another view is invisible here, and
+            // an apparently empty library is the result.
+            filter = ""
             load()
             if !navigatingHistory { record(.section(section)) }
         }

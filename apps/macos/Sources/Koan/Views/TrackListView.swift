@@ -45,6 +45,7 @@ struct TrackListView: View {
                         }
                     }
                     .listStyle(.inset)
+                    .contentMargins(.bottom, 72, for: .scrollIndicators)
                     // The List's own double-click hook. Wired into selection
                     // rather than the gesture system, so it doesn't steal the
                     // first click.
@@ -141,20 +142,8 @@ struct TrackListView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 10) {
-                    Button {
-                        player.playNext(trackIds: tracks.map(\.id))
-                    } label: {
-                        Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
-                    }
-                    Button {
-                        player.enqueue(trackIds: tracks.map(\.id))
-                    } label: {
-                        Label("Queue", systemImage: "text.append")
-                    }
-                }
-                .disabled(tracks.isEmpty)
-                .padding(.top, 4)
+                QueueButtons(playable: playable)
+                    .padding(.top, 4)
             }
             Spacer(minLength: 0)
         }
