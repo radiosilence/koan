@@ -543,6 +543,10 @@ pub(super) struct GqlScanResult {
 pub(super) struct GqlShare {
     pub url: Option<String>,
     pub id: String,
+    /// Tracks the server knows about, which went into the link.
+    pub shared: i32,
+    /// Tracks with no copy on the server, left out of it.
+    pub skipped: i32,
 }
 
 pub(super) struct GqlSimilarTrack {

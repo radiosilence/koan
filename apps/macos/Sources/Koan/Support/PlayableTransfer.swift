@@ -4,8 +4,9 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 extension UTType {
-    /// koan's own drag payload. Declared in code rather than Info.plist because
-    /// nothing outside the app needs to recognise it — drags that leave koan
+    /// koan's own drag payload. Also declared in the bundle's Info.plist —
+    /// without an exported type declaration the system does not recognise the
+    /// identifier and every drop silently does nothing. Drags that leave koan
     /// fall back to the plain-text representation.
     static let koanPlayable = UTType(exportedAs: "cc.blit.koan.playable")
 }

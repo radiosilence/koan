@@ -124,31 +124,26 @@ struct PlayableMenu: View {
 enum Share {
     /// Asks the remote server for a public link and copies it.
     ///
-    /// Only remote tracks can be shared — the link points at the server, so a
-    /// local-only file has nothing for it to point at. It goes to the
-    /// pasteboard because pasting it somewhere is the only thing anyone does
-    /// with a share link.
+    /// Only tracks the server knows about can go in a link — it points at the
+    /// server, so a local-only file has nothing for it to point at. A mixed
+    /// selection shares what it can and says how much it left out. It goes to
+    /// the pasteboard because pasting it somewhere is the only thing anyone
+    /// does with a share link.
     @MainActor
     static func link(for playable: Playable, engine: KoanEngine, player: PlayerModel) {
+        let name = playable.name
         Task {
-            let url = await Task.detached(priority: .userInitiated) { () -> String? in
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<KoanFFI.Share, Error> in
                 let ids = playable.trackIds(using: engine)
-                guard !ids.isEmpty else { return nil }
-                return (try? engine.createShare(trackIds: ids, description: playable.name)) ?? nil
+                guard !ids.isEmpty else {
+                    return .failure(ShareFailure.nothingToShare)
+                }
+                return Result { try engine.createShare(trackIds: ids, description: name) }
             }.value
-
-            guard let url else {
-                player.report("Couldn't create a share link — local-only tracks can't be shared.")
-                return
-            }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(url, forType: .string)
-            player.report("Share link copied: \(url)")
+            deliver(result, to: player)
         }
     }
-}
 
-extension Share {
     /// Share a set of tracks directly.
     ///
     /// The queue holds queue items, not library tracks — a queue entry can
@@ -161,17 +156,44 @@ extension Share {
             return
         }
         Task {
-            let url = await Task.detached(priority: .userInitiated) { () -> String? in
-                (try? engine.createShare(trackIds: trackIds, description: name)) ?? nil
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<KoanFFI.Share, Error> in
+                Result { try engine.createShare(trackIds: trackIds, description: name) }
             }.value
-            guard let url else {
-                player.report("Couldn't create a share link — local-only tracks can't be shared.")
-                return
-            }
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(url, forType: .string)
-            player.report("Share link copied: \(url)")
+            deliver(result, to: player)
         }
+    }
+
+    private enum ShareFailure: LocalizedError {
+        case nothingToShare
+        var errorDescription: String? { "these tracks aren't in the library" }
+    }
+
+    /// The engine says why it failed, so report that rather than assuming. The
+    /// old blanket "local-only tracks can't be shared" sent people looking at
+    /// their library when the server had actually refused, or hadn't been
+    /// configured at all.
+    @MainActor
+    private static func deliver(_ result: Result<KoanFFI.Share, Error>, to player: PlayerModel) {
+        switch result {
+        case .success(let share):
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(share.url, forType: .string)
+            if share.skipped > 0 {
+                player.report(
+                    "Share link copied — \(share.shared) of \(share.shared + share.skipped) tracks; "
+                        + "the rest aren't on your server."
+                )
+            } else {
+                player.report("Share link copied: \(share.url)")
+            }
+        case .failure(let error):
+            player.report("Couldn't create a share link — \(reason(for: error))")
+        }
+    }
+
+    private static func reason(for error: Error) -> String {
+        if case let KoanError.BadArgument(message) = error { return message }
+        return error.localizedDescription
     }
 }
 

@@ -1401,8 +1401,6 @@ impl App {
         let visible = self.visible_queue();
         let selected: Vec<_> = self.queue.selected_ids.iter().copied().collect();
 
-        // Collect remote_ids for selected tracks. If multiple tracks share an album,
-        // try to share the album instead of individual tracks.
         let db = match koan_core::db::connection::Database::open(&self.db_path) {
             Ok(db) => db,
             Err(_) => {
@@ -1411,84 +1409,47 @@ impl App {
             }
         };
 
-        // Check if all selected tracks belong to the same album (for album-level share).
-        let selected_entries: Vec<_> = visible
+        let track_ids: Vec<i64> = visible
             .iter()
             .filter(|e| selected.contains(&e.id))
+            .filter_map(|e| {
+                koan_core::db::queries::track_id_by_path(&db.conn, &e.path.to_string_lossy())
+                    .ok()
+                    .flatten()
+            })
             .collect();
 
-        let album_rid = if !selected_entries.is_empty() {
-            let first_album = &selected_entries[0].album;
-            let all_same_album = selected_entries.iter().all(|e| e.album == *first_album);
-            if all_same_album {
-                koan_core::db::queries::album_remote_id_for_path(
-                    &db.conn,
-                    &selected_entries[0].path,
-                )
-                .ok()
-                .flatten()
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Prefer album share, fall back to individual track shares.
-        let share_ids: Vec<String> = if let Some(ref arid) = album_rid {
-            vec![arid.clone()]
-        } else {
-            selected_entries
-                .iter()
-                .filter_map(|e| {
-                    koan_core::db::queries::remote_id_for_path(&db.conn, &e.path)
-                        .ok()
-                        .flatten()
-                })
-                .collect()
-        };
-
-        if share_ids.is_empty() {
-            self.status_message = Some((
-                "No remote tracks to share".into(),
-                std::time::Instant::now(),
-            ));
-            return;
-        }
-
-        let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-            self.status_message = Some(("Remote not configured".into(), std::time::Instant::now()));
-            return;
-        };
         let log_buffer = Arc::clone(&self.log_buffer);
 
-        // Fire off share creation in a background thread to avoid blocking the UI.
+        // Off the UI thread: this is a network round trip.
         let status_msg: Arc<Mutex<Option<StatusMessage>>> = Arc::new(Mutex::new(None));
         let status_clone = Arc::clone(&status_msg);
 
         std::thread::spawn(move || {
-            let id_refs: Vec<&str> = share_ids.iter().map(|s| s.as_str()).collect();
-            match client.create_share(&id_refs, None) {
-                Ok(share) => {
-                    // The Subsonic API returns the full URL in share.url, but fall back
-                    // to constructing it from base_url if absent.
-                    let share_url = share
-                        .url
-                        .unwrap_or_else(|| format!("{}/s/{}", client.base_url(), share.id));
-                    // Copy to clipboard: pbcopy on macOS, xclip/xsel on Linux.
-                    copy_to_clipboard(&share_url);
-                    if let Ok(mut msg) = status_clone.lock() {
-                        *msg = Some((format!("Copied: {share_url}"), std::time::Instant::now()));
+            let result = koan_core::helpers::create_share(&db, &cfg, &track_ids, None);
+            let message = match result {
+                Ok(outcome) => {
+                    copy_to_clipboard(&outcome.url);
+                    if outcome.skipped > 0 {
+                        format!(
+                            "Copied ({} of {} — the rest aren't on the server): {}",
+                            outcome.shared,
+                            outcome.shared + outcome.skipped,
+                            outcome.url
+                        )
+                    } else {
+                        format!("Copied: {}", outcome.url)
                     }
                 }
                 Err(e) => {
                     if let Ok(mut logs) = log_buffer.lock() {
                         logs.push(format!("Share error: {e}"));
                     }
-                    if let Ok(mut msg) = status_clone.lock() {
-                        *msg = Some((format!("Share failed: {e}"), std::time::Instant::now()));
-                    }
+                    format!("Share failed: {e}")
                 }
+            };
+            if let Ok(mut msg) = status_clone.lock() {
+                *msg = Some((message, std::time::Instant::now()));
             }
         });
 

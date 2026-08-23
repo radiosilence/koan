@@ -227,7 +227,7 @@ final class PlayerModel {
     /// Replace the queue and start playing — double-clicking an album.
     func playNow(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
-        offMain { try $0.replaceQueue(trackIds: trackIds) }
+        offMain { _ = try $0.replaceQueue(trackIds: trackIds) }
     }
 
     /// Queue the whole list but start at the track that was clicked, so the rest
@@ -248,7 +248,7 @@ final class PlayerModel {
     func playNext(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
         guard let cursor = currentItemId else { return enqueue(trackIds: trackIds) }
-        offMain { try $0.insertAfter(trackIds: trackIds, afterQueueItemId: cursor) }
+        offMain { _ = try $0.insertAfter(trackIds: trackIds, afterQueueItemId: cursor) }
     }
 
     /// Surface a one-off message in the same place engine errors appear.
@@ -256,7 +256,7 @@ final class PlayerModel {
 
     func enqueue(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
-        offMain { try $0.addToQueue(trackIds: trackIds) }
+        offMain { _ = try $0.addToQueue(trackIds: trackIds) }
     }
 
     func remove(itemIds: [String]) {
@@ -352,7 +352,7 @@ final class PlayerModel {
         let ids = Pasteboard.readTrackIds()
         guard !ids.isEmpty else { return }
         if let anchor = queue.last(where: { queueSelection.contains($0.queueItemId) }) {
-            offMain { try $0.insertAfter(trackIds: ids, afterQueueItemId: anchor.queueItemId) }
+            offMain { _ = try $0.insertAfter(trackIds: ids, afterQueueItemId: anchor.queueItemId) }
         } else {
             enqueue(trackIds: ids)
         }

@@ -733,33 +733,16 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let db = ctx.data::<DbHandle>()?.open()?;
         let cfg = Config::load().unwrap_or_default();
-        let client = koan_core::helpers::subsonic_client(&cfg)
-            .ok_or_else(|| async_graphql::Error::new("remote not configured"))?;
 
-        // Resolve track IDs to remote IDs.
-        let mut remote_ids = Vec::new();
-        for &tid in &track_ids {
-            if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
-                && let Some(rid) = track.remote_id
-            {
-                remote_ids.push(rid);
-            }
-        }
-
-        if remote_ids.is_empty() {
-            return Err(async_graphql::Error::new(
-                "none of the tracks have remote IDs (local-only tracks can't be shared)",
-            ));
-        }
-
-        let id_refs: Vec<&str> = remote_ids.iter().map(|s| s.as_str()).collect();
-        let share = client
-            .create_share(&id_refs, description.as_deref())
-            .map_err(|e| super::internal_error("share", e))?;
+        let outcome =
+            koan_core::helpers::create_share(&db, &cfg, &track_ids, description.as_deref())
+                .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
         Ok(GqlShare {
-            url: share.url,
-            id: share.id,
+            url: Some(outcome.url),
+            id: outcome.id,
+            shared: outcome.shared as i32,
+            skipped: outcome.skipped as i32,
         })
     }
 }

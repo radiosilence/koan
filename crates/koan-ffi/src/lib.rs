@@ -845,41 +845,24 @@ impl KoanEngine {
 
     /// Create a public share link on the remote server for these tracks.
     ///
-    /// Only remote tracks can be shared — the link points at the server, so a
-    /// local-only file has nothing to point at. Network-bound; keep it off the
-    /// main thread.
+    /// Only tracks the server knows about can go in it — the link points at the
+    /// server, so a local-only file has nothing for it to point at. A mixed
+    /// selection shares what it can; `skipped` says how much it left out.
+    /// Network-bound; keep it off the main thread.
     pub fn create_share(
         &self,
         track_ids: Vec<i64>,
         description: Option<String>,
-        // `None` when the server declines to hand back a URL for the share.
-    ) -> Result<Option<String>, KoanError> {
+    ) -> Result<Share, KoanError> {
         let db = self.db()?;
         let cfg = Config::load().unwrap_or_default();
-        let client =
-            koan_core::helpers::subsonic_client(&cfg).ok_or_else(|| KoanError::BadArgument {
-                message: "no remote server configured".into(),
-            })?;
-
-        let mut remote_ids = Vec::new();
-        for tid in &track_ids {
-            if let Ok(Some(row)) = queries::get_track_row(&db.conn, *tid)
-                && let Some(rid) = row.remote_id
-            {
-                remote_ids.push(rid);
-            }
-        }
-        if remote_ids.is_empty() {
-            return Err(KoanError::BadArgument {
-                message: "local-only tracks can't be shared".into(),
-            });
-        }
-
-        let refs: Vec<&str> = remote_ids.iter().map(String::as_str).collect();
-        client
-            .create_share(&refs, description.as_deref())
-            .map(|share| share.url)
-            .map_err(|e| KoanError::Database {
+        koan_core::helpers::create_share(&db, &cfg, &track_ids, description.as_deref())
+            .map(|outcome| Share {
+                url: outcome.url,
+                shared: outcome.shared as u32,
+                skipped: outcome.skipped as u32,
+            })
+            .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })
     }

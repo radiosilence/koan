@@ -271,6 +271,18 @@ impl From<&QueueEntry> for QueueItem {
     }
 }
 
+/// A created share link, and how much of the request it actually covers.
+///
+/// `skipped` is the point of this being a record rather than a bare string: a
+/// selection mixing local-only files with server-backed ones produces a link
+/// that is genuinely partial, and the UI has to be able to say so.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct Share {
+    pub url: String,
+    pub shared: u32,
+    pub skipped: u32,
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct Stats {
     pub total_tracks: i64,
