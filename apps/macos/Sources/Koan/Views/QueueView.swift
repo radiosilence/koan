@@ -49,7 +49,6 @@ struct QueueView: View {
                     .onMove(perform: move)
                 }
                 .listStyle(.inset)
-                .background(DoubleClickHandler { playSelection() })
                 .onDeleteCommand { removeSelected() }
                 .onChange(of: selection) { _, new in player.queueSelection = new }
                 .onChange(of: player.selectAllToken) { _, _ in
@@ -128,6 +127,9 @@ struct QueueView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .contextMenu { albumMenu(group) }
+                .onTapGesture(count: 2) {
+                    if let first = group.items.first { player.play(itemId: first.queueItemId) }
+                }
         case .track(let item):
             QueueRow(
                 item: item,
@@ -137,6 +139,7 @@ struct QueueView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .contextMenu { trackMenu(item) }
+            .onTapGesture(count: 2) { player.play(itemId: item.queueItemId) }
         }
     }
 

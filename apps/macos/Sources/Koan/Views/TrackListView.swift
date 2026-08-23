@@ -43,10 +43,15 @@ struct TrackListView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
                             .contextMenu { PlayableMenu(playable: .track(track)) }
+                            .draggablePlayable(.track(track))
+                            // Queues the whole list and starts here, so playing
+                            // one track off an album keeps the rest behind it.
+                            .onTapGesture(count: 2) {
+                                player.playNow(trackIds: tracks.map(\.id), startingAt: index)
+                            }
                         }
                     }
                     .listStyle(.inset)
-                    .background(DoubleClickHandler { playSelection() })
                     // Arriving from search: single out the matched track rather
                     // than dropping the user at the top of a 20-track record.
                     .task(id: tracks.count) {

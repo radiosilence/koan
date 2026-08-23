@@ -53,6 +53,7 @@ struct AlbumGridCell: View {
             }
         }
         .contextMenu { PlayableMenu(playable: .album(album)) }
+        .draggablePlayable(.album(album))
     }
 
 }

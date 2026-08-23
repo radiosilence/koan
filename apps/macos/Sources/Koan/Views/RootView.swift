@@ -90,10 +90,13 @@ struct RootView: View {
                     }
                 }
             }
-            // Alone in the trailing slot, so it stays pinned to the right edge
-            // whatever else the section puts in the toolbar — the mirror of the
-            // sidebar toggle on the left.
-            ToolbarItem(placement: .primaryAction) {
+            // A leading Spacer inside the group is what actually pins this to
+            // the right. `.primaryAction` alone only lands trailing when
+            // something else already occupies the toolbar — which is why it
+            // looked correct on the albums view, with its sort picker, and
+            // drifted left everywhere else.
+            ToolbarItemGroup(placement: .primaryAction) {
+                Spacer()
                 Button {
                     showLyrics.toggle()
                 } label: {

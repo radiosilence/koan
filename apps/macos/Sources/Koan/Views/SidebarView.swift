@@ -14,6 +14,11 @@ struct SidebarView: View {
             Section {
                 Label("Queue", systemImage: "list.bullet")
                     .tag(LibraryModel.Section.queue)
+                    // Drop anything playable here to queue it, from any view.
+                    .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+                        player.acceptDrop(dropped)
+                        return true
+                    }
                 if search.hasQuery {
                     Label("Results", systemImage: "magnifyingglass")
                         .tag(LibraryModel.Section.searchResults)

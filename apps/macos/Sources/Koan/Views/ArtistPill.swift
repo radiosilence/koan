@@ -37,5 +37,6 @@ struct ArtistPill: View {
         .onHover { hovering = $0 }
         .help("Go to \(name)")
         .contextMenu { PlayableMenu(playable: .artist(id: artistId, name: name)) }
+        .draggablePlayable(.artist(id: artistId, name: name))
     }
 }

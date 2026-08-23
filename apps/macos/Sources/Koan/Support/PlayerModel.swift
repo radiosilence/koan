@@ -350,6 +350,20 @@ final class PlayerModel {
         }
     }
 
+    /// Resolve dropped playables and queue them. Order is preserved: dropping a
+    /// selection of albums queues them in the order they were dragged.
+    func acceptDrop(_ dropped: [PlayableTransfer], playImmediately: Bool = false) {
+        guard !dropped.isEmpty else { return }
+        let engine = self.engine
+        Task {
+            let ids = await Task.detached(priority: .userInitiated) {
+                dropped.flatMap { $0.trackIds(using: engine) }
+            }.value
+            guard !ids.isEmpty else { return }
+            if playImmediately { playNow(trackIds: ids) } else { enqueue(trackIds: ids) }
+        }
+    }
+
     // MARK: - Session
 
     /// Persist the queue and position. Called on quit, and periodically so an

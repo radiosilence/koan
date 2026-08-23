@@ -14,6 +14,7 @@ final class AppState {
     let search: SearchModel
     let art: CoverArtCache
     private var nowPlaying: NowPlayingCentre?
+    private var keys: KeyMonitor?
 
     init() throws {
         let engine = try KoanEngine()
@@ -30,6 +31,9 @@ final class AppState {
         let centre = NowPlayingCentre(player: player, art: art)
         self.nowPlaying = centre
         player.onTick = { [weak centre] in centre?.refresh() }
+
+        // Space has to be caught before the focused list eats it.
+        self.keys = KeyMonitor { [weak player] in player?.togglePlayPause() }
     }
 }
 
@@ -96,8 +100,10 @@ struct KoanApp: App {
             }
 
             CommandMenu("Playback") {
+                // No `.keyboardShortcut(.space)`: a focused list wins that
+                // contest. KeyMonitor handles the key; this stays for
+                // discoverability and the menu shows the shortcut anyway.
                 Button("Play / Pause") { state?.player.togglePlayPause() }
-                    .keyboardShortcut(.space, modifiers: [])
                 Button("Next") { state?.player.next() }
                     .keyboardShortcut(.rightArrow, modifiers: .command)
                 Button("Previous") { state?.player.previous() }

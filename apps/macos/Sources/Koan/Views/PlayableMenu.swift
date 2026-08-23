@@ -104,11 +104,22 @@ struct PlayableMenu: View {
         }
     }
 
-    /// Shares go to the pasteboard rather than a dialog — the only thing you
-    /// ever do with a share link is paste it somewhere.
     private func share() {
-        let engine = library.engine
-        let playable = self.playable
+        Share.link(for: playable, engine: library.engine, player: player)
+    }
+}
+
+/// Creating a share link, in one place: the menu item and the button on an
+/// album or artist page must not drift apart.
+enum Share {
+    /// Asks the remote server for a public link and copies it.
+    ///
+    /// Only remote tracks can be shared — the link points at the server, so a
+    /// local-only file has nothing for it to point at. It goes to the
+    /// pasteboard because pasting it somewhere is the only thing anyone does
+    /// with a share link.
+    @MainActor
+    static func link(for playable: Playable, engine: KoanEngine, player: PlayerModel) {
         Task {
             let url = await Task.detached(priority: .userInitiated) { () -> String? in
                 let ids = playable.trackIds(using: engine)
@@ -122,8 +133,25 @@ struct PlayableMenu: View {
             }
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(url, forType: .string)
-            player.report("Share link copied.")
+            player.report("Share link copied: \(url)")
         }
+    }
+}
+
+/// Share button for an album or artist page.
+struct ShareButton: View {
+    let playable: Playable
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        Button {
+            Share.link(for: playable, engine: library.engine, player: player)
+        } label: {
+            Label("Share", systemImage: "square.and.arrow.up")
+        }
+        .help("Create a public link on your server and copy it")
     }
 }
 
