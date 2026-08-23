@@ -34,35 +34,45 @@ final class NowPlayingCentre {
     private func registerCommands() {
         let centre = MPRemoteCommandCenter.shared()
 
-        centre.playCommand.addTarget { [weak self] _ in
-            self?.player?.resume()
-            return .success
+        // Remote command handlers are invoked on MediaPlayer's own queue, so
+        // they must not inherit this class's main-actor isolation — touching
+        // `player` directly from one traps in the isolation check. Hop first.
+        func onMain(_ body: @escaping @MainActor (PlayerModel) -> Void) -> (MPRemoteCommandEvent) -> MPRemoteCommandHandlerStatus {
+            { [weak self] _ in
+                Task { @MainActor in
+                    guard let player = self?.player else { return }
+                    body(player)
+                }
+                return .success
+            }
         }
-        centre.pauseCommand.addTarget { [weak self] _ in
-            self?.player?.pause()
-            return .success
-        }
-        centre.togglePlayPauseCommand.addTarget { [weak self] _ in
-            self?.player?.togglePlayPause()
-            return .success
-        }
-        centre.nextTrackCommand.addTarget { [weak self] _ in
-            self?.player?.next()
-            return .success
-        }
-        centre.previousTrackCommand.addTarget { [weak self] _ in
-            self?.player?.previous()
-            return .success
-        }
+
+        centre.playCommand.addTarget(handler: onMain { $0.resume() })
+        centre.pauseCommand.addTarget(handler: onMain { $0.pause() })
+        centre.togglePlayPauseCommand.addTarget(handler: onMain { $0.togglePlayPause() })
+        centre.nextTrackCommand.addTarget(handler: onMain { $0.next() })
+        centre.previousTrackCommand.addTarget(handler: onMain { $0.previous() })
 
         centre.changePlaybackPositionCommand.isEnabled = true
         centre.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let event = event as? MPChangePlaybackPositionCommandEvent,
-                  let player = self?.player
-            else { return .commandFailed }
-            player.seek(toMs: UInt64(max(0, event.positionTime) * 1000))
+            guard let event = event as? MPChangePlaybackPositionCommandEvent else {
+                return .commandFailed
+            }
+            let ms = UInt64(max(0, event.positionTime) * 1000)
+            Task { @MainActor in self?.player?.seek(toMs: ms) }
             return .success
         }
+    }
+
+    /// Deliberately `nonisolated`.
+    ///
+    /// MediaPlayer invokes the request handler on its own queue while encoding
+    /// the image. A closure written inside a `@MainActor` method inherits that
+    /// isolation whatever the captures are marked, and the runtime check then
+    /// traps the first time a track with artwork starts. Building it here, out
+    /// of the actor's reach, is what actually removes the isolation.
+    private nonisolated static func artwork(for image: NSImage) -> MPMediaItemArtwork {
+        MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
 
     // MARK: - Now Playing info
@@ -100,9 +110,7 @@ final class NowPlayingCentre {
             info[MPMediaItemPropertyPlaybackDuration] = Double(now.durationMs) / 1000
         }
         if let trackId = entry.trackId, let image = art.art(trackId: trackId) {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in
-                image
-            }
+            info[MPMediaItemPropertyArtwork] = Self.artwork(for: image)
         }
 
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
