@@ -2,6 +2,10 @@ import Foundation
 import KoanFFI
 import SwiftUI
 
+/// How much history to hold. Enough to scroll back through an evening's
+/// listening without paging; the whole table would be unbounded.
+private let historyPageSize: UInt32 = 500
+
 /// Library browsing state.
 ///
 /// Albums and artists are loaded once and filtered in memory — a few thousand
@@ -17,6 +21,7 @@ final class LibraryModel {
         case albums
         case artists
         case favourites
+        case playHistory
         case snapshots
     }
 
@@ -57,6 +62,7 @@ final class LibraryModel {
     private(set) var albums: [Album] = [] { didSet { refilter() } }
     private(set) var artists: [Artist] = [] { didSet { refilter() } }
     private(set) var favourites: [Track] = [] { didSet { refilter() } }
+    private(set) var playHistory: [PlayHistoryEntry] = [] { didSet { refilter() } }
     private(set) var snapshots: [Snapshot] = []
     private(set) var stats: Stats?
     private(set) var isLoading = false
@@ -119,6 +125,7 @@ final class LibraryModel {
     private(set) var visibleAlbums: [Album] = []
     private(set) var visibleArtists: [Artist] = []
     private(set) var visibleFavourites: [Track] = []
+    private(set) var visiblePlayHistory: [PlayHistoryEntry] = []
 
     /// Recompute what each section shows. Called whenever the filter or any of
     /// the underlying collections change.
@@ -128,6 +135,7 @@ final class LibraryModel {
             visibleAlbums = scoped
             visibleArtists = artists
             visibleFavourites = favourites
+            visiblePlayHistory = playHistory
             return
         }
         visibleAlbums = scoped.filter {
@@ -141,6 +149,11 @@ final class LibraryModel {
             $0.title.localizedCaseInsensitiveContains(filter)
                 || $0.artistName.localizedCaseInsensitiveContains(filter)
                 || $0.albumTitle.localizedCaseInsensitiveContains(filter)
+        }
+        visiblePlayHistory = playHistory.filter {
+            $0.track.title.localizedCaseInsensitiveContains(filter)
+                || $0.track.artistName.localizedCaseInsensitiveContains(filter)
+                || $0.track.albumTitle.localizedCaseInsensitiveContains(filter)
         }
     }
 
@@ -217,12 +230,37 @@ final class LibraryModel {
                 favourites = await Task.detached(priority: .userInitiated) {
                     (try? engine.favourites()) ?? []
                 }.value
+            case .playHistory:
+                // Always refetched: it changes underneath you as you listen.
+                playHistory = await Task.detached(priority: .userInitiated) {
+                    (try? engine.playHistory(limit: historyPageSize, offset: 0)) ?? []
+                }.value
             case .snapshots:
                 snapshots = await Task.detached(priority: .userInitiated) {
                     (try? engine.snapshots()) ?? []
                 }.value
             }
             isLoading = false
+        }
+    }
+
+    /// Forget specific plays. The tracks are untouched; only the log changes.
+    func forgetPlays(ids: Set<Int64>) {
+        guard !ids.isEmpty else { return }
+        let engine = self.engine
+        let doomed = Array(ids)
+        // Dropped locally first so the list does not visibly lag the keystroke.
+        playHistory.removeAll { ids.contains($0.id) }
+        Task.detached(priority: .userInitiated) { _ = try? engine.deletePlays(ids: doomed) }
+    }
+
+    /// Forget every play.
+    func clearPlayHistory() {
+        let engine = self.engine
+        Task {
+            _ = await Task.detached(priority: .userInitiated) { try? engine.clearPlayHistory() }
+                .value
+            playHistory = []
         }
     }
 

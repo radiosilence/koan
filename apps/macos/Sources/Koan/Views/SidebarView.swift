@@ -65,6 +65,8 @@ struct SidebarView: View {
                     .tag(LibraryModel.Section.artists)
                 Label("Favourites", systemImage: "heart")
                     .tag(LibraryModel.Section.favourites)
+                Label("History", systemImage: "clock.arrow.circlepath")
+                    .tag(LibraryModel.Section.playHistory)
             }
 
             Section("Playlists") {

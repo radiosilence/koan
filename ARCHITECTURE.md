@@ -228,6 +228,7 @@ Advancing parks on the next item that is not `Failed`, including one still downl
 | `queries/stats.rs` | Library statistics |
 | `queries/lyrics.rs` | Lyrics caching (synced + plain, per-track) |
 | `queries/favourites.rs` | Favourite/star status (syncs with Navidrome) |
+| `queries/history.rs` | Play history — one row per play, written when a track starts |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
 
 **Track dedup:** `upsert_track` tries three match strategies in order: (1) exact path match, (2) remote_id match, (3) content match (artist + album + disc + track# + title, and only where one side has no local path and one side has no remote_id). First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows, while keeping two files on disk as two tracks however identical their tags: multi-disc releases repeat title and track number across discs. A merge fills gaps only — it never overwrites a populated column with NULL, so a remote sync that knows nothing about sample rate cannot erase what the local scan measured.

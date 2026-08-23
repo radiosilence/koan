@@ -11,33 +11,64 @@ use super::TrackRow;
 pub const SOURCE_LOCAL: &str = "local";
 pub const SOURCE_SUBSONIC: &str = "subsonic";
 
-/// Record a play at an explicit time.
+/// Record a play at an explicit time. Returns the new entry's id.
 ///
 /// `listened_ms` is how long the track was actually listened to, not how long
-/// the track is — a play recorded four minutes into a twenty-minute piece
-/// stores four minutes.
+/// the track is — an entry written the moment playback starts does not know it
+/// yet, and fills it in later via [`set_listened_ms`].
 pub fn record_play_at(
     conn: &Connection,
     track_id: i64,
     played_at: i64,
     listened_ms: Option<i64>,
     source: &str,
-) -> Result<(), DbError> {
+) -> Result<i64, DbError> {
     conn.execute(
         "INSERT INTO play_history (track_id, played_at, duration_ms, source)
          VALUES (?1, ?2, ?3, ?4)",
         params![track_id, played_at, listened_ms, source],
     )?;
-    Ok(())
+    Ok(conn.last_insert_rowid())
 }
 
-/// Record a play that happened just now.
+/// Record a play that started just now.
 pub fn record_play(
     conn: &Connection,
     track_id: i64,
     listened_ms: Option<i64>,
-) -> Result<(), DbError> {
+) -> Result<i64, DbError> {
     record_play_at(conn, track_id, now_secs(), listened_ms, SOURCE_LOCAL)
+}
+
+/// Fill in how long an entry was listened to, once that is known.
+///
+/// Guarded on the track so a dropped start event cannot make the previous
+/// entry inherit this one's listening time.
+pub fn set_listened_ms(
+    conn: &Connection,
+    id: i64,
+    track_id: i64,
+    listened_ms: i64,
+) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE play_history SET duration_ms = ?1 WHERE id = ?2 AND track_id = ?3",
+        params![listened_ms, id, track_id],
+    )?;
+    Ok(())
+}
+
+/// Forget specific plays.
+pub fn delete_plays(conn: &Connection, ids: &[i64]) -> Result<usize, DbError> {
+    let tx = conn.unchecked_transaction()?;
+    let mut removed = 0;
+    {
+        let mut stmt = tx.prepare("DELETE FROM play_history WHERE id = ?1")?;
+        for id in ids {
+            removed += stmt.execute(params![id])?;
+        }
+    }
+    tx.commit()?;
+    Ok(removed)
 }
 
 /// Get the last play timestamp for a track, or None if never played.
@@ -110,6 +141,7 @@ pub fn get_play_history(
 /// times is three rows, so this cannot be deduplicated into a track list.
 #[derive(Debug, Clone)]
 pub struct PlayHistoryRow {
+    pub id: i64,
     pub track: TrackRow,
     pub played_at: i64,
     pub listened_ms: Option<i64>,
@@ -133,7 +165,7 @@ pub fn play_history_with_tracks(
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                 t.genre, t.source, t.remote_id, t.cached_path,
-                h.played_at, h.duration_ms, COALESCE(h.source, 'local')
+                h.id, h.played_at, h.duration_ms, COALESCE(h.source, 'local')
          FROM play_history h
          JOIN tracks t ON t.id = h.track_id
          LEFT JOIN artists a ON t.artist_id = a.id
@@ -146,9 +178,10 @@ pub fn play_history_with_tracks(
         .query_map(params![limit as i64, offset as i64], |row| {
             Ok(PlayHistoryRow {
                 track: super::row_to_track_row(row)?,
-                played_at: row.get(20)?,
-                listened_ms: row.get(21)?,
-                source: row.get(22)?,
+                id: row.get(20)?,
+                played_at: row.get(21)?,
+                listened_ms: row.get(22)?,
+                source: row.get(23)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -291,6 +324,56 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn listening_time_lands_on_the_entry_it_belongs_to() {
+        let db = test_db();
+        let a = seed_track(&db, "A");
+        let b = seed_track(&db, "B");
+
+        let first = record_play(&db.conn, a, None).unwrap();
+        let second = record_play(&db.conn, b, None).unwrap();
+
+        set_listened_ms(&db.conn, second, b, 4_200).unwrap();
+        // A start event that never landed must not push its track's time onto
+        // whatever entry happens to be open.
+        set_listened_ms(&db.conn, first, b, 9_999).unwrap();
+
+        let rows = play_history_with_tracks(&db.conn, 10, 0).unwrap();
+        let by_id: Vec<_> = rows.iter().map(|r| (r.id, r.listened_ms)).collect();
+        assert!(by_id.contains(&(second, Some(4_200))));
+        assert!(
+            by_id.contains(&(first, None)),
+            "the mismatched update was refused"
+        );
+    }
+
+    #[test]
+    fn plays_can_be_forgotten_individually() {
+        let db = test_db();
+        let id = seed_track(&db, "A");
+        let first = record_play(&db.conn, id, None).unwrap();
+        let second = record_play(&db.conn, id, None).unwrap();
+        let third = record_play(&db.conn, id, None).unwrap();
+
+        assert_eq!(delete_plays(&db.conn, &[first, third]).unwrap(), 2);
+
+        let left = play_history_with_tracks(&db.conn, 10, 0).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].id, second);
+        assert_eq!(
+            play_count(&db.conn, id).unwrap(),
+            1,
+            "and the play count follows"
+        );
+    }
+
+    #[test]
+    fn forgetting_an_entry_that_is_already_gone_is_not_an_error() {
+        let db = test_db();
+        assert_eq!(delete_plays(&db.conn, &[404]).unwrap(), 0);
+        assert_eq!(delete_plays(&db.conn, &[]).unwrap(), 0);
     }
 
     #[test]

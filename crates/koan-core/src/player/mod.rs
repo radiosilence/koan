@@ -18,7 +18,7 @@ use crate::audio::{
 };
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
-use history::{InFlight, PlayRecorder};
+use history::{InFlight, PlayEvent, PlayRecorder};
 use state::{LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
 use undo::{UndoEntry, UndoStack};
 
@@ -336,7 +336,7 @@ impl Player {
             duration_ms: info.duration_ms,
         }));
         self.shared_state.set_position_ms(seek_ms);
-        self.on_track_changed(id, info.duration_ms);
+        self.on_track_changed(id);
         log::info!(
             "playing: {} ({:?}) — {} {}Hz/{}ch, {}ms{}",
             path.display(),
@@ -574,7 +574,7 @@ impl Player {
             duration_ms: info.duration_ms,
         }));
         self.shared_state.set_position_ms(0);
-        self.on_track_changed(id, info.duration_ms);
+        self.on_track_changed(id);
         log::info!(
             "streaming: {} ({:?}) — {} {}Hz/{}ch, {}ms",
             path.display(),
@@ -938,12 +938,6 @@ impl Player {
                         duration_ms: stream_info.duration_ms,
                         ..current
                     }));
-                    // The play threshold was set from the short estimate.
-                    if let Some(f) = self.in_flight.as_mut()
-                        && f.item == id
-                    {
-                        f.set_duration_ms(stream_info.duration_ms);
-                    }
                 }
 
                 // Signal UI to re-read cover art and update souvlaki media controls.
@@ -958,29 +952,37 @@ impl Player {
 
     /// Poll the timeline and update shared state with current track/position.
     /// Called from the command loop on each tick.
-    /// The needle has moved to `id`. Bank what the outgoing track earned and
-    /// start counting the new one.
+    /// The needle has moved to `id`. Close out the outgoing track and write
+    /// the new one to history straight away, so history reads in play order
+    /// even for a track that is skipped a moment later.
     ///
     /// A seek restarts playback of the same track, so identity is checked
-    /// rather than finishing unconditionally — otherwise scrubbing around a
-    /// long track would bank it repeatedly.
-    fn on_track_changed(&mut self, id: QueueItemId, duration_ms: u64) {
+    /// rather than closing unconditionally — otherwise scrubbing around a
+    /// track would enter it into history once per seek.
+    fn on_track_changed(&mut self, id: QueueItemId) {
         if self.in_flight.as_ref().is_some_and(|f| f.item == id) {
             return;
         }
         self.finish_play();
-        let db_id = self.shared_state.item_db_id(id);
-        self.in_flight = Some(InFlight::new(id, db_id, duration_ms));
+        let track_id = self.shared_state.item_db_id(id);
+        self.in_flight = Some(InFlight::new(id, track_id));
+        if let (Some(track_id), Some(recorder)) = (track_id, self.history.as_ref()) {
+            recorder.record(PlayEvent::Started { track_id });
+        }
     }
 
-    /// Bank the current track's listening time, if it earned a play. Returns
-    /// what was banked, which is how the tests see it.
-    fn finish_play(&mut self) -> Option<history::Play> {
-        let play = self.in_flight.take().and_then(InFlight::into_play)?;
+    /// Tell history how long the current track was heard for. Returns what was
+    /// reported, which is how the tests see it.
+    fn finish_play(&mut self) -> Option<PlayEvent> {
+        let flight = self.in_flight.take()?;
+        let event = PlayEvent::Finished {
+            track_id: flight.track_id()?,
+            listened_ms: flight.listened_ms(),
+        };
         if let Some(recorder) = self.history.as_ref() {
-            recorder.record(play);
+            recorder.record(event);
         }
-        Some(play)
+        Some(event)
     }
 
     pub fn update_playback_state(&mut self) {
@@ -993,7 +995,7 @@ impl Player {
 
             // A gapless transition moves the needle without anything on this
             // thread having asked it to, so the play is banked from here.
-            self.on_track_changed(id, info.duration_ms);
+            self.on_track_changed(id);
             if let Some(f) = self.in_flight.as_mut() {
                 f.advance(position_ms);
             }
@@ -1390,17 +1392,26 @@ mod tests {
         }
     }
 
+    fn start(player: &mut Player, track_id: i64) -> QueueItemId {
+        let id = QueueItemId::new();
+        player.on_track_changed(id);
+        // The item is not in a playlist here, so there is no db_id to find.
+        player
+            .in_flight
+            .as_mut()
+            .unwrap()
+            .track_id_for_test(track_id);
+        id
+    }
+
     #[test]
     fn a_gapless_transition_closes_the_outgoing_track_and_opens_the_next() {
         let mut player = Player::new();
-        let a = QueueItemId::new();
-        let b = QueueItemId::new();
-
-        player.on_track_changed(a, 200_000);
-        player.in_flight.as_mut().unwrap().track_id_for_test(11);
+        start(&mut player, 11);
         listen(&mut player, 0, 200_000);
 
-        player.on_track_changed(b, 200_000);
+        let b = QueueItemId::new();
+        player.on_track_changed(b);
         let f = player
             .in_flight
             .as_ref()
@@ -1410,43 +1421,41 @@ mod tests {
     }
 
     #[test]
-    fn skipping_through_a_queue_records_nothing() {
+    fn a_track_skipped_seconds_in_is_still_history() {
         let mut player = Player::new();
-        for _ in 0..20 {
-            let id = QueueItemId::new();
-            player.on_track_changed(id, 200_000);
-            player.in_flight.as_mut().unwrap().track_id_for_test(1);
-            listen(&mut player, 0, 3_000);
-            assert!(
-                player.finish_play().is_none(),
-                "three seconds of a track is not a play"
-            );
-        }
+        start(&mut player, 7);
+        listen(&mut player, 0, 2_000);
+
+        let event = player
+            .finish_play()
+            .expect("putting something on is a thing you did, however briefly");
+        assert!(matches!(
+            event,
+            history::PlayEvent::Finished {
+                track_id: 7,
+                listened_ms: 2_000
+            }
+        ));
     }
 
     #[test]
-    fn a_track_played_through_is_recorded_once() {
+    fn a_track_is_closed_out_once() {
         let mut player = Player::new();
-        let id = QueueItemId::new();
-        player.on_track_changed(id, 200_000);
-        player.in_flight.as_mut().unwrap().track_id_for_test(7);
+        start(&mut player, 7);
         listen(&mut player, 0, 200_000);
 
-        let play = player.finish_play().expect("a full listen is a play");
-        assert_eq!(play.track_id, 7);
-        assert!(player.finish_play().is_none(), "and only once");
+        assert!(player.finish_play().is_some());
+        assert!(player.finish_play().is_none());
     }
 
     #[test]
-    fn seeking_around_a_track_does_not_bank_it_twice() {
+    fn seeking_around_a_track_does_not_enter_it_twice() {
         let mut player = Player::new();
-        let id = QueueItemId::new();
-        player.on_track_changed(id, 200_000);
-        player.in_flight.as_mut().unwrap().track_id_for_test(7);
+        let id = start(&mut player, 7);
         listen(&mut player, 0, 120_000);
 
         // A seek restarts playback of the same item.
-        player.on_track_changed(id, 200_000);
+        player.on_track_changed(id);
         assert_eq!(
             player.in_flight.as_ref().unwrap().listened_ms(),
             120_000,
@@ -1454,17 +1463,26 @@ mod tests {
         );
         listen(&mut player, 30_000, 40_000);
 
-        let play = player.finish_play().expect("still one play");
-        assert_eq!(play.listened_ms, 130_000);
+        let Some(history::PlayEvent::Finished { listened_ms, .. }) = player.finish_play() else {
+            panic!("still one play");
+        };
+        assert_eq!(listened_ms, 130_000);
         assert!(player.finish_play().is_none());
     }
 
     #[test]
-    fn stopping_banks_what_was_heard() {
+    fn a_track_that_is_not_in_the_library_is_not_recorded() {
         let mut player = Player::new();
         let id = QueueItemId::new();
-        player.on_track_changed(id, 200_000);
-        player.in_flight.as_mut().unwrap().track_id_for_test(7);
+        player.on_track_changed(id);
+        listen(&mut player, 0, 200_000);
+        assert!(player.finish_play().is_none());
+    }
+
+    #[test]
+    fn stopping_closes_out_what_was_heard() {
+        let mut player = Player::new();
+        start(&mut player, 7);
         listen(&mut player, 0, 150_000);
 
         player.stop_playback_and_clear_state();

@@ -107,6 +107,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `player/commands.rs` | `PlayerCommand` enum, `CommandChannel` (bounded crossbeam) |
 | `player/state.rs` | `SharedPlayerState`, `Playlist`, `PlaylistItem`, `QueueItemId`, `LoadState`, `PlaybackState`, `derive_visible_queue()` |
 | `player/undo.rs` | Undo/redo stack for playlist operations (100-deep) |
+| `player/history.rs` | Play history recording — writes an entry when a track starts, fills in listening time when it ends. Owns the `koan-history` writer thread |
 | `db/schema.rs` | DDL: artists, albums, tracks, scan_cache, remote_servers, organize_log, tracks_fts (FTS5) |
 | `db/connection.rs` | `Database::open()`, WAL mode, pragmas |
 | `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats, snapshots, `batch` (SQL-side track filtering, batched parent→child reads) |
@@ -162,6 +163,7 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Views/PickerSheet.swift` | ⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |
+| `Views/HistoryView.swift` | Play history, grouped by day — read-only, select and ⌫ to forget |
 
 ### koan-server (`crates/koan-server/src/`)
 
