@@ -138,6 +138,33 @@ enum Share {
     }
 }
 
+extension Share {
+    /// Share a set of tracks directly.
+    ///
+    /// The queue holds queue items, not library tracks — a queue entry can
+    /// outlive the row it came from — so it shares by the track ids it carries
+    /// rather than resolving a `Playable`.
+    @MainActor
+    static func link(trackIds: [Int64], named name: String, engine: KoanEngine, player: PlayerModel) {
+        guard !trackIds.isEmpty else {
+            player.report("Nothing here can be shared — these tracks aren't in the library.")
+            return
+        }
+        Task {
+            let url = await Task.detached(priority: .userInitiated) { () -> String? in
+                (try? engine.createShare(trackIds: trackIds, description: name)) ?? nil
+            }.value
+            guard let url else {
+                player.report("Couldn't create a share link — local-only tracks can't be shared.")
+                return
+            }
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(url, forType: .string)
+            player.report("Share link copied: \(url)")
+        }
+    }
+}
+
 /// Share button for an album or artist page.
 struct ShareButton: View {
     let playable: Playable

@@ -69,6 +69,11 @@ pub fn cmd_play(
 
     let download_queue = DownloadQueue::spawn(tx.clone(), state.clone(), log_buffer.clone());
 
+    // Radio's top-up loop lives in koan-core so every client behaves the same.
+    // The TUI used to carry its own copy, which meant a second implementation
+    // to keep in step with this one.
+    koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), config::db_path());
+
     // Spawn the API server on a background thread if requested.
     if let Some(opts) = api_opts {
         let db_path = config::db_path();

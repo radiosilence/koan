@@ -40,21 +40,14 @@ struct TrackListView: View {
                                 position: index + 1,
                                 isCurrent: player.currentTrackId == track.id
                             )
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
-                            // Drag before the tap gesture: a tap recogniser
-                            // registered first can claim the press and the drag
-                            // never starts.
-                            .draggablePlayable(.track(track))
-                            .contextMenu { PlayableMenu(playable: .track(track)) }
-                            // Queues the whole list and starts here, so playing
-                            // one track off an album keeps the rest behind it.
-                            .onTapGesture(count: 2) {
-                                player.playNow(trackIds: tracks.map(\.id), startingAt: index)
-                            }
+                            .rowBehaviour(playable: .track(track)) { playSelection() }
                         }
                     }
                     .listStyle(.inset)
+                    .onKeyPress(.return) {
+                        playSelection()
+                        return .handled
+                    }
                     // Arriving from search: single out the matched track rather
                     // than dropping the user at the top of a 20-track record.
                     .task(id: tracks.count) {

@@ -90,7 +90,7 @@ impl KoanEngine {
         })?;
 
         let (state, _timeline, _viz, tx) = Player::spawn();
-        spawn_radio(state.clone(), tx.clone(), db_path.clone());
+        koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
 
         let listener: Arc<parking_lot::RwLock<Option<Arc<dyn PlayerEvents>>>> =
             Arc::new(parking_lot::RwLock::new(None));
@@ -1106,126 +1106,6 @@ fn restore_items(
         }
     }
     (items, pending)
-}
-
-/// Keep the queue topped up while radio mode is on.
-///
-/// This lived only in `koan-tui`, so any other client could set the flag and
-/// nothing would act on it. Owning it in the engine means every front end gets
-/// the same behaviour rather than reimplementing the loop.
-fn spawn_radio(state: Arc<SharedPlayerState>, tx: Sender<PlayerCommand>, db_path: PathBuf) {
-    std::thread::Builder::new()
-        .name("koan-radio".into())
-        .spawn(move || {
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(2));
-
-                if !state.radio_mode() || state.cursor().is_none() {
-                    continue;
-                }
-
-                let cfg = Config::load().unwrap_or_default();
-                let snapshot = state.derive_visible_queue();
-                let playing = snapshot
-                    .entries
-                    .iter()
-                    .position(|e| e.status == koan_core::player::state::QueueEntryStatus::Playing);
-                let remaining = match playing {
-                    Some(i) => snapshot
-                        .entries
-                        .iter()
-                        .skip(i + 1)
-                        .filter(|e| e.status == koan_core::player::state::QueueEntryStatus::Queued)
-                        .count(),
-                    None => continue,
-                };
-                if remaining > cfg.radio.lookahead {
-                    continue;
-                }
-
-                let Ok(db) = Database::open(&db_path) else {
-                    continue;
-                };
-                let (items, cursor) = state.snapshot_playlist();
-
-                // The seed drifts: recent items weigh more than the first thing
-                // queued, so the radio moves through the library rather than
-                // orbiting one track.
-                let context: Vec<(Option<i64>, Option<String>)> = items
-                    .iter()
-                    .map(|item| {
-                        let row = item
-                            .path
-                            .to_str()
-                            .and_then(|p| queries::track_id_by_path(&db.conn, p).ok())
-                            .flatten()
-                            .and_then(|id| queries::get_track_row(&db.conn, id).ok())
-                            .flatten();
-                        (
-                            row.as_ref().and_then(|t| t.artist_id),
-                            Some(item.path.to_string_lossy().into_owned()),
-                        )
-                    })
-                    .collect();
-
-                let mut ctx = koan_core::radio::RadioContext::build(
-                    &db.conn,
-                    &context,
-                    cfg.radio.seed_window,
-                    cfg.radio.history_window,
-                );
-                if let Some(current) = cursor.and_then(|cid| items.iter().find(|i| i.id == cid))
-                    && let Some(row) = current
-                        .path
-                        .to_str()
-                        .and_then(|p| queries::track_id_by_path(&db.conn, p).ok())
-                        .flatten()
-                        .and_then(|id| queries::get_track_row(&db.conn, id).ok())
-                        .flatten()
-                {
-                    ctx.current_remote_id = row.remote_id.clone();
-                    ctx.current_artist_name = Some(row.artist_name.clone());
-                }
-
-                let client = if cfg.radio.use_subsonic {
-                    koan_core::helpers::subsonic_client(&cfg)
-                } else {
-                    None
-                };
-                if let Some(ref client) = client {
-                    for &artist_id in ctx.seed_artists.keys().take(5) {
-                        let _ = koan_core::radio::fetch_and_cache_similar_artists(
-                            &db.conn, client, artist_id,
-                        );
-                    }
-                }
-
-                let picks =
-                    koan_core::radio::pick_tracks(&db.conn, &ctx, client.as_ref(), &cfg.radio);
-                if picks.is_empty() {
-                    continue;
-                }
-                log::info!("radio: queueing {} tracks", picks.len());
-
-                let rows = queries::tracks_by_ids(&db.conn, &picks).unwrap_or_default();
-                let new_items = koan_core::helpers::playlist_items_for_tracks(&db, &rows);
-                let pending: Vec<(i64, QueueItemId)> = new_items
-                    .iter()
-                    .filter(|i| matches!(i.load_state, LoadState::Pending))
-                    .filter_map(|i| i.db_id.map(|id| (id, i.id)))
-                    .collect();
-                if new_items.is_empty() {
-                    continue;
-                }
-                if tx.send(PlayerCommand::AddToPlaylist(new_items)).is_err() {
-                    return; // Player gone; so is the app.
-                }
-                if !pending.is_empty() {
-                    spawn_downloads(pending, tx.clone(), state.clone());
-                }
-            }
-        })
-        .ok();
 }
 
 /// Fisher-Yates over a fresh seed, so consecutive calls differ.

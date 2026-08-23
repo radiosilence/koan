@@ -49,8 +49,19 @@ struct QueueView: View {
                     .onMove(perform: move)
                 }
                 .listStyle(.inset)
+                // Enter plays the selection, the way Return opens things
+                // everywhere else on the platform.
+                .onKeyPress(.return) {
+                    playSelection()
+                    return .handled
+                }
                 .onDeleteCommand { removeSelected() }
-                .onChange(of: selection) { _, new in player.queueSelection = new }
+                // Mirror the *queue item* ids, not the row ids: an album
+                // heading's id is synthetic, and handing that to the engine
+                // gets it rejected as not being a queue item.
+                .onChange(of: selection) { _, new in
+                    player.queueSelection = Set(itemIds(in: new))
+                }
                 .onChange(of: player.selectAllToken) { _, _ in
                     selection = Set(rows.map(\.id))
                 }
@@ -124,11 +135,10 @@ struct QueueView: View {
         switch row {
         case .album(_, let group):
             QueueAlbumHeader(group: group)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .contextMenu { albumMenu(group) }
-                .onTapGesture(count: 2) {
-                    if let first = group.items.first { player.play(itemId: first.queueItemId) }
+                // No playable: a queue album is a run of queue items, not a
+                // library album, so its actions are its own.
+                .rowBehaviour(playable: nil, onOpen: { playSelection() }) {
+                    albumMenu(group)
                 }
         case .track(let item):
             QueueRow(
@@ -136,10 +146,9 @@ struct QueueView: View {
                 isCurrent: item.queueItemId == player.currentItemId,
                 showArtist: item.artist != item.albumArtist
             )
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-            .contextMenu { trackMenu(item) }
-            .onTapGesture(count: 2) { player.play(itemId: item.queueItemId) }
+            .rowBehaviour(playable: nil, onOpen: { playSelection() }) {
+                trackMenu(item)
+            }
         }
     }
 
@@ -150,6 +159,37 @@ struct QueueView: View {
         }
         Button("Remove Album") {
             player.remove(itemIds: group.items.map(\.queueItemId))
+        }
+        Divider()
+        if let trackId = group.items.compactMap(\.trackId).first {
+            Button("Show in Library") { showInLibrary(trackId: trackId, highlight: false) }
+        }
+        Button("Share Album") {
+            Share.link(
+                trackIds: group.items.compactMap(\.trackId),
+                named: "\(group.albumArtist) — \(group.album)",
+                engine: library.engine,
+                player: player
+            )
+        }
+    }
+
+    /// Find the album a queue item came from, then go there.
+    ///
+    /// Resolved when the button is pressed, not while the menu is built:
+    /// SwiftUI builds context menus as it builds rows, so a lookup here ran a
+    /// blocking query per row and froze the window on a large queue.
+    private func showInLibrary(trackId: Int64, highlight: Bool) {
+        let engine = library.engine
+        Task {
+            let albumId = await Task.detached(priority: .userInitiated) {
+                (try? engine.track(trackId: trackId))??.albumId
+            }.value
+            guard let albumId else {
+                player.report("That track is no longer in the library.")
+                return
+            }
+            library.reveal(album: albumId, highlighting: highlight ? trackId : nil)
         }
     }
 
@@ -163,6 +203,15 @@ struct QueueView: View {
                 player.toggleFavourite(trackId: trackId)
                 library.refreshFavourites()
             }
+            Button("Show in Library") { showInLibrary(trackId: trackId, highlight: true) }
+            Button("Share") {
+                Share.link(
+                    trackIds: [trackId],
+                    named: item.title,
+                    engine: library.engine,
+                    player: player
+                )
+            }
         }
     }
 
@@ -170,8 +219,12 @@ struct QueueView: View {
 
     /// Queue items behind the selection. Selecting an album heading means its
     /// whole run, which is the point of the heading being selectable.
-    private var selectedItemIds: [String] {
-        rows.filter { selection.contains($0.id) }.flatMap(\.itemIds)
+    private var selectedItemIds: [String] { itemIds(in: selection) }
+
+    /// Expand a set of row ids to the queue items they stand for. An album
+    /// heading stands for its whole run; a track stands for itself.
+    private func itemIds(in rowIds: Set<String>) -> [String] {
+        rows.filter { rowIds.contains($0.id) }.flatMap(\.itemIds)
     }
 
     private func removeSelected() {

@@ -63,28 +63,25 @@ struct AlbumArtwork: View {
 
 /// Our own stand-in when a record has no artwork.
 ///
-/// The app icon's ensō, faded right back — a broken ring drawn in one stroke.
-/// Better than the server's placeholder, which is a branded blue vinyl that
-/// looks like real art until you notice every artless album has the same one,
-/// and better than a music-note glyph, which says nothing about koan.
-///
-/// Drawn rather than shipped as an asset so it stays crisp at any size and
-/// picks up the surrounding colour scheme.
+/// The app icon's own ensō, faded back — better than the server's placeholder,
+/// which is a branded blue vinyl that reads as real art, and better than a
+/// music-note glyph, which says nothing about koan.
 struct EnsoPlaceholder: View {
     var body: some View {
         GeometryReader { geo in
             let side = min(geo.size.width, geo.size.height)
-            Circle()
-                // The gap is the ensō's: a circle left deliberately unclosed.
-                .trim(from: 0.04, to: 0.96)
+            EnsoShape()
                 .stroke(
                     .tertiary,
-                    style: StrokeStyle(lineWidth: side * 0.09, lineCap: .round)
+                    style: StrokeStyle(
+                        // Proportional to the icon's own 40/512 stroke.
+                        lineWidth: side * 0.078,
+                        lineCap: .round,
+                        lineJoin: .round
+                    )
                 )
-                .rotationEffect(.degrees(125))
-                .padding(side * 0.24)
-                .frame(width: geo.size.width, height: geo.size.height)
+                .padding(side * 0.2)
         }
-        .opacity(0.55)
+        .opacity(0.5)
     }
 }

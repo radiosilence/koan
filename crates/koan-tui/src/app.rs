@@ -296,10 +296,6 @@ pub struct App {
     /// Last computed display FPS value.
     pub display_fps: u16,
 
-    /// True while a background radio pick is in-flight (prevents duplicate requests).
-    pub radio_pending: bool,
-    /// Receiver for background radio pick results (track IDs to enqueue).
-    pub radio_rx: Option<crossbeam_channel::Receiver<Vec<i64>>>,
     /// Radio config.
     pub radio_config: koan_core::config::RadioConfig,
     /// Album art width in terminal columns. Height = width/2 (square via halfblocks).
@@ -381,8 +377,6 @@ impl App {
             fps_sample_time: std::time::Instant::now(),
             fps_sample_count: 0,
             display_fps: 0,
-            radio_pending: false,
-            radio_rx: None,
             radio_config: cfg.radio,
             art_size: cfg.playback.art_size.clamp(4, 80),
             download_queue,
@@ -733,172 +727,6 @@ impl App {
                 }
             }
         }
-
-        // --- Radio mode: poll results and trigger new picks. ---
-        // Poll for completed radio picks.
-        if let Some(ref rx) = self.radio_rx
-            && let Ok(track_ids) = rx.try_recv()
-        {
-            self.radio_rx = None;
-            self.radio_pending = false;
-            if !track_ids.is_empty() {
-                // Dedup: filter out tracks already in the current playlist.
-                let (current_items, _) = self.state.snapshot_playlist();
-                let current_paths: std::collections::HashSet<String> = current_items
-                    .iter()
-                    .map(|i| i.path.to_string_lossy().into_owned())
-                    .collect();
-
-                let total = track_ids.len();
-                let deduped: Vec<i64> =
-                    if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path) {
-                        track_ids
-                            .into_iter()
-                            .filter(|&id| {
-                                if let Ok(Some(track)) =
-                                    koan_core::db::queries::get_track_row(&db.conn, id)
-                                    && let Some(ref path) = track.path
-                                {
-                                    !current_paths.contains(path)
-                                } else {
-                                    true // can't check, let it through
-                                }
-                            })
-                            .collect()
-                    } else {
-                        track_ids
-                    };
-
-                let dupes = total - deduped.len();
-                if dupes > 0 {
-                    log::info!("radio: filtered {} dupes", dupes);
-                }
-                if !deduped.is_empty() {
-                    self.picker_result = Some((
-                        crate::picker::PickerKind::Track,
-                        deduped,
-                        PickerAction::Append,
-                    ));
-                }
-            }
-        }
-
-        // Trigger radio pick when queue is running low.
-        if self.state.radio_mode() && !self.radio_pending && self.has_played {
-            let vq = &self.queue.vq_cache;
-            // Count tracks remaining after the playing track.
-            let playing_idx = vq
-                .entries
-                .iter()
-                .position(|e| e.status == QueueEntryStatus::Playing);
-            let remaining = if let Some(idx) = playing_idx {
-                vq.entries
-                    .iter()
-                    .skip(idx + 1)
-                    .filter(|e| e.status == QueueEntryStatus::Queued)
-                    .count()
-            } else {
-                0
-            };
-
-            if remaining <= self.radio_config.lookahead {
-                self.trigger_radio_pick();
-            }
-        }
-    }
-
-    /// Spawn a background thread to pick radio tracks.
-    fn trigger_radio_pick(&mut self) {
-        self.radio_pending = true;
-        let (tx, rx) = crossbeam_channel::bounded(1);
-        self.radio_rx = Some(rx);
-
-        let db_path = self.db_path.clone();
-        let state = self.state.clone();
-        let radio_config = self.radio_config.clone();
-
-        std::thread::Builder::new()
-            .name("koan-radio".into())
-            .spawn(move || {
-                let db = match koan_core::db::connection::Database::open(&db_path) {
-                    Ok(db) => db,
-                    Err(e) => {
-                        log::warn!("radio: failed to open db: {}", e);
-                        let _ = tx.send(vec![]);
-                        return;
-                    }
-                };
-
-                // Build context from current queue + play history.
-                let (items, cursor) = state.snapshot_playlist();
-                let current_item = cursor.and_then(|cid| items.iter().find(|i| i.id == cid));
-
-                let context_data: Vec<(Option<i64>, Option<String>)> = items
-                    .iter()
-                    .map(|item| {
-                        let track = item
-                            .path
-                            .to_str()
-                            .and_then(|p| {
-                                koan_core::db::queries::track_id_by_path(&db.conn, p).ok()
-                            })
-                            .flatten()
-                            .and_then(|id| koan_core::db::queries::get_track_row(&db.conn, id).ok())
-                            .flatten();
-                        (
-                            track.as_ref().and_then(|t| t.artist_id),
-                            Some(item.path.to_string_lossy().into_owned()),
-                        )
-                    })
-                    .collect();
-
-                let mut ctx = koan_core::radio::RadioContext::build(
-                    &db.conn,
-                    &context_data,
-                    radio_config.seed_window,
-                    radio_config.history_window,
-                );
-
-                // Set current track info for Subsonic queries.
-                if let Some(current) = current_item {
-                    let current_track = current
-                        .path
-                        .to_str()
-                        .and_then(|p| koan_core::db::queries::track_id_by_path(&db.conn, p).ok())
-                        .flatten()
-                        .and_then(|id| koan_core::db::queries::get_track_row(&db.conn, id).ok())
-                        .flatten();
-                    if let Some(ref track) = current_track {
-                        ctx.current_remote_id = track.remote_id.clone();
-                        ctx.current_artist_name = Some(track.artist_name.clone());
-                    }
-                }
-
-                // Build Subsonic client if configured.
-                let client = if radio_config.use_subsonic {
-                    koan_core::config::Config::load()
-                        .ok()
-                        .and_then(|cfg| koan_core::helpers::subsonic_client(&cfg))
-                } else {
-                    None
-                };
-
-                // Pre-populate similar artist cache for seed artists.
-                if let Some(ref client) = client {
-                    for &artist_id in ctx.seed_artists.keys().take(5) {
-                        let _ = koan_core::radio::fetch_and_cache_similar_artists(
-                            &db.conn, client, artist_id,
-                        );
-                    }
-                }
-
-                let picks =
-                    koan_core::radio::pick_tracks(&db.conn, &ctx, client.as_ref(), &radio_config);
-
-                log::info!("radio: picked {} tracks", picks.len());
-                let _ = tx.send(picks);
-            })
-            .ok();
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) {
