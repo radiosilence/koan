@@ -196,7 +196,7 @@ impl AudioEngine {
 impl Drop for AudioEngine {
     fn drop(&mut self) {
         let stop_status = self.stop_status();
-        log::info!("engine teardown: AudioOutputUnitStop -> {}", stop_status);
+        log::debug!("engine teardown: AudioOutputUnitStop -> {}", stop_status);
 
         // Wait for any in-flight render callback to finish. AudioOutputUnitStop
         // is documented as synchronous, but during sample rate switches the
@@ -213,7 +213,7 @@ impl Drop for AudioEngine {
                 break;
             }
         }
-        log::info!("engine teardown: callback drained after {} spins", spins);
+        log::debug!("engine teardown: callback drained after {} spins", spins);
 
         // Then ask the unit itself. The flag above only proves *our* callback
         // body is not executing; CoreAudio's IO proc can still be mid-cycle
@@ -244,7 +244,7 @@ impl Drop for AudioEngine {
             waited += 1;
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
-        log::info!(
+        log::debug!(
             "engine teardown: IsRunning query -> status {} running {} after {}ms; uninitializing",
             last.0,
             last.1,
@@ -383,16 +383,57 @@ unsafe extern "C" fn render_callback(
     }
 
     // Zero remaining frames on underrun — silence > glitches.
+    //
+    // `write_bytes` counts in elements of the pointee, not in bytes, so
+    // multiplying by `size_of::<f32>()` here wrote four times the intended
+    // range and ran off the end of CoreAudio's buffer. It corrupted the block's
+    // neighbour rather than faulting, so nothing happened until CoreAudio freed
+    // it — surfacing as a trap inside caulk's deallocator in
+    // `AudioUnitUninitialize`, one track later, looking for all the world like
+    // a double free in the teardown (#89).
+    //
+    // Underrun happens at the end of every track, which is why the end of a
+    // queue was where it showed.
     if to_read < total_samples {
+        // SAFETY: `total_samples` is clamped to the buffer's own
+        // `mDataByteSize`, so this slice ends exactly at its end.
         unsafe {
-            ptr::write_bytes(
-                out_ptr.add(to_read),
-                0,
-                (total_samples - to_read) * mem::size_of::<f32>(),
-            );
+            std::slice::from_raw_parts_mut(out_ptr.add(to_read), total_samples - to_read).fill(0.0);
         }
     }
 
     data.in_callback.store(false, Ordering::Release);
     0
+}
+
+#[cfg(test)]
+mod tests {
+    /// The underrun fill wrote `count * size_of::<f32>()` *elements* rather than
+    /// bytes, because `write_bytes` counts in elements of the pointee — four
+    /// times the intended range, straight off the end of CoreAudio's buffer.
+    /// It corrupted the neighbouring block silently, so the damage only
+    /// appeared when CoreAudio freed it, one track later, inside
+    /// `AudioUnitUninitialize`.
+    #[test]
+    fn underrun_fill_stays_inside_the_buffer() {
+        let capacity = 1024usize; // 512 frames x 2 channels
+        let mut buffer = vec![7.0f32; capacity + 64]; // canary tail
+        let out = buffer.as_mut_ptr();
+
+        let total_samples = capacity;
+        let to_read = 300usize;
+
+        unsafe {
+            std::slice::from_raw_parts_mut(out.add(to_read), total_samples - to_read).fill(0.0);
+        }
+
+        assert!(
+            buffer[to_read..capacity].iter().all(|s| *s == 0.0),
+            "the underrun region is silent"
+        );
+        assert!(
+            buffer[capacity..].iter().all(|s| *s == 7.0),
+            "nothing past the buffer was touched"
+        );
+    }
 }
