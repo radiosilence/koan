@@ -25,6 +25,8 @@ final class SearchModel {
     private(set) var isSearching = false
 
     private var task: Task<Void, Never>?
+    /// Where to put the user back when they clear the field.
+    private var sectionBeforeSearch: LibraryModel.Section?
 
     init(engine: KoanEngine, library: LibraryModel) {
         self.engine = engine
@@ -34,20 +36,28 @@ final class SearchModel {
     var isEmpty: Bool { artists.isEmpty && albums.isEmpty && tracks.isEmpty }
     var hasQuery: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
-    /// What the dropdown shows — enough to recognise the thing you meant,
-    /// not enough to browse.
-    var quickArtists: [Artist] { Array(artists.prefix(3)) }
-    var quickAlbums: [Album] { Array(albums.prefix(3)) }
-    var quickTracks: [Track] { Array(tracks.prefix(5)) }
-
+    /// Results land in the main area as you type, rather than in a dropdown.
+    /// A floating suggestion list can't carry actions — `searchSuggestions`
+    /// exists to complete the query text, not to navigate — and it fought the
+    /// lyrics inspector for the same corner of the window.
+    ///
     /// Debounced: a fast typist would otherwise queue a round of queries per
-    /// character, and the fuzzy passes are the expensive half.
+    /// keystroke, and the fuzzy passes are the expensive half.
     func schedule() {
         task?.cancel()
         let text = query.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else {
             clear()
+            if let previous = sectionBeforeSearch {
+                library.section = previous
+                sectionBeforeSearch = nil
+            }
             return
+        }
+
+        if library.section != .searchResults {
+            sectionBeforeSearch = library.section
+            library.section = .searchResults
         }
 
         isSearching = true
@@ -82,8 +92,11 @@ final class SearchModel {
         isSearching = false
     }
 
+    /// Clearing after acting on a result: the field empties but the user has
+    /// already been sent somewhere, so don't drag them back.
     func reset() {
         query = ""
         clear()
+        sectionBeforeSearch = nil
     }
 }

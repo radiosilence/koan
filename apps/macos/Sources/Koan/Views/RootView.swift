@@ -45,17 +45,16 @@ struct RootView: View {
                     }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .inspector(isPresented: $showLyrics) {
-                LyricsPanel()
-                    .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
-            }
+        }
+        .inspector(isPresented: $showLyrics) {
+            LyricsPanel()
+                .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
         }
         .searchable(
             text: $search.query,
-            placement: .toolbar,
-            prompt: "Search artists, albums and tracks"
+            placement: .sidebar,
+            prompt: "Search"
         )
-        .searchSuggestions { SearchSuggestions() }
         .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { library.section = .searchResults }
         .safeAreaInset(edge: .bottom, spacing: 0) {
