@@ -359,12 +359,17 @@ jobs:
           # the DMG landed at a path this did not expect, sha256sum wrote its
           # error to stderr, and the cask was published with `sha256 ""` — which
           # Homebrew cannot install and nothing in the run flagged.
+          # Absolute, because this script later cds into the cloned tap. The
+          # tarball shas were taken before that cd and the DMG's after it, so
+          # only the DMG resolved to nothing — which is exactly the checksum
+          # that went out empty.
+          ARTIFACTS="$PWD/artifacts"
           shasum_of() {
             local file
-            file=$(find artifacts -type f -name "$1" | head -1)
+            file=$(find "$ARTIFACTS" -type f -name "$1" | head -1)
             if [ -z "$file" ]; then
-              echo "release artifact $1 not found under artifacts/" >&2
-              find artifacts -type f | sed 's/^/  /' >&2
+              echo "release artifact $1 not found under $ARTIFACTS" >&2
+              find "$ARTIFACTS" -type f | sed 's/^/  /' >&2
               exit 1
             fi
             sha256sum "$file" | awk '{print $1}'
