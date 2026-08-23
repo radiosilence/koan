@@ -19,7 +19,7 @@ final class CoverArtCache {
     /// `nil` value means "looked, nothing there" — distinct from "not looked
     /// yet", which keeps missing art from being retried on every redraw.
     private var memory: [String: NSImage?] = [:]
-    private var inFlight: Set<String> = []
+    private(set) var inFlight: Set<String> = []
 
     private let engine: KoanEngine
     private let directory: URL?
@@ -53,6 +53,11 @@ final class CoverArtCache {
             (try? engine.coverArt(trackId: trackId, size: 600))?.data
         }
     }
+
+    /// Whether a fetch is outstanding — distinct from having looked and found
+    /// nothing, which should show a placeholder rather than a spinner.
+    func isLoading(albumId: Int64) -> Bool { inFlight.contains("album-\(albumId)") }
+    func isLoading(trackId: Int64) -> Bool { inFlight.contains("track-\(trackId)") }
 
     // MARK: - Loading
 

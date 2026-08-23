@@ -18,6 +18,20 @@ struct AlbumGridCell: View {
         VStack(alignment: .leading, spacing: 7) {
             PlayableArtwork(albumId: album.id)
                 .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
+                .overlay(alignment: .topTrailing) {
+                    if let codec = album.codec {
+                        // Format only, no sample rate: at tile size the rate is
+                        // unreadable and it's the codec that tells you whether
+                        // this is the good copy.
+                        Text(codec.uppercased())
+                            .font(.system(size: 9, weight: .semibold).monospaced())
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.55), in: Capsule())
+                            .padding(6)
+                    }
+                }
 
             Text(album.title)
                 .font(.callout.weight(.medium))

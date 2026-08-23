@@ -186,22 +186,32 @@ struct QueueView: View {
     // MARK: - Reordering
 
     /// Moving a heading moves its whole album, which is why headings are rows.
+    ///
+    /// Anchors to the row being dropped *onto* and inserts before it, rather
+    /// than to the row above and inserting after. The latter has no way to
+    /// express "at the very top", and lands a drop on an album heading below
+    /// that album's first track instead of above the album.
     private func move(from source: IndexSet, to destination: Int) {
-        let moving = source.flatMap { rows[$0].itemIds }
+        // Ordered, not a Set: these keep their relative order in the queue, and
+        // dragging an album must not scramble its tracks.
+        let moving = source.sorted().flatMap { rows[$0].itemIds }
+        let movingSet = Set(moving)
         guard !moving.isEmpty else { return }
 
-        // Anchor to the last queue item above the drop, skipping anything being
-        // moved — the engine positions relative to an item that stays put.
-        let above = rows[..<destination].flatMap(\.itemIds)
-        guard let anchor = above.last(where: { !moving.contains($0) }) else {
-            // Dropped at the very top: anchor to the first item that isn't moving
-            // and let the engine place them before it.
-            guard let first = player.queue.first(where: { !moving.contains($0.queueItemId) })
-            else { return }
-            player.move(itemIds: moving, after: first.queueItemId)
+        // The first row at or after the drop that isn't itself being moved.
+        if let target = rows[min(destination, rows.count)...]
+            .first(where: { row in !row.itemIds.contains(where: movingSet.contains) })?
+            .itemIds.first
+        {
+            player.move(itemIds: moving, target: target, after: false)
             return
         }
-        player.move(itemIds: moving, after: anchor)
+
+        // Nothing below the drop stays put: this is a move to the end.
+        guard let last = player.queue.last(where: { !movingSet.contains($0.queueItemId) }) else {
+            return
+        }
+        player.move(itemIds: moving, target: last.queueItemId, after: true)
     }
 }
 

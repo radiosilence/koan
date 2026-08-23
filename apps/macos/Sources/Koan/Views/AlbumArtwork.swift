@@ -30,9 +30,14 @@ struct AlbumArtwork: View {
                     Rectangle()
                         .fill(.quaternary)
                         .overlay {
-                            Image(systemName: "music.note")
-                                .font(.system(size: 20, weight: .light))
-                                .foregroundStyle(.tertiary)
+                            if isLoading {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Image(systemName: "music.note")
+                                    .font(.system(size: 20, weight: .light))
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
                 }
             }
@@ -41,6 +46,13 @@ struct AlbumArtwork: View {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(.white.opacity(0.06))
             }
+    }
+
+    private var isLoading: Bool {
+        switch source {
+        case .album(let id): cache.isLoading(albumId: id)
+        case .track(let id): cache.isLoading(trackId: id)
+        }
     }
 
     private var image: NSImage? {

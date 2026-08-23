@@ -256,8 +256,12 @@ final class PlayerModel {
         attempt { try engine.removeFromQueue(queueItemIds: itemIds) }
     }
 
-    func move(itemIds: [String], after target: String) {
-        attempt { try engine.moveInQueue(queueItemIds: itemIds, targetQueueItemId: target, after: true) }
+    /// `after: false` inserts *before* the target, which is the only way to
+    /// express "put this at the very top" or "put this above that album".
+    func move(itemIds: [String], target: String, after: Bool) {
+        attempt {
+            try engine.moveInQueue(queueItemIds: itemIds, targetQueueItemId: target, after: after)
+        }
     }
 
     func clearQueue() { attempt { try engine.clearQueue() } }
