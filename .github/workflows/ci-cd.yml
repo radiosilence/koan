@@ -263,6 +263,32 @@ jobs:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: v${{ needs.check-version.outputs.version }}
           generate_release_notes: true
+          # Prepended to the generated notes. Every direct download of the app
+          # hits Gatekeeper, and the dialog it shows offers only "Move to Trash"
+          # — so the way out belongs where people are already standing.
+          body: |
+            ## Install
+
+            ```bash
+            brew install radiosilence/koan/koan            # the CLI and TUI
+            brew install --cask radiosilence/koan/koan-app # the macOS app
+            ```
+
+            ### Opening `Koan.dmg` directly
+
+            The app is signed but not notarised, so macOS refuses it on first
+            open with "Apple could not verify koan is free of malware" and
+            offers only **Move to Trash**. Drag it to Applications, then:
+
+            ```bash
+            xattr -dr com.apple.quarantine /Applications/Koan.app
+            ```
+
+            It opens normally from then on. The Homebrew cask does this for you.
+            Notarising properly needs a paid Apple Developer account, which this
+            project does not have.
+
+            ---
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.dmg

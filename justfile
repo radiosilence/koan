@@ -178,6 +178,12 @@ macos-bundle: macos-build
     # removable volumes, files and folders — has to be given again. Set
     # KOAN_SIGN_IDENTITY to a stable certificate (a self-signed one in your
     # login keychain is enough) and the grants stick across rebuilds.
+    #
+    # It does nothing for Gatekeeper. A downloaded app is refused unless it is
+    # signed with a Developer ID certificate *and* notarised by Apple, which
+    # needs a paid developer account — a self-signed certificate is no more
+    # trusted than ad-hoc. Direct downloads clear the quarantine flag by hand;
+    # the Homebrew cask does it in a postflight.
     codesign --force --deep --sign "${KOAN_SIGN_IDENTITY:--}" "$app"
     echo "built $app"
 

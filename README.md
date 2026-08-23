@@ -10,6 +10,12 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 
 ## Install
 
+Downloading `Koan.dmg` from the releases page rather than using the cask? The app
+is signed but not notarised — Apple charges for that — so macOS refuses the first
+open and offers only "Move to Trash". Drag it to Applications and run
+`xattr -dr com.apple.quarantine /Applications/Koan.app` once. The cask does this
+for you.
+
 ```bash
 # homebrew (recommended)
 brew install radiosilence/koan/koan
