@@ -3,7 +3,7 @@ import SwiftUI
 
 /// Square album art with a placeholder that doesn't look broken while loading.
 struct AlbumArtwork: View {
-    enum Source {
+    enum Source: Hashable {
         case album(Int64)
         case track(Int64)
     }
@@ -12,6 +12,15 @@ struct AlbumArtwork: View {
     var cornerRadius: CGFloat = 6
 
     @Environment(CoverArtCache.self) private var cache
+
+    /// Held per view rather than read from the cache during `body`.
+    ///
+    /// Reading the cache's dictionaries from `body` made every artwork observe
+    /// every entry, so one cover arriving invalidated all of them — and the
+    /// lookup also inserted into the in-flight set while rendering, which
+    /// invalidated them again. Scrolling the album grid pinned ten cores.
+    @State private var image: NSImage?
+    @State private var isLoading = false
 
     var body: some View {
         // A square Color drives the layout and the image sits in an overlay, so
@@ -43,20 +52,23 @@ struct AlbumArtwork: View {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(.white.opacity(0.06))
             }
-    }
+            // Keyed on the source, so a recycled cell in a scrolling grid
+            // cancels the load it no longer needs and starts the one it does.
+            .task(id: source) {
+                image = cache.cached(source)
+                guard image == nil else { return }
 
-    private var isLoading: Bool {
-        switch source {
-        case .album(let id): cache.isLoading(albumId: id)
-        case .track(let id): cache.isLoading(trackId: id)
-        }
-    }
+                // Settle first. `.task(id:)` is cancelled when the cell is
+                // recycled, so flying past a cover never starts its fetch —
+                // without this, one flick through the grid queued a request for
+                // every album in the library.
+                try? await Task.sleep(for: .milliseconds(180))
+                guard !Task.isCancelled else { return }
 
-    private var image: NSImage? {
-        switch source {
-        case .album(let id): cache.art(albumId: id)
-        case .track(let id): cache.art(trackId: id)
-        }
+                isLoading = true
+                image = await cache.image(for: source)
+                isLoading = false
+            }
     }
 }
 

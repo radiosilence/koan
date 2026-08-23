@@ -43,8 +43,6 @@ struct ArtistBrowser: View {
             .frame(height: 24)
             .rowBehaviour(playable: .artist(id: artist.id, name: artist.name))
         }
-        .contentMargins(.bottom, 72, for: .scrollContent)
-        .contentMargins(.bottom, 72, for: .scrollIndicators)
         .contextMenu(forSelectionType: Int64.self) { ids in
             if let id = ids.first,
                let artist = library.visibleArtists.first(where: { $0.id == id }) {

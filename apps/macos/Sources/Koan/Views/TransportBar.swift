@@ -37,6 +37,13 @@ struct TransportBar: View {
             if let trackId = player.currentTrackId {
                 AlbumArtwork(source: .track(trackId), cornerRadius: 5)
                     .frame(width: 46, height: 46)
+                    .showsArtworkFullSize(
+                        source: .track(trackId),
+                        title: player.nowPlaying.entry?.title ?? "",
+                        subtitle: player.nowPlaying.entry.map {
+                            "\($0.artist) — \($0.album)"
+                        }
+                    )
             } else {
                 RoundedRectangle(cornerRadius: 5)
                     .fill(.quaternary)

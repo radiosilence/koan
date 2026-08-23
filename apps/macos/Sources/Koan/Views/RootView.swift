@@ -26,6 +26,7 @@ struct RootView: View {
     @Environment(PlayerModel.self) private var player
 
     @AppStorage("showLyrics") private var showLyrics = false
+    @State private var transportHeight: CGFloat = 0
 
     var body: some View {
         @Bindable var library = library
@@ -38,12 +39,15 @@ struct RootView: View {
             NavigationStack(path: $library.path) {
                 stage
                     // The transport is a safeAreaInset on the split view, which
-                    // insets the window but does not reach the detail column's
-                    // own scroll views — a List happily draws its last rows
-                    // underneath it, where they cannot be read or clicked.
-                    // Restating it here gives the column the inset it should
-                    // have inherited.
-                    .safeAreaPadding(.bottom, 64)
+                    // reserves space in the *window* but not inside the detail
+                    // column's own scroll views — a List draws its last rows
+                    // under the bar, where they cannot be read or clicked.
+                    //
+                    // Measured rather than a constant. The bar's height is a
+                    // stack of paddings and a control size, so any number
+                    // written here would be right until one of them changed and
+                    // then be a gap or a clipped row with nothing to say why.
+                    .safeAreaPadding(.bottom, transportHeight)
                     // The stack draws its own back button for pushed
                     // destinations, next to the pair we already have — three
                     // chevrons in a row. Ours can cross sections and search
@@ -84,7 +88,16 @@ struct RootView: View {
                 Divider()
                 TransportBar()
             }
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: TransportHeightKey.self,
+                        value: proxy.size.height
+                    )
+                }
+            )
         }
+        .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
         .toolbar {
             // Spans section switches and search jumps, which a NavigationStack's
             // own back button cannot — it only knows about one stack.
@@ -236,5 +249,15 @@ private struct ErrorToast: View {
             try? await Task.sleep(for: .seconds(6))
             dismiss()
         }
+    }
+}
+
+
+/// The transport bar's rendered height, so the detail column can inset by
+/// exactly it rather than by a number someone typed.
+private struct TransportHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

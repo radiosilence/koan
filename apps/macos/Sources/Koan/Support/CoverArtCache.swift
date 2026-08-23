@@ -19,7 +19,8 @@ final class CoverArtCache {
     /// `nil` value means "looked, nothing there" — distinct from "not looked
     /// yet", which keeps missing art from being retried on every redraw.
     private var memory: [String: NSImage?] = [:]
-    private(set) var inFlight: Set<String> = []
+    /// One fetch per key, shared by everyone who asks while it is running.
+    private var tasks: [String: Task<NSImage?, Never>] = [:]
 
     /// Which albums produced each image, by content hash.
     ///
@@ -48,10 +49,70 @@ final class CoverArtCache {
 
     // MARK: - Lookup
 
-    /// Art for an album. Returns what's cached and schedules a load otherwise;
-    /// the view re-renders when it arrives.
-    func art(albumId: Int64) -> NSImage? {
-        image(key: "album-\(albumId)") { engine in
+    /// What's already in memory, without starting anything.
+    ///
+    /// Views call this first so a cover that has been seen appears in the same
+    /// frame rather than after an await, which is what made a scrolled-back grid
+    /// flash grey.
+    func cached(_ source: AlbumArtwork.Source) -> NSImage? {
+        memory[Self.key(source)] ?? nil
+    }
+
+    /// Fetch the art, awaiting the disk cache or the network as needed.
+    ///
+    /// Deliberately `async` and not observable: an earlier version returned
+    /// what it had and started a load as a side effect of being read, so every
+    /// artwork on screen depended on every entry in the cache and one arriving
+    /// invalidated all of them.
+    ///
+    /// Concurrent callers for the same key share one fetch rather than racing —
+    /// a grid scrolling past forty covers of the same record should be one
+    /// round trip.
+    func image(for source: AlbumArtwork.Source) async -> NSImage? {
+        let key = Self.key(source)
+        if let cached = memory[key] { return cached }
+        if let running = tasks[key] { return await running.value }
+
+        let engine = self.engine
+        let file = directory?.appendingPathComponent(Self.filename(for: key))
+        let task = Task<NSImage?, Never> { [weak self] in
+            let data = await Task.detached(priority: .utility) { () -> Data? in
+                if let file, let cached = try? Data(contentsOf: file) { return cached }
+                guard let fetched = Self.fetch(source, engine) else { return nil }
+                if let file {
+                    // Best effort: a cache that fails to write is still a cache.
+                    try? fetched.write(to: file, options: .atomic)
+                }
+                return fetched
+            }.value
+
+            guard let self else { return nil }
+            self.tasks[key] = nil
+            guard let data else {
+                self.memory[key] = NSImage?.none
+                return nil
+            }
+            let image = self.accept(data, for: key)
+            self.memory[key] = image
+            return image
+        }
+        tasks[key] = task
+        return await task.value
+    }
+
+    private static func key(_ source: AlbumArtwork.Source) -> String {
+        switch source {
+        case .album(let id): "album-\(id)"
+        case .track(let id): "track-\(id)"
+        }
+    }
+
+    private nonisolated static func fetch(
+        _ source: AlbumArtwork.Source,
+        _ engine: KoanEngine
+    ) -> Data? {
+        switch source {
+        case .album(let albumId):
             // Any track off the record will do — they share the artwork.
             guard let tracks = try? engine.tracks(
                 albumId: albumId, artistId: nil, sort: .album, limit: 1, offset: 0
@@ -60,50 +121,9 @@ final class CoverArtCache {
                 return nil
             }
             return (try? engine.coverArt(trackId: first.id, size: 400))?.data
+        case .track(let trackId):
+            return (try? engine.coverArt(trackId: trackId, size: 600))?.data
         }
-    }
-
-    /// Art for a specific track — used by the transport bar, where the album
-    /// may not be known (queue items can outlive a library row).
-    func art(trackId: Int64) -> NSImage? {
-        image(key: "track-\(trackId)") { engine in
-            (try? engine.coverArt(trackId: trackId, size: 600))?.data
-        }
-    }
-
-    /// Whether a fetch is outstanding — distinct from having looked and found
-    /// nothing, which should show a placeholder rather than a spinner.
-    func isLoading(albumId: Int64) -> Bool { inFlight.contains("album-\(albumId)") }
-    func isLoading(trackId: Int64) -> Bool { inFlight.contains("track-\(trackId)") }
-
-    // MARK: - Loading
-
-    private func image(key: String, fetch: @escaping @Sendable (KoanEngine) -> Data?) -> NSImage? {
-        if let cached = memory[key] { return cached }
-        guard !inFlight.contains(key) else { return nil }
-        inFlight.insert(key)
-
-        let engine = self.engine
-        let file = directory?.appendingPathComponent(Self.filename(for: key))
-        Task {
-            let data = await Task.detached(priority: .utility) { () -> Data? in
-                if let file, let cached = try? Data(contentsOf: file) { return cached }
-                guard let fetched = fetch(engine) else { return nil }
-                if let file {
-                    // Best effort: a cache that fails to write is still a cache.
-                    try? fetched.write(to: file, options: .atomic)
-                }
-                return fetched
-            }.value
-
-            defer { inFlight.remove(key) }
-            guard let data else {
-                memory[key] = NSImage?.none
-                return
-            }
-            memory[key] = accept(data, for: key)
-        }
-        return nil
     }
 
     /// Store the image unless it turns out to be the server's placeholder.

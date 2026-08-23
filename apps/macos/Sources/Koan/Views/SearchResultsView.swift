@@ -103,10 +103,18 @@ private struct SearchTrackRow: View {
             }
         } label: {
             HStack(spacing: 10) {
-                Image(systemName: "music.note")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 14)
+                // The cover is what you recognise a track by, and a results
+                // list is exactly where you are trying to recognise something.
+                Group {
+                    if let albumId = track.albumId {
+                        AlbumArtwork(source: .album(albumId), cornerRadius: 3)
+                    } else {
+                        Image(systemName: "music.note")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(width: 40, height: 40)
 
                 VStack(alignment: .leading, spacing: 1) {
                     Text(track.title).lineLimit(1)
@@ -114,6 +122,7 @@ private struct SearchTrackRow: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    SourceBadges(track: track)
                 }
 
                 Spacer(minLength: 8)
@@ -129,7 +138,7 @@ private struct SearchTrackRow: View {
                     .foregroundStyle(.tertiary)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.vertical, 5)
             .contentShape(.rect)
             .background {
                 RoundedRectangle(cornerRadius: 6)

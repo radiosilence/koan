@@ -46,7 +46,6 @@ struct TrackListView: View {
                         }
                     }
                     .listStyle(.inset)
-                    .contentMargins(.bottom, 72, for: .scrollIndicators)
                     // The List's own double-click hook. Wired into selection
                     // rather than the gesture system, so it doesn't steal the
                     // first click.
@@ -117,6 +116,11 @@ struct TrackListView: View {
                 AlbumArtwork(source: artwork, cornerRadius: 8)
                     .frame(width: 132, height: 132)
                     .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+                    .showsArtworkFullSize(
+                        source: artwork,
+                        title: title,
+                        subtitle: subtitle.isEmpty ? nil : subtitle
+                    )
             }
 
             VStack(alignment: .leading, spacing: 6) {

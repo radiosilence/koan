@@ -748,10 +748,7 @@ impl KoanEngine {
 
         if let Some(id) = cursor {
             self.state.set_cursor(Some(id));
-            self.park_at(id, saved.position_ms);
-            if saved.was_playing {
-                self.send(PlayerCommand::Resume)?;
-            }
+            self.park_at(id, saved.position_ms, saved.was_playing);
         }
 
         Ok(count)
@@ -1015,8 +1012,8 @@ impl KoanEngine {
     /// TUI's: play to load and seek, then immediately pause. It waits for the
     /// track to be Ready first, because a remote track is still downloading at
     /// this point, and gives up rather than waiting forever on one that fails.
-    fn park_at(&self, id: QueueItemId, position_ms: u64) {
-        if position_ms == 0 {
+    fn park_at(&self, id: QueueItemId, position_ms: u64, resume: bool) {
+        if position_ms == 0 && !resume {
             return;
         }
         let state = self.state.clone();
@@ -1037,8 +1034,16 @@ impl KoanEngine {
                         .is_some_and(|s| matches!(s, LoadState::Ready))
                     {
                         let _ = tx.send(PlayerCommand::Play(id));
-                        let _ = tx.send(PlayerCommand::Seek(position_ms));
-                        let _ = tx.send(PlayerCommand::Pause);
+                        if position_ms > 0 {
+                            let _ = tx.send(PlayerCommand::Seek(position_ms));
+                        }
+                        // Whether to stay parked is decided here, not by the
+                        // caller: this runs on a thread that waits for the
+                        // track to become ready, so a Resume sent alongside
+                        // would land long before the Pause and be undone.
+                        if !resume {
+                            let _ = tx.send(PlayerCommand::Pause);
+                        }
                         return;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(100));

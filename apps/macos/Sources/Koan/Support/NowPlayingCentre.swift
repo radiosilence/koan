@@ -109,7 +109,10 @@ final class NowPlayingCentre {
         if now.durationMs > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = Double(now.durationMs) / 1000
         }
-        if let trackId = entry.trackId, let image = art.art(trackId: trackId) {
+        // Whatever is already loaded — the transport bar is showing this same
+        // cover, so it usually is. Fetching here would put a network round trip
+        // on the path of every position update.
+        if let trackId = entry.trackId, let image = art.cached(.track(trackId)) {
             info[MPMediaItemPropertyArtwork] = Self.artwork(for: image)
         }
 

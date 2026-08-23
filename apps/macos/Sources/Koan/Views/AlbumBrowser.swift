@@ -26,8 +26,6 @@ struct AlbumBrowser: View {
                     .padding(20)
                 }
             }
-            .contentMargins(.bottom, 72, for: .scrollContent)
-            .contentMargins(.bottom, 72, for: .scrollIndicators)
     }
 }
 
