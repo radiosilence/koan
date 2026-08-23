@@ -410,6 +410,9 @@ pub enum AlbumSort {
     Title,
     Artist,
     Year,
+    /// Reshuffled on every call, so asking again gives a different order —
+    /// which is the point: it's for turning up records you'd forgotten.
+    Random,
 }
 
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]

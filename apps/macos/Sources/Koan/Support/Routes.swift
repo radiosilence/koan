@@ -23,6 +23,7 @@ extension AlbumSort {
         case .title: "title"
         case .artist: "artist"
         case .year: "year"
+        case .random: "random"
         }
     }
 
@@ -32,6 +33,7 @@ extension AlbumSort {
         case "title": self = .title
         case "artist": self = .artist
         case "year": self = .year
+        case "random": self = .random
         default: return nil
         }
     }
@@ -42,8 +44,9 @@ extension AlbumSort {
         case .title: "Title"
         case .artist: "Artist"
         case .year: "Year"
+        case .random: "Random"
         }
     }
 
-    static let all: [AlbumSort] = [.recentlyAdded, .title, .artist, .year]
+    static let all: [AlbumSort] = [.recentlyAdded, .title, .artist, .year, .random]
 }

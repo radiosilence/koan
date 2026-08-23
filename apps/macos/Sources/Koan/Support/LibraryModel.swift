@@ -72,6 +72,10 @@ final class LibraryModel {
         }
     }
 
+    /// Re-runs the current sort. Only visibly different under Random, which is
+    /// reshuffled server-side on every call — that's what the button is for.
+    func reshuffleAlbums() { reloadAlbums() }
+
     private func reloadAlbums() {
         let engine = self.engine
         let sort = albumSort

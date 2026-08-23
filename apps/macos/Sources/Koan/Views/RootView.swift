@@ -79,6 +79,16 @@ struct RootView: View {
                     .frame(width: 150)
                     .help("Sort albums")
                 }
+                if library.albumSort == .random {
+                    ToolbarItem(placement: .principal) {
+                        Button {
+                            library.reshuffleAlbums()
+                        } label: {
+                            Label("Shuffle", systemImage: "shuffle")
+                        }
+                        .help("Shuffle again")
+                    }
+                }
             }
             // Alone in the trailing slot, so it stays pinned to the right edge
             // whatever else the section puts in the toolbar — the mirror of the

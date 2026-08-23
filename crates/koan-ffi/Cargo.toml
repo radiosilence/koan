@@ -23,6 +23,7 @@ path = "src/bin/uniffi-bindgen.rs"
 [dependencies]
 koan-core = { path = "../koan-core" }
 crossbeam-channel = "0.5"
+getrandom = "0.4"
 log = "0.4"
 nucleo = "0.5"
 parking_lot = "0.12"

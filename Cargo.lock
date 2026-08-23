@@ -2711,6 +2711,7 @@ name = "koan-ffi"
 version = "0.23.3"
 dependencies = [
  "crossbeam-channel",
+ "getrandom 0.4.3",
  "koan-core",
  "log",
  "nucleo",
