@@ -54,6 +54,10 @@ thiserror = "2"
 uuid = { version = "1", features = ["v7"] }
 toml = "1.1"
 walkdir = { workspace = true }
+# Watches the library folders so files added while koan is open are indexed
+# without being asked. Default features so each platform gets its own backend
+# (FSEvents on macOS, inotify on Linux).
+notify = "8"
 
 [target.'cfg(unix)'.dependencies]
 # statvfs, for the free-space check before an organize run

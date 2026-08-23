@@ -57,6 +57,7 @@ final class PlayerModel {
         engine.subscribe(listener: EventBridge(model: self))
         tick()  // Seed from current state; events only carry changes.
         refreshDevices()
+        startAutosave()
     }
 
     /// Apply a snapshot. Called on subscribe and whenever the engine says
@@ -127,8 +128,15 @@ final class PlayerModel {
     /// Bumped whenever the engine reports the queue changed. Lets a caller wait
     /// for its own mutation to land.
     private(set) var queueVersion: UInt64 = 0
+    /// The queue version last written whole, so the blob is only rewritten when
+    /// the queue is what changed.
+    private var savedQueueVersion: UInt64 = 0
     /// Queue mutations in flight. Adding a large selection takes a moment, and
     /// silence while it happens reads as nothing having happened.
+    /// Set by `AppState`. Queue mutations register here alongside every other
+    /// slow thing rather than tracking their own spinner.
+    weak var activity: ActivityModel?
+
     private(set) var pendingMutations = 0
     var isBusy: Bool { pendingMutations > 0 }
     /// What is playing, and in what format. Both change per track, not per tick.
@@ -409,6 +417,27 @@ final class PlayerModel {
     /// unclean exit doesn't lose the session.
     func saveSession() {
         try? engine.saveSession()
+        savedQueueVersion = queueVersion
+    }
+
+    /// Persist often enough that a crash costs a second, not the session.
+    ///
+    /// Position goes every second and is four columns; the queue is a JSON blob
+    /// and only rewritten when it actually changes, because re-serialising a
+    /// library-sized queue once a second would be megabytes of writing to
+    /// remember one number.
+    private func startAutosave() {
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                guard let self else { return }
+                if self.queueVersion != self.savedQueueVersion {
+                    self.saveSession()
+                } else if self.nowPlaying.entry != nil {
+                    try? self.engine.savePosition()
+                }
+            }
+        }
     }
 
     /// Restore the queue from the last session without starting playback.
@@ -445,12 +474,14 @@ final class PlayerModel {
     private func offMain(_ body: @escaping @Sendable (KoanEngine) throws -> Void) {
         let engine = self.engine
         pendingMutations += 1
+        let job = activity?.begin("Updating queue")
         Task {
             do {
                 try await Task.detached(priority: .userInitiated) { try body(engine) }.value
             } catch {
                 lastError = String(describing: error)
             }
+            if let job { activity?.end(job) }
             pendingMutations -= 1
         }
     }

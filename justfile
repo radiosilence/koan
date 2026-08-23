@@ -9,6 +9,12 @@ cli *ARGS:
     cargo run --release -p koan-cli -- {{ARGS}}
 
 # Run tests + clippy
+# KOAN_NO_KEYCHAIN: a cargo test binary is unsigned and rebuilt under a new hash
+# every compile, so a keychain ACL can never match it — every run would prompt
+# for the login password, and "Always Allow" would grant it to a binary that is
+# about to stop existing.
+export KOAN_NO_KEYCHAIN := "1"
+
 check:
     cargo test --all-targets
     cargo clippy --all-targets -- -D warnings
@@ -117,12 +123,12 @@ macos-build: macos-ffi
     done
     cd {{app_dir}} && swift build -c release
 
-# Assemble Koan.app.
+# Assemble kōan.app.
 macos-bundle: macos-build
     #!/usr/bin/env bash
     set -euo pipefail
     version=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2)
-    app="{{app_dir}}/.build/pkg/Koan.app"
+    app="{{app_dir}}/.build/pkg/kōan.app"
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     # A multi-arch `swift build --arch a --arch b` puts its lipo'd product under
@@ -160,8 +166,8 @@ macos-bundle: macos-build
     <dict>
         <key>CFBundleExecutable</key><string>koan-app</string>
         <key>CFBundleIdentifier</key><string>{{bundle_id}}</string>
-        <key>CFBundleName</key><string>Koan</string>
-        <key>CFBundleDisplayName</key><string>koan</string>
+        <key>CFBundleName</key><string>kōan</string>
+        <key>CFBundleDisplayName</key><string>kōan</string>
         <key>CFBundlePackageType</key><string>APPL</string>
         <key>CFBundleShortVersionString</key><string>${version}</string>
         <key>CFBundleVersion</key><string>${version}</string>
@@ -197,7 +203,69 @@ macos-bundle: macos-build
     codesign --force --deep --sign "${KOAN_SIGN_IDENTITY:--}" "$app"
     echo "built $app"
 
-# Check a built Koan.app is actually shippable.
+# Create the self-signed certificate that dev builds sign with.
+#
+# Ad-hoc signing derives the app's identity from the binary's own hash, so every
+# rebuild is a different application to macOS. Keychain items and TCC grants are
+# both keyed on that identity, which is why the app asks for keychain access
+# again after every build and forgets its permission to read removable volumes.
+#
+# A stable certificate fixes both. It does nothing for Gatekeeper — a self-signed
+# certificate is no more trusted than ad-hoc, and only Developer ID plus
+# notarisation clears that — so this is for development, not distribution.
+#
+# The prompt this removes is the legacy keychain ACL dialog, which authenticates
+# with the login password and cannot use Touch ID — biometrics belong to the
+# data-protection keychain, a different API an app opts into, and which asks on
+# every read by design. "Always Allow" binds the item to the signing identity, so
+# it holds only while that identity is stable, which is what this provides.
+#
+# Run once, then export KOAN_SIGN_IDENTITY="koan development".
+macos-signing-cert:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="koan development"
+    if security find-identity -v -p codesigning | grep -q "$name"; then
+        echo "already have a '$name' identity"
+        echo "export KOAN_SIGN_IDENTITY=\"$name\""
+        exit 0
+    fi
+
+    dir=$(mktemp -d)
+    trap 'rm -rf "$dir"' EXIT
+
+    # codeSigning EKU is what lets codesign treat this as an identity.
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -keyout "$dir/key.pem" -out "$dir/cert.pem" \
+        -subj "/CN=$name" \
+        -addext "basicConstraints=critical,CA:false" \
+        -addext "keyUsage=critical,digitalSignature" \
+        -addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null
+
+    # SHA-1/3DES and a non-empty passphrase, because Apple's `security import`
+    # reads neither OpenSSL 3's defaults nor an empty-password PKCS#12 — both
+    # fail as "MAC verification failed (wrong password?)", which is not what is
+    # wrong. The passphrase protects a file that exists for one command.
+    openssl pkcs12 -export -inkey "$dir/key.pem" -in "$dir/cert.pem" \
+        -out "$dir/identity.p12" -passout pass:koan \
+        -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 2>/dev/null
+
+    # -A lets any tool use the private key without asking, which is the whole
+    # point: being asked is what this recipe exists to stop.
+    security import "$dir/identity.p12" -k ~/Library/Keychains/login.keychain-db \
+        -P koan -T /usr/bin/codesign -A
+
+    # Without this the certificate imports but is not a *code-signing* identity,
+    # and `security find-identity -p codesigning` still reports none. User
+    # domain, code signing only — no sudo, and no bearing on any other trust.
+    security add-trusted-cert -r trustRoot -p codeSign \
+        -k ~/Library/Keychains/login.keychain-db "$dir/cert.pem"
+
+    echo
+    echo "created. add this to your shell profile:"
+    echo "    export KOAN_SIGN_IDENTITY=\"$name\""
+
+# Check a built kōan.app is actually shippable.
 #
 # Two ways the bundle has gone out broken, both of which built and signed
 # cleanly and neither of which showed until someone downloaded it:
@@ -209,7 +277,7 @@ macos-bundle: macos-build
 macos-verify *ARCHES:
     #!/usr/bin/env bash
     set -euo pipefail
-    bin="{{app_dir}}/.build/pkg/Koan.app/Contents/MacOS/koan-app"
+    bin="{{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app"
     [ -f "$bin" ] || { echo "no app bundle at $bin"; exit 1; }
 
     if otool -L "$bin" | grep -q koan_ffi; then
@@ -234,14 +302,14 @@ macos-verify *ARCHES:
 macos-run: macos-bundle
     #!/usr/bin/env bash
     set -euo pipefail
-    osascript -e 'quit app "Koan"' 2>/dev/null || true
+    osascript -e 'quit app "kōan"' 2>/dev/null || true
     # Wait for it to actually go before replacing it.
     for _ in $(seq 20); do
-        pgrep -qf 'Koan.app/Contents/MacOS/koan-app' || break
+        pgrep -qf 'kōan.app/Contents/MacOS/koan-app' || break
         sleep 0.2
     done
-    pkill -f 'Koan.app/Contents/MacOS/koan-app' 2>/dev/null || true
-    open {{app_dir}}/.build/pkg/Koan.app
+    pkill -f 'kōan.app/Contents/MacOS/koan-app' 2>/dev/null || true
+    open {{app_dir}}/.build/pkg/kōan.app
     echo "launched $(date +%H:%M:%S)"
 
 # Run the app from the terminal: logs on stderr, and no local library folders,
@@ -250,10 +318,10 @@ macos-run: macos-bundle
 macos-dev *ARGS: macos-bundle
     #!/usr/bin/env bash
     set -euo pipefail
-    osascript -e 'quit app "Koan"' 2>/dev/null || true
+    osascript -e 'quit app "kōan"' 2>/dev/null || true
     KOAN_LIBRARY__FOLDERS='[]' \
     RUST_LOG="${RUST_LOG:-info}" \
-        {{app_dir}}/.build/pkg/Koan.app/Contents/MacOS/koan-app {{ARGS}}
+        {{app_dir}}/.build/pkg/kōan.app/Contents/MacOS/koan-app {{ARGS}}
 
 # Package the app as a DMG for release.
 macos-dmg: macos-bundle
@@ -261,7 +329,7 @@ macos-dmg: macos-bundle
     set -euo pipefail
     out={{app_dir}}/.build/pkg
     rm -f "$out/Koan.dmg"
-    hdiutil create -volname "koan" -srcfolder "$out/Koan.app" -ov -format UDZO "$out/Koan.dmg"
+    hdiutil create -volname "koan" -srcfolder "$out/kōan.app" -ov -format UDZO "$out/Koan.dmg"
     echo "built $out/Koan.dmg"
 
 # Run the macOS app's tests.

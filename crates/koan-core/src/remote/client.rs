@@ -324,6 +324,37 @@ impl SubsonicClient {
         Ok(resp.starred2.map(|s| s.song).unwrap_or_default())
     }
 
+    /// Everything the server has starred: songs, albums and artists.
+    ///
+    /// Subsonic returns all three from one call, so asking for songs alone
+    /// leaves a starred album invisible to us for no saving.
+    pub fn get_starred_all(&self) -> Result<SubsonicStarred, SubsonicError> {
+        let resp = self.get("getStarred2")?;
+        Ok(resp.starred2.unwrap_or_default())
+    }
+
+    /// Star an album. Subsonic keys this off a different parameter to a song —
+    /// `id` would be read as a track and silently star nothing.
+    pub fn star_album(&self, album_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("star", &[("albumId", album_id)])?;
+        Ok(())
+    }
+
+    pub fn unstar_album(&self, album_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("unstar", &[("albumId", album_id)])?;
+        Ok(())
+    }
+
+    pub fn star_artist(&self, artist_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("star", &[("artistId", artist_id)])?;
+        Ok(())
+    }
+
+    pub fn unstar_artist(&self, artist_id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("unstar", &[("artistId", artist_id)])?;
+        Ok(())
+    }
+
     /// Create a sharing link for one or more resources (songs, albums, etc).
     /// Returns the created share including its ID which forms the public URL.
     pub fn create_share(
@@ -489,6 +520,11 @@ pub struct SubsonicSong {
     pub content_type: Option<String>,
     pub album_id: Option<String>,
     pub artist_id: Option<String>,
+    // OpenSubsonic. Absent on a plain Subsonic server, which is why they are
+    // Options rather than defaults — a missing sample rate is not 0 Hz.
+    pub sampling_rate: Option<i32>,
+    pub bit_depth: Option<i32>,
+    pub channel_count: Option<i32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -511,6 +547,10 @@ pub struct SubsonicSearchResult {
 pub struct SubsonicStarred {
     #[serde(default)]
     pub song: Vec<SubsonicSong>,
+    #[serde(default)]
+    pub album: Vec<SubsonicAlbum>,
+    #[serde(default)]
+    pub artist: Vec<SubsonicArtist>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -594,6 +634,40 @@ mod tests {
         assert_eq!(song.content_type.as_deref(), Some("audio/mpeg"));
         assert_eq!(song.album_id.as_deref(), Some("7"));
         assert_eq!(song.artist_id.as_deref(), Some("3"));
+    }
+
+    /// An OpenSubsonic server reports the figures that make a track's quality
+    /// legible. Ignoring them left every remote-only track with no sample rate
+    /// and no bit depth at all.
+    #[test]
+    fn opensubsonic_quality_fields_are_read() {
+        let json = r#"{
+            "id": "000XtGC7jsWEbOjDsZi4Xw",
+            "title": "Anguish",
+            "suffix": "flac",
+            "bitRate": 913,
+            "samplingRate": 44100,
+            "bitDepth": 16,
+            "channelCount": 2
+        }"#;
+
+        let song: SubsonicSong = serde_json::from_str(json).unwrap();
+
+        assert_eq!(song.sampling_rate, Some(44100));
+        assert_eq!(song.bit_depth, Some(16));
+        assert_eq!(song.channel_count, Some(2));
+    }
+
+    /// A plain Subsonic server omits them, and a missing sample rate is not
+    /// 0 Hz — the fields have to stay absent rather than default.
+    #[test]
+    fn a_plain_subsonic_song_has_no_quality_figures() {
+        let json = r#"{"id": "1", "title": "Track", "bitRate": 320}"#;
+        let song: SubsonicSong = serde_json::from_str(json).unwrap();
+
+        assert_eq!(song.sampling_rate, None);
+        assert_eq!(song.bit_depth, None);
+        assert_eq!(song.channel_count, None);
     }
 
     #[test]

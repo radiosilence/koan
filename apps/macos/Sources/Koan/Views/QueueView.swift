@@ -174,7 +174,7 @@ struct QueueView: View {
         Divider()
         organizeButton(trackIds: group.items.compactMap(\.trackId), title: group.album)
         if let trackId = group.items.compactMap(\.trackId).first {
-            Button("Show in Library") { showInLibrary(trackId: trackId, highlight: false) }
+            Button("Go to Album") { showInLibrary(trackId: trackId, highlight: false) }
         }
         Button("Copy Album Share Link") {
             Share.link(
@@ -212,11 +212,10 @@ struct QueueView: View {
         if let trackId = item.trackId {
             Divider()
             organizeButton(trackIds: [trackId], title: item.title)
-            Button("Favourite") {
-                player.toggleFavourite(trackId: trackId)
-                library.refreshFavourites()
+            Button(library.isFavourite(track: trackId) ? "Remove Favourite" : "Favourite Track") {
+                library.toggleFavourite(track: trackId)
             }
-            Button("Show in Library") { showInLibrary(trackId: trackId, highlight: true) }
+            Button("Go to Album") { showInLibrary(trackId: trackId, highlight: true) }
             Button("Copy Share Link") {
                 Share.link(
                     trackIds: [trackId],
@@ -451,6 +450,8 @@ private struct QueueRow: View {
     let showArtist: Bool
 
     @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
+    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 10) {
@@ -494,6 +495,21 @@ private struct QueueRow: View {
                     .frame(width: 54, height: 12)
             }
 
+            if let trackId = item.trackId {
+                FavouriteButton(
+                    isOn: library.isFavourite(track: trackId),
+                    showing: hovering,
+                    size: .caption
+                ) {
+                    library.toggleFavourite(track: trackId)
+                }
+                .frame(width: 16)
+            } else {
+                // Keeps the column even for an item with no library row, so
+                // the durations stay in line down the queue.
+                Color.clear.frame(width: 16, height: 1)
+            }
+
             if let codec = item.codec {
                 Text(codec.uppercased())
                     .font(.caption2.monospaced())
@@ -515,6 +531,7 @@ private struct QueueRow: View {
         // clicks landing there select nothing.
         .contentShape(Rectangle())
         .opacity(item.status == .played ? 0.45 : 1)
+        .onHover { hovering = $0 }
     }
 
     @ViewBuilder

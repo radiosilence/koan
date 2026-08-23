@@ -12,6 +12,18 @@
 
   Dropped files get library rows *where they are*, not in the music tree — importing and organizing are separate on purpose, so files land in the library only after you have seen where they are going.
 
+### Changed
+
+- **`organizePreview` and `organizeExecute` both return `OrganizePlan`** (was `OrganizePreview` / `OrganizeResult`), an ordered list of per-file entries carrying `outcome` (`MOVE` / `UNCHANGED` / `CONFLICT` / `ERROR`), the destination, and the reason where there is one. **Breaking for GraphQL clients**: `moves`, `errors` and `skipped` are gone. A conflict previously arrived as a string in `errors` with the destination buried in the message, which is unusable for the thing a client most needs to render — a file about to be blocked, next to what is blocking it. The TUI's preview gains the same rows.
+
+### Fixed
+
+- **Remote tracks carried no quality figures at all.** Navidrome and any other OpenSubsonic server report `samplingRate`, `bitDepth` and `channelCount` on every song; koan's client did not parse them and the sync hardcoded all three to null. Every remote-only track in a synced library therefore had no sample rate and no bit depth — 5,058 of 5,058 in the library this was found on — so the format badge had nothing to show for them. For a player whose point is bit-perfect output, that is the wrong field to be missing. A full sync fills them in; a plain Subsonic server that does not report them still leaves them absent, because a missing sample rate is not 0 Hz.
+
+## v0.26.0 (2026-08-23)
+
+### Added
+
 - **Play history.** koan never recorded its own plays: `play_history` existed for the radio feature, and its only production writer was the inbound Subsonic scrobble route — i.e. plays arrived when *other* clients scrobbled to koan, and playing a track in koan itself wrote nothing.
 
   A track is now written to history the moment it starts, not once it has been listened to for long enough. History answers "what did I put on, and in what order"; putting something on and skipping two seconds in is still a thing you did, and a log with a threshold on it is a log with holes in it. How long it was actually heard for is filled in afterwards, from position deltas — so a pause adds nothing and a seek does not credit the stretch it skipped.
@@ -20,13 +32,51 @@
 
   Plays of tracks that came from a remote server are scrobbled to it. `SubsonicClient::scrobble` had been written and never called.
 
+- **Albums and artists can be favourited, not only tracks.** Subsonic stars all three and koan only ever read songs back, so an album starred in Navidrome was invisible here and there was no way to star one from koan at all. There is a heart on an album tile, on an artist row, and in the header of both detail pages, and the context menu favourites the thing you opened it on rather than looping over its tracks — which would have turned off every track that was already a favourite. Favourites are keyed by name rather than row id, so like track favourites they survive a rebuilt index.
+
+- **A heart on every queue row**, on hover, filled when the track is a favourite.
+
+- **koan can be set up from the app.** Settings is four panes — Library, Server, Playback, Radio — covering everything needed to go from a fresh install to playing music without opening a terminal: library folders through a folder picker, signing in to a Subsonic or Navidrome server, transcode quality, cache limit and location, download workers, ReplayGain mode and pre-amp, radio lookahead and discovery. The configuration is still `config.toml`, shared with the CLI and the TUI, so this is a view onto that file rather than a second source of truth: fields commit when you finish editing, not on every keystroke, and the window re-reads on focus so a change made elsewhere is not silently overwritten.
+
+- **Remote credentials go to the platform credential store.** `set_remote_credentials` checks them against the server before writing anything, stores the password in the keychain, and empties the config copy — so signing in once migrates a setup that had it in plaintext. Shared by the CLI and the app, which cannot now disagree about where credentials live.
+
+- **The library keeps itself current.** An incremental scan a few seconds after startup, a rescan when the library folders change, and an incremental sync with the server on a timer. All three are cheap: 48,000 files walk in under a second and everything unchanged is skipped on its mtime and size, so the cost tracks what actually changed. Automatic sync is configurable, and a full sync stays a deliberate choice.
+
+- **One place that says what koan is busy with.** Scans, syncs, library rebuilds and large queue edits each get a row at the foot of the sidebar with a label, how far through as counts rather than only a percentage, a bar, and what it is working on that second. Scans report a real fraction: the file count gives a denominator and a new progress callback carries the numerator across the FFI, throttled so a fifty-thousand-file scan does not cross it fifty thousand times. Only one library task runs at a time — they all queue behind SQLite's single writer — and the ones that cannot start are disabled rather than silently ignored. Each can be cancelled, which stops between transactions and keeps what it had already committed. ([#219](https://github.com/radiosilence/koan/issues/219))
+
+- **Removing a folder or signing out can forget what it brought.** Both ask. A track held both locally and on the server keeps its row and loses only the half you removed, so "remove every folder and sign out" ends at an empty library, which is what it looks like it should do.
+
+- **`just macos-signing-cert`** creates the self-signed certificate development builds sign with. Ad-hoc signing derives the app's identity from the binary's own hash, so every rebuild is a different application to macOS and keychain grants and TCC permissions are both forgotten. It does nothing for Gatekeeper — that needs Developer ID and notarisation.
+
 ### Changed
 
-- **`organizePreview` and `organizeExecute` both return `OrganizePlan`** (was `OrganizePreview` / `OrganizeResult`), an ordered list of per-file entries carrying `outcome` (`MOVE` / `UNCHANGED` / `CONFLICT` / `ERROR`), the destination, and the reason where there is one. **Breaking for GraphQL clients**: `moves`, `errors` and `skipped` are gone. A conflict previously arrived as a string in `errors` with the destination buried in the message, which is unusable for the thing a client most needs to render — a file about to be blocked, next to what is blocking it. The TUI's preview gains the same rows.
+- **The app is `kōan.app`** and calls itself kōan in the menu bar and Finder. The executable inside stays ASCII, which is what `ps` and crash reports show.
+
+- **Playback position is saved every second**, so a crash costs a second rather than the session. The queue is only rewritten when the queue changes: it is stored as a JSON blob, and re-serialising a library-sized one every second to remember a number is not a trade.
 
 ### Fixed
 
 - **`play_history.track_id` was missing its `ON DELETE CASCADE`.** Under `foreign_keys = ON` a bare `REFERENCES` makes a track with history undeletable unless the caller clears the history first. One caller did; the constraint should not depend on the next one remembering. The table is rebuilt on first open, dropping entries whose track had already gone.
+
+- **A sync never recorded the album's or the artist's id on the server.** The track's was kept and theirs was dropped, so all 5,800 albums in a synced library had a null `remote_id`. The server keys stars, shares and cover art off those ids, which left koan able to name an album but not refer to it. A full sync backfills them.
+
+- **Favouriting a track from anywhere but the Favourites list appeared to do nothing.** The favourite was written and pushed to the server, but every view held its own copy of the track with the state baked in from when it was fetched, and only the Favourites list was reloaded — so the heart on the album page stayed empty on a track that was now a favourite. Removing one appeared to work because that is the one list that was refreshed. Favourite state now lives in one place and the row reflects it on the click rather than a round trip later.
+
+- **The app never reconciled favourites with the server.** That only happened in `koan remote sync` on the command line, so a star made on another machine never arrived and one made in the app only left if you happened to run the CLI. It is part of a sync now, both directions, for all three kinds — union rather than mirror, since neither side records an unstar and treating one as authoritative would quietly delete favourites made on the other.
+
+- **Nothing the engine logged was written down when it was hosted by the app.** koan-ffi never installed a logger, so every warning in koan-core — a favourite that could not reach the server, a file that would not decode — was discarded. It writes to `~/.config/koan/koan.log`, the same file the CLI uses.
+
+- **The sidebar went on pointing at where you started.** Reaching an album from Favourites, from search, or from "Go to Album" in the queue left the selection on the section you came from. It follows the detail stack now: an album highlights Albums, an artist highlights Artists, whichever door you came through.
+
+- **Artwork opens at the size of the window.** It was capped at 760pt, which made a 4000px scan no bigger than a thumbnail on a large display; lifting the cap then left it tall and narrow, square cover in the middle of a column of dead space. The sheet is sized from the window it hangs off rather than from its own proposal, which AppKit answers with a tall box.
+
+- **"Show in Library" in the queue is "Go to Album"**, which is what it does and what the same action is called everywhere else.
+
+- **`cargo test` asked for the login keychain password on every run.** A keychain item's ACL is keyed on the reading binary's code signature, and a cargo test binary is unsigned and rebuilt under a fresh hash each compile — so no ACL can match it, and "Always Allow" grants access to a binary that is about to stop existing. `KOAN_NO_KEYCHAIN=1` opts out and `just check` exports it.
+
+- **The credential store is asked once per process rather than once per client.** `subsonic_client` builds credentials from scratch and the download queue, radio, sync and sharing each build one, so a single session asked several times over — and being asked five times for one password is indistinguishable from the app being broken.
+
+- **One implementation of pushing a favourite to the server.** The TUI, the app and the server each had a byte-identical copy.
 
 ## v0.25.2 (2026-08-23)
 

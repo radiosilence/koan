@@ -418,22 +418,7 @@ impl App {
             } else {
                 self.favourites.remove(path);
             }
-            // Sync star/unstar to remote if this track has a remote_id.
-            if let Ok(Some(remote_id)) = koan_core::db::queries::remote_id_for_path(&db.conn, path)
-            {
-                let cfg = koan_core::config::Config::load().unwrap_or_default();
-                if let Some(client) = koan_core::helpers::subsonic_client(&cfg) {
-                    let rid = remote_id.clone();
-                    let star = is_fav;
-                    std::thread::spawn(move || {
-                        let _ = if star {
-                            client.star(&rid)
-                        } else {
-                            client.unstar(&rid)
-                        };
-                    });
-                }
-            }
+            koan_core::helpers::sync_favourite_to_remote(&db, path, is_fav);
             return is_fav;
         }
         false
