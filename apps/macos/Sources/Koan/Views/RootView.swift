@@ -80,16 +80,18 @@ struct RootView: View {
                     .help("Sort albums")
                 }
             }
-            // Both trailing, in a fixed order, so they don't move about as the
-            // section changes.
-            ToolbarItemGroup(placement: .primaryAction) {
+            ToolbarItem(placement: .navigation) {
                 Button {
                     showingPicker = true
                 } label: {
                     Label("Add Music", systemImage: "plus.magnifyingglass")
                 }
                 .help("Build a queue from several things at once (⌘K)")
-
+            }
+            // Alone in the trailing slot, so it stays pinned to the right edge
+            // whatever else the section puts in the toolbar — the mirror of the
+            // sidebar toggle on the left.
+            ToolbarItem(placement: .primaryAction) {
                 Button {
                     showLyrics.toggle()
                 } label: {
