@@ -128,6 +128,14 @@ pub fn generate_mp3_with_both_tags(path: &Path, id3v2_title: &str, id3v1_title: 
     frames.push(0); // ISO-8859-1
     frames.extend_from_slice(id3v2_title.as_bytes());
 
+    // A track number too: a row without one cannot content-match the same track
+    // synced from a remote server, so it matters as much as the title.
+    frames.extend_from_slice(b"TRCK");
+    frames.extend_from_slice(&2u32.to_be_bytes());
+    frames.extend_from_slice(&[0, 0]);
+    frames.push(0);
+    frames.push(b'7');
+
     out.extend_from_slice(b"ID3");
     out.extend_from_slice(&[3, 0, 0]); // v2.3, no flags
     let n = frames.len() as u32;

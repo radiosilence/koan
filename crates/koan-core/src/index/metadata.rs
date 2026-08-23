@@ -165,26 +165,31 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
 
     // Try to extract tags from Symphonia's metadata (it's more lenient than lofty
     // for corrupted frames — it skips bad frames instead of erroring).
-    let (title, artist, album) = probe_symphonia_tags(path);
+    //
+    // Everything it offers is taken, not just the three obvious fields: a row
+    // missing its track number cannot content-match the same track synced from
+    // a remote server, so a file that lands here would stay a duplicate even
+    // once its tags read correctly.
+    let tags = probe_symphonia_tags(path);
 
-    let title = title.unwrap_or_else(|| {
+    let title = tags.title.unwrap_or_else(|| {
         path.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("Unknown")
             .to_string()
     });
-    let artist = artist.unwrap_or_else(|| "Unknown Artist".to_string());
-    let album = album.unwrap_or_else(|| "Unknown Album".to_string());
+    let artist = tags.artist.unwrap_or_else(|| "Unknown Artist".to_string());
+    let album = tags.album.unwrap_or_else(|| "Unknown Album".to_string());
 
     Ok(TrackMeta {
         title,
         artist,
-        album_artist: None,
+        album_artist: tags.album_artist,
         album,
-        date: None,
-        disc: None,
-        track_number: None,
-        genre: None,
+        date: tags.date,
+        disc: tags.disc,
+        track_number: tags.track_number,
+        genre: tags.genre,
         label: None,
         duration_ms: props.duration_ms,
         codec: props.codec,
@@ -328,7 +333,20 @@ fn symphonia_codec_name(codec: symphonia::core::codecs::audio::AudioCodecId) -> 
 
 /// Try to extract basic tags (title, artist, album) via Symphonia's metadata reader.
 /// Symphonia is more lenient with corrupted ID3 frames than lofty.
-fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<String>) {
+/// Tags Symphonia can give us when lofty cannot parse the file at all.
+#[derive(Default)]
+struct SymphoniaTags {
+    title: Option<String>,
+    artist: Option<String>,
+    album_artist: Option<String>,
+    album: Option<String>,
+    date: Option<String>,
+    track_number: Option<i32>,
+    disc: Option<i32>,
+    genre: Option<String>,
+}
+
+fn probe_symphonia_tags(path: &Path) -> SymphoniaTags {
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::formats::probe::Hint;
     use symphonia::core::io::MediaSourceStream;
@@ -336,7 +354,7 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
 
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return (None, None, None),
+        Err(_) => return SymphoniaTags::default(),
     };
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
@@ -351,12 +369,10 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
         MetadataOptions::default(),
     ) {
         Ok(r) => r,
-        Err(_) => return (None, None, None),
+        Err(_) => return SymphoniaTags::default(),
     };
 
-    let mut title = None;
-    let mut artist = None;
-    let mut album = None;
+    let mut tags = SymphoniaTags::default();
 
     // Later revisions win. Symphonia's log is time-ordered and `current()` is
     // the *oldest* revision, not the best one — an MP3 carrying both tags
@@ -371,9 +387,15 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
         if let Some(rev) = log.current() {
             for tag in &rev.media.tags {
                 match &tag.std {
-                    Some(StandardTag::TrackTitle(v)) => title = Some(v.to_string()),
-                    Some(StandardTag::Artist(v)) => artist = Some(v.to_string()),
-                    Some(StandardTag::Album(v)) => album = Some(v.to_string()),
+                    Some(StandardTag::TrackTitle(v)) => tags.title = Some(v.to_string()),
+                    Some(StandardTag::Artist(v)) => tags.artist = Some(v.to_string()),
+                    Some(StandardTag::AlbumArtist(v)) => tags.album_artist = Some(v.to_string()),
+                    Some(StandardTag::Album(v)) => tags.album = Some(v.to_string()),
+                    Some(StandardTag::Genre(v)) => tags.genre = Some(v.to_string()),
+                    Some(StandardTag::RecordingDate(v)) => tags.date = Some(v.to_string()),
+                    Some(StandardTag::RecordingYear(v)) => tags.date = Some(v.to_string()),
+                    Some(StandardTag::TrackNumber(v)) => tags.track_number = Some(*v as i32),
+                    Some(StandardTag::DiscNumber(v)) => tags.disc = Some(*v as i32),
                     _ => {}
                 }
             }
@@ -383,7 +405,7 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
         }
     }
 
-    (title, artist, album)
+    tags
 }
 
 /// Determine codec for an MP4 container file (AAC, ALAC, etc.).
@@ -549,8 +571,14 @@ mod tests {
             "Golden Skans (David E Sugar R",
         );
 
-        let (title, _, _) = probe_symphonia_tags(&path);
-        assert_eq!(title.as_deref(), Some("Golden Skans (David E Sugar Remix)"));
+        let tags = probe_symphonia_tags(&path);
+        assert_eq!(
+            tags.title.as_deref(),
+            Some("Golden Skans (David E Sugar Remix)")
+        );
+        // ID3v1 has no track number at all, so this also proves the v2 frame
+        // was reached rather than the walk stopping at the first revision.
+        assert_eq!(tags.track_number, Some(7));
     }
 
     #[test]
