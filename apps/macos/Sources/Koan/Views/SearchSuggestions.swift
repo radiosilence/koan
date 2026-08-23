@@ -63,30 +63,36 @@ private struct SuggestionRow: View {
     let subtitle: String?
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 9) {
             Group {
                 if let albumId {
-                    AlbumArtwork(source: .album(albumId), cornerRadius: 2)
+                    AlbumArtwork(source: .album(albumId), cornerRadius: 3)
                 } else {
                     Image(systemName: icon)
                         .foregroundStyle(.tertiary)
                 }
             }
-            .frame(width: 16, height: 16)
+            // Two lines tall, so the title gets the row to itself and the
+            // subtitle sits under it rather than competing for the same line.
+            .frame(width: 34, height: 34)
 
-            // One line each. A record whose title is a paragraph — and there is
-            // one — otherwise takes the whole dropdown, and the row it pushed
-            // off screen was the one you were looking for.
-            Text(title)
-                .lineLimit(1)
-                .truncationMode(.tail)
-            if let subtitle {
-                Text(subtitle)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                // One line each. A record whose title is a paragraph — and
+                // there is one — otherwise takes the whole dropdown, and the
+                // row it pushed off screen was the one you were looking for.
+                Text(title)
                     .lineLimit(1)
                     .truncationMode(.tail)
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
             }
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: 460, alignment: .leading)
+        .frame(maxWidth: 420, alignment: .leading)
     }
 }
