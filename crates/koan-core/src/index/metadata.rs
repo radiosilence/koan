@@ -51,7 +51,11 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
         _ => {}
     }
 
-    match lofty::read_from_path(path) {
+    // Embedded art is skipped: a scan wants tags and audio properties, and
+    // decoding a few hundred KB of JPEG out of every ID3v2 and FLAC block only
+    // to drop it dominated the run. `extract_cover_art` reads it separately,
+    // for the one track that needs it at the time it needs it.
+    match read_tagged_file(path) {
         Ok(tagged_file) => read_metadata_lofty(path, &tagged_file),
         Err(e) => {
             log::warn!(
@@ -62,6 +66,17 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
             read_metadata_fallback(path)
         }
     }
+}
+
+/// lofty's own reader, minus the pictures.
+///
+/// `extract_cover_art` still reads them, with the defaults, for whichever
+/// single track actually needs artwork.
+fn read_tagged_file(path: &Path) -> Result<lofty::file::TaggedFile, Box<dyn std::error::Error>> {
+    Ok(lofty::probe::Probe::open(path)?
+        .options(ParseOptions::new().read_cover_art(false))
+        .guess_file_type()?
+        .read()?)
 }
 
 /// Full metadata read via lofty (happy path).
