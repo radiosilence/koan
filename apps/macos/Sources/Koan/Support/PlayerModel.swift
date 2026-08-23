@@ -14,6 +14,10 @@ final class PlayerModel {
 
     private(set) var nowPlaying: NowPlaying
     private(set) var queue: [QueueItem] = []
+    /// Queue entries indexed by library track id, so a library row can show
+    /// what the queue knows about it — downloading, failed, already played —
+    /// without scanning the queue once per row.
+    private(set) var queuedByTrack: [Int64: QueueItem] = [:]
     private(set) var devices: [Device] = []
     /// `nil` means system default. Read back from config, so it survives restarts.
     private(set) var currentDevice: String?
@@ -48,7 +52,29 @@ final class PlayerModel {
         // The queue only gets rebuilt when the engine says it changed.
         if nowPlaying.playlistVersion != knownQueueVersion {
             knownQueueVersion = nowPlaying.playlistVersion
-            queue = engine.queue()
+            rebuildQueue()
+        } else if hasActiveDownloads {
+            // Download progress moves without bumping the playlist version, so
+            // a version check alone would freeze the progress bars. Only worth
+            // re-reading while something is actually in flight — rebuilding the
+            // whole queue every tick is the thing the version check exists to
+            // avoid.
+            rebuildQueue()
+        }
+    }
+
+    private var hasActiveDownloads = false
+
+    private func rebuildQueue() {
+        queue = engine.queue()
+        queuedByTrack = Dictionary(
+            queue.compactMap { item in item.trackId.map { ($0, item) } },
+            // A track queued twice: prefer the entry that is actually doing
+            // something over one still sitting idle.
+            uniquingKeysWith: { a, b in b.status == .queued ? a : b }
+        )
+        hasActiveDownloads = queue.contains {
+            $0.status == .downloading || $0.status == .priorityPending
         }
     }
 

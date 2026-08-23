@@ -7,8 +7,7 @@ struct AlbumBrowser: View {
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
+        ScrollView {
                 if library.visibleAlbums.isEmpty {
                     EmptyState(
                         icon: "square.stack",
@@ -30,10 +29,6 @@ struct AlbumBrowser: View {
                     .padding(20)
                 }
             }
-            .navigationDestination(for: AlbumRoute.self) { route in
-                AlbumDetailView(albumId: route.id)
-            }
-        }
     }
 }
 

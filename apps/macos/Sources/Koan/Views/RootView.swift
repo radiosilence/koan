@@ -14,26 +14,50 @@ import SwiftUI
 /// adaptive grid inside it would be stuck at two columns. The transport is a
 /// `safeAreaInset` and the lyrics panel an `inspector` for the same reason —
 /// both add chrome without taking the detail column's width away.
+///
+/// There is one `NavigationStack` for the whole detail column, and its path
+/// lives on `LibraryModel`. Per-browser stacks can't be driven from outside,
+/// and search needs to push you into one.
 struct RootView: View {
     @Binding var showingPicker: Bool
 
     @Environment(LibraryModel.self) private var library
+    @Environment(SearchModel.self) private var search
     @Environment(PlayerModel.self) private var player
 
     @AppStorage("showLyrics") private var showLyrics = false
 
     var body: some View {
+        @Bindable var library = library
+        @Bindable var search = search
+
         NavigationSplitView {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
-            stage
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .inspector(isPresented: $showLyrics) {
-                    LyricsPanel()
-                        .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
-                }
+            NavigationStack(path: $library.path) {
+                stage
+                    .navigationDestination(for: AlbumRoute.self) { route in
+                        AlbumDetailView(albumId: route.id)
+                    }
+                    .navigationDestination(for: ArtistRoute.self) { route in
+                        ArtistDetailView(artistId: route.id)
+                    }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .inspector(isPresented: $showLyrics) {
+                LyricsPanel()
+                    .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
+            }
         }
+        .searchable(
+            text: $search.query,
+            placement: .toolbar,
+            prompt: "Search artists, albums and tracks"
+        )
+        .searchSuggestions { SearchSuggestions() }
+        .onChange(of: search.query) { _, _ in search.schedule() }
+        .onSubmit(of: .search) { library.section = .searchResults }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 Divider()
@@ -47,7 +71,7 @@ struct RootView: View {
                 } label: {
                     Label("Add Music", systemImage: "plus.magnifyingglass")
                 }
-                .help("Find tracks, albums and artists (⌘K)")
+                .help("Build a queue from several things at once (⌘K)")
             }
             ToolbarItem(placement: .primaryAction) {
                 Button {
@@ -74,28 +98,21 @@ struct RootView: View {
         switch library.section {
         case .queue:
             QueueView()
+        case .searchResults:
+            SearchResultsView()
         case .albums:
             AlbumBrowser()
-                .searchable(text: filterBinding, placement: .toolbar, prompt: "Filter albums")
         case .artists:
             ArtistBrowser()
-                .searchable(text: filterBinding, placement: .toolbar, prompt: "Filter artists")
         case .favourites:
             TrackListView(
                 title: "Favourites",
-                subtitle: Format.count(Int64(library.visibleFavourites.count), "track"),
-                tracks: library.visibleFavourites
+                subtitle: Format.count(Int64(library.favourites.count), "track"),
+                tracks: library.favourites
             )
-            .searchable(text: filterBinding, placement: .toolbar, prompt: "Filter favourites")
         case .snapshots:
             SnapshotsView()
         }
-    }
-
-    /// The filter belongs to the library model so it survives switching
-    /// sections, but only the browsing views surface a field for it.
-    private var filterBinding: Binding<String> {
-        Binding(get: { library.filter }, set: { library.filter = $0 })
     }
 }
 

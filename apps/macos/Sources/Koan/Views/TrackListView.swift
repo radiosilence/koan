@@ -14,6 +14,7 @@ struct TrackListView: View {
     @State private var selection: Set<Int64> = []
 
     var body: some View {
+        ScrollViewReader { proxy in
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
                 header
@@ -32,6 +33,7 @@ struct TrackListView: View {
                             isCurrent: player.currentTrackId == track.id,
                             isSelected: selection.contains(track.id)
                         )
+                        .id(track.id)
                         .contentShape(.rect)
                         .onTapGesture(count: 2) {
                             player.playNow(trackIds: tracks.map(\.id), startingAt: index)
@@ -53,6 +55,17 @@ struct TrackListView: View {
                 }
             }
             .padding(.bottom, 20)
+        }
+        // Arriving from search: single out the track that was matched, rather
+        // than dropping the user at the top of a 20-track record to find it.
+        .task(id: tracks.count) {
+            guard let target = library.highlightedTrackId,
+                  tracks.contains(where: { $0.id == target })
+            else { return }
+            selection = [target]
+            withAnimation { proxy.scrollTo(target, anchor: .center) }
+            library.highlightedTrackId = nil
+        }
         }
     }
 
@@ -134,6 +147,8 @@ private struct TrackRow: View {
 
             Spacer(minLength: 8)
 
+            TrackAvailability(track: track)
+
             Button {
                 player.toggleFavourite(trackId: track.id)
                 library.refreshFavourites()
@@ -163,5 +178,69 @@ private struct TrackRow: View {
                 .fill(isSelected ? AnyShapeStyle(.selection) : AnyShapeStyle(hovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear)))
         }
         .onHover { hovering = $0 }
+    }
+}
+
+
+/// Whether this track can play right now, and what the queue is doing about it
+/// if not.
+///
+/// Two different facts share one slot. The library knows whether a file exists
+/// on disk; only the queue knows a download is in flight. A row shows the live
+/// queue state when there is one and falls back to the library's answer.
+private struct TrackAvailability: View {
+    let track: Track
+
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        Group {
+            if let queued = player.queuedByTrack[track.id], isLive(queued.status) {
+                queueState(queued)
+            } else if track.path != nil {
+                // On disk — local file or already downloaded.
+                Image(systemName: "arrow.down.circle.fill")
+                    .foregroundStyle(.tertiary)
+                    .help("Available offline")
+            } else if track.source == "remote" {
+                Image(systemName: "cloud")
+                    .foregroundStyle(.quaternary)
+                    .help("Downloads on play")
+            }
+        }
+        .font(.caption)
+        .frame(width: 16)
+    }
+
+    /// Only these say something the library row doesn't already know.
+    private func isLive(_ status: EntryStatus) -> Bool {
+        status == .downloading || status == .priorityPending || status == .failed
+    }
+
+    @ViewBuilder
+    private func queueState(_ item: QueueItem) -> some View {
+        switch item.status {
+        case .downloading:
+            if let progress = item.downloadProgress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.circular)
+                    .controlSize(.mini)
+                    .help("Downloading — \(Int(progress * 100))%")
+            } else {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .controlSize(.mini)
+            }
+        case .priorityPending:
+            Image(systemName: "arrow.down.circle")
+                .foregroundStyle(.tint)
+                .help("Queued for download")
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .help("Couldn't be fetched")
+        default:
+            EmptyView()
+        }
     }
 }

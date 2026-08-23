@@ -4,6 +4,7 @@ import SwiftUI
 struct SidebarView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
+    @Environment(SearchModel.self) private var search
 
     var body: some View {
         @Bindable var library = library
@@ -12,6 +13,10 @@ struct SidebarView: View {
             Section {
                 Label("Queue", systemImage: "list.bullet")
                     .tag(LibraryModel.Section.queue)
+                if search.hasQuery {
+                    Label("Results", systemImage: "magnifyingglass")
+                        .tag(LibraryModel.Section.searchResults)
+                }
             }
 
             Section("Library") {

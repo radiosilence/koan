@@ -11,13 +11,16 @@ final class AppState {
     let engine: KoanEngine
     let player: PlayerModel
     let library: LibraryModel
+    let search: SearchModel
     let art: CoverArtCache
 
     init() throws {
         let engine = try KoanEngine()
         self.engine = engine
         self.player = PlayerModel(engine: engine)
-        self.library = LibraryModel(engine: engine)
+        let library = LibraryModel(engine: engine)
+        self.library = library
+        self.search = SearchModel(engine: engine, library: library)
         self.art = CoverArtCache(engine: engine)
     }
 }
@@ -36,6 +39,7 @@ struct KoanApp: App {
                         .environment(state)
                         .environment(state.player)
                         .environment(state.library)
+                        .environment(state.search)
                         .environment(state.art)
                 } else if let startupError {
                     StartupErrorView(message: startupError)

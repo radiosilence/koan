@@ -1,5 +1,6 @@
 import Foundation
 import KoanFFI
+import SwiftUI
 
 /// Library browsing state.
 ///
@@ -12,6 +13,7 @@ import KoanFFI
 final class LibraryModel {
     enum Section: Hashable {
         case queue
+        case searchResults
         case albums
         case artists
         case favourites
@@ -21,7 +23,13 @@ final class LibraryModel {
     let engine: KoanEngine
 
     var section: Section = .queue {
-        didSet { if section != oldValue { load() } }
+        didSet {
+            guard section != oldValue else { return }
+            // Each section is its own stack conceptually; carrying a path
+            // across a switch would strand you on an unrelated detail view.
+            path = NavigationPath()
+            load()
+        }
     }
 
     /// Substring filter over whatever the current section is showing.
@@ -33,6 +41,10 @@ final class LibraryModel {
     private(set) var snapshots: [Snapshot] = []
     private(set) var stats: Stats?
     private(set) var isLoading = false
+
+    /// The browse stack's path. Lives here so search can push a destination
+    /// rather than each browser owning a stack nothing else can reach.
+    var path = NavigationPath()
 
     var selectedArtistId: Int64?
     var selectedAlbumId: Int64?
@@ -80,6 +92,37 @@ final class LibraryModel {
     func loadInitial() {
         loadStats()
         load()
+        // Search resolves fuzzy match ids against these, so they cannot wait
+        // until their section is first visited.
+        prefetchCatalogue()
+    }
+
+    private var albumsById: [Int64: Album] = [:]
+    private var artistsById: [Int64: Artist] = [:]
+
+    func album(id: Int64) -> Album? { albumsById[id] }
+    func artist(id: Int64) -> Artist? { artistsById[id] }
+
+    private func prefetchCatalogue() {
+        let engine = self.engine
+        Task {
+            if albums.isEmpty {
+                albums = await Task.detached(priority: .utility) {
+                    (try? engine.albums(artistId: nil)) ?? []
+                }.value
+            }
+            if artists.isEmpty {
+                artists = await Task.detached(priority: .utility) {
+                    (try? engine.artists(search: nil)) ?? []
+                }.value
+            }
+            reindex()
+        }
+    }
+
+    private func reindex() {
+        albumsById = Dictionary(albums.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        artistsById = Dictionary(artists.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
     }
 
     /// Loads whatever the current section needs. Everything heavy happens off
@@ -91,19 +134,21 @@ final class LibraryModel {
 
         Task {
             switch section {
-            case .queue:
-                break  // the player model already owns this
+            case .queue, .searchResults:
+                break  // owned by the player and search models respectively
             case .albums:
                 if albums.isEmpty {
                     albums = await Task.detached(priority: .userInitiated) {
                         (try? engine.albums(artistId: nil)) ?? []
                     }.value
+                    reindex()
                 }
             case .artists:
                 if artists.isEmpty {
                     artists = await Task.detached(priority: .userInitiated) {
                         (try? engine.artists(search: nil)) ?? []
                     }.value
+                    reindex()
                 }
             case .favourites:
                 favourites = await Task.detached(priority: .userInitiated) {
@@ -141,6 +186,25 @@ final class LibraryModel {
     func select(album: Album) {
         selectedAlbumId = album.id
         loadTracks(albumId: album.id)
+    }
+
+    /// Jump straight to a thing from search: switch to the section it lives in,
+    /// then push its detail view.
+    /// The track that search sent you here for, so the album view can single it
+    /// out. Cleared once the view has scrolled to it.
+    var highlightedTrackId: Int64?
+
+    func reveal(album id: Int64, highlighting trackId: Int64? = nil) {
+        highlightedTrackId = trackId
+        section = .albums
+        path = NavigationPath()  // section didSet only clears on an actual change
+        path.append(AlbumRoute(id: id))
+    }
+
+    func reveal(artist id: Int64) {
+        section = .artists
+        path = NavigationPath()
+        path.append(ArtistRoute(id: id))
     }
 
     // MARK: - Mutations

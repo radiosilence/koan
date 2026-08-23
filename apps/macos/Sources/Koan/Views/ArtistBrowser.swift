@@ -5,32 +5,21 @@ struct ArtistBrowser: View {
     @Environment(LibraryModel.self) private var library
 
     var body: some View {
-        NavigationStack {
-            List(library.visibleArtists, id: \.id) { artist in
-                NavigationLink(value: ArtistRoute(id: artist.id)) {
-                    HStack(spacing: 10) {
-                        Image(systemName: "music.mic")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .frame(width: 18)
-                        Text(artist.name)
-                    }
-                    .padding(.vertical, 2)
+        List(library.visibleArtists, id: \.id) { artist in
+            NavigationLink(value: ArtistRoute(id: artist.id)) {
+                HStack(spacing: 10) {
+                    Image(systemName: "music.mic")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 18)
+                    Text(artist.name)
                 }
+                .padding(.vertical, 2)
             }
-            .navigationDestination(for: ArtistRoute.self) { route in
-                ArtistDetailView(artistId: route.id)
-            }
-            .navigationDestination(for: AlbumRoute.self) { route in
-                AlbumDetailView(albumId: route.id)
-            }
-            .overlay {
-                if library.visibleArtists.isEmpty {
-                    EmptyState(
-                        icon: "music.mic",
-                        title: library.filter.isEmpty ? "No artists yet" : "Nothing matches"
-                    )
-                }
+        }
+        .overlay {
+            if library.visibleArtists.isEmpty {
+                EmptyState(icon: "music.mic", title: "No artists yet")
             }
         }
     }
