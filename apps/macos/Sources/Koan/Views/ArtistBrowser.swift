@@ -61,21 +61,7 @@ struct ArtistDetailView: View {
 
                 LazyVGrid(columns: columns, spacing: 22) {
                     ForEach(albums, id: \.id) { album in
-                        NavigationLink(value: AlbumRoute(id: album.id)) {
-                            VStack(alignment: .leading, spacing: 7) {
-                                AlbumArtwork(source: .album(album.id))
-                                    .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
-                                Text(album.title)
-                                    .font(.callout.weight(.medium))
-                                    .lineLimit(1)
-                                if let year = album.year {
-                                    Text(String(year))
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
+                        AlbumGridCell(album: album, showArtist: false)
                     }
                 }
 
@@ -84,12 +70,10 @@ struct ArtistDetailView: View {
                     Text("Similar Artists")
                         .font(.headline)
                     // Cached relationships only — this never reaches the network.
-                    FlowRow(items: similar) { entry in
-                        Text(entry.name)
-                            .font(.callout)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(.quaternary, in: Capsule())
+                    FlowLayout(spacing: 8) {
+                        ForEach(similar, id: \.artistId) { entry in
+                            ArtistPill(name: entry.name, artistId: entry.artistId)
+                        }
                     }
                 }
             }

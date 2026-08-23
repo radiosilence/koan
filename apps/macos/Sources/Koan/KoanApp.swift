@@ -84,24 +84,20 @@ struct KoanApp: App {
                     .keyboardShortcut("k", modifiers: .command)
             }
 
-            // Replaces the stock View menu's window items with navigation,
-            // which is what there actually is to look at.
             CommandGroup(replacing: .sidebar) {
                 ForEach(NavigationCommand.all, id: \.section) { command in
                     Button(command.title) { state?.library.section = command.section }
                         .keyboardShortcut(command.key, modifiers: .command)
                 }
                 Divider()
-                Button("Toggle Lyrics") { toggleLyrics() }
+                Button("Toggle Lyrics") { showLyrics.toggle() }
                     .keyboardShortcut("l", modifiers: [.command, .option])
                 Divider()
             }
 
             CommandMenu("Playback") {
-                Button(state?.player.isPlaying == true ? "Pause" : "Play") {
-                    state?.player.togglePlayPause()
-                }
-                .keyboardShortcut(.space, modifiers: [])
+                Button("Play / Pause") { state?.player.togglePlayPause() }
+                    .keyboardShortcut(.space, modifiers: [])
                 Button("Next") { state?.player.next() }
                     .keyboardShortcut(.rightArrow, modifiers: .command)
                 Button("Previous") { state?.player.previous() }
@@ -114,12 +110,8 @@ struct KoanApp: App {
                 Divider()
                 Button("Favourite Current Track") { state?.player.toggleFavouriteCurrent() }
                     .keyboardShortcut("d", modifiers: .command)
-                    .disabled(state?.player.currentTrackId == nil)
-                Toggle("Radio", isOn: Binding(
-                    get: { state?.player.nowPlaying.radioEnabled ?? false },
-                    set: { state?.player.setRadio($0) }
-                ))
-                .keyboardShortcut("r", modifiers: [.command, .option])
+                Button("Toggle Radio") { state?.player.toggleRadio() }
+                    .keyboardShortcut("r", modifiers: [.command, .option])
             }
 
             CommandMenu("Queue") {
@@ -129,7 +121,7 @@ struct KoanApp: App {
                     .keyboardShortcut("z", modifiers: [.command, .shift])
                 Divider()
                 Button("Save Session") { state?.player.saveSession() }
-                Button("Clear Queue", role: .destructive) { state?.player.clearQueue() }
+                Button("Clear Queue") { state?.player.clearQueue() }
             }
 
             CommandMenu("Library") {
@@ -154,6 +146,14 @@ struct KoanApp: App {
     }
 }
 
+/// Menu commands must not *read* anything that changes often.
+///
+/// `.commands` is part of the Scene body, so reading an observable that ticks —
+/// `isPlaying`, `radioEnabled` — makes SwiftUI rebuild every menu ten times a
+/// second. That shows up as the Edit menu flickering, and as menu items and
+/// keyboard shortcuts going dead because they are torn down mid-use. So the
+/// titles here are fixed and the bodies only ever call methods.
+///
 /// Sections reachable from the View menu, in sidebar order.
 private struct NavigationCommand {
     let title: String

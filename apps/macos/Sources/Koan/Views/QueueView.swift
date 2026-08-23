@@ -266,7 +266,7 @@ private struct QueueRow: View {
             if let progress = item.downloadProgress {
                 ProgressView(value: progress)
                     .progressViewStyle(.linear)
-                    .frame(width: 54)
+                    .frame(width: 54, height: 12)
             }
 
             if let codec = item.codec {
@@ -282,7 +282,9 @@ private struct QueueRow: View {
                     .frame(width: 44, alignment: .trailing)
             }
         }
-        .padding(.vertical, 2)
+        // Fixed height so a row doesn't grow when a download indicator appears
+        // and shrink when it finishes, reflowing the list each time.
+        .frame(height: 34)
         .opacity(item.status == .played ? 0.45 : 1)
     }
 

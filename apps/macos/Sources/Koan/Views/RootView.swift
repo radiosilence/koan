@@ -37,6 +37,10 @@ struct RootView: View {
         } detail: {
             NavigationStack(path: $library.path) {
                 stage
+                    // The transport sits over the bottom of the detail column,
+                    // and without this the scrollbar runs underneath it and is
+                    // impossible to grab near the end of a long list.
+                    .contentMargins(.bottom, 64, for: .scrollIndicators)
                     .navigationDestination(for: AlbumRoute.self) { route in
                         AlbumDetailView(albumId: route.id)
                     }
@@ -59,14 +63,6 @@ struct RootView: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .navigation) {
-                Button {
-                    showingPicker = true
-                } label: {
-                    Label("Add Music", systemImage: "plus.magnifyingglass")
-                }
-                .help("Build a queue from several things at once (⌘K)")
-            }
             // Sort belongs next to what it sorts, so it only appears there.
             if library.section == .albums {
                 ToolbarItem(placement: .principal) {
@@ -84,12 +80,22 @@ struct RootView: View {
                     .help("Sort albums")
                 }
             }
-            ToolbarItem(placement: .primaryAction) {
-                Toggle(isOn: $showLyrics) {
-                    Label("Lyrics", systemImage: "text.quote")
+            // Both trailing, in a fixed order, so they don't move about as the
+            // section changes.
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button {
+                    showingPicker = true
+                } label: {
+                    Label("Add Music", systemImage: "plus.magnifyingglass")
                 }
-                .toggleStyle(.button)
-                .help("Lyrics panel")
+                .help("Build a queue from several things at once (⌘K)")
+
+                Button {
+                    showLyrics.toggle()
+                } label: {
+                    Label("Lyrics", systemImage: "sidebar.right")
+                }
+                .help("Lyrics panel (⌥⌘L)")
             }
         }
         .sheet(isPresented: $showingPicker) {

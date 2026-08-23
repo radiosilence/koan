@@ -74,17 +74,20 @@ struct TransportBar: View {
                 Image(systemName: "backward.fill")
             }
             .keyboardShortcut(.leftArrow, modifiers: .command)
+            .help("Previous track (⌘←)")
 
             Button(action: player.togglePlayPause) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 19))
                     .frame(width: 26)
             }
+            .help(player.isPlaying ? "Pause (Space)" : "Play (Space)")
 
             Button(action: player.next) {
                 Image(systemName: "forward.fill")
             }
             .keyboardShortcut(.rightArrow, modifiers: .command)
+            .help("Next track (⌘→)")
         }
         .buttonStyle(.plain)
         .font(.system(size: 14))
@@ -104,17 +107,19 @@ struct TransportBar: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
-                    .help("Source format — played without resampling")
+                    .help("Source format — koan matches the device rate rather than resampling")
             }
 
             Toggle(isOn: Binding(
                 get: { player.nowPlaying.radioEnabled },
                 set: { player.setRadio($0) }
             )) {
-                Image(systemName: "dot.radiowaves.left.and.right")
+                Label("Radio", systemImage: "dot.radiowaves.left.and.right")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption)
             }
             .toggleStyle(.button)
-            .help("Radio — keep the queue topped up with similar tracks")
+            .help("Radio (⌥⌘R) — when the queue runs low, keep it topped up with similar tracks")
 
             DeviceMenu()
         }
@@ -193,7 +198,7 @@ private struct DeviceMenu: View {
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .frame(width: 24)
-        .help("Output device")
+        .help("Output device — \(player.currentDevice ?? "System Default")")
     }
 }
 

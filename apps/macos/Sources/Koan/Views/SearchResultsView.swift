@@ -39,16 +39,7 @@ struct SearchResultsView: View {
             SectionHeading("Artists", count: search.artists.count)
             FlowLayout(spacing: 8) {
                 ForEach(search.artists, id: \.id) { artist in
-                    Button {
-                        library.reveal(artist: artist.id)
-                    } label: {
-                        Label(artist.name, systemImage: "music.mic")
-                            .font(.callout)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 6)
-                            .background(.quaternary, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
+                    ArtistPill(name: artist.name, artistId: artist.id)
                 }
             }
         }
@@ -59,22 +50,7 @@ struct SearchResultsView: View {
             SectionHeading("Albums", count: search.albums.count)
             LazyVGrid(columns: columns, spacing: 18) {
                 ForEach(search.albums, id: \.id) { album in
-                    Button {
-                        library.reveal(album: album.id)
-                    } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            AlbumArtwork(source: .album(album.id))
-                                .shadow(color: .black.opacity(0.25), radius: 6, y: 2)
-                            Text(album.title)
-                                .font(.callout.weight(.medium))
-                                .lineLimit(1)
-                            Text(album.artistName)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                        }
-                    }
-                    .buttonStyle(.plain)
+                    AlbumGridCell(album: album)
                 }
             }
         }

@@ -57,18 +57,24 @@ final class PlayerModel {
         if nowPlaying.playlistVersion != knownQueueVersion {
             knownQueueVersion = nowPlaying.playlistVersion
             rebuildQueue()
-        } else if hasActiveDownloads {
+        } else if hasActiveDownloads, downloadRefreshDue {
+            lastDownloadRefresh = Date.now
             // Download progress moves without bumping the playlist version, so
-            // a version check alone would freeze the progress bars. Only worth
-            // re-reading while something is actually in flight — rebuilding the
-            // whole queue every tick is the thing the version check exists to
-            // avoid.
+            // a version check alone would freeze the progress bars. But
+            // replacing the queue array is what the List diffs against, and
+            // doing it ten times a second cancels drags mid-gesture and eats
+            // clicks. Once a second is plenty for a progress bar.
             rebuildQueue()
         }
         onTick?()
     }
 
     private var hasActiveDownloads = false
+    private var lastDownloadRefresh = Date.distantPast
+
+    private var downloadRefreshDue: Bool {
+        Date.now.timeIntervalSince(lastDownloadRefresh) >= 1
+    }
 
     private func rebuildQueue() {
         queue = engine.queue()
@@ -199,6 +205,10 @@ final class PlayerModel {
     }
 
     func setRadio(_ enabled: Bool) { engine.setRadio(enabled: enabled) }
+
+    /// Flips it without the caller having to read the current value — menus
+    /// that read observable state rebuild themselves constantly.
+    func toggleRadio() { setRadio(!nowPlaying.radioEnabled) }
 
     /// Toggles, and returns nothing — the library view refetches to pick it up.
     @discardableResult

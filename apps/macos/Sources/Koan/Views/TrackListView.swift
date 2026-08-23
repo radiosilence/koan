@@ -16,58 +16,58 @@ struct TrackListView: View {
     @State private var selection: Set<Int64> = []
 
     var body: some View {
-        ScrollViewReader { proxy in
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
-                header
-                    .padding(.horizontal, 24)
-                    .padding(.top, 18)
-                    .padding(.bottom, 16)
+        VStack(spacing: 0) {
+            header
+                .padding(.horizontal, 24)
+                .padding(.top, 18)
+                .padding(.bottom, 16)
 
-                if tracks.isEmpty {
-                    EmptyState(icon: "music.note.list", title: "No tracks")
-                        .frame(maxWidth: .infinity, minHeight: 220)
-                } else {
-                    ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
-                        TrackRow(
-                            track: track,
-                            position: index + 1,
-                            isCurrent: player.currentTrackId == track.id,
-                            isSelected: selection.contains(track.id)
-                        )
-                        .id(track.id)
-                        .contentShape(.rect)
-                        .onTapGesture(count: 2) {
-                            player.playNow(trackIds: tracks.map(\.id), startingAt: index)
-                        }
-                        .onTapGesture { selection = [track.id] }
-                        .contextMenu {
-                            Button("Play") {
+            if tracks.isEmpty {
+                EmptyState(icon: "music.note.list", title: "No tracks")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                // A real List rather than a LazyVStack of tap gestures. Stacking
+                // single- and double-tap recognisers on a plain view makes
+                // clicks resolve against each other and drop; List gives native
+                // selection, shift/⌘ range select and keyboard navigation.
+                ScrollViewReader { proxy in
+                    List(selection: $selection) {
+                        ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                            TrackRow(
+                                track: track,
+                                position: index + 1,
+                                isCurrent: player.currentTrackId == track.id
+                            )
+                            .id(track.id)
+                            .onTapGesture(count: 2) {
                                 player.playNow(trackIds: tracks.map(\.id), startingAt: index)
                             }
-                            Button("Add to Queue") { player.enqueue(trackIds: [track.id]) }
-                            Divider()
-                            Button(track.isFavourite ? "Remove Favourite" : "Favourite") {
-                                player.toggleFavourite(trackId: track.id)
-                                library.refreshFavourites()
+                            .contextMenu {
+                                Button("Play") {
+                                    player.playNow(trackIds: tracks.map(\.id), startingAt: index)
+                                }
+                                Button("Add to Queue") { player.enqueue(trackIds: [track.id]) }
+                                Divider()
+                                Button(track.isFavourite ? "Remove Favourite" : "Favourite") {
+                                    player.toggleFavourite(trackId: track.id)
+                                    library.refreshFavourites()
+                                }
                             }
                         }
                     }
-                    .padding(.horizontal, 14)
+                    .listStyle(.inset)
+                    // Arriving from search: single out the matched track rather
+                    // than dropping the user at the top of a 20-track record.
+                    .task(id: tracks.count) {
+                        guard let target = library.highlightedTrackId,
+                              tracks.contains(where: { $0.id == target })
+                        else { return }
+                        selection = [target]
+                        withAnimation { proxy.scrollTo(target, anchor: .center) }
+                        library.highlightedTrackId = nil
+                    }
                 }
             }
-            .padding(.bottom, 20)
-        }
-        // Arriving from search: single out the track that was matched, rather
-        // than dropping the user at the top of a 20-track record to find it.
-        .task(id: tracks.count) {
-            guard let target = library.highlightedTrackId,
-                  tracks.contains(where: { $0.id == target })
-            else { return }
-            selection = [target]
-            withAnimation { proxy.scrollTo(target, anchor: .center) }
-            library.highlightedTrackId = nil
-        }
         }
     }
 
@@ -135,7 +135,6 @@ private struct TrackRow: View {
     let track: Track
     let position: Int
     let isCurrent: Bool
-    let isSelected: Bool
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -194,12 +193,7 @@ private struct TrackRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 48, alignment: .trailing)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(isSelected ? AnyShapeStyle(.selection) : AnyShapeStyle(hovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear)))
-        }
+        .frame(height: 34)
         .onHover { hovering = $0 }
     }
 }
@@ -232,7 +226,7 @@ private struct TrackAvailability: View {
             }
         }
         .font(.caption)
-        .frame(width: 16)
+        .frame(width: 16, height: 16)
     }
 
     /// Only these say something the library row doesn't already know.
@@ -248,6 +242,7 @@ private struct TrackAvailability: View {
                 ProgressView(value: progress)
                     .progressViewStyle(.circular)
                     .controlSize(.mini)
+                    .frame(width: 14, height: 14)
                     .help("Downloading — \(Int(progress * 100))%")
             } else {
                 ProgressView()
