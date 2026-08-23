@@ -35,6 +35,158 @@ pub fn get_remote_password(cfg: &Config) -> Option<String> {
     None
 }
 
+/// Keep the library in step with the server, without being asked.
+///
+/// One sync shortly after startup, then every `auto_sync_interval_mins`. Always
+/// incremental: it asks the server what changed rather than walking the whole
+/// library, which is what makes it cheap enough to run unattended. A full sync
+/// stays a deliberate action.
+///
+/// The startup run is delayed a few seconds so it is not competing with the
+/// first frame and the first track for the disk.
+///
+/// `on_state` reports whether a sync is running, so a UI can say so rather than
+/// appearing to do nothing.
+pub fn spawn_auto_sync(
+    db_path: std::path::PathBuf,
+    on_state: impl Fn(bool) + Send + 'static,
+) -> Option<std::thread::JoinHandle<()>> {
+    std::thread::Builder::new()
+        .name("koan-auto-sync".into())
+        .spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+            loop {
+                let cfg = Config::load().unwrap_or_default();
+                if !cfg.remote.enabled || !cfg.remote.auto_sync {
+                    // Re-read rather than exit: the setting can be turned on
+                    // while the app is running.
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+                    continue;
+                }
+
+                if let Some(client) = subsonic_client(&cfg)
+                    && let Ok(db) = Database::open(&db_path)
+                {
+                    on_state(true);
+                    match crate::remote::sync::sync_library(
+                        &db,
+                        &client,
+                        false,
+                        &cfg.remote.url,
+                        &cfg.remote.username,
+                    ) {
+                        Ok(r) => log::info!(
+                            "auto sync: {} artists, {} albums, {} tracks ({} albums failed)",
+                            r.artists_synced,
+                            r.albums_synced,
+                            r.tracks_synced,
+                            r.albums_failed
+                        ),
+                        Err(e) => log::warn!("auto sync failed: {e}"),
+                    }
+                    on_state(false);
+                }
+
+                match cfg.remote.auto_sync_interval_mins {
+                    // Once at startup and no more.
+                    0 => return,
+                    mins => std::thread::sleep(std::time::Duration::from_secs(mins * 60)),
+                }
+            }
+        })
+        .ok()
+}
+
+/// What a library rebuild removed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RebuildSummary {
+    pub tracks: u64,
+    pub albums: u64,
+    pub artists: u64,
+}
+
+/// Drop the index so the next scan rebuilds it from the files.
+///
+/// Favourites are keyed on the file path rather than a row id, so they survive
+/// this and re-attach when the paths come back. Everything keyed on a track id
+/// cannot: lyrics, play history and acoustic embeddings go, and the foreign keys
+/// would refuse the delete otherwise. Lyrics and embeddings are re-derivable;
+/// play counts are not, which is worth saying out loud wherever this is offered.
+///
+/// The remote half of the library comes back on the next sync, the local half on
+/// the next scan.
+pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connection::DbError> {
+    let count = |sql: &str| -> u64 {
+        db.conn
+            .query_row(sql, [], |r| r.get::<_, i64>(0))
+            .unwrap_or(0) as u64
+    };
+    let summary = RebuildSummary {
+        tracks: count("SELECT COUNT(*) FROM tracks"),
+        albums: count("SELECT COUNT(*) FROM albums"),
+        artists: count("SELECT COUNT(*) FROM artists"),
+    };
+
+    // Children before parents; the FTS index has no foreign keys but is derived
+    // from tracks and would otherwise keep answering for rows that are gone.
+    db.conn.execute_batch(
+        "BEGIN;
+         DELETE FROM track_vectors;
+         DELETE FROM lyrics_cache;
+         DELETE FROM play_history;
+         DELETE FROM scan_cache;
+         DELETE FROM tracks_fts;
+         DELETE FROM tracks;
+         DELETE FROM similar_artists;
+         DELETE FROM albums;
+         DELETE FROM artists;
+         COMMIT;",
+    )?;
+    let _ = db.conn.execute_batch("VACUUM");
+    Ok(summary)
+}
+
+/// Bytes currently held in the download cache.
+pub fn cache_size_bytes(cfg: &Config) -> u64 {
+    walkdir::WalkDir::new(cfg.cache_dir())
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .filter_map(|e| e.metadata().ok())
+        .map(|m| m.len())
+        .sum()
+}
+
+/// What clearing the download cache removed.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct CacheCleared {
+    pub files: u64,
+    pub bytes: u64,
+}
+
+/// Delete every downloaded remote track and forget where they were.
+///
+/// The rows stay — a remote track is still in the library, it just has to be
+/// fetched again to play.
+pub fn clear_download_cache(db: &Database, cfg: &Config) -> CacheCleared {
+    let dir = cfg.cache_dir();
+    let mut cleared = CacheCleared::default();
+    for entry in walkdir::WalkDir::new(&dir)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+    {
+        if let Ok(meta) = entry.metadata() {
+            cleared.bytes += meta.len();
+            cleared.files += 1;
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = queries::clear_cached_paths(&db.conn);
+    cleared
+}
+
 /// Push a favourite to the remote server, if this track came from one.
 ///
 /// Fire and forget on its own thread: starring is a courtesy to the server, and
@@ -681,6 +833,66 @@ pub fn spawn_downloads(
         })
     {
         log::error!("failed to spawn download thread: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod rebuild_tests {
+    use super::*;
+    use crate::db::queries::sample_meta;
+
+    fn test_db() -> Database {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        Database { conn }
+    }
+
+    #[test]
+    fn rebuild_drops_the_index_and_keeps_favourites() {
+        let db = test_db();
+        let mut meta = sample_meta("Windowlicker", "Aphex Twin", "Windowlicker EP");
+        meta.path = Some("/music/windowlicker.flac".into());
+        let track_id = queries::upsert_track(&db.conn, &meta).unwrap();
+
+        // Favourites key on the path; lyrics key on the row id.
+        queries::toggle_favourite(&db.conn, Path::new("/music/windowlicker.flac")).unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO lyrics_cache (track_id, source, content, fetched_at)
+                 VALUES (?1, 'test', 'la la la', 0)",
+                [track_id],
+            )
+            .unwrap();
+
+        let summary = rebuild_index(&db).unwrap();
+        assert_eq!(summary.tracks, 1);
+        assert_eq!(summary.albums, 1);
+
+        let tracks: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(tracks, 0, "the index is gone");
+
+        let favourites: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM favourites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(favourites, 1, "favourites survive — they key on the path");
+
+        let lyrics: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM lyrics_cache", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(lyrics, 0, "anything keyed on a track id cannot survive");
+    }
+
+    #[test]
+    fn rebuilding_an_empty_library_is_not_an_error() {
+        let db = test_db();
+        let summary = rebuild_index(&db).unwrap();
+        assert_eq!(summary.tracks, 0);
     }
 }
 

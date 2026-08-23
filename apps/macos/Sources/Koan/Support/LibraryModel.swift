@@ -83,6 +83,10 @@ final class LibraryModel {
     private(set) var detailTracks: [Track] = []
 
     /// Set while a scan runs so the UI can show progress and refuse a second one.
+    /// Set by `AppState`. Long tasks register here so one place can say what is
+    /// happening — see `ActivityModel`.
+    weak var activity: ActivityModel?
+
     private(set) var isScanning = false
     var scanSummary: ScanSummary?
 
@@ -396,10 +400,12 @@ final class LibraryModel {
         guard !isScanning else { return }
         isScanning = true
         let engine = self.engine
+        let job = activity?.begin(full ? "Full sync with server" : "Syncing with server")
         Task {
             _ = await Task.detached(priority: .utility) {
                 try? engine.syncRemote(full: full)
             }.value
+            if let job { activity?.end(job) }
             isScanning = false
             albums = []
             artists = []
@@ -417,10 +423,13 @@ final class LibraryModel {
         scanSummary = nil
 
         let engine = self.engine
+        let job = activity?.begin(force ? "Rescanning every file" : "Scanning library")
+        let progress = job.flatMap { activity?.reporter(for: $0) }
         Task {
             let result = await Task.detached(priority: .utility) {
-                try? engine.scan(force: force)
+                try? engine.scanReporting(force: force, reporter: progress)
             }.value
+            if let job { activity?.end(job) }
             scanSummary = result
             isScanning = false
             // The library moved underneath us — drop the caches and reload.

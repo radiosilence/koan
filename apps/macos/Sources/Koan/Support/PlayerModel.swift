@@ -129,6 +129,10 @@ final class PlayerModel {
     private(set) var queueVersion: UInt64 = 0
     /// Queue mutations in flight. Adding a large selection takes a moment, and
     /// silence while it happens reads as nothing having happened.
+    /// Set by `AppState`. Queue mutations register here alongside every other
+    /// slow thing rather than tracking their own spinner.
+    weak var activity: ActivityModel?
+
     private(set) var pendingMutations = 0
     var isBusy: Bool { pendingMutations > 0 }
     /// What is playing, and in what format. Both change per track, not per tick.
@@ -415,12 +419,14 @@ final class PlayerModel {
     private func offMain(_ body: @escaping @Sendable (KoanEngine) throws -> Void) {
         let engine = self.engine
         pendingMutations += 1
+        let job = activity?.begin("Updating queue")
         Task {
             do {
                 try await Task.detached(priority: .userInitiated) { try body(engine) }.value
             } catch {
                 lastError = String(describing: error)
             }
+            if let job { activity?.end(job) }
             pendingMutations -= 1
         }
     }

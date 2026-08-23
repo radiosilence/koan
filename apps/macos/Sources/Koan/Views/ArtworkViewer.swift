@@ -20,10 +20,14 @@ struct ArtworkViewer: View {
                 .contentShape(.rect)
                 .onTapGesture { dismiss() }
 
-            VStack(spacing: 14) {
+            VStack(spacing: 16) {
+                // Fills whatever the window allows, less a margin so the cover
+                // never runs to the edge. Capping it at a fixed size made a
+                // 4000px scan no bigger than a thumbnail on a large display,
+                // which defeats the point of opening it.
                 AlbumArtwork(source: source, cornerRadius: 10)
-                    .frame(maxWidth: 760, maxHeight: 760)
-                    .shadow(color: .black.opacity(0.45), radius: 28, y: 12)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .shadow(color: .black.opacity(0.45), radius: 32, y: 14)
                     .onTapGesture { dismiss() }
 
                 VStack(spacing: 3) {
@@ -39,9 +43,18 @@ struct ArtworkViewer: View {
                 }
                 .padding(.horizontal, 24)
             }
-            .padding(30)
+            .padding(44)
         }
-        .frame(minWidth: 420, minHeight: 420)
+        // Ideal rather than fixed: a sheet is bounded by its window, so this
+        // asks for a large one and takes what it is given.
+        .frame(
+            minWidth: 420,
+            idealWidth: 1100,
+            maxWidth: .infinity,
+            minHeight: 420,
+            idealHeight: 1100,
+            maxHeight: .infinity
+        )
         // Escape, without a visible button cluttering the picture.
         .onExitCommand { dismiss() }
     }

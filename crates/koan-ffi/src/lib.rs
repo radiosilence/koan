@@ -69,6 +69,22 @@ pub trait PlayerEvents: Send + Sync {
     fn position_changed(&self, position_ms: u64);
 }
 
+/// Reports how far a long task has got.
+///
+/// Scans and syncs take anywhere up to a minute, and a spinner that cannot say
+/// how far through it is tells the user only that the app has not crashed.
+///
+/// `advanced` is called from a worker thread, often — implementations must be
+/// cheap and must not block. koan throttles the calls so a fifty-thousand-file
+/// scan does not cross the FFI fifty thousand times.
+#[uniffi::export(with_foreign)]
+pub trait ProgressReporter: Send + Sync {
+    /// How many items there are, once known. Zero means unknowable.
+    fn started(&self, total: u64);
+    /// How many are done, and what is being worked on now.
+    fn advanced(&self, done: u64, detail: String);
+}
+
 /// The player, the library, and the bridge between them.
 #[derive(uniffi::Object)]
 pub struct KoanEngine {
@@ -76,6 +92,9 @@ pub struct KoanEngine {
     tx: Sender<PlayerCommand>,
     db_path: PathBuf,
     listener: Arc<parking_lot::RwLock<Option<Arc<dyn PlayerEvents>>>>,
+    /// Set while the automatic sync is running, so a UI can say so rather than
+    /// appearing to do nothing for the minute it takes.
+    auto_syncing: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[uniffi::export]
@@ -92,12 +111,21 @@ impl KoanEngine {
         let (state, _timeline, _viz, tx) = Player::spawn();
         koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
 
+        let auto_syncing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let flag = auto_syncing.clone();
+            koan_core::helpers::spawn_auto_sync(db_path.clone(), move |running| {
+                flag.store(running, std::sync::atomic::Ordering::Relaxed);
+            });
+        }
+
         let listener: Arc<parking_lot::RwLock<Option<Arc<dyn PlayerEvents>>>> =
             Arc::new(parking_lot::RwLock::new(None));
         let engine = Arc::new(Self {
             state,
             tx,
             db_path,
+            auto_syncing,
             listener,
         });
         engine.spawn_watcher();
@@ -798,9 +826,186 @@ impl KoanEngine {
 
     // --- Library maintenance ----------------------------------------------
 
+    // --- Settings ----------------------------------------------------------
+
+    /// The whole configuration, as the settings window shows it.
+    pub fn settings(&self) -> Settings {
+        let cfg = Config::load().unwrap_or_default();
+        let cache_dir = cfg.cache_dir();
+        let cache_bytes = koan_core::helpers::cache_size_bytes(&cfg);
+
+        Settings {
+            library_folders: cfg
+                .library
+                .folders
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+
+            remote_enabled: cfg.remote.enabled,
+            remote_url: cfg.remote.url.clone(),
+            remote_username: cfg.remote.username.clone(),
+            remote_signed_in: koan_core::helpers::get_remote_password(&cfg).is_some(),
+            transcode_quality: cfg.remote.transcode_quality.clone(),
+            download_workers: cfg.remote.download_workers as u32,
+            cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
+            cache_dir: cache_dir.to_string_lossy().into_owned(),
+            cache_bytes,
+            auto_sync: cfg.remote.auto_sync,
+            auto_sync_interval_mins: cfg.remote.auto_sync_interval_mins,
+
+            replaygain: match cfg.playback.replaygain {
+                config::ReplayGainMode::Off => "off".into(),
+                config::ReplayGainMode::Track => "track".into(),
+                config::ReplayGainMode::Album => "album".into(),
+            },
+            pre_amp_db: cfg.playback.pre_amp_db,
+
+            radio_lookahead: cfg.radio.lookahead as u32,
+            radio_batch_size: cfg.radio.batch_size as u32,
+            radio_discovery_weight: cfg.radio.discovery_weight,
+        }
+    }
+
+    /// Write the settings back.
+    ///
+    /// Everything lands in `config.local.toml`, which is the machine-specific
+    /// layer — the same file the CLI writes and one the TUI will pick up. The
+    /// password is not here; it goes through `sign_in_remote`.
+    pub fn update_settings(&self, s: Settings) -> Result<(), KoanError> {
+        use toml::Value;
+
+        let cfg_err = |e: config::ConfigError| KoanError::BadArgument {
+            message: e.to_string(),
+        };
+
+        let mut library = toml::map::Map::new();
+        library.insert(
+            "folders".into(),
+            Value::Array(
+                s.library_folders
+                    .iter()
+                    .cloned()
+                    .map(Value::String)
+                    .collect(),
+            ),
+        );
+        Config::patch_local("library", &library).map_err(cfg_err)?;
+
+        let mut remote = toml::map::Map::new();
+        remote.insert("enabled".into(), Value::Boolean(s.remote_enabled));
+        remote.insert("url".into(), Value::String(s.remote_url.clone()));
+        remote.insert("username".into(), Value::String(s.remote_username.clone()));
+        remote.insert(
+            "transcode_quality".into(),
+            Value::String(s.transcode_quality.clone()),
+        );
+        remote.insert(
+            "download_workers".into(),
+            Value::Integer(s.download_workers.max(1) as i64),
+        );
+        remote.insert("cache_limit".into(), Value::String(s.cache_limit.clone()));
+        remote.insert("auto_sync".into(), Value::Boolean(s.auto_sync));
+        remote.insert(
+            "auto_sync_interval_mins".into(),
+            Value::Integer(s.auto_sync_interval_mins as i64),
+        );
+        Config::patch_local("remote", &remote).map_err(cfg_err)?;
+
+        let mut playback = toml::map::Map::new();
+        playback.insert("replaygain".into(), Value::String(s.replaygain.clone()));
+        playback.insert("pre_amp_db".into(), Value::Float(s.pre_amp_db));
+        Config::patch_local("playback", &playback).map_err(cfg_err)?;
+
+        let mut radio = toml::map::Map::new();
+        radio.insert("lookahead".into(), Value::Integer(s.radio_lookahead as i64));
+        radio.insert(
+            "batch_size".into(),
+            Value::Integer(s.radio_batch_size.max(1) as i64),
+        );
+        radio.insert(
+            "discovery_weight".into(),
+            Value::Float(s.radio_discovery_weight.clamp(0.0, 1.0)),
+        );
+        Config::patch_local("radio", &radio).map_err(cfg_err)?;
+
+        Ok(())
+    }
+
+    /// Whether the automatic library sync is running right now.
+    pub fn is_auto_syncing(&self) -> bool {
+        self.auto_syncing.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Sign in to a Subsonic/Navidrome server.
+    ///
+    /// Checked against the server before anything is written, and the password
+    /// goes to the platform credential store rather than to a file.
+    pub fn sign_in_remote(
+        &self,
+        url: String,
+        username: String,
+        password: String,
+    ) -> Result<(), KoanError> {
+        koan_core::helpers::set_remote_credentials(&url, &username, &password).map_err(|e| {
+            KoanError::BadArgument {
+                message: e.to_string(),
+            }
+        })
+    }
+
+    /// Forget the server. Leaves the synced library alone — those tracks are
+    /// still real, they just cannot be fetched until you sign in again.
+    pub fn sign_out_remote(&self) -> Result<(), KoanError> {
+        let cfg = Config::load().unwrap_or_default();
+        let _ = koan_core::credentials::delete_password(&cfg.remote.url);
+
+        let mut remote = toml::map::Map::new();
+        remote.insert("enabled".into(), toml::Value::Boolean(false));
+        remote.insert("password".into(), toml::Value::String(String::new()));
+        Config::patch_local("remote", &remote).map_err(|e| KoanError::BadArgument {
+            message: e.to_string(),
+        })
+    }
+
+    /// Drop the library index so the next scan rebuilds it.
+    ///
+    /// Favourites survive — they key on the file path. Lyrics, play history and
+    /// acoustic embeddings do not; they key on row ids that are about to stop
+    /// existing.
+    pub fn rebuild_index(&self) -> Result<RebuildSummary, KoanError> {
+        let db = self.db()?;
+        let summary = koan_core::helpers::rebuild_index(&db).map_err(db_err)?;
+        Ok(RebuildSummary {
+            tracks: summary.tracks,
+            albums: summary.albums,
+            artists: summary.artists,
+        })
+    }
+
+    /// Delete every downloaded remote track. The library rows stay.
+    pub fn clear_download_cache(&self) -> Result<CacheCleared, KoanError> {
+        let db = self.db()?;
+        let cfg = Config::load().unwrap_or_default();
+        let cleared = koan_core::helpers::clear_download_cache(&db, &cfg);
+        Ok(CacheCleared {
+            files: cleared.files,
+            bytes: cleared.bytes,
+        })
+    }
+
     /// Rescans every configured library folder. Blocking and slow — call it off
     /// the main thread.
     pub fn scan(&self, force: bool) -> Result<ScanSummary, KoanError> {
+        self.scan_reporting(force, None)
+    }
+
+    /// `scan`, saying how far it has got.
+    pub fn scan_reporting(
+        &self,
+        force: bool,
+        reporter: Option<Arc<dyn ProgressReporter>>,
+    ) -> Result<ScanSummary, KoanError> {
         let db = self.db()?;
         let cfg = Config::load().unwrap_or_default();
 
@@ -817,8 +1022,28 @@ impl KoanEngine {
             force,
             force_remove: false,
         };
+
+        if let Some(reporter) = &reporter {
+            reporter.started(koan_core::index::scanner::count_audio_files(
+                &cfg.library.folders,
+            ));
+        }
+
+        let done = std::sync::atomic::AtomicU64::new(0);
         for folder in &cfg.library.folders {
-            let r = koan_core::index::scanner::scan_folder(&db, folder, opts, None);
+            let callback = |event: koan_core::index::scanner::ScanEvent| {
+                let Some(reporter) = &reporter else { return };
+                let n = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                // Reporting every file would be tens of thousands of trips over
+                // the FFI and a redraw for each. Every 64 still looks live.
+                if n.is_multiple_of(64) {
+                    reporter.advanced(n, format!("{} — {}", event.artist, event.title));
+                }
+            };
+            let hook: Option<&dyn Fn(koan_core::index::scanner::ScanEvent)> =
+                reporter.as_ref().map(|_| &callback as _);
+
+            let r = koan_core::index::scanner::scan_folder(&db, folder, opts, hook);
             summary.added += r.added as u32;
             summary.updated += r.updated as u32;
             summary.removed += r.removed as u32;

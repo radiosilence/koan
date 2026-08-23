@@ -288,6 +288,23 @@ fn isolate_read(
     }
 }
 
+/// How many audio files these folders hold.
+///
+/// A directory walk with no tag reads — cheap next to the scan it precedes, and
+/// the only way to report a fraction rather than a spinner.
+pub fn count_audio_files(folders: &[PathBuf]) -> u64 {
+    folders
+        .iter()
+        .flat_map(|folder| {
+            walkdir::WalkDir::new(folder)
+                .follow_links(true)
+                .into_iter()
+                .filter_map(Result::ok)
+        })
+        .filter(|e| e.file_type().is_file() && metadata::is_audio_file(e.path()))
+        .count() as u64
+}
+
 /// Scan all configured library folders.
 pub fn full_scan(
     db: &Database,

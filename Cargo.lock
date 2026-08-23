@@ -2790,6 +2790,7 @@ dependencies = [
  "parking_lot",
  "rusqlite",
  "thiserror 2.0.20",
+ "toml 1.1.4+spec-1.1.0",
  "uniffi",
  "uuid",
 ]

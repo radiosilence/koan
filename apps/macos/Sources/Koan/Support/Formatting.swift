@@ -50,6 +50,12 @@ enum Format {
             : String(format: "%.1f", khz)
     }
 
+    /// Sizes the way Finder writes them — GB not GiB, because that is what the
+    /// rest of the system shows and a disagreement here just looks wrong.
+    static func bytes(_ count: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: count, countStyle: .file)
+    }
+
     static func count(_ n: Int64, _ singular: String, _ plural: String? = nil) -> String {
         let word = n == 1 ? singular : (plural ?? singular + "s")
         return "\(n.formatted(.number)) \(word)"
