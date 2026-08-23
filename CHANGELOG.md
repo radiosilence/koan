@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased
+## v0.25.0 (2026-08-23)
+
+### Added
+
+- **A native macOS app** (`apps/macos`) — SwiftUI on top of koan-core through new uniffi bindings (`koan-ffi`), not a client of the GraphQL server. The app links the engine in-process, so there is no daemon, no port and no auth surface between the UI and the audio it is driving. GraphQL remains the surface for clients that genuinely cannot link the core.
+
+  Queue, albums, artists, favourites and snapshots, with album-grouped queue editing, drag and drop, a ⌘K picker, synced lyrics, global search, media keys and Now Playing, output device switching, cover art with a disk cache, and session restore that picks up mid-track — resuming only if playback was running when you quit.
+
+- **`ReplacePlaylist { items, start }`** — replace the queue and choose where it starts, as one command. Clear-then-add-then-play is three commands down a bounded channel, each acted on as it arrives, so playing track nine of an album audibly started track one first. `replaceQueue` and the FFI both take the index.
+
+- **Radio survives a restart**, and playback state records whether it was running, so reopening resumes rather than always landing paused.
+
+- **Album and artist counts on artist rows**, and `added_at` on albums for a recently-added ordering.
+
+### Changed
+
+- **Sorting reads like a person would.** SQLite's default collation is a byte comparison, so the artist list ran `Zebra` before `aphex twin` and put `Âme` after the entire alphabet. A `LIBRARY` collation folds case and accents onto the base letter and compares digit runs as numbers, so `Track 2` precedes `Track 10`.
+
+- **Radio no longer touches the network on the path that has to produce a track.** `pick_tracks` called ListenBrainz and MusicBrainz in line, and both rate-limit to one request a second per seed artist, so a queue with nothing left to play got its next track long after the music had stopped. It now uses local signals only — genre and era, same-artist, acoustic similarity and random — all database reads. The network signals remain for a background pass that fills the similar-artists cache.
+
+- **Queue mutations are batched everywhere.** Removing a selection took the playlist lock and bumped the version per track, and building queue items re-read `config.toml` for every one. Sharing resolved remote ids one query per track.
 
 ### Fixed
 
@@ -11,6 +31,12 @@
 - **Scanning decoded every embedded cover image and threw it away** — `lofty::read_from_path` parses pictures by default, so a scan pulled a few hundred KB of JPEG out of every ID3v2 tag and FLAC block purely to drop it; a sampled `--force` run spent most of its time in `attached_picture_frame::parse`. The scan now reads tags and audio properties only. Artwork is unaffected: `extract_cover_art` has always done its own read, for the one track that needs it.
 - **The Symphonia fallback read only three tags** — when lofty cannot parse a file at all, the fallback took title, artist and album and dropped the track number, disc, date and genre Symphonia hands over in the same pass. A row with no track number cannot content-match the same track synced from a remote server, so a file landing on this path stayed a duplicate even once its tags read correctly. It now takes everything offered.
 - **"Recently added" was topped by whenever the last scan ran** — locally-scanned albums had no date of their own, so they were stamped with `datetime('now')` at insert. Every local album therefore sat permanently above everything the server considered new, in a different date format that wouldn't sort against it either. A local album now dates from the earliest mtime among its files, written as the same ISO 8601 UTC string a Subsonic server uses for `created`, and rescanning keeps the earliest rather than freezing whichever file the first scan reached. Existing scan-time stamps are cleared on upgrade so the next scan refills them; server-supplied dates are untouched.
+
+- **The scan overlaps tag reads with database writes.** Chunking reads and writes with a barrier between them left the disk idle for every write and the CPU idle for every read; reads now stream down a bounded channel while the main thread commits.
+
+- **lofty's 16 MB allocation cap made whole formats unreadable** — one record with 4000x4000 cover art in its Vorbis comments exceeded it, so lofty refused every file on it and they fell to the Symphonia fallback: worse metadata, three parses instead of one. Raised to 256 MB.
+
+- **Share links report why they failed.** Every surface collapsed all failures into "local-only tracks can't be shared", including a server that returned no URL for a share it had created. Resolution now lives in koan-core, with distinct errors, one query for the remote ids, and a partial share that says how much it left out.
 
 ## v0.24.0 (2026-08-22)
 
