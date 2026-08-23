@@ -219,7 +219,7 @@ final class PlayerModel {
     /// Replace the queue and start playing — double-clicking an album.
     func playNow(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
-        attempt { _ = try engine.replaceQueue(trackIds: trackIds) }
+        offMain { try $0.replaceQueue(trackIds: trackIds) }
     }
 
     /// Queue the whole list but start at the track that was clicked, so the rest
@@ -227,7 +227,7 @@ final class PlayerModel {
     /// IDs in order, which is what makes the jump addressable.
     func playNow(trackIds: [Int64], startingAt index: Int) {
         guard trackIds.indices.contains(index) else { return playNow(trackIds: trackIds) }
-        attempt {
+        offMain { engine in
             let itemIds = try engine.replaceQueue(trackIds: trackIds)
             if itemIds.indices.contains(index) {
                 try engine.play(queueItemId: itemIds[index])
@@ -240,7 +240,7 @@ final class PlayerModel {
     func playNext(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
         guard let cursor = currentItemId else { return enqueue(trackIds: trackIds) }
-        attempt { _ = try engine.insertAfter(trackIds: trackIds, afterQueueItemId: cursor) }
+        offMain { try $0.insertAfter(trackIds: trackIds, afterQueueItemId: cursor) }
     }
 
     /// Surface a one-off message in the same place engine errors appear.
@@ -248,19 +248,19 @@ final class PlayerModel {
 
     func enqueue(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
-        attempt { _ = try engine.addToQueue(trackIds: trackIds) }
+        offMain { try $0.addToQueue(trackIds: trackIds) }
     }
 
     func remove(itemIds: [String]) {
         guard !itemIds.isEmpty else { return }
-        attempt { try engine.removeFromQueue(queueItemIds: itemIds) }
+        offMain { try $0.removeFromQueue(queueItemIds: itemIds) }
     }
 
     /// `after: false` inserts *before* the target, which is the only way to
     /// express "put this at the very top" or "put this above that album".
     func move(itemIds: [String], target: String, after: Bool) {
-        attempt {
-            try engine.moveInQueue(queueItemIds: itemIds, targetQueueItemId: target, after: after)
+        offMain {
+            try $0.moveInQueue(queueItemIds: itemIds, targetQueueItemId: target, after: after)
         }
     }
 
@@ -344,7 +344,7 @@ final class PlayerModel {
         let ids = Pasteboard.readTrackIds()
         guard !ids.isEmpty else { return }
         if let anchor = queue.last(where: { queueSelection.contains($0.queueItemId) }) {
-            attempt { _ = try engine.insertAfter(trackIds: ids, afterQueueItemId: anchor.queueItemId) }
+            offMain { try $0.insertAfter(trackIds: ids, afterQueueItemId: anchor.queueItemId) }
         } else {
             enqueue(trackIds: ids)
         }
@@ -386,11 +386,31 @@ final class PlayerModel {
 
     /// Engine calls fail for real reasons (device vanished, track gone) but
     /// none of them are worth a modal. Surface it and carry on.
+    ///
+    /// For cheap calls only — transport commands are a send down a channel.
     private func attempt(_ body: () throws -> Void) {
         do {
             try body()
         } catch {
             lastError = String(describing: error)
+        }
+    }
+
+    /// Run a blocking engine call off the main actor.
+    ///
+    /// Anything that touches the queue resolves every track against the
+    /// database and builds a playlist item for each. On an artist that is
+    /// thousands of rows, and on the main actor it freezes the window. Nothing
+    /// here needs the result, so nothing waits for it — the engine pushes an
+    /// event when the queue actually changes.
+    private func offMain(_ body: @escaping @Sendable (KoanEngine) throws -> Void) {
+        let engine = self.engine
+        Task {
+            do {
+                try await Task.detached(priority: .userInitiated) { try body(engine) }.value
+            } catch {
+                lastError = String(describing: error)
+            }
         }
     }
 }

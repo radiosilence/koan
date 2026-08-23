@@ -16,10 +16,11 @@ struct ArtistBrowser: View {
             }
             .padding(.vertical, 2)
             .contentShape(Rectangle())
-            // Not a NavigationLink: it consumes the press that starts a drag.
-            .onTapGesture(count: 2) { library.reveal(artist: artist.id) }
-            .contextMenu { PlayableMenu(playable: .artist(id: artist.id, name: artist.name)) }
+            // Drag registers before the tap gestures, which would otherwise
+            // claim the press. Not a NavigationLink for the same reason.
             .draggablePlayable(.artist(id: artist.id, name: artist.name))
+            .contextMenu { PlayableMenu(playable: .artist(id: artist.id, name: artist.name)) }
+            .onTapGesture(count: 2) { library.reveal(artist: artist.id) }
         }
         .overlay {
             if library.visibleArtists.isEmpty {

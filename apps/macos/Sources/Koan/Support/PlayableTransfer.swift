@@ -1,3 +1,4 @@
+import Foundation
 import KoanFFI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -63,7 +64,31 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 
 extension View {
     /// Make this view a drag source for `playable`.
+    ///
+    /// `.onDrag` rather than `.draggable`: the newer Transferable API does not
+    /// take effect on List rows here, while the older item-provider one does.
+    /// Same identifier and same JSON on the wire, so `.dropDestination(for:)`
+    /// still decodes it.
     func draggablePlayable(_ playable: Playable) -> some View {
-        draggable(PlayableTransfer(playable))
+        let transfer = PlayableTransfer(playable)
+        return onDrag {
+            let provider = NSItemProvider()
+            provider.registerDataRepresentation(
+                forTypeIdentifier: UTType.koanPlayable.identifier,
+                visibility: .ownProcess
+            ) { completion in
+                completion(try? JSONEncoder().encode(transfer), nil)
+                return nil
+            }
+            // So a drag that leaves koan still says something useful.
+            provider.registerDataRepresentation(
+                forTypeIdentifier: UTType.plainText.identifier,
+                visibility: .all
+            ) { completion in
+                completion(Data(transfer.name.utf8), nil)
+                return nil
+            }
+            return provider
+        }
     }
 }
