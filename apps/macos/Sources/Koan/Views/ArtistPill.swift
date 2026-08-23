@@ -13,28 +13,26 @@ struct ArtistPill: View {
     @State private var hovering = false
 
     var body: some View {
-        Button {
-            library.reveal(artist: artistId)
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: "music.mic")
+        HStack(spacing: 5) {
+            Image(systemName: "music.mic")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+            Text(name)
+                .font(.callout)
+            if let detail {
+                Text(detail)
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
-                Text(name)
-                    .font(.callout)
-                if let detail {
-                    Text(detail)
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
             }
-            .padding(.horizontal, 11)
-            .padding(.vertical, 6)
-            .background(hovering ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.quaternary), in: Capsule())
-            .contentShape(Capsule())
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 6)
+        .background(hovering ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.quaternary), in: Capsule())
+        // Not a Button: a Button consumes the press that starts a drag, so the
+        // pill would never be draggable.
+        .contentShape(Capsule())
         .onHover { hovering = $0 }
+        .onTapGesture { library.reveal(artist: artistId) }
         .help("Go to \(name)")
         .contextMenu { PlayableMenu(playable: .artist(id: artistId, name: name)) }
         .draggablePlayable(.artist(id: artistId, name: name))

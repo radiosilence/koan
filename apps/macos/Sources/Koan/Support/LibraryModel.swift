@@ -29,6 +29,7 @@ final class LibraryModel {
             // across a switch would strand you on an unrelated detail view.
             path = NavigationPath()
             load()
+            if !navigatingHistory { record(.section(section)) }
         }
     }
 
@@ -220,6 +221,66 @@ final class LibraryModel {
     /// out. Cleared once the view has scrolled to it.
     var highlightedTrackId: Int64?
 
+    // MARK: - History
+    //
+    // A NavigationStack only goes back within one stack, so it can't return you
+    // across a section switch or a jump from search. This records every
+    // destination the user actually reached, which is what "back" means to
+    // someone using the app.
+
+    enum Destination: Hashable {
+        case section(Section)
+        case album(Int64)
+        case artist(Int64)
+    }
+
+    private(set) var history: [Destination] = [.section(.queue)]
+    private(set) var historyCursor = 0
+    /// Set while replaying history, so applying a destination doesn't record it
+    /// again and trap the user in a loop.
+    private var navigatingHistory = false
+
+    var canGoBack: Bool { historyCursor > 0 }
+    var canGoForward: Bool { historyCursor < history.count - 1 }
+
+    private func record(_ destination: Destination) {
+        // A new move discards anything ahead, the way a browser does.
+        if historyCursor < history.count - 1 {
+            history.removeSubrange((historyCursor + 1)...)
+        }
+        guard history.last != destination else { return }
+        history.append(destination)
+        historyCursor = history.count - 1
+    }
+
+    func goBack() {
+        guard canGoBack else { return }
+        historyCursor -= 1
+        apply(history[historyCursor])
+    }
+
+    func goForward() {
+        guard canGoForward else { return }
+        historyCursor += 1
+        apply(history[historyCursor])
+    }
+
+    private func apply(_ destination: Destination) {
+        navigatingHistory = true
+        defer { navigatingHistory = false }
+        switch destination {
+        case .section(let target):
+            section = target
+            path = NavigationPath()
+        case .album(let id):
+            path = NavigationPath()
+            path.append(AlbumRoute(id: id))
+        case .artist(let id):
+            path = NavigationPath()
+            path.append(ArtistRoute(id: id))
+        }
+    }
+
     /// Push a destination onto the current stack.
     ///
     /// Deliberately does *not* switch `section` first. Doing so swaps the
@@ -230,10 +291,12 @@ final class LibraryModel {
     func reveal(album id: Int64, highlighting trackId: Int64? = nil) {
         highlightedTrackId = trackId
         path.append(AlbumRoute(id: id))
+        if !navigatingHistory { record(.album(id)) }
     }
 
     func reveal(artist id: Int64) {
         path.append(ArtistRoute(id: id))
+        if !navigatingHistory { record(.artist(id)) }
     }
 
     // MARK: - Mutations

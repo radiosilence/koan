@@ -94,6 +94,11 @@ struct KoanApp: App {
                         .keyboardShortcut(command.key, modifiers: .command)
                 }
                 Divider()
+                Button("Back") { state?.library.goBack() }
+                    .keyboardShortcut("[", modifiers: .command)
+                Button("Forward") { state?.library.goForward() }
+                    .keyboardShortcut("]", modifiers: .command)
+                Divider()
                 Button("Toggle Lyrics") { showLyrics.toggle() }
                     .keyboardShortcut("l", modifiers: [.command, .option])
                 Divider()

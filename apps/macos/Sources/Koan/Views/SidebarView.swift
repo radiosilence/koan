@@ -5,6 +5,9 @@ struct SidebarView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
     @Environment(SearchModel.self) private var search
+    /// Highlights the Queue row while something is held over it — without it a
+    /// drop is a guess.
+    @State private var queueDropTargeted = false
 
     var body: some View {
         @Bindable var library = library
@@ -14,11 +17,22 @@ struct SidebarView: View {
             Section {
                 Label("Queue", systemImage: "list.bullet")
                     .tag(LibraryModel.Section.queue)
-                    // Drop anything playable here to queue it, from any view.
+                    // Full width, so the target is the row rather than just the
+                    // text — dropping onto the empty part of the row should
+                    // work, and a target you have to hit precisely is no target.
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
                     .dropDestination(for: PlayableTransfer.self) { dropped, _ in
                         player.acceptDrop(dropped)
                         return true
+                    } isTargeted: { targeted in
+                        queueDropTargeted = targeted
                     }
+                    .listRowBackground(
+                        queueDropTargeted
+                            ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25))
+                            : nil
+                    )
                 if search.hasQuery {
                     Label("Results", systemImage: "magnifyingglass")
                         .tag(LibraryModel.Section.searchResults)

@@ -63,6 +63,22 @@ struct RootView: View {
             }
         }
         .toolbar {
+            // Spans section switches and search jumps, which a NavigationStack's
+            // own back button cannot — it only knows about one stack.
+            ToolbarItemGroup(placement: .navigation) {
+                Button { library.goBack() } label: {
+                    Label("Back", systemImage: "chevron.left")
+                }
+                .disabled(!library.canGoBack)
+                .help("Back (⌘[)")
+
+                Button { library.goForward() } label: {
+                    Label("Forward", systemImage: "chevron.right")
+                }
+                .disabled(!library.canGoForward)
+                .help("Forward (⌘])")
+            }
+
             // Sort belongs next to what it sorts, so it only appears there.
             if library.section == .albums {
                 ToolbarItem(placement: .principal) {
