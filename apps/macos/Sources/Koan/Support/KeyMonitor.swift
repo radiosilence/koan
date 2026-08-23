@@ -36,15 +36,9 @@ final class KeyMonitor {
         guard event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else {
             return false
         }
-        guard !isEditingText else { return false }
+        guard !EditCommands.isEditingText else { return false }
         onSpace()
         return true
     }
 
-    private var isEditingText: Bool {
-        guard let responder = NSApp.keyWindow?.firstResponder else { return false }
-        if responder is NSTextView { return true }
-        if let view = responder as? NSView, view is NSTextField { return true }
-        return false
-    }
 }

@@ -134,19 +134,31 @@ struct KoanApp: App {
                     .keyboardShortcut("z", modifiers: [.command, .shift])
             }
 
-            // The standard Edit items, meaning what they mean everywhere else.
+            // The queue borrows these, but they must still mean the ordinary
+            // thing while typing — ⌘A in the search field selects the text, not
+            // the whole queue. EditCommands routes on what has focus.
             CommandGroup(replacing: .pasteboard) {
-                Button("Cut") { state?.player.cutSelection() }
-                    .keyboardShortcut("x", modifiers: .command)
-                Button("Copy") { state?.player.copySelection() }
-                    .keyboardShortcut("c", modifiers: .command)
-                Button("Paste") { state?.player.paste() }
-                    .keyboardShortcut("v", modifiers: .command)
-                Button("Delete") { state?.player.removeSelected() }
-                    .keyboardShortcut(.delete, modifiers: [])
+                Button("Cut") {
+                    EditCommands.cut { state?.player.cutSelection() }
+                }
+                .keyboardShortcut("x", modifiers: .command)
+                Button("Copy") {
+                    EditCommands.copy { state?.player.copySelection() }
+                }
+                .keyboardShortcut("c", modifiers: .command)
+                Button("Paste") {
+                    EditCommands.paste { state?.player.paste() }
+                }
+                .keyboardShortcut("v", modifiers: .command)
+                Button("Delete") {
+                    EditCommands.delete { state?.player.removeSelected() }
+                }
+                .keyboardShortcut(.delete, modifiers: [])
                 Divider()
-                Button("Select All") { state?.player.selectAllQueue() }
-                    .keyboardShortcut("a", modifiers: .command)
+                Button("Select All") {
+                    EditCommands.selectAll { state?.player.selectAllQueue() }
+                }
+                .keyboardShortcut("a", modifiers: .command)
             }
 
             CommandMenu("Queue") {
