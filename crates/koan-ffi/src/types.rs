@@ -77,6 +77,9 @@ pub struct Album {
     pub label: Option<String>,
     pub total_discs: Option<i32>,
     pub total_tracks: Option<i32>,
+    /// When it entered the library. Sortable text — the server's ISO `created`
+    /// for remote albums, SQLite's `datetime('now')` for locally scanned ones.
+    pub added_at: Option<String>,
 }
 
 impl From<AlbumRow> for Album {
@@ -92,6 +95,7 @@ impl From<AlbumRow> for Album {
             label: r.label,
             total_discs: r.total_discs,
             total_tracks: r.total_tracks,
+            added_at: r.added_at,
         }
     }
 }
@@ -388,6 +392,16 @@ pub struct SimilarArtist {
 
 /// Sort orders the library browser offers. Applied after the DB read, so it
 /// works uniformly across every listing regardless of which query produced it.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlbumSort {
+    /// Newest first. What a library browser should open on — the thing you
+    /// just added is the thing you want.
+    RecentlyAdded,
+    Title,
+    Artist,
+    Year,
+}
+
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackSort {
     /// Disc, then track number — album running order.

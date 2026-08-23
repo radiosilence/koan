@@ -145,6 +145,7 @@ fn read_metadata_lofty(
         source: "local".to_string(),
         remote_id: None,
         remote_url: None,
+        album_added_at: None,
     })
 }
 
@@ -197,6 +198,7 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         source: "local".to_string(),
         remote_id: None,
         remote_url: None,
+        album_added_at: None,
     })
 }
 
@@ -515,6 +517,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         source: "streaming".to_string(),
         remote_id: None,
         remote_url: None,
+        album_added_at: None,
     }
 }
 

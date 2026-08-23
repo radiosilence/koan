@@ -169,6 +169,7 @@ mod tests {
             source: "local".into(),
             remote_id: None,
             remote_url: None,
+            album_added_at: None,
             label: None,
         };
         queries::upsert_track(&db.conn, &meta).unwrap()

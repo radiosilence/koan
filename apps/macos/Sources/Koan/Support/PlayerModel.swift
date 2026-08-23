@@ -30,6 +30,10 @@ final class PlayerModel {
     private var knownQueueVersion: UInt64 = .max
     private var ticker: Task<Void, Never>?
 
+    /// Run after every state read. Now Playing hangs off this rather than
+    /// polling the engine a second time on its own timer.
+    var onTick: (() -> Void)?
+
     init(engine: KoanEngine) {
         self.engine = engine
         self.nowPlaying = engine.nowPlaying()
@@ -61,6 +65,7 @@ final class PlayerModel {
             // avoid.
             rebuildQueue()
         }
+        onTick?()
     }
 
     private var hasActiveDownloads = false
@@ -100,6 +105,8 @@ final class PlayerModel {
     // MARK: - Transport
 
     func togglePlayPause() { attempt { try engine.togglePlayPause() } }
+    func pause() { attempt { try engine.pause() } }
+    func resume() { attempt { try engine.resume() } }
     func next() { attempt { try engine.next() } }
     func previous() { attempt { try engine.previous() } }
     func stop() { attempt { try engine.stop() } }
@@ -108,7 +115,10 @@ final class PlayerModel {
 
     /// Commit a scrub. Position comes from the drag, not the engine.
     func seek(fraction: Double) {
-        let ms = UInt64(max(0, fraction) * Double(nowPlaying.durationMs))
+        seek(toMs: UInt64(max(0, min(1, fraction)) * Double(nowPlaying.durationMs)))
+    }
+
+    func seek(toMs ms: UInt64) {
         scrubbing = nil
         attempt { try engine.seek(positionMs: ms) }
     }
@@ -178,6 +188,24 @@ final class PlayerModel {
     @discardableResult
     func toggleFavourite(trackId: Int64) -> Bool {
         (try? engine.toggleFavourite(trackId: trackId)) ?? false
+    }
+
+    // MARK: - Session
+
+    /// Persist the queue and position. Called on quit, and periodically so an
+    /// unclean exit doesn't lose the session.
+    func saveSession() {
+        try? engine.saveSession()
+    }
+
+    /// Restore the queue from the last session without starting playback.
+    func restoreSession() {
+        let engine = self.engine
+        Task {
+            _ = await Task.detached(priority: .userInitiated) {
+                try? engine.restoreSession()
+            }.value
+        }
     }
 
     // MARK: - Errors

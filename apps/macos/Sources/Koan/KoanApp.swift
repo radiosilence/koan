@@ -13,21 +13,30 @@ final class AppState {
     let library: LibraryModel
     let search: SearchModel
     let art: CoverArtCache
+    private var nowPlaying: NowPlayingCentre?
 
     init() throws {
         let engine = try KoanEngine()
         self.engine = engine
-        self.player = PlayerModel(engine: engine)
+        let player = PlayerModel(engine: engine)
+        self.player = player
         let library = LibraryModel(engine: engine)
         self.library = library
         self.search = SearchModel(engine: engine, library: library)
-        self.art = CoverArtCache(engine: engine)
+        let art = CoverArtCache(engine: engine)
+        self.art = art
+
+        // Control Center and the media keys ride the player's existing poll.
+        let centre = NowPlayingCentre(player: player, art: art)
+        self.nowPlaying = centre
+        player.onTick = { [weak centre] in centre?.refresh() }
     }
 }
 
 @main
 struct KoanApp: App {
     @State private var state: AppState?
+    @Environment(\.scenePhase) private var scenePhase
     @State private var startupError: String?
     @State private var showingPicker = false
 
@@ -53,12 +62,17 @@ struct KoanApp: App {
                 do {
                     let created = try AppState()
                     created.player.startPolling()
+                    created.player.restoreSession()
                     created.library.loadInitial()
                     state = created
                 } catch {
                     startupError = String(describing: error)
                 }
             }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Backgrounding is the last dependable moment before termination.
+            if phase != .active { state?.player.saveSession() }
         }
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {

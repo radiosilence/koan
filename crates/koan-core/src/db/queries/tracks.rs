@@ -109,6 +109,7 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
         meta.codec.as_deref(),
         meta.label.as_deref(),
         None,
+        meta.album_added_at.as_deref(),
     )?;
 
     // 1. Match by path.

@@ -102,7 +102,7 @@ struct ArtistDetailView: View {
         let engine = library.engine
         let id = artistId
         albums = await Task.detached(priority: .userInitiated) {
-            (try? engine.albums(artistId: id)) ?? []
+            (try? engine.albums(artistId: id, sort: .year)) ?? []
         }.value
         similar = await Task.detached(priority: .utility) {
             (try? engine.similarArtists(artistId: id)) ?? []

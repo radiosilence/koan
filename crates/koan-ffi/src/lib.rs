@@ -257,14 +257,31 @@ impl KoanEngine {
         Ok(rows.into_iter().map(Artist::from).collect())
     }
 
-    pub fn albums(&self, artist_id: Option<i64>) -> Result<Vec<Album>, KoanError> {
+    pub fn albums(&self, artist_id: Option<i64>, sort: AlbumSort) -> Result<Vec<Album>, KoanError> {
         let db = self.db()?;
         let rows = match artist_id {
             Some(id) => queries::albums_for_artist(&db.conn, id),
             None => queries::all_albums(&db.conn),
         }
         .map_err(db_err)?;
-        Ok(rows.into_iter().map(Album::from).collect())
+
+        let mut albums: Vec<Album> = rows.into_iter().map(Album::from).collect();
+        match sort {
+            // Albums predating the added_at column sort last rather than first,
+            // which is what an empty string would do.
+            AlbumSort::RecentlyAdded => albums.sort_by(|a, b| {
+                b.added_at
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(a.added_at.as_deref().unwrap_or(""))
+            }),
+            AlbumSort::Title => albums.sort_by_key(|a| a.title.to_lowercase()),
+            AlbumSort::Artist => {
+                albums.sort_by_key(|a| (a.artist_name.to_lowercase(), a.year.unwrap_or(0)))
+            }
+            AlbumSort::Year => albums.sort_by_key(|a| std::cmp::Reverse(a.year.unwrap_or(0))),
+        }
+        Ok(albums)
     }
 
     pub fn album(&self, album_id: i64) -> Result<Option<Album>, KoanError> {
@@ -628,6 +645,82 @@ impl KoanEngine {
     pub fn delete_snapshot(&self, name: String) -> Result<bool, KoanError> {
         let db = self.db()?;
         queries::delete_snapshot(&db.conn, &name).map_err(fav_err)
+    }
+
+    // --- Session persistence -----------------------------------------------
+
+    /// Write the queue and position so the next launch can pick them up.
+    /// Call it on quit; it is cheap enough to call on a timer too.
+    pub fn save_session(&self) -> Result<(), KoanError> {
+        let db = self.db()?;
+        let (items, cursor) = self.state.snapshot_playlist();
+        let persisted: Vec<PersistedQueueItem> = items
+            .iter()
+            .map(PersistedQueueItem::from_playlist_item)
+            .collect();
+        let cursor_path = cursor.and_then(|cid| {
+            items
+                .iter()
+                .find(|i| i.id == cid)
+                .map(|i| i.path.to_string_lossy().into_owned())
+        });
+        queries::save_playback_state(
+            &db.conn,
+            &persisted,
+            cursor_path.as_deref(),
+            self.state.position_ms(),
+        )
+        .map_err(fav_err)
+    }
+
+    /// Restore the queue saved by `save_session`, cursor and position included.
+    /// Deliberately does not start playing — reopening an app should not make
+    /// noise. Returns the number of items restored.
+    pub fn restore_session(&self) -> Result<u32, KoanError> {
+        let db = self.db()?;
+        let Some(saved) = queries::load_playback_state(&db.conn).map_err(fav_err)? else {
+            return Ok(0);
+        };
+
+        let mut items = Vec::new();
+        let mut pending: Vec<(i64, QueueItemId)> = Vec::new();
+        for saved_item in &saved.items {
+            if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &saved_item.path)
+                && let Ok(Some(row)) = queries::get_track_row(&db.conn, tid)
+            {
+                let item = track_to_playlist_item(&row, &db);
+                if matches!(item.load_state, LoadState::Pending) {
+                    pending.push((tid, item.id));
+                }
+                items.push(item);
+            } else {
+                items.push(saved_item.to_playlist_item());
+            }
+        }
+        if items.is_empty() {
+            return Ok(0);
+        }
+
+        let count = items.len() as u32;
+        let cursor = saved
+            .cursor_path
+            .as_ref()
+            .and_then(|cp| {
+                items
+                    .iter()
+                    .find(|i| i.path.to_string_lossy() == cp.as_str())
+            })
+            .map(|i| i.id);
+
+        self.send(PlayerCommand::AddToPlaylist(items))?;
+        // Park the cursor without starting playback.
+        if let Some(id) = cursor {
+            self.state.set_cursor(Some(id));
+            self.state.set_position_ms(saved.position_ms);
+        }
+        self.start_downloads(pending);
+
+        Ok(count)
     }
 
     // --- Output device -----------------------------------------------------

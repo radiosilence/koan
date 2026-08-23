@@ -67,12 +67,28 @@ struct RootView: View {
                 }
                 .help("Build a queue from several things at once (⌘K)")
             }
+            // Sort belongs next to what it sorts, so it only appears there.
+            if library.section == .albums {
+                ToolbarItem(placement: .principal) {
+                    Picker("Sort", selection: Binding(
+                        get: { library.albumSort },
+                        set: { library.albumSort = $0 }
+                    )) {
+                        ForEach(AlbumSort.all, id: \.self) { sort in
+                            Text(sort.label).tag(sort)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(width: 150)
+                    .help("Sort albums")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showLyrics.toggle()
-                } label: {
+                Toggle(isOn: $showLyrics) {
                     Label("Lyrics", systemImage: "text.quote")
                 }
+                .toggleStyle(.button)
                 .help("Lyrics panel")
             }
         }

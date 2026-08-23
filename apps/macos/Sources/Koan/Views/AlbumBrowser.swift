@@ -20,10 +20,7 @@ struct AlbumBrowser: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 22) {
                         ForEach(library.visibleAlbums, id: \.id) { album in
-                            NavigationLink(value: AlbumRoute(id: album.id)) {
-                                AlbumCell(album: album)
-                            }
-                            .buttonStyle(.plain)
+                            AlbumCell(album: album)
                         }
                     }
                     .padding(20)
@@ -38,28 +35,35 @@ private struct AlbumCell: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
 
+    @State private var titleHovering = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            AlbumArtwork(source: .album(album.id))
+            PlayableArtwork(albumId: album.id)
                 .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
 
             Text(album.title)
                 .font(.callout.weight(.medium))
+                .underline(titleHovering)
                 .lineLimit(1)
+                .contentShape(.rect)
+                .onHover { titleHovering = $0 }
+                .onTapGesture { library.reveal(album: album.id) }
+
             HStack(spacing: 4) {
-                Text(album.artistName)
-                    .lineLimit(1)
+                LinkText(text: album.artistName, target: .artist(album.artistId), font: .caption)
                 if let year = album.year {
                     Text("· \(String(year))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
-            .font(.caption)
-            .foregroundStyle(.secondary)
         }
-        .contentShape(.rect)
         .contextMenu {
             Button("Play") { play(replacing: true) }
             Button("Add to Queue") { play(replacing: false) }
+            Divider()
+            Button("Go to Artist") { library.reveal(artist: album.artistId) }
         }
     }
 
@@ -92,7 +96,8 @@ struct AlbumDetailView: View {
             title: album?.title ?? "Album",
             subtitle: subtitle,
             tracks: library.detailTracks,
-            artwork: .album(albumId)
+            artwork: .album(albumId),
+            artistLink: album?.artistId
         )
         .task(id: albumId) {
             library.loadTracks(albumId: albumId)

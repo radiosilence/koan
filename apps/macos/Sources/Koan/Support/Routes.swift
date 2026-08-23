@@ -11,3 +11,39 @@ struct AlbumRoute: Hashable {
 struct ArtistRoute: Hashable {
     let id: Int64
 }
+
+import KoanFFI
+
+/// Stable strings for `UserDefaults`, so the stored preference survives the
+/// enum gaining or reordering cases.
+extension AlbumSort {
+    var storageKey: String {
+        switch self {
+        case .recentlyAdded: "recentlyAdded"
+        case .title: "title"
+        case .artist: "artist"
+        case .year: "year"
+        }
+    }
+
+    init?(storageKey: String) {
+        switch storageKey {
+        case "recentlyAdded": self = .recentlyAdded
+        case "title": self = .title
+        case "artist": self = .artist
+        case "year": self = .year
+        default: return nil
+        }
+    }
+
+    var label: String {
+        switch self {
+        case .recentlyAdded: "Recently Added"
+        case .title: "Title"
+        case .artist: "Artist"
+        case .year: "Year"
+        }
+    }
+
+    static let all: [AlbumSort] = [.recentlyAdded, .title, .artist, .year]
+}

@@ -8,6 +8,8 @@ struct TrackListView: View {
     var subtitle: String = ""
     let tracks: [Track]
     var artwork: AlbumArtwork.Source?
+    /// Makes the header's subtitle navigate to the artist.
+    var artistLink: Int64?
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -69,6 +71,17 @@ struct TrackListView: View {
         }
     }
 
+    /// The subtitle is "Artist · 2007 · FLAC · 59:10"; only the first part is
+    /// the artist, and only that part should link.
+    private var subtitleArtist: String {
+        subtitle.components(separatedBy: " · ").first ?? subtitle
+    }
+
+    private var subtitleRest: String {
+        let parts = subtitle.components(separatedBy: " · ").dropFirst()
+        return parts.isEmpty ? "" : "· " + parts.joined(separator: " · ")
+    }
+
     private var header: some View {
         HStack(alignment: .bottom, spacing: 18) {
             if let artwork {
@@ -81,7 +94,16 @@ struct TrackListView: View {
                 Text(title)
                     .font(.system(size: 26, weight: .semibold))
                     .lineLimit(2)
-                if !subtitle.isEmpty {
+                if let artistLink {
+                    HStack(spacing: 5) {
+                        LinkText(text: subtitleArtist, target: .artist(artistLink))
+                        if !subtitleRest.isEmpty {
+                            Text(subtitleRest)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else if !subtitle.isEmpty {
                     Text(subtitle)
                         .font(.callout)
                         .foregroundStyle(.secondary)
@@ -139,10 +161,11 @@ private struct TrackRow: View {
                 Text(track.title)
                     .lineLimit(1)
                     .foregroundStyle(isCurrent ? AnyShapeStyle(.tint) : AnyShapeStyle(.primary))
-                Text(track.artistName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+                LinkText(
+                    text: track.artistName,
+                    target: track.artistId.map { .artist($0) },
+                    font: .caption
+                )
             }
 
             Spacer(minLength: 8)

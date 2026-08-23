@@ -35,6 +35,16 @@ final class LibraryModel {
     /// Substring filter over whatever the current section is showing.
     var filter: String = ""
 
+    /// Newest first by default: the record you just added is the one you're
+    /// looking for. Persisted so it survives a relaunch.
+    var albumSort: AlbumSort = .recentlyAdded {
+        didSet {
+            guard albumSort != oldValue else { return }
+            UserDefaults.standard.set(albumSort.storageKey, forKey: "albumSort")
+            reloadAlbums()
+        }
+    }
+
     private(set) var albums: [Album] = []
     private(set) var artists: [Artist] = []
     private(set) var favourites: [Track] = []
@@ -56,6 +66,21 @@ final class LibraryModel {
 
     init(engine: KoanEngine) {
         self.engine = engine
+        if let stored = UserDefaults.standard.string(forKey: "albumSort"),
+           let sort = AlbumSort(storageKey: stored) {
+            albumSort = sort
+        }
+    }
+
+    private func reloadAlbums() {
+        let engine = self.engine
+        let sort = albumSort
+        Task {
+            albums = await Task.detached(priority: .userInitiated) {
+                (try? engine.albums(artistId: nil, sort: sort)) ?? []
+            }.value
+            reindex()
+        }
     }
 
     // MARK: - Filtered views
@@ -105,10 +130,11 @@ final class LibraryModel {
 
     private func prefetchCatalogue() {
         let engine = self.engine
+        let sort = albumSort
         Task {
             if albums.isEmpty {
                 albums = await Task.detached(priority: .utility) {
-                    (try? engine.albums(artistId: nil)) ?? []
+                    (try? engine.albums(artistId: nil, sort: sort)) ?? []
                 }.value
             }
             if artists.isEmpty {
@@ -130,6 +156,7 @@ final class LibraryModel {
     func load() {
         let engine = self.engine
         let section = self.section
+        let sort = albumSort
         isLoading = true
 
         Task {
@@ -139,7 +166,7 @@ final class LibraryModel {
             case .albums:
                 if albums.isEmpty {
                     albums = await Task.detached(priority: .userInitiated) {
-                        (try? engine.albums(artistId: nil)) ?? []
+                        (try? engine.albums(artistId: nil, sort: sort)) ?? []
                     }.value
                     reindex()
                 }

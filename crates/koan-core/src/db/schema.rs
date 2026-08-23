@@ -23,6 +23,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             codec        TEXT,
             label        TEXT,
             remote_id    TEXT,
+            added_at     TEXT,
             UNIQUE(title, artist_id)
         );
 
@@ -185,6 +186,10 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         // was replaced since the organize is left alone.
         "ALTER TABLE organize_log ADD COLUMN size_bytes INTEGER",
         "ALTER TABLE organize_log ADD COLUMN mtime INTEGER",
+        // When the album entered the library, so clients can offer a
+        // recently-added ordering. Remote sync supplies the server's own
+        // `created`; a local scan has nothing better than the time it ran.
+        "ALTER TABLE albums ADD COLUMN added_at TEXT",
     ];
     for sql in &migrations {
         match conn.execute(sql, []) {
