@@ -429,7 +429,7 @@ jobs:
             desc "Bit-perfect music player for macOS"
             homepage "https://github.com/radiosilence/koan"
 
-            depends_on macos: ">= :sonoma"
+            depends_on macos: ">= :tahoe"
 
             app "Koan.app"
 

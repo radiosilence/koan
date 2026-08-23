@@ -4,6 +4,12 @@
 
 ### Added
 
+- **The macOS app takes the TUI's single-key shortcuts.** `space`, `<`/`>`, `,`/`.`, `f`, `R`, `p`, `/`, `l`/`a`, `r`, `g`/`G`, `L`, `z` and `?` do there what they do in the TUI, and Help ▸ Keyboard Shortcuts (`?`) lists them — generated from the table that implements them, so the two cannot drift.
+
+  They are handled by a local event monitor rather than declared as menu shortcuts. A modifier-less key equivalent is claimed by the menu bar before the responder chain sees it, which would mean `f` favouriting a track instead of typing an f into the search field. The monitor asks what has focus first: the keys are live in the app and dead in any text field, sheet or the settings window. The cost is type-select in lists, which koan's browsers have a filter field for.
+
+  `Esc` now leaves a search or filter field rather than only clearing it, and `⌘F` focuses the filter on the albums and artists pages, the library search everywhere else.
+
 - **Play history.** koan never recorded its own plays: `play_history` existed for the radio feature, and its only production writer was the inbound Subsonic scrobble route — i.e. plays arrived when *other* clients scrobbled to koan, and playing a track in koan itself wrote nothing.
 
   A track is now written to history the moment it starts, not once it has been listened to for long enough. History answers "what did I put on, and in what order"; putting something on and skipping two seconds in is still a thing you did, and a log with a threshold on it is a log with holes in it. How long it was actually heard for is filled in afterwards, from position deltas — so a pause adds nothing and a seek does not credit the stretch it skipped.
@@ -11,6 +17,10 @@
   The macOS app gains a **History** section (⌘5) grouped by day. Read-only: rows link through to the album and the artist and carry the usual play/queue menu, but the only thing you can change is the log itself — select and ⌫ to forget entries, the same as queue items.
 
   Plays of tracks that came from a remote server are scrobbled to it. `SubsonicClient::scrobble` had been written and never called.
+
+### Changed
+
+- **The macOS app requires macOS 26.** It was built against 14. Nothing in the app is holding the old floor up and the newer SwiftUI is worth having — `searchFocused`, which is what lets `/` put the caret in the search field, is 15-and-later on its own. The Homebrew cask requires Tahoe to match.
 
 ### Fixed
 

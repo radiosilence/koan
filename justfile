@@ -146,7 +146,7 @@ macos-bundle: macos-build
     if /usr/bin/actool --version >/dev/null 2>&1; then
         /usr/bin/actool {{app_dir}}/Resources/Assets.xcassets \
             --compile "$app/Contents/Resources" \
-            --platform macosx --minimum-deployment-target 14.0 \
+            --platform macosx --minimum-deployment-target 26.0 \
             --output-partial-info-plist /dev/null >/dev/null
         accent='<key>NSAccentColorName</key><string>AccentColor</string>'
     else
@@ -167,7 +167,7 @@ macos-bundle: macos-build
         <key>CFBundleVersion</key><string>${version}</string>
         <key>CFBundleIconFile</key><string>AppIcon</string>
         ${accent}
-        <key>LSMinimumSystemVersion</key><string>14.0</string>
+        <key>LSMinimumSystemVersion</key><string>26.0</string>
         <key>NSHighResolutionCapable</key><true/>
         <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
         <key>UTExportedTypeDeclarations</key>
