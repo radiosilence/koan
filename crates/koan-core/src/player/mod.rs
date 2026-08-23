@@ -977,8 +977,19 @@ impl Player {
                         Some((Box::new(item), after))
                     })
                     .collect();
-                for &id in &ids {
-                    self.remove_from_playlist(id);
+                // One removal, not one per id. Looping `remove_from_playlist`
+                // took the playlist lock and bumped the version for every
+                // track, and re-entered `next_track` each time the cursor
+                // landed on another doomed item — so clearing a large selection
+                // visibly deleted one at a time and restarted playback
+                // repeatedly.
+                let was_cursor = self
+                    .shared_state
+                    .cursor()
+                    .is_some_and(|cursor| ids.contains(&cursor));
+                self.shared_state.remove_items(&ids);
+                if was_cursor {
+                    self.next_track();
                 }
                 if !items_with_pos.is_empty() {
                     self.push_undo(UndoEntry::Removed {
@@ -1266,8 +1277,16 @@ mod tests {
         let c_id = items[2].id;
 
         player.process_command(PlayerCommand::AddToPlaylist(items));
+        let version_before = player.shared_state.playlist_version();
         player.process_command(PlayerCommand::RemoveFromPlaylistBatch(vec![b_id, c_id]));
         assert_eq!(playlist_titles(&player), vec!["A", "D"]);
+        // One bump for the whole batch. Bumping per item is what made clearing
+        // a large queue crawl, and every bump wakes every client watching.
+        assert_eq!(
+            player.shared_state.playlist_version(),
+            version_before + 1,
+            "batch removal must bump the playlist version exactly once"
+        );
 
         // Single undo restores both
         player.process_command(PlayerCommand::Undo);
