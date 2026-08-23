@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.25.2 (2026-08-23)
+
+### Fixed
+
+- **The macOS app is universal again.** `swift build --arch arm64 --arch x86_64` puts its lipo'd product under `.build/apple/Products` and leaves `.build/release` pointing at one slice, so the bundle shipped the arm64 slice out of a build that had just compiled x86_64 as well — v0.25.1 does not run on Intel.
+- **A broken bundle can no longer ship.** `just macos-verify <arches>` asserts the binary contains every architecture asked for and does not link `koan_ffi` dynamically, and CI runs it between the build and the DMG. Both bundles that went out broken today built, signed and packaged without complaint.
+- **The Homebrew cask is no longer published with an empty checksum.** The shas came from bare `sha256sum <path>` calls whose failure went nowhere, so a missing artifact produced `sha256 ""` — which Homebrew refuses to install — and nothing in the run said so.
+
+### Changed
+
+- **Direct downloads say how to get past Gatekeeper.** The app is signed but not notarised, so macOS refuses the first open of a downloaded copy and offers only "Move to Trash". The `xattr -dr com.apple.quarantine` line now leads the release notes and the README's install section; the Homebrew cask already did this in a postflight.
+
 ## v0.25.1 (2026-08-23)
 
 ### Fixed
