@@ -57,6 +57,9 @@ struct KoanApp: App {
                         .environment(state.library)
                         .environment(state.search)
                         .environment(state.art)
+                        // One accent for the whole app, from the icon. Without
+                        // this everything inherits the system blue.
+                        .tint(.koanAccent)
                 } else if let startupError {
                     StartupErrorView(message: startupError)
                 } else {
