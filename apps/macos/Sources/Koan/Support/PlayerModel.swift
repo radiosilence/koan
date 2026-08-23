@@ -29,6 +29,12 @@ final class PlayerModel {
     /// `nil` means system default. Read back from config, so it survives restarts.
     private(set) var currentDevice: String?
 
+    /// Which queue rows are selected.
+    ///
+    /// Lives on the model rather than in the view because the Edit menu acts on
+    /// it, and a menu can't reach a view's `@State`.
+    var queueSelection: Set<String> = []
+
     /// Set while the user drags the seek head, so the poll doesn't yank the
     /// thumb back to the engine's position mid-gesture.
     var scrubbing: Double?
@@ -289,6 +295,50 @@ final class PlayerModel {
     @discardableResult
     func toggleFavourite(trackId: Int64) -> Bool {
         (try? engine.toggleFavourite(trackId: trackId)) ?? false
+    }
+
+    // MARK: - Edit actions
+    //
+    // Wired to the standard Edit menu, so ⌘A/⌘C/⌘X/⌘V/Delete mean what they
+    // mean everywhere else rather than being decorative.
+
+    func selectAllQueue() { queueSelection = Set(queue.map(\.queueItemId)) }
+
+    func removeSelected() {
+        remove(itemIds: Array(queueSelection))
+        queueSelection = []
+    }
+
+    /// Track IDs behind the current selection, in queue order.
+    var selectedTrackIds: [Int64] {
+        queue.filter { queueSelection.contains($0.queueItemId) }.compactMap(\.trackId)
+    }
+
+    /// Copies as both a koan payload and plain text: the first lets it be
+    /// pasted back into the queue, the second makes it useful anywhere else.
+    func copySelection() {
+        let items = queue.filter { queueSelection.contains($0.queueItemId) }
+        guard !items.isEmpty else { return }
+        Pasteboard.write(
+            trackIds: items.compactMap(\.trackId),
+            text: items.map { "\($0.artist) — \($0.title)" }.joined(separator: "\n")
+        )
+    }
+
+    func cutSelection() {
+        copySelection()
+        removeSelected()
+    }
+
+    /// Pastes after the selection if there is one, otherwise appends.
+    func paste() {
+        let ids = Pasteboard.readTrackIds()
+        guard !ids.isEmpty else { return }
+        if let anchor = queue.last(where: { queueSelection.contains($0.queueItemId) }) {
+            attempt { _ = try engine.insertAfter(trackIds: ids, afterQueueItemId: anchor.queueItemId) }
+        } else {
+            enqueue(trackIds: ids)
+        }
     }
 
     // MARK: - Session

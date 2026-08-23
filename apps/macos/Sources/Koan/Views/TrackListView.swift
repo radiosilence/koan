@@ -41,9 +41,12 @@ struct TrackListView: View {
                                 isCurrent: player.currentTrackId == track.id
                             )
                             .id(track.id)
-                            .onTapGesture(count: 2) {
+                            // Not `onTapGesture`: that consumes the click
+                            // before the List's own selection handling sees it,
+                            // which is why single clicks were being dropped.
+                            .simultaneousGesture(TapGesture(count: 2).onEnded {
                                 player.playNow(trackIds: tracks.map(\.id), startingAt: index)
-                            }
+                            })
                             .contextMenu { PlayableMenu(playable: .track(track)) }
                         }
                     }

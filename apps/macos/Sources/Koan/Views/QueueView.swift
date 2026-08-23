@@ -11,14 +11,15 @@ struct QueueView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
 
-    @State private var selection: Set<String> = []
     @State private var savingSnapshot = false
     @State private var snapshotName = ""
 
     private var groups: [QueueGroup] { QueueGroup.group(player.queue) }
 
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var player = player
+
+        return VStack(spacing: 0) {
             header
             Divider()
 
@@ -37,13 +38,21 @@ struct QueueView: View {
                     // dragged within its own album — which looked like "played
                     // items can't be dragged", they just tend to sit in an
                     // earlier group than the drop target.
-                    List(selection: $selection) {
+                    List(selection: $player.queueSelection) {
                         ForEach(Array(player.queue.enumerated()), id: \.element.queueItemId) { index, item in
                             VStack(alignment: .leading, spacing: 0) {
                                 if let heading = heading(at: index) {
                                     QueueAlbumHeader(group: heading)
                                         .padding(.top, index == 0 ? 0 : 10)
                                         .padding(.bottom, 3)
+                                        .contentShape(.rect)
+                                        // Selects the whole run, so the next
+                                        // drag moves the album rather than the
+                                        // single row the heading sits above.
+                                        .simultaneousGesture(TapGesture().onEnded {
+                                            player.queueSelection = Set(groupItemIds(from: index))
+                                        })
+                                        .help("Select this album")
                                 }
                                 QueueRow(
                                     item: item,
@@ -52,7 +61,9 @@ struct QueueView: View {
                                 )
                             }
                             .id(item.queueItemId)
-                            .onTapGesture(count: 2) { player.play(itemId: item.queueItemId) }
+                            .simultaneousGesture(TapGesture(count: 2).onEnded {
+                                player.play(itemId: item.queueItemId)
+                            })
                             .contextMenu { menu(for: item) }
                         }
                         .onMove(perform: move)
@@ -62,7 +73,7 @@ struct QueueView: View {
                     // Follow the cursor as tracks advance, but never fight a
                     // user who has scrolled somewhere deliberately.
                     .onChange(of: player.currentItemId) { _, id in
-                        guard let id, selection.isEmpty else { return }
+                        guard let id, player.queueSelection.isEmpty else { return }
                         withAnimation { proxy.scrollTo(id, anchor: .center) }
                     }
                 }
@@ -95,8 +106,8 @@ struct QueueView: View {
 
             Spacer()
 
-            if !selection.isEmpty {
-                Text("\(selection.count) selected")
+            if !player.queueSelection.isEmpty {
+                Text("\(player.queueSelection.count) selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Remove", role: .destructive) { removeSelected() }
@@ -144,9 +155,14 @@ struct QueueView: View {
         }
     }
 
-    private func removeSelected() {
-        player.remove(itemIds: Array(selection))
-        selection = []
+    private func removeSelected() { player.removeSelected() }
+
+    /// Every queue item belonging to the run that starts at `index`.
+    private func groupItemIds(from index: Int) -> [String] {
+        let start = player.queue[index]
+        return player.queue[index...]
+            .prefix { $0.album == start.album && $0.albumArtist == start.albumArtist }
+            .map(\.queueItemId)
     }
 
     /// The album heading to draw above this row, if it starts a new run.

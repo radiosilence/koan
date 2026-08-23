@@ -114,12 +114,31 @@ struct KoanApp: App {
                     .keyboardShortcut("r", modifiers: [.command, .option])
             }
 
-            CommandMenu("Queue") {
+            // Replaces the stock Edit ▸ Undo, which has no undo manager behind
+            // it here. Declaring ⌘Z anywhere else just loses to it.
+            CommandGroup(replacing: .undoRedo) {
                 Button("Undo") { state?.player.undo() }
                     .keyboardShortcut("z", modifiers: .command)
                 Button("Redo") { state?.player.redo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
+            }
+
+            // The standard Edit items, meaning what they mean everywhere else.
+            CommandGroup(replacing: .pasteboard) {
+                Button("Cut") { state?.player.cutSelection() }
+                    .keyboardShortcut("x", modifiers: .command)
+                Button("Copy") { state?.player.copySelection() }
+                    .keyboardShortcut("c", modifiers: .command)
+                Button("Paste") { state?.player.paste() }
+                    .keyboardShortcut("v", modifiers: .command)
+                Button("Delete") { state?.player.removeSelected() }
+                    .keyboardShortcut(.delete, modifiers: [])
                 Divider()
+                Button("Select All") { state?.player.selectAllQueue() }
+                    .keyboardShortcut("a", modifiers: .command)
+            }
+
+            CommandMenu("Queue") {
                 Button("Save Session") { state?.player.saveSession() }
                 Button("Clear Queue") { state?.player.clearQueue() }
             }
