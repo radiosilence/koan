@@ -118,20 +118,46 @@ pub fn scan_folder(
 
     result.skipped = total_files - files_to_scan.len();
 
-    // One transaction per chunk. Reading tags for the whole library up front then
-    // writing it in a single transaction blocks every other writer for the length
-    // of the scan and throws away all of it on interrupt.
-    for chunk in files_to_scan.chunks(CHUNK_SIZE) {
-        // Read metadata in parallel (CPU-bound tag parsing — no DB access here).
-        let metadata_results: Vec<(PathBuf, Result<TrackMeta, String>)> = chunk
-            .par_iter()
-            .map(|file_path| {
-                (
+    // Tag reads and database writes run at the same time.
+    //
+    // Reading the whole library up front and writing it in one transaction
+    // blocks every other writer for the length of the scan and loses all of it
+    // on interrupt, so writes stay chunked. But doing that as read-chunk,
+    // write-chunk, read-chunk leaves the disk idle for every write and the CPU
+    // idle for every read — on a library of any size that is most of the run.
+    //
+    // Instead the reads stream: a worker pool walks every file and pushes
+    // results down a bounded channel while this thread batches them into
+    // transactions. The bound is what caps memory, in place of the chunking.
+    let (send, recv) = crossbeam_channel::bounded::<(PathBuf, Result<TrackMeta, String>)>(
+        CHUNK_SIZE.saturating_mul(2),
+    );
+    let reader = std::thread::Builder::new()
+        .name("koan-scan-read".into())
+        .spawn(move || {
+            files_to_scan.par_iter().for_each(|file_path| {
+                // A send error means the consumer is gone; nothing left to do.
+                let _ = send.send((
                     file_path.clone(),
                     isolate_read(file_path, metadata::read_metadata),
-                )
-            })
-            .collect();
+                ));
+            });
+        });
+    if let Err(e) = &reader {
+        log::error!("failed to spawn scan reader: {}", e);
+        result
+            .errors
+            .push((path.to_path_buf(), format!("scan error: {}", e)));
+        return result;
+    }
+
+    loop {
+        // Blocks until a full batch is ready or the readers have finished.
+        let batch: Vec<(PathBuf, Result<TrackMeta, String>)> =
+            recv.iter().take(CHUNK_SIZE).collect();
+        if batch.is_empty() {
+            break;
+        }
 
         let tx = match db.conn.unchecked_transaction() {
             Ok(tx) => tx,
@@ -145,7 +171,7 @@ pub fn scan_folder(
         };
 
         let (mut added, mut updated) = (0usize, 0usize);
-        for (file_path, meta_result) in metadata_results {
+        for (file_path, meta_result) in batch {
             match meta_result {
                 Ok(meta) => match queries::upsert_track_status(&tx, &meta) {
                     Ok((track_id, is_new)) => {
@@ -196,6 +222,12 @@ pub fn scan_folder(
                     .push((path.to_path_buf(), format!("db error: {}", e)));
             }
         }
+    }
+
+    if let Ok(handle) = reader
+        && handle.join().is_err()
+    {
+        log::error!("scan reader thread panicked");
     }
 
     // Remove tracks for files that no longer exist. A folder that yielded nothing

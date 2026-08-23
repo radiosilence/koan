@@ -68,14 +68,29 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
     }
 }
 
+/// lofty refuses any tag that would allocate past a global cap, and its default
+/// is 16 MB — small enough that one record with 4000x4000 cover art in its
+/// Vorbis comments fails to parse at all, dropping every track on it to the
+/// Symphonia fallback with worse metadata and three file parses instead of one.
+/// The cap exists to stop a hostile file exhausting memory, which 256 MB still
+/// does on any machine that can run a music player.
+fn raise_allocation_limit() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        lofty::config::apply_global_options(
+            lofty::config::GlobalOptions::new().allocation_limit(256 * 1024 * 1024),
+        );
+    });
+}
+
 /// lofty's own reader, minus the pictures.
 ///
 /// `extract_cover_art` still reads them, with the defaults, for whichever
 /// single track actually needs artwork.
 fn read_tagged_file(path: &Path) -> Result<lofty::file::TaggedFile, Box<dyn std::error::Error>> {
+    raise_allocation_limit();
     Ok(lofty::probe::Probe::open(path)?
         .options(ParseOptions::new().read_cover_art(false))
-        .guess_file_type()?
         .read()?)
 }
 
@@ -463,6 +478,7 @@ pub fn codec_string(ft: lofty::file::FileType) -> &'static str {
 /// skipped — the `image` crate only has jpeg+png features and macOS
 /// CGImageDestination rejects TIFF for Now Playing artwork.
 pub fn extract_cover_art(path: &Path) -> Option<Vec<u8>> {
+    raise_allocation_limit();
     let tagged_file = lofty::read_from_path(path).ok()?;
     let tag = tagged_file
         .primary_tag()
