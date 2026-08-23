@@ -49,6 +49,7 @@ struct QueueView: View {
                     .onMove(perform: move)
                 }
                 .listStyle(.inset)
+                .tint(.koanAccent)
                 // Double-click and context menu both come from the List, keyed
                 // on the rows under the pointer rather than on a gesture.
                 .contextMenu(forSelectionType: String.self) { ids in

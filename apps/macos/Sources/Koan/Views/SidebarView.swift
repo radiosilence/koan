@@ -34,32 +34,38 @@ struct SidebarView: View {
                     } isTargeted: { targeted in
                         queueDropTargeted = targeted
                     }
-                    .listRowBackground(
-                        queueDropTargeted
-                            ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25))
-                            : nil
+                    .selectionBackground(
+                        for: .queue,
+                        current: library.section,
+                        dropTargeted: queueDropTargeted
                     )
                 if search.hasQuery {
                     Label("Results", systemImage: "magnifyingglass")
                         .tag(LibraryModel.Section.searchResults)
+                    .selectionBackground(for: .searchResults, current: library.section)
                 }
             }
 
             Section("Library") {
                 Label("Albums", systemImage: "square.stack")
                     .tag(LibraryModel.Section.albums)
+                    .selectionBackground(for: .albums, current: library.section)
                 Label("Artists", systemImage: "music.mic")
                     .tag(LibraryModel.Section.artists)
+                    .selectionBackground(for: .artists, current: library.section)
                 Label("Favourites", systemImage: "heart")
                     .tag(LibraryModel.Section.favourites)
+                    .selectionBackground(for: .favourites, current: library.section)
             }
 
             Section("Playlists") {
                 Label("Snapshots", systemImage: "bookmark")
                     .tag(LibraryModel.Section.snapshots)
+                    .selectionBackground(for: .snapshots, current: library.section)
             }
         }
         .listStyle(.sidebar)
+        .tint(.koanAccent)
         // The field belongs to the sidebar, not the window: in the toolbar it
         // sat on top of the lyrics inspector.
         .searchable(text: $search.query, placement: .sidebar, prompt: "Search")
@@ -104,5 +110,31 @@ struct SidebarView: View {
         .padding(.horizontal, 14)
         .padding(.bottom, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// macOS paints list selection with the system accent and ignores SwiftUI's
+/// `.tint`, so the sidebar stayed blue however the app was tinted. Painting the
+/// row background ourselves is the only way to make selection match the rest of
+/// the app — and it has to be every row, not just the selected one, or AppKit
+/// draws its own underneath the ones we left alone.
+private extension View {
+    func selectionBackground(
+        for section: LibraryModel.Section,
+        current: LibraryModel.Section,
+        dropTargeted: Bool = false
+    ) -> some View {
+        let shape = RoundedRectangle(cornerRadius: 5)
+        return listRowBackground(
+            Group {
+                if dropTargeted {
+                    shape.fill(Color.koanAccent.opacity(0.25))
+                } else if current == section {
+                    shape.fill(Color.koanAccent)
+                } else {
+                    shape.fill(.clear)
+                }
+            }
+        )
     }
 }

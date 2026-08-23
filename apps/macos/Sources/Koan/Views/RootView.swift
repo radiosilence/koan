@@ -37,9 +37,11 @@ struct RootView: View {
         } detail: {
             NavigationStack(path: $library.path) {
                 stage
-                    // The transport sits over the bottom of the detail column,
-                    // and without this the scrollbar runs underneath it and is
-                    // impossible to grab near the end of a long list.
+                    // The transport sits over the bottom of the detail column.
+                    // Without this the last rows of a list scroll underneath it
+                    // and cannot be reached, and the scrollbar is unusable near
+                    // the end of a long list.
+                    .contentMargins(.bottom, 64, for: .scrollContent)
                     .contentMargins(.bottom, 64, for: .scrollIndicators)
                     .navigationDestination(for: AlbumRoute.self) { route in
                         AlbumDetailView(albumId: route.id)
