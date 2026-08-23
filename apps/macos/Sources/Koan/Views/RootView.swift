@@ -50,13 +50,8 @@ struct RootView: View {
             LyricsPanel()
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
         }
-        .searchable(
-            text: $search.query,
-            placement: .sidebar,
-            prompt: "Search"
-        )
         .onChange(of: search.query) { _, _ in search.schedule() }
-        .onSubmit(of: .search) { library.section = .searchResults }
+        .onSubmit(of: .search) { handleSubmit() }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 Divider()
@@ -90,6 +85,25 @@ struct RootView: View {
                     .padding(.bottom, 24)
             }
         }
+    }
+
+    /// Return either picks a suggestion — in which case the field holds a token
+    /// naming exactly what was chosen — or it means "show me everything".
+    private func handleSubmit() {
+        guard let selection = SearchModel.Selection(token: search.query) else {
+            library.section = .searchResults
+            return
+        }
+        switch selection {
+        case .track(let id, let albumId):
+            // A track lives on its album; that's where you'd play it from.
+            if let albumId { library.reveal(album: albumId, highlighting: id) }
+        case .album(let id):
+            library.reveal(album: id)
+        case .artist(let id):
+            library.reveal(artist: id)
+        }
+        search.reset()
     }
 
     @ViewBuilder

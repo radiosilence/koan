@@ -8,6 +8,7 @@ struct SidebarView: View {
 
     var body: some View {
         @Bindable var library = library
+        @Bindable var search = search
 
         List(selection: $library.section) {
             Section {
@@ -34,6 +35,10 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // The field belongs to the sidebar, not the window: in the toolbar it
+        // sat on top of the lyrics inspector.
+        .searchable(text: $search.query, placement: .sidebar, prompt: "Search")
+        .searchSuggestions { SearchSuggestions() }
         .safeAreaInset(edge: .bottom) {
             footer
         }

@@ -36,6 +36,45 @@ final class SearchModel {
     var isEmpty: Bool { artists.isEmpty && albums.isEmpty && tracks.isEmpty }
     var hasQuery: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
+    /// What a suggestion row completes to.
+    ///
+    /// `searchSuggestions` rows can only hand back a *string* — they complete
+    /// the query, they don't carry actions. Encoding the kind and id into that
+    /// string is what lets submit route to the exact thing that was clicked
+    /// instead of just running the text as a search.
+    enum Selection {
+        case track(Int64, album: Int64?)
+        case album(Int64)
+        case artist(Int64)
+
+        var token: String {
+            switch self {
+            case .track(let id, let album): "koan://track/\(id)/\(album.map(String.init) ?? "")"
+            case .album(let id): "koan://album/\(id)"
+            case .artist(let id): "koan://artist/\(id)"
+            }
+        }
+
+        init?(token: String) {
+            guard token.hasPrefix("koan://") else { return nil }
+            let parts = token.dropFirst("koan://".count).split(separator: "/", omittingEmptySubsequences: false)
+            switch (parts.first, parts.dropFirst().first.flatMap { Int64($0) }) {
+            case ("track", .some(let id)):
+                self = .track(id, album: parts.dropFirst(2).first.flatMap { Int64($0) })
+            case ("album", .some(let id)):
+                self = .album(id)
+            case ("artist", .some(let id)):
+                self = .artist(id)
+            default:
+                return nil
+            }
+        }
+    }
+
+    /// True while the field holds a completion token rather than something a
+    /// human typed, so we don't fire a search for it.
+    var queryIsToken: Bool { Selection(token: query) != nil }
+
     /// Results land in the main area as you type, rather than in a dropdown.
     /// A floating suggestion list can't carry actions — `searchSuggestions`
     /// exists to complete the query text, not to navigate — and it fought the
@@ -45,6 +84,8 @@ final class SearchModel {
     /// keystroke, and the fuzzy passes are the expensive half.
     func schedule() {
         task?.cancel()
+        // A completion token isn't a search term; submit will consume it.
+        guard !queryIsToken else { return }
         let text = query.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else {
             clear()

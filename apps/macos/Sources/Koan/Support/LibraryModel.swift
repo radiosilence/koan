@@ -183,27 +183,25 @@ final class LibraryModel {
         }
     }
 
-    func select(album: Album) {
-        selectedAlbumId = album.id
-        loadTracks(albumId: album.id)
-    }
-
     /// Jump straight to a thing from search: switch to the section it lives in,
     /// then push its detail view.
     /// The track that search sent you here for, so the album view can single it
     /// out. Cleared once the view has scrolled to it.
     var highlightedTrackId: Int64?
 
+    /// Push a destination onto the current stack.
+    ///
+    /// Deliberately does *not* switch `section` first. Doing so swaps the
+    /// stack's root view in the same update, and SwiftUI discards the path
+    /// against the old root — which landed you on the plain album list instead
+    /// of the album. Pushing onto whatever stack is showing also gives you a
+    /// Back button to the results you came from.
     func reveal(album id: Int64, highlighting trackId: Int64? = nil) {
         highlightedTrackId = trackId
-        section = .albums
-        path = NavigationPath()  // section didSet only clears on an actual change
         path.append(AlbumRoute(id: id))
     }
 
     func reveal(artist id: Int64) {
-        section = .artists
-        path = NavigationPath()
         path.append(ArtistRoute(id: id))
     }
 
