@@ -130,7 +130,7 @@ struct ArtistDetailView: View {
                 ((try? engine.randomTracks(count: 50, artistId: id)) ?? []).map(\.id)
             }.value
             player.playNow(trackIds: ids)
-            library.showQueue()
+            library.showQueueWhenReady(watching: player)
         }
     }
 }

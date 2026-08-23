@@ -124,6 +124,9 @@ final class PlayerModel {
     private(set) var currentTrackId: Int64?
     private(set) var currentItemId: String?
     private(set) var radioEnabled = false
+    /// Bumped whenever the engine reports the queue changed. Lets a caller wait
+    /// for its own mutation to land.
+    private(set) var queueVersion: UInt64 = 0
     /// Queue mutations in flight. Adding a large selection takes a moment, and
     /// silence while it happens reads as nothing having happened.
     private(set) var pendingMutations = 0
@@ -138,6 +141,7 @@ final class PlayerModel {
         if now.entry?.trackId != currentTrackId { currentTrackId = now.entry?.trackId }
         if now.queueItemId != currentItemId { currentItemId = now.queueItemId }
         if now.radioEnabled != radioEnabled { radioEnabled = now.radioEnabled }
+        if now.playlistVersion != queueVersion { queueVersion = now.playlistVersion }
         if now.entry?.queueItemId != currentEntry?.queueItemId
             || now.entry?.status != currentEntry?.status
             || now.entry?.downloadProgress != currentEntry?.downloadProgress

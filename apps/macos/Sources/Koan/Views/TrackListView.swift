@@ -76,7 +76,7 @@ struct TrackListView: View {
     private func play(_ ids: Set<Int64>) {
         guard let index = tracks.firstIndex(where: { ids.contains($0.id) }) else { return }
         player.playNow(trackIds: tracks.map(\.id), startingAt: index)
-        library.showQueue()
+        library.showQueueWhenReady(watching: player)
     }
 
     private func playSelection() { play(selection) }
@@ -91,7 +91,7 @@ struct TrackListView: View {
         } else if !chosen.isEmpty {
             Button("Play") {
                 player.playNow(trackIds: chosen.map(\.id))
-                library.showQueue()
+                library.showQueueWhenReady(watching: player)
             }
             Button("Play Next") { player.playNext(trackIds: chosen.map(\.id)) }
             Button("Add to Queue") { player.enqueue(trackIds: chosen.map(\.id)) }

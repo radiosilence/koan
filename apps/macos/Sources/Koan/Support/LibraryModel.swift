@@ -223,6 +223,27 @@ final class LibraryModel {
         section = .queue
     }
 
+    /// Show the queue once it holds what was just started.
+    ///
+    /// Queue mutations run off the main actor, so switching immediately shows
+    /// the old queue for a frame or two and then flickers. Waiting for the
+    /// engine to confirm avoids that — but only briefly: if the mutation is
+    /// slow enough to notice, jumping to the queue after the fact would feel
+    /// like the app moving on its own, so it stays put instead.
+    func showQueueWhenReady(watching player: PlayerModel) {
+        let before = player.queueVersion
+        Task {
+            let deadline = ContinuousClock.now + .milliseconds(50)
+            while ContinuousClock.now < deadline {
+                if player.queueVersion != before {
+                    section = .queue
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(5))
+            }
+        }
+    }
+
     /// Jump straight to a thing from search: switch to the section it lives in,
     /// then push its detail view.
     /// The track that search sent you here for, so the album view can single it

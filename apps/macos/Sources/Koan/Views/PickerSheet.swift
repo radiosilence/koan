@@ -219,7 +219,7 @@ struct PickerSheet: View {
                 }
             case .replace:
                 player.playNow(trackIds: trackIds)
-                library.showQueue()
+                library.showQueueWhenReady(watching: player)
             }
             isPresented = false
         }

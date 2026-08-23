@@ -53,7 +53,7 @@ struct PlayableMenu: View {
         Button("Play") {
             act {
                 player.playNow(trackIds: $0)
-                library.showQueue()
+                library.showQueueWhenReady(watching: player)
             }
         }
         Button("Play Next") { act { player.playNext(trackIds: $0) } }
@@ -62,7 +62,7 @@ struct PlayableMenu: View {
             Button("Shuffle") {
                 act {
                     player.playNow(trackIds: $0.shuffled())
-                    library.showQueue()
+                    library.showQueueWhenReady(watching: player)
                 }
             }
         }
@@ -212,7 +212,7 @@ struct PlayableHeaderButton: View {
                 }.value
                 loading = false
                 player.playNow(trackIds: ids)
-                library.showQueue()
+                library.showQueueWhenReady(watching: player)
             }
         } label: {
             ZStack {
