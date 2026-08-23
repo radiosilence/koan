@@ -100,9 +100,12 @@ macos-bundle: macos-build
     </dict>
     </plist>
     PLIST
-    # Ad-hoc signature — the bundle links a Rust static library, and an unsigned
-    # binary trips Gatekeeper harder than an unsigned bundle does.
-    codesign --force --deep --sign - "$app"
+    # Signing identity. Ad-hoc ("-") derives the identity from the binary's own
+    # hash, so every rebuild is a different app to macOS and any TCC grant —
+    # removable volumes, files and folders — has to be given again. Set
+    # KOAN_SIGN_IDENTITY to a stable certificate (a self-signed one in your
+    # login keychain is enough) and the grants stick across rebuilds.
+    codesign --force --deep --sign "${KOAN_SIGN_IDENTITY:--}" "$app"
     echo "built $app"
 
 # Build and launch the app bundle.

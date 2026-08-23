@@ -713,12 +713,12 @@ impl KoanEngine {
             .map(|i| i.id);
 
         self.send(PlayerCommand::AddToPlaylist(items))?;
-        // Park the cursor without starting playback.
+        self.start_downloads(pending);
+
         if let Some(id) = cursor {
             self.state.set_cursor(Some(id));
-            self.state.set_position_ms(saved.position_ms);
+            self.park_at(id, saved.position_ms);
         }
-        self.start_downloads(pending);
 
         Ok(count)
     }
@@ -868,6 +868,46 @@ impl KoanEngine {
             }
         }
         (items, pending)
+    }
+
+    /// Load the cursor's track, seek to `position_ms`, and stop there.
+    ///
+    /// Setting the position atomic alone achieves nothing — the engine has not
+    /// opened the file, so the first play starts from zero. The sequence is the
+    /// TUI's: play to load and seek, then immediately pause. It waits for the
+    /// track to be Ready first, because a remote track is still downloading at
+    /// this point, and gives up rather than waiting forever on one that fails.
+    fn park_at(&self, id: QueueItemId, position_ms: u64) {
+        if position_ms == 0 {
+            return;
+        }
+        let state = self.state.clone();
+        let tx = self.tx.clone();
+        std::thread::Builder::new()
+            .name("koan-session-restore".into())
+            .spawn(move || {
+                for _ in 0..600 {
+                    // The user may have started playing something in the
+                    // meantime; restoring a position over that would be rude.
+                    if state.playback_state() != PlaybackState::Stopped
+                        || state.cursor() != Some(id)
+                    {
+                        return;
+                    }
+                    if state
+                        .item_load_state(id)
+                        .is_some_and(|s| matches!(s, LoadState::Ready))
+                    {
+                        let _ = tx.send(PlayerCommand::Play(id));
+                        let _ = tx.send(PlayerCommand::Seek(position_ms));
+                        let _ = tx.send(PlayerCommand::Pause);
+                        return;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                log::info!("session restore: track never became ready, leaving position at 0");
+            })
+            .ok();
     }
 
     fn start_downloads(&self, pending: Vec<(i64, QueueItemId)>) {

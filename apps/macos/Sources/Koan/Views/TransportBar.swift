@@ -152,7 +152,7 @@ private struct SeekBar: View {
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
-                            player.scrubbing = (value.location.x / geo.size.width).clamped()
+                            player.beginScrub(fraction: (value.location.x / geo.size.width).clamped())
                         }
                         .onEnded { value in
                             player.seek(fraction: (value.location.x / geo.size.width).clamped())

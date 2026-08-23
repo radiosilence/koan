@@ -66,7 +66,25 @@ final class PlayerModel {
             // clicks. Once a second is plenty for a progress bar.
             rebuildQueue()
         }
+        settlePendingSeek()
         onTick?()
+    }
+
+    /// Where a seek asked to land, until the engine reports being near it.
+    private var pendingSeekMs: UInt64?
+    private var pendingSeekTicks = 0
+
+    /// Release the held position once the engine has caught up — or give up, so
+    /// a seek the engine rejected can't wedge the bar permanently.
+    private func settlePendingSeek() {
+        guard let target = pendingSeekMs else { return }
+        let reached = abs(Int64(nowPlaying.positionMs) - Int64(target)) < 750
+        pendingSeekTicks += 1
+        if reached || pendingSeekTicks > 20 {
+            pendingSeekMs = nil
+            pendingSeekTicks = 0
+            scrubbing = nil
+        }
     }
 
     private var hasActiveDownloads = false
@@ -124,6 +142,14 @@ final class PlayerModel {
         seek(toMs: UInt64(max(0, min(1, fraction)) * Double(nowPlaying.durationMs)))
     }
 
+    /// Called as the thumb is dragged. Cancels any seek still settling, since
+    /// the user is now the authority on where the head is.
+    func beginScrub(fraction: Double) {
+        pendingSeekMs = nil
+        pendingSeekTicks = 0
+        scrubbing = min(1, max(0, fraction))
+    }
+
     /// Nudge by a number of seconds, clamped to the track. What the arrow-key
     /// shortcuts and the TUI's `,`/`.` do.
     func seek(bySeconds delta: Int) {
@@ -140,8 +166,18 @@ final class PlayerModel {
         return toggleFavourite(trackId: trackId)
     }
 
+    /// Hold the requested position until the engine agrees with it.
+    ///
+    /// The seek is asynchronous — it goes down a channel to the player thread,
+    /// which restarts decoding before `position_ms` moves. Clearing the local
+    /// value when the command is merely *sent* hands the bar back to the engine
+    /// during that gap, so the poll reads the old position and the thumb snaps
+    /// backwards before jumping forward again.
     func seek(toMs ms: UInt64) {
-        scrubbing = nil
+        pendingSeekMs = ms
+        if nowPlaying.durationMs > 0 {
+            scrubbing = Double(ms) / Double(nowPlaying.durationMs)
+        }
         attempt { try engine.seek(positionMs: ms) }
     }
 
