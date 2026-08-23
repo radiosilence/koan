@@ -28,6 +28,10 @@ pub struct PersistedPlaybackState {
     pub items: Vec<PersistedQueueItem>,
     pub cursor_path: Option<String>,
     pub position_ms: u64,
+    /// Playback was running when this was saved.
+    pub was_playing: bool,
+    /// Radio was switched on.
+    pub radio_enabled: bool,
 }
 
 /// Save the current playback state to the database.
@@ -37,14 +41,24 @@ pub fn save_playback_state(
     items: &[PersistedQueueItem],
     cursor_path: Option<&str>,
     position_ms: u64,
+    was_playing: bool,
+    radio_enabled: bool,
 ) -> rusqlite::Result<()> {
     let json = serde_json::to_string(items).unwrap_or_else(|_| "[]".into());
     conn.execute(
-        "INSERT INTO playback_state (id, queue_json, cursor_id, position_ms, updated_at)
-         VALUES (1, ?1, ?2, ?3, datetime('now'))
+        "INSERT INTO playback_state
+             (id, queue_json, cursor_id, position_ms, was_playing, radio_enabled, updated_at)
+         VALUES (1, ?1, ?2, ?3, ?4, ?5, datetime('now'))
          ON CONFLICT(id) DO UPDATE SET
-           queue_json = ?1, cursor_id = ?2, position_ms = ?3, updated_at = datetime('now')",
-        rusqlite::params![json, cursor_path, position_ms as i64],
+           queue_json = ?1, cursor_id = ?2, position_ms = ?3, was_playing = ?4,
+           radio_enabled = ?5, updated_at = datetime('now')",
+        rusqlite::params![
+            json,
+            cursor_path,
+            position_ms as i64,
+            was_playing,
+            radio_enabled
+        ],
     )?;
     Ok(())
 }
@@ -52,18 +66,27 @@ pub fn save_playback_state(
 /// Load persisted playback state. Returns None if no state has been saved.
 pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<PersistedPlaybackState>> {
     let result = conn.query_row(
-        "SELECT queue_json, cursor_id, position_ms FROM playback_state WHERE id = 1",
+        "SELECT queue_json, cursor_id, position_ms, was_playing, radio_enabled
+         FROM playback_state WHERE id = 1",
         [],
         |row| {
             let json: String = row.get(0)?;
             let cursor_path: Option<String> = row.get(1)?;
             let position_ms: i64 = row.get(2)?;
-            Ok((json, cursor_path, position_ms as u64))
+            let was_playing: bool = row.get(3)?;
+            let radio_enabled: bool = row.get(4)?;
+            Ok((
+                json,
+                cursor_path,
+                position_ms as u64,
+                was_playing,
+                radio_enabled,
+            ))
         },
     );
 
     match result {
-        Ok((json, cursor_path, position_ms)) => {
+        Ok((json, cursor_path, position_ms, was_playing, radio_enabled)) => {
             let items: Vec<PersistedQueueItem> = serde_json::from_str(&json).unwrap_or_default();
             if items.is_empty() {
                 return Ok(None);
@@ -72,6 +95,8 @@ pub fn load_playback_state(conn: &Connection) -> rusqlite::Result<Option<Persist
                 items,
                 cursor_path,
                 position_ms,
+                was_playing,
+                radio_enabled,
             }))
         }
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
@@ -178,7 +203,15 @@ mod tests {
             },
         ];
 
-        save_playback_state(&conn, &items, Some("/music/track1.flac"), 42_000).unwrap();
+        save_playback_state(
+            &conn,
+            &items,
+            Some("/music/track1.flac"),
+            42_000,
+            true,
+            false,
+        )
+        .unwrap();
 
         let loaded = load_playback_state(&conn).unwrap().unwrap();
         assert_eq!(loaded.items.len(), 2);
@@ -186,6 +219,47 @@ mod tests {
         assert_eq!(loaded.items[1].path, "/music/track2.flac");
         assert_eq!(loaded.cursor_path.as_deref(), Some("/music/track1.flac"));
         assert_eq!(loaded.position_ms, 42_000);
+        assert!(loaded.was_playing, "a session saved mid-play resumes");
+    }
+
+    #[test]
+    fn radio_survives_a_restart() {
+        let conn = test_conn();
+        let items = vec![PersistedQueueItem {
+            path: "/music/track.flac".into(),
+            title: "Track".into(),
+            artist: "Artist".into(),
+            album_artist: "Artist".into(),
+            album: "Album".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            db_id: None,
+        }];
+        save_playback_state(&conn, &items, None, 0, false, true).unwrap();
+        assert!(load_playback_state(&conn).unwrap().unwrap().radio_enabled);
+    }
+
+    #[test]
+    fn a_paused_session_does_not_resume() {
+        let conn = test_conn();
+        let items = vec![PersistedQueueItem {
+            path: "/music/track.flac".into(),
+            title: "Track".into(),
+            artist: "Artist".into(),
+            album_artist: "Artist".into(),
+            album: "Album".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            db_id: None,
+        }];
+        save_playback_state(&conn, &items, None, 0, false, false).unwrap();
+        assert!(!load_playback_state(&conn).unwrap().unwrap().was_playing);
     }
 
     #[test]
@@ -211,7 +285,7 @@ mod tests {
             duration_ms: None,
             db_id: None,
         }];
-        save_playback_state(&conn, &items, None, 0).unwrap();
+        save_playback_state(&conn, &items, None, 0, false, false).unwrap();
         assert!(load_playback_state(&conn).unwrap().is_some());
 
         clear_playback_state(&conn).unwrap();
@@ -290,7 +364,7 @@ mod tests {
             duration_ms: None,
             db_id: None,
         }];
-        save_playback_state(&conn, &items1, None, 100).unwrap();
+        save_playback_state(&conn, &items1, None, 100, false, false).unwrap();
 
         let items2 = vec![PersistedQueueItem {
             path: "/music/new.flac".into(),
@@ -305,7 +379,7 @@ mod tests {
             duration_ms: None,
             db_id: None,
         }];
-        save_playback_state(&conn, &items2, Some("/music/new.flac"), 999).unwrap();
+        save_playback_state(&conn, &items2, Some("/music/new.flac"), 999, false, false).unwrap();
 
         let loaded = load_playback_state(&conn).unwrap().unwrap();
         assert_eq!(loaded.items.len(), 1);
@@ -344,7 +418,7 @@ mod tests {
                 db_id: Some(99),
             },
         ];
-        save_playback_state(&conn, &items, None, 0).unwrap();
+        save_playback_state(&conn, &items, None, 0, false, false).unwrap();
 
         let loaded = load_playback_state(&conn).unwrap().unwrap();
         assert_eq!(
@@ -429,7 +503,7 @@ mod tests {
         // Save with cursor on the second track, position 42s in.
         let cursor_path = "/music/beta.flac";
         let position_ms = 42_000u64;
-        save_playback_state(&conn, &items, Some(cursor_path), position_ms).unwrap();
+        save_playback_state(&conn, &items, Some(cursor_path), position_ms, false, false).unwrap();
 
         // Simulate "clear in-memory state" by just loading fresh from DB.
         let restored = load_playback_state(&conn)

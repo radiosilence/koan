@@ -145,6 +145,45 @@ impl SubsonicClient {
         Ok(inner)
     }
 
+    /// Detect a Subsonic error returned from an endpoint that should have sent
+    /// binary data.
+    ///
+    /// Subsonic signals failure with HTTP 200 and a JSON or XML error body, so
+    /// checking the status code proves nothing here — without this, an error
+    /// response gets written to disk as if it were audio.
+    fn reject_error_body(resp: &reqwest::blocking::Response) -> Result<(), SubsonicError> {
+        let is_document = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.contains("json") || ct.contains("xml"));
+        if is_document {
+            return Err(SubsonicError::BadResponse);
+        }
+        if !resp.status().is_success() {
+            return Err(SubsonicError::BadResponse);
+        }
+        Ok(())
+    }
+
+    /// Fetch cover art bytes for a song or album ID.
+    ///
+    /// Returns the raw image rather than a parsed response — `getCoverArt`
+    /// answers with image data, not JSON, so it can't go through `get()`.
+    /// `size` requests a square thumbnail; omit it for the original.
+    pub fn get_cover_art(&self, id: &str, size: Option<u32>) -> Result<Vec<u8>, SubsonicError> {
+        let url = format!("{}/rest/getCoverArt", self.base_url());
+        let mut params = self.auth_params()?;
+        params.insert("id".into(), id.to_string());
+        if let Some(px) = size {
+            params.insert("size".into(), px.to_string());
+        }
+
+        let resp = self.http.get(&url).query(&params).send()?;
+        Self::reject_error_body(&resp)?;
+        Ok(resp.bytes()?.to_vec())
+    }
+
     /// Ping the server — verify connection and credentials.
     pub fn ping(&self) -> Result<(), SubsonicError> {
         self.get("ping")?;

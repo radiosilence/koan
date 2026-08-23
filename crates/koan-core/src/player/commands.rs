@@ -40,6 +40,19 @@ pub enum PlayerCommand {
     },
     /// Clear the entire playlist (stop + remove all items).
     ClearPlaylist,
+    /// Replace the playlist and start playing at `start`, as one operation.
+    ///
+    /// Doing this as ClearPlaylist + AddToPlaylist + Play sends three commands
+    /// down a bounded channel, and the player acts on each as it arrives: the
+    /// first track starts, then the cursor jumps. Clicking track nine of an
+    /// album visibly flashed track one as playing first. It is also three undo
+    /// entries for one user action.
+    ///
+    /// `start` past the end starts at the beginning.
+    ReplacePlaylist {
+        items: Vec<PlaylistItem>,
+        start: usize,
+    },
     /// Download complete — check if cursor is waiting on this item.
     TrackReady(QueueItemId),
     /// Enough data buffered for streaming playback — check if cursor is waiting.

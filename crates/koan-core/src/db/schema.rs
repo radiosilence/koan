@@ -6,6 +6,9 @@ use rusqlite::Connection;
 pub const SCHEMA_VERSION: i64 = 1;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
+    // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
+    // connection without it fails them rather than sorting differently.
+    super::connection::register_library_collation(conn)?;
     let found: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if found > SCHEMA_VERSION {
         return Err(rusqlite::Error::SqliteFailure(
@@ -38,6 +41,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             codec        TEXT,
             label        TEXT,
             remote_id    TEXT,
+            added_at     TEXT,
             UNIQUE(title, artist_id)
         );
 
@@ -211,6 +215,24 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ),
     ("organize_log", "size_bytes", "INTEGER"),
     ("organize_log", "mtime", "INTEGER"),
+    // When the album entered the library, so clients can offer a
+    // recently-added ordering. Remote sync supplies the server's own `created`;
+    // a local scan the earliest mtime among the album's files.
+    ("albums", "added_at", "TEXT"),
+    // Whether playback was running when the session was saved, so reopening can
+    // pick up where it left off rather than always paused.
+    (
+        "playback_state",
+        "was_playing",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
+    // Radio is a mode you leave on, not a per-session choice: switching itself
+    // off every launch makes it a setting that will not stay set.
+    (
+        "playback_state",
+        "radio_enabled",
+        "INTEGER NOT NULL DEFAULT 0",
+    ),
 ];
 
 fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
@@ -219,6 +241,18 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
             conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"), [])?;
         }
     }
+
+    // Locally-scanned albums were briefly stamped with the time the scan ran,
+    // which pinned every one of them to the top of recently-added and buried
+    // whatever the server actually considered new. Clearing the scan-time
+    // values lets the next scan refill them from the files themselves; the
+    // server's own ISO 8601 dates are left alone.
+    conn.execute(
+        "UPDATE albums SET added_at = NULL
+           WHERE added_at IS NOT NULL AND added_at NOT LIKE '%T%Z'",
+        [],
+    )?;
+
     Ok(())
 }
 
@@ -242,6 +276,37 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Resu
 mod tests {
     use super::*;
     use crate::db::connection::Database;
+
+    #[test]
+    fn clears_scan_time_added_at_but_keeps_the_servers() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO artists (id, name) VALUES (1, 'Klaxons');
+             INSERT INTO albums (id, title, artist_id, added_at)
+               VALUES (1, 'Local', 1, '2026-08-23 12:14:57'),
+                      (2, 'Remote', 1, '2026-08-06T22:53:14.851697506Z'),
+                      (3, 'Neither', 1, NULL);",
+        )
+        .unwrap();
+
+        // Migrations live inside `create_tables` and are idempotent.
+        create_tables(&conn).unwrap();
+
+        let added = |id: i64| -> Option<String> {
+            conn.query_row("SELECT added_at FROM albums WHERE id = ?1", [id], |r| {
+                r.get(0)
+            })
+            .unwrap()
+        };
+        assert_eq!(added(1), None, "scan-time stamp cleared");
+        assert_eq!(
+            added(2).as_deref(),
+            Some("2026-08-06T22:53:14.851697506Z"),
+            "the server's own date is left alone"
+        );
+        assert_eq!(added(3), None);
+    }
 
     #[test]
     fn migrates_similar_artists_relationship_column() {

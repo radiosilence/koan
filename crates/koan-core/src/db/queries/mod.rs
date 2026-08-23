@@ -38,6 +38,11 @@ pub struct ArtistRow {
     pub name: String,
     pub sort_name: Option<String>,
     pub remote_id: Option<String>,
+    /// Albums credited to this artist, and tracks across them. Aggregated in
+    /// the same query as the row itself — a count per artist would be one
+    /// query per row in a list thousands long.
+    pub album_count: i64,
+    pub track_count: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +57,9 @@ pub struct AlbumRow {
     pub codec: Option<String>,
     pub label: Option<String>,
     pub remote_id: Option<String>,
+    /// When the album entered the library — the server's `created` for remote
+    /// albums, otherwise the time it was first indexed.
+    pub added_at: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +128,10 @@ pub struct TrackMeta {
     pub source: String,
     pub remote_id: Option<String>,
     pub remote_url: Option<String>,
+    /// When the album this track belongs to entered the library. Remote sync
+    /// supplies the server's `created`; anything else leaves it and the album
+    /// is stamped with the time it was first seen.
+    pub album_added_at: Option<String>,
 }
 
 /// Test helper: build a sample TrackMeta for use in tests across sub-modules.
@@ -147,5 +159,6 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         source: "local".into(),
         remote_id: None,
         remote_url: None,
+        album_added_at: None,
     }
 }

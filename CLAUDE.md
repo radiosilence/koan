@@ -2,14 +2,19 @@
 
 ## What is koan
 
-Bit-perfect music player (macOS + Linux). Pure Rust, Ratatui TUI. Four crates:
+Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus a native SwiftUI app on macOS. Five crates:
 
 - **koan-core** — library crate. Audio engine, player, database, indexer, format strings, file organization, remote (Subsonic/Navidrome) client, shared helpers. No UI code, no terminal deps.
 - **koan-tui** — library crate. Ratatui TUI, visualizers, media keys, download queue. Exports `run_tui()`. Depends on koan-core.
 - **koan-server** — library crate. GraphQL (async-graphql + axum), Subsonic REST API, MCP server. Depends on koan-core.
+- **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift. Depends on koan-core only. Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
-Dependency rules (compiler-enforced): koan-tui and koan-server cannot import each other; both depend only on koan-core. Future iOS app imports only koan-core.
+Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 14+). Links koan-ffi.
+
+Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
+
+**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web SPA, iOS, jukebox remotes. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
 ## Architecture overview
 
@@ -68,11 +73,15 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 ## Build & check
 
 ```bash
-just check    # cargo test + clippy -D warnings
-just fmt      # cargo fmt
-just cli      # cargo run --release -p koan-cli -- <args>
-just build    # cargo build --release
+just check      # cargo test + clippy -D warnings
+just fmt        # cargo fmt
+just cli        # cargo run --release -p koan-cli -- <args>
+just build      # cargo build --release
+just macos-run  # build + launch the macOS app
+just macos-dmg  # package the app for release
 ```
+
+The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
 
 Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy --workspace -- -D warnings` before any `git push`. If clippy fails, fix before pushing.
 
@@ -131,6 +140,28 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `download_queue.rs` | Persistent download queue with priority/cursor-aware reordering |
 | `enqueue.rs` | `enqueue_playlist()` — build PlaylistItems from track IDs, submit downloads |
 | `remote_bridge.rs` | Remote bridge: connects TUI to a remote koan server via GraphQL |
+
+### koan-ffi (`crates/koan-ffi/src/`)
+
+| Module | What |
+|--------|------|
+| `lib.rs` | `KoanEngine` — the whole facade. Transport, queue ops, library queries, favourites, snapshots, devices, scan. Blocking; callers keep slow calls off the main thread |
+| `types.rs` | uniffi records mirroring koan-core types (`Track`, `Album`, `NowPlaying`, `QueueItem`, …) and the conversions |
+
+Swift bindings are generated, not checked in — `just macos-ffi` builds the lib and regenerates them.
+
+### apps/macos (`apps/macos/Sources/Koan/`)
+
+| Module | What |
+|--------|------|
+| `KoanApp.swift` | `@main`, `AppState`, menu commands, keyboard shortcuts |
+| `Support/PlayerModel.swift` | Polls `now_playing()` at 10 Hz; refetches the queue only when `playlistVersion` moves |
+| `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale |
+| `Support/CoverArtCache.swift` | Album-keyed art cache. Each miss is an HTTP round trip on remote libraries |
+| `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select |
+| `Views/PickerSheet.swift` | ⌘K picker: multi-select, add / add-and-play / replace queue |
+| `Views/TransportBar.swift` | Transport, seek, format badge, output device |
+| `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |
 
 ### koan-server (`crates/koan-server/src/`)
 

@@ -1261,6 +1261,7 @@ mod tests {
             source: "local".into(),
             remote_id: None,
             remote_url: None,
+            album_added_at: None,
         }
     }
 
@@ -1900,7 +1901,8 @@ mod tests {
             0,
         )
         .unwrap();
-        queries::save_playback_state(&db.conn, &[item], Some(&source_str), 0).unwrap();
+        queries::save_playback_state(&db.conn, &[item], Some(&source_str), 0, false, false)
+            .unwrap();
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
         let dest = result.moves[0].to.clone();

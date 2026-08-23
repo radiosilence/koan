@@ -10,10 +10,11 @@ use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedP
 
 use koan_core::auth::Role;
 
-use super::helpers::{spawn_downloads, sync_favourite_to_remote, track_to_playlist_item};
+use super::helpers::{spawn_downloads, sync_favourite_to_remote};
 use super::jobs::{JobRegistry, JobState};
 use super::types::*;
 use super::{DbHandle, parse_queue_item_id, require_role, send_cmd, send_cmd_via, with_db};
+use koan_core::helpers::track_to_playlist_item;
 
 /// The `organize*` mutations physically move files, so admin alone is not the
 /// bar — the deployment has to have opted in.
@@ -159,29 +160,36 @@ impl MutationRoot {
         })
     }
 
+    /// Replace the queue, starting at `start_at` (default: the first track).
+    ///
+    /// One command rather than clear-then-add-then-play: three commands down a
+    /// bounded channel are acted on as each arrives, so the first track starts
+    /// before the cursor reaches the one that was asked for.
     async fn replace_queue(
         &self,
         ctx: &Context<'_>,
         track_ids: Vec<i64>,
+        start_at: Option<i32>,
     ) -> async_graphql::Result<GqlQueueMutationResult> {
         require_role(ctx, Role::User)?;
         let resolved = resolve_tracks(ctx, track_ids).await?;
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
-        send_cmd_via(tx, PlayerCommand::ClearPlaylist)?;
-
         let queue_item_ids: Vec<String> =
             resolved.items.iter().map(|i| i.id.0.to_string()).collect();
-        let first_id = resolved.items.first().map(|i| i.id);
         let count = resolved.items.len() as i32;
 
-        if !resolved.items.is_empty() {
-            send_cmd_via(tx, PlayerCommand::AddToPlaylist(resolved.items))?;
-
-            if let Some(id) = first_id {
-                send_cmd_via(tx, PlayerCommand::Play(id))?;
-            }
+        if resolved.items.is_empty() {
+            send_cmd_via(tx, PlayerCommand::ClearPlaylist)?;
+        } else {
+            send_cmd_via(
+                tx,
+                PlayerCommand::ReplacePlaylist {
+                    items: resolved.items,
+                    start: start_at.unwrap_or(0).max(0) as usize,
+                },
+            )?;
 
             if !resolved.pending_downloads.is_empty() {
                 spawn_downloads(resolved.pending_downloads, tx.clone(), state.clone());
@@ -303,6 +311,9 @@ impl MutationRoot {
 
         let (items, cursor) = state.snapshot_playlist();
         let position_ms = state.position_ms();
+        let was_playing =
+            state.playback_state() == koan_core::player::state::PlaybackState::Playing;
+        let radio_enabled = state.radio_mode();
         let persisted: Vec<PersistedQueueItem> = items
             .iter()
             .map(PersistedQueueItem::from_playlist_item)
@@ -325,6 +336,8 @@ impl MutationRoot {
                 &persisted,
                 cursor_path.as_deref(),
                 position_ms,
+                was_playing,
+                radio_enabled,
             )
             .map_err(|e| super::internal_error("db", e))?;
             Ok(GqlStatus::success("playback state saved"))
@@ -730,33 +743,19 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         with_db(ctx, move |db| {
             let cfg = Config::load().unwrap_or_default();
-            let client = koan_core::helpers::subsonic_client(&cfg)
-                .ok_or_else(|| async_graphql::Error::new("remote not configured"))?;
-
-            // Resolve track IDs to remote IDs.
-            let mut remote_ids = Vec::new();
-            for tid in track_ids {
-                if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
-                    && let Some(rid) = track.remote_id
-                {
-                    remote_ids.push(rid);
-                }
-            }
-
-            if remote_ids.is_empty() {
-                return Err(async_graphql::Error::new(
-                    "none of the tracks have remote IDs (local-only tracks can't be shared)",
-                ));
-            }
-
-            let id_refs: Vec<&str> = remote_ids.iter().map(|s| s.as_str()).collect();
-            let share = client
-                .create_share(&id_refs, description.as_deref())
-                .map_err(|e| super::internal_error("share", e))?;
+            // One query for the remote ids rather than one per track, a link
+            // built from the share id when the server returns no URL, and a
+            // distinct error for each way this can fail — all shared with the
+            // FFI and the TUI so the three cannot drift.
+            let outcome =
+                koan_core::helpers::create_share(db, &cfg, &track_ids, description.as_deref())
+                    .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
             Ok(GqlShare {
-                url: share.url,
-                id: share.id,
+                url: Some(outcome.url),
+                id: outcome.id,
+                shared: outcome.shared as i32,
+                skipped: outcome.skipped as i32,
             })
         })
         .await

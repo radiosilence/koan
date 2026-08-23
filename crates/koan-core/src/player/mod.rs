@@ -762,30 +762,27 @@ impl Player {
     /// a background thread so the player command loop never blocks — preventing
     /// UI freezes when CoreAudio or the decode thread is slow to shut down.
     fn stop_engine(&mut self) {
-        if let Some(playback) = self.active_playback.take() {
-            // Stop audio output immediately.
-            let _ = playback.engine.stop();
-            // Signal decode thread to exit (non-blocking).
-            playback.decode_handle.signal_stop();
+        let Some(playback) = self.active_playback.take() else {
+            return;
+        };
+        let ActivePlayback {
+            engine,
+            mut decode_handle,
+        } = playback;
 
-            // Drop the audio engine synchronously. AudioUnitUninitialize must
-            // complete before any device sample rate change, otherwise CoreAudio's
-            // internal ExtendedAudioBufferList can be freed mid-teardown (crash
-            // in caulk::alloc::tiered_allocator::deallocate — GitHub #89).
-            let ActivePlayback {
-                engine,
-                decode_handle,
-            } = playback;
-            drop(engine);
-
-            // The decode handle join is the heavy part (waits for the decode
-            // thread to exit) — run it on a background thread so we don't block
-            // the player command loop.
-            thread::Builder::new()
-                .name("koan-cleanup".into())
-                .spawn(move || drop(decode_handle))
-                .ok();
-        }
+        // Stop audio output first, then get the decode thread gone *before* the
+        // engine is dropped.
+        //
+        // The old order signalled the decode thread and dropped the engine
+        // immediately, joining the thread afterwards on a background thread —
+        // so the engine's teardown ran while the decode thread was still alive
+        // and still writing into the ring buffer that the render callback
+        // reads. Tearing CoreAudio down underneath a live producer is exactly
+        // the shape of the end-of-queue crash (#89), and the overlap buys
+        // nothing: `stop()` has already silenced the output.
+        let _ = engine.stop();
+        decode_handle.stop();
+        drop(engine);
     }
 
     /// Full stop: tear down engine + clear all display state.
@@ -1063,6 +1060,25 @@ impl Player {
                 let (items, cursor) = self.shared_state.snapshot_playlist();
                 self.shared_state.clear_playlist();
                 self.push_undo(UndoEntry::Replaced { items, cursor });
+            }
+            PlayerCommand::ReplacePlaylist { items, start } => {
+                // Same order as ClearPlaylist: stop and clear display state
+                // before snapshotting, or the snapshot captures an already
+                // emptied playlist and undo restores nothing.
+                self.stop_playback_and_clear_state();
+                let (old_items, cursor) = self.shared_state.snapshot_playlist();
+                self.shared_state.clear_playlist();
+                self.push_undo(UndoEntry::Replaced {
+                    items: old_items,
+                    cursor,
+                });
+
+                if items.is_empty() {
+                    return;
+                }
+                let start_id = items.get(start).unwrap_or(&items[0]).id;
+                self.shared_state.add_items(items);
+                self.play(start_id);
             }
             PlayerCommand::RemoveFromPlaylist(id) => {
                 let item = self.shared_state.get_item(id);
@@ -1494,8 +1510,16 @@ mod tests {
         let c_id = items[2].id;
 
         player.process_command(PlayerCommand::AddToPlaylist(items));
+        let version_before = player.shared_state.playlist_version();
         player.process_command(PlayerCommand::RemoveFromPlaylistBatch(vec![b_id, c_id]));
         assert_eq!(playlist_titles(&player), vec!["A", "D"]);
+        // One bump for the whole batch. Bumping per item is what made clearing
+        // a large queue crawl, and every bump wakes every client watching.
+        assert_eq!(
+            player.shared_state.playlist_version(),
+            version_before + 1,
+            "batch removal must bump the playlist version exactly once"
+        );
 
         // Single undo restores both
         player.process_command(PlayerCommand::Undo);

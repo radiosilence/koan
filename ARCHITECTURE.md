@@ -18,12 +18,37 @@ crates/
 │                  Subsonic REST API, MCP server.
 │                  Depends on koan-core.
 │
+├── koan-ffi/      staticlib + cdylib. uniffi bindings exposing koan-core
+│                  to Swift. Depends on koan-core only. Not published.
+│
 └── koan-cli/      Binary crate. The `koan` executable.
                    Thin entry point: clap CLI, logger, signal handling.
                    Depends on koan-core, koan-tui and koan-server.
+
+apps/
+└── macos/         SwiftUI app (SwiftPM, Swift 6, macOS 14+).
+                   Links koan-ffi. No Rust of its own.
 ```
 
-Four crates, one workspace. `koan-core` is the engine, `koan-tui` is the terminal UI, `koan-server` is the API layer, and `koan-cli` is the binary that ties them together. Dependency rule, enforced by Cargo: `koan-tui` and `koan-server` cannot import each other -- both depend only on `koan-core`. If you wanted a different UI, write a new crate against `koan-core` -- the CLI owns zero business logic.
+Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server` and `koan-ffi` are three front doors onto it; `koan-cli` is the binary that ties the first two together. Dependency rule, enforced by Cargo: none of the three front doors can import each other -- all depend only on `koan-core`. If you want a different UI, write against `koan-core` -- the CLI owns zero business logic.
+
+### Two front doors for UIs, and when to use which
+
+`koan-server` and `koan-ffi` expose almost the same surface, because both are thin shims over the same `koan-core` helpers. The difference is where the UI runs:
+
+| | koan-ffi | koan-server |
+|---|---|---|
+| Transport | In-process function calls | HTTP + WebSocket |
+| Audio owned by | The UI's own process | A separate `koan` process |
+| State updates | Poll `now_playing()` | GraphQL subscriptions |
+| Auth | None needed | JWT, cookies, CORS |
+| For | macOS app, future iOS app | Web SPA, jukebox remotes |
+
+**A UI that can link the core should.** The macOS app sits directly on top of the audio engine, so routing its own commands through localhost HTTP would add a daemon, a port, an auth surface and a second process contending for the same SQLite file, and buy nothing. It links `koan-ffi`, and CoreAudio output never leaves Rust, so playback stays bit-perfect.
+
+GraphQL earns its keep for clients that genuinely *cannot* link the core -- a browser, or a phone controlling playback on a different machine.
+
+When you add a capability, ask whether both doors need it. `koan-ffi` returns cover art as raw bytes where GraphQL has to base64 it, and polls where GraphQL subscribes; otherwise the two mirror each other closely enough that a gap in one is usually a gap in both.
 
 ## Threading model
 

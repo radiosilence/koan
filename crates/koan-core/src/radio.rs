@@ -54,6 +54,9 @@ struct Candidate {
 /// Context extracted from the current queue and play history to guide radio picks.
 #[derive(Debug, Default)]
 pub struct RadioContext {
+    /// Whether the slow, network-backed signals may run. False when the queue
+    /// is about to run dry and a pick is needed this instant.
+    pub allow_network: bool,
     /// Artist IDs from the seed window, with recency weight (more recent = higher).
     pub seed_artists: HashMap<i64, f64>,
     /// Paths already in the queue (to avoid duplicates).
@@ -82,7 +85,12 @@ impl RadioContext {
         seed_window: usize,
         history_window: usize,
     ) -> Self {
-        let mut ctx = Self::default();
+        let mut ctx = Self {
+            // Enrichment on by default; the caller turns it off when it cannot
+            // wait for it.
+            allow_network: true,
+            ..Self::default()
+        };
 
         // Add queued paths for duplicate prevention.
         for (_aid, path) in queue_items {
@@ -210,15 +218,23 @@ pub fn pick_tracks(
         ctx.current_artist_name.as_deref().unwrap_or("none"),
     );
 
-    // --- Signal 1: ListenBrainz similar artists ---
-    gather_listenbrainz_candidates(conn, ctx, &mut candidates);
+    // Signals 1-3 go to the network, and ListenBrainz and MusicBrainz each
+    // rate-limit themselves to one request a second per seed artist. That is
+    // fine while there is queue left to play and useless when there is not: the
+    // caller that needs a track *now* gets the local signals, which are a
+    // database read, and the enrichment happens on a later pass while there is
+    // time for it.
+    if ctx.allow_network {
+        // --- Signal 1: ListenBrainz similar artists ---
+        gather_listenbrainz_candidates(conn, ctx, &mut candidates);
 
-    // --- Signal 2: MusicBrainz relationships ---
-    gather_musicbrainz_candidates(conn, ctx, &mut candidates);
+        // --- Signal 2: MusicBrainz relationships ---
+        gather_musicbrainz_candidates(conn, ctx, &mut candidates);
 
-    // --- Signal 3: Subsonic similar songs ---
-    if let Some(client) = client {
-        gather_subsonic_candidates(conn, ctx, client, &mut candidates);
+        // --- Signal 3: Subsonic similar songs ---
+        if let Some(client) = client {
+            gather_subsonic_candidates(conn, ctx, client, &mut candidates);
+        }
     }
 
     // --- Signal 4: Genre + era match ---
@@ -974,6 +990,172 @@ pub fn fetch_and_cache_similar_artists(
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Auto-queue
+// ---------------------------------------------------------------------------
+
+/// Keep the queue topped up while radio mode is on.
+///
+/// Radio mode is a flag on `SharedPlayerState`, and for a long time only the
+/// TUI acted on it — so any other client could switch it on and nothing would
+/// happen. Owning the loop here means every front end gets the same behaviour
+/// instead of reimplementing it, and there is one place to fix when it is
+/// wrong.
+///
+/// Runs on its own thread and exits when the player goes away.
+pub fn spawn_autoqueue(
+    state: std::sync::Arc<crate::player::state::SharedPlayerState>,
+    tx: crossbeam_channel::Sender<crate::player::commands::PlayerCommand>,
+    db_path: std::path::PathBuf,
+) {
+    use crate::player::commands::PlayerCommand;
+    use crate::player::state::{LoadState, QueueEntryStatus, QueueItemId};
+
+    std::thread::Builder::new()
+        .name("koan-radio".into())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(2));
+
+                if !state.radio_mode() || state.cursor().is_none() {
+                    continue;
+                }
+                log::debug!("radio: awake, cursor set");
+
+                let cfg = crate::config::Config::load().unwrap_or_default();
+                let snapshot = state.derive_visible_queue();
+                let Some(playing) = snapshot
+                    .entries
+                    .iter()
+                    .position(|e| e.status == QueueEntryStatus::Playing)
+                else {
+                    log::debug!("radio: nothing is playing, waiting");
+                    continue;
+                };
+                let remaining = snapshot
+                    .entries
+                    .iter()
+                    .skip(playing + 1)
+                    .filter(|e| e.status == QueueEntryStatus::Queued)
+                    .count();
+                if remaining > cfg.radio.lookahead {
+                    continue;
+                }
+                log::info!(
+                    "radio: {} queued after the cursor, topping up to {}",
+                    remaining,
+                    cfg.radio.lookahead
+                );
+
+                let Ok(db) = crate::db::connection::Database::open(&db_path) else {
+                    continue;
+                };
+                let (items, cursor) = state.snapshot_playlist();
+
+                // The seed drifts: recent items weigh more than the first thing
+                // queued, so the radio moves through the library rather than
+                // orbiting one track.
+                let context: Vec<(Option<i64>, Option<String>)> = items
+                    .iter()
+                    .map(|item| {
+                        let row = item
+                            .path
+                            .to_str()
+                            .and_then(|p| queries::track_id_by_path(&db.conn, p).ok())
+                            .flatten()
+                            .and_then(|id| queries::get_track_row(&db.conn, id).ok())
+                            .flatten();
+                        (
+                            row.as_ref().and_then(|t| t.artist_id),
+                            Some(item.path.to_string_lossy().into_owned()),
+                        )
+                    })
+                    .collect();
+
+                let mut ctx = RadioContext::build(
+                    &db.conn,
+                    &context,
+                    cfg.radio.seed_window,
+                    cfg.radio.history_window,
+                );
+                if let Some(current) = cursor.and_then(|cid| items.iter().find(|i| i.id == cid))
+                    && let Some(row) = current
+                        .path
+                        .to_str()
+                        .and_then(|p| queries::track_id_by_path(&db.conn, p).ok())
+                        .flatten()
+                        .and_then(|id| queries::get_track_row(&db.conn, id).ok())
+                        .flatten()
+                {
+                    ctx.current_remote_id = row.remote_id.clone();
+                    ctx.current_artist_name = Some(row.artist_name.clone());
+                }
+                // Local signals only.
+                //
+                // ListenBrainz and MusicBrainz each rate-limit to one request a
+                // second per seed artist, and both are called in line before a
+                // single pick comes back — so a queue that needs a track in the
+                // next few seconds gets one long after the music has stopped.
+                // Genre/era, same-artist, acoustic similarity and plain random
+                // are all database reads and answer immediately, which is worth
+                // more than a better-chosen track that arrives too late.
+                //
+                // The network signals stay in `pick_tracks` for whenever they
+                // can be moved off this path and into a background pass that
+                // fills the similar-artists cache.
+                ctx.allow_network = false;
+
+                // No client, and no similar-artist prefetch: both are HTTP
+                // round trips in front of a pick that is needed now. Cached
+                // similar artists are still read from the database by the local
+                // signals; only the fetching is gone.
+                let picks = pick_tracks(&db.conn, &ctx, None, &cfg.radio);
+                if picks.is_empty() {
+                    log::warn!("radio: the picker returned nothing for this seed");
+                    continue;
+                }
+
+                // Never queue something already in the queue: the picker scores
+                // by similarity and has no idea what is sitting below the
+                // cursor.
+                let queued: HashSet<String> = items
+                    .iter()
+                    .map(|i| i.path.to_string_lossy().into_owned())
+                    .collect();
+                let rows: Vec<_> = queries::tracks_by_ids(&db.conn, &picks)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|row| {
+                        row.path
+                            .as_deref()
+                            .or(row.cached_path.as_deref())
+                            .is_none_or(|p| !queued.contains(p))
+                    })
+                    .collect();
+                if rows.is_empty() {
+                    log::warn!("radio: every pick was already in the queue");
+                    continue;
+                }
+
+                let new_items = crate::helpers::playlist_items_for_tracks(&db, &rows);
+                let pending: Vec<(i64, QueueItemId)> = new_items
+                    .iter()
+                    .filter(|i| matches!(i.load_state, LoadState::Pending))
+                    .filter_map(|i| i.db_id.map(|id| (id, i.id)))
+                    .collect();
+
+                log::info!("radio: queueing {} tracks", new_items.len());
+                if tx.send(PlayerCommand::AddToPlaylist(new_items)).is_err() {
+                    return; // Player gone; so is the app.
+                }
+                if !pending.is_empty() {
+                    crate::helpers::spawn_downloads(pending, tx.clone(), state.clone());
+                }
+            }
+        })
+        .ok();
 }
 
 #[cfg(test)]

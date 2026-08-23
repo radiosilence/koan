@@ -422,6 +422,7 @@ mod tests {
                         source: "local".into(),
                         remote_id: None,
                         remote_url: None,
+                        album_added_at: None,
                         label: None,
                     };
                     queries::upsert_track(&db.conn, &meta).unwrap();
@@ -456,6 +457,7 @@ mod tests {
             source: "local".into(),
             remote_id: None,
             remote_url: None,
+            album_added_at: None,
             label: None,
         };
         queries::upsert_track(&db.conn, &meta).unwrap()
@@ -669,26 +671,39 @@ mod tests {
         let data = resp.data.into_json().unwrap();
         assert_eq!(data["replaceQueue"]["addedCount"], 2);
 
-        // Should send: ClearPlaylist, AddToPlaylist, Play
-        let cmd1 = rx.try_recv().unwrap();
-        assert!(
-            matches!(cmd1, PlayerCommand::ClearPlaylist),
-            "first command should be ClearPlaylist"
-        );
-
-        let cmd2 = rx.try_recv().unwrap();
-        match cmd2 {
-            PlayerCommand::AddToPlaylist(items) => {
+        // One command, not clear-then-add-then-play: three commands down a
+        // bounded channel means the first track starts before the cursor lands
+        // on the one that was asked for.
+        match rx.try_recv().unwrap() {
+            PlayerCommand::ReplacePlaylist { items, start } => {
                 assert_eq!(items.len(), 2);
+                assert_eq!(start, 0, "defaults to the first track");
             }
-            other => panic!("expected AddToPlaylist, got {:?}", other),
+            other => panic!("expected ReplacePlaylist, got {:?}", other),
         }
+        assert!(rx.try_recv().is_err(), "no follow-up commands");
+    }
 
-        let cmd3 = rx.try_recv().unwrap();
-        assert!(
-            matches!(cmd3, PlayerCommand::Play(_)),
-            "third command should be Play"
-        );
+    #[tokio::test]
+    async fn replace_queue_starts_where_it_was_asked_to() {
+        let (schema, rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+
+        let id1 = insert_test_track(&db_path, "Track A", "Artist", "Album");
+        let id2 = insert_test_track(&db_path, "Track B", "Artist", "Album");
+
+        let resp = schema
+            .execute(&format!(
+                "mutation {{ replaceQueue(trackIds: [{}, {}], startAt: 1) {{ ok }} }}",
+                id1, id2
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+
+        match rx.try_recv().unwrap() {
+            PlayerCommand::ReplacePlaylist { start, .. } => assert_eq!(start, 1),
+            other => panic!("expected ReplacePlaylist, got {:?}", other),
+        }
     }
 
     // ---- Phase 1 tests: queue snapshot, viz, config, playlist version, subscriptions ----

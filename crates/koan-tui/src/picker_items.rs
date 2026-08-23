@@ -121,6 +121,7 @@ mod tests {
             codec: None,
             label: None,
             remote_id: None,
+            added_at: None,
         }
     }
 

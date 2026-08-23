@@ -64,6 +64,8 @@ fn save_playback_state_from_app(app: &app::App) {
                 &persisted,
                 cursor_path.as_deref(),
                 position_ms,
+                app.state.playback_state() == koan_core::player::state::PlaybackState::Playing,
+                app.state.radio_mode(),
             ) {
                 log::warn!("failed to save playback state: {}", e);
             }

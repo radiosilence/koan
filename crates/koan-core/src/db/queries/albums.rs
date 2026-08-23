@@ -15,7 +15,11 @@ pub fn get_or_create_album(
     total_tracks: Option<i32>,
     codec: Option<&str>,
     label: Option<&str>,
+    // `added_at`: remote sync passes the server's `created`, a local scan the
+    // earliest mtime among the album's files. Both ISO 8601 UTC, so the two
+    // sources sort against each other.
     remote_id: Option<&str>,
+    added_at: Option<&str>,
 ) -> Result<i64, DbError> {
     let existing: Option<i64> = conn
         .query_row(
@@ -33,17 +37,21 @@ pub fn get_or_create_album(
                 codec      = COALESCE(?1, codec),
                 date       = COALESCE(?2, date),
                 label      = COALESCE(?3, label),
-                remote_id  = COALESCE(?4, remote_id)
-             WHERE id = ?5",
-            params![codec, date, label, remote_id, id],
+                remote_id  = COALESCE(?4, remote_id),
+                -- Earliest wins. A record acquired over months should date
+                -- from its first file, not its last, and filling only would
+                -- freeze whichever file the first scan happened to reach.
+                added_at   = MIN(COALESCE(added_at, ?5), COALESCE(?5, added_at))
+             WHERE id = ?6",
+            params![codec, date, label, remote_id, added_at, id],
         )?;
         return Ok(id);
     }
 
     conn.execute(
-        "INSERT INTO albums (title, artist_id, date, total_discs, total_tracks, codec, label, remote_id)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-        params![title, artist_id, date, total_discs, total_tracks, codec, label, remote_id],
+        "INSERT INTO albums (title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+        params![title, artist_id, date, total_discs, total_tracks, codec, label, remote_id, added_at],
     )?;
     Ok(conn.last_insert_rowid())
 }
@@ -52,11 +60,12 @@ pub fn get_or_create_album(
 pub fn albums_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<AlbumRow>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
-                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id
+                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
+                al.added_at
          FROM albums al
          LEFT JOIN artists a ON al.artist_id = a.id
          WHERE al.artist_id = ?1
-         ORDER BY al.date, al.title",
+         ORDER BY al.date, al.title COLLATE LIBRARY",
     )?;
     let rows = stmt
         .query_map(params![artist_id], |row| {
@@ -71,6 +80,7 @@ pub fn albums_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<AlbumR
                 codec: row.get(7)?,
                 label: row.get(8)?,
                 remote_id: row.get(9)?,
+                added_at: row.get(10)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -82,7 +92,8 @@ pub fn get_album(conn: &Connection, album_id: i64) -> Result<Option<AlbumRow>, D
     let result = conn
         .query_row(
             "SELECT al.id, al.title, al.artist_id, a.name, al.date,
-                    al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id
+                    al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
+                al.added_at
              FROM albums al
              LEFT JOIN artists a ON al.artist_id = a.id
              WHERE al.id = ?1",
@@ -99,6 +110,7 @@ pub fn get_album(conn: &Connection, album_id: i64) -> Result<Option<AlbumRow>, D
                     codec: row.get(7)?,
                     label: row.get(8)?,
                     remote_id: row.get(9)?,
+                    added_at: row.get(10)?,
                 })
             },
         )
@@ -122,10 +134,11 @@ pub fn album_date(conn: &Connection, album_id: i64) -> Result<Option<String>, Db
 pub fn all_albums(conn: &Connection) -> Result<Vec<AlbumRow>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
-                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id
+                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
+                al.added_at
          FROM albums al
          LEFT JOIN artists a ON al.artist_id = a.id
-         ORDER BY a.name, al.date, al.title",
+         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY",
     )?;
 
     let rows = stmt
@@ -141,6 +154,7 @@ pub fn all_albums(conn: &Connection) -> Result<Vec<AlbumRow>, DbError> {
                 codec: row.get(7)?,
                 label: row.get(8)?,
                 remote_id: row.get(9)?,
+                added_at: row.get(10)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -175,6 +189,7 @@ mod tests {
             Some("FLAC"),
             Some("Warp"),
             None,
+            None,
         )
         .unwrap();
         let a2 = get_or_create_album(
@@ -186,6 +201,7 @@ mod tests {
             None,
             Some("FLAC"),
             Some("Warp"),
+            None,
             None,
         )
         .unwrap();
@@ -206,6 +222,7 @@ mod tests {
             None,
             None,
             Some("MP3"),
+            None,
             None,
             None,
         )
@@ -230,6 +247,7 @@ mod tests {
             None,
             None,
             Some("FLAC"),
+            None,
             None,
             None,
         )
@@ -268,6 +286,7 @@ mod tests {
             Some("FLAC"),
             Some("Warp"),
             None,
+            None,
         )
         .unwrap();
 
@@ -281,6 +300,7 @@ mod tests {
             None,
             None, // no codec
             None, // no label
+            None,
             None,
         )
         .unwrap();

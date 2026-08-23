@@ -182,6 +182,12 @@ impl AudioEngine {
         check(unsafe { AudioOutputUnitStop(self.audio_unit) })
     }
 
+    /// `stop`, reporting the raw OSStatus — teardown wants to log it.
+    fn stop_status(&self) -> i32 {
+        self.running.store(false, Ordering::Release);
+        unsafe { AudioOutputUnitStop(self.audio_unit) }
+    }
+
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
     }
@@ -189,7 +195,8 @@ impl AudioEngine {
 
 impl Drop for AudioEngine {
     fn drop(&mut self) {
-        let _ = self.stop();
+        let stop_status = self.stop_status();
+        log::debug!("engine teardown: AudioOutputUnitStop -> {}", stop_status);
 
         // Wait for any in-flight render callback to finish. AudioOutputUnitStop
         // is documented as synchronous, but during sample rate switches the
@@ -206,27 +213,59 @@ impl Drop for AudioEngine {
                 break;
             }
         }
+        log::debug!("engine teardown: callback drained after {} spins", spins);
 
-        // Remove the render callback before tearing down. This ensures no
-        // future callback can race with AudioUnitUninitialize, which
-        // otherwise crashes in CoreAudio's internal allocator (caulk) —
-        // especially during sample rate changes.
-        let silent_cb = AURenderCallbackStruct {
-            inputProc: None,
-            inputProcRefCon: ptr::null_mut(),
-        };
-        // SAFETY: Removing the callback from a valid AudioUnit. Even if the unit
-        // is in a degraded state, setting a null callback is a no-op at worst.
-        unsafe {
-            AudioUnitSetProperty(
-                self.audio_unit,
-                kAudioUnitProperty_SetRenderCallback,
-                kAudioUnitScope_Input,
-                0,
-                &silent_cb as *const _ as *const c_void,
-                mem::size_of::<AURenderCallbackStruct>() as u32,
-            );
+        // Then ask the unit itself. The flag above only proves *our* callback
+        // body is not executing; CoreAudio's IO proc can still be mid-cycle
+        // around it, and tearing down underneath that corrupts the buffer list
+        // it is holding — which is what trapped inside caulk's deallocator, in
+        // `AudioUnitUninitialize` and, before this teardown was reordered, in
+        // `AudioUnitSetProperty` (#89).
+        let mut waited = 0u32;
+        let mut last = (0i32, 1u32);
+        for _ in 0..200 {
+            let mut running: UInt32 = 0;
+            let mut size = mem::size_of::<UInt32>() as u32;
+            // SAFETY: querying a bool property on a unit we still own.
+            let status = unsafe {
+                AudioUnitGetProperty(
+                    self.audio_unit,
+                    kAudioOutputUnitProperty_IsRunning,
+                    kAudioUnitScope_Global,
+                    0,
+                    &mut running as *mut _ as *mut c_void,
+                    &mut size,
+                )
+            };
+            last = (status, running);
+            if status != 0 || running == 0 {
+                break;
+            }
+            waited += 1;
+            std::thread::sleep(std::time::Duration::from_millis(1));
         }
+        log::debug!(
+            "engine teardown: IsRunning query -> status {} running {} after {}ms; uninitializing",
+            last.0,
+            last.1,
+            waited
+        );
+
+        // Deliberately no `AudioUnitSetProperty` here.
+        //
+        // Removing the render callback before teardown looks like the safe
+        // move, and it was how this was written — but
+        // `kAudioUnitProperty_SetRenderCallback` may only be set while the unit
+        // is *uninitialized*. Setting it on a live unit makes CoreAudio tear
+        // down and rebuild its internal ExtendedAudioBufferList, and that is
+        // the double free this was meant to prevent: the crash landed inside
+        // `AudioUnitSetProperty` itself, in caulk's deallocator, every time a
+        // queue reached its end (#89, and again at the end of a playlist).
+        //
+        // `AudioUnitUninitialize` releases that buffer list, once, which is all
+        // that is wanted. Nothing can be mid-callback by then: `stop()` has
+        // cleared `running` so the callback only writes silence, and the
+        // spin-wait above has drained anything already executing.
 
         // SAFETY: AudioUnit was successfully created in new(). Uninitialize and
         // Dispose are the documented teardown sequence. callback_data was created
@@ -279,7 +318,32 @@ unsafe extern "C" fn render_callback(
     // We configured a non-interleaved float format, so mNumberBuffers >= 1.
     let buf = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
     let channels = buf.mNumberChannels;
-    let total_samples = (in_number_frames * channels) as usize;
+
+    // Never write past what CoreAudio actually allocated.
+    //
+    // `frames * channels` is what the buffer *should* hold, and it is not the
+    // same question as how big it is. CoreAudio can hand back a shorter buffer
+    // than the frame count implies — a device switching buffer size, or the
+    // final callbacks as a unit is torn down — and writing the full product
+    // then runs off the end of its heap block. The damage does not show up
+    // here: it surfaces later inside CoreAudio's own allocator, whichever call
+    // happens to free that block, which is why this read as a double free in
+    // `AudioUnitUninitialize` and, before that, in `AudioUnitSetProperty`.
+    let capacity = buf.mDataByteSize as usize / mem::size_of::<f32>();
+    let wanted = (in_number_frames * channels) as usize;
+    if wanted > capacity {
+        log::warn!(
+            "CoreAudio buffer holds {} samples but {} frames x {} channels were asked for",
+            capacity,
+            in_number_frames,
+            channels
+        );
+    }
+    let total_samples = wanted.min(capacity);
+    if buf.mData.is_null() || total_samples == 0 {
+        data.in_callback.store(false, Ordering::Release);
+        return 0;
+    }
     if !(buf.mData as usize).is_multiple_of(mem::align_of::<f32>()) {
         log::error!("CoreAudio buffer not aligned for f32");
         // Fill silence rather than risking UB from an unaligned cast.
@@ -319,16 +383,57 @@ unsafe extern "C" fn render_callback(
     }
 
     // Zero remaining frames on underrun — silence > glitches.
+    //
+    // `write_bytes` counts in elements of the pointee, not in bytes, so
+    // multiplying by `size_of::<f32>()` here wrote four times the intended
+    // range and ran off the end of CoreAudio's buffer. It corrupted the block's
+    // neighbour rather than faulting, so nothing happened until CoreAudio freed
+    // it — surfacing as a trap inside caulk's deallocator in
+    // `AudioUnitUninitialize`, one track later, looking for all the world like
+    // a double free in the teardown (#89).
+    //
+    // Underrun happens at the end of every track, which is why the end of a
+    // queue was where it showed.
     if to_read < total_samples {
+        // SAFETY: `total_samples` is clamped to the buffer's own
+        // `mDataByteSize`, so this slice ends exactly at its end.
         unsafe {
-            ptr::write_bytes(
-                out_ptr.add(to_read),
-                0,
-                (total_samples - to_read) * mem::size_of::<f32>(),
-            );
+            std::slice::from_raw_parts_mut(out_ptr.add(to_read), total_samples - to_read).fill(0.0);
         }
     }
 
     data.in_callback.store(false, Ordering::Release);
     0
+}
+
+#[cfg(test)]
+mod tests {
+    /// The underrun fill wrote `count * size_of::<f32>()` *elements* rather than
+    /// bytes, because `write_bytes` counts in elements of the pointee — four
+    /// times the intended range, straight off the end of CoreAudio's buffer.
+    /// It corrupted the neighbouring block silently, so the damage only
+    /// appeared when CoreAudio freed it, one track later, inside
+    /// `AudioUnitUninitialize`.
+    #[test]
+    fn underrun_fill_stays_inside_the_buffer() {
+        let capacity = 1024usize; // 512 frames x 2 channels
+        let mut buffer = vec![7.0f32; capacity + 64]; // canary tail
+        let out = buffer.as_mut_ptr();
+
+        let total_samples = capacity;
+        let to_read = 300usize;
+
+        unsafe {
+            std::slice::from_raw_parts_mut(out.add(to_read), total_samples - to_read).fill(0.0);
+        }
+
+        assert!(
+            buffer[to_read..capacity].iter().all(|s| *s == 0.0),
+            "the underrun region is silent"
+        );
+        assert!(
+            buffer[capacity..].iter().all(|s| *s == 7.0),
+            "nothing past the buffer was touched"
+        );
+    }
 }

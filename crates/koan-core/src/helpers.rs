@@ -66,6 +66,109 @@ pub fn subsonic_client(cfg: &Config) -> Option<SubsonicClient> {
 }
 
 // ---------------------------------------------------------------------------
+// Sharing
+// ---------------------------------------------------------------------------
+
+/// Why a share link could not be made. Each variant is something the user can
+/// act on, which is the point — every caller used to collapse these into
+/// "local-only tracks can't be shared" and send people looking in the wrong
+/// place.
+#[derive(Debug, thiserror::Error)]
+pub enum ShareError {
+    #[error("no remote server is configured")]
+    NoRemote,
+    #[error("none of these tracks are on the server, so a link has nothing to point at")]
+    NothingRemote,
+    #[error("the server refused to share these: {0}")]
+    Server(#[from] crate::remote::client::SubsonicError),
+    #[error(transparent)]
+    Database(#[from] crate::db::connection::DbError),
+}
+
+/// A created share link, and how much of the request it covers.
+#[derive(Debug, Clone)]
+pub struct ShareOutcome {
+    pub url: String,
+    /// The server's own ID for the share, for callers that manage them.
+    pub id: String,
+    /// Tracks the server knows about, which went into the link.
+    pub shared: usize,
+    /// Tracks with no copy on the server, left out of it.
+    pub skipped: usize,
+}
+
+/// Create a public share link on the remote server for these tracks.
+///
+/// A link points at the server, so only tracks the server knows about can go in
+/// it. A mixed selection shares the part that can be shared and reports the
+/// rest rather than failing whole — half a link beats none, as long as the
+/// caller says which half.
+///
+/// Network-bound. Callers keep it off whatever thread draws.
+pub fn create_share(
+    db: &Database,
+    cfg: &Config,
+    track_ids: &[i64],
+    description: Option<&str>,
+) -> Result<ShareOutcome, ShareError> {
+    let client = subsonic_client(cfg).ok_or(ShareError::NoRemote)?;
+
+    // One query, not one per track: sharing an artist is thousands of tracks.
+    let rows = queries::tracks_by_ids(&db.conn, track_ids)?;
+
+    let shared = rows.iter().filter(|t| t.remote_id.is_some()).count();
+    if shared == 0 {
+        return Err(ShareError::NothingRemote);
+    }
+
+    // A whole record shares as one album rather than as N tracks — the server
+    // renders it as the album it is, and the link survives the user adding to
+    // it. Only when the selection is genuinely the whole thing.
+    let one_album = rows
+        .first()
+        .and_then(|f| f.album_id)
+        .filter(|first| rows.iter().all(|t| t.album_id == Some(*first)))
+        .and_then(|album_id| album_remote_id(&db.conn, album_id, rows.len()));
+
+    let remote_ids: Vec<String> = match one_album {
+        Some(rid) => vec![rid],
+        None => rows.into_iter().filter_map(|t| t.remote_id).collect(),
+    };
+
+    let refs: Vec<&str> = remote_ids.iter().map(String::as_str).collect();
+    let share = client.create_share(&refs, description)?;
+
+    // Navidrome does not always hand back a URL, and a share with no link is
+    // useless to the caller — the ID is enough to build it.
+    let url = share
+        .url
+        .clone()
+        .unwrap_or_else(|| format!("{}/s/{}", client.base_url(), share.id));
+
+    Ok(ShareOutcome {
+        url,
+        id: share.id,
+        shared,
+        skipped: track_ids.len().saturating_sub(shared),
+    })
+}
+
+/// The album's own remote ID, but only when `selected` covers every track on
+/// it. Sharing an album link for half an album would hand out more than the
+/// user picked.
+fn album_remote_id(conn: &rusqlite::Connection, album_id: i64, selected: usize) -> Option<String> {
+    let (remote_id, total): (Option<String>, i64) = conn
+        .query_row(
+            "SELECT al.remote_id, (SELECT COUNT(*) FROM tracks WHERE album_id = al.id)
+             FROM albums al WHERE al.id = ?1",
+            [album_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok()?;
+    (total == selected as i64).then_some(remote_id).flatten()
+}
+
+// ---------------------------------------------------------------------------
 // Path utilities
 // ---------------------------------------------------------------------------
 
@@ -158,10 +261,21 @@ pub fn resolve_item_path(
 ) -> (PathBuf, LoadState) {
     match queries::resolve_playback_path(&db.conn, id) {
         Ok(Some(queries::PlaybackSource::Local(p))) => (p, LoadState::Ready),
-        Ok(Some(queries::PlaybackSource::Cached(p))) => (p, LoadState::Ready),
+        // A cache entry is only as good as its contents. Older builds could
+        // store a Subsonic error body here, which reports Ready and then fails
+        // to decode forever; treating it as Pending sends it back through the
+        // download path, which discards it and re-fetches.
+        Ok(Some(queries::PlaybackSource::Cached(p))) => {
+            let state = if is_cached_audio(&p) {
+                LoadState::Ready
+            } else {
+                LoadState::Pending
+            };
+            (p, state)
+        }
         Ok(Some(queries::PlaybackSource::Remote(_))) => {
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
-            if dest.exists() {
+            if dest.exists() && is_cached_audio(&dest) {
                 (dest, LoadState::Ready)
             } else {
                 (dest, LoadState::Pending)
@@ -206,6 +320,35 @@ pub fn playlist_item_from_track(
     }
 }
 
+/// Build playlist items for many tracks at once.
+///
+/// `track_to_playlist_item` loads the config on every call, which means
+/// reading and parsing `config.toml` and `config.local.toml` once per track —
+/// the reason a large add crawled. This loads it once and memoises album dates,
+/// so a thousand-track add costs one config read instead of a thousand.
+pub fn playlist_items_for_tracks(db: &Database, tracks: &[queries::TrackRow]) -> Vec<PlaylistItem> {
+    use std::collections::HashMap;
+
+    let cfg = Config::load().unwrap_or_default();
+    let mut album_dates: HashMap<i64, Option<String>> = HashMap::new();
+
+    tracks
+        .iter()
+        .map(|track| {
+            let album_date = match track.album_id {
+                Some(aid) => album_dates
+                    .entry(aid)
+                    .or_insert_with(|| queries::album_date(&db.conn, aid).ok().flatten())
+                    .clone(),
+                None => None,
+            };
+            let (path, load_state) =
+                resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
+            playlist_item_from_track(track, album_date.as_deref(), path, load_state)
+        })
+        .collect()
+}
+
 /// Build a PlaylistItem from a TrackRow, resolving its path automatically.
 pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> PlaylistItem {
     let album_date = track
@@ -243,6 +386,28 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
 // ---------------------------------------------------------------------------
 // Download
 // ---------------------------------------------------------------------------
+
+/// Whether a cached file plausibly holds audio.
+///
+/// A stored Subsonic error is a few hundred bytes of JSON or XML; no real
+/// encoded track comes close to that, so the size check alone settles almost
+/// every case and the leading byte covers the rest.
+fn is_cached_audio(path: &std::path::Path) -> bool {
+    const MIN_PLAUSIBLE_BYTES: u64 = 4096;
+    match std::fs::metadata(path) {
+        Ok(meta) if meta.len() >= MIN_PLAUSIBLE_BYTES => true,
+        Ok(_) => {
+            let mut first = [0u8; 1];
+            match std::fs::File::open(path)
+                .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut first).map(|_| first[0]))
+            {
+                Ok(b) => b != b'{' && b != b'<',
+                Err(_) => false,
+            }
+        }
+        Err(_) => false,
+    }
+}
 
 /// Resolve a track to a playable file, downloading from remote if needed.
 ///
@@ -315,6 +480,17 @@ pub fn download_track(
     let dest = cache_path_for_track(&cfg.cache_dir(), &track, album_date.as_deref());
 
     // 2. Already cached.
+    //
+    // Older builds could write a Subsonic error body here as if it were audio,
+    // leaving a tiny JSON file that reports Ready and then fails to decode
+    // forever. Treat those as absent so they get re-fetched.
+    if dest.exists() && !is_cached_audio(&dest) {
+        log::warn!(
+            "discarding non-audio cache entry {} (likely a stored server error)",
+            dest.display()
+        );
+        let _ = std::fs::remove_file(&dest);
+    }
     if dest.exists() {
         state.update_paths(&[(queue_id, dest)]);
         state.update_load_state(queue_id, LoadState::Ready);
@@ -417,5 +593,77 @@ pub fn spawn_downloads(
         })
     {
         log::error!("failed to spawn download thread: {}", e);
+    }
+}
+
+#[cfg(test)]
+mod share_tests {
+    use super::*;
+    use crate::db::queries::sample_meta;
+
+    fn test_db() -> Database {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        Database { conn }
+    }
+
+    /// Three tracks on one album; the album carries a remote ID.
+    fn album_of_three(db: &Database) -> (i64, Vec<i64>) {
+        let ids: Vec<i64> = ["One", "Two", "Three"]
+            .iter()
+            .enumerate()
+            .map(|(i, title)| {
+                let mut meta = sample_meta(title, "Boards of Canada", "Geogaddi");
+                meta.path = Some(format!("/music/geogaddi/{i}.flac"));
+                meta.track_number = Some(i as i32 + 1);
+                queries::upsert_track(&db.conn, &meta).unwrap()
+            })
+            .collect();
+        let album_id: i64 = db
+            .conn
+            .query_row("SELECT album_id FROM tracks WHERE id = ?1", [ids[0]], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        db.conn
+            .execute(
+                "UPDATE albums SET remote_id = 'al-1' WHERE id = ?1",
+                [album_id],
+            )
+            .unwrap();
+        (album_id, ids)
+    }
+
+    #[test]
+    fn whole_album_collapses_to_the_album_link() {
+        let db = test_db();
+        let (album_id, ids) = album_of_three(&db);
+        assert_eq!(
+            album_remote_id(&db.conn, album_id, ids.len()),
+            Some("al-1".into())
+        );
+    }
+
+    #[test]
+    fn part_of_an_album_does_not() {
+        let db = test_db();
+        let (album_id, _) = album_of_three(&db);
+        // Sharing an album link for two of three tracks would hand out a track
+        // the user did not pick.
+        assert_eq!(album_remote_id(&db.conn, album_id, 2), None);
+    }
+
+    #[test]
+    fn a_local_only_album_has_no_link_to_collapse_to() {
+        let db = test_db();
+        let (album_id, ids) = album_of_three(&db);
+        db.conn
+            .execute(
+                "UPDATE albums SET remote_id = NULL WHERE id = ?1",
+                [album_id],
+            )
+            .unwrap();
+        assert_eq!(album_remote_id(&db.conn, album_id, ids.len()), None);
     }
 }

@@ -51,7 +51,11 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
         _ => {}
     }
 
-    match lofty::read_from_path(path) {
+    // Embedded art is skipped: a scan wants tags and audio properties, and
+    // decoding a few hundred KB of JPEG out of every ID3v2 and FLAC block only
+    // to drop it dominated the run. `extract_cover_art` reads it separately,
+    // for the one track that needs it at the time it needs it.
+    match read_tagged_file(path) {
         Ok(tagged_file) => read_metadata_lofty(path, &tagged_file),
         Err(e) => {
             log::warn!(
@@ -62,6 +66,32 @@ pub fn read_metadata(path: &Path) -> Result<TrackMeta, MetadataError> {
             read_metadata_fallback(path)
         }
     }
+}
+
+/// lofty refuses any tag that would allocate past a global cap, and its default
+/// is 16 MB — small enough that one record with 4000x4000 cover art in its
+/// Vorbis comments fails to parse at all, dropping every track on it to the
+/// Symphonia fallback with worse metadata and three file parses instead of one.
+/// The cap exists to stop a hostile file exhausting memory, which 256 MB still
+/// does on any machine that can run a music player.
+fn raise_allocation_limit() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        lofty::config::apply_global_options(
+            lofty::config::GlobalOptions::new().allocation_limit(256 * 1024 * 1024),
+        );
+    });
+}
+
+/// lofty's own reader, minus the pictures.
+///
+/// `extract_cover_art` still reads them, with the defaults, for whichever
+/// single track actually needs artwork.
+fn read_tagged_file(path: &Path) -> Result<lofty::file::TaggedFile, Box<dyn std::error::Error>> {
+    raise_allocation_limit();
+    Ok(lofty::probe::Probe::open(path)?
+        .options(ParseOptions::new().read_cover_art(false))
+        .read()?)
 }
 
 /// Full metadata read via lofty (happy path).
@@ -145,6 +175,7 @@ fn read_metadata_lofty(
         source: "local".to_string(),
         remote_id: None,
         remote_url: None,
+        album_added_at: mtime.and_then(iso8601_utc),
     })
 }
 
@@ -164,26 +195,31 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
 
     // Try to extract tags from Symphonia's metadata (it's more lenient than lofty
     // for corrupted frames — it skips bad frames instead of erroring).
-    let (title, artist, album) = probe_symphonia_tags(path);
+    //
+    // Everything it offers is taken, not just the three obvious fields: a row
+    // missing its track number cannot content-match the same track synced from
+    // a remote server, so a file that lands here would stay a duplicate even
+    // once its tags read correctly.
+    let tags = probe_symphonia_tags(path);
 
-    let title = title.unwrap_or_else(|| {
+    let title = tags.title.unwrap_or_else(|| {
         path.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or("Unknown")
             .to_string()
     });
-    let artist = artist.unwrap_or_else(|| "Unknown Artist".to_string());
-    let album = album.unwrap_or_else(|| "Unknown Album".to_string());
+    let artist = tags.artist.unwrap_or_else(|| "Unknown Artist".to_string());
+    let album = tags.album.unwrap_or_else(|| "Unknown Album".to_string());
 
     Ok(TrackMeta {
         title,
         artist,
-        album_artist: None,
+        album_artist: tags.album_artist,
         album,
-        date: None,
-        disc: None,
-        track_number: None,
-        genre: None,
+        date: tags.date,
+        disc: tags.disc,
+        track_number: tags.track_number,
+        genre: tags.genre,
         label: None,
         duration_ms: props.duration_ms,
         codec: props.codec,
@@ -197,7 +233,16 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         source: "local".to_string(),
         remote_id: None,
         remote_url: None,
+        album_added_at: mtime.and_then(iso8601_utc),
     })
+}
+
+/// A unix timestamp as the same ISO 8601 UTC string a Subsonic server uses for
+/// `created`, so a library mixing local files and remote entries can be ordered
+/// by one column without comparing two date formats.
+fn iso8601_utc(unix_secs: i64) -> Option<String> {
+    chrono::DateTime::from_timestamp(unix_secs, 0)
+        .map(|t| t.format("%Y-%m-%dT%H:%M:%SZ").to_string())
 }
 
 /// Probed audio properties from Symphonia.
@@ -318,7 +363,20 @@ fn symphonia_codec_name(codec: symphonia::core::codecs::audio::AudioCodecId) -> 
 
 /// Try to extract basic tags (title, artist, album) via Symphonia's metadata reader.
 /// Symphonia is more lenient with corrupted ID3 frames than lofty.
-fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<String>) {
+/// Tags Symphonia can give us when lofty cannot parse the file at all.
+#[derive(Default)]
+struct SymphoniaTags {
+    title: Option<String>,
+    artist: Option<String>,
+    album_artist: Option<String>,
+    album: Option<String>,
+    date: Option<String>,
+    track_number: Option<i32>,
+    disc: Option<i32>,
+    genre: Option<String>,
+}
+
+fn probe_symphonia_tags(path: &Path) -> SymphoniaTags {
     use symphonia::core::formats::FormatOptions;
     use symphonia::core::formats::probe::Hint;
     use symphonia::core::io::MediaSourceStream;
@@ -326,7 +384,7 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
 
     let file = match std::fs::File::open(path) {
         Ok(f) => f,
-        Err(_) => return (None, None, None),
+        Err(_) => return SymphoniaTags::default(),
     };
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
     let mut hint = Hint::new();
@@ -341,28 +399,33 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
         MetadataOptions::default(),
     ) {
         Ok(r) => r,
-        Err(_) => return (None, None, None),
+        Err(_) => return SymphoniaTags::default(),
     };
 
-    let mut title = None;
-    let mut artist = None;
-    let mut album = None;
+    let mut tags = SymphoniaTags::default();
 
-    // Metadata found while probing is queued on the reader ahead of the
-    // container's own, so walking the revision log oldest-first keeps the
-    // probe's tags authoritative and fills any gaps from the container.
+    // Later revisions win. Symphonia's log is time-ordered and `current()` is
+    // the *oldest* revision, not the best one — an MP3 carrying both tags
+    // surfaces ID3v1 first and ID3v2 second. ID3v1 is never the one you want:
+    // its fields are a fixed 30 bytes, so anything longer arrives silently
+    // truncated, and a truncated title then matches nothing on a remote server.
+    //
+    // This walk accumulates rather than calling `skip_to_latest()`, so a field
+    // present only in an older revision still fills a gap the newest one leaves.
     let mut log = reader.metadata();
     loop {
         if let Some(rev) = log.current() {
             for tag in &rev.media.tags {
                 match &tag.std {
-                    Some(StandardTag::TrackTitle(v)) if title.is_none() => {
-                        title = Some(v.to_string())
-                    }
-                    Some(StandardTag::Artist(v)) if artist.is_none() => {
-                        artist = Some(v.to_string())
-                    }
-                    Some(StandardTag::Album(v)) if album.is_none() => album = Some(v.to_string()),
+                    Some(StandardTag::TrackTitle(v)) => tags.title = Some(v.to_string()),
+                    Some(StandardTag::Artist(v)) => tags.artist = Some(v.to_string()),
+                    Some(StandardTag::AlbumArtist(v)) => tags.album_artist = Some(v.to_string()),
+                    Some(StandardTag::Album(v)) => tags.album = Some(v.to_string()),
+                    Some(StandardTag::Genre(v)) => tags.genre = Some(v.to_string()),
+                    Some(StandardTag::RecordingDate(v)) => tags.date = Some(v.to_string()),
+                    Some(StandardTag::RecordingYear(v)) => tags.date = Some(v.to_string()),
+                    Some(StandardTag::TrackNumber(v)) => tags.track_number = Some(*v as i32),
+                    Some(StandardTag::DiscNumber(v)) => tags.disc = Some(*v as i32),
                     _ => {}
                 }
             }
@@ -372,7 +435,7 @@ fn probe_symphonia_tags(path: &Path) -> (Option<String>, Option<String>, Option<
         }
     }
 
-    (title, artist, album)
+    tags
 }
 
 /// Determine codec for an MP4 container file (AAC, ALAC, etc.).
@@ -415,6 +478,7 @@ pub fn codec_string(ft: lofty::file::FileType) -> &'static str {
 /// skipped — the `image` crate only has jpeg+png features and macOS
 /// CGImageDestination rejects TIFF for Now Playing artwork.
 pub fn extract_cover_art(path: &Path) -> Option<Vec<u8>> {
+    raise_allocation_limit();
     let tagged_file = lofty::read_from_path(path).ok()?;
     let tag = tagged_file
         .primary_tag()
@@ -515,12 +579,38 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         source: "streaming".to_string(),
         remote_id: None,
         remote_url: None,
+        album_added_at: None,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file carrying both tags must be read from ID3v2. ID3v1's fields are a
+    /// fixed 30 bytes, so preferring it silently truncates every longer title —
+    /// which then matches nothing on a remote server, splitting one record into
+    /// two albums. Symphonia surfaces the v1 tag as the *first* metadata
+    /// revision, so "take the first" is exactly the wrong rule.
+    #[test]
+    fn id3v2_beats_id3v1() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("both.mp3");
+        crate::test_utils::generate_mp3_with_both_tags(
+            &path,
+            "Golden Skans (David E Sugar Remix)",
+            "Golden Skans (David E Sugar R",
+        );
+
+        let tags = probe_symphonia_tags(&path);
+        assert_eq!(
+            tags.title.as_deref(),
+            Some("Golden Skans (David E Sugar Remix)")
+        );
+        // ID3v1 has no track number at all, so this also proves the v2 frame
+        // was reached rather than the walk stopping at the first revision.
+        assert_eq!(tags.track_number, Some(7));
+    }
 
     #[test]
     fn test_is_audio_file() {

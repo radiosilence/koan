@@ -267,6 +267,7 @@ fn write_albums(
                 source: "remote".to_string(),
                 remote_id: Some(song.id.clone()),
                 remote_url: Some(client.stream_url_template(&song.id)),
+                album_added_at: album.created.clone(),
             };
 
             match queries::upsert_track(&db.conn, &meta) {
@@ -410,6 +411,7 @@ mod tests {
             source: "remote".into(),
             remote_id: Some(remote_id.into()),
             remote_url: Some(format!("https://example.com/stream?id={}", remote_id)),
+            album_added_at: None,
         }
     }
 

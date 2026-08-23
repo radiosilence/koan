@@ -14,6 +14,9 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 # homebrew (recommended)
 brew install radiosilence/koan/koan
 
+# the macOS app (optional — same engine, native UI)
+brew install --cask radiosilence/koan/koan-app
+
 # pre-built binary via mise
 mise use -g github:radiosilence/koan@latest
 
@@ -163,7 +166,22 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 File -> Symphonia -> f32 samples -> rtrb ring buffer -> CoreAudio/cpal callback -> DAC
 ```
 
-Four crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
+Five crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (Ratatui TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), `koan-ffi` (uniffi bindings for native clients), and `koan-cli` (the `koan` binary). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
+
+## macOS app
+
+A native SwiftUI front-end lives in [`apps/macos`](apps/macos). It links `koan-core` directly through `koan-ffi` rather than talking to `koan serve` — the app is sitting on top of the audio engine, so round-tripping HTTP to reach it would buy nothing and cost a daemon, a port, and an auth surface. Playback stays bit-perfect because CoreAudio output never leaves Rust.
+
+GraphQL remains the surface for clients that genuinely *can't* link the core: the web SPA, iOS, and jukebox-style remotes.
+
+It shares one library and one config with the CLI and TUI, so a queue saved in one shows up in the others. Visualizers are deliberately absent — that is what the TUI is for.
+
+```bash
+just macos-run     # build and launch
+just macos-dmg     # package for release
+```
+
+Requires Swift 6 and macOS 14+.
 
 ## Coming soon
 
@@ -177,6 +195,7 @@ Four crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (
 just check    # test + clippy
 just fmt      # cargo fmt
 just cli      # cargo run -p koan-cli -- <args>
+just macos-run # build + launch the macOS app
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.

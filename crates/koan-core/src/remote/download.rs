@@ -127,6 +127,20 @@ fn attempt_download(
 ) -> Result<u64, DownloadError> {
     let resp = request()?.send()?;
     let status = resp.status();
+    // Subsonic reports failure with HTTP 200 and a JSON or XML error body, so a
+    // success status proves nothing on a binary endpoint. Without this, an error
+    // response gets written to disk and cached as if it were audio — it then
+    // reports Ready and fails to decode forever.
+    if resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| ct.contains("json") || ct.contains("xml"))
+    {
+        return Err(DownloadError::Request(
+            "server returned an error document where audio was expected".into(),
+        ));
+    }
     if !status.is_success() {
         return Err(DownloadError::Status(status));
     }

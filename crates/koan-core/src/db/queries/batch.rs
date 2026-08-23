@@ -65,11 +65,12 @@ pub fn albums_for_artists(
     }
     let sql = format!(
         "SELECT al.id, al.title, al.artist_id, a.name, al.date,
-                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id
+                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
+                al.added_at
          FROM albums al
          LEFT JOIN artists a ON al.artist_id = a.id
          WHERE al.artist_id IN {}
-         ORDER BY al.date, al.title",
+         ORDER BY al.date, al.title COLLATE LIBRARY",
         placeholders(artist_ids.len())
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -85,6 +86,7 @@ pub fn albums_for_artists(
             codec: row.get(7)?,
             label: row.get(8)?,
             remote_id: row.get(9)?,
+            added_at: row.get(10)?,
         })
     })?;
 

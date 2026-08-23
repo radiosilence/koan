@@ -109,6 +109,7 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
         meta.codec.as_deref(),
         meta.label.as_deref(),
         None,
+        meta.album_added_at.as_deref(),
     )?;
 
     // 1. Match by path.
@@ -454,7 +455,7 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
          WHERE t.artist_id = ?1 OR al.artist_id = ?1
-         ORDER BY al.date, al.title, t.disc, t.track_number",
+         ORDER BY al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
     )?;
     let rows = stmt
         .query_map(params![artist_id], row_to_track_row)?
@@ -560,7 +561,7 @@ pub fn all_tracks(conn: &Connection) -> Result<Vec<TrackRow>, DbError> {
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         ORDER BY a.name, al.date, al.title, t.disc, t.track_number",
+         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
     )?;
 
     let rows = stmt
@@ -636,13 +637,47 @@ pub fn all_tracks_paged(
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         ORDER BY a.name, al.date, al.title, t.disc, t.track_number
+         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY, t.disc, t.track_number
          LIMIT ?1 OFFSET ?2",
     )?;
     let rows = stmt
         .query_map(params![limit, offset], row_to_track_row)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+/// Fetch many tracks in one query, in the order the ids were given.
+///
+/// Building a queue used to call `get_track_row` per id. That is one round trip
+/// per track, and a thousand-track add felt like it.
+pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, DbError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = std::iter::repeat_n("?", ids.len())
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         WHERE t.id IN ({placeholders})"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let params = rusqlite::params_from_iter(ids.iter());
+    let rows = stmt
+        .query_map(params, row_to_track_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+
+    // SQL returns them in whatever order it likes; callers care about the order
+    // they asked for, because that is the order they will be queued in.
+    let mut by_id: HashMap<i64, TrackRow> = rows.into_iter().map(|r| (r.id, r)).collect();
+    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
 }
 
 /// Get a single track by ID with full metadata.
@@ -994,6 +1029,45 @@ pub fn favourite_artist_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbE
         "SELECT DISTINCT t.artist_id FROM tracks t
          JOIN favourites f ON (t.path = f.track_path OR t.cached_path = f.track_path)
          WHERE t.artist_id IS NOT NULL",
+    )?;
+    let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
+    let mut ids = HashSet::new();
+    for row in rows {
+        ids.insert(row?);
+    }
+    Ok(ids)
+}
+
+/// The path a track is favourited under.
+///
+/// Favourites are keyed by path, but which path depends on the track: a local
+/// file has one, a cached remote track has a cache path, and a remote track
+/// that has never been downloaded only has its URL. Without this, remote
+/// tracks can't be favourited at all.
+pub fn track_favourite_key(conn: &Connection, track_id: i64) -> Result<Option<String>, DbError> {
+    let result = conn.query_row(
+        "SELECT COALESCE(path, cached_path, remote_url) FROM tracks WHERE id = ?1",
+        params![track_id],
+        |row| row.get::<_, Option<String>>(0),
+    );
+    match result {
+        Ok(key) => Ok(key),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Get all favourited track IDs in a single query.
+///
+/// Matches the same three columns as [`track_id_by_path`], `remote_url`
+/// included — a remote track that has never been cached is favourited by its
+/// remote URL, and comparing only local paths misses every one of them.
+pub fn favourite_track_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT t.id FROM tracks t
+         JOIN favourites f ON (t.path = f.track_path
+                            OR t.cached_path = f.track_path
+                            OR t.remote_url = f.track_path)",
     )?;
     let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
     let mut ids = HashSet::new();

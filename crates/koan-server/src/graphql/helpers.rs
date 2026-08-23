@@ -131,14 +131,3 @@ pub(super) fn spawn_downloads(
 ) {
     koan_core::helpers::spawn_downloads(pending, tx, state);
 }
-
-// ---------------------------------------------------------------------------
-// TrackRow -> PlaylistItem — delegates to koan-core helpers
-// ---------------------------------------------------------------------------
-
-pub fn track_to_playlist_item(
-    track: &queries::TrackRow,
-    db: &Database,
-) -> koan_core::player::state::PlaylistItem {
-    koan_core::helpers::track_to_playlist_item(track, db)
-}

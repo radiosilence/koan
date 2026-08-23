@@ -48,11 +48,14 @@ pub fn get_or_create_artist(
 pub fn find_artists(conn: &Connection, query: &str) -> Result<Vec<ArtistRow>, DbError> {
     let pattern = format!("%{}%", escape_like(query));
     let mut stmt = conn.prepare(
-        "SELECT DISTINCT a.id, a.name, a.sort_name, a.remote_id
+        "SELECT a.id, a.name, a.sort_name, a.remote_id,
+                COUNT(DISTINCT al.id), COUNT(t.id)
          FROM artists a
          INNER JOIN albums al ON al.artist_id = a.id
+         LEFT JOIN tracks t ON t.album_id = al.id
          WHERE a.name LIKE ?1 COLLATE NOCASE ESCAPE '\\'
-         ORDER BY COALESCE(a.sort_name, a.name)",
+         GROUP BY a.id
+         ORDER BY COALESCE(a.sort_name, a.name) COLLATE LIBRARY",
     )?;
     let rows = stmt
         .query_map(params![pattern], |row| {
@@ -61,6 +64,8 @@ pub fn find_artists(conn: &Connection, query: &str) -> Result<Vec<ArtistRow>, Db
                 name: row.get(1)?,
                 sort_name: row.get(2)?,
                 remote_id: row.get(3)?,
+                album_count: row.get(4)?,
+                track_count: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -73,10 +78,13 @@ pub fn find_artists(conn: &Connection, query: &str) -> Result<Vec<ArtistRow>, Db
 /// top-level library view — they appear inline in the queue display.
 pub fn all_artists(conn: &Connection) -> Result<Vec<ArtistRow>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT DISTINCT a.id, a.name, a.sort_name, a.remote_id
+        "SELECT a.id, a.name, a.sort_name, a.remote_id,
+                COUNT(DISTINCT al.id), COUNT(t.id)
          FROM artists a
          INNER JOIN albums al ON al.artist_id = a.id
-         ORDER BY COALESCE(a.sort_name, a.name)",
+         LEFT JOIN tracks t ON t.album_id = al.id
+         GROUP BY a.id
+         ORDER BY COALESCE(a.sort_name, a.name) COLLATE LIBRARY",
     )?;
 
     let rows = stmt
@@ -86,6 +94,8 @@ pub fn all_artists(conn: &Connection) -> Result<Vec<ArtistRow>, DbError> {
                 name: row.get(1)?,
                 sort_name: row.get(2)?,
                 remote_id: row.get(3)?,
+                album_count: row.get(4)?,
+                track_count: row.get(5)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;

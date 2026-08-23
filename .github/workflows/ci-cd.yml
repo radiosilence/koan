@@ -82,6 +82,25 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
       - run: cargo build --release
 
+  macos-app:
+    name: macOS App
+    runs-on: macos-latest
+    timeout-minutes: 45
+    concurrency:
+      group: macos-app-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          key: macos-app
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      # Builds koan-ffi, regenerates the Swift bindings from it, then compiles
+      # the app. The bindings are generated, so this catches drift between the
+      # Rust surface and the Swift that calls it.
+      - run: just macos-build
+
   msrv:
     name: MSRV (1.89)
     runs-on: ubuntu-latest
@@ -98,7 +117,10 @@ jobs:
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
         with:
           key: msrv
-      - run: cargo check --workspace --all-targets
+      # koan-ffi is excluded deliberately: it is unpublished, built only as part
+      # of the macOS app, and uniffi's bindgen floors it at 1.91. The MSRV that
+      # matters is the one the published crates promise.
+      - run: cargo check --workspace --all-targets --exclude koan-ffi
 
   audit:
     name: Security Audit
@@ -111,6 +133,7 @@ jobs:
       - uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
 
   check-version:
     name: Check Version
@@ -192,11 +215,35 @@ jobs:
           name: ${{ matrix.binary_name }}
           path: ${{ matrix.binary_name }}.tar.gz
 
+  create-macos-app:
+    name: Release (Koan.app)
+    runs-on: macos-latest
+    needs: [check-version]
+    if: needs.check-version.outputs.should_release == 'true'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v5
+      - uses: dtolnay/rust-toolchain@631a55b12751854ce901bb631d5902ceb48146f7 # stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          key: macos-app
+      - uses: extractions/setup-just@dd310ad5a97d8e7b41793f8ef055398d51ad4de6 # v2
+      # Both slices, lipo'd into one static library, so the app runs on Intel
+      # and Apple silicon from a single download.
+      - run: just macos-ffi "aarch64-apple-darwin x86_64-apple-darwin"
+      - run: cd apps/macos && swift build -c release --arch arm64 --arch x86_64
+      - run: just macos-dmg
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: koan-macos-app
+          path: apps/macos/.build/pkg/Koan.dmg
+
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [fmt, clippy, test, build, create-release, check-version, publish-crate]
+    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, check-version, publish-crate]
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       contents: write
@@ -216,7 +263,9 @@ jobs:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: v${{ needs.check-version.outputs.version }}
           generate_release_notes: true
-          files: artifacts/**/*.tar.gz
+          files: |
+            artifacts/**/*.tar.gz
+            artifacts/**/*.dmg
 
   publish-crate:
     name: Publish to crates.io
@@ -285,6 +334,35 @@ jobs:
           end
           FORMULA
           sed -i 's/^          //' Formula/koan.rb
+          # The GUI ships as a cask beside the CLI formula. Named koan-app so
+          # `brew install koan` stays unambiguously the command-line player.
+          DMG_SHA=$(sha256sum artifacts/koan-macos-app/Koan.dmg | awk '{print $1}')
+          mkdir -p Casks
+          cat > Casks/koan-app.rb <<CASK
+          cask "koan-app" do
+            version "${VERSION}"
+            sha256 "${DMG_SHA}"
+
+            url "https://github.com/radiosilence/koan/releases/download/v#{version}/Koan.dmg"
+            name "koan"
+            desc "Bit-perfect music player for macOS"
+            homepage "https://github.com/radiosilence/koan"
+
+            depends_on macos: ">= :sonoma"
+
+            app "Koan.app"
+
+            # Ad-hoc signed, not notarised — without this Gatekeeper quarantines it.
+            postflight do
+              system_command "/usr/bin/xattr", args: ["-cr", "#{appdir}/Koan.app"]
+            end
+
+            zap trash: [
+              "~/.config/koan",
+            ]
+          end
+          CASK
+          sed -i 's/^          //' Casks/koan-app.rb
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
