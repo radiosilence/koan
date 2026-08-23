@@ -197,6 +197,68 @@ macos-bundle: macos-build
     codesign --force --deep --sign "${KOAN_SIGN_IDENTITY:--}" "$app"
     echo "built $app"
 
+# Create the self-signed certificate that dev builds sign with.
+#
+# Ad-hoc signing derives the app's identity from the binary's own hash, so every
+# rebuild is a different application to macOS. Keychain items and TCC grants are
+# both keyed on that identity, which is why the app asks for keychain access
+# again after every build and forgets its permission to read removable volumes.
+#
+# A stable certificate fixes both. It does nothing for Gatekeeper — a self-signed
+# certificate is no more trusted than ad-hoc, and only Developer ID plus
+# notarisation clears that — so this is for development, not distribution.
+#
+# The prompt this removes is the legacy keychain ACL dialog, which authenticates
+# with the login password and cannot use Touch ID — biometrics belong to the
+# data-protection keychain, a different API an app opts into, and which asks on
+# every read by design. "Always Allow" binds the item to the signing identity, so
+# it holds only while that identity is stable, which is what this provides.
+#
+# Run once, then export KOAN_SIGN_IDENTITY="koan development".
+macos-signing-cert:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    name="koan development"
+    if security find-identity -v -p codesigning | grep -q "$name"; then
+        echo "already have a '$name' identity"
+        echo "export KOAN_SIGN_IDENTITY=\"$name\""
+        exit 0
+    fi
+
+    dir=$(mktemp -d)
+    trap 'rm -rf "$dir"' EXIT
+
+    # codeSigning EKU is what lets codesign treat this as an identity.
+    openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+        -keyout "$dir/key.pem" -out "$dir/cert.pem" \
+        -subj "/CN=$name" \
+        -addext "basicConstraints=critical,CA:false" \
+        -addext "keyUsage=critical,digitalSignature" \
+        -addext "extendedKeyUsage=critical,codeSigning" 2>/dev/null
+
+    # SHA-1/3DES and a non-empty passphrase, because Apple's `security import`
+    # reads neither OpenSSL 3's defaults nor an empty-password PKCS#12 — both
+    # fail as "MAC verification failed (wrong password?)", which is not what is
+    # wrong. The passphrase protects a file that exists for one command.
+    openssl pkcs12 -export -inkey "$dir/key.pem" -in "$dir/cert.pem" \
+        -out "$dir/identity.p12" -passout pass:koan \
+        -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 2>/dev/null
+
+    # -A lets any tool use the private key without asking, which is the whole
+    # point: being asked is what this recipe exists to stop.
+    security import "$dir/identity.p12" -k ~/Library/Keychains/login.keychain-db \
+        -P koan -T /usr/bin/codesign -A
+
+    # Without this the certificate imports but is not a *code-signing* identity,
+    # and `security find-identity -p codesigning` still reports none. User
+    # domain, code signing only — no sudo, and no bearing on any other trust.
+    security add-trusted-cert -r trustRoot -p codeSign \
+        -k ~/Library/Keychains/login.keychain-db "$dir/cert.pem"
+
+    echo
+    echo "created. add this to your shell profile:"
+    echo "    export KOAN_SIGN_IDENTITY=\"$name\""
+
 # Check a built Koan.app is actually shippable.
 #
 # Two ways the bundle has gone out broken, both of which built and signed
