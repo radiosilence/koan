@@ -1,5 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use rusqlite::{Connection, params};
 
 use crate::db::connection::DbError;
@@ -151,91 +149,6 @@ pub fn has_fresh_similar_artists_for_source(
     };
 
     Ok(count > 0)
-}
-
-// --- Play history ---
-
-/// Record a play event.
-pub fn record_play(
-    conn: &Connection,
-    track_id: i64,
-    duration_ms: Option<i64>,
-) -> Result<(), DbError> {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-
-    conn.execute(
-        "INSERT INTO play_history (track_id, played_at, duration_ms)
-         VALUES (?1, ?2, ?3)",
-        params![track_id, now, duration_ms],
-    )?;
-    Ok(())
-}
-
-/// Get the last play timestamp for a track, or None if never played.
-pub fn last_played_at(conn: &Connection, track_id: i64) -> Result<Option<i64>, DbError> {
-    let result = conn.query_row(
-        "SELECT MAX(played_at) FROM play_history WHERE track_id = ?1",
-        params![track_id],
-        |row| row.get::<_, Option<i64>>(0),
-    )?;
-    Ok(result)
-}
-
-/// Get track IDs from recent play history (most recent first), up to `limit`.
-pub fn recent_track_ids(conn: &Connection, limit: usize) -> Result<Vec<i64>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT track_id FROM play_history
-         ORDER BY played_at DESC
-         LIMIT ?1",
-    )?;
-    let rows = stmt
-        .query_map(params![limit as i64], |row| row.get(0))?
-        .collect::<Result<Vec<i64>, _>>()?;
-    Ok(rows)
-}
-
-/// Get play count for a track.
-pub fn play_count(conn: &Connection, track_id: i64) -> Result<i64, DbError> {
-    let count = conn.query_row(
-        "SELECT COUNT(*) FROM play_history WHERE track_id = ?1",
-        params![track_id],
-        |row| row.get(0),
-    )?;
-    Ok(count)
-}
-
-/// A play history entry with full track info.
-#[derive(Debug, Clone)]
-pub struct PlayHistoryEntry {
-    pub track_id: i64,
-    pub played_at: i64,
-    pub duration_ms: Option<i64>,
-}
-
-/// Get recent play history entries (most recent first).
-pub fn get_play_history(
-    conn: &Connection,
-    limit: u32,
-    offset: u32,
-) -> Result<Vec<PlayHistoryEntry>, DbError> {
-    let mut stmt = conn.prepare(
-        "SELECT track_id, played_at, duration_ms FROM play_history
-         ORDER BY played_at DESC
-         LIMIT ?1 OFFSET ?2",
-    )?;
-    let rows = stmt
-        .query_map(params![limit as i64, offset as i64], |row| {
-            Ok(PlayHistoryEntry {
-                track_id: row.get(0)?,
-                played_at: row.get(1)?,
-                duration_ms: row.get(2)?,
-            })
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(rows)
 }
 
 /// Get random tracks from the library, excluding specific track paths.
@@ -575,39 +488,6 @@ mod tests {
         let db = test_db();
         let tracks = random_tracks_excluding(&db.conn, &[], &[], &[], 10).unwrap();
         assert!(tracks.is_empty());
-    }
-
-    #[test]
-    fn test_record_and_query_play_history() {
-        let db = test_db();
-        let mut meta = sample_meta("Track1", "Artist1", "Album1");
-        meta.path = Some("/music/Track1.flac".into());
-        upsert_track(&db.conn, &meta).unwrap();
-
-        let track_id: i64 = db
-            .conn
-            .query_row("SELECT id FROM tracks LIMIT 1", [], |row| row.get(0))
-            .unwrap();
-
-        // No plays yet.
-        assert_eq!(play_count(&db.conn, track_id).unwrap(), 0);
-        assert!(last_played_at(&db.conn, track_id).unwrap().is_none());
-        assert!(recent_track_ids(&db.conn, 10).unwrap().is_empty());
-
-        // Record a play.
-        record_play(&db.conn, track_id, Some(240_000)).unwrap();
-        assert_eq!(play_count(&db.conn, track_id).unwrap(), 1);
-        assert!(last_played_at(&db.conn, track_id).unwrap().is_some());
-
-        let recent = recent_track_ids(&db.conn, 10).unwrap();
-        assert_eq!(recent.len(), 1);
-        assert_eq!(recent[0], track_id);
-
-        // Record another play.
-        record_play(&db.conn, track_id, Some(240_000)).unwrap();
-        assert_eq!(play_count(&db.conn, track_id).unwrap(), 2);
-        // Still only 1 distinct track.
-        assert_eq!(recent_track_ids(&db.conn, 10).unwrap().len(), 1);
     }
 
     #[test]

@@ -210,7 +210,8 @@ private struct NavigationCommand {
         .init(title: "Albums", key: "2", section: .albums),
         .init(title: "Artists", key: "3", section: .artists),
         .init(title: "Favourites", key: "4", section: .favourites),
-        .init(title: "Snapshots", key: "5", section: .snapshots),
+        .init(title: "History", key: "5", section: .playHistory),
+        .init(title: "Snapshots", key: "6", section: .snapshots),
     ]
 }
 
