@@ -77,7 +77,9 @@ private struct StatusLine: View {
 
 private struct LibrarySettings: View {
     @Bindable var model: SettingsModel
+    @Environment(ActivityModel.self) private var activity
     @State private var confirmingRebuild = false
+    @State private var removing: LibraryFolder?
 
     var body: some View {
         Form {
@@ -87,16 +89,19 @@ private struct LibrarySettings: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-                ForEach(model.settings.libraryFolders, id: \.self) { folder in
+                ForEach(model.settings.libraryFolders, id: \.path) { folder in
                     HStack {
-                        Text(folder)
+                        Text(folder.path)
                             .font(.callout.monospaced())
                             .lineLimit(1)
                             .truncationMode(.head)
-                            .help(folder)
-                        Spacer()
+                            .help(folder.path)
+                        Spacer(minLength: 8)
+                        Text(Format.count(Int64(folder.tracks), "track"))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.tertiary)
                         Button {
-                            model.removeFolder(folder)
+                            removing = folder
                         } label: {
                             Image(systemName: "minus.circle")
                         }
@@ -105,6 +110,7 @@ private struct LibrarySettings: View {
                     }
                 }
                 Button("Add Folder…") { model.addFolder() }
+                    .disabled(activity.isLibraryBusy)
             } header: {
                 Text("Folders")
             } footer: {
@@ -113,11 +119,22 @@ private struct LibrarySettings: View {
                     .foregroundStyle(.tertiary)
             }
 
-            Section("Scan") {
+            Section {
                 HStack {
                     Button("Scan") { model.scan() }
                     Button("Rescan Everything") { model.scan(force: true) }
                         .help("Re-read every file's tags, ignoring the scan cache")
+                }
+                // One library task at a time: they all queue behind the same
+                // database writer, so starting a second only makes both slower.
+                .disabled(activity.isLibraryBusy)
+            } header: {
+                Text("Scan")
+            } footer: {
+                if activity.isLibraryBusy {
+                    Text("Waiting for the running task to finish.")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
             }
 
@@ -125,6 +142,7 @@ private struct LibrarySettings: View {
                 Button("Clear Library Index…", role: .destructive) {
                     confirmingRebuild = true
                 }
+                .disabled(activity.isLibraryBusy)
             } header: {
                 Text("Rebuild")
             } footer: {
@@ -149,6 +167,23 @@ private struct LibrarySettings: View {
         } message: {
             Text("Play counts, lyrics and audio analysis are lost. Favourites are kept. Your music files are not touched.")
         }
+        .confirmationDialog(
+            "Stop scanning \(removing?.path ?? "")?",
+            isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Remove and Forget Its Tracks", role: .destructive) {
+                if let folder = removing { model.removeFolder(folder.path, forgetTracks: true) }
+                removing = nil
+            }
+            Button("Remove, Keep Them in the Library") {
+                if let folder = removing { model.removeFolder(folder.path, forgetTracks: false) }
+                removing = nil
+            }
+            Button("Cancel", role: .cancel) { removing = nil }
+        } message: {
+            Text("Your files are not touched either way. Keeping them leaves records in the library that koan will not scan again.")
+        }
     }
 }
 
@@ -156,8 +191,10 @@ private struct LibrarySettings: View {
 
 private struct RemoteSettings: View {
     @Bindable var model: SettingsModel
+    @Environment(ActivityModel.self) private var activity
     @State private var url = ""
     @State private var username = ""
+    @State private var confirmingSignOut = false
 
     var body: some View {
         Form {
@@ -165,22 +202,31 @@ private struct RemoteSettings: View {
                 Section("Signed in") {
                     LabeledContent("Server", value: model.settings.remoteUrl)
                     LabeledContent("User", value: model.settings.remoteUsername)
+                    LabeledContent(
+                        "Tracks",
+                        value: Format.count(Int64(model.settings.remoteTracks), "track")
+                    )
                     HStack {
                         Button("Sync Now") { model.syncNow(full: false) }
                         Button("Full Sync") { model.syncNow(full: true) }
                             .help("Walk the whole library rather than only what changed")
+                            .disabled(activity.isLibraryBusy)
                         Spacer()
-                        Button("Sign Out", role: .destructive) { model.signOut() }
+                        Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     }
+                    .disabled(activity.isLibraryBusy)
                 }
             } else {
                 Section {
-                    TextField("https://music.example.com", text: $url)
-                    TextField("Username", text: $username)
-                    SecureField("Password", text: Binding(
-                        get: { model.password },
-                        set: { model.password = $0 }
-                    ))
+                    // Label on the left, example inside the field. Passing the
+                    // example as the title made the URL the label.
+                    TextField("Server", text: $url, prompt: Text("https://music.example.com"))
+                    TextField("Username", text: $username, prompt: Text("your account"))
+                    SecureField(
+                        "Password",
+                        text: Binding(get: { model.password }, set: { model.password = $0 }),
+                        prompt: Text("not stored in any file")
+                    )
                     Button("Sign In") { model.signIn(url: url, username: username) }
                         .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                 } header: {
@@ -251,6 +297,21 @@ private struct RemoteSettings: View {
         .onAppear {
             url = model.settings.remoteUrl
             username = model.settings.remoteUsername
+        }
+        .confirmationDialog(
+            "Sign out of \(model.settings.remoteUrl)?",
+            isPresented: $confirmingSignOut,
+            titleVisibility: .visible
+        ) {
+            Button("Sign Out and Forget Its Tracks", role: .destructive) {
+                model.signOut(forgetTracks: true)
+            }
+            Button("Sign Out, Keep Them in the Library") {
+                model.signOut(forgetTracks: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
         }
     }
 }

@@ -17,6 +17,12 @@ final class ActivityModel {
         let id = UUID()
         /// Shown to the user: "Scanning library", "Syncing with server".
         let label: String
+        /// Library work — scanning, syncing, rebuilding — all of which contend
+        /// for SQLite's single writer. Only one runs at a time; queue edits are
+        /// small and fast and do not take part.
+        var exclusive = false
+        /// Whether asking it to stop does anything.
+        var cancellable = false
         /// How many done and how many there are, where the engine counts them.
         /// Shown as "12,345 / 48,087" — a percentage alone hides whether the
         /// remaining work is ten items or ten thousand.
@@ -36,6 +42,28 @@ final class ActivityModel {
 
     var isBusy: Bool { !tasks.isEmpty }
 
+    /// A library task is running, so another would just queue behind it on the
+    /// database writer. Menu items and buttons that start one are disabled.
+    ///
+    /// Stored rather than derived from `tasks`. `.commands` is part of the Scene
+    /// body, so a menu that reads this would rebuild on every progress tick if
+    /// it depended on the task list — observation is per property, and this one
+    /// only changes when a task starts or ends.
+    private(set) var isLibraryBusy = false
+
+    private func refreshBusy() {
+        let busy = tasks.contains { $0.exclusive }
+        if busy != isLibraryBusy { isLibraryBusy = busy }
+    }
+
+    /// Called to stop the running library task. Set by whoever owns the engine.
+    var cancelLibraryTask: (() -> Void)?
+
+    func cancel(_ id: UUID) {
+        guard let task = tasks.first(where: { $0.id == id }), task.cancellable else { return }
+        cancelLibraryTask?()
+    }
+
     /// The one to show when there is only room for one. The oldest, so a long
     /// sync is not hidden by a queue add that started after it.
     var current: Task? { tasks.first }
@@ -47,9 +75,11 @@ final class ActivityModel {
     @discardableResult
     func run<T: Sendable>(
         _ label: String,
+        exclusive: Bool = false,
+        cancellable: Bool = false,
         _ work: @escaping @Sendable () throws -> T
     ) async -> Result<T, Error> {
-        let id = begin(label)
+        let id = begin(label, exclusive: exclusive, cancellable: cancellable)
         defer { end(id) }
         return await _Concurrency.Task.detached(priority: .userInitiated) {
             Result { try work() }
@@ -61,9 +91,11 @@ final class ActivityModel {
     @discardableResult
     func runReporting<T: Sendable>(
         _ label: String,
+        exclusive: Bool = true,
+        cancellable: Bool = true,
         _ work: @escaping @Sendable (EngineProgress) throws -> T
     ) async -> Result<T, Error> {
-        let id = begin(label)
+        let id = begin(label, exclusive: exclusive, cancellable: cancellable)
         let progress = reporter(for: id)
         defer { end(id) }
         return await _Concurrency.Task.detached(priority: .userInitiated) {
@@ -74,14 +106,16 @@ final class ActivityModel {
     /// For work that does not fit the closure shape — a long-lived poller, or
     /// something whose lifetime is owned elsewhere. Pair every `begin` with an
     /// `end`.
-    func begin(_ label: String) -> UUID {
-        let task = Task(label: label)
+    func begin(_ label: String, exclusive: Bool = false, cancellable: Bool = false) -> UUID {
+        let task = Task(label: label, exclusive: exclusive, cancellable: cancellable)
         tasks.append(task)
+        refreshBusy()
         return task.id
     }
 
     func end(_ id: UUID) {
         tasks.removeAll { $0.id == id }
+        refreshBusy()
     }
 
     func setCounts(_ id: UUID, done: UInt64?, total: UInt64?) {
@@ -99,14 +133,19 @@ final class ActivityModel {
     /// the folder watcher, the automatic sync. They are not started by the UI,
     /// so nothing here can wrap them; this polls the flag instead and shows a
     /// row for as long as it is set.
-    func mirror(_ label: String, while running: @escaping @Sendable () -> Bool) {
+    func mirror(
+        _ label: String,
+        exclusive: Bool = true,
+        cancellable: Bool = true,
+        while running: @escaping @Sendable () -> Bool
+    ) {
         _Concurrency.Task { [weak self] in
             var id: UUID?
             while !_Concurrency.Task.isCancelled {
                 let isRunning = running()
                 switch (isRunning, id) {
                 case (true, nil):
-                    id = self?.begin(label)
+                    id = self?.begin(label, exclusive: exclusive, cancellable: cancellable)
                 case (false, let some?):
                     self?.end(some)
                     id = nil

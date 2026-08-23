@@ -97,6 +97,10 @@ pub struct KoanEngine {
     auto_syncing: Arc<std::sync::atomic::AtomicBool>,
     /// Set while the startup or watched-folder scan is running.
     auto_scanning: Arc<std::sync::atomic::AtomicBool>,
+    /// Raised to stop whichever library task is running. One flag rather than
+    /// one per task, because only one runs at a time — they all contend for the
+    /// same single database writer.
+    cancel_library_task: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[uniffi::export]
@@ -140,6 +144,7 @@ impl KoanEngine {
             db_path,
             auto_syncing,
             auto_scanning,
+            cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             listener,
         });
         engine.spawn_watcher();
@@ -756,6 +761,30 @@ impl KoanEngine {
         .map_err(fav_err)
     }
 
+    /// Persist where you are, without rewriting the queue.
+    ///
+    /// Cheap enough to call every second, which is what makes a crash cost a
+    /// second of playback rather than the whole session. `save_session` still
+    /// runs when the queue changes and on quit.
+    pub fn save_position(&self) -> Result<(), KoanError> {
+        let db = self.db()?;
+        let (items, cursor) = self.state.snapshot_playlist();
+        let cursor_path = cursor.and_then(|cid| {
+            items
+                .iter()
+                .find(|i| i.id == cid)
+                .map(|i| i.path.to_string_lossy().into_owned())
+        });
+        queries::save_playback_position(
+            &db.conn,
+            cursor_path.as_deref(),
+            self.state.position_ms(),
+            self.state.playback_state() == PlaybackState::Playing,
+            self.state.radio_mode(),
+        )
+        .map_err(fav_err)
+    }
+
     /// Restore the queue saved by `save_session`, cursor and position included.
     ///
     /// Resumes only if playback was running when the session was saved: closing
@@ -848,18 +877,29 @@ impl KoanEngine {
         let cache_dir = cfg.cache_dir();
         let cache_bytes = koan_core::helpers::cache_size_bytes(&cfg);
 
+        let db = self.db().ok();
         Settings {
             library_folders: cfg
                 .library
                 .folders
                 .iter()
-                .map(|p| p.to_string_lossy().into_owned())
+                .map(|p| LibraryFolder {
+                    path: p.to_string_lossy().into_owned(),
+                    tracks: db
+                        .as_ref()
+                        .map(|db| koan_core::helpers::tracks_under(db, p))
+                        .unwrap_or(0),
+                })
                 .collect(),
 
             remote_enabled: cfg.remote.enabled,
             remote_url: cfg.remote.url.clone(),
             remote_username: cfg.remote.username.clone(),
             remote_signed_in: koan_core::helpers::get_remote_password(&cfg).is_some(),
+            remote_tracks: db
+                .as_ref()
+                .map(koan_core::helpers::tracks_from_server)
+                .unwrap_or(0),
             transcode_quality: cfg.remote.transcode_quality.clone(),
             download_workers: cfg.remote.download_workers as u32,
             cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
@@ -899,8 +939,7 @@ impl KoanEngine {
             Value::Array(
                 s.library_folders
                     .iter()
-                    .cloned()
-                    .map(Value::String)
+                    .map(|f| Value::String(f.path.clone()))
                     .collect(),
             ),
         );
@@ -951,6 +990,15 @@ impl KoanEngine {
         self.auto_syncing.load(std::sync::atomic::Ordering::Relaxed)
     }
 
+    /// Ask the running library task to stop.
+    ///
+    /// It stops between transactions and keeps what it had already committed —
+    /// a cancelled scan is a shorter scan, not an undone one.
+    pub fn cancel_library_task(&self) {
+        self.cancel_library_task
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Whether the startup or watched-folder scan is running right now.
     pub fn is_auto_scanning(&self) -> bool {
         self.auto_scanning
@@ -986,6 +1034,23 @@ impl KoanEngine {
         Config::patch_local("remote", &remote).map_err(|e| KoanError::BadArgument {
             message: e.to_string(),
         })
+    }
+
+    /// Forget every track that came from a folder.
+    ///
+    /// A track the server also has keeps its row and loses only its local path.
+    /// Albums and artists left holding nothing go too.
+    pub fn forget_folder(&self, path: String) -> Result<u64, KoanError> {
+        let db = self.db()?;
+        koan_core::helpers::forget_folder(&db, Path::new(&path)).map_err(db_err)
+    }
+
+    /// Forget everything that only existed on the server.
+    ///
+    /// A track held locally as well keeps its row and loses its remote id.
+    pub fn forget_remote(&self) -> Result<u64, KoanError> {
+        let db = self.db()?;
+        koan_core::helpers::forget_remote(&db).map_err(db_err)
     }
 
     /// Drop the library index so the next scan rebuilds it.
@@ -1041,7 +1106,11 @@ impl KoanEngine {
         let opts = koan_core::index::scanner::ScanOptions {
             force,
             force_remove: false,
+            cancel: Some(self.cancel_library_task.clone()),
         };
+        // A cancel from a previous run must not stop this one before it starts.
+        self.cancel_library_task
+            .store(false, std::sync::atomic::Ordering::Relaxed);
 
         if let Some(reporter) = &reporter {
             reporter.started(koan_core::index::scanner::count_audio_files(
@@ -1063,7 +1132,7 @@ impl KoanEngine {
             let hook: Option<&dyn Fn(koan_core::index::scanner::ScanEvent)> =
                 reporter.as_ref().map(|_| &callback as _);
 
-            let r = koan_core::index::scanner::scan_folder(&db, folder, opts, hook);
+            let r = koan_core::index::scanner::scan_folder(&db, folder, opts.clone(), hook);
             summary.added += r.added as u32;
             summary.updated += r.updated as u32;
             summary.removed += r.removed as u32;

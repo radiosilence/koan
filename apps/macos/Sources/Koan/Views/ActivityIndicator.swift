@@ -15,7 +15,7 @@ struct ActivityList: View {
         if !activity.tasks.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(activity.tasks) { task in
-                    ActivityRow(task: task)
+                    ActivityRow(task: task) { activity.cancel(task.id) }
                 }
             }
             .padding(.bottom, 4)
@@ -27,6 +27,9 @@ struct ActivityList: View {
 
 private struct ActivityRow: View {
     let task: ActivityModel.Task
+    let cancel: () -> Void
+
+    @State private var hovering = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -49,9 +52,23 @@ private struct ActivityRow: View {
             // Determinate where the engine can say, a barber's pole where it
             // cannot — both are the same height, so the row does not jump when
             // a total arrives partway through.
-            ProgressView(value: task.progress)
-                .progressViewStyle(.linear)
-                .controlSize(.small)
+            HStack(spacing: 6) {
+                ProgressView(value: task.progress)
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
+
+                // Only where stopping does something. A button that cannot
+                // cancel is worse than none.
+                if task.cancellable {
+                    Button(action: cancel) {
+                        Image(systemName: "xmark.circle")
+                            .font(.caption2)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(hovering ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
+                    .help("Stop — what it has already done is kept")
+                }
+            }
 
             // What it is on right now. Proof it is moving, which a percentage
             // alone does not give during a slow step.
@@ -64,5 +81,6 @@ private struct ActivityRow: View {
             }
         }
         .help(task.detail ?? task.label)
+        .onHover { hovering = $0 }
     }
 }

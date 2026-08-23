@@ -400,7 +400,10 @@ final class LibraryModel {
         guard !isScanning else { return }
         isScanning = true
         let engine = self.engine
-        let job = activity?.begin(full ? "Full sync with server" : "Syncing with server")
+        let job = activity?.begin(
+            full ? "Full sync with server" : "Syncing with server",
+            exclusive: true
+        )
         Task {
             _ = await Task.detached(priority: .utility) {
                 try? engine.syncRemote(full: full)
@@ -423,7 +426,11 @@ final class LibraryModel {
         scanSummary = nil
 
         let engine = self.engine
-        let job = activity?.begin(force ? "Rescanning every file" : "Scanning library")
+        let job = activity?.begin(
+            force ? "Rescanning every file" : "Scanning library",
+            exclusive: true,
+            cancellable: true
+        )
         let progress = job.flatMap { activity?.reporter(for: $0) }
         Task {
             let result = await Task.detached(priority: .utility) {

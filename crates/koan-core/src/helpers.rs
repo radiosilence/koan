@@ -236,6 +236,144 @@ pub fn cache_size_bytes(cfg: &Config) -> u64 {
         .sum()
 }
 
+/// How many tracks came from this folder.
+///
+/// The trailing separator matters: without it `/Volumes/Music` also counts
+/// `/Volumes/Music Backup`.
+pub fn tracks_under(db: &Database, folder: &Path) -> u64 {
+    let prefix = format!(
+        "{}{}%",
+        folder
+            .to_string_lossy()
+            .trim_end_matches(std::path::MAIN_SEPARATOR),
+        std::path::MAIN_SEPARATOR
+    );
+    db.conn
+        .query_row(
+            "SELECT COUNT(*) FROM tracks WHERE path LIKE ?1",
+            [&prefix],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as u64
+}
+
+/// How many tracks the server accounts for.
+pub fn tracks_from_server(db: &Database) -> u64 {
+    db.conn
+        .query_row(
+            "SELECT COUNT(*) FROM tracks WHERE remote_id IS NOT NULL",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap_or(0) as u64
+}
+
+/// Forget every track under a folder.
+///
+/// Removing a folder from the library should remove what it put there —
+/// otherwise the library keeps showing records whose files it will never look
+/// at again, and there is no way back to an empty library short of clearing the
+/// whole index.
+///
+/// A track that also exists on the server keeps its row and loses only its local
+/// path: it is still playable, just by download rather than from disk.
+///
+/// Albums and artists left holding nothing go too, or the browser fills with
+/// empty shelves.
+pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::connection::DbError> {
+    // Trailing separator, or `/Volumes/Music` also matches `/Volumes/Music Backup`.
+    let prefix = format!(
+        "{}{}%",
+        folder
+            .to_string_lossy()
+            .trim_end_matches(std::path::MAIN_SEPARATOR),
+        std::path::MAIN_SEPARATOR
+    );
+
+    let tx = db.conn.unchecked_transaction()?;
+    // Still on the server: keep the row, drop the local file.
+    tx.execute(
+        "UPDATE tracks SET path = NULL, source = 'remote'
+          WHERE path LIKE ?1 AND remote_id IS NOT NULL",
+        [&prefix],
+    )?;
+
+    let ids: Vec<i64> = {
+        let mut stmt = tx.prepare("SELECT id FROM tracks WHERE path LIKE ?1")?;
+        let rows = stmt.query_map([&prefix], |r| r.get(0))?;
+        rows.filter_map(Result::ok).collect()
+    };
+    for id in &ids {
+        tx.execute("DELETE FROM track_vectors WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM tracks_fts WHERE rowid = ?1", [id])?;
+        tx.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    }
+    prune_empty_albums_and_artists(&tx)?;
+    tx.commit()?;
+    Ok(ids.len() as u64)
+}
+
+/// Forget everything that only existed on the server.
+///
+/// Signing out should leave the library with what is actually on this machine.
+/// A track held both locally and remotely keeps its row and loses its remote id;
+/// one that only ever came from the server goes.
+pub fn forget_remote(db: &Database) -> Result<u64, crate::db::connection::DbError> {
+    let tx = db.conn.unchecked_transaction()?;
+
+    let ids: Vec<i64> = {
+        let mut stmt =
+            tx.prepare("SELECT id FROM tracks WHERE remote_id IS NOT NULL AND path IS NULL")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        rows.filter_map(Result::ok).collect()
+    };
+    for id in &ids {
+        tx.execute("DELETE FROM track_vectors WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM lyrics_cache WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM play_history WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM scan_cache WHERE track_id = ?1", [id])?;
+        tx.execute("DELETE FROM tracks_fts WHERE rowid = ?1", [id])?;
+        tx.execute("DELETE FROM tracks WHERE id = ?1", [id])?;
+    }
+    // Local copies stay, minus the server they were also on.
+    tx.execute(
+        "UPDATE tracks SET remote_id = NULL, remote_url = NULL, source = 'local'
+          WHERE remote_id IS NOT NULL",
+        [],
+    )?;
+    tx.execute("DELETE FROM similar_artists", [])?;
+    prune_empty_albums_and_artists(&tx)?;
+    tx.commit()?;
+    Ok(ids.len() as u64)
+}
+
+/// Albums and artists with nothing left in them.
+fn prune_empty_albums_and_artists(
+    tx: &rusqlite::Transaction<'_>,
+) -> Result<(), crate::db::connection::DbError> {
+    tx.execute(
+        "DELETE FROM albums WHERE NOT EXISTS
+           (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM similar_artists WHERE NOT EXISTS
+           (SELECT 1 FROM albums WHERE albums.artist_id = similar_artists.artist_id)",
+        [],
+    )?;
+    tx.execute(
+        "DELETE FROM artists WHERE NOT EXISTS
+             (SELECT 1 FROM albums WHERE albums.artist_id = artists.id)
+           AND NOT EXISTS
+             (SELECT 1 FROM tracks WHERE tracks.artist_id = artists.id)",
+        [],
+    )?;
+    Ok(())
+}
+
 /// What clearing the download cache removed.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CacheCleared {

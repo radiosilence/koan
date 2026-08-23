@@ -474,13 +474,17 @@ pub(crate) fn year_of(date: &str) -> Option<i32> {
 /// credential store and is written through `sign_in_remote`, never read back.
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct Settings {
-    pub library_folders: Vec<String>,
+    /// Folders and how many tracks each accounts for — a folder is easier to
+    /// judge by what it contributed than by its path.
+    pub library_folders: Vec<LibraryFolder>,
 
     pub remote_enabled: bool,
     pub remote_url: String,
     pub remote_username: String,
     /// A password is stored for this server. Not the password.
     pub remote_signed_in: bool,
+    /// Tracks the server accounts for.
+    pub remote_tracks: u64,
     /// `original`, `opus-128` or `mp3-320`.
     pub transcode_quality: String,
     pub download_workers: u32,
@@ -498,6 +502,13 @@ pub struct Settings {
     pub radio_lookahead: u32,
     pub radio_batch_size: u32,
     pub radio_discovery_weight: f64,
+}
+
+/// A scanned folder, and what it contributed.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct LibraryFolder {
+    pub path: String,
+    pub tracks: u64,
 }
 
 /// What a library rebuild removed.

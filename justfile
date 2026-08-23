@@ -9,6 +9,12 @@ cli *ARGS:
     cargo run --release -p koan-cli -- {{ARGS}}
 
 # Run tests + clippy
+# KOAN_NO_KEYCHAIN: a cargo test binary is unsigned and rebuilt under a new hash
+# every compile, so a keychain ACL can never match it — every run would prompt
+# for the login password, and "Always Allow" would grant it to a binary that is
+# about to stop existing.
+export KOAN_NO_KEYCHAIN := "1"
+
 check:
     cargo test --all-targets
     cargo clippy --all-targets -- -D warnings

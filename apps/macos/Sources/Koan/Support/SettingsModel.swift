@@ -70,15 +70,34 @@ final class SettingsModel {
 
         let added = panel.urls.map(\.path)
         edit { s in
-            for path in added where !s.libraryFolders.contains(path) {
-                s.libraryFolders.append(path)
+            for path in added where !s.libraryFolders.contains(where: { $0.path == path }) {
+                // Count comes back from the engine on the next read; the scan
+                // this kicks off is what fills it in.
+                s.libraryFolders.append(LibraryFolder(path: path, tracks: 0))
             }
         }
         scan()
     }
 
-    func removeFolder(_ path: String) {
-        edit { $0.libraryFolders.removeAll { $0 == path } }
+    /// Stop scanning a folder, and optionally forget what it put in the library.
+    ///
+    /// Keeping the rows leaves records on screen whose files koan will never
+    /// look at again; forgetting them is what makes "remove every folder and
+    /// sign out" end at an empty library, which is what people expect of it.
+    func removeFolder(_ path: String, forgetTracks: Bool) {
+        edit { $0.libraryFolders.removeAll { $0.path == path } }
+        guard forgetTracks else { return }
+        let engine = self.engine
+        Task {
+            let result = await activity.run("Forgetting \(URL(fileURLWithPath: path).lastPathComponent)", exclusive: true) {
+                try engine.forgetFolder(path: path)
+            }
+            switch result {
+            case .success(let n): lastResult = "Forgot \(n.formatted(.number)) tracks"
+            case .failure(let e): lastError = Self.describe(e)
+            }
+            reload()
+        }
     }
 
     // MARK: - Actions
@@ -120,15 +139,31 @@ final class SettingsModel {
         }
     }
 
-    func signOut() {
+    func signOut(forgetTracks: Bool) {
         do {
             try engine.signOutRemote()
             lastResult = "Signed out"
             lastError = nil
         } catch {
             lastError = Self.describe(error)
+            reload()
+            return
         }
-        reload()
+        guard forgetTracks else {
+            reload()
+            return
+        }
+        let engine = self.engine
+        Task {
+            let result = await activity.run("Forgetting the server's tracks", exclusive: true) {
+                try engine.forgetRemote()
+            }
+            switch result {
+            case .success(let n): lastResult = "Signed out and forgot \(n.formatted(.number)) tracks"
+            case .failure(let e): lastError = Self.describe(e)
+            }
+            reload()
+        }
     }
 
     func syncNow(full: Bool) {
@@ -139,7 +174,11 @@ final class SettingsModel {
             }
             switch result {
             case .success(let s):
-                lastResult = "\(s.tracks) tracks across \(s.albums) albums"
+                // Zero is the normal answer for an incremental sync with nothing
+                // new, and "0 tracks across 0 albums" reads as a failure.
+                lastResult = s.tracks == 0
+                    ? "Already up to date"
+                    : "\(s.tracks.formatted(.number)) tracks across \(s.albums.formatted(.number)) albums"
             case .failure(let e):
                 lastError = Self.describe(e)
             }
