@@ -233,6 +233,11 @@ jobs:
       # and Apple silicon from a single download.
       - run: just macos-ffi "aarch64-apple-darwin x86_64-apple-darwin"
       - run: cd apps/macos && swift build -c release --arch arm64 --arch x86_64
+      # Bundle, check, then package. `macos-verify` inspects the assembled
+      # Koan.app, so it has to come after something that assembles one —
+      # `macos-dmg` does that itself via `macos-bundle`, which put the check
+      # before the thing it checks.
+      - run: just macos-bundle
       - run: just macos-verify arm64 x86_64
       - run: just macos-dmg
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
