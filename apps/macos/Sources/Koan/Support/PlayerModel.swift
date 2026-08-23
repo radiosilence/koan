@@ -12,14 +12,13 @@ import KoanFFI
 final class PlayerModel {
     let engine: KoanEngine
 
-    /// Everything the transport needs, refreshed every tick.
-    ///
-    /// Read this ONLY where a ticking value is actually wanted. `positionMs`
-    /// changes ten times a second, so a view that reads any field of this
-    /// struct re-renders at that rate — which in a list means rows are being
-    /// replaced under the pointer and clicks get dropped. Lists should read the
-    /// derived properties below, which are only assigned when they change.
-    private(set) var nowPlaying: NowPlaying
+    /// The last raw snapshot. Deliberately not observed: it carries a position
+    /// that moves every tick, and anything observing it would re-render at that
+    /// rate. Views read the change-guarded properties below, or `clock`.
+    @ObservationIgnored private(set) var nowPlaying: NowPlaying
+
+    /// Position, on its own observable so only the transport sees the tick.
+    let clock = PlaybackClock()
     private(set) var queue: [QueueItem] = []
     /// Queue entries indexed by library track id, so a library row can show
     /// what the queue knows about it — downloading, failed, already played —
@@ -41,8 +40,6 @@ final class PlayerModel {
     var lastError: String?
 
     private var knownQueueVersion: UInt64 = .max
-    private var ticker: Task<Void, Never>?
-
     /// Run after every state read. Now Playing hangs off this rather than
     /// polling the engine a second time on its own timer.
     var onTick: (() -> Void)?
@@ -52,33 +49,25 @@ final class PlayerModel {
         self.nowPlaying = engine.nowPlaying()
     }
 
-    /// 10 Hz — smooth enough for a seek bar, far below anything the engine notices.
-    func startPolling() {
-        guard ticker == nil else { return }
-        ticker = Task { [weak self] in
-            while !Task.isCancelled {
-                self?.tick()
-                try? await Task.sleep(for: .milliseconds(100))
-            }
-        }
+    /// Subscribe to engine events. Nothing here polls any more: the engine
+    /// pushes state changes, queue changes and position, so the UI reacts
+    /// rather than asking. The watching still happens — it just happens in
+    /// Rust, over atomics, off the audio path.
+    func start() {
+        engine.subscribe(listener: EventBridge(model: self))
+        tick()  // Seed from current state; events only carry changes.
         refreshDevices()
     }
 
-    private func tick() {
+    /// Apply a snapshot. Called on subscribe and whenever the engine says
+    /// something changed.
+    fileprivate func tick() {
         let now = engine.nowPlaying()
         nowPlaying = now
         updateDerived(now)
         // The queue only gets rebuilt when the engine says it changed.
         if nowPlaying.playlistVersion != knownQueueVersion {
             knownQueueVersion = nowPlaying.playlistVersion
-            rebuildQueue()
-        } else if hasActiveDownloads, downloadRefreshDue {
-            lastDownloadRefresh = Date.now
-            // Download progress moves without bumping the playlist version, so
-            // a version check alone would freeze the progress bars. But
-            // replacing the queue array is what the List diffs against, and
-            // doing it ten times a second cancels drags mid-gesture and eats
-            // clicks. Once a second is plenty for a progress bar.
             rebuildQueue()
         }
         settlePendingSeek()
@@ -93,20 +82,13 @@ final class PlayerModel {
     /// a seek the engine rejected can't wedge the bar permanently.
     private func settlePendingSeek() {
         guard let target = pendingSeekMs else { return }
-        let reached = abs(Int64(nowPlaying.positionMs) - Int64(target)) < 750
+        let reached = abs(Int64(clock.positionMs) - Int64(target)) < 750
         pendingSeekTicks += 1
         if reached || pendingSeekTicks > 20 {
             pendingSeekMs = nil
             pendingSeekTicks = 0
             scrubbing = nil
         }
-    }
-
-    private var hasActiveDownloads = false
-    private var lastDownloadRefresh = Date.distantPast
-
-    private var downloadRefreshDue: Bool {
-        Date.now.timeIntervalSince(lastDownloadRefresh) >= 1
     }
 
     private func rebuildQueue() {
@@ -117,9 +99,20 @@ final class PlayerModel {
             // something over one still sitting idle.
             uniquingKeysWith: { a, b in b.status == .queued ? a : b }
         )
-        hasActiveDownloads = queue.contains {
-            $0.status == .downloading || $0.status == .priorityPending
-        }
+    }
+
+    /// The queue changed — rebuild it and refresh what depends on it.
+    fileprivate func applyQueueChange() {
+        rebuildQueue()
+        tick()
+    }
+
+    /// Position moved. The only genuinely periodic event, and the only thing
+    /// that should make the transport redraw.
+    fileprivate func applyPosition(_ ms: UInt64) {
+        clock.update(positionMs: ms, durationMs: clock.durationMs)
+        settlePendingSeek()
+        onTick?()
     }
 
     // MARK: - Derived
@@ -131,10 +124,9 @@ final class PlayerModel {
     private(set) var currentTrackId: Int64?
     private(set) var currentItemId: String?
     private(set) var radioEnabled = false
-    /// Whole seconds. Anything that only needs "roughly where are we" — lyric
-    /// highlighting, for instance — should read this rather than `positionMs`,
-    /// so it re-renders once a second instead of ten times.
-    private(set) var positionSeconds = 0
+    /// What is playing, and in what format. Both change per track, not per tick.
+    private(set) var currentEntry: QueueItem?
+    private(set) var currentFormat: StreamFormat?
 
     private func updateDerived(_ now: NowPlaying) {
         let playing = now.state == .playing
@@ -142,16 +134,23 @@ final class PlayerModel {
         if now.entry?.trackId != currentTrackId { currentTrackId = now.entry?.trackId }
         if now.queueItemId != currentItemId { currentItemId = now.queueItemId }
         if now.radioEnabled != radioEnabled { radioEnabled = now.radioEnabled }
-        let seconds = Int(now.positionMs / 1000)
-        if seconds != positionSeconds { positionSeconds = seconds }
+        if now.entry?.queueItemId != currentEntry?.queueItemId
+            || now.entry?.status != currentEntry?.status
+            || now.entry?.downloadProgress != currentEntry?.downloadProgress
+        {
+            currentEntry = now.entry
+        }
+        if now.format?.codec != currentFormat?.codec
+            || now.format?.sampleRate != currentFormat?.sampleRate
+            || now.format?.bitDepth != currentFormat?.bitDepth
+        {
+            currentFormat = now.format
+        }
+        clock.update(positionMs: now.positionMs, durationMs: now.durationMs)
     }
 
     /// 0–1 through the current track. Reflects the drag while scrubbing.
-    var progress: Double {
-        if let scrubbing { return scrubbing }
-        guard nowPlaying.durationMs > 0 else { return 0 }
-        return min(1, Double(nowPlaying.positionMs) / Double(nowPlaying.durationMs))
-    }
+    var progress: Double { scrubbing ?? clock.progress }
 
     var upNext: [QueueItem] {
         guard let cursor = nowPlaying.queueItemId,
@@ -173,7 +172,7 @@ final class PlayerModel {
 
     /// Commit a scrub. Position comes from the drag, not the engine.
     func seek(fraction: Double) {
-        seek(toMs: UInt64(max(0, min(1, fraction)) * Double(nowPlaying.durationMs)))
+        seek(toMs: UInt64(max(0, min(1, fraction)) * Double(clock.durationMs)))
     }
 
     /// Called as the thumb is dragged. Cancels any seek still settling, since
@@ -187,9 +186,9 @@ final class PlayerModel {
     /// Nudge by a number of seconds, clamped to the track. What the arrow-key
     /// shortcuts and the TUI's `,`/`.` do.
     func seek(bySeconds delta: Int) {
-        let current = Int64(nowPlaying.positionMs)
+        let current = Int64(clock.positionMs)
         let target = max(0, current + Int64(delta) * 1000)
-        seek(toMs: UInt64(min(target, Int64(nowPlaying.durationMs))))
+        seek(toMs: UInt64(min(target, Int64(clock.durationMs))))
     }
 
     /// Favourite whatever is playing. No-op when the queue item has no library
@@ -209,8 +208,8 @@ final class PlayerModel {
     /// backwards before jumping forward again.
     func seek(toMs ms: UInt64) {
         pendingSeekMs = ms
-        if nowPlaying.durationMs > 0 {
-            scrubbing = Double(ms) / Double(nowPlaying.durationMs)
+        if clock.durationMs > 0 {
+            scrubbing = Double(ms) / Double(clock.durationMs)
         }
         attempt { try engine.seek(positionMs: ms) }
     }
@@ -289,7 +288,7 @@ final class PlayerModel {
 
     /// Flips it without the caller having to read the current value — menus
     /// that read observable state rebuild themselves constantly.
-    func toggleRadio() { setRadio(!nowPlaying.radioEnabled) }
+    func toggleRadio() { setRadio(!radioEnabled) }
 
     /// Toggles, and returns nothing — the library view refetches to pick it up.
     @discardableResult
@@ -302,7 +301,13 @@ final class PlayerModel {
     // Wired to the standard Edit menu, so ⌘A/⌘C/⌘X/⌘V/Delete mean what they
     // mean everywhere else rather than being decorative.
 
-    func selectAllQueue() { queueSelection = Set(queue.map(\.queueItemId)) }
+    /// Menus can't write the view's selection directly — the List binds to
+    /// local state, and observing the model from the body is what made clicking
+    /// unreliable. So this bumps a token the view watches, which only changes
+    /// when the command is actually invoked.
+    private(set) var selectAllToken = 0
+
+    func selectAllQueue() { selectAllToken += 1 }
 
     func removeSelected() {
         remove(itemIds: Array(queueSelection))
@@ -369,5 +374,30 @@ final class PlayerModel {
         } catch {
             lastError = String(describing: error)
         }
+    }
+}
+
+/// Bridges the engine's callbacks onto the main actor.
+///
+/// uniffi calls these from its own thread, so nothing here may touch the model
+/// directly — each hop is explicit. Separate from `PlayerModel` because the
+/// callback interface must be `Sendable` and the model is main-actor isolated.
+final class EventBridge: PlayerEvents, @unchecked Sendable {
+    private weak var model: PlayerModel?
+
+    init(model: PlayerModel) {
+        self.model = model
+    }
+
+    func playbackChanged(nowPlaying: NowPlaying) {
+        Task { @MainActor [weak model] in model?.tick() }
+    }
+
+    func queueChanged(version: UInt64) {
+        Task { @MainActor [weak model] in model?.applyQueueChange() }
+    }
+
+    func positionChanged(positionMs: UInt64) {
+        Task { @MainActor [weak model] in model?.applyPosition(positionMs) }
     }
 }

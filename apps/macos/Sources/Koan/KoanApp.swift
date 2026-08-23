@@ -64,7 +64,7 @@ struct KoanApp: App {
                 guard state == nil, startupError == nil else { return }
                 do {
                     let created = try AppState()
-                    created.player.startPolling()
+                    created.player.start()
                     created.player.restoreSession()
                     created.library.loadInitial()
                     state = created

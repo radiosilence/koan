@@ -14,8 +14,6 @@ struct QueueView: View {
     @State private var savingSnapshot = false
     @State private var snapshotName = ""
 
-    private var groups: [QueueGroup] { QueueGroup.group(player.queue) }
-
     /// Selection is local `@State`, deliberately.
     ///
     /// It lived on `PlayerModel` so the Edit menu could reach it, but reading an
@@ -24,6 +22,12 @@ struct QueueView: View {
     /// is what made clicking here so unreliable. It is mirrored to the model on
     /// change instead: written, never read, so it stays out of the render path.
     @State private var selection: Set<String> = []
+
+    /// Album headings are rows in their own right, not decoration attached to
+    /// the first track. That is what lets an album be selected and dragged as a
+    /// unit — and stops selecting a track from lighting up the heading above it,
+    /// which is what happened while they shared a row.
+    private var rows: [Row] { Row.build(from: player.queue) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,53 +42,18 @@ struct QueueView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollViewReader { proxy in
-                    // One flat ForEach, with album headings rendered inline
-                    // rather than as Sections. `onMove` cannot cross a Section
-                    // boundary, so grouping this way meant a track could only be
-                    // dragged within its own album — which looked like "played
-                    // items can't be dragged", they just tend to sit in an
-                    // earlier group than the drop target.
-                    List(selection: $selection) {
-                        ForEach(Array(player.queue.enumerated()), id: \.element.queueItemId) { index, item in
-                            VStack(alignment: .leading, spacing: 0) {
-                                if let heading = heading(at: index) {
-                                    QueueAlbumHeader(group: heading)
-                                        .padding(.top, index == 0 ? 0 : 10)
-                                        .padding(.bottom, 3)
-                                        .contentShape(.rect)
-                                        // Selects the whole run, so the next
-                                        // drag moves the album rather than the
-                                        // single row the heading sits above.
-                                        .simultaneousGesture(TapGesture().onEnded {
-                                            selection = Set(groupItemIds(from: index))
-                                        })
-                                        .help("Select this album")
-                                }
-                                QueueRow(
-                                    item: item,
-                                    isCurrent: item.queueItemId == player.currentItemId,
-                                    showArtist: item.artist != item.albumArtist
-                                )
-                            }
-                            .simultaneousGesture(TapGesture(count: 2).onEnded {
-                                player.play(itemId: item.queueItemId)
-                            })
-                            .contextMenu { menu(for: item) }
-                        }
-                        .onMove(perform: move)
+                List(selection: $selection) {
+                    ForEach(rows) { row in
+                        rowView(row)
                     }
-                    .listStyle(.inset)
-                    .onDeleteCommand { removeSelected() }
-                    // One-way mirror so the Edit menu can act on the selection
-                    // without the render path having to observe it.
-                    .onChange(of: selection) { _, new in player.queueSelection = new }
-                    // Follow the cursor as tracks advance, but never fight a
-                    // user who has scrolled somewhere deliberately.
-                    .onChange(of: player.currentItemId) { _, id in
-                        guard let id, selection.isEmpty else { return }
-                        withAnimation { proxy.scrollTo(id, anchor: .center) }
-                    }
+                    .onMove(perform: move)
+                }
+                .listStyle(.inset)
+                .background(DoubleClickHandler { playSelection() })
+                .onDeleteCommand { removeSelected() }
+                .onChange(of: selection) { _, new in player.queueSelection = new }
+                .onChange(of: player.selectAllToken) { _, _ in
+                    selection = Set(rows.map(\.id))
                 }
             }
         }
@@ -116,7 +85,7 @@ struct QueueView: View {
             Spacer()
 
             if !selection.isEmpty {
-                Text("\(selection.count) selected")
+                Text("\(selectedItemIds.count) selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Remove", role: .destructive) { removeSelected() }
@@ -149,10 +118,40 @@ struct QueueView: View {
         return total > 0 ? "\(count) · \(Format.duration(total))" : count
     }
 
-    // MARK: - Actions
+    /// Extracted because the type checker gives up on a switch this size
+    /// inline in a ForEach.
+    @ViewBuilder
+    private func rowView(_ row: Row) -> some View {
+        switch row {
+        case .album(_, let group):
+            QueueAlbumHeader(group: group)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .contextMenu { albumMenu(group) }
+        case .track(let item):
+            QueueRow(
+                item: item,
+                isCurrent: item.queueItemId == player.currentItemId,
+                showArtist: item.artist != item.albumArtist
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+            .contextMenu { trackMenu(item) }
+        }
+    }
 
     @ViewBuilder
-    private func menu(for item: QueueItem) -> some View {
+    private func albumMenu(_ group: QueueGroup) -> some View {
+        Button("Play") {
+            if let first = group.items.first { player.play(itemId: first.queueItemId) }
+        }
+        Button("Remove Album") {
+            player.remove(itemIds: group.items.map(\.queueItemId))
+        }
+    }
+
+    @ViewBuilder
+    private func trackMenu(_ item: QueueItem) -> some View {
         Button("Play") { player.play(itemId: item.queueItemId) }
         Button("Remove") { player.remove(itemIds: [item.queueItemId]) }
         if let trackId = item.trackId {
@@ -164,55 +163,102 @@ struct QueueView: View {
         }
     }
 
+    // MARK: - Selection
+
+    /// Queue items behind the selection. Selecting an album heading means its
+    /// whole run, which is the point of the heading being selectable.
+    private var selectedItemIds: [String] {
+        rows.filter { selection.contains($0.id) }.flatMap(\.itemIds)
+    }
+
     private func removeSelected() {
-        player.remove(itemIds: Array(selection))
+        player.remove(itemIds: selectedItemIds)
         selection = []
     }
 
-    /// Every queue item belonging to the run that starts at `index`.
-    private func groupItemIds(from index: Int) -> [String] {
-        let start = player.queue[index]
-        return player.queue[index...]
-            .prefix { $0.album == start.album && $0.albumArtist == start.albumArtist }
-            .map(\.queueItemId)
+    /// Double-click plays what the first click selected — the track, or the
+    /// first track of the album whose heading was clicked.
+    private func playSelection() {
+        guard let id = selectedItemIds.first else { return }
+        player.play(itemId: id)
     }
 
-    /// The album heading to draw above this row, if it starts a new run.
-    ///
-    /// Contiguous runs, mirroring the TUI: queue order is the user's, and
-    /// collapsing two separate visits to the same record into one heading would
-    /// misrepresent it.
-    private func heading(at index: Int) -> QueueGroup? {
-        let item = player.queue[index]
-        guard !item.album.isEmpty else { return nil }
-        if index > 0 {
-            let previous = player.queue[index - 1]
-            guard previous.album != item.album || previous.albumArtist != item.albumArtist else {
-                return nil
-            }
-        }
-        return QueueGroup(
-            id: item.queueItemId,
-            albumArtist: item.albumArtist,
-            album: item.album,
-            items: [item]
-        )
-    }
+    // MARK: - Reordering
 
-    /// `onMove` speaks in indices over the whole queue; the engine speaks in
-    /// item IDs. Translate at the boundary and let it decide the result.
+    /// Moving a heading moves its whole album, which is why headings are rows.
     private func move(from source: IndexSet, to destination: Int) {
-        let moving = source.map { player.queue[$0].queueItemId }
-        guard destination > 0 else {
-            // Dropped at the very top — anchor to the first item that isn't moving.
-            guard let anchor = player.queue.first(where: { !moving.contains($0.queueItemId) })
+        let moving = source.flatMap { rows[$0].itemIds }
+        guard !moving.isEmpty else { return }
+
+        // Anchor to the last queue item above the drop, skipping anything being
+        // moved — the engine positions relative to an item that stays put.
+        let above = rows[..<destination].flatMap(\.itemIds)
+        guard let anchor = above.last(where: { !moving.contains($0) }) else {
+            // Dropped at the very top: anchor to the first item that isn't moving
+            // and let the engine place them before it.
+            guard let first = player.queue.first(where: { !moving.contains($0.queueItemId) })
             else { return }
-            player.move(itemIds: moving, after: anchor.queueItemId)
+            player.move(itemIds: moving, after: first.queueItemId)
             return
         }
-        let anchor = player.queue[destination - 1].queueItemId
-        guard !moving.contains(anchor) else { return }
         player.move(itemIds: moving, after: anchor)
+    }
+}
+
+// MARK: - Rows
+
+extension QueueView {
+    /// A queue row: either an album heading or one track.
+    enum Row: Identifiable {
+        case album(id: String, group: QueueGroup)
+        case track(QueueItem)
+
+        var id: String {
+            switch self {
+            case .album(let id, _): id
+            case .track(let item): item.queueItemId
+            }
+        }
+
+        /// The queue items this row stands for.
+        var itemIds: [String] {
+            switch self {
+            case .album(_, let group): group.items.map(\.queueItemId)
+            case .track(let item): [item.queueItemId]
+            }
+        }
+
+        /// Contiguous runs, mirroring the TUI: queue order is the user's, and
+        /// collapsing two separate visits to the same record into one heading
+        /// would misrepresent it. A heading precedes each run; tracks with no
+        /// album stand alone.
+        static func build(from queue: [QueueItem]) -> [Row] {
+            var rows: [Row] = []
+            var index = 0
+            while index < queue.count {
+                let first = queue[index]
+                guard !first.album.isEmpty else {
+                    rows.append(.track(first))
+                    index += 1
+                    continue
+                }
+                let run = queue[index...].prefix {
+                    $0.album == first.album && $0.albumArtist == first.albumArtist
+                }
+                rows.append(.album(
+                    id: "album:\(first.queueItemId)",
+                    group: QueueGroup(
+                        id: first.queueItemId,
+                        albumArtist: first.albumArtist,
+                        album: first.album,
+                        items: Array(run)
+                    )
+                ))
+                rows.append(contentsOf: run.map { Row.track($0) })
+                index += run.count
+            }
+            return rows
+        }
     }
 }
 

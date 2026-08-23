@@ -40,16 +40,13 @@ struct TrackListView: View {
                                 position: index + 1,
                                 isCurrent: player.currentTrackId == track.id
                             )
-                            // Not `onTapGesture`: that consumes the click
-                            // before the List's own selection handling sees it,
-                            // which is why single clicks were being dropped.
-                            .simultaneousGesture(TapGesture(count: 2).onEnded {
-                                player.playNow(trackIds: tracks.map(\.id), startingAt: index)
-                            })
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
                             .contextMenu { PlayableMenu(playable: .track(track)) }
                         }
                     }
                     .listStyle(.inset)
+                    .background(DoubleClickHandler { playSelection() })
                     // Arriving from search: single out the matched track rather
                     // than dropping the user at the top of a 20-track record.
                     .task(id: tracks.count) {
@@ -63,6 +60,15 @@ struct TrackListView: View {
                 }
             }
         }
+    }
+
+    /// Double-click plays whatever the first click selected, keeping the rest
+    /// of the list queued behind it.
+    private func playSelection() {
+        guard let id = selection.first,
+              let index = tracks.firstIndex(where: { $0.id == id })
+        else { return }
+        player.playNow(trackIds: tracks.map(\.id), startingAt: index)
     }
 
     /// The subtitle is "Artist · 2007 · FLAC · 59:10"; only the first part is

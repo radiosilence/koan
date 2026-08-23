@@ -50,12 +50,32 @@ pub struct FuzzyMatch {
     pub kind: SearchKind,
 }
 
+/// Events pushed from the engine, so clients don't have to poll.
+///
+/// Watching happens on a Rust thread reading atomics, not from the audio or
+/// decode threads: `set_position_ms` is a hot-path store and calling into a
+/// foreign language from there would put an unbounded amount of work in a
+/// timing-sensitive path. Discrete changes fire as they happen; position ticks
+/// only while something is playing, and only when the value actually moved.
+#[uniffi::export(with_foreign)]
+pub trait PlayerEvents: Send + Sync {
+    /// State, track, or format changed — anything a transport bar displays
+    /// other than the position.
+    fn playback_changed(&self, now_playing: NowPlaying);
+    /// The queue was mutated. Carries the version so a client can skip a
+    /// refetch it has already done.
+    fn queue_changed(&self, version: u64);
+    /// Playback position, while playing.
+    fn position_changed(&self, position_ms: u64);
+}
+
 /// The player, the library, and the bridge between them.
 #[derive(uniffi::Object)]
 pub struct KoanEngine {
     state: Arc<SharedPlayerState>,
     tx: Sender<PlayerCommand>,
     db_path: PathBuf,
+    listener: Arc<parking_lot::RwLock<Option<Arc<dyn PlayerEvents>>>>,
 }
 
 #[uniffi::export]
@@ -71,7 +91,17 @@ impl KoanEngine {
 
         let (state, _timeline, _viz, tx) = Player::spawn();
         spawn_radio(state.clone(), tx.clone(), db_path.clone());
-        Ok(Arc::new(Self { state, tx, db_path }))
+
+        let listener: Arc<parking_lot::RwLock<Option<Arc<dyn PlayerEvents>>>> =
+            Arc::new(parking_lot::RwLock::new(None));
+        let engine = Arc::new(Self {
+            state,
+            tx,
+            db_path,
+            listener,
+        });
+        engine.spawn_watcher();
+        Ok(engine)
     }
 
     // --- Transport ---------------------------------------------------------
@@ -135,6 +165,18 @@ impl KoanEngine {
             playlist_version: self.state.playlist_version(),
             radio_enabled: self.state.radio_mode(),
         }
+    }
+
+    /// Start pushing events to `listener`. Replaces polling `now_playing()`.
+    ///
+    /// One listener at a time — a second call replaces the first, which is what
+    /// a single UI wants and avoids leaking a listener across a reload.
+    pub fn subscribe(&self, listener: Arc<dyn PlayerEvents>) {
+        *self.listener.write() = Some(listener);
+    }
+
+    pub fn unsubscribe(&self) {
+        *self.listener.write() = None;
     }
 
     /// Cheap enough to poll every frame — use it to decide whether to call
@@ -899,6 +941,69 @@ impl KoanEngine {
 // --- Internals -------------------------------------------------------------
 
 impl KoanEngine {
+    /// Watch shared state and push changes to the listener.
+    ///
+    /// Polls, but in Rust and over atomics, which is nothing — and the client
+    /// sees events. The alternative, notifying from the player's own mutation
+    /// points, would put foreign calls on the decode thread.
+    fn spawn_watcher(self: &Arc<Self>) {
+        let engine = Arc::downgrade(self);
+        std::thread::Builder::new()
+            .name("koan-events".into())
+            .spawn(move || {
+                let mut last_version = u64::MAX;
+                let mut last_position = u64::MAX;
+                let mut last_signature: Option<(PlaybackState, Option<String>)> = None;
+                let mut ticks_since_download_nudge = 0u32;
+
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let Some(engine) = engine.upgrade() else {
+                        return; // Engine dropped; so is the app.
+                    };
+                    let Some(listener) = engine.listener.read().clone() else {
+                        continue;
+                    };
+
+                    let state = engine.state.playback_state();
+                    let cursor = engine.state.cursor().map(|c| c.0.to_string());
+                    let signature = (state, cursor);
+                    if last_signature.as_ref() != Some(&signature) {
+                        last_signature = Some(signature);
+                        listener.playback_changed(engine.now_playing());
+                    }
+
+                    let version = engine.state.playlist_version();
+                    if version != last_version {
+                        last_version = version;
+                        listener.queue_changed(version);
+                        ticks_since_download_nudge = 0;
+                    } else if !engine.state.pending_downloads().is_empty() {
+                        // Download progress moves without bumping the version,
+                        // so nothing above would announce it. Once a second is
+                        // plenty for a progress bar and keeps the client from
+                        // having to poll for the one thing events don't cover.
+                        ticks_since_download_nudge += 1;
+                        if ticks_since_download_nudge >= 10 {
+                            ticks_since_download_nudge = 0;
+                            listener.queue_changed(version);
+                        }
+                    }
+
+                    // Only while playing: a paused position doesn't move, and
+                    // re-sending it would keep a transport bar redrawing.
+                    if state == PlaybackState::Playing {
+                        let position = engine.state.position_ms();
+                        if position != last_position {
+                            last_position = position;
+                            listener.position_changed(position);
+                        }
+                    }
+                }
+            })
+            .ok();
+    }
+
     fn db(&self) -> Result<Database, KoanError> {
         Database::open(&self.db_path).map_err(db_err)
     }
@@ -1136,9 +1241,12 @@ fn shuffle<T>(items: &mut [T]) {
 
 fn sort_rows(mut rows: Vec<queries::TrackRow>, sort: TrackSort) -> Vec<queries::TrackRow> {
     match sort {
-        TrackSort::Album => {
-            rows.sort_by_key(|r| (r.disc.unwrap_or(1), r.track_number.unwrap_or(0)))
-        }
+        // Left alone deliberately. Every query already ORDERs BY album date,
+        // title, disc and track — the coherent ordering, and better than
+        // anything reconstructible here since TrackRow carries no release date.
+        // Re-sorting on (disc, track) alone turned an artist's discography into
+        // track 1 of every album, then track 2 of every album.
+        TrackSort::Album => {}
         TrackSort::Title => rows.sort_by_key(|r| r.title.to_lowercase()),
         TrackSort::Artist => rows.sort_by_key(|r| r.artist_name.to_lowercase()),
         TrackSort::Duration => rows.sort_by_key(|r| r.duration_ms.unwrap_or(0)),

@@ -93,13 +93,13 @@ struct LyricsPanel: View {
     /// apart, and depending on the millisecond value would re-render every line
     /// ten times a second for no visible gain.
     private func currentIndex(_ lyrics: Lyrics) -> Int? {
-        let position = Double(player.positionSeconds)
+        let position = Double(player.clock.positionSeconds)
         return lyrics.lines.lastIndex { $0.timeSecs <= position }
     }
 
     private func fraction(of line: LyricLine) -> Double {
-        guard player.nowPlaying.durationMs > 0 else { return 0 }
-        return (line.timeSecs * 1000 / Double(player.nowPlaying.durationMs)).clamped()
+        guard player.clock.durationMs > 0 else { return 0 }
+        return (line.timeSecs * 1000 / Double(player.clock.durationMs)).clamped()
     }
 
     /// Cache first so the panel fills instantly, then LRCLIB in the background

@@ -48,7 +48,7 @@ struct TransportBar: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                if let entry = player.nowPlaying.entry {
+                if let entry = player.currentEntry {
                     Text(entry.title)
                         .font(.callout.weight(.medium))
                         .lineLimit(1)
@@ -91,7 +91,7 @@ struct TransportBar: View {
         }
         .buttonStyle(.plain)
         .font(.system(size: 14))
-        .disabled(player.nowPlaying.entry == nil)
+        .disabled(player.currentEntry == nil)
     }
 
     // MARK: - Right: format and output
@@ -100,7 +100,7 @@ struct TransportBar: View {
     private var trailing: some View {
         HStack(spacing: 14) {
             // The whole point of the player: what the DAC is being handed.
-            if let format = player.nowPlaying.format {
+            if let format = player.currentFormat {
                 Text(Format.quality(format))
                     .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
@@ -111,7 +111,7 @@ struct TransportBar: View {
             }
 
             Toggle(isOn: Binding(
-                get: { player.nowPlaying.radioEnabled },
+                get: { player.radioEnabled },
                 set: { player.setRadio($0) }
             )) {
                 Label("Radio", systemImage: "dot.radiowaves.left.and.right")
@@ -161,16 +161,16 @@ private struct SeekBar: View {
             }
             .frame(height: 14)
 
-            Text(Format.duration(player.nowPlaying.durationMs))
+            Text(Format.duration(player.clock.durationMs))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 40, alignment: .leading)
         }
-        .disabled(player.nowPlaying.durationMs == 0)
+        .disabled(player.clock.durationMs == 0)
     }
 
     private var displayedPosition: UInt64 {
-        UInt64(player.progress * Double(player.nowPlaying.durationMs))
+        UInt64(player.progress * Double(player.clock.durationMs))
     }
 }
 
