@@ -124,12 +124,20 @@ final class PlayerModel {
     private(set) var isPlaying = false
     private(set) var currentTrackId: Int64?
     private(set) var currentItemId: String?
+    private(set) var radioEnabled = false
+    /// Whole seconds. Anything that only needs "roughly where are we" — lyric
+    /// highlighting, for instance — should read this rather than `positionMs`,
+    /// so it re-renders once a second instead of ten times.
+    private(set) var positionSeconds = 0
 
     private func updateDerived(_ now: NowPlaying) {
         let playing = now.state == .playing
         if playing != isPlaying { isPlaying = playing }
         if now.entry?.trackId != currentTrackId { currentTrackId = now.entry?.trackId }
         if now.queueItemId != currentItemId { currentItemId = now.queueItemId }
+        if now.radioEnabled != radioEnabled { radioEnabled = now.radioEnabled }
+        let seconds = Int(now.positionMs / 1000)
+        if seconds != positionSeconds { positionSeconds = seconds }
     }
 
     /// 0–1 through the current track. Reflects the drag while scrubbing.

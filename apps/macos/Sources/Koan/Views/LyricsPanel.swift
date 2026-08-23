@@ -88,8 +88,12 @@ struct LyricsPanel: View {
     }
 
     /// Last line whose timestamp has passed.
+    ///
+    /// Reads whole seconds rather than milliseconds: lyric lines are seconds
+    /// apart, and depending on the millisecond value would re-render every line
+    /// ten times a second for no visible gain.
     private func currentIndex(_ lyrics: Lyrics) -> Int? {
-        let position = Double(player.nowPlaying.positionMs) / 1000
+        let position = Double(player.positionSeconds)
         return lyrics.lines.lastIndex { $0.timeSecs <= position }
     }
 

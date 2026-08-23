@@ -70,7 +70,7 @@ struct SidebarView: View {
                 .foregroundStyle(.secondary)
             }
 
-            if player.nowPlaying.radioEnabled {
+            if player.radioEnabled {
                 Label("Radio on", systemImage: "dot.radiowaves.left.and.right")
                     .font(.caption)
                     .foregroundStyle(.tint)
