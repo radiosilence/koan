@@ -60,7 +60,6 @@ struct QueueView: View {
                                     showArtist: item.artist != item.albumArtist
                                 )
                             }
-                            .id(item.queueItemId)
                             .simultaneousGesture(TapGesture(count: 2).onEnded {
                                 player.play(itemId: item.queueItemId)
                             })

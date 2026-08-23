@@ -40,7 +40,6 @@ struct TrackListView: View {
                                 position: index + 1,
                                 isCurrent: player.currentTrackId == track.id
                             )
-                            .id(track.id)
                             // Not `onTapGesture`: that consumes the click
                             // before the List's own selection handling sees it,
                             // which is why single clicks were being dropped.
