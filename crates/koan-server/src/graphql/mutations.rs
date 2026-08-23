@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use koan_core::auth::Role;
 
-use super::helpers::{spawn_downloads, sync_favourite_to_remote, track_to_playlist_item};
+use super::helpers::{spawn_downloads, sync_favourite_to_remote};
 use super::types::*;
 use super::{DbHandle, parse_queue_item_id, require_role, send_cmd};
 
@@ -416,23 +416,37 @@ impl MutationRoot {
 
         // Resolve each snapshot item through the same path resolution as
         // addToQueue — ensures correct cache paths and triggers downloads.
-        let mut items = Vec::new();
+        // Resolve every path to an id first, then fetch the rows in one query:
+        // per-track resolution re-read the config for each one.
+        let ids: Vec<Option<i64>> = snap
+            .items
+            .iter()
+            .map(|item| {
+                queries::track_id_by_path(&db.conn, &item.path)
+                    .ok()
+                    .flatten()
+            })
+            .collect();
+        let known: Vec<i64> = ids.iter().flatten().copied().collect();
+        let rows = queries::tracks_by_ids(&db.conn, &known).unwrap_or_default();
+        let mut resolved = koan_core::helpers::playlist_items_for_tracks(&db, &rows).into_iter();
+
+        let mut items = Vec::with_capacity(snap.items.len());
         let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
-        for snap_item in &snap.items {
-            if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &snap_item.path)
-                && let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
-            {
-                let item = track_to_playlist_item(&track, &db);
-                if matches!(
-                    item.load_state,
-                    koan_core::player::state::LoadState::Pending
-                ) {
-                    pending_downloads.push((tid, item.id));
+        for (snap_item, id) in snap.items.iter().zip(ids) {
+            match id.and_then(|_| resolved.next()) {
+                Some(item) => {
+                    if matches!(
+                        item.load_state,
+                        koan_core::player::state::LoadState::Pending
+                    ) && let Some(db_id) = item.db_id
+                    {
+                        pending_downloads.push((db_id, item.id));
+                    }
+                    items.push(item);
                 }
-                items.push(item);
-            } else {
-                // Track not in DB — use snapshot's stored data.
-                items.push(snap_item.to_playlist_item());
+                // Track no longer in the library — keep what the snapshot stored.
+                None => items.push(snap_item.to_playlist_item()),
             }
         }
 

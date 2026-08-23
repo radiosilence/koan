@@ -21,7 +21,7 @@ use crossbeam_channel::Sender;
 use koan_core::config::{self, Config};
 use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, PersistedQueueItem};
-use koan_core::helpers::{spawn_downloads, track_to_playlist_item};
+use koan_core::helpers::spawn_downloads;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
@@ -644,21 +644,7 @@ impl KoanEngine {
                 message: format!("snapshot '{name}'"),
             })?;
 
-        let mut items = Vec::new();
-        let mut pending: Vec<(i64, QueueItemId)> = Vec::new();
-        for snap_item in &snap.items {
-            if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &snap_item.path)
-                && let Ok(Some(row)) = queries::get_track_row(&db.conn, tid)
-            {
-                let item = track_to_playlist_item(&row, &db);
-                if matches!(item.load_state, LoadState::Pending) {
-                    pending.push((tid, item.id));
-                }
-                items.push(item);
-            } else {
-                items.push(snap_item.to_playlist_item());
-            }
-        }
+        let (items, pending) = restore_items(&db, &snap.items);
 
         self.send(PlayerCommand::ClearPlaylist)?;
         if items.is_empty() {
@@ -726,21 +712,7 @@ impl KoanEngine {
             return Ok(0);
         };
 
-        let mut items = Vec::new();
-        let mut pending: Vec<(i64, QueueItemId)> = Vec::new();
-        for saved_item in &saved.items {
-            if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &saved_item.path)
-                && let Ok(Some(row)) = queries::get_track_row(&db.conn, tid)
-            {
-                let item = track_to_playlist_item(&row, &db);
-                if matches!(item.load_state, LoadState::Pending) {
-                    pending.push((tid, item.id));
-                }
-                items.push(item);
-            } else {
-                items.push(saved_item.to_playlist_item());
-            }
-        }
+        let (items, pending) = restore_items(&db, &saved.items);
         if items.is_empty() {
             return Ok(0);
         }
@@ -1096,6 +1068,46 @@ impl KoanEngine {
     }
 }
 
+/// Rebuild playlist items for a saved queue.
+///
+/// Anything still in the library is re-resolved so cache paths and downloads
+/// are correct; anything that has since gone keeps the copy stored in the
+/// snapshot, so a restore never silently drops tracks.
+fn restore_items(
+    db: &Database,
+    saved: &[PersistedQueueItem],
+) -> (Vec<PlaylistItem>, Vec<(i64, QueueItemId)>) {
+    let ids: Vec<Option<i64>> = saved
+        .iter()
+        .map(|item| {
+            queries::track_id_by_path(&db.conn, &item.path)
+                .ok()
+                .flatten()
+        })
+        .collect();
+
+    let known: Vec<i64> = ids.iter().flatten().copied().collect();
+    let rows = queries::tracks_by_ids(&db.conn, &known).unwrap_or_default();
+    let mut resolved = koan_core::helpers::playlist_items_for_tracks(db, &rows).into_iter();
+
+    let mut items = Vec::with_capacity(saved.len());
+    let mut pending = Vec::new();
+    for (saved_item, id) in saved.iter().zip(ids) {
+        match id.and_then(|_| resolved.next()) {
+            Some(item) => {
+                if matches!(item.load_state, LoadState::Pending)
+                    && let Some(db_id) = item.db_id
+                {
+                    pending.push((db_id, item.id));
+                }
+                items.push(item);
+            }
+            None => items.push(saved_item.to_playlist_item()),
+        }
+    }
+    (items, pending)
+}
+
 /// Keep the queue topped up while radio mode is on.
 ///
 /// This lived only in `koan-tui`, so any other client could set the flag and
@@ -1195,17 +1207,13 @@ fn spawn_radio(state: Arc<SharedPlayerState>, tx: Sender<PlayerCommand>, db_path
                 }
                 log::info!("radio: queueing {} tracks", picks.len());
 
-                let mut new_items = Vec::new();
-                let mut pending: Vec<(i64, QueueItemId)> = Vec::new();
-                for tid in picks {
-                    if let Ok(Some(row)) = queries::get_track_row(&db.conn, tid) {
-                        let item = track_to_playlist_item(&row, &db);
-                        if matches!(item.load_state, LoadState::Pending) {
-                            pending.push((tid, item.id));
-                        }
-                        new_items.push(item);
-                    }
-                }
+                let rows = queries::tracks_by_ids(&db.conn, &picks).unwrap_or_default();
+                let new_items = koan_core::helpers::playlist_items_for_tracks(&db, &rows);
+                let pending: Vec<(i64, QueueItemId)> = new_items
+                    .iter()
+                    .filter(|i| matches!(i.load_state, LoadState::Pending))
+                    .filter_map(|i| i.db_id.map(|id| (id, i.id)))
+                    .collect();
                 if new_items.is_empty() {
                     continue;
                 }
