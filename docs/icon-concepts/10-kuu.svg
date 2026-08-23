@@ -7,7 +7,7 @@
   <g clip-path="url(#tile)">
     
     <rect width="512" height="512" fill="#141416"/>
-    <text x="256" y="330" font-family="PingFang SC" font-weight="500" font-size="300"
+    <text x="256" y="370" font-family="PingFang SC" font-weight="500" font-size="300"
           fill="#EDEAE2" text-anchor="middle">空</text>
     
   </g>
