@@ -16,18 +16,17 @@ struct SidebarView: View {
         @Bindable var library = library
         @Bindable var search = search
 
-        // Not `$library.section` directly: choosing the section you are already
-        // in should take you back to its root, which is otherwise a trip out to
-        // another section and back.
         List(selection: Binding(
-            get: { library.section },
+            get: { library.navSelection },
             set: { chosen in
                 guard let chosen else { return }
-                if chosen == library.section {
-                    library.popToRoot()
-                } else {
-                    library.section = chosen
-                }
+                // Choosing a section always lands on its root — including the
+                // one you are already in, which is otherwise a trip out to
+                // another section and back. `navSelection` follows the detail
+                // stack, so this also covers choosing Albums from inside an
+                // album you reached through Favourites.
+                library.section = chosen
+                library.popToRoot()
             }
         )) {
             Section {
@@ -115,14 +114,11 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
 
-            if library.isScanning {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Scanning…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else if let stats = library.stats {
+            // Every long task, one row each. Replaces a "Scanning…" line that
+            // said the same thing whatever was actually running.
+            ActivityList()
+
+            if let stats = library.stats {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Format.count(stats.totalTracks, "track"))
                     Text("\(Format.count(stats.totalAlbums, "album")) · \(Format.count(stats.totalArtists, "artist"))")

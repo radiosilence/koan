@@ -151,6 +151,7 @@ struct TrackListView: View {
                     QueueButtons(playable: playable)
                     if let playable {
                         ShareButton(playable: playable)
+                        FavouriteHeaderButton(playable: playable)
                     }
                 }
                 .padding(.top, 4)
@@ -216,15 +217,9 @@ private struct TrackRow: View {
 
             TrackAvailability(track: track)
 
-            Button {
-                player.toggleFavourite(trackId: track.id)
-                library.refreshFavourites()
-            } label: {
-                Image(systemName: track.isFavourite ? "heart.fill" : "heart")
-                    .foregroundStyle(track.isFavourite ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
+            FavouriteButton(isOn: library.isFavourite(track: track.id), showing: hovering) {
+                library.toggleFavourite(track: track.id)
             }
-            .buttonStyle(.plain)
-            .opacity(track.isFavourite || hovering ? 1 : 0)
 
             if let quality = Format.quality(track) {
                 Text(quality)

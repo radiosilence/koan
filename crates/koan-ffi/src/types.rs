@@ -429,6 +429,8 @@ pub struct SyncSummary {
     /// Non-zero means the run was incomplete and the next one will retry those
     /// albums — worth saying so rather than reporting a clean sync.
     pub albums_failed: u32,
+    pub favourites_pushed: u32,
+    pub favourites_imported: u32,
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
@@ -479,4 +481,64 @@ pub enum KoanError {
 
 pub(crate) fn year_of(date: &str) -> Option<i32> {
     date.get(..4).and_then(|s| s.parse().ok())
+}
+
+/// Everything the settings window reads and writes.
+///
+/// One record rather than a getter per field: the window shows the whole
+/// configuration at once, and a single read keeps it consistent with itself.
+/// The remote password is deliberately absent — it lives in the platform
+/// credential store and is written through `sign_in_remote`, never read back.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct Settings {
+    /// Folders and how many tracks each accounts for — a folder is easier to
+    /// judge by what it contributed than by its path.
+    pub library_folders: Vec<LibraryFolder>,
+
+    pub remote_enabled: bool,
+    pub remote_url: String,
+    pub remote_username: String,
+    /// A password is stored for this server. Not the password.
+    pub remote_signed_in: bool,
+    /// Tracks the server accounts for.
+    pub remote_tracks: u64,
+    /// `original`, `opus-128` or `mp3-320`.
+    pub transcode_quality: String,
+    pub download_workers: u32,
+    /// Human-readable, e.g. "50GB". Empty means unlimited.
+    pub cache_limit: String,
+    pub cache_dir: String,
+    pub cache_bytes: u64,
+    pub auto_sync: bool,
+    pub auto_sync_interval_mins: u64,
+
+    /// `off`, `track` or `album`.
+    pub replaygain: String,
+    pub pre_amp_db: f64,
+
+    pub radio_lookahead: u32,
+    pub radio_batch_size: u32,
+    pub radio_discovery_weight: f64,
+}
+
+/// A scanned folder, and what it contributed.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct LibraryFolder {
+    pub path: String,
+    pub tracks: u64,
+}
+
+/// What a library rebuild removed.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct RebuildSummary {
+    pub tracks: u64,
+    pub albums: u64,
+    pub artists: u64,
+}
+
+/// What clearing the download cache removed.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct CacheCleared {
+    pub files: u64,
+    pub bytes: u64,
 }

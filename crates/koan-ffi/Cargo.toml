@@ -21,6 +21,8 @@ name = "uniffi-bindgen"
 path = "src/bin/uniffi-bindgen.rs"
 
 [dependencies]
+# Config is written back from the settings window.
+toml = "1.1"
 koan-core = { path = "../koan-core" }
 crossbeam-channel = "0.5"
 getrandom = "0.4"
@@ -31,3 +33,4 @@ rusqlite = { workspace = true }
 thiserror = "2"
 uniffi = { version = "0.32", features = ["cli"] }
 uuid = { version = "1", features = ["v7"] }
+chrono = "0.4"

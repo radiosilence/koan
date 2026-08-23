@@ -227,7 +227,7 @@ jobs:
           path: ${{ matrix.binary_name }}.tar.gz
 
   create-macos-app:
-    name: Release (Koan.app)
+    name: Release (kōan.app)
     runs-on: macos-latest
     needs: [check-version]
     if: needs.check-version.outputs.should_release == 'true'
@@ -246,7 +246,7 @@ jobs:
       - run: just macos-ffi "aarch64-apple-darwin x86_64-apple-darwin"
       - run: cd apps/macos && swift build -c release --arch arm64 --arch x86_64
       # Bundle, check, then package. `macos-verify` inspects the assembled
-      # Koan.app, so it has to come after something that assembles one —
+      # kōan.app, so it has to come after something that assembles one —
       # `macos-dmg` does that itself via `macos-bundle`, which put the check
       # before the thing it checks.
       - run: just macos-bundle
@@ -299,7 +299,7 @@ jobs:
             offers only **Move to Trash**. Drag it to Applications, then:
 
             ```bash
-            xattr -dr com.apple.quarantine /Applications/Koan.app
+            xattr -dr com.apple.quarantine /Applications/kōan.app
             ```
 
             It opens normally from then on. The Homebrew cask does this for you.
@@ -431,11 +431,11 @@ jobs:
 
             depends_on macos: ">= :tahoe"
 
-            app "Koan.app"
+            app "kōan.app"
 
             # Ad-hoc signed, not notarised — without this Gatekeeper quarantines it.
             postflight do
-              system_command "/usr/bin/xattr", args: ["-cr", "#{appdir}/Koan.app"]
+              system_command "/usr/bin/xattr", args: ["-cr", "#{appdir}/kōan.app"]
             end
 
             zap trash: [

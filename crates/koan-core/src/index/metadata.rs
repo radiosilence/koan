@@ -174,6 +174,8 @@ fn read_metadata_lofty(
         path: Some(path.to_string_lossy().to_string()),
         source: "local".to_string(),
         remote_id: None,
+        album_remote_id: None,
+        artist_remote_id: None,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
     })
@@ -232,6 +234,8 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         path: Some(path.to_string_lossy().to_string()),
         source: "local".to_string(),
         remote_id: None,
+        album_remote_id: None,
+        artist_remote_id: None,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
     })
@@ -578,6 +582,8 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         path: None,
         source: "streaming".to_string(),
         remote_id: None,
+        album_remote_id: None,
+        artist_remote_id: None,
         remote_url: None,
         album_added_at: None,
     }

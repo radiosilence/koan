@@ -13,7 +13,7 @@ Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library 
 Downloading `Koan.dmg` from the releases page rather than using the cask? The app
 is signed but not notarised — Apple charges for that — so macOS refuses the first
 open and offers only "Move to Trash". Drag it to Applications and run
-`xattr -dr com.apple.quarantine /Applications/Koan.app` once. The cask does this
+`xattr -dr com.apple.quarantine /Applications/kōan.app` once. The cask does this
 for you.
 
 ```bash
@@ -77,7 +77,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV/AIFF/CAF, Ogg, MKV/WebM, MP4
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
-- **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, favourite sync
+- **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way favourite sync for tracks, albums and artists
 - **Radio mode** -- infinite play using Subsonic similarity, cached artist relationships, and genre matching
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for display and file organization

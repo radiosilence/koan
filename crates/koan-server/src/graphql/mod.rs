@@ -422,6 +422,8 @@ mod tests {
                         source: "local".into(),
                         remote_id: None,
                         remote_url: None,
+                        album_remote_id: None,
+                        artist_remote_id: None,
                         album_added_at: None,
                         label: None,
                     };
@@ -457,6 +459,8 @@ mod tests {
             source: "local".into(),
             remote_id: None,
             remote_url: None,
+            album_remote_id: None,
+            artist_remote_id: None,
             album_added_at: None,
             label: None,
         };

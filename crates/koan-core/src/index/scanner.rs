@@ -1,5 +1,7 @@
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::UNIX_EPOCH;
 
 use rayon::prelude::*;
@@ -24,13 +26,21 @@ pub struct ScanResult {
     /// show what a removal actually took.
     pub removed_paths: Vec<String>,
     pub errors: Vec<(PathBuf, String)>,
+    /// Stopped early because someone asked. What it had done is still done.
+    pub cancelled: bool,
 }
 
 /// How a scan should behave.
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct ScanOptions {
     /// Re-read tags for every file, ignoring `scan_cache`.
     pub force: bool,
+    /// Set from another thread to stop early.
+    ///
+    /// Checked between transactions, so a cancelled scan keeps everything it
+    /// had already committed rather than throwing the work away — stopping is
+    /// "stop here", not "undo".
+    pub cancel: Option<Arc<AtomicBool>>,
     /// Delete stale tracks even when the proportion missing looks like a mount
     /// failure. Lifts the removal-fraction brake only — a folder that yields no
     /// audio files is still left alone, and an IO error still never counts as
@@ -158,6 +168,15 @@ pub fn scan_folder(
         if batch.is_empty() {
             break;
         }
+        if opts
+            .cancel
+            .as_ref()
+            .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+        {
+            log::info!("scan cancelled — keeping what was already committed");
+            result.cancelled = true;
+            break;
+        }
 
         let tx = match db.conn.unchecked_transaction() {
             Ok(tx) => tx,
@@ -230,6 +249,13 @@ pub fn scan_folder(
         log::error!("scan reader thread panicked");
     }
 
+    if result.cancelled {
+        // Stale removal decides what is missing by what the scan did *not* see.
+        // After a cancellation that is most of the folder, so it would delete a
+        // library rather than tidy one.
+        return result;
+    }
+
     // Remove tracks for files that no longer exist. A folder that yielded nothing
     // is far more likely to be an unmounted volume than a library someone emptied,
     // and stale rows are recoverable where deleted play history is not.
@@ -288,6 +314,23 @@ fn isolate_read(
     }
 }
 
+/// How many audio files these folders hold.
+///
+/// A directory walk with no tag reads — cheap next to the scan it precedes, and
+/// the only way to report a fraction rather than a spinner.
+pub fn count_audio_files(folders: &[PathBuf]) -> u64 {
+    folders
+        .iter()
+        .flat_map(|folder| {
+            walkdir::WalkDir::new(folder)
+                .follow_links(true)
+                .into_iter()
+                .filter_map(Result::ok)
+        })
+        .filter(|e| e.file_type().is_file() && metadata::is_audio_file(e.path()))
+        .count() as u64
+}
+
 /// Scan all configured library folders.
 pub fn full_scan(
     db: &Database,
@@ -297,11 +340,15 @@ pub fn full_scan(
 ) -> ScanResult {
     let mut total = ScanResult::default();
     for folder in folders {
+        if total.cancelled {
+            break;
+        }
         if !folder.exists() {
             log::warn!("library folder does not exist: {}", folder.display());
             continue;
         }
-        let r = scan_folder(db, folder, opts, on_track);
+        let r = scan_folder(db, folder, opts.clone(), on_track);
+        total.cancelled |= r.cancelled;
         total.added += r.added;
         total.updated += r.updated;
         total.removed += r.removed;

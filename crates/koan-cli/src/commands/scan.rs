@@ -76,6 +76,7 @@ pub fn cmd_scan(path: Option<&Path>, force: bool, force_remove: bool) {
     let opts = koan_core::index::scanner::ScanOptions {
         force,
         force_remove,
+        cancel: None,
     };
     let result = koan_core::index::scanner::full_scan(&db, &folders, opts, Some(&on_track));
     let elapsed = start.elapsed();
