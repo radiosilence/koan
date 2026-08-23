@@ -10,6 +10,7 @@ import SwiftUI
 /// underneath. Nothing moves until the button is pressed.
 struct OrganizeSheet: View {
     @Environment(OrganizeModel.self) private var organize
+    @Environment(ActivityModel.self) private var activity
 
     var body: some View {
         @Bindable var organize = organize
@@ -210,8 +211,14 @@ struct OrganizeSheet: View {
         return "Move \(Format.count(Int64(plan.movedCount), "File"))"
     }
 
+    /// Armed only when pressing it will actually move something: a plan with
+    /// moves in it, nothing already in flight, and no other library task
+    /// holding the database writer.
     private var canRun: Bool {
-        !organize.running && !organize.previewing && (organize.plan?.movedCount ?? 0) > 0
+        !organize.running
+            && !organize.previewing
+            && !activity.isLibraryBusy
+            && (organize.plan?.movedCount ?? 0) > 0
     }
 }
 

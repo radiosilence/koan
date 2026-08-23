@@ -33,6 +33,7 @@ final class AppState {
         self.activity = activity
         library.activity = activity
         player.activity = activity
+        organize.activity = activity
 
         // The engine syncs and scans on its own — on startup, on a timer, and
         // when the library folders change. Those are the slow things a user is

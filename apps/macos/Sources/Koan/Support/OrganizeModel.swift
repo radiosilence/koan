@@ -12,6 +12,7 @@ import KoanFFI
 @Observable
 final class OrganizeModel {
     private let engine: KoanEngine
+    weak var activity: ActivityModel?
 
     /// What the sheet is working on. Non-nil means the sheet is up.
     private(set) var subject: Subject?
@@ -153,9 +154,11 @@ final class OrganizeModel {
         running = true
         error = nil
         Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                Result { try engine.organizeExecute(pattern: pattern, trackIds: ids, baseDir: base) }
-            }.value
+            // Exclusive: the moves and the row rewrites share a transaction, so
+            // this contends for the writer the way a scan does.
+            let result = await activity?.run("Moving files", exclusive: true) {
+                try engine.organizeExecute(pattern: pattern, trackIds: ids, baseDir: base)
+            } ?? .failure(OrganizeFailure.noEngine)
             guard requested == generation else { return }
             running = false
             previewing = false
@@ -175,6 +178,13 @@ final class OrganizeModel {
             plan = nil
             error = String(describing: failure)
         }
+    }
+
+    /// `activity` is wired at startup and is the only route to the engine for
+    /// a run, so its absence is a programming error rather than a state the
+    /// sheet has to render.
+    enum OrganizeFailure: Error {
+        case noEngine
     }
 
     /// What a finished run did, in the order it matters: what moved, then what
