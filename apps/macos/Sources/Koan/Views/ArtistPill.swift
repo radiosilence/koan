@@ -36,5 +36,6 @@ struct ArtistPill: View {
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
         .help("Go to \(name)")
+        .contextMenu { PlayableMenu(playable: .artist(id: artistId, name: name)) }
     }
 }

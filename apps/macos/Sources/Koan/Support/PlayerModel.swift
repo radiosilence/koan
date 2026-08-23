@@ -230,6 +230,17 @@ final class PlayerModel {
         }
     }
 
+    /// Queue immediately after whatever is playing, rather than at the end.
+    /// Falls back to appending when nothing is playing to insert after.
+    func playNext(trackIds: [Int64]) {
+        guard !trackIds.isEmpty else { return }
+        guard let cursor = currentItemId else { return enqueue(trackIds: trackIds) }
+        attempt { _ = try engine.insertAfter(trackIds: trackIds, afterQueueItemId: cursor) }
+    }
+
+    /// Surface a one-off message in the same place engine errors appear.
+    func report(_ message: String) { lastError = message }
+
     func enqueue(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
         attempt { _ = try engine.addToQueue(trackIds: trackIds) }

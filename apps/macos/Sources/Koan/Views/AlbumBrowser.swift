@@ -43,7 +43,8 @@ struct AlbumDetailView: View {
             subtitle: subtitle,
             tracks: library.detailTracks,
             artwork: .album(albumId),
-            artistLink: album?.artistId
+            artistLink: album?.artistId,
+            playable: album.map { Playable.album($0) }
         )
         .task(id: albumId) {
             library.loadTracks(albumId: albumId)

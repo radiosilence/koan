@@ -44,6 +44,9 @@ struct ArtistDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 HStack(alignment: .center, spacing: 14) {
+                    if let artist {
+                        PlayableHeaderButton(playable: .artist(id: artist.id, name: artist.name))
+                    }
                     VStack(alignment: .leading, spacing: 4) {
                         Text(artist?.name ?? "Artist")
                             .font(.system(size: 26, weight: .semibold))

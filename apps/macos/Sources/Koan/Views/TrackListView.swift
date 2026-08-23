@@ -10,6 +10,8 @@ struct TrackListView: View {
     var artwork: AlbumArtwork.Source?
     /// Makes the header's subtitle navigate to the artist.
     var artistLink: Int64?
+    /// What the header's play button acts on.
+    var playable: Playable?
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -42,17 +44,7 @@ struct TrackListView: View {
                             .onTapGesture(count: 2) {
                                 player.playNow(trackIds: tracks.map(\.id), startingAt: index)
                             }
-                            .contextMenu {
-                                Button("Play") {
-                                    player.playNow(trackIds: tracks.map(\.id), startingAt: index)
-                                }
-                                Button("Add to Queue") { player.enqueue(trackIds: [track.id]) }
-                                Divider()
-                                Button(track.isFavourite ? "Remove Favourite" : "Favourite") {
-                                    player.toggleFavourite(trackId: track.id)
-                                    library.refreshFavourites()
-                                }
-                            }
+                            .contextMenu { PlayableMenu(playable: .track(track)) }
                         }
                     }
                     .listStyle(.inset)
@@ -91,9 +83,14 @@ struct TrackListView: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(title)
-                    .font(.system(size: 26, weight: .semibold))
-                    .lineLimit(2)
+                HStack(spacing: 12) {
+                    if let playable {
+                        PlayableHeaderButton(playable: playable)
+                    }
+                    Text(title)
+                        .font(.system(size: 26, weight: .semibold))
+                        .lineLimit(2)
+                }
                 if let artistLink {
                     HStack(spacing: 5) {
                         LinkText(text: subtitleArtist, target: .artist(artistLink))
@@ -111,12 +108,10 @@ struct TrackListView: View {
 
                 HStack(spacing: 10) {
                     Button {
-                        player.playNow(trackIds: tracks.map(\.id))
+                        player.playNext(trackIds: tracks.map(\.id))
                     } label: {
-                        Label("Play", systemImage: "play.fill")
+                        Label("Play Next", systemImage: "text.line.first.and.arrowtriangle.forward")
                     }
-                    .buttonStyle(.borderedProminent)
-
                     Button {
                         player.enqueue(trackIds: tracks.map(\.id))
                     } label: {
