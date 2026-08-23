@@ -12,6 +12,13 @@ import KoanFFI
 final class PlayerModel {
     let engine: KoanEngine
 
+    /// Everything the transport needs, refreshed every tick.
+    ///
+    /// Read this ONLY where a ticking value is actually wanted. `positionMs`
+    /// changes ten times a second, so a view that reads any field of this
+    /// struct re-renders at that rate — which in a list means rows are being
+    /// replaced under the pointer and clicks get dropped. Lists should read the
+    /// derived properties below, which are only assigned when they change.
     private(set) var nowPlaying: NowPlaying
     private(set) var queue: [QueueItem] = []
     /// Queue entries indexed by library track id, so a library row can show
@@ -52,7 +59,9 @@ final class PlayerModel {
     }
 
     private func tick() {
-        nowPlaying = engine.nowPlaying()
+        let now = engine.nowPlaying()
+        nowPlaying = now
+        updateDerived(now)
         // The queue only gets rebuilt when the engine says it changed.
         if nowPlaying.playlistVersion != knownQueueVersion {
             knownQueueVersion = nowPlaying.playlistVersion
@@ -108,9 +117,20 @@ final class PlayerModel {
     }
 
     // MARK: - Derived
+    //
+    // Stored rather than computed, and assigned only on an actual change, so
+    // observers of these don't inherit the tick rate of `nowPlaying`.
 
-    var isPlaying: Bool { nowPlaying.state == .playing }
-    var currentTrackId: Int64? { nowPlaying.entry?.trackId }
+    private(set) var isPlaying = false
+    private(set) var currentTrackId: Int64?
+    private(set) var currentItemId: String?
+
+    private func updateDerived(_ now: NowPlaying) {
+        let playing = now.state == .playing
+        if playing != isPlaying { isPlaying = playing }
+        if now.entry?.trackId != currentTrackId { currentTrackId = now.entry?.trackId }
+        if now.queueItemId != currentItemId { currentItemId = now.queueItemId }
+    }
 
     /// 0–1 through the current track. Reflects the drag while scrubbing.
     var progress: Double {

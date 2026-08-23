@@ -31,30 +31,37 @@ struct QueueView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollViewReader { proxy in
+                    // One flat ForEach, with album headings rendered inline
+                    // rather than as Sections. `onMove` cannot cross a Section
+                    // boundary, so grouping this way meant a track could only be
+                    // dragged within its own album — which looked like "played
+                    // items can't be dragged", they just tend to sit in an
+                    // earlier group than the drop target.
                     List(selection: $selection) {
-                        ForEach(groups) { group in
-                            Section {
-                                ForEach(group.items, id: \.queueItemId) { item in
-                                    QueueRow(
-                                        item: item,
-                                        isCurrent: item.queueItemId == player.nowPlaying.queueItemId,
-                                        showArtist: item.artist != group.albumArtist
-                                    )
-                                    .id(item.queueItemId)
-                                    .onTapGesture(count: 2) { player.play(itemId: item.queueItemId) }
-                                    .contextMenu { menu(for: item) }
+                        ForEach(Array(player.queue.enumerated()), id: \.element.queueItemId) { index, item in
+                            VStack(alignment: .leading, spacing: 0) {
+                                if let heading = heading(at: index) {
+                                    QueueAlbumHeader(group: heading)
+                                        .padding(.top, index == 0 ? 0 : 10)
+                                        .padding(.bottom, 3)
                                 }
-                                .onMove { move(in: group, from: $0, to: $1) }
-                            } header: {
-                                QueueAlbumHeader(group: group)
+                                QueueRow(
+                                    item: item,
+                                    isCurrent: item.queueItemId == player.currentItemId,
+                                    showArtist: item.artist != item.albumArtist
+                                )
                             }
+                            .id(item.queueItemId)
+                            .onTapGesture(count: 2) { player.play(itemId: item.queueItemId) }
+                            .contextMenu { menu(for: item) }
                         }
+                        .onMove(perform: move)
                     }
                     .listStyle(.inset)
                     .onDeleteCommand { removeSelected() }
                     // Follow the cursor as tracks advance, but never fight a
                     // user who has scrolled somewhere deliberately.
-                    .onChange(of: player.nowPlaying.queueItemId) { _, id in
+                    .onChange(of: player.currentItemId) { _, id in
                         guard let id, selection.isEmpty else { return }
                         withAnimation { proxy.scrollTo(id, anchor: .center) }
                     }
@@ -142,21 +149,40 @@ struct QueueView: View {
         selection = []
     }
 
-    /// `onMove` indices are relative to the group; the engine wants item IDs
-    /// against the whole queue. Translate through the group's own offsets.
-    private func move(in group: QueueGroup, from source: IndexSet, to destination: Int) {
-        let moving = source.map { group.items[$0].queueItemId }
-        let anchorIndex = destination - 1
-        guard group.items.indices.contains(anchorIndex) else {
-            // Dropped above the group's first row — anchor to whatever precedes it.
-            guard let first = group.items.first,
-                  let globalIndex = player.queue.firstIndex(where: { $0.queueItemId == first.queueItemId }),
-                  globalIndex > 0
+    /// The album heading to draw above this row, if it starts a new run.
+    ///
+    /// Contiguous runs, mirroring the TUI: queue order is the user's, and
+    /// collapsing two separate visits to the same record into one heading would
+    /// misrepresent it.
+    private func heading(at index: Int) -> QueueGroup? {
+        let item = player.queue[index]
+        guard !item.album.isEmpty else { return nil }
+        if index > 0 {
+            let previous = player.queue[index - 1]
+            guard previous.album != item.album || previous.albumArtist != item.albumArtist else {
+                return nil
+            }
+        }
+        return QueueGroup(
+            id: item.queueItemId,
+            albumArtist: item.albumArtist,
+            album: item.album,
+            items: [item]
+        )
+    }
+
+    /// `onMove` speaks in indices over the whole queue; the engine speaks in
+    /// item IDs. Translate at the boundary and let it decide the result.
+    private func move(from source: IndexSet, to destination: Int) {
+        let moving = source.map { player.queue[$0].queueItemId }
+        guard destination > 0 else {
+            // Dropped at the very top — anchor to the first item that isn't moving.
+            guard let anchor = player.queue.first(where: { !moving.contains($0.queueItemId) })
             else { return }
-            player.move(itemIds: moving, after: player.queue[globalIndex - 1].queueItemId)
+            player.move(itemIds: moving, after: anchor.queueItemId)
             return
         }
-        let anchor = group.items[anchorIndex].queueItemId
+        let anchor = player.queue[destination - 1].queueItemId
         guard !moving.contains(anchor) else { return }
         player.move(itemIds: moving, after: anchor)
     }
