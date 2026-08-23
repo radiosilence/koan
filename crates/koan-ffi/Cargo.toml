@@ -33,3 +33,4 @@ rusqlite = { workspace = true }
 thiserror = "2"
 uniffi = { version = "0.32", features = ["cli"] }
 uuid = { version = "1", features = ["v7"] }
+chrono = "0.4"

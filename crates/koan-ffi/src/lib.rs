@@ -86,6 +86,64 @@ pub trait ProgressReporter: Send + Sync {
 }
 
 /// The player, the library, and the bridge between them.
+/// Send `log` output to `~/.config/koan/koan.log`, the same file the CLI
+/// writes.
+///
+/// Without this every `log::warn!` in koan-core is discarded when the engine is
+/// hosted by a GUI, so a favourite that failed to reach the server, or a track
+/// that would not decode, leaves nothing behind to look at.
+fn init_logging() {
+    use std::io::Write as _;
+    use std::sync::Mutex;
+
+    struct FileLogger(Mutex<Option<std::fs::File>>);
+
+    impl log::Log for FileLogger {
+        fn enabled(&self, metadata: &log::Metadata) -> bool {
+            metadata.level() <= log::Level::Info
+        }
+
+        fn log(&self, record: &log::Record) {
+            if !self.enabled(record.metadata()) {
+                return;
+            }
+            let Ok(mut guard) = self.0.lock() else { return };
+            let Some(file) = guard.as_mut() else { return };
+            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+            let _ = writeln!(
+                file,
+                "[{}] {}: {}",
+                now,
+                record.level().as_str().to_lowercase(),
+                record.args()
+            );
+        }
+
+        fn flush(&self) {
+            if let Ok(mut guard) = self.0.lock()
+                && let Some(file) = guard.as_mut()
+            {
+                let _ = file.flush();
+            }
+        }
+    }
+
+    static LOGGER: std::sync::OnceLock<FileLogger> = std::sync::OnceLock::new();
+
+    let logger = LOGGER.get_or_init(|| {
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(config::config_dir().join("koan.log"))
+            .ok();
+        FileLogger(Mutex::new(file))
+    });
+    // A second engine in one process is not an error worth failing over.
+    if log::set_logger(logger).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct KoanEngine {
     state: Arc<SharedPlayerState>,
@@ -108,6 +166,7 @@ impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
     #[uniffi::constructor]
     pub fn new() -> Result<Arc<Self>, KoanError> {
+        init_logging();
         let db_path = config::db_path();
         // Fail fast on a broken library rather than after the audio threads exist.
         Database::open(&db_path).map_err(|e| KoanError::Database {

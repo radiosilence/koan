@@ -2812,6 +2812,7 @@ dependencies = [
 name = "koan-ffi"
 version = "0.25.2"
 dependencies = [
+ "chrono",
  "crossbeam-channel",
  "getrandom 0.4.3",
  "koan-core",
