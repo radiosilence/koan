@@ -16,10 +16,17 @@ struct QueueView: View {
 
     private var groups: [QueueGroup] { QueueGroup.group(player.queue) }
 
-    var body: some View {
-        @Bindable var player = player
+    /// Selection is local `@State`, deliberately.
+    ///
+    /// It lived on `PlayerModel` so the Edit menu could reach it, but reading an
+    /// observable in the body means every selection change invalidates the whole
+    /// view and rebuilds the List — under the very click that caused it, which
+    /// is what made clicking here so unreliable. It is mirrored to the model on
+    /// change instead: written, never read, so it stays out of the render path.
+    @State private var selection: Set<String> = []
 
-        return VStack(spacing: 0) {
+    var body: some View {
+        VStack(spacing: 0) {
             header
             Divider()
 
@@ -38,7 +45,7 @@ struct QueueView: View {
                     // dragged within its own album — which looked like "played
                     // items can't be dragged", they just tend to sit in an
                     // earlier group than the drop target.
-                    List(selection: $player.queueSelection) {
+                    List(selection: $selection) {
                         ForEach(Array(player.queue.enumerated()), id: \.element.queueItemId) { index, item in
                             VStack(alignment: .leading, spacing: 0) {
                                 if let heading = heading(at: index) {
@@ -50,7 +57,7 @@ struct QueueView: View {
                                         // drag moves the album rather than the
                                         // single row the heading sits above.
                                         .simultaneousGesture(TapGesture().onEnded {
-                                            player.queueSelection = Set(groupItemIds(from: index))
+                                            selection = Set(groupItemIds(from: index))
                                         })
                                         .help("Select this album")
                                 }
@@ -69,10 +76,13 @@ struct QueueView: View {
                     }
                     .listStyle(.inset)
                     .onDeleteCommand { removeSelected() }
+                    // One-way mirror so the Edit menu can act on the selection
+                    // without the render path having to observe it.
+                    .onChange(of: selection) { _, new in player.queueSelection = new }
                     // Follow the cursor as tracks advance, but never fight a
                     // user who has scrolled somewhere deliberately.
                     .onChange(of: player.currentItemId) { _, id in
-                        guard let id, player.queueSelection.isEmpty else { return }
+                        guard let id, selection.isEmpty else { return }
                         withAnimation { proxy.scrollTo(id, anchor: .center) }
                     }
                 }
@@ -105,8 +115,8 @@ struct QueueView: View {
 
             Spacer()
 
-            if !player.queueSelection.isEmpty {
-                Text("\(player.queueSelection.count) selected")
+            if !selection.isEmpty {
+                Text("\(selection.count) selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button("Remove", role: .destructive) { removeSelected() }
@@ -154,7 +164,10 @@ struct QueueView: View {
         }
     }
 
-    private func removeSelected() { player.removeSelected() }
+    private func removeSelected() {
+        player.remove(itemIds: Array(selection))
+        selection = []
+    }
 
     /// Every queue item belonging to the run that starts at `index`.
     private func groupItemIds(from index: Int) -> [String] {
