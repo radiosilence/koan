@@ -74,13 +74,15 @@ struct EnsoPlaceholder: View {
                 .stroke(
                     .tertiary,
                     style: StrokeStyle(
-                        // Proportional to the icon's own 40/512 stroke.
-                        lineWidth: side * 0.078,
+                        // Lighter than the icon's own 40/512 stroke: at
+                        // placeholder size that weight reads as a fat ring
+                        // rather than a brush mark.
+                        lineWidth: side * 0.045,
                         lineCap: .round,
                         lineJoin: .round
                     )
                 )
-                .padding(side * 0.2)
+                .padding(side * 0.26)
         }
         .opacity(0.5)
     }

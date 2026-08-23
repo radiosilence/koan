@@ -38,12 +38,21 @@ struct TrackListView: View {
                             TrackRow(
                                 track: track,
                                 position: index + 1,
-                                isCurrent: player.currentTrackId == track.id
+                                isCurrent: player.currentTrackId == track.id,
+                                allTrackIds: tracks.map(\.id)
                             )
-                            .rowBehaviour(playable: .track(track)) { playSelection() }
+                            .rowBehaviour(playable: .track(track))
                         }
                     }
                     .listStyle(.inset)
+                    // The List's own double-click hook. Wired into selection
+                    // rather than the gesture system, so it doesn't steal the
+                    // first click.
+                    .contextMenu(forSelectionType: Int64.self) { ids in
+                        menu(for: ids)
+                    } primaryAction: { ids in
+                        play(ids)
+                    }
                     .onKeyPress(.return) {
                         playSelection()
                         return .handled
@@ -63,13 +72,26 @@ struct TrackListView: View {
         }
     }
 
-    /// Double-click plays whatever the first click selected, keeping the rest
-    /// of the list queued behind it.
-    private func playSelection() {
-        guard let id = selection.first,
-              let index = tracks.firstIndex(where: { $0.id == id })
-        else { return }
+    /// Plays the list from the first of `ids`, keeping the rest behind it.
+    private func play(_ ids: Set<Int64>) {
+        guard let index = tracks.firstIndex(where: { ids.contains($0.id) }) else { return }
         player.playNow(trackIds: tracks.map(\.id), startingAt: index)
+    }
+
+    private func playSelection() { play(selection) }
+
+    /// Menu for the rows under the pointer — the List hands us the selection
+    /// they belong to, so a menu on a multi-selection acts on all of it.
+    @ViewBuilder
+    private func menu(for ids: Set<Int64>) -> some View {
+        let chosen = tracks.filter { ids.contains($0.id) }
+        if chosen.count == 1, let track = chosen.first {
+            PlayableMenu(playable: .track(track))
+        } else if !chosen.isEmpty {
+            Button("Play") { player.playNow(trackIds: chosen.map(\.id)) }
+            Button("Play Next") { player.playNext(trackIds: chosen.map(\.id)) }
+            Button("Add to Queue") { player.enqueue(trackIds: chosen.map(\.id)) }
+        }
     }
 
     /// The subtitle is "Artist · 2007 · FLAC · 59:10"; only the first part is
@@ -139,6 +161,8 @@ private struct TrackRow: View {
     let track: Track
     let position: Int
     let isCurrent: Bool
+    /// The whole list, so playing this row keeps the rest queued behind it.
+    let allTrackIds: [Int64]
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -150,7 +174,11 @@ private struct TrackRow: View {
             // same width either way so the column doesn't twitch.
             Group {
                 if hovering {
-                    RowPlayButton(playable: .track(track), visible: true)
+                    RowPlayButton(
+                        playable: .track(track),
+                        visible: true,
+                        inContext: (trackIds: allTrackIds, startAt: position - 1)
+                    )
                 } else if isCurrent {
                     Image(systemName: player.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
                         .foregroundStyle(.tint)
@@ -172,12 +200,7 @@ private struct TrackRow: View {
                     font: .caption
                 )
             }
-            // Drag starts from the title, not the whole row. `.onDrag` across
-            // the full row claims every press and leaves selection unreliable;
-            // scoped to the text, clicking anywhere else selects normally.
-            // A table that owned both would not need this, but SwiftUI's List
-            // does not hand that over.
-            .draggablePlayable(.track(track))
+
 
             Spacer(minLength: 8)
 

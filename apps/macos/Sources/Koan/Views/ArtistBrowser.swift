@@ -24,17 +24,24 @@ struct ArtistBrowser: View {
                     }
                 }
                 .frame(width: 18, height: 18)
-                Text(artist.name)
-                    .draggablePlayable(.artist(id: artist.id, name: artist.name))
+                // The name is the way in — a link, so a single click opens the
+                // artist while the rest of the row selects.
+                RowLink(artist.name) { library.reveal(artist: artist.id) }
                 Spacer()
             }
             .onHover { inside in
                 if inside { hovered = artist.id } else if hovered == artist.id { hovered = nil }
             }
             .frame(height: 24)
-            .rowBehaviour(playable: .artist(id: artist.id, name: artist.name)) {
-                library.reveal(artist: artist.id)
+            .rowBehaviour(playable: .artist(id: artist.id, name: artist.name))
+        }
+        .contextMenu(forSelectionType: Int64.self) { ids in
+            if let id = ids.first,
+               let artist = library.visibleArtists.first(where: { $0.id == id }) {
+                PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
             }
+        } primaryAction: { ids in
+            if let id = ids.first { library.reveal(artist: id) }
         }
         .overlay {
             if library.visibleArtists.isEmpty {

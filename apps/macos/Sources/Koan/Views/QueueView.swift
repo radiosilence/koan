@@ -49,6 +49,13 @@ struct QueueView: View {
                     .onMove(perform: move)
                 }
                 .listStyle(.inset)
+                // Double-click and context menu both come from the List, keyed
+                // on the rows under the pointer rather than on a gesture.
+                .contextMenu(forSelectionType: String.self) { ids in
+                    menu(forRows: ids)
+                } primaryAction: { ids in
+                    play(rowIds: ids)
+                }
                 // Enter plays the selection, the way Return opens things
                 // everywhere else on the platform.
                 .onKeyPress(.return) {
@@ -137,18 +144,14 @@ struct QueueView: View {
             QueueAlbumHeader(group: group)
                 // No playable: a queue album is a run of queue items, not a
                 // library album, so its actions are its own.
-                .rowBehaviour(playable: nil, onOpen: { playSelection() }) {
-                    albumMenu(group)
-                }
+                .rowBehaviour()
         case .track(let item):
             QueueRow(
                 item: item,
                 isCurrent: item.queueItemId == player.currentItemId,
                 showArtist: item.artist != item.albumArtist
             )
-            .rowBehaviour(playable: nil, onOpen: { playSelection() }) {
-                trackMenu(item)
-            }
+            .rowBehaviour()
         }
     }
 
@@ -232,11 +235,27 @@ struct QueueView: View {
         selection = []
     }
 
-    /// Double-click plays what the first click selected — the track, or the
-    /// first track of the album whose heading was clicked.
-    private func playSelection() {
-        guard let id = selectedItemIds.first else { return }
+    /// Play the first queue item the given rows stand for — the track itself,
+    /// or the first track of the album whose heading was double-clicked.
+    private func play(rowIds: Set<String>) {
+        guard let id = itemIds(in: rowIds).first else { return }
         player.play(itemId: id)
+    }
+
+    private func playSelection() { play(rowIds: selection) }
+
+    /// The menu for whatever is under the pointer. An album heading gets the
+    /// album's actions; anything else gets the track's.
+    @ViewBuilder
+    private func menu(forRows ids: Set<String>) -> some View {
+        if ids.count == 1, let row = rows.first(where: { ids.contains($0.id) }) {
+            switch row {
+            case .album(_, let group): albumMenu(group)
+            case .track(let item): trackMenu(item)
+            }
+        } else {
+            Button("Remove") { player.remove(itemIds: itemIds(in: ids)) }
+        }
     }
 
     // MARK: - Reordering

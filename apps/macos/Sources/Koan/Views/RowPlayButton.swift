@@ -9,6 +9,10 @@ import SwiftUI
 struct RowPlayButton: View {
     let playable: Playable
     let visible: Bool
+    /// Play this list from here, rather than the row on its own. A track's
+    /// play button should start the album at that track and keep the rest
+    /// behind it, which is what pressing play on a track means.
+    var inContext: (trackIds: [Int64], startAt: Int)?
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -32,6 +36,10 @@ struct RowPlayButton: View {
     /// a lot of rows.
     private func play() {
         guard !loading else { return }
+        if let context = inContext {
+            player.playNow(trackIds: context.trackIds, startingAt: context.startAt)
+            return
+        }
         loading = true
         let engine = library.engine
         let playable = self.playable

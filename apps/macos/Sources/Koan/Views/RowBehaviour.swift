@@ -1,71 +1,79 @@
+import AppKit
 import KoanFFI
 import SwiftUI
 
-/// Everything a list row does, in one place.
+/// What a list row itself is responsible for.
 ///
-/// Rows across the app need the same behaviours — be selectable, respond to
-/// double-click, carry a context menu, and hold their hit area across the full
-/// width. Defining that per screen is how they drifted: album
-/// and artist lists kept a tap gesture that had already been removed from the
-/// queue for breaking selection, so the same bug lived on in two places after
-/// being "fixed".
-///
-/// The hard-won details behind each of these are in `DoubleClick.swift` and
-/// `PlayableTransfer.swift`.
+/// Deliberately small. Selection, the context menu and double-click all belong
+/// to the List via `contextMenu(forSelectionType:menu:primaryAction:)`, which is
+/// wired into its selection machinery rather than the gesture system — the
+/// reason it doesn't steal the first click the way `.onTapGesture(count: 2)`
+/// does. Rows only need a hit area and, where it applies, a drag payload.
 struct RowBehaviour: ViewModifier {
-    /// What the row stands for. Supplies the drag payload and the menu.
     let playable: Playable?
-    /// Run on double-click. Usually "play what is selected".
-    let onOpen: () -> Void
-    /// Extra items appended to the shared playable menu.
-    @ViewBuilder let extraMenu: () -> AnyView
 
     func body(content: Content) -> some View {
         content
-            // Full width and an explicit shape: empty space in a row is not
-            // hit-testable, so the gap between title and duration would be dead.
+            // Empty space in a row is not hit-testable, so the gap between the
+            // title and the duration would otherwise be dead.
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            // No drag here. `.onDrag` on a List row claims the press to watch
-            // for movement, which leaves single-click selection unreliable —
-            // it broke selection in exactly the lists whose rows were
-            // draggable, and nowhere else. Grids and pills drag fine because
-            // they are not rows competing with a table's own click handling.
-            .contextMenu {
-                if let playable {
-                    PlayableMenu(playable: playable)
-                }
-                extraMenu()
-            }
-            // SwiftUI has no double-click API, so this is the gesture — and it
-            // does hold the first click for the system double-click interval
-            // before letting it through. That delay is accepted deliberately:
-            // the alternative is an AppKit recogniser on the backing table,
-            // which is a lot of machinery to avoid half a second.
-            .onTapGesture(count: 2, perform: onOpen)
+            .modifier(OptionalDrag(playable: playable))
+    }
+}
+
+/// `.draggable` — not `.onDrag`. The underlying AppKit drag recogniser has a
+/// movement threshold, so it coexists with selection; `.onDrag` claims the
+/// press outright and leaves clicks landing about one in twenty.
+///
+/// Known limit: with a multi-selection this drags only the row you grabbed, not
+/// the selection. Dragging a whole selection means building the item providers
+/// from `selection` by hand.
+private struct OptionalDrag: ViewModifier {
+    let playable: Playable?
+
+    func body(content: Content) -> some View {
+        if let playable {
+            content.draggable(PlayableTransfer(playable))
+        } else {
+            content
+        }
     }
 }
 
 extension View {
-    /// Standard list-row behaviour: selectable, double-click to open, context
-    /// menu, full-width hit area.
-    func rowBehaviour(
-        playable: Playable?,
-        onOpen: @escaping () -> Void
-    ) -> some View {
-        modifier(
-            RowBehaviour(playable: playable, onOpen: onOpen, extraMenu: { AnyView(EmptyView()) })
-        )
+    /// Standard row: full-width hit area, and draggable when it stands for
+    /// something playable.
+    func rowBehaviour(playable: Playable? = nil) -> some View {
+        modifier(RowBehaviour(playable: playable))
+    }
+}
+
+/// A link inside a row.
+///
+/// A `Button` wins hit-testing within its own frame, so the row's selection and
+/// primary action don't fire when you hit the link — which is what makes
+/// "click the artist name to go to the artist, click the row to select it"
+/// possible at all.
+struct RowLink: View {
+    let title: String
+    let font: Font
+    let action: () -> Void
+
+    init(_ title: String, font: Font = .body, action: @escaping () -> Void) {
+        self.title = title
+        self.font = font
+        self.action = action
     }
 
-    /// As above, with extra menu items after the shared ones.
-    func rowBehaviour(
-        playable: Playable?,
-        onOpen: @escaping () -> Void,
-        @ViewBuilder extraMenu: @escaping () -> some View
-    ) -> some View {
-        modifier(
-            RowBehaviour(playable: playable, onOpen: onOpen, extraMenu: { AnyView(extraMenu()) })
-        )
+    var body: some View {
+        Button(title, action: action)
+            .buttonStyle(.link)
+            .font(font)
+            .lineLimit(1)
+            // `.pointerStyle(.link)` needs macOS 15; the app targets 14.
+            .onHover { inside in
+                if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            }
     }
 }
