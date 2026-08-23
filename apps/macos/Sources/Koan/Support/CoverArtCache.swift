@@ -26,9 +26,15 @@ final class CoverArtCache {
     /// Navidrome answers with a stock placeholder — a blue vinyl with its own
     /// logo on it — for anything with no artwork, and it looks like real art
     /// until you notice every artless record has the same one. There is no flag
-    /// to ask about, but the placeholder gives itself away by being
-    /// byte-identical across albums: the moment one image turns up for a second
-    /// album, it isn't album art.
+    /// to ask about, but the placeholder gives itself away by repeating across
+    /// unrelated albums.
+    ///
+    /// Only *album* lookups teach this, and it takes three albums to conclude
+    /// it. Learning from track lookups was wrong in a way that destroyed real
+    /// art: a track's cover is by definition the same image as its album's, so
+    /// playing an album made its own artwork look like a repeat and wiped it
+    /// from the grid. Two albums sharing art is also legitimate — a single and
+    /// the record it came from — so two sightings is too eager.
     private var hashOwners: [String: Set<String>] = [:]
     private var placeholderHashes: Set<String> = []
 
@@ -105,12 +111,16 @@ final class CoverArtCache {
         let hash = Self.digest(data)
         if placeholderHashes.contains(hash) { return nil }
 
+        // Track lookups never teach: a track's cover is its album's cover, so
+        // counting it would make every played album look like a repeat.
+        guard key.hasPrefix("album-") else { return NSImage(data: data) }
+
         hashOwners[hash, default: []].insert(key)
-        guard hashOwners[hash]?.count ?? 0 > 1 else {
+        guard hashOwners[hash]?.count ?? 0 >= 3 else {
             return NSImage(data: data)
         }
 
-        // Second sighting: it's a placeholder. Forget everyone who got it.
+        // Three unrelated albums with byte-identical art is a placeholder.
         placeholderHashes.insert(hash)
         for owner in hashOwners[hash] ?? [] {
             memory[owner] = NSImage?.none
