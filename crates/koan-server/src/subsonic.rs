@@ -2182,6 +2182,7 @@ mod tests {
             remote_url: None,
             album_remote_id: None,
             artist_remote_id: None,
+            mbid: None,
             album_added_at: None,
         }
     }

@@ -137,6 +137,9 @@ pub struct TrackMeta {
     /// albums and artists it can name but cannot refer to.
     pub album_remote_id: Option<String>,
     pub artist_remote_id: Option<String>,
+    /// MusicBrainz recording id. From the server today; a local scan could
+    /// read it from `MUSICBRAINZ_TRACKID` too.
+    pub mbid: Option<String>,
     /// When the album this track belongs to entered the library. Remote sync
     /// supplies the server's `created`; anything else leaves it and the album
     /// is stamped with the time it was first seen.
@@ -169,6 +172,7 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         remote_id: None,
         album_remote_id: None,
         artist_remote_id: None,
+        mbid: None,
         remote_url: None,
         album_added_at: None,
     }

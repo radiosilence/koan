@@ -248,6 +248,14 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
         "radio_enabled",
         "INTEGER NOT NULL DEFAULT 0",
     ),
+    // MusicBrainz ids are the join key for anything that wants to look a
+    // release or a recording up elsewhere. The server hands them over on every
+    // album and every song and koan was discarding all of them.
+    ("albums", "mbid", "TEXT"),
+    ("tracks", "mbid", "TEXT"),
+    // The server's own sort key, which is what it orders by. Artists already
+    // had this column and nothing ever filled it.
+    ("albums", "sort_name", "TEXT"),
 ];
 
 fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {

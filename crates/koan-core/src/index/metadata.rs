@@ -176,6 +176,7 @@ fn read_metadata_lofty(
         remote_id: None,
         album_remote_id: None,
         artist_remote_id: None,
+        mbid: None,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
     })
@@ -236,6 +237,7 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         remote_id: None,
         album_remote_id: None,
         artist_remote_id: None,
+        mbid: None,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
     })
@@ -584,6 +586,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         remote_id: None,
         album_remote_id: None,
         artist_remote_id: None,
+        mbid: None,
         remote_url: None,
         album_added_at: None,
     }
