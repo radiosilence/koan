@@ -257,9 +257,16 @@ fn write_albums(
                 label: None,
                 duration_ms: song.duration.map(|d| d * 1000),
                 codec: song.suffix.clone(),
-                sample_rate: None,
-                bit_depth: None,
-                channels: None,
+                // OpenSubsonic servers report these; a plain Subsonic one
+                // leaves them out and the track keeps no quality figures,
+                // which is what every remote track used to get.
+                //
+                // Zero means "not applicable", not "zero" — Navidrome reports
+                // bitDepth 0 for every lossy file. Storing it would render an
+                // MP3 as 0-bit, which is worse than saying nothing.
+                sample_rate: positive(song.sampling_rate),
+                bit_depth: positive(song.bit_depth),
+                channels: positive(song.channel_count),
                 bitrate: song.bit_rate,
                 size_bytes: None,
                 mtime: None,
@@ -284,6 +291,12 @@ fn write_albums(
         .map_err(crate::db::connection::DbError::from)?;
 
     Ok(())
+}
+
+/// Treat a non-positive figure as absent. None of sample rate, bit depth or
+/// channel count has a meaningful zero.
+fn positive(value: Option<i32>) -> Option<i32> {
+    value.filter(|v| *v > 0)
 }
 
 #[cfg(test)]
@@ -403,9 +416,9 @@ mod tests {
             label: None,
             duration_ms: Some(240_000),
             codec: Some("FLAC".into()),
-            sample_rate: None,
-            bit_depth: None,
-            channels: None,
+            sample_rate: Some(44100),
+            bit_depth: Some(16),
+            channels: Some(2),
             bitrate: Some(1000),
             size_bytes: None,
             mtime: None,
@@ -417,6 +430,31 @@ mod tests {
             artist_remote_id: Some(format!("artist-of-{remote_id}")),
             album_added_at: None,
         }
+    }
+
+    /// Navidrome reports bitDepth 0 for every lossy file. Keeping it would
+    /// render an MP3 as 0-bit; absent is the honest answer.
+    #[test]
+    fn a_zero_quality_figure_is_treated_as_absent() {
+        assert_eq!(positive(Some(0)), None);
+        assert_eq!(positive(Some(16)), Some(16));
+        assert_eq!(positive(None), None);
+    }
+
+    /// A remote track carries the quality figures an OpenSubsonic server
+    /// reports. Without them the format badge has nothing to show, which is
+    /// what every remote-only track in a synced library used to look like.
+    #[test]
+    fn a_synced_track_keeps_its_quality_figures() {
+        let (db, _dir) = test_db();
+
+        let meta = remote_track_meta("remote-200", "Anguish", "Sleep", "Volume One");
+        let id = queries::upsert_track(&db.conn, &meta).unwrap();
+
+        let row = queries::get_track_row(&db.conn, id).unwrap().unwrap();
+        assert_eq!(row.sample_rate, Some(44100));
+        assert_eq!(row.bit_depth, Some(16));
+        assert_eq!(row.channels, Some(2));
     }
 
     /// The server keys stars, shares and cover art off album and artist ids,
