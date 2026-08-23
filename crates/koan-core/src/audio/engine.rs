@@ -274,7 +274,32 @@ unsafe extern "C" fn render_callback(
     // We configured a non-interleaved float format, so mNumberBuffers >= 1.
     let buf = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr() };
     let channels = buf.mNumberChannels;
-    let total_samples = (in_number_frames * channels) as usize;
+
+    // Never write past what CoreAudio actually allocated.
+    //
+    // `frames * channels` is what the buffer *should* hold, and it is not the
+    // same question as how big it is. CoreAudio can hand back a shorter buffer
+    // than the frame count implies — a device switching buffer size, or the
+    // final callbacks as a unit is torn down — and writing the full product
+    // then runs off the end of its heap block. The damage does not show up
+    // here: it surfaces later inside CoreAudio's own allocator, whichever call
+    // happens to free that block, which is why this read as a double free in
+    // `AudioUnitUninitialize` and, before that, in `AudioUnitSetProperty`.
+    let capacity = buf.mDataByteSize as usize / mem::size_of::<f32>();
+    let wanted = (in_number_frames * channels) as usize;
+    if wanted > capacity {
+        log::warn!(
+            "CoreAudio buffer holds {} samples but {} frames x {} channels were asked for",
+            capacity,
+            in_number_frames,
+            channels
+        );
+    }
+    let total_samples = wanted.min(capacity);
+    if buf.mData.is_null() || total_samples == 0 {
+        data.in_callback.store(false, Ordering::Release);
+        return 0;
+    }
     if !(buf.mData as usize).is_multiple_of(mem::align_of::<f32>()) {
         log::error!("CoreAudio buffer not aligned for f32");
         // Fill silence rather than risking UB from an unaligned cast.

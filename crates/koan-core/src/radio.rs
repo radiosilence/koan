@@ -1006,6 +1006,7 @@ pub fn spawn_autoqueue(
                 if !state.radio_mode() || state.cursor().is_none() {
                     continue;
                 }
+                log::debug!("radio: awake, cursor set");
 
                 let cfg = crate::config::Config::load().unwrap_or_default();
                 let snapshot = state.derive_visible_queue();
@@ -1014,6 +1015,7 @@ pub fn spawn_autoqueue(
                     .iter()
                     .position(|e| e.status == QueueEntryStatus::Playing)
                 else {
+                    log::debug!("radio: nothing is playing, waiting");
                     continue;
                 };
                 let remaining = snapshot
@@ -1025,6 +1027,11 @@ pub fn spawn_autoqueue(
                 if remaining > cfg.radio.lookahead {
                     continue;
                 }
+                log::info!(
+                    "radio: {} queued after the cursor, topping up to {}",
+                    remaining,
+                    cfg.radio.lookahead
+                );
 
                 let Ok(db) = crate::db::connection::Database::open(&db_path) else {
                     continue;
@@ -1083,6 +1090,7 @@ pub fn spawn_autoqueue(
 
                 let picks = pick_tracks(&db.conn, &ctx, client.as_ref(), &cfg.radio);
                 if picks.is_empty() {
+                    log::warn!("radio: the picker returned nothing for this seed");
                     continue;
                 }
 
@@ -1104,6 +1112,7 @@ pub fn spawn_autoqueue(
                     })
                     .collect();
                 if rows.is_empty() {
+                    log::warn!("radio: every pick was already in the queue");
                     continue;
                 }
 

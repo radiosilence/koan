@@ -85,6 +85,19 @@ struct SidebarView: View {
     /// Library size and scan state. The counts are the quickest way to tell
     /// whether a scan actually picked anything up.
     @ViewBuilder
+    /// What radio is about to do, rather than that it is switched on.
+    private var radioStatus: String {
+        guard let cursor = player.currentItemId,
+              let index = player.queue.firstIndex(where: { $0.queueItemId == cursor })
+        else {
+            return "Radio — waiting for something to play"
+        }
+        let ahead = player.queue.count - index - 1
+        return ahead == 0
+            ? "Radio — extending after this track"
+            : "Radio — \(Format.count(Int64(ahead), "track")) ahead"
+    }
+
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
@@ -109,7 +122,10 @@ struct SidebarView: View {
             }
 
             if player.radioEnabled {
-                Label("Radio on", systemImage: "dot.radiowaves.left.and.right")
+                // "Radio on" only repeats what the lit button already says.
+                // What is worth knowing is whether it is about to do anything,
+                // which is a question about how much queue is left.
+                Label(radioStatus, systemImage: "dot.radiowaves.left.and.right")
                     .font(.caption)
                     .foregroundStyle(.tint)
             }
