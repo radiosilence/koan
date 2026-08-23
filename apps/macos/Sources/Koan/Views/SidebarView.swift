@@ -102,14 +102,11 @@ struct SidebarView: View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
 
-            if library.isScanning {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Scanning…")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else if let stats = library.stats {
+            // Every long task, one row each. Replaces a "Scanning…" line that
+            // said the same thing whatever was actually running.
+            ActivityList()
+
+            if let stats = library.stats {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(Format.count(stats.totalTracks, "track"))
                     Text("\(Format.count(stats.totalAlbums, "album")) · \(Format.count(stats.totalArtists, "artist"))")

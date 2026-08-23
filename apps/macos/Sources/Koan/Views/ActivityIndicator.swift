@@ -1,56 +1,68 @@
 import SwiftUI
 
-/// What the app is busy with, in the toolbar.
+/// What the app is busy with, stacked at the foot of the sidebar.
 ///
-/// Scans, syncs and large queue edits took anywhere up to a minute with nothing
-/// to show for it but a small line in the sidebar footer that said "Scanning…"
-/// whatever was actually happening. This says which task, and disappears when
-/// there is none — a permanently visible idle state is just furniture.
-struct ActivityIndicator: View {
+/// Scans, syncs and large queue edits take anywhere up to a minute. This was a
+/// pill in the toolbar, which had room for one task and truncated its label; the
+/// sidebar has the width for a real label and grows downwards when more than one
+/// thing is running, which is normal — a sync while a queue add lands.
+///
+/// Shows nothing at all when idle. A permanent empty state is furniture.
+struct ActivityList: View {
     @Environment(ActivityModel.self) private var activity
 
     var body: some View {
-        if let task = activity.current {
-            HStack(spacing: 6) {
-                if let progress = task.progress {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.circular)
-                        .controlSize(.small)
-                } else {
-                    ProgressView()
-                        .progressViewStyle(.circular)
-                        .controlSize(.small)
+        if !activity.tasks.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(activity.tasks) { task in
+                    ActivityRow(task: task)
                 }
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(task.label)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    // What it is on right now — proof it is moving, which a
-                    // percentage alone does not give on a slow step.
-                    if let detail = task.detail {
-                        Text(detail)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .lineLimit(1)
-                .frame(maxWidth: 220, alignment: .leading)
+            }
+            .padding(.bottom, 4)
+            .transition(.opacity)
+            .animation(.easeOut(duration: 0.15), value: activity.tasks.count)
+        }
+    }
+}
 
-                if let progress = task.progress {
-                    Text("\(Int(progress * 100))%")
+private struct ActivityRow: View {
+    let task: ActivityModel.Task
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(task.label)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                if let done = task.done, let total = task.total, total > 0 {
+                    Text("\(done.formatted(.number)) / \(total.formatted(.number))")
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.tertiary)
-                }
-                // More than one at once is normal — a sync while a queue add
-                // lands — and the count is cheaper than listing them.
-                if activity.tasks.count > 1 {
-                    Text("+\(activity.tasks.count - 1)")
+                } else if let done = task.done {
+                    Text(done.formatted(.number))
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.tertiary)
                 }
             }
-            .help(activity.tasks.map(\.label).joined(separator: "\n"))
-            .transition(.opacity)
+
+            // Determinate where the engine can say, a barber's pole where it
+            // cannot — both are the same height, so the row does not jump when
+            // a total arrives partway through.
+            ProgressView(value: task.progress)
+                .progressViewStyle(.linear)
+                .controlSize(.small)
+
+            // What it is on right now. Proof it is moving, which a percentage
+            // alone does not give during a slow step.
+            if let detail = task.detail {
+                Text(detail)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
         }
+        .help(task.detail ?? task.label)
     }
 }

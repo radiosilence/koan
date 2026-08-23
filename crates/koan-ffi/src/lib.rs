@@ -95,6 +95,8 @@ pub struct KoanEngine {
     /// Set while the automatic sync is running, so a UI can say so rather than
     /// appearing to do nothing for the minute it takes.
     auto_syncing: Arc<std::sync::atomic::AtomicBool>,
+    /// Set while the startup or watched-folder scan is running.
+    auto_scanning: Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[uniffi::export]
@@ -119,6 +121,17 @@ impl KoanEngine {
             });
         }
 
+        // Local files are watched rather than synced on a timer: a folder that
+        // has not changed costs nothing to notice, and one that has should show
+        // up without being asked.
+        let auto_scanning = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        {
+            let flag = auto_scanning.clone();
+            koan_core::helpers::spawn_library_watch(db_path.clone(), move |running| {
+                flag.store(running, std::sync::atomic::Ordering::Relaxed);
+            });
+        }
+
         let listener: Arc<parking_lot::RwLock<Option<Arc<dyn PlayerEvents>>>> =
             Arc::new(parking_lot::RwLock::new(None));
         let engine = Arc::new(Self {
@@ -126,6 +139,7 @@ impl KoanEngine {
             tx,
             db_path,
             auto_syncing,
+            auto_scanning,
             listener,
         });
         engine.spawn_watcher();
@@ -935,6 +949,12 @@ impl KoanEngine {
     /// Whether the automatic library sync is running right now.
     pub fn is_auto_syncing(&self) -> bool {
         self.auto_syncing.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Whether the startup or watched-folder scan is running right now.
+    pub fn is_auto_scanning(&self) -> bool {
+        self.auto_scanning
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Sign in to a Subsonic/Navidrome server.

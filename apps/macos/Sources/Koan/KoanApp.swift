@@ -32,6 +32,13 @@ final class AppState {
         library.activity = activity
         player.activity = activity
 
+        // The engine syncs and scans on its own — on startup, on a timer, and
+        // when the library folders change. Those are the slow things a user is
+        // most likely to notice and least likely to have asked for, so they get
+        // a row like anything else.
+        activity.mirror("Syncing with server") { engine.isAutoSyncing() }
+        activity.mirror("Scanning library") { engine.isAutoScanning() }
+
         // Control Center and the media keys ride the player's existing poll.
         let centre = NowPlayingCentre(player: player, art: art)
         self.nowPlaying = centre

@@ -122,12 +122,6 @@ struct RootView: View {
                 Spacer()
             }
 
-            // Ahead of the view's own controls, so it reads as a property of
-            // the window rather than of whatever is on screen.
-            ToolbarItem(placement: .primaryAction) {
-                ActivityIndicator()
-            }
-
             // Filtering what is on screen belongs with it, not in the sidebar
             // search, which navigates away instead of narrowing.
             if library.section == .albums || library.section == .artists {

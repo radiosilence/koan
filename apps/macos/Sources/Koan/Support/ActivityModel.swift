@@ -17,10 +17,19 @@ final class ActivityModel {
         let id = UUID()
         /// Shown to the user: "Scanning library", "Syncing with server".
         let label: String
-        /// 0…1 where the engine can say, `nil` where it cannot.
-        var progress: Double?
+        /// How many done and how many there are, where the engine counts them.
+        /// Shown as "12,345 / 48,087" — a percentage alone hides whether the
+        /// remaining work is ten items or ten thousand.
+        var done: UInt64?
+        var total: UInt64?
         /// What it is working on right now, if it says.
         var detail: String?
+
+        /// 0…1, or nil when there is nothing to divide by.
+        var progress: Double? {
+            guard let done, let total, total > 0 else { return nil }
+            return min(1, Double(done) / Double(total))
+        }
     }
 
     private(set) var tasks: [Task] = []
@@ -75,14 +84,38 @@ final class ActivityModel {
         tasks.removeAll { $0.id == id }
     }
 
-    func setProgress(_ id: UUID, _ fraction: Double?) {
+    func setCounts(_ id: UUID, done: UInt64?, total: UInt64?) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
-        tasks[index].progress = fraction
+        if let done { tasks[index].done = done }
+        if let total { tasks[index].total = total }
     }
 
     func setDetail(_ id: UUID, _ detail: String?) {
         guard let index = tasks.firstIndex(where: { $0.id == id }) else { return }
         tasks[index].detail = detail
+    }
+
+    /// Mirror a background job the engine runs on its own — the startup scan,
+    /// the folder watcher, the automatic sync. They are not started by the UI,
+    /// so nothing here can wrap them; this polls the flag instead and shows a
+    /// row for as long as it is set.
+    func mirror(_ label: String, while running: @escaping @Sendable () -> Bool) {
+        _Concurrency.Task { [weak self] in
+            var id: UUID?
+            while !_Concurrency.Task.isCancelled {
+                let isRunning = running()
+                switch (isRunning, id) {
+                case (true, nil):
+                    id = self?.begin(label)
+                case (false, let some?):
+                    self?.end(some)
+                    id = nil
+                default:
+                    break
+                }
+                try? await _Concurrency.Task.sleep(for: .seconds(1))
+            }
+        }
     }
 
     /// A `ProgressReporter` the engine can call from its worker threads,
@@ -109,14 +142,17 @@ final class EngineProgress: ProgressReporter, @unchecked Sendable {
 
     func started(total: UInt64) {
         self.total.withLock { $0 = total }
+        let task = self.task
+        Task { @MainActor [weak activity] in
+            activity?.setCounts(task, done: 0, total: total)
+        }
     }
 
     func advanced(done: UInt64, detail: String) {
         let total = self.total.withLock { $0 }
-        let fraction = total > 0 ? Double(done) / Double(total) : nil
         let task = self.task
         Task { @MainActor [weak activity] in
-            activity?.setProgress(task, fraction)
+            activity?.setCounts(task, done: done, total: total > 0 ? total : nil)
             activity?.setDetail(task, detail)
         }
     }

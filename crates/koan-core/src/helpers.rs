@@ -35,6 +35,85 @@ pub fn get_remote_password(cfg: &Config) -> Option<String> {
     None
 }
 
+/// Index files that appear in the library folders while koan is running.
+///
+/// One incremental scan shortly after startup — the walk is a fraction of a
+/// second even across fifty thousand files, and everything unchanged is skipped
+/// on its mtime and size — then a rescan whenever the folders change.
+///
+/// Changes are debounced: copying an album in produces a burst of events, and
+/// scanning once per file would be both slow and pointless. The scan is
+/// incremental in every case, so the cost is proportional to what actually
+/// changed rather than to the size of the library.
+///
+/// `on_state` reports whether a scan is running, so a UI can show it.
+pub fn spawn_library_watch(
+    db_path: std::path::PathBuf,
+    on_state: impl Fn(bool) + Send + Sync + 'static,
+) -> Option<std::thread::JoinHandle<()>> {
+    use notify::{RecursiveMode, Watcher};
+
+    std::thread::Builder::new()
+        .name("koan-library-watch".into())
+        .spawn(move || {
+            let scan_now = |reason: &str| {
+                let cfg = Config::load().unwrap_or_default();
+                if cfg.library.folders.is_empty() {
+                    return;
+                }
+                let Ok(db) = Database::open(&db_path) else {
+                    return;
+                };
+                on_state(true);
+                let result = crate::index::scanner::full_scan(
+                    &db,
+                    &cfg.library.folders,
+                    crate::index::scanner::ScanOptions::default(),
+                    None,
+                );
+                on_state(false);
+                log::info!(
+                    "{reason} scan: {} added, {} updated, {} removed, {} unchanged",
+                    result.added,
+                    result.updated,
+                    result.removed,
+                    result.skipped
+                );
+            };
+
+            // After the first frame and the first track, not competing with them.
+            std::thread::sleep(std::time::Duration::from_secs(3));
+            scan_now("startup");
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            let Ok(mut watcher) = notify::recommended_watcher(move |event| {
+                let _ = tx.send(event);
+            }) else {
+                log::warn!("could not watch the library folders");
+                return;
+            };
+
+            let cfg = Config::load().unwrap_or_default();
+            for folder in &cfg.library.folders {
+                if let Err(e) = watcher.watch(folder, RecursiveMode::Recursive) {
+                    log::warn!("could not watch {}: {e}", folder.display());
+                }
+            }
+
+            // Copying an album in is a burst of events. Wait for it to stop
+            // before scanning, rather than scanning per file.
+            const SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
+            while let Ok(first) = rx.recv() {
+                if first.is_err() {
+                    continue;
+                }
+                while rx.recv_timeout(SETTLE).is_ok() {}
+                scan_now("watched change");
+            }
+        })
+        .ok()
+}
+
 /// Keep the library in step with the server, without being asked.
 ///
 /// One sync shortly after startup, then every `auto_sync_interval_mins`. Always
