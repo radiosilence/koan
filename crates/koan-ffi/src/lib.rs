@@ -794,6 +794,36 @@ impl KoanEngine {
         Ok(summary)
     }
 
+    /// Pull the remote library into the local database. Long and network-bound
+    /// — call it off the main thread. `full` ignores the incremental cursor and
+    /// re-walks every album.
+    pub fn sync_remote(&self, full: bool) -> Result<SyncSummary, KoanError> {
+        let db = self.db()?;
+        let cfg = Config::load().unwrap_or_default();
+        let client =
+            koan_core::helpers::subsonic_client(&cfg).ok_or_else(|| KoanError::BadArgument {
+                message: "no remote server configured".into(),
+            })?;
+
+        let result = koan_core::remote::sync::sync_library(
+            &db,
+            &client,
+            full,
+            &cfg.remote.url,
+            &cfg.remote.username,
+        )
+        .map_err(|e| KoanError::Database {
+            message: e.to_string(),
+        })?;
+
+        Ok(SyncSummary {
+            artists: result.artists_synced as u32,
+            albums: result.albums_synced as u32,
+            tracks: result.tracks_synced as u32,
+            albums_failed: result.albums_failed as u32,
+        })
+    }
+
     /// Where the library folders point. Shown in settings.
     pub fn library_folders(&self) -> Vec<String> {
         Config::load()

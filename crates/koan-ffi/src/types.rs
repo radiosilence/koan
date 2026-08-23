@@ -383,6 +383,16 @@ pub struct ScanSummary {
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
+pub struct SyncSummary {
+    pub artists: u32,
+    pub albums: u32,
+    pub tracks: u32,
+    /// Non-zero means the run was incomplete and the next one will retry those
+    /// albums — worth saying so rather than reporting a clean sync.
+    pub albums_failed: u32,
+}
+
+#[derive(uniffi::Record, Debug, Clone)]
 pub struct SimilarArtist {
     pub artist_id: i64,
     pub name: String,

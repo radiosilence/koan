@@ -263,6 +263,25 @@ final class LibraryModel {
         }
     }
 
+    /// Pull the remote library. Minutes on a large server, so it runs detached
+    /// and the caches are dropped afterwards rather than during.
+    func syncRemote(full: Bool = false) {
+        guard !isScanning else { return }
+        isScanning = true
+        let engine = self.engine
+        Task {
+            _ = await Task.detached(priority: .utility) {
+                try? engine.syncRemote(full: full)
+            }.value
+            isScanning = false
+            albums = []
+            artists = []
+            loadStats()
+            prefetchCatalogue()
+            load()
+        }
+    }
+
     /// Full rescan of every configured folder. Minutes on a big library, so it
     /// runs detached and the UI stays live throughout.
     func scan(force: Bool = false) {

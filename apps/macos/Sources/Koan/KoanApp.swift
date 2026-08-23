@@ -39,6 +39,9 @@ struct KoanApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var startupError: String?
     @State private var showingPicker = false
+    @AppStorage("showLyrics") private var showLyrics = false
+
+    private func toggleLyrics() { showLyrics.toggle() }
 
     var body: some Scene {
         Window("koan", id: "main") {
@@ -80,6 +83,20 @@ struct KoanApp: App {
                 Button("Add Music…") { showingPicker = true }
                     .keyboardShortcut("k", modifiers: .command)
             }
+
+            // Replaces the stock View menu's window items with navigation,
+            // which is what there actually is to look at.
+            CommandGroup(replacing: .sidebar) {
+                ForEach(NavigationCommand.all, id: \.section) { command in
+                    Button(command.title) { state?.library.section = command.section }
+                        .keyboardShortcut(command.key, modifiers: .command)
+                }
+                Divider()
+                Button("Toggle Lyrics") { toggleLyrics() }
+                    .keyboardShortcut("l", modifiers: [.command, .option])
+                Divider()
+            }
+
             CommandMenu("Playback") {
                 Button(state?.player.isPlaying == true ? "Pause" : "Play") {
                     state?.player.togglePlayPause()
@@ -90,15 +107,40 @@ struct KoanApp: App {
                 Button("Previous") { state?.player.previous() }
                     .keyboardShortcut(.leftArrow, modifiers: .command)
                 Divider()
-                Button("Clear Queue") { state?.player.clearQueue() }
+                Button("Skip Forward") { state?.player.seek(bySeconds: 10) }
+                    .keyboardShortcut(.rightArrow, modifiers: .option)
+                Button("Skip Back") { state?.player.seek(bySeconds: -10) }
+                    .keyboardShortcut(.leftArrow, modifiers: .option)
+                Divider()
+                Button("Favourite Current Track") { state?.player.toggleFavouriteCurrent() }
+                    .keyboardShortcut("d", modifiers: .command)
+                    .disabled(state?.player.currentTrackId == nil)
+                Toggle("Radio", isOn: Binding(
+                    get: { state?.player.nowPlaying.radioEnabled ?? false },
+                    set: { state?.player.setRadio($0) }
+                ))
+                .keyboardShortcut("r", modifiers: [.command, .option])
+            }
+
+            CommandMenu("Queue") {
                 Button("Undo") { state?.player.undo() }
                     .keyboardShortcut("z", modifiers: .command)
                 Button("Redo") { state?.player.redo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
+                Divider()
+                Button("Save Session") { state?.player.saveSession() }
+                Button("Clear Queue", role: .destructive) { state?.player.clearQueue() }
             }
-            CommandGroup(after: .toolbar) {
-                Button("Rescan Library") { state?.library.scan() }
+
+            CommandMenu("Library") {
+                Button("Rescan Local Folders") { state?.library.scan() }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
+                Button("Force Rescan") { state?.library.scan(force: true) }
+                Divider()
+                Button("Sync Remote Library") { state?.library.syncRemote() }
+                Button("Full Remote Sync") { state?.library.syncRemote(full: true) }
+                Divider()
+                Button("Clear Artwork Cache") { state?.art.purge() }
             }
         }
 
@@ -110,6 +152,25 @@ struct KoanApp: App {
             }
         }
     }
+}
+
+/// Sections reachable from the View menu, in sidebar order.
+private struct NavigationCommand {
+    let title: String
+    let key: KeyEquivalent
+    let section: LibraryModel.Section
+
+    static let all: [NavigationCommand] = [
+        .init(title: "Queue", key: "1", section: .queue),
+        .init(title: "Albums", key: "2", section: .albums),
+        .init(title: "Artists", key: "3", section: .artists),
+        .init(title: "Favourites", key: "4", section: .favourites),
+        .init(title: "Snapshots", key: "5", section: .snapshots),
+    ]
+}
+
+extension LibraryModel.Section: Identifiable {
+    public var id: Self { self }
 }
 
 /// The library is a file on disk; if it can't be opened there is no app to show.

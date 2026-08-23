@@ -118,6 +118,22 @@ final class PlayerModel {
         seek(toMs: UInt64(max(0, min(1, fraction)) * Double(nowPlaying.durationMs)))
     }
 
+    /// Nudge by a number of seconds, clamped to the track. What the arrow-key
+    /// shortcuts and the TUI's `,`/`.` do.
+    func seek(bySeconds delta: Int) {
+        let current = Int64(nowPlaying.positionMs)
+        let target = max(0, current + Int64(delta) * 1000)
+        seek(toMs: UInt64(min(target, Int64(nowPlaying.durationMs))))
+    }
+
+    /// Favourite whatever is playing. No-op when the queue item has no library
+    /// row behind it.
+    @discardableResult
+    func toggleFavouriteCurrent() -> Bool {
+        guard let trackId = currentTrackId else { return false }
+        return toggleFavourite(trackId: trackId)
+    }
+
     func seek(toMs ms: UInt64) {
         scrubbing = nil
         attempt { try engine.seek(positionMs: ms) }
