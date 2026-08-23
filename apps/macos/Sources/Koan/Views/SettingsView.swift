@@ -207,14 +207,19 @@ private struct RemoteSettings: View {
                         value: Format.count(Int64(model.settings.remoteTracks), "track")
                     )
                     HStack {
-                        Button("Sync Now") { model.syncNow(full: false) }
-                        Button("Full Sync") { model.syncNow(full: true) }
-                            .help("Walk the whole library rather than only what changed")
-                            .disabled(activity.isLibraryBusy)
+                        // Only the syncs wait on the database writer. Signing
+                        // out is a config write and a keychain delete, and
+                        // greying it out while a sync runs strands you on a
+                        // server you are trying to leave.
+                        Group {
+                            Button("Sync Now") { model.syncNow(full: false) }
+                            Button("Full Sync") { model.syncNow(full: true) }
+                                .help("Walk the whole library rather than only what changed")
+                        }
+                        .disabled(activity.isLibraryBusy)
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     }
-                    .disabled(activity.isLibraryBusy)
                 }
             } else {
                 Section {
