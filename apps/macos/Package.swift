@@ -18,17 +18,13 @@ let package = Package(
             dependencies: ["KoanFFI"],
             path: "Sources/Koan",
             linkerSettings: [
-                // Both, because a universal build lipo's its output somewhere
-                // else: `just macos-ffi <targets>` writes
-                // target/universal/release, while a single-arch build writes
-                // target/release. The linker takes the first that exists, and a
-                // missing search path is not an error — so with only the
-                // single-arch path here, the release DMG failed to link with
-                // "library 'koan_ffi' not found" while local builds were fine.
-                .unsafeFlags([
-                    "-L../../target/universal/release",
-                    "-L../../target/release",
-                ]),
+                // `just macos-ffi` stages the right archive here — the host
+                // one, or the lipo'd universal one for a release — and nothing
+                // else. Pointing at cargo's own output directory instead gave
+                // the linker a .dylib alongside the .a, which it prefers: the
+                // app then referenced a library by absolute path inside the
+                // build tree and could not launch anywhere else.
+                .unsafeFlags(["-L../../target/swift-link"]),
                 .linkedLibrary("koan_ffi"),
                 .linkedFramework("CoreAudio"),
                 .linkedFramework("AudioToolbox"),

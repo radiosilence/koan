@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.25.1 (2026-08-23)
+
+### Fixed
+
+- **The v0.25.0 macOS app could not launch.** `-lkoan_ffi` over cargo's output directory finds the `.dylib` next to the archive and prefers it, so the shipped app referenced `/Users/runner/work/koan/koan/target/release/deps/libkoan_ffi.dylib` — a path that exists only on the CI runner — and was arm64-only, the host dylib having won over the universal archive. `just macos-ffi` now stages the right archive in a directory holding nothing else, which cannot produce either outcome. The bundled binary goes from 3.4 MB to 20 MB, which is the engine actually being in it.
+
 ## v0.25.0 (2026-08-23)
 
 ### Added

@@ -64,10 +64,6 @@ macos-ffi *TARGETS:
     set -euo pipefail
     targets="{{TARGETS}}"
     if [ -z "$targets" ]; then
-        # A stale universal library from an earlier release build would shadow
-        # this one: Package.swift searches target/universal/release first, and
-        # the linker takes the first match rather than the newest.
-        rm -rf target/universal/release
         cargo build --release -p koan-ffi
         lib=target/release/libkoan_ffi.a
         dylib=target/release/libkoan_ffi.dylib
@@ -81,6 +77,19 @@ macos-ffi *TARGETS:
         lib=target/universal/release/libkoan_ffi.a
         dylib=target/$(echo $targets | cut -d' ' -f1)/release/libkoan_ffi.dylib
     fi
+    # Stage the archive somewhere holding nothing else, and link against that.
+    #
+    # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
+    # .dylib, and cargo leaves one next to the archive. The release DMG shipped
+    # an app that referenced
+    # `/Users/runner/work/koan/koan/target/release/deps/libkoan_ffi.dylib` and
+    # could not launch anywhere, and it was arm64-only because the host dylib
+    # won over the universal archive. A directory with one file in it cannot
+    # produce either outcome.
+    rm -rf target/swift-link
+    mkdir -p target/swift-link
+    cp "$lib" target/swift-link/libkoan_ffi.a
+
     # Bindings are generated from the dylib's embedded metadata, not the sources.
     cargo run --release -q -p koan-ffi --bin uniffi-bindgen -- \
         generate --library "$dylib" --language swift --out-dir target/uniffi
