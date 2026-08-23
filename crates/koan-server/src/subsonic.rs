@@ -1644,19 +1644,26 @@ async fn scrobble(
             .map_err(|e| SubsonicError::internal(e.to_string()))?
             .ok_or_else(|| SubsonicError::not_found("Track"))?;
 
-        let result = if let Some(time_ms) = params.time {
-            db.conn
-                .execute(
-                    "INSERT INTO play_history (track_id, played_at, duration_ms) VALUES (?1, ?2, NULL)",
-                    rusqlite::params![track_id, time_ms / 1000],
-                )
-                .map(|_| ())
-                .map_err(|e| e.into())
-        } else {
-            queries::record_play(&db.conn, track_id, None)
-        };
+        // `time` is when the client played it, which can be well in the past
+        // after an offline session.
+        let played_at = params.time.map_or_else(
+            || {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs() as i64
+            },
+            |time_ms| time_ms / 1000,
+        );
 
-        result.map_err(|e| SubsonicError::from(format!("Database error: {}", e)))?;
+        queries::record_play_at(
+            &db.conn,
+            track_id,
+            played_at,
+            None,
+            queries::SOURCE_SUBSONIC,
+        )
+        .map_err(|e| SubsonicError::from(format!("Database error: {}", e)))?;
         Ok(b)
     })
 }

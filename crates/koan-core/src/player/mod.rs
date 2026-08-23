@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod history;
 pub mod state;
 pub mod undo;
 
@@ -17,6 +18,7 @@ use crate::audio::{
 };
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
+use history::{InFlight, PlayRecorder};
 use state::{LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
 use undo::{UndoEntry, UndoStack};
 
@@ -51,6 +53,11 @@ pub struct Player {
     backend: Box<dyn AudioBackend>,
     /// Debounce: timestamp of last NextTrack/PrevTrack to suppress key repeat.
     last_skip: std::time::Instant,
+    /// Writes plays away from this thread. None when there is no database to
+    /// write to, and in tests, which must not touch the real library.
+    history: Option<PlayRecorder>,
+    /// How much of the current track has been heard so far.
+    in_flight: Option<InFlight>,
     /// Playback sessions started — lets tests assert how many engine restarts
     /// an operation costs.
     #[cfg(test)]
@@ -95,6 +102,8 @@ impl Player {
             output_device_name: cfg.playback.output_device.clone(),
             backend: crate::audio::platform_backend(),
             last_skip: std::time::Instant::now(),
+            history: None,
+            in_flight: None,
             #[cfg(test)]
             playback_starts: 0,
         }
@@ -327,6 +336,7 @@ impl Player {
             duration_ms: info.duration_ms,
         }));
         self.shared_state.set_position_ms(seek_ms);
+        self.on_track_changed(id, info.duration_ms);
         log::info!(
             "playing: {} ({:?}) — {} {}Hz/{}ch, {}ms{}",
             path.display(),
@@ -564,6 +574,7 @@ impl Player {
             duration_ms: info.duration_ms,
         }));
         self.shared_state.set_position_ms(0);
+        self.on_track_changed(id, info.duration_ms);
         log::info!(
             "streaming: {} ({:?}) — {} {}Hz/{}ch, {}ms",
             path.display(),
@@ -787,6 +798,7 @@ impl Player {
 
     /// Full stop: tear down engine + clear all display state.
     fn stop_playback_and_clear_state(&mut self) {
+        self.finish_play();
         self.stop_engine();
         self.timeline.reset();
         self.shared_state.set_playback_state(PlaybackState::Stopped);
@@ -926,6 +938,12 @@ impl Player {
                         duration_ms: stream_info.duration_ms,
                         ..current
                     }));
+                    // The play threshold was set from the short estimate.
+                    if let Some(f) = self.in_flight.as_mut()
+                        && f.item == id
+                    {
+                        f.set_duration_ms(stream_info.duration_ms);
+                    }
                 }
 
                 // Signal UI to re-read cover art and update souvlaki media controls.
@@ -940,13 +958,45 @@ impl Player {
 
     /// Poll the timeline and update shared state with current track/position.
     /// Called from the command loop on each tick.
-    pub fn update_playback_state(&self) {
+    /// The needle has moved to `id`. Bank what the outgoing track earned and
+    /// start counting the new one.
+    ///
+    /// A seek restarts playback of the same track, so identity is checked
+    /// rather than finishing unconditionally — otherwise scrubbing around a
+    /// long track would bank it repeatedly.
+    fn on_track_changed(&mut self, id: QueueItemId, duration_ms: u64) {
+        if self.in_flight.as_ref().is_some_and(|f| f.item == id) {
+            return;
+        }
+        self.finish_play();
+        let db_id = self.shared_state.item_db_id(id);
+        self.in_flight = Some(InFlight::new(id, db_id, duration_ms));
+    }
+
+    /// Bank the current track's listening time, if it earned a play. Returns
+    /// what was banked, which is how the tests see it.
+    fn finish_play(&mut self) -> Option<history::Play> {
+        let play = self.in_flight.take().and_then(InFlight::into_play)?;
+        if let Some(recorder) = self.history.as_ref() {
+            recorder.record(play);
+        }
+        Some(play)
+    }
+
+    pub fn update_playback_state(&mut self) {
         if self.active_playback.is_none() {
             return;
         }
 
         if let Some((id, path, info, position_ms)) = self.timeline.current_playback() {
             self.shared_state.set_position_ms(position_ms);
+
+            // A gapless transition moves the needle without anything on this
+            // thread having asked it to, so the play is banked from here.
+            self.on_track_changed(id, info.duration_ms);
+            if let Some(f) = self.in_flight.as_mut() {
+                f.advance(position_ms);
+            }
 
             // Update track_info + cursor if the timeline shows a different track
             // (gapless transition happened).
@@ -1260,6 +1310,7 @@ impl Player {
         crossbeam_channel::Sender<PlayerCommand>,
     ) {
         let mut player = Self::new();
+        player.history = PlayRecorder::spawn();
         let state = player.shared_state();
         let timeline = player.timeline();
         let viz_snapshot = player.viz_snapshot();
@@ -1324,6 +1375,101 @@ mod tests {
     }
 
     // --- cursor transitions ---
+
+    /// Feed the player a track's worth of playback ticks, as the 50ms poll would.
+    fn listen(player: &mut Player, from_ms: u64, to_ms: u64) {
+        let mut at = from_ms;
+        if let Some(f) = player.in_flight.as_mut() {
+            f.advance(at); // the position the needle landed on
+        }
+        while at < to_ms {
+            at = (at + 50).min(to_ms);
+            if let Some(f) = player.in_flight.as_mut() {
+                f.advance(at);
+            }
+        }
+    }
+
+    #[test]
+    fn a_gapless_transition_closes_the_outgoing_track_and_opens_the_next() {
+        let mut player = Player::new();
+        let a = QueueItemId::new();
+        let b = QueueItemId::new();
+
+        player.on_track_changed(a, 200_000);
+        player.in_flight.as_mut().unwrap().track_id_for_test(11);
+        listen(&mut player, 0, 200_000);
+
+        player.on_track_changed(b, 200_000);
+        let f = player
+            .in_flight
+            .as_ref()
+            .expect("the next track is counting");
+        assert_eq!(f.item, b);
+        assert_eq!(f.listened_ms(), 0, "and starts from nothing");
+    }
+
+    #[test]
+    fn skipping_through_a_queue_records_nothing() {
+        let mut player = Player::new();
+        for _ in 0..20 {
+            let id = QueueItemId::new();
+            player.on_track_changed(id, 200_000);
+            player.in_flight.as_mut().unwrap().track_id_for_test(1);
+            listen(&mut player, 0, 3_000);
+            assert!(
+                player.finish_play().is_none(),
+                "three seconds of a track is not a play"
+            );
+        }
+    }
+
+    #[test]
+    fn a_track_played_through_is_recorded_once() {
+        let mut player = Player::new();
+        let id = QueueItemId::new();
+        player.on_track_changed(id, 200_000);
+        player.in_flight.as_mut().unwrap().track_id_for_test(7);
+        listen(&mut player, 0, 200_000);
+
+        let play = player.finish_play().expect("a full listen is a play");
+        assert_eq!(play.track_id, 7);
+        assert!(player.finish_play().is_none(), "and only once");
+    }
+
+    #[test]
+    fn seeking_around_a_track_does_not_bank_it_twice() {
+        let mut player = Player::new();
+        let id = QueueItemId::new();
+        player.on_track_changed(id, 200_000);
+        player.in_flight.as_mut().unwrap().track_id_for_test(7);
+        listen(&mut player, 0, 120_000);
+
+        // A seek restarts playback of the same item.
+        player.on_track_changed(id, 200_000);
+        assert_eq!(
+            player.in_flight.as_ref().unwrap().listened_ms(),
+            120_000,
+            "the seek kept the count rather than restarting it"
+        );
+        listen(&mut player, 30_000, 40_000);
+
+        let play = player.finish_play().expect("still one play");
+        assert_eq!(play.listened_ms, 130_000);
+        assert!(player.finish_play().is_none());
+    }
+
+    #[test]
+    fn stopping_banks_what_was_heard() {
+        let mut player = Player::new();
+        let id = QueueItemId::new();
+        player.on_track_changed(id, 200_000);
+        player.in_flight.as_mut().unwrap().track_id_for_test(7);
+        listen(&mut player, 0, 150_000);
+
+        player.stop_playback_and_clear_state();
+        assert!(player.in_flight.is_none(), "the stop consumed it");
+    }
 
     #[test]
     fn removing_the_playing_track_resumes_at_its_successor() {
