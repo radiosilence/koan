@@ -3,9 +3,9 @@ import SwiftUI
 
 /// Everything a list row does, in one place.
 ///
-/// Rows across the app need the same five behaviours — be selectable, respond
-/// to double-click, be draggable, carry a context menu, and hold their hit area
-/// across the full width. Defining that per screen is how they drifted: album
+/// Rows across the app need the same behaviours — be selectable, respond to
+/// double-click, carry a context menu, and hold their hit area across the full
+/// width. Defining that per screen is how they drifted: album
 /// and artist lists kept a tap gesture that had already been removed from the
 /// queue for breaking selection, so the same bug lived on in two places after
 /// being "fixed".
@@ -26,9 +26,11 @@ struct RowBehaviour: ViewModifier {
             // hit-testable, so the gap between title and duration would be dead.
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
-            // Drag first — a gesture or a Button registered before it claims the
-            // press and the drag never starts.
-            .modifier(OptionalDrag(playable: playable))
+            // No drag here. `.onDrag` on a List row claims the press to watch
+            // for movement, which leaves single-click selection unreliable —
+            // it broke selection in exactly the lists whose rows were
+            // draggable, and nowhere else. Grids and pills drag fine because
+            // they are not rows competing with a table's own click handling.
             .contextMenu {
                 if let playable {
                     PlayableMenu(playable: playable)
@@ -41,22 +43,9 @@ struct RowBehaviour: ViewModifier {
     }
 }
 
-/// `.draggable` only when there is something to drag.
-private struct OptionalDrag: ViewModifier {
-    let playable: Playable?
-
-    func body(content: Content) -> some View {
-        if let playable {
-            content.draggablePlayable(playable)
-        } else {
-            content
-        }
-    }
-}
-
 extension View {
-    /// Standard list-row behaviour: selectable, draggable, double-click to open,
-    /// context menu, full-width hit area.
+    /// Standard list-row behaviour: selectable, double-click to open, context
+    /// menu, full-width hit area.
     func rowBehaviour(
         playable: Playable?,
         onOpen: @escaping () -> Void

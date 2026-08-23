@@ -149,7 +149,9 @@ private struct TrackRow: View {
             // The row number becomes a speaker for whatever is playing —
             // same width either way so the column doesn't twitch.
             Group {
-                if isCurrent {
+                if hovering {
+                    RowPlayButton(playable: .track(track), visible: true)
+                } else if isCurrent {
                     Image(systemName: player.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
                         .foregroundStyle(.tint)
                 } else {

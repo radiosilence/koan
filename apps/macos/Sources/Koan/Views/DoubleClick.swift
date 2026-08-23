@@ -1,79 +1,107 @@
 import AppKit
 import SwiftUI
 
-/// Double-click on a List row, done through AppKit.
+/// Double-click on a List row, done through AppKit, resolved to the row that
+/// was actually clicked.
 ///
-/// Two approaches failed before this one. `.onTapGesture(count: 2)` makes
-/// SwiftUI hold the first click back to see whether a second follows, which
-/// leaves single-click selection feeling dead. A local `NSEvent` monitor never
-/// sees the clicks at all — the list consumes them first.
+/// Earlier attempts failed in instructive ways. `.onTapGesture(count: 2)` makes
+/// SwiftUI hold the first click back to see whether a second follows, leaving
+/// single-click selection dead. A local `NSEvent` monitor never sees the clicks
+/// at all — the list consumes them first. And registering one action per table
+/// means the last row to render wins, which showed up as every double-click in
+/// the artist list opening the same artist.
 ///
-/// So: attach one `NSClickGestureRecognizer` to the table itself. AppKit's own
-/// click handling runs untouched, so selection behaves exactly as it does in
-/// any other table, and only the second click reaches us.
+/// So: one `NSClickGestureRecognizer` per table with
+/// `delaysPrimaryMouseButtonEvents = false`, so AppKit's own click handling runs
+/// untouched, and the click location decides which row's action to run.
 ///
-/// Placed inside a *row* rather than on the List. A `.background` on the List
-/// lands outside the list's own view hierarchy — its ancestors are the split
-/// view column — so walking up from there never finds the table.
+/// The catcher must be applied to a *row*. A `.background` on the List lands
+/// outside the list's own hierarchy — its ancestors are the split-view column —
+/// so walking up from there never finds the table.
 struct DoubleClickCatcher: NSViewRepresentable {
     let action: () -> Void
 
-    func makeNSView(context: Context) -> NSView { PassthroughView() }
+    func makeNSView(context: Context) -> NSView {
+        let view = PassthroughView()
+        context.coordinator.view = view
+        return view
+    }
 
     func updateNSView(_ view: NSView, context: Context) {
-        let action = self.action
+        context.coordinator.action = action
         Task { @MainActor in
-            guard let table = Self.enclosingTable(of: view) else { return }
-            // Every row installs the same action, so last writer wins and the
-            // closure stays current as the view is rebuilt.
-            Registry.shared.register(action, for: table)
+            Registry.shared.attach(context.coordinator, from: view)
         }
     }
 
-    private static func enclosingTable(of view: NSView) -> NSTableView? {
-        var candidate: NSView? = view
-        while let current = candidate {
-            if let table = current as? NSTableView { return table }
-            candidate = current.superview
-        }
-        return nil
+    func makeCoordinator() -> RowEntry { RowEntry() }
+
+    /// One row's claim on a double-click.
+    @MainActor
+    final class RowEntry {
+        weak var view: NSView?
+        var action: (() -> Void)?
     }
 
-    /// Keeps one recogniser per table and the action it should run.
     @MainActor
     private final class Registry {
         static let shared = Registry()
-        private var actions: [ObjectIdentifier: () -> Void] = [:]
+        /// Rows per table. Weak views, so rows that scroll away drop out.
+        private var rows: [ObjectIdentifier: [RowEntry]] = [:]
+        private var attached: Set<ObjectIdentifier> = []
 
-        func register(_ action: @escaping () -> Void, for table: NSTableView) {
+        func attach(_ entry: RowEntry, from view: NSView) {
+            guard let table = Self.enclosingTable(of: view) else { return }
             let key = ObjectIdentifier(table)
-            let isNew = actions[key] == nil
-            actions[key] = action
-            guard isNew else { return }
 
+            var known = rows[key] ?? []
+            known.removeAll { $0.view == nil || $0 === entry }
+            known.append(entry)
+            rows[key] = known
+
+            guard !attached.contains(key) else { return }
+            attached.insert(key)
             let recogniser = NSClickGestureRecognizer(target: self, action: #selector(fire(_:)))
             recogniser.numberOfClicksRequired = 2
-            // Without this the recogniser holds back the first click, which is
-            // the whole problem we are avoiding.
+            // Without this the recogniser holds the first click back, which is
+            // the problem we are avoiding.
             recogniser.delaysPrimaryMouseButtonEvents = false
             table.addGestureRecognizer(recogniser)
         }
 
+        /// Run the action belonging to the row under the pointer.
         @objc private func fire(_ sender: NSClickGestureRecognizer) {
-            guard let table = sender.view as? NSTableView else { return }
-            actions[ObjectIdentifier(table)]?()
+            guard let table = sender.view else { return }
+            let point = sender.location(in: table)
+            let candidates = rows[ObjectIdentifier(table)] ?? []
+            for entry in candidates {
+                guard let view = entry.view, view.window != nil else { continue }
+                let frame = view.convert(view.bounds, to: table)
+                if frame.contains(point) {
+                    entry.action?()
+                    return
+                }
+            }
+        }
+
+        private static func enclosingTable(of view: NSView) -> NSTableView? {
+            var candidate: NSView? = view
+            while let current = candidate {
+                if let table = current as? NSTableView { return table }
+                candidate = current.superview
+            }
+            return nil
         }
     }
 }
 
-/// Invisible and untouchable: it exists only to find the table it sits in.
+/// Invisible and untouchable: it exists only to locate its row and its table.
 private final class PassthroughView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 }
 
 extension View {
-    /// Run `action` when a row in the enclosing List is double-clicked.
-    /// Apply to a row, not to the List.
+    /// Run `action` when this row is double-clicked. Apply to a row, not a List.
     func onRowDoubleClick(perform action: @escaping () -> Void) -> some View {
         background(DoubleClickCatcher(action: action))
     }

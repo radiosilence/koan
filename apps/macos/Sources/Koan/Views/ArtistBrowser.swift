@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ArtistBrowser: View {
     @Environment(LibraryModel.self) private var library
+    @State private var hovered: Int64?
 
     var body: some View {
         List(library.visibleArtists, id: \.id) { artist in
@@ -13,6 +14,13 @@ struct ArtistBrowser: View {
                     .frame(width: 18)
                 Text(artist.name)
                 Spacer()
+                RowPlayButton(
+                    playable: .artist(id: artist.id, name: artist.name),
+                    visible: hovered == artist.id
+                )
+            }
+            .onHover { inside in
+                if inside { hovered = artist.id } else if hovered == artist.id { hovered = nil }
             }
             .padding(.vertical, 2)
             .rowBehaviour(playable: .artist(id: artist.id, name: artist.name)) {
