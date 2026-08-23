@@ -290,7 +290,14 @@ final class PlayerModel {
         currentDevice = name
     }
 
-    func setRadio(_ enabled: Bool) { engine.setRadio(enabled: enabled) }
+    /// Reflected locally as well as set on the engine. The engine emits events
+    /// for playback, queue and position — nothing for radio — so a UI driven by
+    /// those events would never learn the flag had changed, and the toggle read
+    /// as dead.
+    func setRadio(_ enabled: Bool) {
+        engine.setRadio(enabled: enabled)
+        radioEnabled = enabled
+    }
 
     /// Flips it without the caller having to read the current value — menus
     /// that read observable state rebuild themselves constantly.

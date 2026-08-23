@@ -258,19 +258,12 @@ private struct TrackAvailability: View {
         Group {
             if let queued = player.queuedByTrack[track.id], isLive(queued.status) {
                 queueState(queued)
-            } else if track.path != nil {
-                // On disk — local file or already downloaded.
-                Image(systemName: "arrow.down.circle.fill")
-                    .foregroundStyle(.tertiary)
-                    .help("Available offline")
-            } else if track.source == "remote" {
-                Image(systemName: "cloud")
-                    .foregroundStyle(.quaternary)
-                    .help("Downloads on play")
+            } else {
+                SourceBadges(track: track)
             }
         }
         .font(.caption)
-        .frame(width: 16, height: 16)
+        .frame(width: 30, height: 16, alignment: .trailing)
     }
 
     /// Only these say something the library row doesn't already know.

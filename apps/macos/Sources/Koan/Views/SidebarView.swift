@@ -13,7 +13,20 @@ struct SidebarView: View {
         @Bindable var library = library
         @Bindable var search = search
 
-        List(selection: $library.section) {
+        // Not `$library.section` directly: choosing the section you are already
+        // in should take you back to its root, which is otherwise a trip out to
+        // another section and back.
+        List(selection: Binding(
+            get: { library.section },
+            set: { chosen in
+                guard let chosen else { return }
+                if chosen == library.section {
+                    library.popToRoot()
+                } else {
+                    library.section = chosen
+                }
+            }
+        )) {
             Section {
                 HStack {
                     Label("Queue", systemImage: "list.bullet")

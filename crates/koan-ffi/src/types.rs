@@ -54,6 +54,8 @@ pub struct Artist {
     pub id: i64,
     pub name: String,
     pub sort_name: Option<String>,
+    pub album_count: i64,
+    pub track_count: i64,
 }
 
 impl From<ArtistRow> for Artist {
@@ -61,6 +63,8 @@ impl From<ArtistRow> for Artist {
         Self {
             id: r.id,
             name: r.name,
+            album_count: r.album_count,
+            track_count: r.track_count,
             sort_name: r.sort_name,
         }
     }
@@ -120,6 +124,12 @@ pub struct Track {
     pub genre: Option<String>,
     /// `"local"` or `"remote"` — remote tracks download on demand.
     pub source: String,
+    /// The server knows about this track. Independent of `on_disk`: a record
+    /// held both locally and on the server is one row that is both, and a UI
+    /// that treats source as a single value cannot say so.
+    pub on_server: bool,
+    /// The bytes are on this machine — an indexed file or a finished download.
+    pub on_disk: bool,
     /// Present once the file exists on disk, locally or in the cache.
     pub path: Option<String>,
     pub is_favourite: bool,
@@ -146,6 +156,8 @@ impl Track {
             bitrate: r.bitrate,
             genre: r.genre,
             source: r.source,
+            on_server: r.remote_id.is_some(),
+            on_disk: path.is_some(),
             path,
             is_favourite,
         }

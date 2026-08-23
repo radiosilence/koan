@@ -199,6 +199,10 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         // buried what the server actually considered new. Clearing the
         // scan-time values lets the next scan refill them from the files
         // themselves; the server's own ISO 8601 dates are left alone.
+        // Whether playback was running when the session was saved, so
+        // reopening can pick up where it left off rather than always in a
+        // paused state.
+        "ALTER TABLE playback_state ADD COLUMN was_playing INTEGER NOT NULL DEFAULT 0",
         "UPDATE albums SET added_at = NULL
            WHERE added_at IS NOT NULL AND added_at NOT LIKE '%T%Z'",
     ];

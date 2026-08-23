@@ -73,6 +73,8 @@ pub fn get_similar_artists(
                     name: row.get(1)?,
                     sort_name: row.get(2)?,
                     remote_id: row.get(3)?,
+                    album_count: 0,
+                    track_count: 0,
                 },
                 row.get::<_, f64>(4)?,
             ))
@@ -103,6 +105,8 @@ pub fn get_similar_artists_detailed(
                     name: row.get(1)?,
                     sort_name: row.get(2)?,
                     remote_id: row.get(3)?,
+                    album_count: 0,
+                    track_count: 0,
                 },
                 score: row.get(4)?,
                 source: row.get(5)?,

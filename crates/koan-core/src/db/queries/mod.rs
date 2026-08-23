@@ -36,6 +36,11 @@ pub struct ArtistRow {
     pub name: String,
     pub sort_name: Option<String>,
     pub remote_id: Option<String>,
+    /// Albums credited to this artist, and tracks across them. Aggregated in
+    /// the same query as the row itself — a count per artist would be one
+    /// query per row in a list thousands long.
+    pub album_count: i64,
+    pub track_count: i64,
 }
 
 #[derive(Debug, Clone)]

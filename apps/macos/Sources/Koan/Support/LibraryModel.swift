@@ -65,6 +65,14 @@ final class LibraryModel {
     /// rather than each browser owning a stack nothing else can reach.
     var path = NavigationPath()
 
+    /// Back to the top of the current section, without leaving it.
+    func popToRoot() {
+        guard !path.isEmpty else { return }
+        path = NavigationPath()
+        selectedAlbumId = nil
+        selectedArtistId = nil
+    }
+
     var selectedArtistId: Int64? {
         didSet {
             guard selectedArtistId != oldValue else { return }

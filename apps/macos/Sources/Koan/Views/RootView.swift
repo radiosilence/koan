@@ -44,11 +44,17 @@ struct RootView: View {
                     // Restating it here gives the column the inset it should
                     // have inherited.
                     .safeAreaPadding(.bottom, 64)
+                    // The stack draws its own back button for pushed
+                    // destinations, next to the pair we already have — three
+                    // chevrons in a row. Ours can cross sections and search
+                    // jumps, which the stack's cannot, so the stack's goes.
                     .navigationDestination(for: AlbumRoute.self) { route in
                         AlbumDetailView(albumId: route.id)
+                            .navigationBarBackButtonHidden(true)
                     }
                     .navigationDestination(for: ArtistRoute.self) { route in
                         ArtistDetailView(artistId: route.id)
+                            .navigationBarBackButtonHidden(true)
                     }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -56,6 +62,20 @@ struct RootView: View {
         .inspector(isPresented: $showLyrics) {
             LyricsPanel()
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
+                // The toggle belongs to the inspector rather than the window, so
+                // it sits at the pane's leading edge and moves with it. In the
+                // window's trailing group the pane opened out from underneath
+                // it, and it shared a capsule with the filter field.
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            showLyrics.toggle()
+                        } label: {
+                            Label("Lyrics", systemImage: "quote.bubble")
+                        }
+                        .help("Lyrics panel (⌥⌘L)")
+                    }
+                }
         }
         .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { handleSubmit() }
@@ -82,55 +102,58 @@ struct RootView: View {
                 .help("Forward (⌘])")
             }
 
-            // Everything that acts on the current view lives in one trailing
-            // group. A leading Spacer inside the group is what actually pins it
-            // right: `.primaryAction` alone only lands trailing when something
-            // else already occupies the toolbar, which is why it looked correct
-            // on the albums view and drifted left everywhere else.
-            ToolbarItemGroup(placement: .primaryAction) {
+            // Separate items, not one ToolbarItemGroup: a group is drawn as a
+            // single joined control, which put the filter field and the lyrics
+            // toggle inside the same capsule.
+            ToolbarItem(placement: .primaryAction) {
                 Spacer()
+            }
 
-                // Filtering what is on screen belongs with it, not in the
-                // sidebar search, which navigates away instead of narrowing.
-                if library.section == .albums || library.section == .artists {
+            // Filtering what is on screen belongs with it, not in the sidebar
+            // search, which navigates away instead of narrowing.
+            if library.section == .albums || library.section == .artists {
+                ToolbarItem(placement: .primaryAction) {
                     FilterField(
                         placeholder: library.section == .albums
-                            ? "Filter albums" : "Filter artists"
+                            ? "Filter albums" : "Filter artists",
+                        text: $library.filter
                     )
+                    .frame(width: 180)
                 }
-
-                // Sort belongs next to what it sorts, so it only appears there.
-                if library.section == .albums {
-                    Picker("Sort", selection: Binding(
-                        get: { library.albumSort },
-                        set: { library.albumSort = $0 }
-                    )) {
-                        ForEach(AlbumSort.all, id: \.self) { sort in
-                            Text(sort.label).tag(sort)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(width: 150)
-                    .help("Sort albums")
-
-                    if library.albumSort == .random {
-                        Button {
-                            library.reshuffleAlbums()
-                        } label: {
-                            Label("Shuffle", systemImage: "shuffle")
-                        }
-                        .help("Shuffle again")
-                    }
-                }
-
-                Button {
-                    showLyrics.toggle()
-                } label: {
-                    Label("Lyrics", systemImage: "quote.bubble")
-                }
-                .help("Lyrics panel (⌥⌘L)")
             }
+
+            // Sort belongs next to what it sorts, so it only appears there.
+            if library.section == .albums {
+                // A pull-down with the current choice ticked, the way Finder's
+                // arrange control works — rather than a picker forced to a
+                // fixed width, which reads as a control that did not fit.
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Picker("Sort", selection: Binding(
+                            get: { library.albumSort },
+                            set: { library.albumSort = $0 }
+                        )) {
+                            ForEach(AlbumSort.all, id: \.self) { sort in
+                                Text(sort.label).tag(sort)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                        .labelsHidden()
+
+                        if library.albumSort == .random {
+                            Divider()
+                            Button("Shuffle Again") { library.reshuffleAlbums() }
+                        }
+                    } label: {
+                        Label("Sort", systemImage: "arrow.up.arrow.down")
+                    }
+                    // The accent marks what is playing and what is selected.
+                    // A toolbar control that is always there is neither.
+                    .tint(.primary)
+                    .help("Sort albums — \(library.albumSort.label)")
+                }
+            }
+
         }
         .sheet(isPresented: $showingPicker) {
             PickerSheet(isPresented: $showingPicker)

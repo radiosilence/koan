@@ -27,7 +27,15 @@ struct ArtistBrowser: View {
                 // The name is the way in — a link, so a single click opens the
                 // artist while the rest of the row selects.
                 RowLink(artist.name) { library.reveal(artist: artist.id) }
-                Spacer()
+                Spacer(minLength: 12)
+                Text(Format.count(artist.albumCount, "album"))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .frame(width: 78, alignment: .trailing)
+                Text(Format.count(artist.trackCount, "track"))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .frame(width: 78, alignment: .trailing)
             }
             .onHover { inside in
                 if inside { hovered = artist.id } else if hovered == artist.id { hovered = nil }
@@ -71,24 +79,30 @@ struct ArtistDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                HStack(alignment: .center, spacing: 14) {
-                    if let artist {
-                        PlayableHeaderButton(playable: .artist(id: artist.id, name: artist.name))
-                    }
-                    VStack(alignment: .leading, spacing: 4) {
+                // The play button reads as part of the title, so it sits on the
+                // title's line. Everything below is full width rather than
+                // indented into a column beside it.
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 14) {
+                        if let artist {
+                            PlayableHeaderButton(
+                                playable: .artist(id: artist.id, name: artist.name)
+                            )
+                            .alignmentGuide(.firstTextBaseline) { $0[.bottom] * 0.78 }
+                        }
                         Text(artist?.name ?? "Artist")
                             .font(.system(size: 26, weight: .semibold))
-                        Text(Format.count(Int64(albums.count), "album"))
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        if let artist {
-                            let playable = Playable.artist(id: artist.id, name: artist.name)
-                            HStack(spacing: 10) {
-                                QueueButtons(playable: playable)
-                                ShareButton(playable: playable)
-                            }
-                            .padding(.top, 4)
+                    }
+                    Text(Format.count(Int64(albums.count), "album"))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    if let artist {
+                        let playable = Playable.artist(id: artist.id, name: artist.name)
+                        HStack(spacing: 10) {
+                            QueueButtons(playable: playable)
+                            ShareButton(playable: playable)
                         }
+                        .padding(.top, 4)
                     }
                     Spacer()
                     Button {

@@ -708,13 +708,19 @@ impl KoanEngine {
             &persisted,
             cursor_path.as_deref(),
             self.state.position_ms(),
+            self.state.playback_state() == PlaybackState::Playing,
         )
         .map_err(fav_err)
     }
 
     /// Restore the queue saved by `save_session`, cursor and position included.
-    /// Deliberately does not start playing — reopening an app should not make
-    /// noise. Returns the number of items restored.
+    ///
+    /// Resumes only if playback was running when the session was saved: closing
+    /// a player mid-track and having it pick up where it left off is the point,
+    /// while a player that was paused should stay paused rather than start
+    /// making noise at whoever opened it.
+    ///
+    /// Returns the number of items restored.
     pub fn restore_session(&self) -> Result<u32, KoanError> {
         let db = self.db()?;
         let Some(saved) = queries::load_playback_state(&db.conn).map_err(fav_err)? else {
@@ -743,6 +749,9 @@ impl KoanEngine {
         if let Some(id) = cursor {
             self.state.set_cursor(Some(id));
             self.park_at(id, saved.position_ms);
+            if saved.was_playing {
+                self.send(PlayerCommand::Resume)?;
+            }
         }
 
         Ok(count)
