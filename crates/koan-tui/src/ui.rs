@@ -502,6 +502,11 @@ mod tests {
 
     /// An `App` with a queue and a track playing, detached from any real player.
     fn app_with_queue(len: usize) -> App {
+        // First, before anything reads configuration: spawning the download
+        // queue resolves the remote server, and a render test has no business
+        // reaching for anyone's credentials.
+        koan_core::config::isolate_config_for_tests();
+
         let state = SharedPlayerState::new();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let log_buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));

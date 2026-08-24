@@ -1329,6 +1329,7 @@ mod client_cache_tests {
 
     #[test]
     fn one_subsonic_client_is_shared_per_credentials() {
+        crate::config::isolate_config_for_tests();
         let mut cfg = Config::default();
         cfg.remote.enabled = true;
         cfg.remote.url = "https://shared-client.invalid".into();

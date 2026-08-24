@@ -4,6 +4,20 @@
 
 ### Added
 
+- **`KOAN_CONFIG_DIR` points koan at a different configuration directory**, so one machine can run more than one library. `config_dir()` honours it, and `set_config_dir()` does the same in-process.
+
+### Fixed
+
+- **The test suite read the developer's own configuration, and asked for their keychain password.** `Config::load()` resolves its directory from `$HOME`, so tests inherited whatever library folders and remote server belonged to whoever ran them. A koan-tui *rendering* test spawned the download queue, which resolved the configured server and reached for the credentials to reach it with — and macOS put up a dialog asking for the login keychain password. The suite then blocked on it: koan-server's tests took 25.52s waiting, and 0.10s when the keychain was disabled.
+
+  Nothing was hardcoded; that is what made it easy to miss. The tests were simply configured as the person running them, and CI never noticed because a runner has no `~/.config/koan/` to inherit. On a developer's machine the same code path would have gone on to fetch tracks from their server.
+
+  Tests point the configuration at a disposable directory now, so they read a config nobody has edited. The ones that need a remote build their own rather than borrowing one.
+
+## Unreleased
+
+### Added
+
 - **The macOS app takes the TUI's single-key shortcuts.** `space`, `<`/`>`, `,`/`.`, `f`, `R`, `p`, `/`, `l`/`a`, `r`, `g`/`G`, `L`, `z` and `?` do there what they do in the TUI, and Help ▸ Keyboard Shortcuts (`?`) lists them — generated from the table that implements them, so the two cannot drift.
 
   They are handled by a local event monitor rather than declared as menu shortcuts. A modifier-less key equivalent is claimed by the menu bar before the responder chain sees it, which would mean `f` favouriting a track instead of typing an f into the search field. The monitor asks what has focus first: the keys are live in the app and dead in any text field, sheet or the settings window. The cost is type-select in lists, which koan's browsers have a filter field for.
