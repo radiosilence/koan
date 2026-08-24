@@ -1,20 +1,6 @@
 # Changelog
 
-## Unreleased
-
-### Added
-
-- **`KOAN_CONFIG_DIR` points koan at a different configuration directory**, so one machine can run more than one library. `config_dir()` honours it, and `set_config_dir()` does the same in-process.
-
-### Fixed
-
-- **The test suite read the developer's own configuration, and asked for their keychain password.** `Config::load()` resolves its directory from `$HOME`, so tests inherited whatever library folders and remote server belonged to whoever ran them. A koan-tui *rendering* test spawned the download queue, which resolved the configured server and reached for the credentials to reach it with — and macOS put up a dialog asking for the login keychain password. The suite then blocked on it: koan-server's tests took 25.52s waiting, and 0.10s when the keychain was disabled.
-
-  Nothing was hardcoded; that is what made it easy to miss. The tests were simply configured as the person running them, and CI never noticed because a runner has no `~/.config/koan/` to inherit. On a developer's machine the same code path would have gone on to fetch tracks from their server.
-
-  Tests point the configuration at a disposable directory now, so they read a config nobody has edited. The ones that need a remote build their own rather than borrowing one.
-
-## v0.27.0 (2026-08-24)
+## v0.27.1 (2026-08-24)
 
 ### Changed
 
@@ -24,7 +10,11 @@
 
   A client that falls behind now drops the events it missed instead of delaying the engine. Every variant carries an absolute value — a snapshot, a version, a position — so the one that does arrive is complete on its own.
 
+## v0.27.0 (2026-08-24)
+
 ### Added
+
+- **`KOAN_CONFIG_DIR` points koan at a different configuration directory**, so one machine can run more than one library. `config_dir()` honours it, and `set_config_dir()` does the same in-process.
 
 - **The macOS app takes the TUI's single-key shortcuts.** `space`, `<`/`>`, `,`/`.`, `f`, `R`, `p`, `/`, `l`/`a`, `r`, `g`/`G`, `L`, `z` and `?` do there what they do in the TUI, and Help ▸ Keyboard Shortcuts (`?`) lists them — generated from the table that implements them, so the two cannot drift.
 
@@ -67,6 +57,12 @@
   `koan remote status` asks the way koan asks. It read the config field directly and never consulted the credential store, so it reported `password: not set` for every keychain-backed sign-in — the arrangement `koan remote login` creates — and then skipped its own connectivity check because of that same flag. The one tool that should have diagnosed this was reporting the opposite of the truth.
 
 ### Fixed
+
+- **The test suite read the developer's own configuration, and asked for their keychain password.** `Config::load()` resolves its directory from `$HOME`, so tests inherited whatever library folders and remote server belonged to whoever ran them. A koan-tui *rendering* test spawned the download queue, which resolved the configured server and reached for the credentials to reach it with — and macOS put up a dialog asking for the login keychain password. The suite then blocked on it: koan-server's tests took 25.52s waiting, and 0.10s when the keychain was disabled.
+
+  Nothing was hardcoded; that is what made it easy to miss. The tests were simply configured as the person running them, and CI never noticed because a runner has no `~/.config/koan/` to inherit. On a developer's machine the same code path would have gone on to fetch tracks from their server.
+
+  Tests point the configuration at a disposable directory now, so they read a config nobody has edited. The ones that need a remote build their own rather than borrowing one.
 
 - **Menu shortcuts no longer reach past a field you are typing in.** ⌘← and ⌥← skipped tracks instead of moving the caret or the word, and ⌘Z undid a queue edit instead of the typing — in the search field, a filter, Settings, anywhere. Every shortcut whose key also means something while typing is now *disabled* while a field has focus, which releases its key equivalent to the responder chain; declining the action instead would leave the menu swallowing the key, so the shortcut would stop working without the field ever hearing it. The bare-key shortcuts already asked what had focus; the modified ones never did.
 
