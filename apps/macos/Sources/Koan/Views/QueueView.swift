@@ -18,13 +18,6 @@ struct QueueView: View {
     @State private var savingSnapshot = false
     @State private var snapshotName = ""
 
-    /// The record the wash behind the header is showing.
-    ///
-    /// Held rather than derived from `currentTrackId` on every frame: artwork
-    /// is fetched per *track*, so re-deriving it would ask the server for a new
-    /// copy of the same sleeve at every track change within a record. It only
-    /// moves when the record does.
-    @State private var bleed: AlbumArtwork.Source?
 
     /// Grouped or one row per track. Persisted because it is a preference about
     /// how you listen rather than about the queue in front of you: an album
@@ -105,17 +98,6 @@ struct QueueView: View {
                 }
             }
         }
-        // The queue is a list of names; the record playing is the one thing in
-        // it with a colour. An album page washes its header in the cover, and
-        // this is the same treatment applied to what is on rather than to what
-        // you opened.
-        .background(alignment: .top) {
-            ArtworkBleed(source: bleed, drifts: player.isPlaying)
-                .frame(height: 320)
-        }
-        .onChange(of: playingRecord, initial: true) { _, _ in
-            bleed = player.currentTrackId.map { .track($0) }
-        }
         // On the whole stage, not the List: an empty queue is exactly when you
         // want to drop a folder on it, and it has no rows to land on.
         .dropDestination(for: URL.self) { urls, _ in
@@ -136,12 +118,6 @@ struct QueueView: View {
     }
 
     // MARK: - Header
-
-    /// Which record is playing — artist as well as title, because "Greatest
-    /// Hits" is not one record.
-    private var playingRecord: String? {
-        player.currentEntry.map { "\($0.albumArtist)\u{1}\($0.album)" }
-    }
 
     private var header: some View {
         HStack(spacing: 12) {

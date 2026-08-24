@@ -26,22 +26,80 @@ struct RootView: View {
     @Environment(Navigator.self) private var nav
     @Environment(SearchModel.self) private var search
     @Environment(PlayerModel.self) private var player
+    /// Read here only to hand back to the window background — see below.
+    @Environment(CoverArtCache.self) private var art
 
     @AppStorage("showLyrics") private var showLyrics = false
     @State private var transportHeight: CGFloat = 0
+    /// The record the window is washed in.
+    ///
+    /// Held rather than derived from `currentTrackId` on every frame: artwork
+    /// is fetched per *track*, so re-deriving it would ask the server for a new
+    /// copy of the same sleeve at every track change within a record. It only
+    /// moves when the record does.
+    @State private var bleed: AlbumArtwork.Source?
+    /// The colour of the record playing. The app's own accent is a neutral, so
+    /// the only colour in the chrome is the one the music brought.
+    @State private var recordTint: Color?
+    /// Watched rather than inferred from the measured width: a collapsed
+    /// sidebar still reports its last width, so the transport kept a gap where
+    /// it used to be.
+    @State private var columns: NavigationSplitViewVisibility = .automatic
+
+    /// What the window is washed in: the record you opened, or the one playing,
+    /// and only where either means something. A library grid is its own colour.
+    private var washSource: AlbumArtwork.Source? {
+        if case .album(let id) = nav.stack.wrappedValue.last {
+            .album(id)
+        } else if nav.section == .queue {
+            bleed
+        } else {
+            nil
+        }
+    }
+
+    /// What the *controls* take their colour from. The page you are on first —
+    /// an album's own record — and what is playing everywhere else, so a
+    /// favourites list is still coloured by the music rather than by nothing.
+    private var tintSource: AlbumArtwork.Source? {
+        if case .album(let id) = nav.stack.wrappedValue.last {
+            .album(id)
+        } else {
+            bleed
+        }
+    }
+
+    /// Which record is playing — artist as well as title, because "Greatest
+    /// Hits" is not one record.
+    private var playingRecord: String? {
+        player.currentEntry.map { "\($0.albumArtist)\u{1}\($0.album)" }
+    }
 
     var body: some View {
         @Bindable var library = library
         @Bindable var search = search
         @Bindable var ui = ui
 
-        NavigationSplitView {
+        // The window background is evaluated by the *scene*, outside every
+        // environment `RootView` was handed, so anything it needs is captured
+        // here. Reading an `@Environment` inside that closure — including to
+        // put one back — traps, and the app dies on launch.
+        let wash = washSource
+        let washDrifts = player.isPlaying
+        let artCache = art
+
+        NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
             NavigationStack(path: nav.stack) {
                 StageView()
                     .clearsTransport(transportHeight)
+                    // A page with no wash needs a ground of its own. The
+                    // window's is the wash now, so anything transparent
+                    // composites onto it — and onto the page you came from,
+                    // which is what a library grid was doing.
+                    .background(washSource == nil ? AnyShapeStyle(.background) : AnyShapeStyle(.clear))
                     // The stack draws its own back button for pushed
                     // destinations, next to the pair we already have — three
                     // chevrons in a row. Ours can cross sections and search
@@ -52,10 +110,27 @@ struct RootView: View {
                             AlbumDetailView(albumId: id)
                                 .navigationBarBackButtonHidden(true)
                                 .clearsTransport(transportHeight)
+                                // Its own ground and its own wash, rather than
+                                // borrowing the window's. A pushed view lingers
+                                // in the hierarchy after you pop it, and a
+                                // transparent one goes on drawing itself over
+                                // the grid you came back to.
+                                .background {
+                                    ZStack {
+                                        Rectangle().fill(.background)
+                                        ArtworkBleed(
+                                            source: .album(id),
+                                            drifts: player.isPlaying
+                                        )
+                                    }
+                                }
                         case .artist(let id):
                             ArtistDetailView(artistId: id)
                                 .navigationBarBackButtonHidden(true)
                                 .clearsTransport(transportHeight)
+                                // An artist is a shelf of records rather than
+                                // one, so there is no wash to show through.
+                                .background(.background)
                         }
                     }
             }
@@ -79,6 +154,44 @@ struct RootView: View {
                     }
                 }
         }
+        // The queue is a list of names, and the record playing is the only
+        // thing in it with a colour. On the *window* rather than behind the
+        // queue: nothing inside a split view column reaches past the toolbar's
+        // inset, and a wash that stops in a line under the toolbar is worse
+        // than none. An album page washes its own header, so the window stays
+        // out of its way.
+        .containerBackground(for: .window) {
+            // Over an opaque ground, because this *replaces* the window's own
+            // background rather than sitting on it — a half-transparent wash on
+            // its own leaves you looking through the app at the desktop.
+            ZStack {
+                Rectangle().fill(.background)
+                ArtworkBleed(source: wash, drifts: washDrifts)
+                    .environment(artCache)
+            }
+        }
+        .onChange(of: playingRecord, initial: true) { _, _ in
+            bleed = player.currentTrackId.map { .track($0) }
+        }
+        .task(id: tintSource) {
+            guard let tintSource, let cover = await art.image(for: tintSource) else {
+                recordTint = nil
+                return
+            }
+            recordTint = .dominant(of: cover)
+        }
+        // Overrides the app-wide tint for everything below, which is every
+        // control koan draws itself. What AppKit draws — list selection, focus
+        // rings — keeps the declared accent, and that is deliberately a neutral
+        // so the two never argue.
+        .tint(recordTint ?? .koanAccent)
+        .animation(.easeInOut(duration: 2), value: recordTint)
+        // The toolbar paints its own ground over whatever is behind it, which
+        // put a hard grey strip across the top of a queue washed in the colour
+        // of the record. Hidden, the glass controls sit in that colour — which
+        // is the whole point of them being glass — and the scroll edge effect
+        // keeps rows legible as they pass under.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { handleSubmit() }
         // On the window rather than inside the detail column: a
@@ -89,7 +202,7 @@ struct RootView: View {
         // `clearsTransport`.
         .overlay(alignment: .bottom) {
             TransportBar()
-                .padding(.leading, ui.sidebarWidth)
+                .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(
@@ -256,7 +369,8 @@ private struct StageView: View {
             TrackListView(
                 title: "Favourites",
                 subtitle: Format.count(Int64(library.favourites.count), "track"),
-                tracks: library.favourites
+                tracks: library.favourites,
+                mixedAlbums: true
             )
         case .playHistory:
             HistoryView()

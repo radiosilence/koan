@@ -12,6 +12,10 @@ struct TrackListView: View {
     var artistLink: Int64?
     /// What the header's play button acts on.
     var playable: Playable?
+    /// Set when the tracks come from all over rather than from one record.
+    /// Those rows carry their own cover and name the album they came from —
+    /// a single record's tracklist has both in the header above it.
+    var mixedAlbums = false
 
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
@@ -24,7 +28,6 @@ struct TrackListView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
                 .padding(.bottom, 16)
-                .background(alignment: .top) { ArtworkBleed(source: artwork) }
 
             if tracks.isEmpty {
                 EmptyState(icon: "music.note.list", title: "No tracks")
@@ -42,12 +45,21 @@ struct TrackListView: View {
                                 position: index + 1,
                                 isCurrent: player.currentTrackId == track.id,
                                 isSelected: selection.contains(track.id),
+                                showsAlbum: mixedAlbums,
                                 allTrackIds: tracks.map(\.id)
                             )
                             .rowBehaviour(playable: .track(track))
                         }
                     }
                     .listStyle(.inset)
+                    // Gives up its ground only where there is a wash to show:
+                    // otherwise the List paints over it and the record's colour
+                    // stops in a line under the header. Without a cover — a
+                    // favourites list — it keeps its ground, or it composites
+                    // onto whatever the window is drawing, which is the page
+                    // you came from.
+                    .scrollContentBackground(artwork == nil ? .visible : .hidden)
+
                     // The List's own double-click hook. Wired into selection
                     // rather than the gesture system, so it doesn't steal the
                     // first click.
@@ -168,6 +180,8 @@ private struct TrackRow: View {
     let position: Int
     let isCurrent: Bool
     let isSelected: Bool
+    /// Draws the cover and names the album — see `TrackListView.mixedAlbums`.
+    let showsAlbum: Bool
     /// The whole list, so playing this row keeps the rest queued behind it.
     let allTrackIds: [Int64]
 
@@ -196,6 +210,21 @@ private struct TrackRow: View {
             .font(.caption.monospacedDigit())
             .frame(width: 22, alignment: .trailing)
 
+            if showsAlbum {
+                // The cover is what you recognise a record by, and a list
+                // gathered from the whole library is exactly that job.
+                Group {
+                    if let albumId = track.albumId {
+                        AlbumArtwork(source: .album(albumId), cornerRadius: 3)
+                    } else {
+                        Image(systemName: "music.note")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(width: 34, height: 34)
+            }
+
             VStack(alignment: .leading, spacing: 1) {
                 Text(track.title)
                     .lineLimit(1)
@@ -206,13 +235,24 @@ private struct TrackRow: View {
                             ? AnyShapeStyle(.tint)
                             : AnyShapeStyle(.primary)
                     )
-                LinkText(
-                    text: track.artistName,
-                    target: track.artistId.map { .artist($0) },
-                    font: .caption
-                )
+                HStack(spacing: 5) {
+                    LinkText(
+                        text: track.artistName,
+                        target: track.artistId.map { .artist($0) },
+                        font: .caption
+                    )
+                    if showsAlbum {
+                        Text("·")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        LinkText(
+                            text: track.albumTitle,
+                            target: track.albumId.map { .album($0) },
+                            font: .caption
+                        )
+                    }
+                }
             }
-
 
             Spacer(minLength: 8)
 
@@ -234,7 +274,7 @@ private struct TrackRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 48, alignment: .trailing)
         }
-        .frame(height: 34)
+        .frame(height: showsAlbum ? 44 : 34)
         // The row is only clickable where a view sits; the Spacer would
         // otherwise be a dead zone.
         .contentShape(Rectangle())
