@@ -104,7 +104,7 @@ extension Hotkeys {
     /// ⌘ shortcuts in the menu bar cover what the menus already say.
     static func standard(
         player: PlayerModel,
-        library: LibraryModel,
+        nav: Navigator,
         ui: UIState
     ) -> Hotkeys {
         Hotkeys([
@@ -137,17 +137,17 @@ extension Hotkeys {
                 ui.focusSearch()
             },
             Hotkey(keys: ["l", "a"], label: "Albums", group: .navigation) {
-                library.section = .albums
+                nav.show(.albums)
             },
             Hotkey(keys: ["r"], label: "Artists", group: .navigation) {
-                library.section = .artists
+                nav.show(.artists)
             },
             Hotkey(keys: ["g"], label: "Top of the queue", group: .navigation) {
-                library.section = .queue
+                nav.show(.queue)
                 ui.jumpQueue(to: .top)
             },
             Hotkey(keys: ["G"], label: "End of the queue", group: .navigation) {
-                library.section = .queue
+                nav.show(.queue)
                 ui.jumpQueue(to: .bottom)
             },
 

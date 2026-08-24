@@ -20,6 +20,12 @@
 
 ### Fixed
 
+- **Clicks that registered and did nothing.** Four separate things cleared or replaced the detail column's navigation path — a section switch, the sidebar's selection setter, a history move, and the push itself — and none knew about the others, so a push could be undone by an unrelated update landing in the same pass. `Navigator` owns it now: one `Location` value holding the section and the stack pushed on top of it, one history of locations behind it, and a single move that writes both. The sidebar's highlight is stored rather than derived from the stack, so a `List` writing its selection back can no longer pop what was just pushed, and the stack's root is a view of its own, so changing section cannot make SwiftUI discard the path against it.
+
+  Two consequences worth knowing. Back and Forward now restore the whole location, so returning to a section you had pushed into puts you back where you were rather than at its top. And clicking the sidebar row you are already on does nothing — that write is indistinguishable from one SwiftUI makes itself, and honouring it was half the bug. Back, from the toolbar or ⌘[, is the way out of a detail view.
+
+- **Picking a search suggestion lands in the section the thing lives in.** It used to push onto the results page and then empty the field, which left you standing on a root that no longer had anything in it. An album opens under Albums, an artist under Artists, and Back returns to whatever you were doing before you searched.
+
 - **Correcting a file's tags re-merges it with its remote copy.** `upsert_track` matched by path first, so once a row existed for a file every later scan updated it in place and never reconsidered the cross-source merge. That is wrong exactly when the original tags were bad: a track indexed as `Golden Skans (David E Sugar R` with no track number could not content-match the copy synced from the server, and fixing the tags gave it the right title and a second identical row rather than one. A row matched by path or remote id is now asked the content-match question again against the corrected metadata, and folds its counterpart in if it is there — play history concatenates, lyrics and the embedding fill a gap, favourites follow the path. The album the bad tags invented is dropped with it.
 
   A library already holding duplicates from this is repaired by `koan scan --force`; a plain scan skips files whose mtime and size have not changed, and it is the re-read that spots the merge.

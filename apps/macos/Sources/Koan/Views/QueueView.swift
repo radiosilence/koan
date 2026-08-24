@@ -9,6 +9,7 @@ import SwiftUI
 /// separate visits to the same record into one heading would misrepresent it.
 struct QueueView: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
     @Environment(\.openWindow) private var openWindow
@@ -233,7 +234,7 @@ struct QueueView: View {
                 player.report("That track is no longer in the library.")
                 return
             }
-            library.reveal(album: albumId, highlighting: highlight ? trackId : nil)
+            nav.open(album: albumId, highlighting: highlight ? trackId : nil)
         }
     }
 

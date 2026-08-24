@@ -166,7 +166,8 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Library tasks are exclusive — they queue behind SQLite's single writer — and each is cancellable |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
 | `Support/PlayerModel.swift` | Polls `now_playing()` at 10 Hz; refetches the queue only when `playlistVersion` moves |
-| `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale |
+| `Support/Navigator.swift` | Where the app is. One `Location` — a section plus the stack pushed on it — and the only thing that writes the detail stack's path or the history behind it |
+| `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale. Follows the navigator; never moves it |
 | `Support/CoverArtCache.swift` | Album-keyed art cache. Each miss is an HTTP round trip on remote libraries |
 | `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select |
 | `Views/PickerSheet.swift` | ⌘K picker: multi-select, add / add-and-play / replace queue |

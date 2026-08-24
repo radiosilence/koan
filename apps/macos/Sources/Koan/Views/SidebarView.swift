@@ -10,6 +10,7 @@ struct SidebarView: View {
     let bottomInset: CGFloat
 
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
     @Environment(SearchModel.self) private var search
     @Environment(UIState.self) private var ui
@@ -19,26 +20,13 @@ struct SidebarView: View {
     @State private var queueDropTargeted = false
 
     var body: some View {
-        @Bindable var library = library
         @Bindable var search = search
 
-        // The lit row is the section being browsed, and nothing else. Deriving
-        // it from the detail stack — so that an album reached from anywhere lit
-        // Albums — meant pushing a destination moved the selection, and a List
-        // writes a moved selection back through its binding. The setter below
-        // then popped the path it had just been given, so a click on a search
-        // result registered and went nowhere.
-        List(selection: Binding(
-            get: { library.section },
-            set: { chosen in
-                guard let chosen else { return }
-                // Choosing a section always lands on its root — including the
-                // one you are already in, which is otherwise a trip out to
-                // another section and back.
-                library.section = chosen
-                library.popToRoot()
-            }
-        )) {
+        // The lit row is the section you are in, whatever you have pushed on
+        // top of it — that is where Back returns you to. The navigator owns
+        // both halves of the binding; see `sidebarSelection` for why the
+        // highlight is not derived from the stack.
+        List(selection: nav.sidebarSelection) {
             Section {
                 HStack {
                     Label("Queue", systemImage: "list.bullet")
@@ -47,7 +35,7 @@ struct SidebarView: View {
                         ProgressView().controlSize(.small)
                     }
                 }
-                    .tag(LibraryModel.Section.queue)
+                    .tag(Navigator.Section.queue)
                     // Full width, so the target is the row rather than just the
                     // text — dropping onto the empty part of the row should
                     // work, and a target you have to hit precisely is no target.
@@ -66,24 +54,24 @@ struct SidebarView: View {
                     )
                 if search.hasQuery {
                     Label("Results", systemImage: "magnifyingglass")
-                        .tag(LibraryModel.Section.searchResults)
+                        .tag(Navigator.Section.searchResults)
                 }
             }
 
             Section("Library") {
                 Label("Albums", systemImage: "square.stack")
-                    .tag(LibraryModel.Section.albums)
+                    .tag(Navigator.Section.albums)
                 Label("Artists", systemImage: "music.mic")
-                    .tag(LibraryModel.Section.artists)
+                    .tag(Navigator.Section.artists)
                 Label("Favourites", systemImage: "heart")
-                    .tag(LibraryModel.Section.favourites)
+                    .tag(Navigator.Section.favourites)
                 Label("History", systemImage: "clock.arrow.circlepath")
-                    .tag(LibraryModel.Section.playHistory)
+                    .tag(Navigator.Section.playHistory)
             }
 
             Section("Playlists") {
                 Label("Snapshots", systemImage: "bookmark")
-                    .tag(LibraryModel.Section.snapshots)
+                    .tag(Navigator.Section.snapshots)
             }
         }
         .listStyle(.sidebar)

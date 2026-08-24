@@ -10,6 +10,7 @@ struct ArtistPill: View {
     var detail: String?
 
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
     @State private var hovering = false
 
     var body: some View {
@@ -38,7 +39,7 @@ struct ArtistPill: View {
         .background(hovering ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.quaternary), in: Capsule())
         .contentShape(Capsule())
         .onHover { hovering = $0 }
-        .onTapGesture { library.reveal(artist: artistId) }
+        .onTapGesture { nav.open(artist: artistId) }
         .help("Go to \(name)")
         .contextMenu { PlayableMenu(playable: .artist(id: artistId, name: name)) }
         .draggablePlayable(.artist(id: artistId, name: name))

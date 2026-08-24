@@ -10,6 +10,7 @@ struct AlbumGridCell: View {
     var showArtist: Bool = true
 
     @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
 
     @State private var titleHovering = false
@@ -53,7 +54,7 @@ struct AlbumGridCell: View {
                 .lineLimit(1)
                 .contentShape(.rect)
                 .onHover { titleHovering = $0 }
-                .onTapGesture { library.reveal(album: album.id) }
+                .onTapGesture { nav.open(album: album.id) }
 
             HStack(spacing: 4) {
                 if showArtist {

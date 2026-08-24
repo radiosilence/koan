@@ -15,14 +15,15 @@ import SwiftUI
 /// `safeAreaInset` and the lyrics panel an `inspector` for the same reason —
 /// both add chrome without taking the detail column's width away.
 ///
-/// There is one `NavigationStack` for the whole detail column, and its path
-/// lives on `LibraryModel`. Per-browser stacks can't be driven from outside,
-/// and search needs to push you into one.
+/// There is one `NavigationStack` for the whole detail column and one owner of
+/// its path, `Navigator`. Per-browser stacks can't be driven from outside, and
+/// search needs to push you into one.
 struct RootView: View {
     let hotkeys: Hotkeys
 
     @Environment(UIState.self) private var ui
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
     @Environment(SearchModel.self) private var search
     @Environment(PlayerModel.self) private var player
 
@@ -38,8 +39,8 @@ struct RootView: View {
             SidebarView(bottomInset: transportHeight)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
-            NavigationStack(path: $library.path) {
-                stage
+            NavigationStack(path: nav.stack) {
+                StageView()
                     // The transport is a safeAreaInset on the split view, which
                     // reserves space in the *window* but not inside the detail
                     // column's own scroll views — a List draws its last rows
@@ -54,13 +55,15 @@ struct RootView: View {
                     // destinations, next to the pair we already have — three
                     // chevrons in a row. Ours can cross sections and search
                     // jumps, which the stack's cannot, so the stack's goes.
-                    .navigationDestination(for: AlbumRoute.self) { route in
-                        AlbumDetailView(albumId: route.id)
-                            .navigationBarBackButtonHidden(true)
-                    }
-                    .navigationDestination(for: ArtistRoute.self) { route in
-                        ArtistDetailView(artistId: route.id)
-                            .navigationBarBackButtonHidden(true)
+                    .navigationDestination(for: Route.self) { route in
+                        switch route {
+                        case .album(let id):
+                            AlbumDetailView(albumId: id)
+                                .navigationBarBackButtonHidden(true)
+                        case .artist(let id):
+                            ArtistDetailView(artistId: id)
+                                .navigationBarBackButtonHidden(true)
+                        }
                     }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -105,16 +108,16 @@ struct RootView: View {
             // Spans section switches and search jumps, which a NavigationStack's
             // own back button cannot — it only knows about one stack.
             ToolbarItemGroup(placement: .navigation) {
-                Button { library.goBack() } label: {
+                Button { nav.goBack() } label: {
                     Label("Back", systemImage: "chevron.left")
                 }
-                .disabled(!library.canGoBack)
+                .disabled(!nav.canGoBack)
                 .help("Back (⌘[)")
 
-                Button { library.goForward() } label: {
+                Button { nav.goForward() } label: {
                     Label("Forward", systemImage: "chevron.right")
                 }
-                .disabled(!library.canGoForward)
+                .disabled(!nav.canGoForward)
                 .help("Forward (⌘])")
             }
 
@@ -127,10 +130,10 @@ struct RootView: View {
 
             // Filtering what is on screen belongs with it, not in the sidebar
             // search, which navigates away instead of narrowing.
-            if library.section == .albums || library.section == .artists {
+            if nav.section == .albums || nav.section == .artists {
                 ToolbarItem(placement: .primaryAction) {
                     FilterField(
-                        placeholder: library.section == .albums
+                        placeholder: nav.section == .albums
                             ? "Filter albums" : "Filter artists",
                         text: $library.filter,
                         focusToken: ui.filterFocusToken
@@ -140,7 +143,7 @@ struct RootView: View {
             }
 
             // Sort belongs next to what it sorts, so it only appears there.
-            if library.section == .albums {
+            if nav.section == .albums {
                 // A pull-down with the current choice ticked, the way Finder's
                 // arrange control works — rather than a picker forced to a
                 // fixed width, which reads as a control that did not fit.
@@ -212,29 +215,35 @@ struct RootView: View {
     /// naming exactly what was chosen — or it means "show me everything".
     private func handleSubmit() {
         guard let selection = SearchModel.Selection(token: search.query) else {
-            library.section = .searchResults
+            nav.show(.searchResults)
             return
         }
         switch selection {
         case .track(let id, let albumId):
             // A track lives on its album; that's where you'd play it from.
-            if let albumId { library.reveal(album: albumId, highlighting: id) }
+            if let albumId { nav.jump(to: .album(albumId), highlighting: id) }
         case .album(let id):
-            library.reveal(album: id)
+            nav.jump(to: .album(id))
         case .artist(let id):
-            library.reveal(artist: id)
+            nav.jump(to: .artist(id))
         }
-        // Emptying the field is its own update. The results page is the stack's
-        // root when a suggestion is picked, and clearing the query swaps what
-        // that root draws in the same pass as the push — the case `reveal()`
-        // warns about, where the destination is discarded against the root it
-        // was pushed onto and you are left looking at an empty results page.
-        Task { @MainActor in search.reset() }
+        search.reset()
     }
+}
 
-    @ViewBuilder
-    private var stage: some View {
-        switch library.section {
+/// The root of the detail stack.
+///
+/// A view of its own rather than a `switch` written inline: a `NavigationStack`
+/// discards its path when its root changes identity in the same update, and
+/// each branch of a `switch` in a `ViewBuilder` is a different view. Keeping
+/// the switch one level inside gives the stack a root that never changes, which
+/// is what lets the section and the stack move together.
+private struct StageView: View {
+    @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
+
+    var body: some View {
+        switch nav.section {
         case .queue:
             QueueView()
         case .searchResults:
