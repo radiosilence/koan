@@ -88,6 +88,8 @@
 
   The sidebar takes the same measured inset the detail column takes, so the footer grows upward from the top of the bar.
 
+- **Drag sources outside list rows went through `.onDrag`.** It claims the press outright, which costs the tap underneath it — `RowBehaviour` had already found this and moved list rows to `.draggable`, whose recogniser has a movement threshold and leaves a press that never moves as a click. Album tiles, artist pills and artist names were still on the old path. `PlayableTransfer` is `Transferable` with the two representations the item provider was registering by hand, so drops inside koan and the plain-text fallback out of it are unchanged.
+
 ## v0.26.0 (2026-08-23)
 
 ### Added

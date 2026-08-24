@@ -36,8 +36,6 @@ struct ArtistPill: View {
         .padding(.vertical, 6)
         .fixedSize(horizontal: true, vertical: false)
         .background(hovering ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.quaternary), in: Capsule())
-        // Not a Button: a Button consumes the press that starts a drag, so the
-        // pill would never be draggable.
         .contentShape(Capsule())
         .onHover { hovering = $0 }
         .onTapGesture { library.reveal(artist: artistId) }

@@ -71,11 +71,6 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 
 extension View {
     /// Make this view a drag source for `playable`.
-    ///
-    /// `.onDrag` rather than `.draggable`: the newer Transferable API does not
-    /// take effect on List rows here, while the older item-provider one does.
-    /// Same identifier and same JSON on the wire, so `.dropDestination(for:)`
-    /// still decodes it.
     func draggablePlayable(_ playable: Playable) -> some View {
         draggableTransfer(PlayableTransfer(playable))
     }
@@ -83,25 +78,13 @@ extension View {
     /// The payload directly, for a view that stands for something playable but
     /// has no `Playable` to hand — an artist name inside an album tile knows an
     /// id and a name and nothing else.
+    ///
+    /// `.draggable`, not `.onDrag`: the drag recogniser behind it has a movement
+    /// threshold, so a press that never moves is still a click. `.onDrag` claims
+    /// the press outright and any tap underneath it never fires. The
+    /// `Transferable` conformance puts the same two representations on the wire
+    /// that the item provider used to register by hand.
     func draggableTransfer(_ transfer: PlayableTransfer) -> some View {
-        onDrag {
-            let provider = NSItemProvider()
-            provider.registerDataRepresentation(
-                forTypeIdentifier: UTType.koanPlayable.identifier,
-                visibility: .ownProcess
-            ) { completion in
-                completion(try? JSONEncoder().encode(transfer), nil)
-                return nil
-            }
-            // So a drag that leaves koan still says something useful.
-            provider.registerDataRepresentation(
-                forTypeIdentifier: UTType.plainText.identifier,
-                visibility: .all
-            ) { completion in
-                completion(Data(transfer.name.utf8), nil)
-                return nil
-            }
-            return provider
-        }
+        draggable(transfer)
     }
 }
