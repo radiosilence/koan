@@ -120,7 +120,20 @@ final class Navigator {
     /// about to empty. Back returns to what you were doing before you searched.
     func jump(to route: Route, highlighting trackId: Int64? = nil) {
         highlightedTrackId = trackId
-        go(to: Location(section: route.home, stack: [route]))
+        // In two moves, because a `NavigationStack` throws its path away when
+        // its root changes under it — and a section change swaps the root. Set
+        // both at once and the stack answers the push by writing an empty path
+        // back over it, which is how picking an album out of the search
+        // dropdown left you on the album grid. The section lands first, then
+        // the route is pushed onto a stack that has finished rebuilding.
+        //
+        // The cost is a frame of the section's own root before the push. The
+        // cure for that is a stack whose root never changes; see #300.
+        go(to: Location(section: route.home, stack: []))
+        Task { @MainActor [weak self] in
+            guard let self, location.section == route.home, location.stack.isEmpty else { return }
+            go(to: Location(section: route.home, stack: [route]))
+        }
     }
 
     func goBack() {
