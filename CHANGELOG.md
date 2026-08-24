@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Added
+
+- **The macOS app takes the TUI's single-key shortcuts.** `space`, `<`/`>`, `,`/`.`, `f`, `R`, `p`, `/`, `l`/`a`, `r`, `g`/`G`, `L`, `z` and `?` do there what they do in the TUI, and Help ▸ Keyboard Shortcuts (`?`) lists them — generated from the table that implements them, so the two cannot drift.
+
+  They are handled by a local event monitor rather than declared as menu shortcuts. A modifier-less key equivalent is claimed by the menu bar before the responder chain sees it, which would mean `f` favouriting a track instead of typing an f into the search field. The monitor asks what has focus first: the keys are live in the app and dead in any text field, sheet or the settings window. The cost is type-select in lists, which koan's browsers have a filter field for.
+
+  `Esc` now leaves a search or filter field rather than only clearing it, and `⌘F` focuses the filter on the albums and artists pages, the library search everywhere else.
+
+### Changed
+
+- **The macOS app requires macOS 26.** It was built against 14. Nothing in the app is holding the old floor up and the newer SwiftUI is worth having — `searchFocused`, which is what lets `/` put the caret in the search field, is 15-and-later on its own. The Homebrew cask requires Tahoe to match.
+
 ### Fixed
 
 - **The sync fetched 1,725 artists and threw the list away.** `get_artists` was called, counted, logged as "syncing 1725 artists" and then dropped — artists only ever came into being as a side effect of a track upsert, which saw nothing but a name and an id. That is why not one artist in a synced library had a MusicBrainz id or a sort name, and why the reported artist count was theatre. The list is applied now, and the count is what was actually written.

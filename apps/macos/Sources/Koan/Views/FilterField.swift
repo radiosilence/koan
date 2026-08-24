@@ -16,6 +16,8 @@ import SwiftUI
 struct FilterField: NSViewRepresentable {
     let placeholder: String
     @Binding var text: String
+    /// ⌘F. A counter because focusing twice has to work twice.
+    var focusToken = 0
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
@@ -31,6 +33,9 @@ struct FilterField: NSViewRepresentable {
 
     func updateNSView(_ field: NSSearchField, context: Context) {
         field.placeholderString = placeholder
+        if context.coordinator.claim(focusToken) {
+            field.window?.makeFirstResponder(field)
+        }
         // Only when it actually differs, or every keystroke resets the cursor
         // to the end of the field.
         if field.stringValue != text {
@@ -42,9 +47,19 @@ struct FilterField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         private let text: Binding<String>
+        private var seenFocusToken = 0
 
         init(text: Binding<String>) {
             self.text = text
+        }
+
+        /// True the first time a given token is seen — the field is rebuilt on
+        /// every keystroke in it, and stealing focus back each time would fight
+        /// anyone who had clicked elsewhere.
+        func claim(_ token: Int) -> Bool {
+            guard token != seenFocusToken else { return false }
+            seenFocusToken = token
+            return true
         }
 
         func controlTextDidChange(_ notification: Notification) {

@@ -1,11 +1,11 @@
-// swift-tools-version: 6.0
+// swift-tools-version: 6.2
 import PackageDescription
 
 // The Rust static lib and the generated bindings are build products, not
 // sources — `just macos-ffi` puts them in place before `swift build` runs.
 let package = Package(
     name: "Koan",
-    platforms: [.macOS(.v14)],
+    platforms: [.macOS(.v26)],
     targets: [
         .systemLibrary(name: "koan_ffiFFI", path: "Sources/koan_ffiFFI"),
         .target(

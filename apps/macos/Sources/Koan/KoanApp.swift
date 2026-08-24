@@ -14,8 +14,9 @@ final class AppState {
     let search: SearchModel
     let art: CoverArtCache
     let activity: ActivityModel
+    let ui = UIState()
+    let hotkeys: Hotkeys
     private var nowPlaying: NowPlayingCentre?
-    private var keys: KeyMonitor?
 
     init() throws {
         let engine = try KoanEngine()
@@ -45,8 +46,8 @@ final class AppState {
         self.nowPlaying = centre
         player.onTick = { [weak centre] in centre?.refresh() }
 
-        // Space has to be caught before the focused list eats it.
-        self.keys = KeyMonitor { [weak player] in player?.togglePlayPause() }
+        // Single-key shortcuts, caught before the focused list eats them.
+        self.hotkeys = Hotkeys.standard(player: player, library: library, ui: ui)
     }
 }
 
@@ -55,17 +56,15 @@ struct KoanApp: App {
     @State private var state: AppState?
     @Environment(\.scenePhase) private var scenePhase
     @State private var startupError: String?
-    @State private var showingPicker = false
     @AppStorage("showLyrics") private var showLyrics = false
-
-    private func toggleLyrics() { showLyrics.toggle() }
 
     var body: some Scene {
         Window("koan", id: "main") {
             Group {
                 if let state {
-                    RootView(showingPicker: $showingPicker)
+                    RootView(hotkeys: state.hotkeys)
                         .environment(state)
+                        .environment(state.ui)
                         .environment(state.player)
                         .environment(state.library)
                         .environment(state.search)
@@ -101,7 +100,7 @@ struct KoanApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Add Music…") { showingPicker = true }
+                Button("Add Music…") { state?.ui.showingPicker = true }
                     .keyboardShortcut("k", modifiers: .command)
             }
 
@@ -123,7 +122,7 @@ struct KoanApp: App {
 
             CommandMenu("Playback") {
                 // No `.keyboardShortcut(.space)`: a focused list wins that
-                // contest. KeyMonitor handles the key; this stays for
+                // contest. Hotkeys handles the key; this stays for
                 // discoverability and the menu shows the shortcut anyway.
                 Button("Play / Pause") { state?.player.togglePlayPause() }
                 Button("Next") { state?.player.next() }
@@ -178,9 +177,28 @@ struct KoanApp: App {
                 .keyboardShortcut("a", modifiers: .command)
             }
 
+            // ⌘F means "narrow what I'm looking at" where there is a filter for
+            // that, and the library lookup everywhere else.
+            CommandGroup(after: .pasteboard) {
+                Divider()
+                Button("Find") {
+                    guard let state else { return }
+                    switch state.library.section {
+                    case .albums, .artists: state.ui.focusFilter()
+                    default: state.ui.focusSearch()
+                    }
+                }
+                .keyboardShortcut("f", modifiers: .command)
+            }
+
             CommandMenu("Queue") {
                 Button("Save Session") { state?.player.saveSession() }
                 Button("Clear Queue") { state?.player.clearQueue() }
+            }
+
+            CommandGroup(replacing: .help) {
+                Button("Keyboard Shortcuts") { state?.ui.showingShortcuts = true }
+                    .keyboardShortcut("/", modifiers: .command)
             }
 
             CommandMenu("Library") {
