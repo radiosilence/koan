@@ -19,8 +19,9 @@ import SwiftUI
 /// lives on `LibraryModel`. Per-browser stacks can't be driven from outside,
 /// and search needs to push you into one.
 struct RootView: View {
-    @Binding var showingPicker: Bool
+    let hotkeys: Hotkeys
 
+    @Environment(UIState.self) private var ui
     @Environment(LibraryModel.self) private var library
     @Environment(SearchModel.self) private var search
     @Environment(PlayerModel.self) private var player
@@ -32,6 +33,7 @@ struct RootView: View {
     var body: some View {
         @Bindable var library = library
         @Bindable var search = search
+        @Bindable var ui = ui
 
         NavigationSplitView {
             SidebarView()
@@ -130,7 +132,8 @@ struct RootView: View {
                     FilterField(
                         placeholder: library.section == .albums
                             ? "Filter albums" : "Filter artists",
-                        text: $library.filter
+                        text: $library.filter,
+                        focusToken: ui.filterFocusToken
                     )
                     .frame(width: 180)
                 }
@@ -180,8 +183,22 @@ struct RootView: View {
             }
 
         }
-        .sheet(isPresented: $showingPicker) {
-            PickerSheet(isPresented: $showingPicker)
+        .sheet(isPresented: $ui.showingPicker) {
+            PickerSheet(isPresented: $ui.showingPicker)
+        }
+        // `z`, from wherever you are: the cover in the transport bar opens the
+        // same sheet on click, but a keystroke has no cover under the pointer.
+        .sheet(isPresented: $ui.showingArtwork) {
+            if let trackId = player.currentTrackId {
+                ArtworkViewer(
+                    source: .track(trackId),
+                    title: player.nowPlaying.entry?.title ?? "",
+                    subtitle: player.nowPlaying.entry.map { "\($0.artist) — \($0.album)" }
+                )
+            }
+        }
+        .sheet(isPresented: $ui.showingShortcuts) {
+            ShortcutsSheet(hotkeys: hotkeys.all)
         }
         // Bound to what is being organized rather than to a flag: the sheet has
         // nothing to show without a selection, and dismissing it is what clears

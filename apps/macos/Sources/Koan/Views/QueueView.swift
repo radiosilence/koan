@@ -11,6 +11,7 @@ struct QueueView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
+    @Environment(UIState.self) private var ui
 
     @State private var savingSnapshot = false
     @State private var snapshotName = ""
@@ -43,35 +44,43 @@ struct QueueView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(selection: $selection) {
-                    ForEach(rows) { row in
-                        rowView(row)
+                ScrollViewReader { scroll in
+                    List(selection: $selection) {
+                        ForEach(rows) { row in
+                            rowView(row)
+                        }
+                        .onMove(perform: move)
                     }
-                    .onMove(perform: move)
-                }
-                .listStyle(.inset)
-                // Double-click and context menu both come from the List, keyed
-                // on the rows under the pointer rather than on a gesture.
-                .contextMenu(forSelectionType: String.self) { ids in
-                    menu(forRows: ids)
-                } primaryAction: { ids in
-                    play(rowIds: ids)
-                }
-                // Enter plays the selection, the way Return opens things
-                // everywhere else on the platform.
-                .onKeyPress(.return) {
-                    playSelection()
-                    return .handled
-                }
-                .onDeleteCommand { removeSelected() }
-                // Mirror the *queue item* ids, not the row ids: an album
-                // heading's id is synthetic, and handing that to the engine
-                // gets it rejected as not being a queue item.
-                .onChange(of: selection) { _, new in
-                    player.queueSelection = Set(itemIds(in: new))
-                }
-                .onChange(of: player.selectAllToken) { _, _ in
-                    selection = Set(rows.map(\.id))
+                    .listStyle(.inset)
+                    // `g` / `G`. Watches the token rather than the edge: jumping
+                    // to where you already are still has to scroll, because the
+                    // list may have been moved since.
+                    .onChange(of: ui.queueJumpToken) { _, _ in
+                        jump(to: ui.queueJumpEdge, using: scroll)
+                    }
+                    // Double-click and context menu both come from the List, keyed
+                    // on the rows under the pointer rather than on a gesture.
+                    .contextMenu(forSelectionType: String.self) { ids in
+                        menu(forRows: ids)
+                    } primaryAction: { ids in
+                        play(rowIds: ids)
+                    }
+                    // Enter plays the selection, the way Return opens things
+                    // everywhere else on the platform.
+                    .onKeyPress(.return) {
+                        playSelection()
+                        return .handled
+                    }
+                    .onDeleteCommand { removeSelected() }
+                    // Mirror the *queue item* ids, not the row ids: an album
+                    // heading's id is synthetic, and handing that to the engine
+                    // gets it rejected as not being a queue item.
+                    .onChange(of: selection) { _, new in
+                        player.queueSelection = Set(itemIds(in: new))
+                    }
+                    .onChange(of: player.selectAllToken) { _, _ in
+                        selection = Set(rows.map(\.id))
+                    }
                 }
             }
         }
@@ -252,6 +261,16 @@ struct QueueView: View {
     }
 
     private func playSelection() { play(rowIds: selection) }
+
+    /// Scrolls only. The TUI's `g` moves a cursor because the cursor is how you
+    /// look around there; here the pointer and the selection are separate things
+    /// and moving the selection would throw away what you had picked.
+    private func jump(to edge: UIState.Edge, using scroll: ScrollViewProxy) {
+        guard let target = edge == .top ? rows.first?.id : rows.last?.id else { return }
+        withAnimation(.easeOut(duration: 0.18)) {
+            scroll.scrollTo(target, anchor: edge == .top ? .top : .bottom)
+        }
+    }
 
     /// The menu for whatever is under the pointer. An album heading gets the
     /// album's actions; anything else gets the track's.

@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::db::connection::Database;
 use crate::db::queries::{self, TrackMeta};
-use crate::remote::client::{SubsonicAlbumFull, SubsonicClient};
+use crate::remote::client::{SubsonicAlbumFull, SubsonicArtist, SubsonicClient};
 
 use rayon::prelude::*;
 use rusqlite::params;
@@ -206,6 +206,12 @@ pub fn sync_library(
         }
     }
 
+    // The artist list was fetched at the top and, until this, thrown away —
+    // artists only ever existed as a side effect of a track upsert, which is
+    // why not one of them had a MusicBrainz id or a sort name. Applied last,
+    // because the rows do not exist until their tracks have been written.
+    write_artists(db, &artists, &mut result);
+
     if result.is_complete() {
         update_last_sync(db, server_url, username, sync_start)?;
     } else {
@@ -224,6 +230,38 @@ pub fn sync_library(
     );
 
     Ok(result)
+}
+
+/// Record what the server knows about each artist.
+///
+/// Best-effort: a library that synced its tracks fine should not fail because
+/// one artist row could not be updated.
+fn write_artists(db: &Database, artists: &[SubsonicArtist], result: &mut SyncResult) {
+    if db.conn.execute_batch("BEGIN").is_err() {
+        return;
+    }
+    let mut enriched = 0;
+    for artist in artists {
+        match queries::enrich_remote_artist(
+            &db.conn,
+            &artist.id,
+            artist.music_brainz_id.as_deref(),
+            artist.sort_name.as_deref(),
+        ) {
+            Ok(()) => enriched += 1,
+            Err(e) => log::warn!(
+                "failed to record artist metadata for {}: {}",
+                artist.name,
+                e
+            ),
+        }
+    }
+    if db.conn.execute_batch("COMMIT").is_err() {
+        let _ = db.conn.execute_batch("ROLLBACK");
+        return;
+    }
+    result.artists_synced = enriched;
+    log::info!("recorded metadata for {enriched} artists");
 }
 
 /// Write one batch of fetched albums in a single transaction.
@@ -276,6 +314,7 @@ fn write_albums(
                 remote_url: Some(client.stream_url_template(&song.id)),
                 album_remote_id: Some(album.id.clone()),
                 artist_remote_id: album.artist_id.clone(),
+                mbid: song.music_brainz_id.clone(),
                 album_added_at: album.created.clone(),
             };
 
@@ -283,6 +322,20 @@ fn write_albums(
                 Ok(_) => result.tracks_synced += 1,
                 Err(e) => log::warn!("failed to insert remote track {}: {}", song.title, e),
             }
+        }
+
+        // The album row is created through its tracks, so it only ever sees
+        // what a file's tags say. Track totals, the label and the MusicBrainz
+        // id belong to the release, and came back in the same response.
+        if let Err(e) = queries::enrich_remote_album(
+            &db.conn,
+            &album.id,
+            album.music_brainz_id.as_deref(),
+            album.sort_name.as_deref(),
+            album.song_count,
+            album.record_labels.first().map(|l| l.name.as_str()),
+        ) {
+            log::warn!("failed to record album metadata for {}: {}", album.name, e);
         }
     }
 
@@ -428,6 +481,7 @@ mod tests {
             remote_url: Some(format!("https://example.com/stream?id={}", remote_id)),
             album_remote_id: Some(format!("album-of-{remote_id}")),
             artist_remote_id: Some(format!("artist-of-{remote_id}")),
+            mbid: Some(format!("mbid-of-{remote_id}")),
             album_added_at: None,
         }
     }
@@ -439,6 +493,115 @@ mod tests {
         assert_eq!(positive(Some(0)), None);
         assert_eq!(positive(Some(16)), Some(16));
         assert_eq!(positive(None), None);
+    }
+
+    /// The album row is created through its tracks, so it only ever sees what
+    /// a file's tags say. Track totals, the label and the MusicBrainz id are
+    /// properties of the release and arrive in the same response.
+    #[test]
+    fn album_metadata_from_the_server_is_recorded() {
+        let (db, _dir) = test_db();
+
+        let meta = remote_track_meta("remote-300", "Anguish", "Sleep", "Volume One");
+        queries::upsert_track(&db.conn, &meta).unwrap();
+
+        queries::enrich_remote_album(
+            &db.conn,
+            "album-of-remote-300",
+            Some("mb-album-1"),
+            Some("volume one"),
+            Some(6),
+            Some("Off The Disk"),
+        )
+        .unwrap();
+
+        let row: (Option<String>, Option<String>, Option<i32>, Option<String>) = db
+            .conn
+            .query_row(
+                "SELECT mbid, sort_name, total_tracks, label FROM albums WHERE title = 'Volume One'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(row.0.as_deref(), Some("mb-album-1"));
+        assert_eq!(row.1.as_deref(), Some("volume one"));
+        assert_eq!(row.2, Some(6));
+        assert_eq!(row.3.as_deref(), Some("Off The Disk"));
+    }
+
+    /// Enrichment fills blanks. A locally-scanned album whose tags named a
+    /// label must keep it, rather than have the server's answer written over.
+    #[test]
+    fn server_metadata_does_not_overwrite_what_tags_said() {
+        let (db, _dir) = test_db();
+
+        let mut meta = remote_track_meta("remote-301", "Dopesmoker", "Sleep", "Dopesmoker");
+        meta.label = Some("From The Tags".into());
+        queries::upsert_track(&db.conn, &meta).unwrap();
+
+        queries::enrich_remote_album(
+            &db.conn,
+            "album-of-remote-301",
+            None,
+            None,
+            None,
+            Some("From The Server"),
+        )
+        .unwrap();
+
+        let label: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT label FROM albums WHERE title = 'Dopesmoker'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(label.as_deref(), Some("From The Tags"));
+    }
+
+    /// Artists existed only as a side effect of a track upsert, so nothing
+    /// ever wrote their MusicBrainz id or sort name.
+    #[test]
+    fn artist_metadata_from_the_server_is_recorded() {
+        let (db, _dir) = test_db();
+
+        let meta = remote_track_meta("remote-302", "Holy Mountain", "Sleep", "Holy Mountain");
+        queries::upsert_track(&db.conn, &meta).unwrap();
+
+        queries::enrich_remote_artist(
+            &db.conn,
+            "artist-of-remote-302",
+            Some("mb-artist-1"),
+            Some("sleep"),
+        )
+        .unwrap();
+
+        let row: (Option<String>, Option<String>) = db
+            .conn
+            .query_row(
+                "SELECT mbid, sort_name FROM artists WHERE name = 'Sleep'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(row.0.as_deref(), Some("mb-artist-1"));
+        assert_eq!(row.1.as_deref(), Some("sleep"));
+    }
+
+    /// The recording id travels with the track.
+    #[test]
+    fn a_synced_track_keeps_its_musicbrainz_id() {
+        let (db, _dir) = test_db();
+
+        let meta = remote_track_meta("remote-303", "Aquarian", "Sleep", "Dopesmoker");
+        let id = queries::upsert_track(&db.conn, &meta).unwrap();
+
+        let mbid: Option<String> = db
+            .conn
+            .query_row("SELECT mbid FROM tracks WHERE id = ?1", [id], |r| r.get(0))
+            .unwrap();
+        assert_eq!(mbid.as_deref(), Some("mbid-of-remote-303"));
     }
 
     /// A remote track carries the quality figures an OpenSubsonic server

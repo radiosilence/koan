@@ -150,3 +150,51 @@ Tracks are grouped by album with headers showing album artist, year, album title
      03 SPL -- Fade                                1:52
      04 Icicle                                     2:27
 ```
+
+---
+
+## macOS app
+
+Two kinds of shortcut. Anything with ⌘ is a menu command and shows in the menu bar; the single-key ones follow the TUI and are listed under Help ▸ Keyboard Shortcuts (`?`).
+
+Single keys never fire while a text field has focus, so typing an `f` into the search box types an f. `Esc` gets you back out of a field.
+
+### Single keys
+
+| Key | Action |
+|-----|--------|
+| `space` | Play / pause |
+| `<` | Previous track |
+| `>` or `n` | Next track |
+| `,` | Back 10 seconds |
+| `.` | Forward 10 seconds |
+| `f` | Favourite the current track |
+| `R` | Radio mode |
+| `p` | Add music (the ⌘K picker) |
+| `/` | Search the library |
+| `l` or `a` | Albums |
+| `r` | Artists |
+| `g` / `G` | Top / end of the queue |
+| `L` | Lyrics panel |
+| `z` | Zoom the cover |
+| `?` | The shortcuts list |
+
+### Menu commands
+
+| Key | Action |
+|-----|--------|
+| `⌘K` | Add music |
+| `⌘1`–`⌘6` | Queue, Albums, Artists, Favourites, History, Snapshots |
+| `⌘[` / `⌘]` | Back / forward |
+| `⌘F` | Filter what's on screen (albums, artists), otherwise search the library |
+| `⌘←` / `⌘→` | Previous / next track |
+| `⌥←` / `⌥→` | Seek ∓10 seconds |
+| `⌘D` | Favourite the current track |
+| `⌥⌘R` | Radio mode |
+| `⌥⌘L` | Lyrics panel |
+| `⌘Z` / `⇧⌘Z` | Undo / redo a queue change |
+| `⌘X` `⌘C` `⌘V` `⌫` `⌘A` | Queue editing, or the ordinary thing while typing |
+| `⇧⌘R` | Rescan local folders |
+| `⌘/` | Keyboard shortcuts |
+
+Keys the TUI spends on its own modes — edit mode, the visualizer, the help overlay — have no counterpart: the queue is always editable here, and there is no visualizer.

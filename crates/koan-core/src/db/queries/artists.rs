@@ -103,6 +103,27 @@ pub fn all_artists(conn: &Connection) -> Result<Vec<ArtistRow>, DbError> {
     Ok(rows)
 }
 
+/// Record what the server knows about an artist beyond its name.
+///
+/// Fills blanks rather than overwriting: a local scan may have set a sort name
+/// from tags, and the server's should not clobber it. Matched on `remote_id`,
+/// which the artist already has from the track upserts.
+pub fn enrich_remote_artist(
+    conn: &Connection,
+    remote_id: &str,
+    mbid: Option<&str>,
+    sort_name: Option<&str>,
+) -> Result<(), DbError> {
+    conn.execute(
+        "UPDATE artists SET
+             mbid      = COALESCE(mbid, ?2),
+             sort_name = COALESCE(sort_name, ?3)
+         WHERE remote_id = ?1",
+        params![remote_id, mbid, sort_name],
+    )?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

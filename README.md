@@ -189,7 +189,7 @@ just macos-run     # build and launch
 just macos-dmg     # package for release
 ```
 
-Requires Swift 6 and macOS 14+.
+Requires Swift 6 and macOS 26+.
 
 ## Coming soon
 

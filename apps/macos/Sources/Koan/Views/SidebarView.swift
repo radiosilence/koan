@@ -1,3 +1,4 @@
+import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -5,6 +6,8 @@ struct SidebarView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
     @Environment(SearchModel.self) private var search
+    @Environment(UIState.self) private var ui
+    @FocusState private var searchFocused: Bool
     /// Highlights the Queue row while something is held over it — without it a
     /// drop is a guess.
     @State private var queueDropTargeted = false
@@ -78,6 +81,14 @@ struct SidebarView: View {
         // sat on top of the lyrics inspector.
         .searchable(text: $search.query, placement: .sidebar, prompt: "Search")
         .searchSuggestions { SearchSuggestions() }
+        .searchFocused($searchFocused)
+        // `/`, the way it works in the TUI. The field is somewhere else on
+        // screen, so the key can only ask for it by token.
+        .onChange(of: ui.searchFocusToken) { _, _ in
+            NSLog("SIDEBAR token change -> searchFocused = true")
+            searchFocused = true
+        }
+        .onChange(of: searchFocused) { _, new in NSLog("SIDEBAR searchFocused = \(new)") }
         .safeAreaInset(edge: .bottom) {
             footer
         }

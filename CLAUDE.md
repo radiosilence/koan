@@ -10,7 +10,7 @@ Bit-perfect music player (macOS + Linux). Rust core, Ratatui TUI, plus a native 
 - **koan-ffi** — staticlib/cdylib crate. uniffi bindings exposing koan-core to Swift. Depends on koan-core only. Not published to crates.io.
 - **koan-cli** — binary crate (`koan`). Thin entry point: clap CLI, logger, signal handling, command routing. Depends on koan-core + koan-tui + koan-server.
 
-Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 14+). Links koan-ffi.
+Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ffi.
 
 Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
 
