@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// koan's accent, read from the asset catalog.
@@ -11,6 +12,12 @@ import SwiftUI
 ///
 /// `NSAccentColorName` in the bundle's Info.plist points at this colour set;
 /// see the `macos-bundle` recipe.
+/// Falls back to the system accent when the catalog is not in the bundle.
+/// Compiling it needs `actool`, which ships with Xcode proper rather than the
+/// command line tools, so a build made without Xcode has no colour to find.
+/// Resolving to nothing tints the app with nothing, which does not merely lose
+/// the colour — every borderless control and the playing row's title are drawn
+/// in `.tint`, and they become invisible rather than uncoloured.
 extension Color {
-    static let koanAccent = Color("AccentColor")
+    static let koanAccent = NSColor(named: "AccentColor").map(Color.init) ?? .accentColor
 }

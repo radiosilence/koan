@@ -11,6 +11,7 @@ final class AppState {
     let engine: KoanEngine
     let player: PlayerModel
     let library: LibraryModel
+    let nav: Navigator
     let search: SearchModel
     let art: CoverArtCache
     let organize: OrganizeModel
@@ -27,7 +28,9 @@ final class AppState {
         self.player = player
         let library = LibraryModel(engine: engine)
         self.library = library
-        self.search = SearchModel(engine: engine, library: library)
+        let nav = Navigator(library: library)
+        self.nav = nav
+        self.search = SearchModel(engine: engine, library: library, nav: nav)
         let art = CoverArtCache(engine: engine)
         self.art = art
         self.organize = OrganizeModel(engine: engine)
@@ -51,7 +54,7 @@ final class AppState {
         player.onTick = { [weak centre] in centre?.refresh() }
 
         // Single-key shortcuts, caught before the focused list eats them.
-        self.hotkeys = Hotkeys.standard(player: player, library: library, ui: ui)
+        self.hotkeys = Hotkeys.standard(player: player, nav: nav, ui: ui)
 
         // A client that cannot reach its server fails at everything quietly:
         // nothing plays, nothing downloads, and every record comes back with no
@@ -81,7 +84,7 @@ struct KoanApp: App {
     @AppStorage("showLyrics") private var showLyrics = false
 
     var body: some Scene {
-        Window("koan", id: "main") {
+        Window("koan", id: MainWindow.id) {
             Group {
                 if let state {
                     RootView(hotkeys: state.hotkeys)
@@ -89,6 +92,7 @@ struct KoanApp: App {
                         .environment(state.ui)
                         .environment(state.player)
                         .environment(state.library)
+                        .environment(state.nav)
                         .environment(state.search)
                         .environment(state.art)
                         .environment(state.organize)
@@ -131,14 +135,14 @@ struct KoanApp: App {
 
             CommandGroup(replacing: .sidebar) {
                 ForEach(NavigationCommand.all, id: \.section) { command in
-                    Button(command.title) { state?.library.section = command.section }
+                    Button(command.title) { state?.nav.show(command.section) }
                         .keyboardShortcut(command.key, modifiers: .command)
                 }
                 Divider()
-                Button("Back") { state?.library.goBack() }
+                Button("Back") { state?.nav.goBack() }
                     .keyboardShortcut("[", modifiers: .command)
                     .disabled(isTyping)
-                Button("Forward") { state?.library.goForward() }
+                Button("Forward") { state?.nav.goForward() }
                     .keyboardShortcut("]", modifiers: .command)
                     .disabled(isTyping)
                 Divider()
@@ -222,7 +226,7 @@ struct KoanApp: App {
                 Divider()
                 Button("Find") {
                     guard let state else { return }
-                    switch state.library.section {
+                    switch state.nav.section {
                     case .albums, .artists: state.ui.focusFilter()
                     default: state.ui.focusSearch()
                     }
@@ -307,7 +311,7 @@ struct KoanApp: App {
 private struct NavigationCommand {
     let title: String
     let key: KeyEquivalent
-    let section: LibraryModel.Section
+    let section: Navigator.Section
 
     static let all: [NavigationCommand] = [
         .init(title: "Queue", key: "1", section: .queue),
@@ -317,10 +321,6 @@ private struct NavigationCommand {
         .init(title: "History", key: "5", section: .playHistory),
         .init(title: "Snapshots", key: "6", section: .snapshots),
     ]
-}
-
-extension LibraryModel.Section: Identifiable {
-    public var id: Self { self }
 }
 
 /// The library is a file on disk; if it can't be opened there is no app to show.
@@ -346,4 +346,11 @@ private struct StartupErrorView: View {
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+/// The main window's scene id. SwiftUI puts it on the `NSWindow`, which is how
+/// the single-key shortcuts tell koan's own window from a sheet or one of the
+/// auxiliary scenes.
+enum MainWindow {
+    static let id = "main"
 }

@@ -15,6 +15,7 @@ struct RowPlayButton: View {
     var inContext: (trackIds: [Int64], startAt: Int)?
 
     @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @State private var loading = false
 
@@ -38,7 +39,7 @@ struct RowPlayButton: View {
         guard !loading else { return }
         if let context = inContext {
             player.playNow(trackIds: context.trackIds, startingAt: context.startAt)
-            library.showQueueWhenReady(watching: player)
+            nav.showQueueWhenReady(watching: player)
             return
         }
         loading = true
@@ -48,7 +49,7 @@ struct RowPlayButton: View {
             let ids = await playable.trackIds(using: engine)
             loading = false
             player.playNow(trackIds: ids)
-            library.showQueueWhenReady(watching: player)
+            nav.showQueueWhenReady(watching: player)
         }
     }
 }

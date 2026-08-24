@@ -17,30 +17,22 @@ private let historyPageSize: UInt32 = 500
 @MainActor
 @Observable
 final class LibraryModel {
-    enum Section: Hashable {
-        case queue
-        case searchResults
-        case albums
-        case artists
-        case favourites
-        case playHistory
-        case snapshots
-    }
+    typealias Section = Navigator.Section
 
     let engine: KoanEngine
 
-    var section: Section = .queue {
-        didSet {
-            guard section != oldValue else { return }
-            // Each section is its own stack conceptually; carrying a path
-            // across a switch would strand you on an unrelated detail view.
-            path = NavigationPath()
-            // A filter you left behind on another view is invisible here, and
-            // an apparently empty library is the result.
-            filter = ""
-            load()
-            if !navigatingHistory { record(.section(section)) }
-        }
+    /// What is on screen. Written only by the navigator, which owns it — the
+    /// library follows where you are, it does not decide it.
+    private(set) var section: Section = .queue
+
+    /// The navigator moved. Catch up.
+    func showing(_ section: Section) {
+        guard section != self.section else { return }
+        self.section = section
+        // A filter you left behind on another view is invisible here, and an
+        // apparently empty library is the result.
+        filter = ""
+        load()
     }
 
     /// Substring filter over whatever the current section is showing.
@@ -87,16 +79,6 @@ final class LibraryModel {
     private(set) var snapshots: [Snapshot] = []
     private(set) var stats: Stats?
     private(set) var isLoading = false
-
-    /// The browse stack's path. Lives here so search can push a destination
-    /// rather than each browser owning a stack nothing else can reach.
-    var path = NavigationPath()
-
-    /// Back to the top of the current section, without leaving it.
-    func popToRoot() {
-        guard !path.isEmpty else { return }
-        path = NavigationPath()
-    }
 
     private(set) var detailTracks: [Track] = []
 
@@ -305,125 +287,6 @@ final class LibraryModel {
                 albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
             )) ?? []
         }
-    }
-
-    /// Show the queue. Called after anything that starts playback outright, so
-    /// you end up looking at what you just started. Not called for "add to
-    /// queue" or "play next" — those are things you do while browsing, and
-    /// being thrown across the app for them would be rude.
-    func showQueue() {
-        section = .queue
-    }
-
-    /// Show the queue once it holds what was just started.
-    ///
-    /// Queue mutations run off the main actor, so switching immediately shows
-    /// the old queue for a frame or two and then flickers. Waiting for the
-    /// engine to confirm avoids that — but only briefly: if the mutation is
-    /// slow enough to notice, jumping to the queue after the fact would feel
-    /// like the app moving on its own, so it stays put instead.
-    func showQueueWhenReady(watching player: PlayerModel) {
-        let before = player.queueVersion
-        Task {
-            let deadline = ContinuousClock.now + .milliseconds(50)
-            while ContinuousClock.now < deadline {
-                if player.queueVersion != before {
-                    section = .queue
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(5))
-            }
-        }
-    }
-
-    /// Jump straight to a thing from search: switch to the section it lives in,
-    /// then push its detail view.
-    /// The track that search sent you here for, so the album view can single it
-    /// out. Cleared once the view has scrolled to it.
-    var highlightedTrackId: Int64?
-
-    // MARK: - History
-    //
-    // A NavigationStack only goes back within one stack, so it can't return you
-    // across a section switch or a jump from search. This records every
-    // destination the user actually reached, which is what "back" means to
-    // someone using the app.
-
-    enum Destination: Hashable {
-        case section(Section)
-        case album(Int64)
-        case artist(Int64)
-    }
-
-    /// What the sidebar should highlight.
-    ///
-    /// Reaching an album from Favourites, from search, or from "Go to Album" in
-    /// the queue pushes a detail view without changing section, so the sidebar
-    /// went on pointing at wherever you started — which is not where you are.
-    /// The row an album lives under is Albums, whichever door you came through.
-    private(set) var history: [Destination] = [.section(.queue)]
-    private(set) var historyCursor = 0
-    /// Set while replaying history, so applying a destination doesn't record it
-    /// again and trap the user in a loop.
-    private var navigatingHistory = false
-
-    var canGoBack: Bool { historyCursor > 0 }
-    var canGoForward: Bool { historyCursor < history.count - 1 }
-
-    private func record(_ destination: Destination) {
-        // A new move discards anything ahead, the way a browser does.
-        if historyCursor < history.count - 1 {
-            history.removeSubrange((historyCursor + 1)...)
-        }
-        guard history.last != destination else { return }
-        history.append(destination)
-        historyCursor = history.count - 1
-    }
-
-    func goBack() {
-        guard canGoBack else { return }
-        historyCursor -= 1
-        apply(history[historyCursor])
-    }
-
-    func goForward() {
-        guard canGoForward else { return }
-        historyCursor += 1
-        apply(history[historyCursor])
-    }
-
-    private func apply(_ destination: Destination) {
-        navigatingHistory = true
-        defer { navigatingHistory = false }
-        switch destination {
-        case .section(let target):
-            section = target
-            path = NavigationPath()
-        case .album(let id):
-            path = NavigationPath()
-            path.append(AlbumRoute(id: id))
-        case .artist(let id):
-            path = NavigationPath()
-            path.append(ArtistRoute(id: id))
-        }
-    }
-
-    /// Push a destination onto the current stack.
-    ///
-    /// Deliberately does *not* switch `section` first. Doing so swaps the
-    /// stack's root view in the same update, and SwiftUI discards the path
-    /// against the old root — which landed you on the plain album list instead
-    /// of the album. Pushing onto whatever stack is showing also gives you a
-    /// Back button to the results you came from.
-    func reveal(album id: Int64, highlighting trackId: Int64? = nil) {
-        highlightedTrackId = trackId
-        path.append(AlbumRoute(id: id))
-        if !navigatingHistory { record(.album(id)) }
-    }
-
-    func reveal(artist id: Int64) {
-        path.append(ArtistRoute(id: id))
-        if !navigatingHistory { record(.artist(id)) }
     }
 
     // MARK: - Mutations

@@ -99,6 +99,7 @@ private struct SearchTrackRow: View {
     let track: Track
 
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
     @State private var hovering = false
 
     var body: some View {
@@ -146,7 +147,7 @@ private struct SearchTrackRow: View {
         .rowBehaviour(playable: .track(track))
         .onTapGesture {
             guard let albumId = track.albumId else { return }
-            library.reveal(album: albumId, highlighting: track.id)
+            nav.open(album: albumId, highlighting: track.id)
         }
         .contextMenu { PlayableMenu(playable: .track(track)) }
         .onHover { hovering = $0 }

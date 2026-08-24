@@ -82,16 +82,16 @@ final class Hotkeys {
     /// The main window, or nil when focus is somewhere these keys have no
     /// business being — a sheet, the settings window, or the organize window,
     /// whose own controls are what a key should reach.
+    ///
+    /// SwiftUI stamps a scene's id onto its window, so asking for the one
+    /// window these keys belong to covers every other case at once: sheets
+    /// carry no identifier and the auxiliary scenes carry their own. Naming
+    /// them instead means each new window is a bug until someone remembers to
+    /// add it to the list.
     private var ownWindow: NSWindow? {
-        guard let window = NSApp.keyWindow else { return nil }
-        guard !window.isSheet, window.attachedSheet == nil else { return nil }
-        guard window.identifier?.rawValue != "com_apple_SwiftUI_Settings_window" else {
-            return nil
-        }
-        // Organize is its own window with its own field and its own Esc. Same
-        // reasoning as the settings window: its controls are what a key there
-        // should reach.
-        guard window.identifier?.rawValue != "organize" else { return nil }
+        guard let window = NSApp.keyWindow,
+              window.identifier?.rawValue == MainWindow.id
+        else { return nil }
         return window
     }
 }
@@ -104,7 +104,7 @@ extension Hotkeys {
     /// ⌘ shortcuts in the menu bar cover what the menus already say.
     static func standard(
         player: PlayerModel,
-        library: LibraryModel,
+        nav: Navigator,
         ui: UIState
     ) -> Hotkeys {
         Hotkeys([
@@ -137,17 +137,17 @@ extension Hotkeys {
                 ui.focusSearch()
             },
             Hotkey(keys: ["l", "a"], label: "Albums", group: .navigation) {
-                library.section = .albums
+                nav.show(.albums)
             },
             Hotkey(keys: ["r"], label: "Artists", group: .navigation) {
-                library.section = .artists
+                nav.show(.artists)
             },
             Hotkey(keys: ["g"], label: "Top of the queue", group: .navigation) {
-                library.section = .queue
+                nav.show(.queue)
                 ui.jumpQueue(to: .top)
             },
             Hotkey(keys: ["G"], label: "End of the queue", group: .navigation) {
-                library.section = .queue
+                nav.show(.queue)
                 ui.jumpQueue(to: .bottom)
             },
 

@@ -9,6 +9,7 @@ import SwiftUI
 /// separate visits to the same record into one heading would misrepresent it.
 struct QueueView: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
     @Environment(\.openWindow) private var openWindow
@@ -16,6 +17,12 @@ struct QueueView: View {
 
     @State private var savingSnapshot = false
     @State private var snapshotName = ""
+
+    /// Grouped or one row per track. Persisted because it is a preference about
+    /// how you listen rather than about the queue in front of you: an album
+    /// listen wants the headings, a long shuffled queue wants every row to say
+    /// what it is and show its own sleeve.
+    @AppStorage("queueGrouped") private var grouped = true
 
     /// Selection is local `@State`, deliberately.
     ///
@@ -30,7 +37,9 @@ struct QueueView: View {
     /// the first track. That is what lets an album be selected and dragged as a
     /// unit — and stops selecting a track from lighting up the heading above it,
     /// which is what happened while they shared a row.
-    private var rows: [Row] { Row.build(from: player.queue) }
+    private var rows: [Row] {
+        grouped ? Row.build(from: player.queue) : player.queue.map(Row.track)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -125,6 +134,19 @@ struct QueueView: View {
                 Button("Remove", role: .destructive) { removeSelected() }
             }
 
+            // Both modes shown with the active one lit, the way Finder switches
+            // view. A single icon has to choose between naming the mode you are
+            // in and the mode you would get, and whichever it picks the other
+            // reading is available and wrong.
+            Picker("Queue layout", selection: $grouped) {
+                Image(systemName: "square.stack").tag(true)
+                Image(systemName: "list.bullet").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Group by album, or one row per track")
+
             Button { player.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .help("Undo (⌘Z)")
             Button { player.redo() } label: { Image(systemName: "arrow.uturn.forward") }
@@ -167,7 +189,10 @@ struct QueueView: View {
                 item: item,
                 isCurrent: item.queueItemId == player.currentItemId,
                 isSelected: selection.contains(item.queueItemId),
-                showArtist: item.artist != item.albumArtist
+                // Ungrouped there is no heading above to say what record this
+                // is, so the row says it itself.
+                showArtist: !grouped || item.artist != item.albumArtist,
+                artwork: !grouped
             )
             .rowBehaviour()
         }
@@ -209,7 +234,7 @@ struct QueueView: View {
                 player.report("That track is no longer in the library.")
                 return
             }
-            library.reveal(album: albumId, highlighting: highlight ? trackId : nil)
+            nav.open(album: albumId, highlighting: highlight ? trackId : nil)
         }
     }
 
@@ -502,6 +527,8 @@ private struct QueueRow: View {
     let isCurrent: Bool
     let isSelected: Bool
     let showArtist: Bool
+    /// Its own sleeve, for when there is no album heading above carrying one.
+    var artwork = false
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
@@ -513,13 +540,18 @@ private struct QueueRow: View {
                 .font(.caption)
                 .frame(width: 16)
 
-            // Always occupies its column, number or not: a missing track
-            // number would otherwise shift the title left and break the
-            // alignment down the list.
-            Text(item.trackNumber.map(String.init) ?? "")
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.tertiary)
-                .frame(width: 20, alignment: .trailing)
+            if artwork, let trackId = item.trackId {
+                AlbumArtwork(source: .track(trackId), cornerRadius: 3)
+                    .frame(width: 28, height: 28)
+            } else {
+                // Always occupies its column, number or not: a missing track
+                // number would otherwise shift the title left and break the
+                // alignment down the list.
+                Text(item.trackNumber.map(String.init) ?? "")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .frame(width: artwork ? 28 : 20, alignment: .trailing)
+            }
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
@@ -534,7 +566,9 @@ private struct QueueRow: View {
                 // Only worth a second line when it differs from the album
                 // artist — compilations and features, not every track.
                 if showArtist && !item.artist.isEmpty {
-                    Text(item.artist)
+                    Text(artwork && !item.album.isEmpty
+                        ? "\(item.artist) — \(item.album)"
+                        : item.artist)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
@@ -579,7 +613,7 @@ private struct QueueRow: View {
         }
         // Fixed height so a row doesn't grow when a download indicator appears
         // and shrink when it finishes, reflowing the list each time.
-        .frame(height: 34)
+        .frame(height: artwork ? 40 : 34)
         // Without this the row is only clickable where a view actually sits —
         // the Spacer between the title and the duration is a dead zone, and
         // clicks landing there select nothing.

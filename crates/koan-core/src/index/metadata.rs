@@ -89,9 +89,23 @@ fn raise_allocation_limit() {
 /// single track actually needs artwork.
 fn read_tagged_file(path: &Path) -> Result<lofty::file::TaggedFile, Box<dyn std::error::Error>> {
     raise_allocation_limit();
-    Ok(lofty::probe::Probe::open(path)?
-        .options(ParseOptions::new().read_cover_art(false))
-        .read()?)
+    let options = ParseOptions::new().read_cover_art(false);
+
+    // An MP3's embedded art is read and discarded even under
+    // `read_cover_art(false)`, so it gets a reader that holds the pictures back
+    // rather than a plain file. See `id3v2_pictures`.
+    let file_type = lofty::file::FileType::from_path(path);
+    if file_type == Some(lofty::file::FileType::Mpeg)
+        && let Some(reader) = super::id3v2_pictures::open(path)
+    {
+        return Ok(
+            lofty::probe::Probe::with_file_type(reader, lofty::file::FileType::Mpeg)
+                .options(options)
+                .read()?,
+        );
+    }
+
+    Ok(lofty::probe::Probe::open(path)?.options(options).read()?)
 }
 
 /// Full metadata read via lofty (happy path).
@@ -805,5 +819,54 @@ mod tests {
             "ALAC",
             "real ALAC .m4a should be identified as ALAC, not AAC"
         );
+    }
+
+    /// The scan reads MP3 tags through a reader that blanks out the embedded
+    /// art (see `id3v2_pictures`). That is only sound if what comes back is
+    /// byte-for-byte what lofty would have parsed off the plain file.
+    #[test]
+    fn holding_the_pictures_back_changes_nothing_lofty_parses() {
+        let dir = tempfile::tempdir().unwrap();
+        let art: Vec<u8> = (0..40_000u32).map(|i| (i % 251) as u8 + 1).collect();
+
+        for version in [2, 3, 4] {
+            let path = dir.path().join(format!("v2{version}.mp3"));
+            crate::test_utils::generate_mp3_with_picture(
+                &path,
+                version,
+                "Golden Skans",
+                "Klaxons",
+                &art,
+            );
+
+            let held_back = read_tagged_file(&path).unwrap();
+            let plain = lofty::probe::Probe::open(&path)
+                .unwrap()
+                .options(ParseOptions::new().read_cover_art(false))
+                .read()
+                .unwrap();
+
+            let tags = |f: &lofty::file::TaggedFile| {
+                let tag = f.primary_tag().or_else(|| f.first_tag()).unwrap();
+                (
+                    tag.title().map(|s| s.to_string()),
+                    tag.artist().map(|s| s.to_string()),
+                )
+            };
+            assert_eq!(tags(&held_back), tags(&plain), "v2.{version}");
+            assert_eq!(
+                tags(&held_back),
+                (Some("Golden Skans".into()), Some("Klaxons".into())),
+                "v2.{version}: the frame after the picture must survive intact"
+            );
+            assert_eq!(
+                held_back.properties().duration(),
+                plain.properties().duration(),
+                "v2.{version}"
+            );
+
+            // And the art is still there for whoever actually wants it.
+            assert_eq!(extract_cover_art(&path), Some(art.clone()), "v2.{version}");
+        }
     }
 }

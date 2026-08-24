@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 import KoanFFI
 import Observation
 
@@ -64,20 +64,10 @@ final class SettingsModel {
 
     // MARK: - Folders
 
-    /// Ask for a folder and add it. Music lives in one place per person, so the
-    /// panel starts at the last folder they picked rather than at the root.
-    func addFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = true
-        panel.prompt = "Add"
-        panel.message = "Choose a folder to scan for music"
-        guard panel.runModal() == .OK else { return }
-
-        let added = panel.urls.map(\.path)
+    /// Add folders to scan, ignoring any already listed.
+    func addFolders(_ paths: [String]) {
         edit { s in
-            for path in added where !s.libraryFolders.contains(where: { $0.path == path }) {
+            for path in paths where !s.libraryFolders.contains(where: { $0.path == path }) {
                 // Count comes back from the engine on the next read; the scan
                 // this kicks off is what fills it in.
                 s.libraryFolders.append(LibraryFolder(path: path, tracks: 0))

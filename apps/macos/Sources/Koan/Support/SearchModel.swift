@@ -16,6 +16,7 @@ import KoanFFI
 final class SearchModel {
     private let engine: KoanEngine
     private let library: LibraryModel
+    private let nav: Navigator
 
     var query: String = ""
 
@@ -25,12 +26,14 @@ final class SearchModel {
     private(set) var isSearching = false
 
     private var task: Task<Void, Never>?
-    /// Where to put the user back when they clear the field.
-    private var sectionBeforeSearch: LibraryModel.Section?
+    /// Where to put the user back when they clear the field — the whole
+    /// location, so a detail view you searched from is still there afterwards.
+    private var locationBeforeSearch: Location?
 
-    init(engine: KoanEngine, library: LibraryModel) {
+    init(engine: KoanEngine, library: LibraryModel, nav: Navigator) {
         self.engine = engine
         self.library = library
+        self.nav = nav
     }
 
     var isEmpty: Bool { artists.isEmpty && albums.isEmpty && tracks.isEmpty }
@@ -89,16 +92,16 @@ final class SearchModel {
         let text = query.trimmingCharacters(in: .whitespaces)
         guard !text.isEmpty else {
             clear()
-            if let previous = sectionBeforeSearch {
-                library.section = previous
-                sectionBeforeSearch = nil
+            if let previous = locationBeforeSearch {
+                nav.go(to: previous)
+                locationBeforeSearch = nil
             }
             return
         }
 
-        if library.section != .searchResults {
-            sectionBeforeSearch = library.section
-            library.section = .searchResults
+        if nav.section != .searchResults {
+            locationBeforeSearch = nav.location
+            nav.show(.searchResults)
         }
 
         isSearching = true
@@ -125,6 +128,9 @@ final class SearchModel {
 
     func clear() {
         task?.cancel()
+        // The results page only exists while there is a query, so it stops
+        // being somewhere Back can return to.
+        nav.forget(.searchResults)
         artists = []
         albums = []
         tracks = []
@@ -136,6 +142,6 @@ final class SearchModel {
     func reset() {
         query = ""
         clear()
-        sectionBeforeSearch = nil
+        locationBeforeSearch = nil
     }
 }

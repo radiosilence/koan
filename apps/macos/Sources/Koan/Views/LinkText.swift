@@ -1,4 +1,3 @@
-import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -22,6 +21,7 @@ struct LinkText: View {
     var prominent = false
 
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
     @State private var hovering = false
 
     private func transfer(for target: Target) -> PlayableTransfer {
@@ -41,21 +41,15 @@ struct LinkText: View {
                 )
                 .lineLimit(1)
                 .contentShape(.rect)
-                .onHover { inside in
-                    hovering = inside
-                    // `.pointerStyle(.link)` needs macOS 15; the app targets 14.
-                    if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-                }
+                .pointerStyle(.link)
+                .onHover { hovering = $0 }
                 // A row that scrolls or filters away while hovered never sees
-                // the exit, and the hand cursor would be left on the stack.
-                .onDisappear {
-                    if hovering { NSCursor.pop() }
-                    hovering = false
-                }
+                // the exit, so it would come back still underlined.
+                .onDisappear { hovering = false }
                 .onTapGesture {
                     switch target {
-                    case .artist(let id): library.reveal(artist: id)
-                    case .album(let id): library.reveal(album: id)
+                    case .artist(let id): nav.open(artist: id)
+                    case .album(let id): nav.open(album: id)
                     }
                 }
                 // Dragging the name drags what it names, which is not
@@ -80,6 +74,7 @@ struct PlayableArtwork: View {
     var cornerRadius: CGFloat = 6
 
     @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @State private var hovering = false
     @State private var loading = false
@@ -124,7 +119,7 @@ struct PlayableArtwork: View {
             )) ?? []).map(\.id)
             loading = false
             player.playNow(trackIds: ids)
-            library.showQueueWhenReady(watching: player)
+            nav.showQueueWhenReady(watching: player)
         }
     }
 }

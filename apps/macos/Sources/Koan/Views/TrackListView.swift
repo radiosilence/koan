@@ -14,6 +14,7 @@ struct TrackListView: View {
     var playable: Playable?
 
     @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @State private var selection: Set<Int64> = []
 
@@ -61,12 +62,12 @@ struct TrackListView: View {
                     // Arriving from search: single out the matched track rather
                     // than dropping the user at the top of a 20-track record.
                     .task(id: tracks.count) {
-                        guard let target = library.highlightedTrackId,
+                        guard let target = nav.highlightedTrackId,
                               tracks.contains(where: { $0.id == target })
                         else { return }
                         selection = [target]
                         withAnimation { proxy.scrollTo(target, anchor: .center) }
-                        library.highlightedTrackId = nil
+                        nav.highlightedTrackId = nil
                     }
                 }
             }
@@ -77,7 +78,7 @@ struct TrackListView: View {
     private func play(_ ids: Set<Int64>) {
         guard let index = tracks.firstIndex(where: { ids.contains($0.id) }) else { return }
         player.playNow(trackIds: tracks.map(\.id), startingAt: index)
-        library.showQueueWhenReady(watching: player)
+        nav.showQueueWhenReady(watching: player)
     }
 
     private func playSelection() { play(selection) }
@@ -92,7 +93,7 @@ struct TrackListView: View {
         } else if !chosen.isEmpty {
             Button("Play") {
                 player.playNow(trackIds: chosen.map(\.id))
-                library.showQueueWhenReady(watching: player)
+                nav.showQueueWhenReady(watching: player)
             }
             Button("Play Next") { player.playNext(trackIds: chosen.map(\.id)) }
             Button("Add to Queue") { player.enqueue(trackIds: chosen.map(\.id)) }

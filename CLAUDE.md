@@ -117,6 +117,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `db/queries/` | Row types, upsert (3-strategy dedup), FTS5 search, scan cache, stats, snapshots, `batch` (SQL-side track filtering, batched parent→child reads) |
 | `index/scanner.rs` | Streaming library scan: walkdir → rayon tag reads → bounded channel → batched DB transactions. `ScanOptions` carries a cancel flag and an optional progress sink. `import_paths` indexes named files where they lie (Finder drops), removing nothing |
 | `index/metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, APE), codec detection |
+| `index/id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 | `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 59 built-in functions |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
@@ -165,7 +166,8 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Library tasks are exclusive — they queue behind SQLite's single writer — and each is cancellable |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
 | `Support/PlayerModel.swift` | Polls `now_playing()` at 10 Hz; refetches the queue only when `playlistVersion` moves |
-| `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale |
+| `Support/Navigator.swift` | Where the app is. One `Location` — a section plus the stack pushed on it — and the only thing that writes the detail stack's path or the history behind it |
+| `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale. Follows the navigator; never moves it |
 | `Support/CoverArtCache.swift` | Album-keyed art cache. Each miss is an HTTP round trip on remote libraries |
 | `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select |
 | `Views/PickerSheet.swift` | ⌘K picker: multi-select, add / add-and-play / replace queue |
