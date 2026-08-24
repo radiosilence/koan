@@ -518,9 +518,9 @@ impl MutationRoot {
         with_db(ctx, move |db| {
             require_organize()?;
             let result = if let Some(ids) = track_ids {
-                koan_core::organize::preview_for_tracks(db, &ids, &pattern, None)
+                koan_core::organize::preview_for_tracks(db, &ids, &pattern, None, true)
             } else {
-                koan_core::organize::preview(db, &pattern, None)
+                koan_core::organize::preview(db, &pattern, None, true)
             }
             .map_err(|e| super::internal_error("organize", e))?;
 

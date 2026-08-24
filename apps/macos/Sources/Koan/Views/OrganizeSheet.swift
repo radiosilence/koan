@@ -69,7 +69,7 @@ struct OrganizeSheet: View {
                         Text(pattern.name).tag(pattern.name as String?)
                     }
                 }
-                .frame(maxWidth: 240)
+                .frame(maxWidth: 240, alignment: .leading)
                 .disabled(organize.editing)
 
                 // Only worth asking when there is a choice. With one library
@@ -80,7 +80,7 @@ struct OrganizeSheet: View {
                             Text(shortFolder(folder)).tag(folder)
                         }
                     }
-                    .frame(maxWidth: 240)
+                    .frame(maxWidth: 240, alignment: .leading)
                 }
 
                 Spacer(minLength: 0)
@@ -346,7 +346,7 @@ private struct SheetChrome: NSViewRepresentable {
             super.viewDidMoveToWindow()
             guard !configured, let window else { return }
             configured = true
-            window.styleMask.insert(.resizable)
+            allowResizing(window)
             guard let parent = parentWindow(of: window) else { return }
             window.setContentSize(
                 NSSize(
@@ -354,6 +354,26 @@ private struct SheetChrome: NSViewRepresentable {
                     height: parent.frame.height * heightFraction
                 )
             )
+        }
+
+        /// SwiftUI pins a sheet's content size to what it fits, so the style
+        /// mask alone leaves a window that reports itself resizable and refuses
+        /// to change size. The limits have to be widened too.
+        private func allowResizing(_ window: NSWindow) {
+            window.styleMask.insert(.resizable)
+            window.contentMinSize = NSSize(width: 560, height: 400)
+            window.contentMaxSize = NSSize(width: 100_000, height: 100_000)
+            window.minSize = NSSize(width: 560, height: 400)
+            window.maxSize = NSSize(width: 100_000, height: 100_000)
+        }
+
+        /// SwiftUI re-applies its own sizing on later layout passes, which puts
+        /// the limits back. Cheap to check, and self-healing if it does.
+        override func layout() {
+            super.layout()
+            if let window, !window.styleMask.contains(.resizable) || window.contentMaxSize.width < 10_000 {
+                allowResizing(window)
+            }
         }
 
         /// The window this sheet hangs off. `sheetParent` is authoritative but

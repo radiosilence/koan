@@ -1440,6 +1440,24 @@ impl KoanEngine {
         })
     }
 
+    /// Read a selection out of the library, ready to have patterns generated
+    /// against it.
+    ///
+    /// This is the expensive half — database rows, album facts, a `stat` per
+    /// file, and a tag read for anything the library has never seen — and it
+    /// happens once per selection. Blocking; call it off the main thread.
+    /// `track_ids` of `None` means the whole library.
+    pub fn organize_selection(
+        &self,
+        track_ids: Option<Vec<i64>>,
+    ) -> Result<Arc<OrganizeSelection>, KoanError> {
+        let db = self.db()?;
+        let requested = track_ids.as_ref().map(Vec::len);
+        let inner =
+            koan_core::organize::resolve(&db, track_ids.as_deref()).map_err(organize_err)?;
+        Ok(Arc::new(OrganizeSelection { inner, requested }))
+    }
+
     /// What `pattern` would do to these tracks. Touches nothing.
     ///
     /// `track_ids` of `None` means the whole library. `base_dir` picks which
@@ -1456,9 +1474,9 @@ impl KoanEngine {
         let base = base_dir.map(PathBuf::from);
         let result = match &track_ids {
             Some(ids) => {
-                koan_core::organize::preview_for_tracks(&db, ids, &pattern, base.as_deref())
+                koan_core::organize::preview_for_tracks(&db, ids, &pattern, base.as_deref(), true)
             }
-            None => koan_core::organize::preview(&db, &pattern, base.as_deref()),
+            None => koan_core::organize::preview(&db, &pattern, base.as_deref(), true),
         }
         .map_err(organize_err)?;
         Ok(OrganizePlan::build(
@@ -1526,6 +1544,46 @@ impl KoanEngine {
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect()
+    }
+}
+
+/// A resolved selection, held by the caller so a pattern can be generated
+/// against it many times without re-reading anything.
+///
+/// The split is the point. `generate` is pure string work and runs on every
+/// keystroke; `check` is the filesystem pass and runs once the typing settles.
+/// Neither can change what the other decided, so the fast answer is never
+/// wrong — only less complete.
+#[derive(uniffi::Object)]
+pub struct OrganizeSelection {
+    inner: koan_core::organize::ResolvedSelection,
+    /// How many tracks were asked for, so the shortfall can be reported.
+    requested: Option<usize>,
+}
+
+#[uniffi::export]
+impl OrganizeSelection {
+    /// Turn the pattern into destinations. **Touches no files**, so this is
+    /// safe to call as fast as someone can type.
+    pub fn generate(&self, pattern: String, base_dir: String) -> OrganizePlan {
+        let result = koan_core::organize::generate(&self.inner, &pattern, Path::new(&base_dir));
+        OrganizePlan::build(result, self.requested)
+    }
+
+    /// Generate, then ask the disk the two questions generation cannot answer:
+    /// which destinations are already occupied, and what ancillary files travel
+    /// with each move. A `stat` per file and a directory read per source
+    /// folder — off the main thread, after the fast answer is on screen.
+    pub fn check(&self, pattern: String, base_dir: String) -> OrganizePlan {
+        let mut result = koan_core::organize::generate(&self.inner, &pattern, Path::new(&base_dir));
+        koan_core::organize::check_against_disk(&mut result);
+        OrganizePlan::build(result, self.requested)
+    }
+
+    /// How many files resolved to something local. Fewer than were asked for
+    /// means the rest are remote-only or gone from disk.
+    pub fn count(&self) -> u32 {
+        self.inner.len() as u32
     }
 }
 

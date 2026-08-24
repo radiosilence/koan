@@ -68,6 +68,9 @@ macos-icon:
 macos-ffi *TARGETS:
     #!/usr/bin/env bash
     set -euo pipefail
+    # Match what SwiftPM links against. Without it cargo builds for the host's
+    # OS and every link is a page of "built for newer macOS version" warnings.
+    export MACOSX_DEPLOYMENT_TARGET=26.0
     targets="{{TARGETS}}"
     if [ -z "$targets" ]; then
         cargo build --release -p koan-ffi

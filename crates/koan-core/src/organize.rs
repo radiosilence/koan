@@ -415,7 +415,6 @@ fn plan_single_move(
     pattern: &str,
     base_dir: &Path,
     dests: &mut DestinationLedger,
-    planned_ancillary: &mut HashSet<PathBuf>,
 ) -> PlanEntry {
     let entry = |to: Option<PathBuf>, outcome: PlanOutcome| PlanEntry {
         track_id,
@@ -490,22 +489,57 @@ fn plan_single_move(
         );
     }
 
-    // A destination that resolves to the source itself is a case-only rename, which
-    // is a real move; anything else already there would be overwritten.
-    if dest.exists() && !paths_equal(source, &dest) {
-        return entry(
-            Some(dest),
-            PlanOutcome::Conflict("a file is already here — it would be overwritten".into()),
-        );
+    // Whether something is *already* sitting at the destination is a question
+    // for the filesystem, and this function deliberately does not ask one —
+    // see `check_against_disk`.
+    PlanEntry {
+        track_id,
+        from: source.to_path_buf(),
+        to: Some(dest),
+        ancillary: Vec::new(),
+        outcome: PlanOutcome::Move,
     }
+}
 
-    // Plan ancillary moves — move files in source dir to dest dir.
-    let source_dir = source.parent().unwrap_or(Path::new("."));
-    let dest_dir = dest.parent().unwrap_or(Path::new("."));
-    let mut ancillary = Vec::new();
+/// Ask the filesystem the two questions formatting cannot answer: whether a
+/// destination is already occupied, and what ancillary files travel with each
+/// move.
+///
+/// Separate from planning because it is the only part that touches the disk. A
+/// preview that reruns on every keystroke wants the pure half immediately and
+/// this afterwards; an execute wants both before it moves anything.
+pub fn check_against_disk(result: &mut OrganizeResult) {
+    let mut dests = DestinationLedger::default();
+    let mut planned_ancillary: HashSet<PathBuf> = HashSet::new();
+    // One directory read per source folder. An album is one folder and a dozen
+    // tracks, so doing this per file repeated the same readdir a dozen times.
+    let mut ancillary_by_dir: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
 
-    if source_dir != dest_dir {
-        for anc_path in find_ancillary_files(source_dir) {
+    for entry in &mut result.entries {
+        let (PlanOutcome::Move, Some(dest)) = (&entry.outcome, entry.to.clone()) else {
+            continue;
+        };
+
+        // A destination that resolves to the source itself is a case-only
+        // rename, which is a real move; anything else already there would be
+        // overwritten.
+        if dest.exists() && !paths_equal(&entry.from, &dest) {
+            entry.outcome =
+                PlanOutcome::Conflict("a file is already here — it would be overwritten".into());
+            continue;
+        }
+        dests.claim(&dest);
+
+        let source_dir = entry.from.parent().unwrap_or(Path::new("."));
+        let dest_dir = dest.parent().unwrap_or(Path::new("."));
+        if source_dir == dest_dir {
+            continue;
+        }
+        let candidates = ancillary_by_dir
+            .entry(source_dir.to_path_buf())
+            .or_insert_with(|| find_ancillary_files(source_dir))
+            .clone();
+        for anc_path in candidates {
             if planned_ancillary.contains(&anc_path) {
                 continue;
             }
@@ -519,16 +553,8 @@ fn plan_single_move(
                 continue;
             }
             planned_ancillary.insert(anc_path.clone());
-            ancillary.push((anc_path, anc_dest));
+            entry.ancillary.push((anc_path, anc_dest));
         }
-    }
-
-    PlanEntry {
-        track_id,
-        from: source.to_path_buf(),
-        to: Some(dest),
-        ancillary,
-        outcome: PlanOutcome::Move,
     }
 }
 
@@ -612,17 +638,55 @@ fn resolve_from_paths(
     Ok(resolved)
 }
 
-/// Build the list of moves. Every entry point plans through here, so a preview and the
-/// execute that follows it produce the same destinations from the same metadata.
-fn plan(
+/// A selection with every read already done: library rows, album facts, and
+/// tags for files the library has never seen.
+///
+/// This is the half that costs something. Generating destinations from it is
+/// pure string work, so a preview that reruns as a pattern is typed resolves
+/// once here and formats many times against the result.
+pub struct ResolvedSelection {
+    tracks: Vec<ResolvedTrack>,
+}
+
+impl ResolvedSelection {
+    /// How many files resolved to something with a local path. Fewer than were
+    /// asked for means the rest are remote-only or gone from disk.
+    pub fn len(&self) -> usize {
+        self.tracks.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tracks.is_empty()
+    }
+}
+
+/// Read a selection out of the library. `track_ids` of `None` means all of it.
+///
+/// Database reads and a `stat` per file, so it belongs off whatever thread is
+/// drawing — but it only has to happen once per selection.
+pub fn resolve(
+    db: &Database,
+    track_ids: Option<&[i64]>,
+) -> Result<ResolvedSelection, OrganizeError> {
+    let selection = match track_ids {
+        Some(ids) => Selection::TrackIds(ids),
+        None => Selection::All,
+    };
+    resolve_selection(db, selection)
+}
+
+/// Read a selection of file paths, which may or may not be in the library.
+/// Unknown files pay for a tag read; known ones come from their row.
+pub fn resolve_paths(db: &Database, paths: &[PathBuf]) -> Result<ResolvedSelection, OrganizeError> {
+    resolve_selection(db, Selection::Paths(paths))
+}
+
+fn resolve_selection(
     db: &Database,
     selection: Selection<'_>,
-    pattern: &str,
-    base_dir: &Path,
-) -> Result<OrganizeResult, OrganizeError> {
+) -> Result<ResolvedSelection, OrganizeError> {
     let albums = load_album_facts(&db.conn)?;
-
-    let resolved = match selection {
+    let tracks = match selection {
         Selection::All => resolve_from_rows(queries::all_tracks(&db.conn)?, &albums),
         Selection::TrackIds(ids) => {
             let mut rows = Vec::with_capacity(ids.len());
@@ -635,21 +699,29 @@ fn plan(
         }
         Selection::Paths(paths) => resolve_from_paths(db, paths, &albums)?,
     };
+    Ok(ResolvedSelection { tracks })
+}
 
-    let mut entries = Vec::with_capacity(resolved.len());
+/// Turn a pattern into destinations. **Touches no files at all.**
+///
+/// Everything here is formatting the pattern, sanitising what it produced, and
+/// checking the result against the destinations this same run has already
+/// claimed. That is fast enough to run on every keystroke, which is the whole
+/// reason it is separate from `check_against_disk`.
+pub fn generate(selection: &ResolvedSelection, pattern: &str, base_dir: &Path) -> OrganizeResult {
+    let mut entries = Vec::with_capacity(selection.tracks.len());
     let mut dests = DestinationLedger::default();
-    let mut planned_ancillary: HashSet<PathBuf> = HashSet::new();
 
-    for track in resolved {
-        let metadata = match track.metadata {
+    for track in &selection.tracks {
+        let metadata = match &track.metadata {
             Ok(m) => m,
             Err(msg) => {
                 entries.push(PlanEntry {
                     track_id: track.track_id,
-                    from: track.source,
+                    from: track.source.clone(),
                     to: None,
                     ancillary: Vec::new(),
-                    outcome: PlanOutcome::Error(msg),
+                    outcome: PlanOutcome::Error(msg.clone()),
                 });
                 continue;
             }
@@ -657,15 +729,32 @@ fn plan(
         entries.push(plan_single_move(
             &track.source,
             track.track_id,
-            &metadata,
+            metadata,
             pattern,
             base_dir,
             &mut dests,
-            &mut planned_ancillary,
         ));
     }
 
-    Ok(OrganizeResult { entries })
+    OrganizeResult { entries }
+}
+
+/// Resolve, generate, and optionally ask the disk. Every entry point plans
+/// through here, so a preview and the execute that follows it produce the same
+/// destinations from the same metadata.
+fn plan(
+    db: &Database,
+    selection: Selection<'_>,
+    pattern: &str,
+    base_dir: &Path,
+    check_disk: bool,
+) -> Result<OrganizeResult, OrganizeError> {
+    let resolved = resolve_selection(db, selection)?;
+    let mut result = generate(&resolved, pattern, base_dir);
+    if check_disk {
+        check_against_disk(&mut result);
+    }
+    Ok(result)
 }
 
 /// Plan, then carry out the moves: each file's database rows and its rename land
@@ -676,7 +765,7 @@ fn run(
     pattern: &str,
     base_dir: &Path,
 ) -> Result<OrganizeResult, OrganizeError> {
-    let mut result = plan(db, selection, pattern, base_dir)?;
+    let mut result = plan(db, selection, pattern, base_dir, true)?;
 
     let pending: Vec<FileMove> = result
         .entries
@@ -710,13 +799,20 @@ fn run(
 }
 
 /// Preview what would happen without moving files.
+///
+/// `check_disk` is what finds destinations that are already occupied and the
+/// ancillary files travelling with each move. It is a `stat` per file and a
+/// directory read per source folder, and it changes none of the destinations —
+/// so a preview that reruns as a pattern is typed leaves it off and fills it in
+/// afterwards.
 pub fn preview(
     db: &Database,
     pattern: &str,
     base_dir: Option<&Path>,
+    check_disk: bool,
 ) -> Result<OrganizeResult, OrganizeError> {
     let base = resolve_base_dir(base_dir)?;
-    plan(db, Selection::All, pattern, &base)
+    plan(db, Selection::All, pattern, &base, check_disk)
 }
 
 /// Execute the moves: rename files, update DB, log for undo.
@@ -735,9 +831,16 @@ pub fn preview_for_tracks(
     track_ids: &[i64],
     pattern: &str,
     base_dir: Option<&Path>,
+    check_disk: bool,
 ) -> Result<OrganizeResult, OrganizeError> {
     let base = resolve_base_dir(base_dir)?;
-    plan(db, Selection::TrackIds(track_ids), pattern, &base)
+    plan(
+        db,
+        Selection::TrackIds(track_ids),
+        pattern,
+        &base,
+        check_disk,
+    )
 }
 
 /// Execute organize for a specific set of tracks.
@@ -756,10 +859,11 @@ pub fn preview_for_paths(
     paths: &[PathBuf],
     pattern: &str,
     base_dir: Option<&Path>,
+    check_disk: bool,
 ) -> Result<OrganizeResult, OrganizeError> {
     let db = Database::open_default()?;
     let base = resolve_base_dir(base_dir)?;
-    plan(&db, Selection::Paths(paths), pattern, &base)
+    plan(&db, Selection::Paths(paths), pattern, &base, check_disk)
 }
 
 /// Execute organize for file paths. Requires the library database: without it there is
@@ -1598,7 +1702,13 @@ mod tests {
         let source = tmp.path().join("src/test.flac");
         add_track(&db, &source, "Airbag", 1);
 
-        let result = preview(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        let result = preview(
+            &db,
+            "%album artist%/%album%/%title%",
+            Some(tmp.path()),
+            true,
+        )
+        .unwrap();
         assert!(source.exists());
         assert_eq!(result.moved_count(), 1);
     }
@@ -1646,7 +1756,7 @@ mod tests {
         meta.path = Some(source.to_string_lossy().into_owned());
         queries::upsert_track(&db.conn, &meta).unwrap();
 
-        let previewed = preview(&db, pattern, Some(tmp.path())).unwrap();
+        let previewed = preview(&db, pattern, Some(tmp.path()), true).unwrap();
         assert_eq!(previewed.moved_count(), 1);
         let expected = previewed.moves().next().unwrap().dest().to_path_buf();
         assert!(expected.starts_with(tmp.path().join("Warp Records")));
@@ -1697,6 +1807,92 @@ mod tests {
             db_path_of(&db, imported.track_ids[0]).as_deref(),
             dest.to_str()
         );
+    }
+
+    /// Generation is pure. It is what reruns on every keystroke, so if it ever
+    /// starts touching the filesystem this is what says so: the destination is
+    /// occupied and the source directory is full of cover art, and neither
+    /// shows up until the disk is actually asked.
+    #[test]
+    fn generate_touches_no_files() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/track.flac");
+        add_track(&db, &source, "Airbag", 1);
+        std::fs::write(source.parent().unwrap().join("cover.jpg"), b"art").unwrap();
+
+        // Something is already sitting where the pattern points.
+        let occupied = tmp.path().join("Radiohead/OK Computer/Airbag.flac");
+        std::fs::create_dir_all(occupied.parent().unwrap()).unwrap();
+        std::fs::write(&occupied, b"the good rip").unwrap();
+
+        let selection = resolve(&db, None).unwrap();
+        let mut result = generate(&selection, "%album artist%/%album%/%title%", tmp.path());
+
+        // Pure pass: a move, no conflict, no ancillary — it has not looked.
+        assert_eq!(result.moved_count(), 1);
+        assert_eq!(result.conflicts().count(), 0);
+        assert!(result.entries[0].ancillary.is_empty());
+
+        // Asking the disk is what finds both.
+        check_against_disk(&mut result);
+        assert_eq!(result.moved_count(), 0);
+        assert_eq!(result.conflicts().count(), 1);
+        assert_eq!(result.conflicts().next().unwrap().dest(), occupied);
+    }
+
+    /// Resolving once and generating many times must agree with planning from
+    /// scratch, or the preview would be lying about what execute will do.
+    #[test]
+    fn generate_agrees_with_a_full_plan() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        add_track(&db, &tmp.path().join("src/a.flac"), "Airbag", 1);
+        add_track(&db, &tmp.path().join("src/b.flac"), "Karma Police", 2);
+        let pattern = "%album artist%/%album%/%tracknumber%. %title%";
+
+        let selection = resolve(&db, None).unwrap();
+        let mut generated = generate(&selection, pattern, tmp.path());
+        check_against_disk(&mut generated);
+        let planned = preview(&db, pattern, Some(tmp.path()), true).unwrap();
+
+        assert_eq!(generated.entries.len(), planned.entries.len());
+        for (a, b) in generated.entries.iter().zip(&planned.entries) {
+            assert_eq!(a.from, b.from);
+            assert_eq!(a.to, b.to);
+            assert_eq!(a.outcome, b.outcome);
+            assert_eq!(a.ancillary, b.ancillary);
+        }
+    }
+
+    /// One readdir per source directory, not one per file — the thing that made
+    /// a preview over an album on a slow volume cost what it did.
+    #[test]
+    fn ancillary_is_scanned_once_per_directory() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        for (i, title) in ["Airbag", "Karma Police", "Lucky"].iter().enumerate() {
+            add_track(
+                &db,
+                &tmp.path().join(format!("src/{i}.flac")),
+                title,
+                i as i32 + 1,
+            );
+        }
+        std::fs::write(tmp.path().join("src/cover.jpg"), b"art").unwrap();
+
+        let result = preview(
+            &db,
+            "%album artist%/%album%/%title%",
+            Some(tmp.path()),
+            true,
+        )
+        .unwrap();
+
+        // The cover travels with exactly one of them, not all three.
+        let carrying: Vec<_> = result.moves().filter(|e| !e.ancillary.is_empty()).collect();
+        assert_eq!(carrying.len(), 1);
+        assert_eq!(carrying[0].ancillary.len(), 1);
     }
 
     // ---- Collisions ----
@@ -2274,7 +2470,7 @@ mod tests {
         queries::upsert_track(&db.conn, &meta).unwrap();
 
         let pattern = "%album artist%/['('$left(%date%,4)')' ]%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%";
-        let result = preview(&db, pattern, Some(tmp.path())).unwrap();
+        let result = preview(&db, pattern, Some(tmp.path()), true).unwrap();
         assert_eq!(result.moved_count(), 1);
         assert_eq!(
             result
@@ -2305,7 +2501,7 @@ mod tests {
         queries::upsert_track(&db.conn, &meta).unwrap();
 
         let pattern = "%album artist%/['('$left(%date%,4)')' ]%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%";
-        let result = preview(&db, pattern, Some(tmp.path())).unwrap();
+        let result = preview(&db, pattern, Some(tmp.path()), true).unwrap();
         assert_eq!(result.moved_count(), 1);
         assert_eq!(
             result

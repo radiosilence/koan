@@ -43,6 +43,10 @@ final class OrganizeModel {
     private(set) var error: String?
 
     private var previewTask: Task<Void, Never>?
+    /// The selection, read once when the sheet opens. Patterns are generated
+    /// against it — no database, no filesystem — which is what makes typing
+    /// feel like typing.
+    private var selection: OrganizeSelection?
     /// Bumped per request, so a slow plan can't land on top of a newer one. The
     /// custom field previews as it's typed, so overlapping requests are normal.
     private var generation = 0
@@ -77,14 +81,37 @@ final class OrganizeModel {
         patternName = patterns.first(where: \.isDefault)?.name ?? patterns.first?.name
         draft = stored(patternName) ?? ""
         configuring = false
-        refreshPreview()
+        resolveSelection(trackIds: trackIds)
     }
 
     func dismiss() {
         previewTask?.cancel()
         previewTask = nil
         subject = nil
+        selection = nil
         plan = nil
+    }
+
+    /// Read the selection once. Everything after this is generating patterns
+    /// against what it returns.
+    private func resolveSelection(trackIds: [Int64]) {
+        let engine = self.engine
+        generation += 1
+        let requested = generation
+        previewing = true
+        Task {
+            let resolved = await Task.detached(priority: .userInitiated) {
+                try? engine.organizeSelection(trackIds: trackIds)
+            }.value
+            guard requested == generation, subject != nil else { return }
+            selection = resolved
+            previewing = false
+            guard resolved != nil else {
+                error = "Could not read those tracks."
+                return
+            }
+            refreshPreview()
+        }
     }
 
     // MARK: - The pattern
@@ -138,38 +165,47 @@ final class OrganizeModel {
 
     // MARK: - Preview
 
-    /// Debounced, because the custom field previews as it is typed and each
-    /// pass resolves a destination for every selected file.
+    /// Only the disk pass is worth debouncing, and `refreshPreview` puts the
+    /// pure result up before waiting on it — so the delay is invisible on the
+    /// destinations and only defers the conflict flags.
     private func schedulePreview() {
         previewTask?.cancel()
-        guard subject != nil, !configuring else { return }
+        guard subject != nil, selection != nil, !configuring else { return }
         previewTask = Task {
-            try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
             refreshPreview()
         }
     }
 
+    /// Two passes.
+    ///
+    /// The first is pure — the pattern formatted into destinations, no files
+    /// touched — and lands immediately, so the table tracks what is being
+    /// typed. The second asks the disk which destinations are already occupied
+    /// and what artwork travels along, and swaps in when it returns. The fast
+    /// answer is never wrong, only less complete, so there is nothing to
+    /// unsee when the slow one arrives.
     func refreshPreview() {
-        guard let subject, !pattern.isEmpty else {
+        guard let selection, !pattern.isEmpty else {
             plan = nil
             return
         }
-        let engine = self.engine
         let (pattern, base) = (self.pattern, self.baseDir)
-        let ids = subject.trackIds
 
         generation += 1
         let requested = generation
+
+        plan = selection.generate(pattern: pattern, baseDir: base)
+        error = nil
+
         previewing = true
         Task {
-            let result = await Task.detached(priority: .userInitiated) {
-                Result { try engine.organizePreview(pattern: pattern, trackIds: ids, baseDir: base) }
+            let checked = await Task.detached(priority: .userInitiated) {
+                selection.check(pattern: pattern, baseDir: base)
             }.value
-            // A later keystroke already asked for a newer plan, or the sheet is gone.
-            guard requested == generation, self.subject != nil else { return }
+            guard requested == generation else { return }
             previewing = false
-            apply(result)
+            plan = checked
         }
     }
 

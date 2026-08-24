@@ -107,7 +107,7 @@ impl OrganizeModalState {
         std::thread::Builder::new()
             .name("koan-org-preview".into())
             .spawn(move || {
-                let preview = koan_core::organize::preview_for_paths(&paths, &pattern, None);
+                let preview = koan_core::organize::preview_for_paths(&paths, &pattern, None, true);
 
                 if let Ok(mut p) = pending.lock() {
                     match preview {
