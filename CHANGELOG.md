@@ -88,6 +88,8 @@
 
   The sidebar takes the same measured inset the detail column takes, so the footer grows upward from the top of the bar.
 
+- **Drag sources outside list rows went through `.onDrag`.** It claims the press outright, which costs the tap underneath it — `RowBehaviour` had already found this and moved list rows to `.draggable`, whose recogniser has a movement threshold and leaves a press that never moves as a click. Album tiles, artist pills and artist names were still on the old path. `PlayableTransfer` is `Transferable` with the two representations the item provider was registering by hand, so drops inside koan and the plain-text fallback out of it are unchanged.
+
 - **Track results could not be dragged or right-clicked.** The album tiles and artist pills beside them could do both; the track row was a `Button`, which claims the press, so it was the one result you could only click. It takes the same row behaviour the library lists use — full-width hit area, drag to enqueue — and the same context menu the tiles and pills already had. Clicking still goes to the album.
 
 - **Clicking a search result did nothing.** Albums, artists and tracks on the results page all registered the click and stayed put; the same tiles and pills worked in the album and artist browsers, which is what made it look like a hit-testing problem rather than a navigation one.
