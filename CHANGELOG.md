@@ -27,6 +27,12 @@
 
 - **The sidebar said no remote tracks were cached, however many were.** The count asked for tracks whose `source` is `'cached'` — a value the schema allows and nothing writes, because downloading a track does not change where it came from. What a download writes is `cached_path`, which is what `set_cached_path` sets and clearing the cache nulls. Counted from there it agrees with the files on disk.
 
+## v0.29.1 (2026-08-24)
+
+### Changed
+
+- **The playing row is marked by bars rather than a speaker.** A speaker glyph says "sound comes out of here", which is true of the whole application; what a row needs to say is *this one, and it is still moving*. Three bars ride a pair of sine waves whose frequencies sit at an irrational ratio, so the pattern never settles into a loop the eye can catch, and they freeze where they stand when the transport pauses — paused is the absence of motion, so it costs no second glyph. Reduce Motion gets the bars at rest.
+
 ## v0.29.0 (2026-08-24)
 
 ### Added
