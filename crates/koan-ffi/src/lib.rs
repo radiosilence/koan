@@ -1458,6 +1458,21 @@ impl KoanEngine {
         Ok(Arc::new(OrganizeSelection { inner, requested }))
     }
 
+    /// Whether cover art, cue sheets and logs travel with the music.
+    pub fn organize_moves_ancillary(&self) -> bool {
+        Config::load().unwrap_or_default().organize.move_ancillary
+    }
+
+    /// Remember the choice. Written to `config.toml`, so the CLI and TUI
+    /// organize the same way the app just did.
+    pub fn set_organize_moves_ancillary(&self, enabled: bool) -> Result<(), KoanError> {
+        Config::update_base(|cfg| cfg.organize.move_ancillary = enabled).map_err(|e| {
+            KoanError::BadArgument {
+                message: e.to_string(),
+            }
+        })
+    }
+
     /// What `pattern` would do to these tracks. Touches nothing.
     ///
     /// `track_ids` of `None` means the whole library. `base_dir` picks which
@@ -1574,9 +1589,9 @@ impl OrganizeSelection {
     /// which destinations are already occupied, and what ancillary files travel
     /// with each move. A `stat` per file and a directory read per source
     /// folder — off the main thread, after the fast answer is on screen.
-    pub fn check(&self, pattern: String, base_dir: String) -> OrganizePlan {
+    pub fn check(&self, pattern: String, base_dir: String, move_ancillary: bool) -> OrganizePlan {
         let mut result = koan_core::organize::generate(&self.inner, &pattern, Path::new(&base_dir));
-        koan_core::organize::check_against_disk(&mut result);
+        koan_core::organize::check_against_disk(&mut result, move_ancillary);
         OrganizePlan::build(result, self.requested)
     }
 

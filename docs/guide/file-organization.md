@@ -56,7 +56,8 @@ Or define them in your config directly:
 
 ```toml
 [organize]
-default = "standard"      # pattern selected by default in the modal
+default = "standard"       # pattern selected by default in the modal
+move_ancillary = true      # cover art, .cue and .log travel with the music
 
 [organize.patterns]
 standard = "%album artist%/(%date%) %album%/%tracknumber%. %title%"
@@ -105,4 +106,4 @@ Music files are irreplaceable, so organize refuses anything it can't do without 
 - **Undo.** Every move -- including files the library has no row for -- is written to `organize_log`, newest batch first. Undo restores a file only if its original path is still free and the moved file is still the one that was logged; anything else is reported and left alone, with its log entry intact.
 - **Cross-filesystem moves are copied, flushed and verified before the original is deleted.** A run that won't fit is refused before it starts.
 - **Empty directories are cleaned up, but never a configured library root** or anything above one.
-- **Ancillary files move with music.** Cover art, cue sheets, and log files in the same directory are moved alongside the music files. Artwork already at the destination is left alone.
+- **Ancillary files move with music.** Cover art, cue sheets, and log files in the same directory are moved alongside the music files. Artwork already at the destination is left alone. Turn it off with `[organize] move_ancillary = false`, or the checkbox in the macOS sheet, which writes the same setting.

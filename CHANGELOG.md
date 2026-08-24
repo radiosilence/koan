@@ -18,6 +18,8 @@
 
   Dropped files get library rows *where they are*, not in the music tree — importing and organizing are separate on purpose, so files land in the library only after you have seen where they are going.
 
+  Whether cover art and cue sheets travel with the music is a checkbox in the sheet and a `[organize] move_ancillary` setting behind it, so the CLI and TUI organize the way the app just did.
+
   Generating destinations is separated from asking the disk about them, because only one of those is fast. `organize::generate` formats a pattern against an already-resolved selection and touches no files at all, so it reruns on every keystroke; `organize::check_against_disk` is the `stat`-per-file pass that finds occupied destinations and the artwork travelling alongside, and it lands a moment later. Ancillary files were previously discovered with a directory read *per file*, so an album of a dozen tracks did the same `readdir` a dozen times.
 
 ### Changed

@@ -508,7 +508,7 @@ fn plan_single_move(
 /// Separate from planning because it is the only part that touches the disk. A
 /// preview that reruns on every keystroke wants the pure half immediately and
 /// this afterwards; an execute wants both before it moves anything.
-pub fn check_against_disk(result: &mut OrganizeResult) {
+pub fn check_against_disk(result: &mut OrganizeResult, move_ancillary: bool) {
     let mut dests = DestinationLedger::default();
     let mut planned_ancillary: HashSet<PathBuf> = HashSet::new();
     // One directory read per source folder. An album is one folder and a dozen
@@ -530,6 +530,9 @@ pub fn check_against_disk(result: &mut OrganizeResult) {
         }
         dests.claim(&dest);
 
+        if !move_ancillary {
+            continue;
+        }
         let source_dir = entry.from.parent().unwrap_or(Path::new("."));
         let dest_dir = dest.parent().unwrap_or(Path::new("."));
         if source_dir == dest_dir {
@@ -752,7 +755,7 @@ fn plan(
     let resolved = resolve_selection(db, selection)?;
     let mut result = generate(&resolved, pattern, base_dir);
     if check_disk {
-        check_against_disk(&mut result);
+        check_against_disk(&mut result, move_ancillary());
     }
     Ok(result)
 }
@@ -1459,6 +1462,14 @@ fn resolve_base_dir(base_dir: Option<&Path>) -> Result<PathBuf, OrganizeError> {
     })
 }
 
+/// Whether cover art and cue sheets travel with the music. A preference, so it
+/// is read where it is used rather than threaded through every signature.
+fn move_ancillary() -> bool {
+    crate::config::Config::load()
+        .map(|c| c.organize.move_ancillary)
+        .unwrap_or(true)
+}
+
 fn batch_id() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1835,7 +1846,7 @@ mod tests {
         assert!(result.entries[0].ancillary.is_empty());
 
         // Asking the disk is what finds both.
-        check_against_disk(&mut result);
+        check_against_disk(&mut result, true);
         assert_eq!(result.moved_count(), 0);
         assert_eq!(result.conflicts().count(), 1);
         assert_eq!(result.conflicts().next().unwrap().dest(), occupied);
@@ -1853,7 +1864,7 @@ mod tests {
 
         let selection = resolve(&db, None).unwrap();
         let mut generated = generate(&selection, pattern, tmp.path());
-        check_against_disk(&mut generated);
+        check_against_disk(&mut generated, true);
         let planned = preview(&db, pattern, Some(tmp.path()), true).unwrap();
 
         assert_eq!(generated.entries.len(), planned.entries.len());
@@ -1893,6 +1904,44 @@ mod tests {
         let carrying: Vec<_> = result.moves().filter(|e| !e.ancillary.is_empty()).collect();
         assert_eq!(carrying.len(), 1);
         assert_eq!(carrying[0].ancillary.len(), 1);
+    }
+
+    /// The disk pass must not mistake a file for its own obstacle. Nothing
+    /// stops a caller planning against paths a previous run already moved, and
+    /// a bare `exists()` on the destination says "occupied" for every one of
+    /// them.
+    #[test]
+    fn a_file_already_at_its_destination_is_unchanged_not_a_conflict() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let pattern = "%album artist%/%album%/%title%";
+        add_track(&db, &tmp.path().join("src/a.flac"), "Airbag", 1);
+
+        let moved = execute(&db, pattern, Some(tmp.path())).unwrap();
+        assert_eq!(moved.moved_count(), 1);
+
+        // Plan again, from the rows as they now stand.
+        let again = preview(&db, pattern, Some(tmp.path()), true).unwrap();
+        assert_eq!(again.conflicts().count(), 0);
+        assert_eq!(again.unchanged_count(), 1);
+    }
+
+    #[test]
+    fn ancillary_files_stay_put_when_they_are_turned_off() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/a.flac");
+        add_track(&db, &source, "Airbag", 1);
+        std::fs::write(source.parent().unwrap().join("cover.jpg"), b"art").unwrap();
+
+        let selection = resolve(&db, None).unwrap();
+        let mut off = generate(&selection, "%album artist%/%album%/%title%", tmp.path());
+        check_against_disk(&mut off, false);
+        assert!(off.moves().all(|e| e.ancillary.is_empty()));
+
+        let mut on = generate(&selection, "%album artist%/%album%/%title%", tmp.path());
+        check_against_disk(&mut on, true);
+        assert_eq!(on.moves().next().unwrap().ancillary.len(), 1);
     }
 
     // ---- Collisions ----

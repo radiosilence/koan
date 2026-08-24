@@ -25,10 +25,13 @@ struct OrganizeSheet: View {
             Divider()
             footer
         }
-        // An explicit size, computed from the window this is covering before
-        // the sheet went up. A sheet sizes itself to its content, so this is
-        // the only thing it reliably honours.
-        .frame(width: organize.size.width, height: organize.size.height)
+        // Flexible, so the window can be resized and the content follows.
+        // `SheetChrome` is what gives it a starting size and a grip.
+        .frame(
+            minWidth: 560, maxWidth: .infinity,
+            minHeight: 400, maxHeight: .infinity
+        )
+        .background(SheetChrome(initialSize: organize.size))
     }
 
     // MARK: - Header
@@ -107,9 +110,17 @@ struct OrganizeSheet: View {
             }
 
             HStack(spacing: 6) {
+                Toggle("Move cover art and cue sheets", isOn: $organize.moveAncillary)
+                    .toggleStyle(.checkbox)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .help("Artwork, .cue and .log files in the same folder travel with the music")
+
+                Text("·")
+
                 // Destinations are relative to this, so it has to be visible
                 // even when there was nothing to choose.
-                Text("Destinations are relative to \(organize.baseDir)")
+                Text("relative to \(organize.baseDir)")
                 // An edited pattern previews and moves without being saved, so
                 // say which state you are looking at.
                 if organize.isModified {
@@ -296,6 +307,69 @@ private struct OrganizeRow: View {
         case .unchanged: .secondary
         case .conflict: .orange
         case .error: .red
+        }
+    }
+}
+
+/// Gives the sheet a starting size and a resize grip.
+///
+/// Neither comes from SwiftUI. AppKit leaves `.resizable` off a sheet's style
+/// mask, and SwiftUI pins the window's content size to whatever the content
+/// fits — so the mask alone produces a window that calls itself resizable and
+/// refuses to move. Both limits have to be lifted with it.
+///
+/// The starting size is passed in rather than measured here. Asking for the
+/// parent window during presentation does not work: `sheetParent` is not set
+/// until the sheet has begun, and `NSApp.mainWindow` is unreliable at that
+/// moment. `OrganizeModel` works it out before the sheet exists, when the
+/// window is unambiguous.
+private struct SheetChrome: NSViewRepresentable {
+    let initialSize: CGSize
+
+    func makeNSView(context: Context) -> NSView {
+        ChromeView(initialSize: initialSize)
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class ChromeView: NSView {
+        private let initialSize: CGSize
+        /// Sized once. Re-applying on a later window change would yank it back
+        /// under the user's own drag.
+        private var sized = false
+
+        init(initialSize: CGSize) {
+            self.initialSize = initialSize
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard !sized, let window else { return }
+            sized = true
+            allowResizing(window)
+            window.setContentSize(NSSize(width: initialSize.width, height: initialSize.height))
+        }
+
+        /// SwiftUI re-applies its own sizing on later layout passes, which puts
+        /// the limits back. Cheap to check, and self-healing if it does.
+        override func layout() {
+            super.layout()
+            guard let window else { return }
+            if !window.styleMask.contains(.resizable) || window.contentMaxSize.width < 10_000 {
+                allowResizing(window)
+            }
+        }
+
+        private func allowResizing(_ window: NSWindow) {
+            window.styleMask.insert(.resizable)
+            window.contentMinSize = NSSize(width: 560, height: 400)
+            window.contentMaxSize = NSSize(width: 100_000, height: 100_000)
+            window.minSize = NSSize(width: 560, height: 400)
+            window.maxSize = NSSize(width: 100_000, height: 100_000)
         }
     }
 }

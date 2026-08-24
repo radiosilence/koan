@@ -38,6 +38,17 @@ final class OrganizeModel {
     /// Which library folder the pattern's relative paths hang off.
     var baseDir: String = "" { didSet { schedulePreview() } }
 
+    /// Whether cover art, cue sheets and logs travel with the music.
+    /// Persists the moment it is flipped — it is a preference, not a per-run
+    /// choice, and the CLI and TUI read the same setting.
+    var moveAncillary = true {
+        didSet {
+            guard !configuring, oldValue != moveAncillary else { return }
+            try? engine.setOrganizeMovesAncillary(enabled: moveAncillary)
+            schedulePreview()
+        }
+    }
+
     /// How big to open. Decided here rather than in the view: a sheet sizes
     /// itself to its content, and the window to measure against is only
     /// unambiguous *before* the sheet goes up.
@@ -84,6 +95,7 @@ final class OrganizeModel {
         patterns = engine.organizePatterns()
         folders = engine.libraryFolders()
         baseDir = folders.first ?? ""
+        moveAncillary = engine.organizeMovesAncillary()
         patternName = patterns.first(where: \.isDefault)?.name ?? patterns.first?.name
         draft = stored(patternName) ?? ""
         configuring = false
@@ -205,6 +217,7 @@ final class OrganizeModel {
             return
         }
         let (pattern, base) = (self.pattern, self.baseDir)
+        let ancillary = moveAncillary
 
         generation += 1
         let requested = generation
@@ -215,7 +228,7 @@ final class OrganizeModel {
         previewing = true
         Task {
             let checked = await Task.detached(priority: .userInitiated) {
-                selection.check(pattern: pattern, baseDir: base)
+                selection.check(pattern: pattern, baseDir: base, moveAncillary: ancillary)
             }.value
             guard requested == generation else { return }
             previewing = false
@@ -247,13 +260,18 @@ final class OrganizeModel {
             running = false
             switch result {
             case .success:
-                // Re-plan against where the files now are, rather than leaving
-                // the table showing moves that have already happened. Every
-                // file that made it comes back as unchanged — a column of
-                // ticks — and anything blocked is still blocked, for the same
-                // reason it was. The table stays the report.
+                // Re-*resolve*, not just re-generate. The selection was read
+                // when the sheet opened and still holds the paths the files had
+                // then; generating against it would point every row at the
+                // destination its own file is now sitting in, and the disk pass
+                // would flag each file as about to overwrite itself.
+                //
+                // Reading it again picks the new paths out of the database, so
+                // everything that moved comes back as unchanged — a column of
+                // ticks — and anything blocked is still blocked for the reason
+                // it was. The table stays the report.
                 error = nil
-                refreshPreview()
+                resolveSelection(trackIds: subject.trackIds)
             case .failure(let failure):
                 previewing = false
                 self.plan = nil

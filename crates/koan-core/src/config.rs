@@ -230,7 +230,7 @@ pub fn parse_size_bytes(s: &str) -> Option<u64> {
     Some((value * multiplier as f64) as u64)
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OrganizeConfig {
     /// Default named pattern to use when --pattern is omitted.
@@ -239,6 +239,21 @@ pub struct OrganizeConfig {
     /// Named patterns — keys are names, values are format strings.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub patterns: HashMap<String, String>,
+    /// Move cover art, cue sheets and logs alongside the music they belong to.
+    /// On by default: a folder's artwork is part of the release, and leaving it
+    /// behind turns one album into two half-albums.
+    #[serde(default = "default_true")]
+    pub move_ancillary: bool,
+}
+
+impl Default for OrganizeConfig {
+    fn default() -> Self {
+        Self {
+            default: None,
+            patterns: HashMap::new(),
+            move_ancillary: true,
+        }
+    }
 }
 
 impl OrganizeConfig {
@@ -298,6 +313,10 @@ pub struct GraphqlConfig {
     pub cookie_secure: bool,
     /// Expose the `organize*` mutations, which physically move files on disk.
     pub allow_organize: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_bind() -> std::net::IpAddr {
