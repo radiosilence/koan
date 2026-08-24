@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 
@@ -13,6 +14,13 @@ final class UIState {
     var showingPicker = false
     var showingArtwork = false
     var showingShortcuts = false
+
+    /// The main window's content size, measured by `RootView`.
+    ///
+    /// A sheet is bounded by the window it hangs from but cannot ask how big
+    /// that is — a `GeometryReader` inside one only ever sees the sheet's own
+    /// proposal. The window measures itself and leaves the answer here.
+    var windowSize: CGSize = .zero
 
     enum Edge { case top, bottom }
 

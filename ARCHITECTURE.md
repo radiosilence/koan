@@ -224,7 +224,7 @@ Advancing parks on the next item that is not `Failed`, including one still downl
 | `queries/mod.rs` | Row types (`ArtistRow`, `AlbumRow`, `TrackRow`, `PlaybackSource`, `LibraryStats`, `TrackMeta`), re-exports |
 | `queries/artists.rs` | Artist upsert/query |
 | `queries/albums.rs` | Album upsert/query |
-| `queries/tracks.rs` | Track upsert (3-strategy dedup: path → remote_id → content match), removal, playback source resolution, `track_id_by_path()` |
+| `queries/tracks.rs` | Track upsert (dedup: path → remote_id → content match, then a re-merge pass), removal, playback source resolution, `track_id_by_path()` |
 | `queries/search.rs` | FTS5 full-text search |
 | `queries/scan_cache.rs` | Mtime+size change detection to skip unchanged files |
 | `queries/stats.rs` | Library statistics |
@@ -234,6 +234,10 @@ Advancing parks on the next item that is not `Failed`, including one still downl
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
 
 **Track dedup:** `upsert_track` tries three match strategies in order: (1) exact path match, (2) remote_id match, (3) content match (artist + album + disc + track# + title, and only where one side has no local path and one side has no remote_id). First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows, while keeping two files on disk as two tracks however identical their tags: multi-disc releases repeat title and track number across discs. A merge fills gaps only — it never overwrites a populated column with NULL, so a remote sync that knows nothing about sample rate cannot erase what the local scan measured.
+
+A row matched by path or remote_id is then asked the content-match question a second time, against the corrected metadata. Strategies 1 and 2 pin a row to the source it was first seen from, so a file indexed with bad tags could never merge with its remote copy however good the tags later became — the path kept matching, and the merge that should have happened never got asked. If the counterpart turns up, `merge_track_rows` folds it in: play history concatenates, lyrics and the embedding fill a gap or are dropped, favourites need no move because they are keyed by path. An album left with nothing in it goes too, since a corrected tag usually strands a misreading nobody wants in the browser.
+
+Only a single-sourced row is asked — one already carrying both a path and a remote id has nothing left to absorb. Unchanged files never reach `upsert_track` at all, so repairing a library that already holds duplicates from this means `koan scan --force`.
 
 ### `index/`
 

@@ -100,6 +100,7 @@ struct RootView: View {
             )
         }
         .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
+        .onGeometryChange(for: CGSize.self) { $0.size } action: { ui.windowSize = $0 }
         .toolbar {
             // Spans section switches and search jumps, which a NavigationStack's
             // own back button cannot — it only knows about one stack.
