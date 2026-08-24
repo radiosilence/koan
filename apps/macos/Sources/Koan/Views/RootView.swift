@@ -223,7 +223,12 @@ struct RootView: View {
         case .artist(let id):
             library.reveal(artist: id)
         }
-        search.reset()
+        // Emptying the field is its own update. The results page is the stack's
+        // root when a suggestion is picked, and clearing the query swaps what
+        // that root draws in the same pass as the push — the case `reveal()`
+        // warns about, where the destination is discarded against the root it
+        // was pushed onto and you are left looking at an empty results page.
+        Task { @MainActor in search.reset() }
     }
 
     @ViewBuilder
