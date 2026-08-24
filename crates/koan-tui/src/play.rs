@@ -12,13 +12,13 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::LoadState;
 
 use crate::app::{self, PickerAction};
-use crate::download_queue::DownloadQueue;
 use crate::enqueue::enqueue_playlist;
 use crate::picker::{
     PickerItem, PickerKind, PickerPartKind, PickerState, all_tracks_sentinel,
     artist_id_from_sentinel, is_all_tracks_sentinel,
 };
 use crate::picker_items::{load_picker_items, make_album_picker_items};
+use koan_core::remote::queue::DownloadQueue;
 
 /// Callbacks for CLI integration. The TUI library crate doesn't own
 /// the logger or signal handler — koan-cli provides those.

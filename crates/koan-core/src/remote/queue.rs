@@ -4,12 +4,12 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use parking_lot::{Condvar, Mutex};
 
-use koan_core::config;
-use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{LoadState, QueueItemId, SharedPlayerState};
-use koan_core::remote::client::SubsonicClient;
+use crate::config;
+use crate::player::commands::PlayerCommand;
+use crate::player::state::{LoadState, QueueItemId, SharedPlayerState};
+use crate::remote::client::SubsonicClient;
 
-use koan_core::helpers::download_track;
+use crate::helpers::download_track;
 
 /// Concurrent downloads the priority lane may run outside the worker pool.
 /// Small on purpose: its job is to get the track under the cursor playing, and
@@ -112,7 +112,7 @@ impl DownloadQueue {
     ) -> Self {
         let cfg = config::Config::load().unwrap_or_default();
         let num_workers = cfg.remote.download_workers.max(1);
-        let client = koan_core::helpers::subsonic_client(&cfg);
+        let client = crate::helpers::subsonic_client(&cfg);
         if client.is_none() {
             log::info!("remote not configured — download queue will idle");
         }
@@ -214,9 +214,12 @@ fn dispatch_priority(inner: &Arc<Inner>, item: (i64, QueueItemId)) {
 /// Run one download, containing any panic so the worker pool never shrinks.
 fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
     let Some(client) = inner.client.as_ref() else {
-        inner
-            .state
-            .update_load_state(queue_id, LoadState::Failed("remote not configured".into()));
+        // Failed, not left Pending: the player waits for Ready, so a queue of
+        // tracks that can never arrive would otherwise sit saying nothing.
+        inner.state.update_load_state(
+            queue_id,
+            LoadState::Failed(crate::helpers::remote_unavailable(&inner.cfg)),
+        );
         return;
     };
 
@@ -318,6 +321,30 @@ fn cursor_watcher(inner: Arc<Inner>) {
             dispatch_priority(&inner, item);
         }
     }
+}
+
+/// The process's download queue.
+///
+/// One player means one pool, one priority lane and one cursor watcher; a
+/// second set would compete with the first for the same link and the same
+/// cursor. Every front end reaches downloads through here — the TUI directly,
+/// the FFI and the GraphQL server through `helpers::spawn_downloads`.
+///
+/// `log_buf` is only honoured by whoever initialises it, which is the TUI when
+/// it is running, since it is the only front end that shows the buffer.
+pub fn shared(
+    cmd_tx: &crossbeam_channel::Sender<PlayerCommand>,
+    state: &Arc<SharedPlayerState>,
+    log_buf: Option<Arc<StdMutex<Vec<String>>>>,
+) -> &'static DownloadQueue {
+    static QUEUE: std::sync::OnceLock<DownloadQueue> = std::sync::OnceLock::new();
+    QUEUE.get_or_init(|| {
+        DownloadQueue::spawn(
+            cmd_tx.clone(),
+            state.clone(),
+            log_buf.unwrap_or_else(|| Arc::new(StdMutex::new(Vec::new()))),
+        )
+    })
 }
 
 #[cfg(test)]

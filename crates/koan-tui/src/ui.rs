@@ -510,7 +510,7 @@ mod tests {
         let state = SharedPlayerState::new();
         let (tx, _rx) = crossbeam_channel::unbounded();
         let log_buffer = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let download_queue = crate::download_queue::DownloadQueue::spawn(
+        let download_queue = koan_core::remote::queue::DownloadQueue::spawn(
             tx.clone(),
             state.clone(),
             log_buffer.clone(),

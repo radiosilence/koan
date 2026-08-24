@@ -14,7 +14,7 @@ use koan_core::player::state::{
     VisibleQueueSnapshot,
 };
 
-use crate::download_queue::DownloadQueue;
+use koan_core::remote::queue::DownloadQueue;
 
 use super::library::LibraryState;
 use super::lyrics::LyricsState;
