@@ -821,6 +821,107 @@ mod tests {
         );
     }
 
+    /// Everything lofty parsed out of a file, so a comparison misses nothing.
+    ///
+    /// Title and artist are the fields a hand-written test thinks to check.
+    /// A divergence would just as happily land on a track number, a sort
+    /// name, or a MusicBrainz id nobody remembered to assert on.
+    #[cfg(test)]
+    fn fingerprint(f: &lofty::file::TaggedFile) -> Vec<String> {
+        use lofty::tag::Accessor;
+        let mut out: Vec<String> = Vec::new();
+        for tag in f.tags() {
+            for item in tag.items() {
+                out.push(format!("{:?}={:?}", item.key(), item.value()));
+            }
+            out.push(format!("comment={:?}", tag.comment()));
+        }
+        out.sort();
+        out.push(format!("duration={:?}", f.properties().duration()));
+        out
+    }
+
+    /// Every MP3 under `KOAN_SWEEP_DIR`, read both ways, must agree.
+    ///
+    /// The generated fixtures below cover the shapes we thought of; a real
+    /// library covers the ones we did not. Twenty years of files written by
+    /// twenty different taggers is a better fuzzer than anything hand-rolled,
+    /// and the walk's own doc comment admits it is only correct while its
+    /// frame arithmetic matches lofty's — which is a claim about lofty as much
+    /// as about us, and so wants re-checking whenever lofty moves.
+    ///
+    /// ```text
+    /// KOAN_SWEEP_DIR=/path/to/music cargo test -p koan-core -- --ignored --nocapture sweep
+    /// ```
+    #[test]
+    #[ignore = "needs a music library; set KOAN_SWEEP_DIR"]
+    fn holding_the_pictures_back_changes_nothing_across_a_real_library() {
+        let Ok(dir) = std::env::var("KOAN_SWEEP_DIR") else {
+            eprintln!("KOAN_SWEEP_DIR unset — nothing to sweep");
+            return;
+        };
+        let limit: usize = std::env::var("KOAN_SWEEP_LIMIT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(usize::MAX);
+
+        let mut checked = 0usize;
+        let mut diverged: Vec<String> = Vec::new();
+
+        for entry in walkdir::WalkDir::new(&dir)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if checked >= limit {
+                break;
+            }
+            let path = entry.path();
+            if !path.is_file()
+                || path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .map(|e| e.to_ascii_lowercase())
+                    != Some("mp3".into())
+            {
+                continue;
+            }
+
+            let held_back = read_tagged_file(path).ok();
+            let plain = lofty::probe::Probe::open(path).ok().and_then(|p| {
+                p.options(ParseOptions::new().read_cover_art(false))
+                    .read()
+                    .ok()
+            });
+
+            checked += 1;
+            match (held_back, plain) {
+                (Some(a), Some(b)) => {
+                    if fingerprint(&a) != fingerprint(&b) {
+                        diverged.push(format!("{}: tags differ", path.display()));
+                    }
+                }
+                // Failing identically is agreement. Failing differently is not:
+                // it means the blanked reader changed whether the file parses.
+                (None, None) => {}
+                (a, _) => diverged.push(format!(
+                    "{}: {} parsed, the other did not",
+                    path.display(),
+                    if a.is_some() { "held-back" } else { "plain" }
+                )),
+            }
+        }
+
+        eprintln!("swept {checked} mp3s, {} diverged", diverged.len());
+        for d in diverged.iter().take(40) {
+            eprintln!("  {d}");
+        }
+        assert!(
+            diverged.is_empty(),
+            "{} files parse differently",
+            diverged.len()
+        );
+    }
+
     /// The scan reads MP3 tags through a reader that blanks out the embedded
     /// art (see `id3v2_pictures`). That is only sound if what comes back is
     /// byte-for-byte what lofty would have parsed off the plain file.
