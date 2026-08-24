@@ -66,7 +66,8 @@ pub fn cmd_play(
 
     let (state, _timeline, viz_snapshot, tx) = Player::spawn();
 
-    let download_queue = koan_core::remote::queue::shared(&tx, &state, Some(log_buffer.clone())).clone();
+    let download_queue =
+        koan_core::remote::queue::shared(&tx, &state, Some(log_buffer.clone())).clone();
 
     // Radio's top-up loop lives in koan-core so every client behaves the same.
     // The TUI used to carry its own copy, which meant a second implementation
