@@ -80,6 +80,8 @@
 
 - **Reading the config forked a `git` process.** `Config::load()` re-read both TOML files, re-ran the figment merge, and re-scanned for credentials in version control — and that last check shells out to `git ls-files` whenever a password is present in the file, then panics if it is tracked. koan reaches config from paths that run per frame: the macOS settings pane reads `library_folders()` from a SwiftUI list body, so it did all of that per rendered frame. The check is what its own message says it is, a gate on starting, and runs once per process now. The merged config is cached and re-read when either file's mtime moves, so a config edited by hand is still picked up.
 
+- **The Homebrew cask warned on every `brew` command.** `depends_on macos: ">= :tahoe"` is a deprecated string comparison; the bare symbol has always meant "that version or newer", so the requirement is unchanged. The workflow that regenerates the cask on release is fixed too, not just the published tap.
+
 - **The foot of the macOS sidebar was cut off by the transport bar.** The bar is a `safeAreaInset` on the split view, which reserves space in the window but not inside a column's own scroll view. The detail column already compensated; the sidebar never did, so its footer was laid out against a frame whose bottom sits behind the bar — the divider and the first activity row showed, and the progress bar, the cancel button and the library counts underneath them did not. During a sync you got a label with nothing to say how far along it was.
 
   The sidebar takes the same measured inset the detail column takes, so the footer grows upward from the top of the bar.
