@@ -25,7 +25,6 @@ struct RootView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(SearchModel.self) private var search
     @Environment(PlayerModel.self) private var player
-    @Environment(OrganizeModel.self) private var organize
 
     @AppStorage("showLyrics") private var showLyrics = false
     @State private var transportHeight: CGFloat = 0
@@ -199,15 +198,6 @@ struct RootView: View {
         }
         .sheet(isPresented: $ui.showingShortcuts) {
             ShortcutsSheet(hotkeys: hotkeys.all)
-        }
-        // Bound to what is being organized rather than to a flag: the sheet has
-        // nothing to show without a selection, and dismissing it is what clears
-        // one.
-        .sheet(isPresented: Binding(
-            get: { organize.subject != nil },
-            set: { if !$0 { organize.dismiss() } }
-        )) {
-            OrganizeSheet()
         }
         .overlay(alignment: .bottom) {
             if let error = player.lastError {

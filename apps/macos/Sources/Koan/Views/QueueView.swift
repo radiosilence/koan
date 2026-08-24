@@ -11,6 +11,7 @@ struct QueueView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
+    @Environment(\.openWindow) private var openWindow
     @Environment(UIState.self) private var ui
 
     @State private var savingSnapshot = false
@@ -304,6 +305,7 @@ struct QueueView: View {
                 title: title ?? Format.count(Int64(trackIds.count), "track"),
                 trackIds: trackIds
             )
+            openWindow(id: OrganizeWindow.id)
         }
         .disabled(trackIds.isEmpty)
     }

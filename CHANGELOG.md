@@ -18,9 +18,15 @@
 
   Dropped files get library rows *where they are*, not in the music tree — importing and organizing are separate on purpose, so files land in the library only after you have seen where they are going.
 
+  It opens in a window rather than a sheet. A sheet cannot be resized — AppKit leaves the style mask off and SwiftUI pins its content size — and a table of file paths is exactly the thing you want to make wider. A window also leaves the library visible behind it, which suits a preview you are checking against rather than a prompt you are answering.
+
   Whether cover art and cue sheets travel with the music is a checkbox in the sheet and a `[organize] move_ancillary` setting behind it, so the CLI and TUI organize the way the app just did.
 
   Generating destinations is separated from asking the disk about them, because only one of those is fast. `organize::generate` formats a pattern against an already-resolved selection and touches no files at all, so it reruns on every keystroke; `organize::check_against_disk` is the `stat`-per-file pass that finds occupied destinations and the artwork travelling alongside, and it lands a moment later. Ancillary files were previously discovered with a directory read *per file*, so an album of a dozen tracks did the same `readdir` a dozen times.
+
+### Fixed
+
+- **Menu shortcuts no longer reach past a field you are typing in.** ⌘← and ⌥← skipped tracks instead of moving the caret, and ⌘Z undid a queue edit instead of the typing — in the search field, a filter, Settings, anywhere. A menu key equivalent is claimed before the responder chain sees it, so a command has to decline it: the ones whose key is also a text-editing command now do. The bare-key shortcuts already asked what had focus; the modified ones did not.
 
 ### Changed
 

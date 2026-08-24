@@ -114,9 +114,9 @@ struct KoanApp: App {
                         .keyboardShortcut(command.key, modifiers: .command)
                 }
                 Divider()
-                Button("Back") { state?.library.goBack() }
+                Button("Back") { EditCommands.unlessEditing { state?.library.goBack() } }
                     .keyboardShortcut("[", modifiers: .command)
-                Button("Forward") { state?.library.goForward() }
+                Button("Forward") { EditCommands.unlessEditing { state?.library.goForward() } }
                     .keyboardShortcut("]", modifiers: .command)
                 Divider()
                 Button("Toggle Lyrics") { showLyrics.toggle() }
@@ -129,15 +129,22 @@ struct KoanApp: App {
                 // contest. Hotkeys handles the key; this stays for
                 // discoverability and the menu shows the shortcut anyway.
                 Button("Play / Pause") { state?.player.togglePlayPause() }
-                Button("Next") { state?.player.next() }
+                // Arrow keys with a modifier are text navigation first: ⌘←
+                // is start-of-line and ⌥← is previous word. They only mean
+                // transport when nobody is typing.
+                Button("Next") { EditCommands.unlessEditing { state?.player.next() } }
                     .keyboardShortcut(.rightArrow, modifiers: .command)
-                Button("Previous") { state?.player.previous() }
+                Button("Previous") { EditCommands.unlessEditing { state?.player.previous() } }
                     .keyboardShortcut(.leftArrow, modifiers: .command)
                 Divider()
-                Button("Skip Forward") { state?.player.seek(bySeconds: 10) }
-                    .keyboardShortcut(.rightArrow, modifiers: .option)
-                Button("Skip Back") { state?.player.seek(bySeconds: -10) }
-                    .keyboardShortcut(.leftArrow, modifiers: .option)
+                Button("Skip Forward") {
+                    EditCommands.unlessEditing { state?.player.seek(bySeconds: 10) }
+                }
+                .keyboardShortcut(.rightArrow, modifiers: .option)
+                Button("Skip Back") {
+                    EditCommands.unlessEditing { state?.player.seek(bySeconds: -10) }
+                }
+                .keyboardShortcut(.leftArrow, modifiers: .option)
                 Divider()
                 Button("Favourite Current Track") { state?.player.toggleFavouriteCurrent() }
                     .keyboardShortcut("d", modifiers: .command)
@@ -148,9 +155,10 @@ struct KoanApp: App {
             // Replaces the stock Edit ▸ Undo, which has no undo manager behind
             // it here. Declaring ⌘Z anywhere else just loses to it.
             CommandGroup(replacing: .undoRedo) {
-                Button("Undo") { state?.player.undo() }
+                // ⌘Z while typing is undoing the typing, not the queue.
+                Button("Undo") { EditCommands.undo { state?.player.undo() } }
                     .keyboardShortcut("z", modifiers: .command)
-                Button("Redo") { state?.player.redo() }
+                Button("Redo") { EditCommands.redo { state?.player.redo() } }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
             }
 
@@ -223,6 +231,26 @@ struct KoanApp: App {
                 Button("Clear Artwork Cache") { state?.art.purge() }
             }
         }
+
+        // A window, not a sheet. A sheet is not resizable — AppKit leaves the
+        // style mask off and SwiftUI pins its content size — and this is a
+        // table of file paths, which is exactly the thing someone wants to make
+        // wider. A Window gets `.defaultSize`, a resize grip, and a size macOS
+        // remembers between launches, none of which had to be written.
+        //
+        // It also means the library stays visible behind it, which suits a
+        // preview you are checking rather than a prompt you are answering.
+        Window("Organize Files", id: OrganizeWindow.id) {
+            if let state {
+                OrganizeWindow()
+                    // A separate scene inherits nothing, so everything it reads
+                    // is listed here — a missing one is not a compile error.
+                    .environment(state.organize)
+                    .environment(state.activity)
+            }
+        }
+        .defaultSize(width: 940, height: 640)
+        .keyboardShortcut(nil)
 
         Settings {
             if let state {

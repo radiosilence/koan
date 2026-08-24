@@ -1,4 +1,3 @@
-import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -12,6 +11,7 @@ import SwiftUI
 struct OrganizeSheet: View {
     @Environment(OrganizeModel.self) private var organize
     @Environment(ActivityModel.self) private var activity
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         @Bindable var organize = organize
@@ -25,13 +25,7 @@ struct OrganizeSheet: View {
             Divider()
             footer
         }
-        // Flexible, so the window can be resized and the content follows.
-        // `SheetChrome` is what gives it a starting size and a grip.
-        .frame(
-            minWidth: 560, maxWidth: .infinity,
-            minHeight: 400, maxHeight: .infinity
-        )
-        .background(SheetChrome(initialSize: organize.size))
+        .frame(minWidth: 560, minHeight: 400)
     }
 
     // MARK: - Header
@@ -175,8 +169,11 @@ struct OrganizeSheet: View {
         HStack(spacing: 12) {
             counts
             Spacer(minLength: 0)
-            Button("Close") { organize.dismiss() }
-                .keyboardShortcut(.cancelAction)
+            Button("Close") {
+                organize.dismiss()
+                dismiss()
+            }
+            .keyboardShortcut(.cancelAction)
             Button(runTitle) { organize.run() }
                 .keyboardShortcut(.defaultAction)
                 .disabled(!canRun)
@@ -311,77 +308,26 @@ private struct OrganizeRow: View {
     }
 }
 
-/// Gives the sheet a starting size and a resize grip.
+/// What the organize window shows.
 ///
-/// Neither comes from SwiftUI. AppKit leaves `.resizable` off a sheet's style
-/// mask, and SwiftUI pins the window's content size to whatever the content
-/// fits — so the mask alone produces a window that calls itself resizable and
-/// refuses to move. Both limits have to be lifted with it.
-///
-/// The starting size is passed in rather than measured here. Asking for the
-/// parent window during presentation does not work: `sheetParent` is not set
-/// until the sheet has begun, and `NSApp.mainWindow` is unreliable at that
-/// moment. `OrganizeModel` works it out before the sheet exists, when the
-/// window is unambiguous.
-///
-/// It is applied in `layout`, not on arrival — see below for why that is the
-/// difference between a sheet that opens at the size it was told and one that
-/// opens at 560x400.
-private struct SheetChrome: NSViewRepresentable {
-    let initialSize: CGSize
+/// A window can be opened with nothing selected — from the Window menu, or
+/// reopened by macOS at launch — which a sheet could never be, so it has to say
+/// something rather than render an empty table.
+struct OrganizeWindow: View {
+    static let id = "organize"
 
-    func makeNSView(context: Context) -> NSView {
-        ChromeView(initialSize: initialSize)
-    }
+    @Environment(OrganizeModel.self) private var organize
 
-    func updateNSView(_ view: NSView, context: Context) {}
-
-    private final class ChromeView: NSView {
-        private let initialSize: CGSize
-        /// Sized once. Re-applying on a later window change would yank it back
-        /// under the user's own drag.
-        private var sized = false
-
-        init(initialSize: CGSize) {
-            self.initialSize = initialSize
-            super.init(frame: .zero)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { fatalError("not from a nib") }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard let window else { return }
-            allowResizing(window)
-        }
-
-        /// The size is applied here rather than on arrival, and after
-        /// `super.layout()`.
-        ///
-        /// SwiftUI sizes the sheet's window from its content during layout, and
-        /// a frame with a flexible maximum fits to its *minimum* — so anything
-        /// set beforehand is simply measured over the top of and the sheet opens
-        /// at 560x400. Setting it once the pass has run is what makes it stick.
-        /// Exactly once: after this the size belongs to whoever is dragging the
-        /// corner.
-        override func layout() {
-            super.layout()
-            guard let window else { return }
-            if !window.styleMask.contains(.resizable) || window.contentMaxSize.width < 10_000 {
-                allowResizing(window)
-            }
-            guard !sized else { return }
-            sized = true
-            window.setContentSize(NSSize(width: initialSize.width, height: initialSize.height))
-        }
-
-        private func allowResizing(_ window: NSWindow) {
-            window.styleMask.insert(.resizable)
-            window.contentMinSize = NSSize(width: 560, height: 400)
-            window.contentMaxSize = NSSize(width: 100_000, height: 100_000)
-            window.minSize = NSSize(width: 560, height: 400)
-            window.maxSize = NSSize(width: 100_000, height: 100_000)
+    var body: some View {
+        if organize.subject != nil {
+            OrganizeSheet()
+        } else {
+            EmptyState(
+                icon: "folder",
+                title: "Nothing to organize",
+                detail: "Select tracks in the queue or the library, then choose Organize Files."
+            )
+            .frame(minWidth: 560, minHeight: 400)
         }
     }
 }
