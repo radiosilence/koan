@@ -124,7 +124,7 @@ extension Hotkeys {
                 player.seek(bySeconds: 10)
             },
             Hotkey(keys: ["f"], label: "Favourite this track", group: .playback) {
-                _ = player.toggleFavouriteCurrent()
+                player.toggleFavouriteCurrent()
             },
             Hotkey(keys: ["R"], label: "Radio mode", group: .playback) {
                 player.toggleRadio()

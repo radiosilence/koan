@@ -204,9 +204,7 @@ struct QueueView: View {
     private func showInLibrary(trackId: Int64, highlight: Bool) {
         let engine = library.engine
         Task {
-            let albumId = await Task.detached(priority: .userInitiated) {
-                (try? engine.track(trackId: trackId))??.albumId
-            }.value
+            let albumId = (try? await engine.track(trackId: trackId))??.albumId
             guard let albumId else {
                 player.report("That track is no longer in the library.")
                 return
@@ -301,11 +299,15 @@ struct QueueView: View {
     @ViewBuilder
     private func organizeButton(trackIds: [Int64], title: String?) -> some View {
         Button("Organize Files…") {
-            organize.begin(
-                title: title ?? Format.count(Int64(trackIds.count), "track"),
-                trackIds: trackIds
-            )
+            // The window opens first: `begin` reads the config and resolves the
+            // selection, and waiting on that would leave the click dead.
             openWindow(id: OrganizeWindow.id)
+            Task {
+                await organize.begin(
+                    title: title ?? Format.count(Int64(trackIds.count), "track"),
+                    trackIds: trackIds
+                )
+            }
         }
         .disabled(trackIds.isEmpty)
     }

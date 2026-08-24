@@ -113,14 +113,12 @@ struct LyricsPanel: View {
         guard trackId != loadedTrackId else { return }
 
         loadedTrackId = trackId
-        lyrics = try? library.engine.lyrics(trackId: trackId)
+        lyrics = try? await library.engine.lyrics(trackId: trackId)
         guard lyrics == nil else { return }
 
         loading = true
         let engine = library.engine
-        let fetched = await Task.detached(priority: .utility) {
-            try? engine.fetchLyrics(trackId: trackId)
-        }.value
+        let fetched = try? await engine.fetchLyrics(trackId: trackId)
         loading = false
         // The track may have changed while LRCLIB was answering.
         guard loadedTrackId == trackId else { return }

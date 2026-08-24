@@ -45,9 +45,7 @@ struct RowPlayButton: View {
         let engine = library.engine
         let playable = self.playable
         Task {
-            let ids = await Task.detached(priority: .userInitiated) {
-                playable.trackIds(using: engine)
-            }.value
+            let ids = await playable.trackIds(using: engine)
             loading = false
             player.playNow(trackIds: ids)
             library.showQueueWhenReady(watching: player)

@@ -107,13 +107,11 @@ final class SearchModel {
             try? await Task.sleep(for: .milliseconds(160))
             guard !Task.isCancelled else { return }
 
-            let found = await Task.detached(priority: .userInitiated) {
-                (
-                    (try? engine.search(query: text, limit: 60)) ?? [],
-                    (try? engine.fuzzySearch(query: text, kind: .album, limit: 30)) ?? [],
-                    (try? engine.fuzzySearch(query: text, kind: .artist, limit: 30)) ?? []
-                )
-            }.value
+            let found = (
+                (try? await engine.search(query: text, limit: 60)) ?? [],
+                (try? await engine.fuzzySearch(query: text, kind: .album, limit: 30)) ?? [],
+                (try? await engine.fuzzySearch(query: text, kind: .artist, limit: 30)) ?? []
+            )
 
             guard !Task.isCancelled else { return }
             tracks = found.0

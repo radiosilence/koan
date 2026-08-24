@@ -30,14 +30,14 @@ final class SettingsModel {
     /// the engine — the credential store is write-only from this side.
     var password = ""
 
-    init(engine: KoanEngine, activity: ActivityModel) {
+    init(engine: KoanEngine, activity: ActivityModel) async {
         self.engine = engine
         self.activity = activity
-        self.settings = engine.settings()
+        self.settings = await engine.settings()
     }
 
     func reload() {
-        settings = engine.settings()
+        Task { settings = await engine.settings() }
     }
 
     // MARK: - Editing
@@ -52,11 +52,13 @@ final class SettingsModel {
     }
 
     private func commit() {
-        do {
-            try engine.updateSettings(s: settings)
-            lastError = nil
-        } catch {
-            lastError = Self.describe(error)
+        Task {
+            do {
+                try await engine.updateSettings(s: settings)
+                lastError = nil
+            } catch {
+                lastError = Self.describe(error)
+            }
         }
     }
 
@@ -95,7 +97,7 @@ final class SettingsModel {
         let engine = self.engine
         Task {
             let result = await activity.run("Forgetting \(URL(fileURLWithPath: path).lastPathComponent)", exclusive: true) {
-                try engine.forgetFolder(path: path)
+                try await engine.forgetFolder(path: path)
             }
             switch result {
             case .success(let n): lastResult = "Forgot \(n.formatted(.number)) tracks"
@@ -113,7 +115,7 @@ final class SettingsModel {
             let result = await activity.runReporting(
                 force ? "Rescanning every file" : "Scanning library"
             ) { progress in
-                try engine.scanReporting(force: force, reporter: progress)
+                try await engine.scanReporting(force: force, reporter: progress)
             }
             switch result {
             case .success(let s):
@@ -130,7 +132,7 @@ final class SettingsModel {
         let password = self.password
         Task {
             let result = await activity.run("Signing in") {
-                try engine.signInRemote(url: url, username: username, password: password)
+                try await engine.signInRemote(url: url, username: username, password: password)
             }
             switch result {
             case .success:
@@ -145,23 +147,22 @@ final class SettingsModel {
     }
 
     func signOut(forgetTracks: Bool) {
-        do {
-            try engine.signOutRemote()
-            lastResult = "Signed out"
-            lastError = nil
-        } catch {
-            lastError = Self.describe(error)
-            reload()
-            return
-        }
-        guard forgetTracks else {
-            reload()
-            return
-        }
-        let engine = self.engine
         Task {
+            do {
+                try await engine.signOutRemote()
+                lastResult = "Signed out"
+                lastError = nil
+            } catch {
+                lastError = Self.describe(error)
+                reload()
+                return
+            }
+            guard forgetTracks else {
+                reload()
+                return
+            }
             let result = await activity.run("Forgetting the server's tracks", exclusive: true) {
-                try engine.forgetRemote()
+                try await self.engine.forgetRemote()
             }
             switch result {
             case .success(let n): lastResult = "Signed out and forgot \(n.formatted(.number)) tracks"
@@ -175,7 +176,7 @@ final class SettingsModel {
         let engine = self.engine
         Task {
             let result = await activity.run(full ? "Full sync with server" : "Syncing with server") {
-                try engine.syncRemote(full: full)
+                try await engine.syncRemote(full: full)
             }
             switch result {
             case .success(let s):
@@ -198,7 +199,7 @@ final class SettingsModel {
         let engine = self.engine
         Task {
             let result = await activity.run("Clearing downloads") {
-                try engine.clearDownloadCache()
+                try await engine.clearDownloadCache()
             }
             switch result {
             case .success(let c):
@@ -214,7 +215,7 @@ final class SettingsModel {
         let engine = self.engine
         Task {
             let result = await activity.run("Clearing the library index") {
-                try engine.rebuildIndex()
+                try await engine.rebuildIndex()
             }
             switch result {
             case .success(let s):

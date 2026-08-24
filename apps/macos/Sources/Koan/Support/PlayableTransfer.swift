@@ -57,14 +57,14 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
 
     /// Resolve to track IDs. Off the main actor — this is a database read, and
     /// an artist is a large one.
-    func trackIds(using engine: KoanEngine) -> [Int64] {
+    func trackIds(using engine: KoanEngine) async -> [Int64] {
         switch kind {
         case .track:
             return [id]
         case .album:
-            return (try? engine.trackIds(albumId: id, artistId: nil)) ?? []
+            return (try? await engine.trackIds(albumId: id, artistId: nil)) ?? []
         case .artist:
-            return (try? engine.trackIds(albumId: nil, artistId: id)) ?? []
+            return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
         }
     }
 }

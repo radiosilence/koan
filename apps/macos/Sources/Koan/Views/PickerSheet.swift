@@ -184,22 +184,21 @@ struct PickerSheet: View {
         resolving = true
         let engine = library.engine
         Task {
-            let trackIds = await Task.detached(priority: .userInitiated) {
-                rows.flatMap { row -> [Int64] in
-                    switch row.kind {
-                    case .track:
-                        return [row.id]
-                    case .album:
-                        return ((try? engine.tracks(
-                            albumId: row.id, artistId: nil, sort: .album, limit: 500, offset: 0
-                        )) ?? []).map(\.id)
-                    case .artist:
-                        return ((try? engine.tracks(
-                            albumId: nil, artistId: row.id, sort: .album, limit: 2000, offset: 0
-                        )) ?? []).map(\.id)
-                    }
+            var trackIds: [Int64] = []
+            for row in rows {
+                switch row.kind {
+                case .track:
+                    trackIds.append(row.id)
+                case .album:
+                    trackIds += ((try? await engine.tracks(
+                        albumId: row.id, artistId: nil, sort: .album, limit: 500, offset: 0
+                    )) ?? []).map(\.id)
+                case .artist:
+                    trackIds += ((try? await engine.tracks(
+                        albumId: nil, artistId: row.id, sort: .album, limit: 2000, offset: 0
+                    )) ?? []).map(\.id)
                 }
-            }.value
+            }
 
             resolving = false
             guard !trackIds.isEmpty else { return }
@@ -243,10 +242,10 @@ struct PickerSheet: View {
             try? await Task.sleep(for: .milliseconds(140))
             guard !Task.isCancelled else { return }
 
-            let found = await Task.detached(priority: .userInitiated) { () -> [PickerRow] in
+            let found: [PickerRow] =
                 switch kind {
                 case .track:
-                    return ((try? engine.search(query: text, limit: 60)) ?? []).map {
+                    ((try? await engine.search(query: text, limit: 60)) ?? []).map {
                         PickerRow(
                             id: $0.id,
                             kind: .track,
@@ -256,11 +255,10 @@ struct PickerSheet: View {
                         )
                     }
                 case .album, .artist:
-                    return ((try? engine.fuzzySearch(query: text, kind: kind, limit: 40)) ?? []).map {
+                    ((try? await engine.fuzzySearch(query: text, kind: kind, limit: 40)) ?? []).map {
                         PickerRow(id: $0.id, kind: kind, title: $0.name, subtitle: nil, durationMs: nil)
                     }
                 }
-            }.value
 
             guard !Task.isCancelled else { return }
             results = found

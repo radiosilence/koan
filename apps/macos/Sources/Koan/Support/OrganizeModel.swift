@@ -43,7 +43,7 @@ final class OrganizeModel {
     var moveAncillary = true {
         didSet {
             guard !configuring, oldValue != moveAncillary else { return }
-            try? engine.setOrganizeMovesAncillary(enabled: moveAncillary)
+            Task { try? await engine.setOrganizeMovesAncillary(enabled: moveAncillary) }
             schedulePreview()
         }
     }
@@ -79,16 +79,16 @@ final class OrganizeModel {
 
     // MARK: - Presenting
 
-    func begin(title: String, trackIds: [Int64]) {
+    func begin(title: String, trackIds: [Int64]) async {
         configuring = true
         subject = Subject(title: title, trackIds: trackIds)
         plan = nil
         error = nil
         editing = false
-        patterns = engine.organizePatterns()
-        folders = engine.libraryFolders()
+        patterns = await engine.organizePatterns()
+        folders = await engine.libraryFolders()
         baseDir = folders.first ?? ""
-        moveAncillary = engine.organizeMovesAncillary()
+        moveAncillary = await engine.organizeMovesAncillary()
         patternName = patterns.first(where: \.isDefault)?.name ?? patterns.first?.name
         draft = stored(patternName) ?? ""
         configuring = false
@@ -109,9 +109,7 @@ final class OrganizeModel {
         let requested = generation
         previewing = true
         Task {
-            let resolved = await Task.detached(priority: .userInitiated) {
-                try? engine.organizeSelection(trackIds: trackIds)
-            }.value
+            let resolved = try? await engine.organizeSelection(trackIds: trackIds)
             guard requested == generation, subject != nil else { return }
             selection = resolved
             previewing = false
@@ -155,13 +153,15 @@ final class OrganizeModel {
             editing = false
             return
         }
-        do {
-            try engine.saveOrganizePattern(name: name, pattern: draft)
-            patterns = engine.organizePatterns()
-            editing = false
-            error = nil
-        } catch {
-            self.error = String(describing: error)
+        Task {
+            do {
+                try await engine.saveOrganizePattern(name: name, pattern: draft)
+                patterns = await engine.organizePatterns()
+                editing = false
+                error = nil
+            } catch {
+                self.error = String(describing: error)
+            }
         }
     }
 
@@ -202,14 +202,16 @@ final class OrganizeModel {
         generation += 1
         let requested = generation
 
-        plan = selection.generate(pattern: pattern, baseDir: base)
-        error = nil
-
         previewing = true
         Task {
-            let checked = await Task.detached(priority: .userInitiated) {
-                selection.check(pattern: pattern, baseDir: base, moveAncillary: ancillary)
-            }.value
+            let fast = await selection.generate(pattern: pattern, baseDir: base)
+            guard requested == generation else { return }
+            plan = fast
+            error = nil
+
+            let checked = await selection.check(
+                pattern: pattern, baseDir: base, moveAncillary: ancillary
+            )
             guard requested == generation else { return }
             previewing = false
             plan = checked
@@ -234,7 +236,7 @@ final class OrganizeModel {
             // Exclusive: the moves and the row rewrites share a transaction, so
             // this contends for the writer the way a scan does.
             let result = await activity?.run("Moving files", exclusive: true) {
-                try engine.organizeExecute(pattern: pattern, trackIds: ids, baseDir: base)
+                try await engine.organizeExecute(pattern: pattern, trackIds: ids, baseDir: base)
             } ?? .failure(OrganizeFailure.noEngine)
             guard requested == generation else { return }
             running = false

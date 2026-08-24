@@ -77,13 +77,15 @@ final class ActivityModel {
         _ label: String,
         exclusive: Bool = false,
         cancellable: Bool = false,
-        _ work: @escaping @Sendable () throws -> T
+        _ work: @escaping @Sendable () async throws -> T
     ) async -> Result<T, Error> {
         let id = begin(label, exclusive: exclusive, cancellable: cancellable)
         defer { end(id) }
-        return await _Concurrency.Task.detached(priority: .userInitiated) {
-            Result { try work() }
-        }.value
+        do {
+            return .success(try await work())
+        } catch {
+            return .failure(error)
+        }
     }
 
     /// Run `work` with a reporter the engine can call back into, so the task
@@ -93,14 +95,16 @@ final class ActivityModel {
         _ label: String,
         exclusive: Bool = true,
         cancellable: Bool = true,
-        _ work: @escaping @Sendable (EngineProgress) throws -> T
+        _ work: @escaping @Sendable (EngineProgress) async throws -> T
     ) async -> Result<T, Error> {
         let id = begin(label, exclusive: exclusive, cancellable: cancellable)
         let progress = reporter(for: id)
         defer { end(id) }
-        return await _Concurrency.Task.detached(priority: .userInitiated) {
-            Result { try work(progress) }
-        }.value
+        do {
+            return .success(try await work(progress))
+        } catch {
+            return .failure(error)
+        }
     }
 
     /// For work that does not fit the closure shape — a long-lived poller, or

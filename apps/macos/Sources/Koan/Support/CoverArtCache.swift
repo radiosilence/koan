@@ -76,9 +76,11 @@ final class CoverArtCache {
         let engine = self.engine
         let file = directory?.appendingPathComponent(Self.filename(for: key))
         let task = Task<NSImage?, Never> { [weak self] in
+            // Detached for the disk cache, not for the engine: reading and
+            // writing the file would otherwise happen on the main actor.
             let data = await Task.detached(priority: .utility) { () -> Data? in
                 if let file, let cached = try? Data(contentsOf: file) { return cached }
-                guard let fetched = Self.fetch(source, engine) else { return nil }
+                guard let fetched = await Self.fetch(source, engine) else { return nil }
                 if let file {
                     // Best effort: a cache that fails to write is still a cache.
                     try? fetched.write(to: file, options: .atomic)
@@ -110,19 +112,19 @@ final class CoverArtCache {
     private nonisolated static func fetch(
         _ source: AlbumArtwork.Source,
         _ engine: KoanEngine
-    ) -> Data? {
+    ) async -> Data? {
         switch source {
         case .album(let albumId):
             // Any track off the record will do — they share the artwork.
-            guard let tracks = try? engine.tracks(
+            guard let tracks = try? await engine.tracks(
                 albumId: albumId, artistId: nil, sort: .album, limit: 1, offset: 0
             ) else { return nil }
             guard let first = tracks.first(where: { $0.path != nil }) ?? tracks.first else {
                 return nil
             }
-            return (try? engine.coverArt(trackId: first.id, size: 400))?.data
+            return (try? await engine.coverArt(trackId: first.id, size: 400))?.data
         case .track(let trackId):
-            return (try? engine.coverArt(trackId: trackId, size: 600))?.data
+            return (try? await engine.coverArt(trackId: trackId, size: 600))?.data
         }
     }
 

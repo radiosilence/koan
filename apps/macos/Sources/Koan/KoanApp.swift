@@ -20,8 +20,8 @@ final class AppState {
     let hotkeys: Hotkeys
     private var nowPlaying: NowPlayingCentre?
 
-    init() throws {
-        let engine = try KoanEngine()
+    init() async throws {
+        let engine = try await KoanEngine()
         self.engine = engine
         let player = PlayerModel(engine: engine)
         self.player = player
@@ -95,8 +95,8 @@ struct KoanApp: App {
             .task {
                 guard state == nil, startupError == nil else { return }
                 do {
-                    let created = try AppState()
-                    created.player.start()
+                    let created = try await AppState()
+                    await created.player.start()
                     created.player.restoreSession()
                     created.library.loadInitial()
                     state = created
@@ -107,7 +107,9 @@ struct KoanApp: App {
         }
         .onChange(of: scenePhase) { _, phase in
             // Backgrounding is the last dependable moment before termination.
-            if phase != .active { state?.player.saveSession() }
+            if phase != .active {
+                Task { await state?.player.saveSession() }
+            }
         }
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
@@ -218,7 +220,7 @@ struct KoanApp: App {
             }
 
             CommandMenu("Queue") {
-                Button("Save Session") { state?.player.saveSession() }
+                Button("Save Session") { Task { await state?.player.saveSession() } }
                 Button("Clear Queue") { state?.player.clearQueue() }
             }
 

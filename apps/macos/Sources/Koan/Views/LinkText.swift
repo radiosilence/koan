@@ -103,11 +103,9 @@ struct PlayableArtwork: View {
         let engine = library.engine
         let albumId = self.albumId
         Task {
-            let ids = await Task.detached(priority: .userInitiated) {
-                ((try? engine.tracks(
-                    albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
-                )) ?? []).map(\.id)
-            }.value
+            let ids = ((try? await engine.tracks(
+                albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
+            )) ?? []).map(\.id)
             loading = false
             player.playNow(trackIds: ids)
             library.showQueueWhenReady(watching: player)

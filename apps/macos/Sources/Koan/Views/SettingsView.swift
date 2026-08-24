@@ -34,9 +34,9 @@ struct SettingsView: View {
             }
         }
         .frame(width: 560, height: 460)
-        .onAppear {
+        .task {
             if model == nil {
-                let created = SettingsModel(engine: library.engine, activity: activity)
+                let created = await SettingsModel(engine: library.engine, activity: activity)
                 created.library = library
                 model = created
             }

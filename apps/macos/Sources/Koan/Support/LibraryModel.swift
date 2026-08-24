@@ -127,9 +127,7 @@ final class LibraryModel {
         let engine = self.engine
         let sort = albumSort
         Task {
-            albums = await Task.detached(priority: .userInitiated) {
-                (try? engine.albums(artistId: nil, sort: sort)) ?? []
-            }.value
+            albums = (try? await engine.albums(artistId: nil, sort: sort)) ?? []
             reindex()
         }
     }
@@ -201,14 +199,10 @@ final class LibraryModel {
         let sort = albumSort
         Task {
             if albums.isEmpty {
-                albums = await Task.detached(priority: .utility) {
-                    (try? engine.albums(artistId: nil, sort: sort)) ?? []
-                }.value
+                albums = (try? await engine.albums(artistId: nil, sort: sort)) ?? []
             }
             if artists.isEmpty {
-                artists = await Task.detached(priority: .utility) {
-                    (try? engine.artists(search: nil)) ?? []
-                }.value
+                artists = (try? await engine.artists(search: nil)) ?? []
             }
             reindex()
         }
@@ -233,31 +227,21 @@ final class LibraryModel {
                 break  // owned by the player and search models respectively
             case .albums:
                 if albums.isEmpty {
-                    albums = await Task.detached(priority: .userInitiated) {
-                        (try? engine.albums(artistId: nil, sort: sort)) ?? []
-                    }.value
+                    albums = (try? await engine.albums(artistId: nil, sort: sort)) ?? []
                     reindex()
                 }
             case .artists:
                 if artists.isEmpty {
-                    artists = await Task.detached(priority: .userInitiated) {
-                        (try? engine.artists(search: nil)) ?? []
-                    }.value
+                    artists = (try? await engine.artists(search: nil)) ?? []
                     reindex()
                 }
             case .favourites:
-                favourites = await Task.detached(priority: .userInitiated) {
-                    (try? engine.favourites()) ?? []
-                }.value
+                favourites = (try? await engine.favourites()) ?? []
             case .playHistory:
                 // Always refetched: it changes underneath you as you listen.
-                playHistory = await Task.detached(priority: .userInitiated) {
-                    (try? engine.playHistory(limit: historyPageSize, offset: 0)) ?? []
-                }.value
+                playHistory = (try? await engine.playHistory(limit: historyPageSize, offset: 0)) ?? []
             case .snapshots:
-                snapshots = await Task.detached(priority: .userInitiated) {
-                    (try? engine.snapshots()) ?? []
-                }.value
+                snapshots = (try? await engine.snapshots()) ?? []
             }
             isLoading = false
         }
@@ -270,15 +254,14 @@ final class LibraryModel {
         let doomed = Array(ids)
         // Dropped locally first so the list does not visibly lag the keystroke.
         playHistory.removeAll { ids.contains($0.id) }
-        Task.detached(priority: .userInitiated) { _ = try? engine.deletePlays(ids: doomed) }
+        Task { _ = try? await engine.deletePlays(ids: doomed) }
     }
 
     /// Forget every play.
     func clearPlayHistory() {
         let engine = self.engine
         Task {
-            _ = await Task.detached(priority: .userInitiated) { try? engine.clearPlayHistory() }
-                .value
+            _ = try? await engine.clearPlayHistory()
             playHistory = []
         }
     }
@@ -286,7 +269,7 @@ final class LibraryModel {
     func loadStats() {
         let engine = self.engine
         Task {
-            stats = await Task.detached(priority: .utility) { try? engine.libraryStats() }.value
+            stats = try? await engine.libraryStats()
         }
     }
 
@@ -295,11 +278,9 @@ final class LibraryModel {
         let engine = self.engine
         detailTracks = []
         Task {
-            detailTracks = await Task.detached(priority: .userInitiated) {
-                (try? engine.tracks(
-                    albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
-                )) ?? []
-            }.value
+            detailTracks = (try? await engine.tracks(
+                albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
+            )) ?? []
         }
     }
 
@@ -441,9 +422,7 @@ final class LibraryModel {
     func toggleFavourite(track id: Int64) {
         let engine = self.engine
         Task {
-            let now = await Task.detached(priority: .userInitiated) {
-                (try? engine.toggleFavourite(trackId: id))
-            }.value
+            let now = (try? await engine.toggleFavourite(trackId: id))
             guard let now else { return }
             if now { favouriteTrackIds.insert(id) } else { favouriteTrackIds.remove(id) }
             reloadFavouritesList()
@@ -453,9 +432,7 @@ final class LibraryModel {
     func toggleFavourite(album id: Int64) {
         let engine = self.engine
         Task {
-            let now = await Task.detached(priority: .userInitiated) {
-                (try? engine.toggleFavouriteAlbum(albumId: id))
-            }.value
+            let now = (try? await engine.toggleFavouriteAlbum(albumId: id))
             guard let now else { return }
             if now { favouriteAlbumIds.insert(id) } else { favouriteAlbumIds.remove(id) }
         }
@@ -464,9 +441,7 @@ final class LibraryModel {
     func toggleFavourite(artist id: Int64) {
         let engine = self.engine
         Task {
-            let now = await Task.detached(priority: .userInitiated) {
-                (try? engine.toggleFavouriteArtist(artistId: id))
-            }.value
+            let now = (try? await engine.toggleFavouriteArtist(artistId: id))
             guard let now else { return }
             if now { favouriteArtistIds.insert(id) } else { favouriteArtistIds.remove(id) }
         }
@@ -477,13 +452,11 @@ final class LibraryModel {
     func refreshFavourites() {
         let engine = self.engine
         Task {
-            let sets = await Task.detached(priority: .utility) {
-                (
-                    Set((try? engine.favouriteTrackIds()) ?? []),
-                    Set((try? engine.favouriteAlbumIds()) ?? []),
-                    Set((try? engine.favouriteArtistIds()) ?? [])
-                )
-            }.value
+            let sets = (
+                Set((try? await engine.favouriteTrackIds()) ?? []),
+                Set((try? await engine.favouriteAlbumIds()) ?? []),
+                Set((try? await engine.favouriteArtistIds()) ?? [])
+            )
             favouriteTrackIds = sets.0
             favouriteAlbumIds = sets.1
             favouriteArtistIds = sets.2
@@ -495,16 +468,14 @@ final class LibraryModel {
         guard section == .favourites else { return }
         let engine = self.engine
         Task {
-            favourites = await Task.detached(priority: .utility) {
-                (try? engine.favourites()) ?? []
-            }.value
+            favourites = (try? await engine.favourites()) ?? []
         }
     }
 
     func saveSnapshot(name: String) {
         let engine = self.engine
         Task {
-            await Task.detached(priority: .utility) { try? engine.saveSnapshot(name: name) }.value
+            try? await engine.saveSnapshot(name: name)
             load()
         }
     }
@@ -512,7 +483,7 @@ final class LibraryModel {
     func deleteSnapshot(name: String) {
         let engine = self.engine
         Task {
-            _ = await Task.detached(priority: .utility) { try? engine.deleteSnapshot(name: name) }.value
+            _ = try? await engine.deleteSnapshot(name: name)
             load()
         }
     }
@@ -528,9 +499,7 @@ final class LibraryModel {
             exclusive: true
         )
         Task {
-            _ = await Task.detached(priority: .utility) {
-                try? engine.syncRemote(full: full)
-            }.value
+            _ = try? await engine.syncRemote(full: full)
             if let job { activity?.end(job) }
             isScanning = false
             albums = []
@@ -556,9 +525,7 @@ final class LibraryModel {
         )
         let progress = job.flatMap { activity?.reporter(for: $0) }
         Task {
-            let result = await Task.detached(priority: .utility) {
-                try? engine.scanReporting(force: force, reporter: progress)
-            }.value
+            let result = try? await engine.scanReporting(force: force, reporter: progress)
             if let job { activity?.end(job) }
             scanSummary = result
             isScanning = false
