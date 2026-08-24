@@ -1,15 +1,31 @@
 import KoanFFI
 import SwiftUI
 
+/// The transport, as a slab of glass floating over the stage.
+///
+/// Inset from the window rather than welded to its bottom edge: the material
+/// only reads as glass when there is something moving underneath it and an edge
+/// for the light to catch. `RootView` insets the stage by the bar's measured
+/// height so the queue keeps scrolling under it instead of stopping short.
+///
+/// It stops short of the sidebar, which is glass in its own right on macOS 26 —
+/// glass floating on glass reads as neither.
 struct TransportBar: View {
     @Environment(PlayerModel.self) private var player
+
+    /// Wide enough to read as a slab rather than a pill at this height.
+    private static let radius: CGFloat = 26
+    /// One height for all three zones, so the bar is a bar and not a stack of
+    /// controls that happen to be near each other.
+    private static let zoneHeight: CGFloat = 46
 
     var body: some View {
         // Three equal-weight columns so the transport stays centred as the
         // window grows, rather than the centre pinning at a fixed width and
         // everything bunching to the left.
-        HStack(spacing: 16) {
+        HStack(spacing: 18) {
             nowPlaying
+                .frame(height: Self.zoneHeight)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
 
@@ -17,16 +33,20 @@ struct TransportBar: View {
                 controls
                 SeekBar()
             }
+            .frame(height: Self.zoneHeight)
             .frame(maxWidth: 560)
             .layoutPriority(2)
 
             trailing
+                .frame(height: Self.zoneHeight)
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .layoutPriority(1)
         }
-        .padding(.horizontal, 18)
-        .padding(.vertical, 11)
-        .background(.bar)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 9)
+        .glassEffect(.regular, in: .rect(cornerRadius: Self.radius))
+        .padding(.horizontal, 16)
+        .padding(.bottom, 14)
     }
 
     // MARK: - Left: what's on
@@ -35,8 +55,8 @@ struct TransportBar: View {
     private var nowPlaying: some View {
         HStack(spacing: 11) {
             if let trackId = player.currentTrackId {
-                AlbumArtwork(source: .track(trackId), cornerRadius: 5)
-                    .frame(width: 46, height: 46)
+                AlbumArtwork(source: .track(trackId), cornerRadius: 8)
+                    .frame(width: 44, height: 44)
                     .showsArtworkFullSize(
                         source: .track(trackId),
                         title: player.nowPlaying.entry?.title ?? "",
@@ -45,9 +65,9 @@ struct TransportBar: View {
                         }
                     )
             } else {
-                RoundedRectangle(cornerRadius: 5)
+                RoundedRectangle(cornerRadius: 8)
                     .fill(.quaternary)
-                    .frame(width: 46, height: 46)
+                    .frame(width: 44, height: 44)
                     .overlay {
                         Image(systemName: "music.note")
                             .foregroundStyle(.tertiary)
@@ -76,17 +96,20 @@ struct TransportBar: View {
     // MARK: - Centre: transport
 
     private var controls: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: 22) {
             Button(action: player.previous) {
                 Image(systemName: "backward.fill")
             }
             .keyboardShortcut(.leftArrow, modifiers: .command)
             .help("Previous track (⌘←)")
 
+            // Bigger than the pair either side of it: it is the one you reach
+            // for without looking.
             Button(action: player.togglePlayPause) {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 19))
-                    .frame(width: 26)
+                    .font(.system(size: 25))
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 30)
             }
             .help(player.isPlaying ? "Pause (Space)" : "Play (Space)")
 
@@ -97,15 +120,14 @@ struct TransportBar: View {
             .help("Next track (⌘→)")
         }
         .buttonStyle(.plain)
-        .font(.system(size: 14))
-        .disabled(player.currentEntry == nil)
+        .font(.system(size: 13))
     }
 
     // MARK: - Right: format and output
 
     @ViewBuilder
     private var trailing: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             // The whole point of the player: what the DAC is being handed.
             if let format = player.currentFormat {
                 Text(Format.quality(format))
@@ -113,7 +135,7 @@ struct TransportBar: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 5))
+                    .background(.quaternary, in: Capsule())
                     .help("Source format — koan matches the device rate rather than resampling")
             }
 
@@ -126,6 +148,7 @@ struct TransportBar: View {
                     .font(.caption)
             }
             .toggleStyle(.button)
+            .buttonStyle(.glass)
             .help("Radio (⌥⌘R) — when the queue runs low, keep it topped up with similar tracks")
 
             DeviceMenu()

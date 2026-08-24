@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The macOS app is built out of Liquid Glass.** Not a coat of blur over the old chrome — the real macOS 26 material, and the layout changes it asks for. The transport is a slab of glass floating over the stage rather than a bar welded to the window's bottom edge behind a divider: the queue scrolls *under* it, fading out at the soft scroll edge as it goes, because glass with nothing moving behind it is just a grey rectangle. It stops short of the sidebar, which is glass in its own right on 26, and stacking the two reads as neither.
+
+  It hangs off the window rather than the detail column. A `NavigationStack` drops decoration applied around it the moment it pushes, which took the transport off every album and artist page; each screen now makes its own room for it instead. Play/pause is bigger than the two beside it and no longer goes dead when nothing is queued — it is the control you reach for without looking.
+
+- **The toolbar says what belongs together.** `ToolbarSpacer` replaces a `Spacer` smuggled inside a `ToolbarItem`, so filtering and sorting sit on separate panes of glass instead of sharing one joined capsule with the lyrics toggle.
+
+- **An album page carries the colour of the record.** The cover, blurred out behind the header, mirrors outwards under the sidebar and the toolbar via `backgroundExtensionEffect` — the art bleeds into the chrome rather than stopping at a hard edge where the pane begins.
+
+- **Everything laid over artwork is glass now.** The codec badge on a sleeve is clear glass rather than a black scrim hiding the corner it sits on; the favourite heart gets a ground of its own instead of a drop shadow fighting whatever is behind it, and grows in on hover. Artist chips, the shortcut sheet's key caps, the picker's commit bar and the error toast follow — the toast tinted rather than bordered, since glass already has an edge.
+
 ## v0.29.0 (2026-08-24)
 
 ### Added

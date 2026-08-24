@@ -2,13 +2,6 @@ import KoanFFI
 import SwiftUI
 
 struct SidebarView: View {
-    /// The transport bar's height. The bar is a `safeAreaInset` on the split
-    /// view, which reserves space in the window but not inside this List — so
-    /// the footer drew underneath it and everything below the first activity
-    /// row was cut off. Measured in `RootView` and passed down rather than
-    /// guessed at, for the same reason the detail column measures it.
-    let bottomInset: CGFloat
-
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
@@ -75,6 +68,9 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        // The footer floats over the rows rather than being fenced off by a
+        // divider; the soft edge fades a row out as it passes underneath.
+        .scrollEdgeEffectStyle(.soft, for: .bottom)
         // The field belongs to the sidebar, not the window: in the toolbar it
         // sat on top of the lyrics inspector.
         .searchable(text: $search.query, placement: .sidebar, prompt: "Search")
@@ -85,10 +81,9 @@ struct SidebarView: View {
         .onChange(of: ui.searchFocusToken) { _, _ in
             searchFocused = true
         }
-        .safeAreaInset(edge: .bottom) {
-            footer
-                .padding(.bottom, bottomInset)
-        }
+        .safeAreaInset(edge: .bottom) { footer }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { ui.sidebarWidth = $0 }
+        .onDisappear { ui.sidebarWidth = 0 }
     }
 
     /// What radio is about to do, rather than that it is switched on.
@@ -109,8 +104,6 @@ struct SidebarView: View {
     @ViewBuilder
     private var footer: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Divider()
-
             // Every long task, one row each. Replaces a "Scanning…" line that
             // said the same thing whatever was actually running.
             ActivityList()

@@ -31,8 +31,10 @@ struct PickerSheet: View {
             kindPicker
             Divider()
             resultList
-            Divider()
-            commitBar
+                // The commit bar floats over the results rather than being
+                // fenced off below them, so the list keeps the full height and
+                // you can see what is still under the bar as you scroll.
+                .safeAreaInset(edge: .bottom, spacing: 0) { commitBar }
         }
         .frame(width: 660, height: 500)
         .onAppear { fieldFocused = true }
@@ -114,6 +116,7 @@ struct PickerSheet: View {
                 }
             }
             .listStyle(.inset)
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
         }
     }
 
@@ -155,9 +158,11 @@ struct PickerSheet: View {
                 .buttonStyle(.borderedProminent)
         }
         .disabled(resolving || (picked.isEmpty && highlighted == nil))
-        .padding(.horizontal, 16)
-        .padding(.vertical, 11)
-        .background(.bar)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
     }
 
     private func toggle(_ row: PickerRow) {

@@ -51,9 +51,9 @@ struct ShortcutsSheet: View {
                 ForEach(hotkey.keys, id: \.self) { key in
                     Text(key == " " ? "space" : key)
                         .font(.caption.monospaced())
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(.quaternary, in: RoundedRectangle(cornerRadius: 4))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .glassEffect(.regular, in: .rect(cornerRadius: 6))
                 }
             }
             Text(hotkey.label)

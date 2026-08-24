@@ -11,7 +11,6 @@ struct ArtistPill: View {
 
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
-    @State private var hovering = false
 
     var body: some View {
         HStack(spacing: 5) {
@@ -36,9 +35,8 @@ struct ArtistPill: View {
         .padding(.horizontal, 11)
         .padding(.vertical, 6)
         .fixedSize(horizontal: true, vertical: false)
-        .background(hovering ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.quaternary), in: Capsule())
+        .glassEffect(.regular.interactive(), in: .capsule)
         .contentShape(Capsule())
-        .onHover { hovering = $0 }
         .onTapGesture { nav.open(artist: artistId) }
         .help("Go to \(name)")
         .contextMenu { PlayableMenu(playable: .artist(id: artistId, name: name)) }
