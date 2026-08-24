@@ -26,14 +26,37 @@ struct RootView: View {
     @Environment(Navigator.self) private var nav
     @Environment(SearchModel.self) private var search
     @Environment(PlayerModel.self) private var player
+    /// Read here only to hand back to the window background — see below.
+    @Environment(CoverArtCache.self) private var art
 
     @AppStorage("showLyrics") private var showLyrics = false
     @State private var transportHeight: CGFloat = 0
+    /// The record the window is washed in.
+    ///
+    /// Held rather than derived from `currentTrackId` on every frame: artwork
+    /// is fetched per *track*, so re-deriving it would ask the server for a new
+    /// copy of the same sleeve at every track change within a record. It only
+    /// moves when the record does.
+    @State private var bleed: AlbumArtwork.Source?
+
+    /// Which record is playing — artist as well as title, because "Greatest
+    /// Hits" is not one record.
+    private var playingRecord: String? {
+        player.currentEntry.map { "\($0.albumArtist)\u{1}\($0.album)" }
+    }
 
     var body: some View {
         @Bindable var library = library
         @Bindable var search = search
         @Bindable var ui = ui
+
+        // The window background is evaluated by the *scene*, outside every
+        // environment `RootView` was handed, so anything it needs is captured
+        // here. Reading an `@Environment` inside that closure — including to
+        // put one back — traps, and the app dies on launch.
+        let wash = nav.section == .queue ? bleed : nil
+        let washDrifts = player.isPlaying
+        let artCache = art
 
         NavigationSplitView {
             SidebarView()
@@ -79,6 +102,31 @@ struct RootView: View {
                     }
                 }
         }
+        // The queue is a list of names, and the record playing is the only
+        // thing in it with a colour. On the *window* rather than behind the
+        // queue: nothing inside a split view column reaches past the toolbar's
+        // inset, and a wash that stops in a line under the toolbar is worse
+        // than none. An album page washes its own header, so the window stays
+        // out of its way.
+        .containerBackground(for: .window) {
+            // Over an opaque ground, because this *replaces* the window's own
+            // background rather than sitting on it — a half-transparent wash on
+            // its own leaves you looking through the app at the desktop.
+            ZStack {
+                Rectangle().fill(.background)
+                ArtworkBleed(source: wash, drifts: washDrifts)
+                    .environment(artCache)
+            }
+        }
+        .onChange(of: playingRecord, initial: true) { _, _ in
+            bleed = player.currentTrackId.map { .track($0) }
+        }
+        // The toolbar paints its own ground over whatever is behind it, which
+        // put a hard grey strip across the top of a queue washed in the colour
+        // of the record. Hidden, the glass controls sit in that colour — which
+        // is the whole point of them being glass — and the scroll edge effect
+        // keeps rows legible as they pass under.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { handleSubmit() }
         // On the window rather than inside the detail column: a
