@@ -338,15 +338,6 @@ final class LibraryModel {
     /// the queue pushes a detail view without changing section, so the sidebar
     /// went on pointing at wherever you started — which is not where you are.
     /// The row an album lives under is Albums, whichever door you came through.
-    var navSelection: Section {
-        guard !path.isEmpty else { return section }
-        switch history.indices.contains(historyCursor) ? history[historyCursor] : .section(section) {
-        case .album: return .albums
-        case .artist: return .artists
-        case .section(let s): return s
-        }
-    }
-
     private(set) var history: [Destination] = [.section(.queue)]
     private(set) var historyCursor = 0
     /// Set while replaying history, so applying a destination doesn't record it
