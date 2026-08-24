@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import KoanFFI
 
@@ -37,12 +38,16 @@ final class OrganizeModel {
     /// Which library folder the pattern's relative paths hang off.
     var baseDir: String = "" { didSet { schedulePreview() } }
 
+    /// How big to open. Decided here rather than in the view: a sheet sizes
+    /// itself to its content, and the window to measure against is only
+    /// unambiguous *before* the sheet goes up.
+    private(set) var size = CGSize(width: 900, height: 620)
+
     private(set) var plan: OrganizePlan?
     private(set) var previewing = false
     private(set) var running = false
     private(set) var error: String?
 
-    private var previewTask: Task<Void, Never>?
     /// The selection, read once when the sheet opens. Patterns are generated
     /// against it — no database, no filesystem — which is what makes typing
     /// feel like typing.
@@ -70,6 +75,7 @@ final class OrganizeModel {
     // MARK: - Presenting
 
     func begin(title: String, trackIds: [Int64]) {
+        size = Self.openingSize()
         configuring = true
         subject = Subject(title: title, trackIds: trackIds)
         plan = nil
@@ -84,9 +90,20 @@ final class OrganizeModel {
         resolveSelection(trackIds: trackIds)
     }
 
+    /// Most of the window it is covering, bounded so it stays a dialog on a
+    /// large display and still fits on a small one. Falls back to the screen
+    /// when there is no window to ask, and to a fixed size when there is
+    /// neither.
+    private static func openingSize() -> CGSize {
+        let available = NSApp.mainWindow?.frame ?? NSScreen.main?.visibleFrame
+        guard let available else { return CGSize(width: 900, height: 620) }
+        return CGSize(
+            width: min(max(available.width * 0.9, 700), 1400),
+            height: min(max(available.height * 0.85, 480), 1000)
+        )
+    }
+
     func dismiss() {
-        previewTask?.cancel()
-        previewTask = nil
         subject = nil
         selection = nil
         plan = nil
@@ -165,16 +182,13 @@ final class OrganizeModel {
 
     // MARK: - Preview
 
-    /// Only the disk pass is worth debouncing, and `refreshPreview` puts the
-    /// pure result up before waiting on it — so the delay is invisible on the
-    /// destinations and only defers the conflict flags.
+    /// Called straight from the property that changed, not through a task.
+    /// Generating destinations is pure string work, so there is nothing to
+    /// debounce and nothing to wait for — the table changes under the caret.
+    /// Only the disk pass inside `refreshPreview` is deferred.
     private func schedulePreview() {
-        previewTask?.cancel()
         guard subject != nil, selection != nil, !configuring else { return }
-        previewTask = Task {
-            guard !Task.isCancelled else { return }
-            refreshPreview()
-        }
+        refreshPreview()
     }
 
     /// Two passes.
@@ -217,7 +231,6 @@ final class OrganizeModel {
         let (pattern, base) = (self.pattern, self.baseDir)
         let ids = subject.trackIds
 
-        previewTask?.cancel()
         // Claim the generation so an in-flight preview can't overwrite the
         // result of the run with a plan made before it.
         generation += 1

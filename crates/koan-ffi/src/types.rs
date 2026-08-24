@@ -468,8 +468,10 @@ pub struct OrganizeEntry {
     pub outcome: PlanOutcome,
     /// Why this file isn't moving. `None` when it is.
     pub reason: Option<String>,
-    /// Cover art, cue sheets and logs travelling with this file.
-    pub ancillary_count: u32,
+    /// Names of the cover art, cue sheets and logs travelling with this file.
+    /// Named rather than counted: "+1 file" tells you something is coming
+    /// along without telling you whether you want it to.
+    pub ancillary: Vec<String>,
 }
 
 /// Every selected file and what happens to it, in plan order.
@@ -514,7 +516,16 @@ impl OrganizePlan {
                     from_path: e.from.to_string_lossy().into_owned(),
                     to_path: e.to.map(|t| t.to_string_lossy().into_owned()),
                     reason: e.outcome.reason().map(str::to_owned),
-                    ancillary_count: e.ancillary.len() as u32,
+                    ancillary: e
+                        .ancillary
+                        .iter()
+                        .map(|(from, _)| {
+                            from.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned()
+                        })
+                        .collect(),
                     outcome: match e.outcome {
                         Core::Move => PlanOutcome::Move,
                         Core::Unchanged => PlanOutcome::Unchanged,

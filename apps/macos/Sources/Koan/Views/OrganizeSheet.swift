@@ -25,13 +25,10 @@ struct OrganizeSheet: View {
             Divider()
             footer
         }
-        // Fills whatever the sheet window is set to, rather than pinning a
-        // size. `SheetChrome` is what sets that — see below.
-        .frame(
-            minWidth: 560, maxWidth: .infinity,
-            minHeight: 400, maxHeight: .infinity
-        )
-        .background(SheetChrome(widthFraction: 0.9, heightFraction: 0.85))
+        // An explicit size, computed from the window this is covering before
+        // the sheet went up. A sheet sizes itself to its content, so this is
+        // the only thing it reliably honours.
+        .frame(width: organize.size.width, height: organize.size.height)
     }
 
     // MARK: - Header
@@ -260,10 +257,16 @@ private struct OrganizeRow: View {
                         .foregroundStyle(tint)
                 }
 
-                if entry.ancillaryCount > 0 {
-                    Text("+ \(Format.count(Int64(entry.ancillaryCount), "extra file")) alongside")
+                if !entry.ancillary.isEmpty {
+                    // Named, not counted. Artwork and cue sheets moving with
+                    // the music is usually wanted and occasionally not, and
+                    // "+1 file" cannot tell you which.
+                    Text("+ \(entry.ancillary.joined(separator: ", "))")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(entry.ancillary.joined(separator: "\n"))
                 }
             }
         }
@@ -293,99 +296,6 @@ private struct OrganizeRow: View {
         case .unchanged: .secondary
         case .conflict: .orange
         case .error: .red
-        }
-    }
-}
-
-
-/// Makes the sheet resizable and opens it large.
-///
-/// Neither is available from SwiftUI on macOS 14. AppKit leaves `.resizable`
-/// off a sheet's style mask, so there is no grip however the content is framed;
-/// and a sheet sizes itself to its content, so a flexible frame with nothing
-/// driving it collapses toward the minimum instead of filling anything.
-/// `.presentationSizing` solves the second on macOS 15, which is past our floor.
-///
-/// So both are asked for directly: insert the style mask, and set a starting
-/// size from the window the sheet belongs to. The content's frame is flexible,
-/// so it follows the window from then on — including the user's own resizing,
-/// which is the point.
-///
-/// Sized in `viewDidMoveToWindow`, synchronously. Doing it a runloop turn later
-/// works, but by then the sheet has already been drawn at its collapsed size
-/// and the correction is visible as a jump. That means the parent cannot come
-/// from `sheetParent`, which is not set until the sheet has begun — so it comes
-/// from the application's own windows instead.
-private struct SheetChrome: NSViewRepresentable {
-    let widthFraction: CGFloat
-    let heightFraction: CGFloat
-
-    func makeNSView(context: Context) -> NSView {
-        ChromeView(widthFraction: widthFraction, heightFraction: heightFraction)
-    }
-
-    func updateNSView(_ view: NSView, context: Context) {}
-
-    private final class ChromeView: NSView {
-        let widthFraction: CGFloat
-        let heightFraction: CGFloat
-        /// The sheet is configured once. Re-applying on a later window change
-        /// would yank it back to the default size under the user's drag.
-        private var configured = false
-
-        init(widthFraction: CGFloat, heightFraction: CGFloat) {
-            self.widthFraction = widthFraction
-            self.heightFraction = heightFraction
-            super.init(frame: .zero)
-        }
-
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { fatalError("not from a nib") }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            guard !configured, let window else { return }
-            configured = true
-            allowResizing(window)
-            guard let parent = parentWindow(of: window) else { return }
-            window.setContentSize(
-                NSSize(
-                    width: parent.frame.width * widthFraction,
-                    height: parent.frame.height * heightFraction
-                )
-            )
-        }
-
-        /// SwiftUI pins a sheet's content size to what it fits, so the style
-        /// mask alone leaves a window that reports itself resizable and refuses
-        /// to change size. The limits have to be widened too.
-        private func allowResizing(_ window: NSWindow) {
-            window.styleMask.insert(.resizable)
-            window.contentMinSize = NSSize(width: 560, height: 400)
-            window.contentMaxSize = NSSize(width: 100_000, height: 100_000)
-            window.minSize = NSSize(width: 560, height: 400)
-            window.maxSize = NSSize(width: 100_000, height: 100_000)
-        }
-
-        /// SwiftUI re-applies its own sizing on later layout passes, which puts
-        /// the limits back. Cheap to check, and self-healing if it does.
-        override func layout() {
-            super.layout()
-            if let window, !window.styleMask.contains(.resizable) || window.contentMaxSize.width < 10_000 {
-                allowResizing(window)
-            }
-        }
-
-        /// The window this sheet hangs off. `sheetParent` is authoritative but
-        /// only once the sheet has begun, which is after this runs, so fall
-        /// back to the app's main window and then to the largest visible one
-        /// that is not a sheet.
-        private func parentWindow(of sheet: NSWindow) -> NSWindow? {
-            if let parent = sheet.sheetParent { return parent }
-            if let main = NSApp.mainWindow, main !== sheet { return main }
-            return NSApp.windows
-                .filter { $0 !== sheet && $0.isVisible && $0.sheetParent == nil }
-                .max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
         }
     }
 }
