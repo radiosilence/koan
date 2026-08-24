@@ -173,8 +173,12 @@ private struct SeekBar: View {
                     Capsule()
                         .fill(.quaternary)
                         .frame(height: 4)
+                    // Not the tint. The tint is the colour of the record now,
+                    // and a muted sleeve puts the played portion at the same
+                    // value as the track behind it — this is a bar you read a
+                    // position off, not a thing that needs to say whose it is.
                     Capsule()
-                        .fill(.tint)
+                        .fill(.primary)
                         .frame(width: geo.size.width * player.progress, height: 4)
                 }
                 .frame(maxHeight: .infinity, alignment: .center)
