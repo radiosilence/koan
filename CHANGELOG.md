@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.30.1 (2026-08-25)
+
+### Fixed
+
+- **Navigating anywhere could take two seconds.** Opening an album from the queue and then clicking through to its artist slid the page in as though it were being dragged. `.animation(_:value:)` animates *every* animatable change in the subtree it is attached to, not only the value it names, and it was attached to the whole split view to cross-fade the tint between records — so any navigation that happened to coincide with a new colour was stretched to the length of that cross-fade. The tint is animated where it is set instead, which is the only thing that was ever meant to move.
+
 ## v0.30.0 (2026-08-24)
 
 ### Changed

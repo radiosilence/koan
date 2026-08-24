@@ -174,18 +174,24 @@ struct RootView: View {
             bleed = player.currentTrackId.map { .track($0) }
         }
         .task(id: tintSource) {
+            // Animated at the point the colour changes rather than by an
+            // `.animation(_:value:)` on the view. That modifier animates *every*
+            // animatable change in the subtree it is attached to whenever its
+            // value moves — and attached here that subtree is the whole split
+            // view, so a navigation push that happened to coincide with a new
+            // record was dragged out over two seconds along with it.
             guard let tintSource, let cover = await art.image(for: tintSource) else {
-                recordTint = nil
+                withAnimation(.easeInOut(duration: 2)) { recordTint = nil }
                 return
             }
-            recordTint = .dominant(of: cover)
+            let colour = Color.dominant(of: cover)
+            withAnimation(.easeInOut(duration: 2)) { recordTint = colour }
         }
         // Overrides the app-wide tint for everything below, which is every
         // control koan draws itself. What AppKit draws — list selection, focus
         // rings — keeps the declared accent, and that is deliberately a neutral
         // so the two never argue.
         .tint(recordTint ?? .koanAccent)
-        .animation(.easeInOut(duration: 2), value: recordTint)
         // The toolbar paints its own ground over whatever is behind it, which
         // put a hard grey strip across the top of a queue washed in the colour
         // of the record. Hidden, the glass controls sit in that colour — which
