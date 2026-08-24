@@ -1,7 +1,7 @@
 import KoanFFI
 import SwiftUI
 
-/// ⌘K. The TUI's track/album/artist pickers, as one native sheet.
+/// ⇧⌘K. The TUI's track/album/artist pickers, as one native sheet.
 ///
 /// Two things carried over deliberately: you can pick *several* things before
 /// committing, and committing is three distinct verbs — append, append and
