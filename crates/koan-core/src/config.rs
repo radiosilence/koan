@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Once};
+use std::time::SystemTime;
 
 use figment::Figment;
 use figment::providers::{Env, Format, Serialized, Toml};
@@ -404,6 +406,26 @@ impl Default for DiscoveryConfig {
     }
 }
 
+/// Mtimes of the two files `figment()` layers. Keyed on these so a config
+/// edited by hand is picked up without koan being told about it; `KOAN_*` env
+/// vars are not tracked, since they are fixed for the life of the process.
+type ConfigStamp = (Option<SystemTime>, Option<SystemTime>);
+
+type CachedConfig = Option<(ConfigStamp, Arc<Config>)>;
+
+static CONFIG_CACHE: LazyLock<parking_lot::RwLock<CachedConfig>> =
+    LazyLock::new(|| parking_lot::RwLock::new(None));
+
+fn config_stamp() -> ConfigStamp {
+    stamp_of(&config_file_path(), &config_local_file_path())
+}
+
+/// A file that does not exist stamps as `None`, so creating one is a change.
+fn stamp_of(base: &Path, local: &Path) -> ConfigStamp {
+    let mtime = |p: &Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+    (mtime(base), mtime(local))
+}
+
 impl Config {
     /// Build the figment provider chain:
     /// defaults → config.toml → config.local.toml → KOAN_* env vars.
@@ -426,18 +448,48 @@ impl Config {
             .extract()
             .map_err(|e| ConfigError::Figment(Box::new(e)))?;
 
-        // Security: warn if config files containing secrets are tracked by git.
+        // Security: refuse to start if config files containing secrets are
+        // tracked by git.
         check_secrets_in_git();
 
         Ok(cfg)
     }
 
     /// Load config, logging and falling back to defaults on error.
+    ///
+    /// Served from the cache, so what this costs is a clone of the struct
+    /// rather than two file reads and a figment merge.
     pub fn load_or_default() -> Self {
-        Self::load().unwrap_or_else(|e| {
+        (*Self::cached()).clone()
+    }
+
+    /// The merged config, reloaded only when it changed on disk.
+    ///
+    /// `load()` re-reads both TOML files and re-runs the whole figment merge,
+    /// and koan reaches it from paths that run per frame — `library_folders()`
+    /// is read from a SwiftUI list body. Callers that want to avoid even the
+    /// clone `load_or_default()` does can hold this `Arc`.
+    pub fn cached() -> Arc<Config> {
+        let stamp = config_stamp();
+        if let Some((seen, cfg)) = CONFIG_CACHE.read().as_ref()
+            && *seen == stamp
+        {
+            return cfg.clone();
+        }
+
+        let cfg = Arc::new(Self::load().unwrap_or_else(|e| {
             log::warn!("failed to load config, using defaults: {}", e);
             Self::default()
-        })
+        }));
+        *CONFIG_CACHE.write() = Some((stamp, cfg.clone()));
+        cfg
+    }
+
+    /// Drop the cached config. koan's own writes invalidate explicitly rather
+    /// than relying on the mtime, which can land in the same filesystem tick as
+    /// the read before it.
+    pub fn invalidate_cache() {
+        *CONFIG_CACHE.write() = None;
     }
 
     /// Load from a specific TOML file (no env var overlay).
@@ -462,6 +514,7 @@ impl Config {
         };
         mutate(&mut cfg);
         cfg.write_to(&path)?;
+        Self::invalidate_cache();
         Ok(())
     }
 
@@ -512,6 +565,7 @@ impl Config {
             use std::os::unix::fs::PermissionsExt;
             fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
         }
+        Self::invalidate_cache();
         Ok(())
     }
 
@@ -555,10 +609,19 @@ pub fn db_path() -> PathBuf {
     config_dir().join("koan.db")
 }
 
-/// Check if any config file containing secrets (password fields) is tracked by git.
-/// Prints a loud warning to stderr and panics if so — credentials in version control
-/// is a security incident, not a warning you can ignore.
+/// Refuse to start when credentials are sitting in version control, which is a
+/// security incident rather than a warning anyone would act on.
+///
+/// Runs once per process. It reads both config files and, when a password is
+/// present, forks `git ls-files` — and `load()` is reached from UI paths that
+/// run per frame. The name says what it is: a gate on starting, not a check
+/// that belongs on every read.
 fn check_secrets_in_git() {
+    static ONCE: Once = Once::new();
+    ONCE.call_once(scan_for_tracked_secrets);
+}
+
+fn scan_for_tracked_secrets() {
     let sensitive_fields = ["password"];
 
     for (label, path) in [
@@ -1182,5 +1245,48 @@ fps = 30
         assert!(!cfg.visualizer.enabled, "visualizer should be disabled");
         assert_eq!(cfg.visualizer.mode, "oscilloscope");
         assert_eq!(cfg.visualizer.fps, 30);
+    }
+
+    #[test]
+    fn a_missing_config_file_stamps_as_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("config.toml");
+        let local = dir.path().join("config.local.toml");
+
+        assert_eq!(stamp_of(&base, &local), (None, None));
+
+        fs::write(&base, "[remote]\nurl = \"https://example.com\"\n").unwrap();
+        let (base_stamp, local_stamp) = stamp_of(&base, &local);
+        assert!(base_stamp.is_some(), "creating the file must be a change");
+        assert!(local_stamp.is_none());
+    }
+
+    #[test]
+    fn editing_a_config_file_changes_its_stamp() {
+        let dir = tempfile::tempdir().unwrap();
+        let base = dir.path().join("config.toml");
+        let local = dir.path().join("config.local.toml");
+        fs::write(&base, "[playback]\ntarget_fps = 60\n").unwrap();
+
+        let before = stamp_of(&base, &local);
+        // Coarse-grained filesystems would otherwise stamp both writes alike.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        fs::write(&base, "[playback]\ntarget_fps = 30\n").unwrap();
+
+        assert_ne!(
+            before,
+            stamp_of(&base, &local),
+            "a config edited by hand has to be picked up"
+        );
+    }
+
+    #[test]
+    fn invalidating_forces_a_reload() {
+        let first = Config::cached();
+        Config::invalidate_cache();
+        assert!(
+            !Arc::ptr_eq(&first, &Config::cached()),
+            "koan's own writes invalidate explicitly; the next read must re-parse"
+        );
     }
 }

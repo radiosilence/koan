@@ -609,7 +609,7 @@ impl KoanEngine {
         let Some(remote_id) = row.remote_id else {
             return Ok(None);
         };
-        let cfg = Config::load().unwrap_or_default();
+        let cfg = Config::cached();
         if !cfg.remote.enabled {
             return Ok(None);
         }
@@ -1029,7 +1029,7 @@ impl KoanEngine {
     /// The device name persisted in config, or `None` for the system default.
     /// Read from config rather than the player so it survives a restart.
     pub fn current_device(&self) -> Option<String> {
-        Config::load().unwrap_or_default().playback.output_device
+        Config::cached().playback.output_device.clone()
     }
 
     // --- Radio -------------------------------------------------------------
@@ -1397,8 +1397,7 @@ impl KoanEngine {
 
     /// Where the library folders point. Shown in settings.
     pub fn library_folders(&self) -> Vec<String> {
-        Config::load()
-            .unwrap_or_default()
+        Config::cached()
             .library
             .folders
             .iter()

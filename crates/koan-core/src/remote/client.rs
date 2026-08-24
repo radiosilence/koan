@@ -31,7 +31,7 @@ pub enum SubsonicError {
 /// blocking `reqwest` clients, each carrying its own runtime — doing so from
 /// inside a tokio runtime panics. A caller that only needs a signed URL, such
 /// as koan's own Subsonic proxy, holds this instead.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SubsonicAuth {
     pub base_url: String,
     pub username: String,

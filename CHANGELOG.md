@@ -22,6 +22,10 @@
 
 - **Remote tracks carried no quality figures at all.** Navidrome and any other OpenSubsonic server report `samplingRate`, `bitDepth` and `channelCount` on every song; koan's client did not parse them and the sync hardcoded all three to null. Every remote-only track in a synced library therefore had no sample rate and no bit depth — 5,058 of 5,058 in the library this was found on — so the format badge had nothing to show for them. For a player whose point is bit-perfect output, that is the wrong field to be missing. A full sync fills them in; a plain Subsonic server that does not report them still leaves them absent, because a missing sample rate is not 0 Hz.
 
+- **A fresh HTTP client, and a fresh TLS handshake, for every remote request.** `subsonic_client()` built a new `SubsonicClient` on each call, and each of those builds two blocking `reqwest` clients — two runtimes on two threads with two cold connection pools. Browsing a synced library paid that per album cover. The download queue had already worked this out and kept a client of its own for the app's lifetime; the client is now shared process-wide and keyed on the credentials, so every caller gets connection reuse and logging in as someone else still replaces it.
+
+- **Reading the config forked a `git` process.** `Config::load()` re-read both TOML files, re-ran the figment merge, and re-scanned for credentials in version control — and that last check shells out to `git ls-files` whenever a password is present in the file, then panics if it is tracked. koan reaches config from paths that run per frame: the macOS settings pane reads `library_folders()` from a SwiftUI list body, so it did all of that per rendered frame. The check is what its own message says it is, a gate on starting, and runs once per process now. The merged config is cached and re-read when either file's mtime moves, so a config edited by hand is still picked up.
+
 ## v0.26.0 (2026-08-23)
 
 ### Added
