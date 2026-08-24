@@ -13,7 +13,9 @@ final class AppState {
     let library: LibraryModel
     let search: SearchModel
     let art: CoverArtCache
+    let organize: OrganizeModel
     let activity: ActivityModel
+    let textFocus = TextFocus()
     let ui = UIState()
     let hotkeys: Hotkeys
     private var nowPlaying: NowPlayingCentre?
@@ -28,10 +30,12 @@ final class AppState {
         self.search = SearchModel(engine: engine, library: library)
         let art = CoverArtCache(engine: engine)
         self.art = art
+        self.organize = OrganizeModel(engine: engine)
         let activity = ActivityModel()
         self.activity = activity
         library.activity = activity
         player.activity = activity
+        organize.activity = activity
 
         // The engine syncs and scans on its own — on startup, on a timer, and
         // when the library folders change. Those are the slow things a user is
@@ -54,6 +58,13 @@ final class AppState {
 @main
 struct KoanApp: App {
     @State private var state: AppState?
+
+    /// Someone is in a text field, so every shortcut whose key also means
+    /// something while typing stands down. Read in the Scene body, so flipping
+    /// it re-evaluates the menus — which is the point: a *disabled* menu item
+    /// releases its key equivalent to the responder chain, and that is the only
+    /// thing that hands the keystroke back to macOS.
+    private var isTyping: Bool { state?.textFocus.isEditing == true }
     @Environment(\.scenePhase) private var scenePhase
     @State private var startupError: String?
     @AppStorage("showLyrics") private var showLyrics = false
@@ -69,6 +80,7 @@ struct KoanApp: App {
                         .environment(state.library)
                         .environment(state.search)
                         .environment(state.art)
+                        .environment(state.organize)
                         .environment(state.activity)
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
@@ -112,8 +124,10 @@ struct KoanApp: App {
                 Divider()
                 Button("Back") { state?.library.goBack() }
                     .keyboardShortcut("[", modifiers: .command)
+                    .disabled(isTyping)
                 Button("Forward") { state?.library.goForward() }
                     .keyboardShortcut("]", modifiers: .command)
+                    .disabled(isTyping)
                 Divider()
                 Button("Toggle Lyrics") { showLyrics.toggle() }
                     .keyboardShortcut("l", modifiers: [.command, .option])
@@ -125,15 +139,23 @@ struct KoanApp: App {
                 // contest. Hotkeys handles the key; this stays for
                 // discoverability and the menu shows the shortcut anyway.
                 Button("Play / Pause") { state?.player.togglePlayPause() }
+                // Arrow keys with a modifier are text navigation first: ⌘← is
+                // start-of-line, ⌥← is previous word. Disabled rather than
+                // declined — a disabled item releases its key equivalent, and
+                // that is the only way the field ever sees it.
                 Button("Next") { state?.player.next() }
                     .keyboardShortcut(.rightArrow, modifiers: .command)
+                    .disabled(isTyping)
                 Button("Previous") { state?.player.previous() }
                     .keyboardShortcut(.leftArrow, modifiers: .command)
+                    .disabled(isTyping)
                 Divider()
                 Button("Skip Forward") { state?.player.seek(bySeconds: 10) }
                     .keyboardShortcut(.rightArrow, modifiers: .option)
+                    .disabled(isTyping)
                 Button("Skip Back") { state?.player.seek(bySeconds: -10) }
                     .keyboardShortcut(.leftArrow, modifiers: .option)
+                    .disabled(isTyping)
                 Divider()
                 Button("Favourite Current Track") { state?.player.toggleFavouriteCurrent() }
                     .keyboardShortcut("d", modifiers: .command)
@@ -144,10 +166,14 @@ struct KoanApp: App {
             // Replaces the stock Edit ▸ Undo, which has no undo manager behind
             // it here. Declaring ⌘Z anywhere else just loses to it.
             CommandGroup(replacing: .undoRedo) {
+                // ⌘Z while typing is undoing the typing, not the queue — and
+                // the field editor has its own undo stack to do it with.
                 Button("Undo") { state?.player.undo() }
                     .keyboardShortcut("z", modifiers: .command)
+                    .disabled(isTyping)
                 Button("Redo") { state?.player.redo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(isTyping)
             }
 
             // The queue borrows these, but they must still mean the ordinary
@@ -219,6 +245,26 @@ struct KoanApp: App {
                 Button("Clear Artwork Cache") { state?.art.purge() }
             }
         }
+
+        // A window, not a sheet. A sheet is not resizable — AppKit leaves the
+        // style mask off and SwiftUI pins its content size — and this is a
+        // table of file paths, which is exactly the thing someone wants to make
+        // wider. A Window gets `.defaultSize`, a resize grip, and a size macOS
+        // remembers between launches, none of which had to be written.
+        //
+        // It also means the library stays visible behind it, which suits a
+        // preview you are checking rather than a prompt you are answering.
+        Window("Organize Files", id: OrganizeWindow.id) {
+            if let state {
+                OrganizeWindow()
+                    // A separate scene inherits nothing, so everything it reads
+                    // is listed here — a missing one is not a compile error.
+                    .environment(state.organize)
+                    .environment(state.activity)
+            }
+        }
+        .defaultSize(width: 940, height: 640)
+        .keyboardShortcut(nil)
 
         Settings {
             if let state {

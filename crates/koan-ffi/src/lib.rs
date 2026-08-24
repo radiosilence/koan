@@ -1395,6 +1395,161 @@ impl KoanEngine {
             .collect())
     }
 
+    // --- File organization -------------------------------------------------
+
+    /// Named patterns from `[organize.patterns]`, sorted by name.
+    ///
+    /// Patterns are config, shared with the CLI and TUI, so this reads them
+    /// rather than offering somewhere else to define them.
+    pub fn organize_patterns(&self) -> Vec<OrganizePattern> {
+        let cfg = Config::load().unwrap_or_default().organize;
+        let mut patterns: Vec<OrganizePattern> = cfg
+            .patterns
+            .iter()
+            .map(|(name, pattern)| OrganizePattern {
+                name: name.clone(),
+                pattern: pattern.clone(),
+                is_default: cfg.default.as_deref() == Some(name.as_str()),
+            })
+            .collect();
+        patterns.sort_by(|a, b| a.name.cmp(&b.name));
+        patterns
+    }
+
+    /// Store a named pattern in `config.toml`, replacing one of the same name.
+    ///
+    /// Writes the base config rather than the local overlay: patterns are a
+    /// preference, not a machine fact, and the CLI and TUI read the same list.
+    pub fn save_organize_pattern(&self, name: String, pattern: String) -> Result<(), KoanError> {
+        let name = name.trim().to_string();
+        if name.is_empty() || pattern.trim().is_empty() {
+            return Err(KoanError::BadArgument {
+                message: "a pattern needs both a name and a format string".into(),
+            });
+        }
+        // Parse it before storing it: a pattern that can't be evaluated would
+        // sit in the config failing on every future run.
+        koan_core::format::parse(&pattern).map_err(|e| KoanError::BadArgument {
+            message: e.to_string(),
+        })?;
+        Config::update_base(|cfg| {
+            cfg.organize.patterns.insert(name, pattern);
+        })
+        .map_err(|e| KoanError::BadArgument {
+            message: e.to_string(),
+        })
+    }
+
+    /// Read a selection out of the library, ready to have patterns generated
+    /// against it.
+    ///
+    /// This is the expensive half — database rows, album facts, a `stat` per
+    /// file, and a tag read for anything the library has never seen — and it
+    /// happens once per selection. Blocking; call it off the main thread.
+    /// `track_ids` of `None` means the whole library.
+    pub fn organize_selection(
+        &self,
+        track_ids: Option<Vec<i64>>,
+    ) -> Result<Arc<OrganizeSelection>, KoanError> {
+        let db = self.db()?;
+        let requested = track_ids.as_ref().map(Vec::len);
+        let inner =
+            koan_core::organize::resolve(&db, track_ids.as_deref()).map_err(organize_err)?;
+        Ok(Arc::new(OrganizeSelection { inner, requested }))
+    }
+
+    /// Whether cover art, cue sheets and logs travel with the music.
+    pub fn organize_moves_ancillary(&self) -> bool {
+        Config::load().unwrap_or_default().organize.move_ancillary
+    }
+
+    /// Remember the choice. Written to `config.toml`, so the CLI and TUI
+    /// organize the same way the app just did.
+    pub fn set_organize_moves_ancillary(&self, enabled: bool) -> Result<(), KoanError> {
+        Config::update_base(|cfg| cfg.organize.move_ancillary = enabled).map_err(|e| {
+            KoanError::BadArgument {
+                message: e.to_string(),
+            }
+        })
+    }
+
+    /// What `pattern` would do to these tracks. Touches nothing.
+    ///
+    /// `track_ids` of `None` means the whole library. `base_dir` picks which
+    /// library folder the pattern's relative paths hang off; `None` uses the
+    /// first configured one, matching the CLI. Blocking — it resolves a
+    /// destination per file, so keep it off the main thread.
+    pub fn organize_preview(
+        &self,
+        pattern: String,
+        track_ids: Option<Vec<i64>>,
+        base_dir: Option<String>,
+    ) -> Result<OrganizePlan, KoanError> {
+        let db = self.db()?;
+        let base = base_dir.map(PathBuf::from);
+        let result = match &track_ids {
+            Some(ids) => {
+                koan_core::organize::preview_for_tracks(&db, ids, &pattern, base.as_deref(), true)
+            }
+            None => koan_core::organize::preview(&db, &pattern, base.as_deref(), true),
+        }
+        .map_err(organize_err)?;
+        Ok(OrganizePlan::build(
+            result,
+            track_ids.as_ref().map(Vec::len),
+        ))
+    }
+
+    /// Carry out the moves, then point the queue at where the files went.
+    ///
+    /// The rename and the database rows land together, and playback survives it
+    /// — a Unix rename keeps the open descriptor. Blocking and destructive:
+    /// call it off the main thread, and only for a plan the user has seen.
+    pub fn organize_execute(
+        &self,
+        pattern: String,
+        track_ids: Option<Vec<i64>>,
+        base_dir: Option<String>,
+    ) -> Result<OrganizePlan, KoanError> {
+        let db = self.db()?;
+        let base = base_dir.map(PathBuf::from);
+        let result = match &track_ids {
+            Some(ids) => {
+                koan_core::organize::execute_for_tracks(&db, ids, &pattern, base.as_deref())
+            }
+            None => koan_core::organize::execute(&db, &pattern, base.as_deref()),
+        }
+        .map_err(organize_err)?;
+        self.follow_moved_files(&result);
+        Ok(OrganizePlan::build(
+            result,
+            track_ids.as_ref().map(Vec::len),
+        ))
+    }
+
+    /// Index files from anywhere into the library, and return their track IDs.
+    ///
+    /// This is what a drop from Finder lands on: the files are read for tags,
+    /// given library rows where they sit, and handed back as IDs the caller can
+    /// queue. They are not moved — organize is what puts them under a library
+    /// folder, and it can only do that once they have rows. Directories are
+    /// walked recursively. Blocking and tag-bound; keep it off the main thread.
+    pub fn import_files(&self, paths: Vec<String>) -> Result<ImportSummary, KoanError> {
+        let db = self.db()?;
+        let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+        let result = koan_core::index::scanner::import_paths(&db, &paths);
+        Ok(ImportSummary {
+            track_ids: result.track_ids,
+            added: result.added as u32,
+            updated: result.updated as u32,
+            errors: result
+                .errors
+                .into_iter()
+                .map(|(p, e)| format!("{}: {e}", p.display()))
+                .collect(),
+        })
+    }
+
     /// Where the library folders point. Shown in settings.
     pub fn library_folders(&self) -> Vec<String> {
         Config::cached()
@@ -1403,6 +1558,46 @@ impl KoanEngine {
             .iter()
             .map(|p| p.to_string_lossy().into_owned())
             .collect()
+    }
+}
+
+/// A resolved selection, held by the caller so a pattern can be generated
+/// against it many times without re-reading anything.
+///
+/// The split is the point. `generate` is pure string work and runs on every
+/// keystroke; `check` is the filesystem pass and runs once the typing settles.
+/// Neither can change what the other decided, so the fast answer is never
+/// wrong — only less complete.
+#[derive(uniffi::Object)]
+pub struct OrganizeSelection {
+    inner: koan_core::organize::ResolvedSelection,
+    /// How many tracks were asked for, so the shortfall can be reported.
+    requested: Option<usize>,
+}
+
+#[uniffi::export]
+impl OrganizeSelection {
+    /// Turn the pattern into destinations. **Touches no files**, so this is
+    /// safe to call as fast as someone can type.
+    pub fn generate(&self, pattern: String, base_dir: String) -> OrganizePlan {
+        let result = koan_core::organize::generate(&self.inner, &pattern, Path::new(&base_dir));
+        OrganizePlan::build(result, self.requested)
+    }
+
+    /// Generate, then ask the disk the two questions generation cannot answer:
+    /// which destinations are already occupied, and what ancillary files travel
+    /// with each move. A `stat` per file and a directory read per source
+    /// folder — off the main thread, after the fast answer is on screen.
+    pub fn check(&self, pattern: String, base_dir: String, move_ancillary: bool) -> OrganizePlan {
+        let mut result = koan_core::organize::generate(&self.inner, &pattern, Path::new(&base_dir));
+        koan_core::organize::check_against_disk(&mut result, move_ancillary);
+        OrganizePlan::build(result, self.requested)
+    }
+
+    /// How many files resolved to something local. Fewer than were asked for
+    /// means the rest are remote-only or gone from disk.
+    pub fn count(&self) -> u32 {
+        self.inner.len() as u32
     }
 }
 
@@ -1470,6 +1665,35 @@ impl KoanEngine {
                 }
             })
             .ok();
+    }
+
+    /// Rewrite the queue to point at where organize put the files.
+    ///
+    /// The database rows moved with the files, but the playlist is in memory
+    /// and still holds the old paths — a queued track would fail to open on the
+    /// next play. Only the player may mutate it, so this goes through the
+    /// command channel like every other queue change.
+    fn follow_moved_files(&self, result: &koan_core::organize::OrganizeResult) {
+        let moved: std::collections::HashMap<&Path, &Path> = result
+            .moves()
+            .filter_map(|e| e.to.as_deref().map(|to| (e.from.as_path(), to)))
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+
+        let (items, _) = self.state.snapshot_playlist();
+        let updates: Vec<(QueueItemId, PathBuf)> = items
+            .iter()
+            .filter_map(|item| {
+                moved
+                    .get(item.path.as_path())
+                    .map(|to| (item.id, to.to_path_buf()))
+            })
+            .collect();
+        if !updates.is_empty() {
+            let _ = self.send(PlayerCommand::UpdatePaths(updates));
+        }
     }
 
     fn db(&self) -> Result<Database, KoanError> {
@@ -1673,6 +1897,19 @@ fn parse_qids(ids: &[String]) -> Result<Vec<QueueItemId>, KoanError> {
 fn db_err(e: impl std::fmt::Display) -> KoanError {
     KoanError::Database {
         message: e.to_string(),
+    }
+}
+
+/// A pattern that can't be resolved, a library folder that isn't configured and
+/// a file that won't move are all things the user can act on, so they come back
+/// as bad arguments rather than as an opaque failure. Only the database going
+/// wrong is out of their hands.
+fn organize_err(e: koan_core::organize::OrganizeError) -> KoanError {
+    use koan_core::organize::OrganizeError as E;
+    let message = e.to_string();
+    match e {
+        E::Db(_) | E::Sqlite(_) => KoanError::Database { message },
+        _ => KoanError::BadArgument { message },
     }
 }
 

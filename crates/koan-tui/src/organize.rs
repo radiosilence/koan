@@ -7,7 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Widget};
 
-use koan_core::organize::OrganizeResult;
+use koan_core::organize::{OrganizeResult, PlanEntry, PlanOutcome};
 use koan_core::player::state::QueueItemId;
 
 use super::theme::Theme;
@@ -107,7 +107,7 @@ impl OrganizeModalState {
         std::thread::Builder::new()
             .name("koan-org-preview".into())
             .spawn(move || {
-                let preview = koan_core::organize::preview_for_paths(&paths, &pattern, None);
+                let preview = koan_core::organize::preview_for_paths(&paths, &pattern, None, true);
 
                 if let Ok(mut p) = pending.lock() {
                     match preview {
@@ -159,20 +159,25 @@ impl OrganizeModalState {
                         Ok(result) => {
                             // Build path update map: match QueueItemIds to moved files.
                             let mut path_updates = Vec::new();
-                            for file_move in &result.moves {
+                            for entry in result.moves() {
+                                let Some(to) = entry.to.clone() else { continue };
                                 if let Some((qid, _)) =
-                                    queue_entries.iter().find(|(_, p)| *p == file_move.from)
+                                    queue_entries.iter().find(|(_, p)| *p == entry.from)
                                 {
-                                    path_updates.push((*qid, file_move.to.clone()));
+                                    path_updates.push((*qid, to));
                                 }
                             }
 
-                            let moved_count = result.moves.len();
-                            let error_count = result.errors.len();
-                            let skipped = result.skipped;
+                            let moved_count = result.moved_count();
+                            let conflict_count = result.conflicts().count();
+                            let error_count = result.failures().count() - conflict_count;
+                            let skipped = result.unchanged_count();
                             let mut parts = vec![format!("Moved {moved_count} files")];
                             if skipped > 0 {
                                 parts.push(format!("{skipped} unchanged"));
+                            }
+                            if conflict_count > 0 {
+                                parts.push(format!("{conflict_count} blocked"));
                             }
                             if error_count > 0 {
                                 parts.push(format!("{error_count} errors"));
@@ -227,15 +232,18 @@ impl OrganizeModalState {
                 // Update selected_paths and queue_entries to reflect moved files,
                 // so re-preview operates on the new locations.
                 if let Some(ref exec_result) = result.preview {
-                    for file_move in &exec_result.moves {
+                    for entry in exec_result.moves() {
+                        let Some(to) = entry.to.as_ref() else {
+                            continue;
+                        };
                         for path in self.selected_paths.iter_mut() {
-                            if *path == file_move.from {
-                                *path = file_move.to.clone();
+                            if *path == entry.from {
+                                *path = to.clone();
                             }
                         }
                         for (_, path) in self.queue_entries.iter_mut() {
-                            if *path == file_move.from {
-                                *path = file_move.to.clone();
+                            if *path == entry.from {
+                                *path = to.clone();
                             }
                         }
                     }
@@ -413,113 +421,109 @@ impl Widget for OrganizeOverlay<'_> {
         preview_block.render(chunks[1], buf);
 
         if let Some(ref result) = self.state.preview {
-            if result.moves.is_empty() && result.errors.is_empty() {
-                let msg = if result.skipped > 0 {
-                    format!(" All {} files already at target paths", result.skipped)
+            let rows: Vec<&PlanEntry> = result
+                .entries
+                .iter()
+                .filter(|e| e.outcome != PlanOutcome::Unchanged)
+                .collect();
+
+            if rows.is_empty() {
+                let unchanged = result.unchanged_count();
+                let msg = if unchanged > 0 {
+                    format!(" All {unchanged} files already at target paths")
                 } else {
                     " No files to move".into()
                 };
                 let line = Line::from(Span::styled(msg, self.theme.hint_desc));
                 Paragraph::new(line).render(preview_inner, buf);
-            } else if result.moves.is_empty() && !result.errors.is_empty() {
-                // All moves failed — show the errors.
-                let visible_rows = preview_inner.height as usize;
-                let scroll = self.state.scroll.min(result.errors.len().saturating_sub(1));
-                let lines: Vec<Line> = result
-                    .errors
-                    .iter()
-                    .skip(scroll)
-                    .take(visible_rows)
-                    .map(|(path, err)| {
-                        let name = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .into_owned();
-                        Line::from(vec![
-                            Span::styled(
-                                format!(" {name}: "),
-                                Style::default().fg(ratatui::style::Color::Red),
-                            ),
-                            Span::styled(err.as_str(), self.theme.hint_desc),
-                        ])
-                    })
-                    .collect();
-                Paragraph::new(lines).render(preview_inner, buf);
             } else {
-                // Before/after diff view: each move = 2 lines (before + after).
+                // Before/after diff view, in plan order. A file that can't move
+                // keeps its place in the table and shows the destination it was
+                // headed for — a conflict you have to go looking for is a
+                // conflict you find out about afterwards.
                 let usable_width = preview_inner.width.saturating_sub(2) as usize;
 
-                // Find longest common path prefix across all from/to paths to strip for display.
-                let all_paths: Vec<String> = result
-                    .moves
+                // Strip the prefix every path shares, so the part that differs
+                // is what fills the width.
+                let all_paths: Vec<String> = rows
                     .iter()
-                    .flat_map(|m| {
-                        [
-                            m.from.to_string_lossy().into_owned(),
-                            m.to.to_string_lossy().into_owned(),
-                        ]
+                    .flat_map(|e| {
+                        std::iter::once(e.from.to_string_lossy().into_owned())
+                            .chain(e.to.iter().map(|t| t.to_string_lossy().into_owned()))
                     })
                     .collect();
                 let common_prefix = common_path_prefix(&all_paths);
 
-                let strip = |p: &std::path::PathBuf| -> String {
+                let strip = |p: &std::path::Path| -> String {
                     let s = p.to_string_lossy();
                     s.strip_prefix(&common_prefix).unwrap_or(&s).to_string()
                 };
 
-                // Build all display lines.
                 let mut all_lines: Vec<Line> = Vec::new();
 
-                for m in &result.moves {
-                    let from_rel = strip(&m.from);
-                    let to_rel = strip(&m.to);
-                    let shared = shared_prefix_len(&from_rel, &to_rel);
+                for entry in &rows {
+                    let from_rel = strip(&entry.from);
 
-                    // Before line: dim (DarkGray), shows old relative path.
-                    let before_str = truncate_path(&from_rel, usable_width.saturating_sub(2));
+                    // Source line, dim: where the file is now.
                     all_lines.push(Line::from(vec![
                         Span::styled("  ", self.theme.hint_desc),
-                        Span::styled(before_str, self.theme.hint_desc),
+                        Span::styled(
+                            truncate_path(&from_rel, usable_width.saturating_sub(2)),
+                            self.theme.hint_desc,
+                        ),
                     ]));
 
-                    // After line: shared path prefix in normal colour, changed part in green+bold.
-                    let common_part = to_rel[..shared].to_string();
-                    let changed_part = if shared < to_rel.len() {
-                        to_rel[shared..].to_string()
-                    } else {
-                        String::new()
+                    let Some(to) = entry.to.as_deref() else {
+                        all_lines.push(Line::from(vec![
+                            Span::styled("\u{2717} ", Style::default().fg(Color::Red)),
+                            Span::styled(
+                                entry
+                                    .outcome
+                                    .reason()
+                                    .unwrap_or("cannot be placed")
+                                    .to_string(),
+                                Style::default().fg(Color::Red),
+                            ),
+                        ]));
+                        continue;
                     };
-                    let arrow_width = 2; // "→ "
-                    let remaining = usable_width.saturating_sub(arrow_width);
+
+                    let to_rel = strip(to);
+                    let shared = shared_prefix_len(&from_rel, &to_rel);
+                    let (marker, marker_colour, changed_colour) = match &entry.outcome {
+                        PlanOutcome::Move => ("\u{2192} ", Color::DarkGray, Color::Green),
+                        // Blocked, not broken: nothing was destroyed and the
+                        // file is still where it was.
+                        PlanOutcome::Conflict(_) => ("\u{26a0} ", Color::Yellow, Color::Yellow),
+                        _ => ("\u{2717} ", Color::Red, Color::Red),
+                    };
+
+                    let common_part = to_rel[..shared].to_string();
+                    let changed_part = to_rel[shared..].to_string();
+                    let remaining = usable_width.saturating_sub(2);
                     let common_display = truncate_path(&common_part, remaining);
                     let changed_display = truncate_path(
                         &changed_part,
-                        remaining.saturating_sub(common_display.len()),
+                        remaining.saturating_sub(common_display.chars().count()),
                     );
 
                     all_lines.push(Line::from(vec![
-                        Span::styled("\u{2192} ", Style::default().fg(Color::DarkGray)),
+                        Span::styled(marker, Style::default().fg(marker_colour)),
                         Span::styled(common_display, Style::default()),
                         Span::styled(
                             changed_display,
                             Style::default()
-                                .fg(Color::Green)
+                                .fg(changed_colour)
                                 .add_modifier(Modifier::BOLD),
                         ),
                     ]));
-                }
 
-                for (path, err) in &result.errors {
-                    let name = path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .into_owned();
-                    all_lines.push(Line::from(vec![
-                        Span::styled(format!("  {name}: "), Style::default().fg(Color::Red)),
-                        Span::styled(err.as_str(), self.theme.hint_desc),
-                    ]));
+                    if let Some(reason) = entry.outcome.reason() {
+                        all_lines.push(Line::from(Span::styled(
+                            format!("  {}", truncate_path(reason, usable_width)),
+                            Style::default().fg(marker_colour),
+                        )));
+                    }
                 }
 
                 let total_lines = all_lines.len();
@@ -550,11 +554,10 @@ impl Widget for OrganizeOverlay<'_> {
 
         // Count line + run button.
         let button_area = Rect::new(chunks[2].x, chunks[2].y + 1, chunks[2].width, 1);
-        let (move_count, error_count, skipped_count) = self
-            .state
-            .preview
-            .as_ref()
-            .map_or((0, 0, 0), |r| (r.moves.len(), r.errors.len(), r.skipped));
+        let (move_count, error_count, skipped_count) =
+            self.state.preview.as_ref().map_or((0, 0, 0), |r| {
+                (r.moved_count(), r.failures().count(), r.unchanged_count())
+            });
         let btn_focused = self.state.focus == OrganizeFocus::RunButton;
         let btn_style = if btn_focused {
             Style::default()

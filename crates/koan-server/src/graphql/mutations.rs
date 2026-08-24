@@ -513,34 +513,18 @@ impl MutationRoot {
         ctx: &Context<'_>,
         pattern: String,
         track_ids: Option<Vec<i64>>,
-    ) -> async_graphql::Result<GqlOrganizePreview> {
+    ) -> async_graphql::Result<GqlOrganizePlan> {
         require_role(ctx, Role::Admin)?;
         with_db(ctx, move |db| {
             require_organize()?;
             let result = if let Some(ids) = track_ids {
-                koan_core::organize::preview_for_tracks(db, &ids, &pattern, None)
+                koan_core::organize::preview_for_tracks(db, &ids, &pattern, None, true)
             } else {
-                koan_core::organize::preview(db, &pattern, None)
+                koan_core::organize::preview(db, &pattern, None, true)
             }
             .map_err(|e| super::internal_error("organize", e))?;
 
-            Ok(GqlOrganizePreview {
-                moves: result
-                    .moves
-                    .iter()
-                    .map(|m| GqlFileMove {
-                        track_id: m.track_id,
-                        from_path: m.from.to_string_lossy().into_owned(),
-                        to_path: m.to.to_string_lossy().into_owned(),
-                    })
-                    .collect(),
-                errors: result
-                    .errors
-                    .iter()
-                    .map(|(p, e)| format!("{}: {}", p.display(), e))
-                    .collect(),
-                skipped: result.skipped as i32,
-            })
+            Ok(result.into())
         })
         .await
     }
@@ -550,7 +534,7 @@ impl MutationRoot {
         ctx: &Context<'_>,
         pattern: String,
         track_ids: Option<Vec<i64>>,
-    ) -> async_graphql::Result<GqlOrganizeResult> {
+    ) -> async_graphql::Result<GqlOrganizePlan> {
         require_role(ctx, Role::Admin)?;
         with_db(ctx, move |db| {
             require_organize()?;
@@ -561,15 +545,7 @@ impl MutationRoot {
             }
             .map_err(|e| super::internal_error("organize", e))?;
 
-            Ok(GqlOrganizeResult {
-                moved_count: result.moves.len() as i32,
-                errors: result
-                    .errors
-                    .iter()
-                    .map(|(p, e)| format!("{}: {}", p.display(), e))
-                    .collect(),
-                skipped: result.skipped as i32,
-            })
+            Ok(result.into())
         })
         .await
     }
