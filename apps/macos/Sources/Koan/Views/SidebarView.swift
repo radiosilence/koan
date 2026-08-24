@@ -92,10 +92,8 @@ struct SidebarView: View {
         // `/`, the way it works in the TUI. The field is somewhere else on
         // screen, so the key can only ask for it by token.
         .onChange(of: ui.searchFocusToken) { _, _ in
-            NSLog("SIDEBAR token change -> searchFocused = true")
             searchFocused = true
         }
-        .onChange(of: searchFocused) { _, new in NSLog("SIDEBAR searchFocused = \(new)") }
         .safeAreaInset(edge: .bottom) {
             footer
                 .padding(.bottom, bottomInset)

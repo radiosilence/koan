@@ -134,7 +134,6 @@ extension Hotkeys {
                 ui.showingPicker = true
             },
             Hotkey(keys: ["/"], label: "Search library", group: .navigation) {
-                NSLog("HOTKEY slash -> focusSearch")
                 ui.focusSearch()
             },
             Hotkey(keys: ["l", "a"], label: "Albums", group: .navigation) {
