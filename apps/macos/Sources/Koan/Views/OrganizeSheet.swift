@@ -323,6 +323,10 @@ private struct OrganizeRow: View {
 /// until the sheet has begun, and `NSApp.mainWindow` is unreliable at that
 /// moment. `OrganizeModel` works it out before the sheet exists, when the
 /// window is unambiguous.
+///
+/// It is applied in `layout`, not on arrival — see below for why that is the
+/// difference between a sheet that opens at the size it was told and one that
+/// opens at 560x400.
 private struct SheetChrome: NSViewRepresentable {
     let initialSize: CGSize
 
@@ -348,20 +352,28 @@ private struct SheetChrome: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard !sized, let window else { return }
-            sized = true
+            guard let window else { return }
             allowResizing(window)
-            window.setContentSize(NSSize(width: initialSize.width, height: initialSize.height))
         }
 
-        /// SwiftUI re-applies its own sizing on later layout passes, which puts
-        /// the limits back. Cheap to check, and self-healing if it does.
+        /// The size is applied here rather than on arrival, and after
+        /// `super.layout()`.
+        ///
+        /// SwiftUI sizes the sheet's window from its content during layout, and
+        /// a frame with a flexible maximum fits to its *minimum* — so anything
+        /// set beforehand is simply measured over the top of and the sheet opens
+        /// at 560x400. Setting it once the pass has run is what makes it stick.
+        /// Exactly once: after this the size belongs to whoever is dragging the
+        /// corner.
         override func layout() {
             super.layout()
             guard let window else { return }
             if !window.styleMask.contains(.resizable) || window.contentMaxSize.width < 10_000 {
                 allowResizing(window)
             }
+            guard !sized else { return }
+            sized = true
+            window.setContentSize(NSSize(width: initialSize.width, height: initialSize.height))
         }
 
         private func allowResizing(_ window: NSWindow) {
