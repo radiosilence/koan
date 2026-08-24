@@ -18,21 +18,54 @@ use crate::remote::client::{SubsonicAuth, SubsonicClient};
 // Subsonic client builder
 // ---------------------------------------------------------------------------
 
+/// Where the remote password came from, or why there is not one.
+///
+/// "koan has no password" and "koan cannot read the password it has" are
+/// different problems with different fixes, and anything reporting on the
+/// remote needs to tell them apart. A credential store that holds an entry and
+/// declines to hand it over — a locked keychain, a dismissed dialog, an item
+/// whose ACL does not list the binary asking — looks exactly like no password
+/// at all to a caller that only sees `Option<String>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PasswordSource {
+    /// The platform credential store answered.
+    Keychain,
+    /// `config.local.toml`, or `KOAN_REMOTE__PASSWORD` layered over it.
+    Config,
+    /// Neither has one to give.
+    Missing,
+    /// The store holds an entry and would not part with it. Carries the
+    /// platform's own message, which is the only thing separating a locked
+    /// keychain from a refused one.
+    Unreadable(String),
+}
+
 /// Get the remote password. Keychain first, config second.
 ///
 /// The config copy is only a migration path now: `set_remote_credentials` writes
 /// to the keychain and clears it, so a plaintext password survives exactly until
 /// the next sign-in.
 pub fn get_remote_password(cfg: &Config) -> Option<String> {
-    if let Ok(pw) = crate::credentials::get_password(&cfg.remote.url)
-        && !pw.is_empty()
-    {
-        return Some(pw);
-    }
+    remote_password(cfg).0
+}
+
+/// `get_remote_password`, and how it got there.
+pub fn remote_password(cfg: &Config) -> (Option<String>, PasswordSource) {
+    let refusal = match crate::credentials::get_password(&cfg.remote.url) {
+        Ok(pw) if !pw.is_empty() => return (Some(pw), PasswordSource::Keychain),
+        // An empty stored password is no more useful than no entry at all.
+        Ok(_) | Err(crate::credentials::CredentialError::NotFound) => None,
+        Err(e) => Some(e.to_string()),
+    };
+
     if !cfg.remote.password.is_empty() {
-        return Some(cfg.remote.password.clone());
+        return (Some(cfg.remote.password.clone()), PasswordSource::Config);
     }
-    None
+
+    (
+        None,
+        refusal.map_or(PasswordSource::Missing, PasswordSource::Unreadable),
+    )
 }
 
 /// Index files that appear in the library folders while koan is running.
@@ -1164,6 +1197,32 @@ fn push_log(log_buf: &Arc<Mutex<Vec<String>>>, msg: String) {
     }
 }
 
+/// Why there is no remote client, in words worth showing someone.
+///
+/// Every caller of `subsonic_client` gets `None` for four different reasons and
+/// used to report the same one. "koan has no password" sends you to sign in;
+/// "koan cannot read the password it has" sends you to the keychain, and the
+/// two are indistinguishable to a caller holding an `Option`.
+pub fn remote_unavailable(cfg: &Config) -> String {
+    if !cfg.remote.enabled {
+        return "no remote server is configured".into();
+    }
+    if cfg.remote.url.is_empty() {
+        return "the remote server has no address".into();
+    }
+    match remote_password(cfg).1 {
+        PasswordSource::Missing => "no password is stored for the remote server".into(),
+        PasswordSource::Unreadable(why) => {
+            format!("the remote password is in the keychain but could not be read: {why}")
+        }
+        // A password resolved, so the client should have built. Nothing else
+        // returns `None`, but saying so beats claiming a cause that is wrong.
+        PasswordSource::Keychain | PasswordSource::Config => {
+            "the remote server could not be reached".into()
+        }
+    }
+}
+
 /// Spawn background downloads for remote tracks with LoadState::Pending.
 pub fn spawn_downloads(
     pending: Vec<(i64, QueueItemId)>,
@@ -1176,10 +1235,15 @@ pub fn spawn_downloads(
         .spawn(move || {
             let cfg = Config::load().unwrap_or_default();
             let Some(client) = subsonic_client(&cfg) else {
-                log::warn!(
-                    "remote not configured -- skipping {} downloads",
-                    pending.len()
-                );
+                // Marked failed rather than left Pending. A track that cannot
+                // be fetched will never become Ready, and the player waits for
+                // Ready — so returning here quietly meant a queue that sat
+                // saying nothing until it ran off the end.
+                let why = remote_unavailable(&cfg);
+                log::warn!("skipping {} downloads: {}", pending.len(), why);
+                for (_, queue_id) in pending {
+                    state.update_load_state(queue_id, LoadState::Failed(why.clone()));
+                }
                 return;
             };
             for (db_id, queue_id) in pending {
