@@ -1,3 +1,4 @@
+import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -80,8 +81,13 @@ struct OrganizeSheet: View {
                 Spacer(minLength: 0)
 
                 if organize.editing {
+                    // While editing, the two keys everyone reaches for belong
+                    // to the field: Esc abandons the edit, Return commits it.
+                    // They are handed back to Close and Move on the way out.
                     Button("Cancel") { organize.cancelEditing() }
+                        .keyboardShortcut(.cancelAction)
                     Button("Save") { organize.saveEditing() }
+                        .keyboardShortcut(.defaultAction)
                         .disabled(!organize.isModified)
                         .help("Store this pattern in config.toml under its name")
                 } else {
@@ -173,9 +179,9 @@ struct OrganizeSheet: View {
                 organize.dismiss()
                 dismiss()
             }
-            .keyboardShortcut(.cancelAction)
+            .keyboardShortcut(organize.editing ? nil : .cancelAction)
             Button(runTitle) { organize.run() }
-                .keyboardShortcut(.defaultAction)
+                .keyboardShortcut(organize.editing ? nil : .defaultAction)
                 .disabled(!canRun)
         }
         .padding(.horizontal, 18)
@@ -319,6 +325,11 @@ struct OrganizeWindow: View {
     @Environment(OrganizeModel.self) private var organize
 
     var body: some View {
+        content.background(WindowIdentity(Self.id))
+    }
+
+    @ViewBuilder
+    private var content: some View {
         if organize.subject != nil {
             OrganizeSheet()
         } else {
@@ -328,6 +339,35 @@ struct OrganizeWindow: View {
                 detail: "Select tracks in the queue or the library, then choose Organize Files."
             )
             .frame(minWidth: 560, minHeight: 400)
+        }
+    }
+}
+
+/// Stamps an identifier on the hosting window.
+///
+/// The single-key shortcuts are the main window's, and they decide that by
+/// asking the key window what it is. A SwiftUI `Window` scene does not reliably
+/// carry its scene id onto the `NSWindow`, so it is put there rather than
+/// guessed at from the title.
+private struct WindowIdentity: NSViewRepresentable {
+    let id: String
+
+    init(_ id: String) { self.id = id }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = IdentifyingView()
+        view.id = id
+        return view
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class IdentifyingView: NSView {
+        var id = ""
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.identifier = NSUserInterfaceItemIdentifier(id)
         }
     }
 }
