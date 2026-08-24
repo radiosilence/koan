@@ -22,17 +22,24 @@ final class OrganizeModel {
     private(set) var patterns: [OrganizePattern] = []
     private(set) var folders: [String] = []
 
-    /// The chosen pattern's name, or nil while editing a custom one.
-    var patternName: String? { didSet { schedulePreview() } }
-    var customPattern = "" { didSet { schedulePreview() } }
+    /// The chosen pattern's name.
+    var patternName: String? {
+        didSet {
+            guard !configuring else { return }
+            editing = false
+            loadSelectedPattern()
+        }
+    }
+    /// The format string being edited. Previews as you type; only written back
+    /// to the config when saved, so trying one out costs nothing.
+    var draft = "" { didSet { schedulePreview() } }
+    private(set) var editing = false
     /// Which library folder the pattern's relative paths hang off.
     var baseDir: String = "" { didSet { schedulePreview() } }
 
     private(set) var plan: OrganizePlan?
     private(set) var previewing = false
     private(set) var running = false
-    /// Set once a run finishes, so the sheet can report instead of re-arming.
-    private(set) var outcome: String?
     private(set) var error: String?
 
     private var previewTask: Task<Void, Never>?
@@ -62,13 +69,13 @@ final class OrganizeModel {
         configuring = true
         subject = Subject(title: title, trackIds: trackIds)
         plan = nil
-        outcome = nil
         error = nil
+        editing = false
         patterns = engine.organizePatterns()
         folders = engine.libraryFolders()
         baseDir = folders.first ?? ""
         patternName = patterns.first(where: \.isDefault)?.name ?? patterns.first?.name
-        customPattern = pattern
+        draft = stored(patternName) ?? ""
         configuring = false
         refreshPreview()
     }
@@ -82,20 +89,51 @@ final class OrganizeModel {
 
     // MARK: - The pattern
 
-    /// The format string in effect: a named pattern if one is chosen, the
-    /// free-text field otherwise.
-    var pattern: String {
-        guard let patternName else { return customPattern }
-        return patterns.first { $0.name == patternName }?.pattern ?? customPattern
+    /// The format string the preview and the run both use. Always the draft:
+    /// picking a pattern loads it into the draft, so there is one answer to
+    /// "what is about to happen" rather than two that can disagree.
+    var pattern: String { draft }
+
+    /// What the config holds for a name, before any editing.
+    private func stored(_ name: String?) -> String? {
+        guard let name else { return nil }
+        return patterns.first { $0.name == name }?.pattern
     }
 
-    var isCustom: Bool { patternName == nil }
+    /// True once the draft differs from what is stored — the only state in
+    /// which saving does anything.
+    var isModified: Bool { draft != stored(patternName) }
 
-    /// Switch to editing the pattern by hand, seeded with whatever is selected
-    /// — nobody writes one of these from a blank field.
-    func startCustomPattern() {
-        customPattern = pattern
-        patternName = nil
+    func beginEditing() { editing = true }
+
+    /// Put the stored pattern back and stop editing. The preview follows,
+    /// because it reads the draft.
+    func cancelEditing() {
+        editing = false
+        draft = stored(patternName) ?? draft
+    }
+
+    /// Write the draft to `config.toml` under the selected name.
+    func saveEditing() {
+        guard let name = patternName, isModified else {
+            editing = false
+            return
+        }
+        do {
+            try engine.saveOrganizePattern(name: name, pattern: draft)
+            patterns = engine.organizePatterns()
+            editing = false
+            error = nil
+        } catch {
+            self.error = String(describing: error)
+        }
+    }
+
+    /// Selecting a different pattern loads it, abandoning an unsaved draft —
+    /// which is what picking a different one means.
+    private func loadSelectedPattern() {
+        guard let replacement = stored(patternName) else { return }
+        draft = replacement
     }
 
     // MARK: - Preview
@@ -105,9 +143,6 @@ final class OrganizeModel {
     private func schedulePreview() {
         previewTask?.cancel()
         guard subject != nil, !configuring else { return }
-        // Changing anything puts the sheet back into preview mode, so a finished
-        // run reports what it did without stranding you on the report.
-        outcome = nil
         previewTask = Task {
             try? await Task.sleep(for: .milliseconds(250))
             guard !Task.isCancelled else { return }
@@ -161,10 +196,19 @@ final class OrganizeModel {
             } ?? .failure(OrganizeFailure.noEngine)
             guard requested == generation else { return }
             running = false
-            previewing = false
-            apply(result)
-            if case .success(let done) = result {
-                outcome = Self.summary(of: done)
+            switch result {
+            case .success:
+                // Re-plan against where the files now are, rather than leaving
+                // the table showing moves that have already happened. Every
+                // file that made it comes back as unchanged — a column of
+                // ticks — and anything blocked is still blocked, for the same
+                // reason it was. The table stays the report.
+                error = nil
+                refreshPreview()
+            case .failure(let failure):
+                previewing = false
+                self.plan = nil
+                error = String(describing: failure)
             }
         }
     }
@@ -187,16 +231,4 @@ final class OrganizeModel {
         case noEngine
     }
 
-    /// What a finished run did, in the order it matters: what moved, then what
-    /// didn't and why.
-    private static func summary(of plan: OrganizePlan) -> String {
-        var parts = [Format.count(Int64(plan.movedCount), "file") + " moved"]
-        if plan.conflictCount > 0 {
-            parts.append("\(plan.conflictCount) blocked")
-        }
-        if plan.errorCount > 0 {
-            parts.append("\(plan.errorCount) failed")
-        }
-        return parts.joined(separator: " · ")
-    }
 }

@@ -1416,6 +1416,30 @@ impl KoanEngine {
         patterns
     }
 
+    /// Store a named pattern in `config.toml`, replacing one of the same name.
+    ///
+    /// Writes the base config rather than the local overlay: patterns are a
+    /// preference, not a machine fact, and the CLI and TUI read the same list.
+    pub fn save_organize_pattern(&self, name: String, pattern: String) -> Result<(), KoanError> {
+        let name = name.trim().to_string();
+        if name.is_empty() || pattern.trim().is_empty() {
+            return Err(KoanError::BadArgument {
+                message: "a pattern needs both a name and a format string".into(),
+            });
+        }
+        // Parse it before storing it: a pattern that can't be evaluated would
+        // sit in the config failing on every future run.
+        koan_core::format::parse(&pattern).map_err(|e| KoanError::BadArgument {
+            message: e.to_string(),
+        })?;
+        Config::update_base(|cfg| {
+            cfg.organize.patterns.insert(name, pattern);
+        })
+        .map_err(|e| KoanError::BadArgument {
+            message: e.to_string(),
+        })
+    }
+
     /// What `pattern` would do to these tracks. Touches nothing.
     ///
     /// `track_ids` of `None` means the whole library. `base_dir` picks which

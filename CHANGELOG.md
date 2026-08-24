@@ -8,7 +8,7 @@
 
   The preview is the feature. Every selected file gets a row showing its destination relative to the library folder, *including the ones that can't move* — a destination already occupied, or two files resolving to the same path, is an orange row next to the path it collided with rather than a number in an error count underneath. Nothing is ever overwritten, so the only way that matters is if you can see it before pressing the button.
 
-  Patterns come from `[organize.patterns]`, shared with the CLI and TUI, with a free-text field for one you only want once. With more than one library folder configured you pick which one to organize into; the CLI's behaviour (the first) is the default.
+  Patterns come from `[organize.patterns]`, shared with the CLI and TUI, and can be edited in place: the preview follows what you type, and saving writes it back to `config.toml` under its name. An edited pattern previews and runs without being saved, so trying one out costs nothing. With more than one library folder configured you pick which one to organize into; the CLI's behaviour (the first) is the default.
 
   Dropped files get library rows *where they are*, not in the music tree — importing and organizing are separate on purpose, so files land in the library only after you have seen where they are going.
 

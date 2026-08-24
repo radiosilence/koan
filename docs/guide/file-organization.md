@@ -50,7 +50,9 @@ For example, with `folders = ["/Volumes/Music/library"]` and the `standard` patt
 
 ## Configuring patterns
 
-Define named patterns in your config:
+The macOS app edits them in place: **Edit** next to the pattern picker turns it into a field, the preview follows what you type, and **Save** writes it back to `config.toml` under its name. A pattern you have edited but not saved still previews and still runs, so trying one out costs nothing.
+
+Or define them in your config directly:
 
 ```toml
 [organize]

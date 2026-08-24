@@ -64,16 +64,13 @@ struct OrganizeSheet: View {
 
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 12) {
-                Picker("Pattern", selection: patternSelection) {
+                Picker("Pattern", selection: $organize.patternName) {
                     ForEach(organize.patterns, id: \.name) { pattern in
                         Text(pattern.name).tag(pattern.name as String?)
                     }
-                    if !organize.patterns.isEmpty {
-                        Divider()
-                    }
-                    Text("Custom…").tag(String?.none)
                 }
-                .frame(maxWidth: 260)
+                .frame(maxWidth: 240)
+                .disabled(organize.editing)
 
                 // Only worth asking when there is a choice. With one library
                 // folder the answer is that folder, and the row below says so.
@@ -83,14 +80,24 @@ struct OrganizeSheet: View {
                             Text(shortFolder(folder)).tag(folder)
                         }
                     }
-                    .frame(maxWidth: 260)
+                    .frame(maxWidth: 240)
                 }
 
                 Spacer(minLength: 0)
+
+                if organize.editing {
+                    Button("Cancel") { organize.cancelEditing() }
+                    Button("Save") { organize.saveEditing() }
+                        .disabled(!organize.isModified)
+                        .help("Store this pattern in config.toml under its name")
+                } else {
+                    Button("Edit") { organize.beginEditing() }
+                        .disabled(organize.patternName == nil)
+                }
             }
 
-            if organize.isCustom {
-                TextField("Format string", text: $organize.customPattern)
+            if organize.editing {
+                TextField("Format string", text: $organize.draft)
                     .textFieldStyle(.roundedBorder)
                     .font(.callout.monospaced())
             } else {
@@ -102,29 +109,22 @@ struct OrganizeSheet: View {
                     .textSelection(.enabled)
             }
 
-            // Destinations are relative to this, so it has to be visible even
-            // when there was nothing to choose.
-            Text("Destinations are relative to \(organize.baseDir)")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            HStack(spacing: 6) {
+                // Destinations are relative to this, so it has to be visible
+                // even when there was nothing to choose.
+                Text("Destinations are relative to \(organize.baseDir)")
+                // An edited pattern previews and moves without being saved, so
+                // say which state you are looking at.
+                if organize.isModified {
+                    Text("· unsaved changes")
+                        .foregroundStyle(.orange)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.tertiary)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 12)
-    }
-
-    /// Selecting "Custom…" seeds the field from whatever was showing, rather
-    /// than handing over a blank one.
-    private var patternSelection: Binding<String?> {
-        Binding(
-            get: { organize.patternName },
-            set: { name in
-                if let name {
-                    organize.patternName = name
-                } else {
-                    organize.startCustomPattern()
-                }
-            }
-        )
     }
 
     private func shortFolder(_ path: String) -> String {
@@ -167,16 +167,11 @@ struct OrganizeSheet: View {
         HStack(spacing: 12) {
             counts
             Spacer(minLength: 0)
-            Button(organize.outcome == nil ? "Cancel" : "Close") { organize.dismiss() }
+            Button("Close") { organize.dismiss() }
                 .keyboardShortcut(.cancelAction)
-            // Gone once the run is done, rather than sitting there re-armed
-            // over a plan that has already happened. Changing the pattern or
-            // the destination brings it back.
-            if organize.outcome == nil {
-                Button(runTitle) { organize.run() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(!canRun)
-            }
+            Button(runTitle) { organize.run() }
+                .keyboardShortcut(.defaultAction)
+                .disabled(!canRun)
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 13)
@@ -184,10 +179,7 @@ struct OrganizeSheet: View {
 
     @ViewBuilder
     private var counts: some View {
-        if let outcome = organize.outcome {
-            Text(outcome)
-                .font(.callout)
-        } else if let plan = organize.plan {
+        if let plan = organize.plan {
             HStack(spacing: 10) {
                 Text(Format.count(Int64(plan.movedCount), "file") + " to move")
                 if plan.unchangedCount > 0 {
@@ -314,10 +306,16 @@ private struct OrganizeRow: View {
 /// driving it collapses toward the minimum instead of filling anything.
 /// `.presentationSizing` solves the second on macOS 15, which is past our floor.
 ///
-/// So both are asked for directly: insert the style mask, and take a starting
-/// size from the window the sheet is attached to. The content's frame is
-/// flexible, so it follows the window from then on — including the user's own
-/// resizing, which is the point.
+/// So both are asked for directly: insert the style mask, and set a starting
+/// size from the window the sheet belongs to. The content's frame is flexible,
+/// so it follows the window from then on — including the user's own resizing,
+/// which is the point.
+///
+/// Sized in `viewDidMoveToWindow`, synchronously. Doing it a runloop turn later
+/// works, but by then the sheet has already been drawn at its collapsed size
+/// and the correction is visible as a jump. That means the parent cannot come
+/// from `sheetParent`, which is not set until the sheet has begun — so it comes
+/// from the application's own windows instead.
 private struct SheetChrome: NSViewRepresentable {
     let widthFraction: CGFloat
     let heightFraction: CGFloat
@@ -346,23 +344,28 @@ private struct SheetChrome: NSViewRepresentable {
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
-            guard !configured, window != nil else { return }
-            // `sheetParent` is only set once the sheet has actually begun, which
-            // is after the view lands in it.
-            DispatchQueue.main.async { [weak self] in self?.configure() }
-        }
-
-        private func configure() {
             guard !configured, let window else { return }
             configured = true
             window.styleMask.insert(.resizable)
-            guard let parent = window.sheetParent else { return }
+            guard let parent = parentWindow(of: window) else { return }
             window.setContentSize(
                 NSSize(
                     width: parent.frame.width * widthFraction,
                     height: parent.frame.height * heightFraction
                 )
             )
+        }
+
+        /// The window this sheet hangs off. `sheetParent` is authoritative but
+        /// only once the sheet has begun, which is after this runs, so fall
+        /// back to the app's main window and then to the largest visible one
+        /// that is not a sheet.
+        private func parentWindow(of sheet: NSWindow) -> NSWindow? {
+            if let parent = sheet.sheetParent { return parent }
+            if let main = NSApp.mainWindow, main !== sheet { return main }
+            return NSApp.windows
+                .filter { $0 !== sheet && $0.isVisible && $0.sheetParent == nil }
+                .max { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height }
         }
     }
 }
