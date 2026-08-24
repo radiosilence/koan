@@ -126,6 +126,10 @@ impl QueryRoot {
                     .into_values()
                     .flatten()
                     .collect()
+            } else if let Some(ref query) = search {
+                // Narrowed in SQL rather than over every album in the library —
+                // the same core helper the native client's filter runs through.
+                queries::find_albums(&db.conn, query).map_err(|e| super::internal_error("db", e))?
             } else {
                 queries::all_albums(&db.conn).map_err(|e| super::internal_error("db", e))?
             };

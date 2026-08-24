@@ -30,6 +30,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState,
 };
+use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
 mod offload;
@@ -405,16 +406,24 @@ impl KoanEngine {
         .await
     }
 
+    /// The library's albums, narrowed by `search` if given.
+    ///
+    /// The search runs in SQL rather than over the returned list: a client that
+    /// filters what it has already been handed still pays to read and marshal
+    /// every album in the library on each keystroke.
     pub async fn albums(
         self: Arc<Self>,
         artist_id: Option<i64>,
         sort: AlbumSort,
+        search: Option<String>,
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = match artist_id {
-                Some(id) => queries::albums_for_artist(&db.conn, id),
-                None => queries::all_albums(&db.conn),
+            let query = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            let rows = match (artist_id, query) {
+                (Some(id), _) => queries::albums_for_artist(&db.conn, id),
+                (None, Some(q)) => queries::find_albums(&db.conn, q),
+                (None, None) => queries::all_albums(&db.conn),
             }
             .map_err(db_err)?;
 
@@ -428,10 +437,12 @@ impl KoanEngine {
                         .unwrap_or("")
                         .cmp(a.added_at.as_deref().unwrap_or(""))
                 }),
-                AlbumSort::Title => albums.sort_by_key(|a| a.title.to_lowercase()),
-                AlbumSort::Artist => {
-                    albums.sort_by_key(|a| (a.artist_name.to_lowercase(), a.year.unwrap_or(0)))
-                }
+                // Cached: `sort_by_key` recomputes the key on every
+                // comparison, so a plain sort lowercases each title a couple of
+                // dozen times over.
+                AlbumSort::Title => albums.sort_by_cached_key(|a| a.title.to_lowercase()),
+                AlbumSort::Artist => albums
+                    .sort_by_cached_key(|a| (a.artist_name.to_lowercase(), a.year.unwrap_or(0))),
                 AlbumSort::Year => albums.sort_by_key(|a| std::cmp::Reverse(a.year.unwrap_or(0))),
                 AlbumSort::Random => shuffle(&mut albums),
             }
@@ -632,20 +643,59 @@ impl KoanEngine {
                 return Ok(None);
             };
             let cfg = Config::cached();
+            // No server configured: this record simply has no art.
             if !cfg.remote.enabled {
                 return Ok(None);
             }
+            // Configured but unusable — signed out, or the password cannot be
+            // read. Reported rather than shrugged off: answering "no art" for
+            // every record makes a signed-out client look like a library that
+            // has no covers, which is a long way from where the problem is.
             let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-                return Ok(None);
+                return Err(KoanError::Remote {
+                    message: koan_core::helpers::remote_unavailable(&cfg),
+                });
             };
             match client.get_cover_art(&remote_id, size) {
                 Ok(data) if !data.is_empty() => {
                     let mime = sniff_mime(&data).to_string();
                     Ok(Some(CoverArt { data, mime }))
                 }
-                // No art on the server is normal, not a failure worth surfacing.
-                _ => Ok(None),
+                // The server answered and it has nothing. Normal, and worth
+                // remembering: this record has no art and never will.
+                Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => {
+                    Ok(None)
+                }
+                // A timeout or a dropped connection says nothing about whether
+                // art exists. Reported rather than swallowed, so the caller can
+                // ask again instead of recording "this album has none" for the
+                // rest of the session — and so it appears in the log at all.
+                Err(e) => {
+                    log::warn!("cover art for track {track_id} failed: {e}");
+                    Err(KoanError::Remote {
+                        message: e.to_string(),
+                    })
+                }
             }
+        })
+        .await
+    }
+
+    /// Why the configured server cannot be used, if it cannot.
+    ///
+    /// `None` means there is nothing to say: either no server is configured, or
+    /// the one that is works. A client should not have to watch playback fail
+    /// and artwork come back empty to work out that it is signed out — the
+    /// engine already knows, and every front end asks the same question.
+    pub async fn remote_problem(self: Arc<Self>) -> Option<String> {
+        offload::offload(move || {
+            let cfg = Config::cached();
+            if !cfg.remote.enabled || cfg.remote.url.is_empty() {
+                return None;
+            }
+            koan_core::helpers::subsonic_auth(&cfg)
+                .is_none()
+                .then(|| koan_core::helpers::remote_unavailable(&cfg))
         })
         .await
     }
