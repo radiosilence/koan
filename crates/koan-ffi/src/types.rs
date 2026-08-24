@@ -593,6 +593,10 @@ pub enum KoanError {
     NotFound { message: String },
     #[error("bad argument: {message}")]
     BadArgument { message: String },
+    /// The server could not be reached, or gave up part way. Distinct from a
+    /// server that answered and said no — this one is worth retrying.
+    #[error("remote: {message}")]
+    Remote { message: String },
 }
 
 pub(crate) fn year_of(date: &str) -> Option<i32> {

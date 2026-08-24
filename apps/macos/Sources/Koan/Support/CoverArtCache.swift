@@ -81,25 +81,29 @@ final class CoverArtCache {
             // writing the file would otherwise happen on the main actor. The
             // hash comes back with the bytes because it is a pass over the
             // whole payload and the main actor has no business doing it.
-            let payload = await Task.detached(priority: .utility) { () -> (Data, String)? in
+            let payload = await Task.detached(priority: .utility) { () -> Fetched in
                 if let file, let cached = try? Data(contentsOf: file) {
-                    return (cached, Self.digest(cached))
+                    return .art(cached, hash: Self.digest(cached))
                 }
-                guard let fetched = await Self.fetch(source, engine) else { return nil }
-                if let file {
+                let fetched = await Self.fetch(source, engine)
+                if case .art(let bytes, _) = fetched, let file {
                     // Best effort: a cache that fails to write is still a cache.
-                    try? fetched.write(to: file, options: .atomic)
+                    try? bytes.write(to: file, options: .atomic)
                 }
-                return (fetched, Self.digest(fetched))
+                return fetched
             }.value
 
             guard let self else { return nil }
             self.tasks[key] = nil
-            guard let payload, self.accept(hash: payload.1, for: key) else {
+            // Nothing recorded: the next tile that asks tries again.
+            guard case .art(let data, let hash) = payload else {
+                if case .none = payload { self.memory[key] = NSImage?.none }
+                return nil
+            }
+            guard self.accept(hash: hash, for: key) else {
                 self.memory[key] = NSImage?.none
                 return nil
             }
-            let data = payload.0
             let image = await Task.detached(priority: .utility) {
                 Self.decode(data, source: source)
             }.value
@@ -117,22 +121,40 @@ final class CoverArtCache {
         }
     }
 
+    /// What an attempt learned.
+    ///
+    /// A server that answers and says it has no art is worth remembering. One
+    /// that could not be reached is not: recording that as "no art" is why a
+    /// scroll during a blip left permanent holes in the grid until relaunch.
+    private enum Fetched {
+        case art(Data, hash: String)
+        case none
+        case failed
+    }
+
     private nonisolated static func fetch(
         _ source: AlbumArtwork.Source,
         _ engine: KoanEngine
-    ) async -> Data? {
-        switch source {
-        case .album(let albumId):
-            // Any track off the record will do — they share the artwork.
-            guard let tracks = try? await engine.tracks(
-                albumId: albumId, artistId: nil, sort: .album, limit: 1, offset: 0
-            ) else { return nil }
-            guard let first = tracks.first(where: { $0.path != nil }) ?? tracks.first else {
-                return nil
+    ) async -> Fetched {
+        do {
+            let data: Data?
+            switch source {
+            case .album(let albumId):
+                // Any track off the record will do — they share the artwork.
+                let tracks = try await engine.tracks(
+                    albumId: albumId, artistId: nil, sort: .album, limit: 1, offset: 0
+                )
+                guard let first = tracks.first(where: { $0.path != nil }) ?? tracks.first else {
+                    return .none
+                }
+                data = try await engine.coverArt(trackId: first.id, size: 400)?.data
+            case .track(let trackId):
+                data = try await engine.coverArt(trackId: trackId, size: 600)?.data
             }
-            return (try? await engine.coverArt(trackId: first.id, size: 400))?.data
-        case .track(let trackId):
-            return (try? await engine.coverArt(trackId: trackId, size: 600))?.data
+            guard let data, !data.isEmpty else { return .none }
+            return .art(data, hash: digest(data))
+        } catch {
+            return .failed
         }
     }
 

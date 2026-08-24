@@ -52,6 +52,17 @@ final class AppState {
 
         // Single-key shortcuts, caught before the focused list eats them.
         self.hotkeys = Hotkeys.standard(player: player, library: library, ui: ui)
+
+        // A client that cannot reach its server fails at everything quietly:
+        // nothing plays, nothing downloads, and every record comes back with no
+        // artwork — which reads as an empty library rather than as being signed
+        // out. The engine knows why; this is it saying so. Off the launch path,
+        // since the answer can involve the credential store.
+        Task { [weak player] in
+            if let problem = await engine.remoteProblem() {
+                player?.lastError = problem
+            }
+        }
     }
 }
 
