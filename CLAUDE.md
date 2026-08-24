@@ -151,7 +151,8 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 
 | Module | What |
 |--------|------|
-| `lib.rs` | `KoanEngine` — the whole facade. Transport, queue ops, library queries, favourites, snapshots, devices, scan. Blocking; callers keep slow calls off the main thread |
+| `lib.rs` | `KoanEngine` — the whole facade. Transport, queue ops, library queries, favourites, snapshots, devices, scan. Every call that can block is `async`; only single-atomic reads stay sync |
+| `offload.rs` | Where blocking work goes — a growing thread pool for reads, and one ordered lane for anything that ends in a `PlayerCommand` |
 | `types.rs` | uniffi records mirroring koan-core types (`Track`, `Album`, `NowPlaying`, `QueueItem`, …) and the conversions |
 
 Swift bindings are generated, not checked in — `just macos-ffi` builds the lib and regenerates them.

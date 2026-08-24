@@ -30,14 +30,14 @@ enum Playable {
         }
     }
 
-    func trackIds(using engine: KoanEngine) -> [Int64] {
+    func trackIds(using engine: KoanEngine) async -> [Int64] {
         switch self {
         case .track(let t):
             return [t.id]
         case .album(let a):
-            return (try? engine.trackIds(albumId: a.id, artistId: nil)) ?? []
+            return (try? await engine.trackIds(albumId: a.id, artistId: nil)) ?? []
         case .artist(let id, _):
-            return (try? engine.trackIds(albumId: nil, artistId: id)) ?? []
+            return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
         }
     }
 }
@@ -114,9 +114,7 @@ struct PlayableMenu: View {
         let engine = library.engine
         let playable = self.playable
         Task {
-            let ids = await Task.detached(priority: .userInitiated) {
-                playable.trackIds(using: engine)
-            }.value
+            let ids = await playable.trackIds(using: engine)
             guard !ids.isEmpty else { return }
             body(ids)
         }
@@ -141,14 +139,16 @@ enum Share {
     static func link(for playable: Playable, engine: KoanEngine, player: PlayerModel) {
         let name = playable.name
         Task {
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<KoanFFI.Share, Error> in
-                let ids = playable.trackIds(using: engine)
-                guard !ids.isEmpty else {
-                    return .failure(ShareFailure.nothingToShare)
-                }
-                return Result { try engine.createShare(trackIds: ids, description: name) }
-            }.value
-            deliver(result, to: player)
+            let ids = await playable.trackIds(using: engine)
+            guard !ids.isEmpty else {
+                return deliver(.failure(ShareFailure.nothingToShare), to: player)
+            }
+            do {
+                let share = try await engine.createShare(trackIds: ids, description: name)
+                deliver(.success(share), to: player)
+            } catch {
+                deliver(.failure(error), to: player)
+            }
         }
     }
 
@@ -164,10 +164,12 @@ enum Share {
             return
         }
         Task {
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<KoanFFI.Share, Error> in
-                Result { try engine.createShare(trackIds: trackIds, description: name) }
-            }.value
-            deliver(result, to: player)
+            do {
+                let share = try await engine.createShare(trackIds: trackIds, description: name)
+                deliver(.success(share), to: player)
+            } catch {
+                deliver(.failure(error), to: player)
+            }
         }
     }
 
@@ -267,9 +269,7 @@ struct PlayableHeaderButton: View {
             let engine = library.engine
             let playable = self.playable
             Task {
-                let ids = await Task.detached(priority: .userInitiated) {
-                    playable.trackIds(using: engine)
-                }.value
+                let ids = await playable.trackIds(using: engine)
                 loading = false
                 player.playNow(trackIds: ids)
                 library.showQueueWhenReady(watching: player)
@@ -329,9 +329,7 @@ struct QueueButtons: View {
         working = true
         let engine = library.engine
         Task {
-            let ids = await Task.detached(priority: .userInitiated) {
-                playable.trackIds(using: engine)
-            }.value
+            let ids = await playable.trackIds(using: engine)
             working = false
             guard !ids.isEmpty else { return }
             body(ids)

@@ -145,21 +145,15 @@ struct ArtistDetailView: View {
     private func load() async {
         let engine = library.engine
         let id = artistId
-        albums = await Task.detached(priority: .userInitiated) {
-            (try? engine.albums(artistId: id, sort: .year)) ?? []
-        }.value
-        similar = await Task.detached(priority: .utility) {
-            (try? engine.similarArtists(artistId: id)) ?? []
-        }.value
+        albums = (try? await engine.albums(artistId: id, sort: .year)) ?? []
+        similar = (try? await engine.similarArtists(artistId: id)) ?? []
     }
 
     private func shufflePlay() {
         let engine = library.engine
         let id = artistId
         Task {
-            let ids = await Task.detached(priority: .userInitiated) {
-                ((try? engine.randomTracks(count: 50, artistId: id)) ?? []).map(\.id)
-            }.value
+            let ids = ((try? await engine.randomTracks(count: 50, artistId: id)) ?? []).map(\.id)
             player.playNow(trackIds: ids)
             library.showQueueWhenReady(watching: player)
         }

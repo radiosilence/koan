@@ -195,9 +195,7 @@ struct QueueView: View {
     private func showInLibrary(trackId: Int64, highlight: Bool) {
         let engine = library.engine
         Task {
-            let albumId = await Task.detached(priority: .userInitiated) {
-                (try? engine.track(trackId: trackId))??.albumId
-            }.value
+            let albumId = (try? await engine.track(trackId: trackId))??.albumId
             guard let albumId else {
                 player.report("That track is no longer in the library.")
                 return

@@ -32,7 +32,7 @@ struct SnapshotsView: View {
                             }
                             Spacer()
                             Button("Restore") {
-                                try? player.engine.restoreSnapshot(name: snapshot.name)
+                                Task { try? await player.engine.restoreSnapshot(name: snapshot.name) }
                             }
                             Button {
                                 library.deleteSnapshot(name: snapshot.name)

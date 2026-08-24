@@ -46,30 +46,35 @@ final class PlayerModel {
 
     init(engine: KoanEngine) {
         self.engine = engine
-        self.nowPlaying = engine.nowPlaying()
+        // Reading the engine is a suspension now, so the first frame renders
+        // against a stopped transport and `start()` fills it in.
+        self.nowPlaying = NowPlaying(
+            state: .stopped, positionMs: 0, durationMs: 0, queueItemId: nil,
+            entry: nil, format: nil, playlistVersion: 0, radioEnabled: false
+        )
     }
 
     /// Subscribe to engine events. Nothing here polls any more: the engine
     /// pushes state changes, queue changes and position, so the UI reacts
     /// rather than asking. The watching still happens — it just happens in
     /// Rust, over atomics, off the audio path.
-    func start() {
-        engine.subscribe(listener: EventBridge(model: self))
-        tick()  // Seed from current state; events only carry changes.
+    func start() async {
+        await engine.subscribe(listener: EventBridge(model: self))
+        await tick()  // Seed from current state; events only carry changes.
         refreshDevices()
         startAutosave()
     }
 
     /// Apply a snapshot. Called on subscribe and whenever the engine says
     /// something changed.
-    fileprivate func tick() {
-        let now = engine.nowPlaying()
+    fileprivate func tick() async {
+        let now = await engine.nowPlaying()
         nowPlaying = now
         updateDerived(now)
         // The queue only gets rebuilt when the engine says it changed.
         if nowPlaying.playlistVersion != knownQueueVersion {
             knownQueueVersion = nowPlaying.playlistVersion
-            rebuildQueue()
+            await rebuildQueue()
         }
         settlePendingSeek()
         onTick?()
@@ -92,8 +97,8 @@ final class PlayerModel {
         }
     }
 
-    private func rebuildQueue() {
-        queue = engine.queue()
+    private func rebuildQueue() async {
+        queue = await engine.queue()
         queuedByTrack = Dictionary(
             queue.compactMap { item in item.trackId.map { ($0, item) } },
             // A track queued twice: prefer the entry that is actually doing
@@ -103,9 +108,9 @@ final class PlayerModel {
     }
 
     /// The queue changed — rebuild it and refresh what depends on it.
-    fileprivate func applyQueueChange() {
-        rebuildQueue()
-        tick()
+    fileprivate func applyQueueChange() async {
+        await rebuildQueue()
+        await tick()
     }
 
     /// Position moved. The only genuinely periodic event, and the only thing
@@ -177,14 +182,14 @@ final class PlayerModel {
 
     // MARK: - Transport
 
-    func togglePlayPause() { attempt { try engine.togglePlayPause() } }
-    func pause() { attempt { try engine.pause() } }
-    func resume() { attempt { try engine.resume() } }
-    func next() { attempt { try engine.next() } }
-    func previous() { attempt { try engine.previous() } }
-    func stop() { attempt { try engine.stop() } }
+    func togglePlayPause() { attempt { try await self.engine.togglePlayPause() } }
+    func pause() { attempt { try await self.engine.pause() } }
+    func resume() { attempt { try await self.engine.resume() } }
+    func next() { attempt { try await self.engine.next() } }
+    func previous() { attempt { try await self.engine.previous() } }
+    func stop() { attempt { try await self.engine.stop() } }
 
-    func play(itemId: String) { attempt { try engine.play(queueItemId: itemId) } }
+    func play(itemId: String) { attempt { try await self.engine.play(queueItemId: itemId) } }
 
     /// Commit a scrub. Position comes from the drag, not the engine.
     func seek(fraction: Double) {
@@ -209,10 +214,9 @@ final class PlayerModel {
 
     /// Favourite whatever is playing. No-op when the queue item has no library
     /// row behind it.
-    @discardableResult
-    func toggleFavouriteCurrent() -> Bool {
-        guard let trackId = currentTrackId else { return false }
-        return toggleFavourite(trackId: trackId)
+    func toggleFavouriteCurrent() {
+        guard let trackId = currentTrackId else { return }
+        toggleFavourite(trackId: trackId)
     }
 
     /// Hold the requested position until the engine agrees with it.
@@ -227,7 +231,7 @@ final class PlayerModel {
         if clock.durationMs > 0 {
             scrubbing = Double(ms) / Double(clock.durationMs)
         }
-        attempt { try engine.seek(positionMs: ms) }
+        attempt { try await self.engine.seek(positionMs: ms) }
     }
 
     // MARK: - Queue
@@ -242,7 +246,7 @@ final class PlayerModel {
     func playNow(trackIds: [Int64], startingAt index: Int = 0) {
         guard !trackIds.isEmpty else { return }
         let start = trackIds.indices.contains(index) ? index : 0
-        offMain { _ = try $0.replaceQueue(trackIds: trackIds, startAt: UInt32(start)) }
+        mutate { _ = try await $0.replaceQueue(trackIds: trackIds, startAt: UInt32(start)) }
     }
 
     /// Queue immediately after whatever is playing, rather than at the end.
@@ -250,7 +254,7 @@ final class PlayerModel {
     func playNext(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
         guard let cursor = currentItemId else { return enqueue(trackIds: trackIds) }
-        offMain { _ = try $0.insertAfter(trackIds: trackIds, afterQueueItemId: cursor) }
+        mutate { _ = try await $0.insertAfter(trackIds: trackIds, afterQueueItemId: cursor) }
     }
 
     /// Surface a one-off message in the same place engine errors appear.
@@ -258,42 +262,40 @@ final class PlayerModel {
 
     func enqueue(trackIds: [Int64]) {
         guard !trackIds.isEmpty else { return }
-        offMain { _ = try $0.addToQueue(trackIds: trackIds) }
+        mutate { _ = try await $0.addToQueue(trackIds: trackIds) }
     }
 
     func remove(itemIds: [String]) {
         guard !itemIds.isEmpty else { return }
-        offMain { try $0.removeFromQueue(queueItemIds: itemIds) }
+        mutate { try await $0.removeFromQueue(queueItemIds: itemIds) }
     }
 
     /// `after: false` inserts *before* the target, which is the only way to
     /// express "put this at the very top" or "put this above that album".
     func move(itemIds: [String], target: String, after: Bool) {
-        offMain {
-            try $0.moveInQueue(queueItemIds: itemIds, targetQueueItemId: target, after: after)
+        mutate {
+            try await $0.moveInQueue(queueItemIds: itemIds, targetQueueItemId: target, after: after)
         }
     }
 
-    func clearQueue() { attempt { try engine.clearQueue() } }
-    func undo() { attempt { try engine.undo() } }
-    func redo() { attempt { try engine.redo() } }
+    func clearQueue() { attempt { try await self.engine.clearQueue() } }
+    func undo() { attempt { try await self.engine.undo() } }
+    func redo() { attempt { try await self.engine.redo() } }
 
     // MARK: - Devices & modes
 
     func refreshDevices() {
         let engine = self.engine
         Task {
-            let found = await Task.detached(priority: .utility) {
-                (try? engine.devices()) ?? []
-            }.value
+            let found = (try? await engine.devices()) ?? []
             self.devices = found
-            self.currentDevice = engine.currentDevice()
+            self.currentDevice = await engine.currentDevice()
         }
     }
 
     func setDevice(_ name: String?) {
         attempt {
-            if let name { try engine.setDevice(name: name) } else { try engine.clearDevice() }
+            if let name { try await self.engine.setDevice(name: name) } else { try await self.engine.clearDevice() }
         }
         currentDevice = name
     }
@@ -312,9 +314,8 @@ final class PlayerModel {
     func toggleRadio() { setRadio(!radioEnabled) }
 
     /// Toggles, and returns nothing — the library view refetches to pick it up.
-    @discardableResult
-    func toggleFavourite(trackId: Int64) -> Bool {
-        (try? engine.toggleFavourite(trackId: trackId)) ?? false
+    func toggleFavourite(trackId: Int64) {
+        attempt { _ = try await self.engine.toggleFavourite(trackId: trackId) }
     }
 
     // MARK: - Edit actions
@@ -361,7 +362,7 @@ final class PlayerModel {
         let ids = Pasteboard.readTrackIds()
         guard !ids.isEmpty else { return }
         if let anchor = queue.last(where: { queueSelection.contains($0.queueItemId) }) {
-            offMain { _ = try $0.insertAfter(trackIds: ids, afterQueueItemId: anchor.queueItemId) }
+            mutate { _ = try await $0.insertAfter(trackIds: ids, afterQueueItemId: anchor.queueItemId) }
         } else {
             enqueue(trackIds: ids)
         }
@@ -373,9 +374,10 @@ final class PlayerModel {
         guard !dropped.isEmpty else { return }
         let engine = self.engine
         Task {
-            let ids = await Task.detached(priority: .userInitiated) {
-                dropped.flatMap { $0.trackIds(using: engine) }
-            }.value
+            var ids: [Int64] = []
+            for item in dropped {
+                ids += await item.trackIds(using: engine)
+            }
             guard !ids.isEmpty else { return }
             if playImmediately { playNow(trackIds: ids) } else { enqueue(trackIds: ids) }
         }
@@ -385,8 +387,8 @@ final class PlayerModel {
 
     /// Persist the queue and position. Called on quit, and periodically so an
     /// unclean exit doesn't lose the session.
-    func saveSession() {
-        try? engine.saveSession()
+    func saveSession() async {
+        try? await engine.saveSession()
         savedQueueVersion = queueVersion
     }
 
@@ -402,9 +404,9 @@ final class PlayerModel {
                 try? await Task.sleep(for: .seconds(1))
                 guard let self else { return }
                 if self.queueVersion != self.savedQueueVersion {
-                    self.saveSession()
+                    await self.saveSession()
                 } else if self.nowPlaying.entry != nil {
-                    try? self.engine.savePosition()
+                    try? await self.engine.savePosition()
                 }
             }
         }
@@ -414,9 +416,7 @@ final class PlayerModel {
     func restoreSession() {
         let engine = self.engine
         Task {
-            _ = await Task.detached(priority: .userInitiated) {
-                try? engine.restoreSession()
-            }.value
+            _ = try? await engine.restoreSession()
         }
     }
 
@@ -425,29 +425,30 @@ final class PlayerModel {
     /// Engine calls fail for real reasons (device vanished, track gone) but
     /// none of them are worth a modal. Surface it and carry on.
     ///
-    /// For cheap calls only — transport commands are a send down a channel.
-    private func attempt(_ body: () throws -> Void) {
-        do {
-            try body()
-        } catch {
-            lastError = String(describing: error)
+    private func attempt(_ body: @escaping () async throws -> Void) {
+        Task {
+            do {
+                try await body()
+            } catch {
+                lastError = String(describing: error)
+            }
         }
     }
 
-    /// Run a blocking engine call off the main actor.
+    /// A queue mutation, with the spinner and the error reporting every one of
+    /// them wants.
     ///
-    /// Anything that touches the queue resolves every track against the
-    /// database and builds a playlist item for each. On an artist that is
-    /// thousands of rows, and on the main actor it freezes the window. Nothing
-    /// here needs the result, so nothing waits for it — the engine pushes an
-    /// event when the queue actually changes.
-    private func offMain(_ body: @escaping @Sendable (KoanEngine) throws -> Void) {
+    /// Nothing waits for the result — the engine pushes an event when the queue
+    /// actually changes — but these are ordered against each other on the
+    /// engine's side, so dropping in an album and then pressing undo cannot
+    /// land the wrong way round.
+    private func mutate(_ body: @escaping (KoanEngine) async throws -> Void) {
         let engine = self.engine
         pendingMutations += 1
         let job = activity?.begin("Updating queue")
         Task {
             do {
-                try await Task.detached(priority: .userInitiated) { try body(engine) }.value
+                try await body(engine)
             } catch {
                 lastError = String(describing: error)
             }
@@ -470,11 +471,11 @@ final class EventBridge: PlayerEvents, @unchecked Sendable {
     }
 
     func playbackChanged(nowPlaying: NowPlaying) {
-        Task { @MainActor [weak model] in model?.tick() }
+        Task { @MainActor [weak model] in await model?.tick() }
     }
 
     func queueChanged(version: UInt64) {
-        Task { @MainActor [weak model] in model?.applyQueueChange() }
+        Task { @MainActor [weak model] in await model?.applyQueueChange() }
     }
 
     func positionChanged(positionMs: UInt64) {
