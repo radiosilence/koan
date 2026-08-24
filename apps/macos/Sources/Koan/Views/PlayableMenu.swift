@@ -47,6 +47,7 @@ struct PlayableMenu: View {
     let playable: Playable
 
     @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
     @Environment(\.openWindow) private var openWindow
@@ -55,7 +56,7 @@ struct PlayableMenu: View {
         Button("Play") {
             act {
                 player.playNow(trackIds: $0)
-                library.showQueueWhenReady(watching: player)
+                nav.showQueueWhenReady(watching: player)
             }
         }
         Button("Play Next") { act { player.playNext(trackIds: $0) } }
@@ -64,7 +65,7 @@ struct PlayableMenu: View {
             Button("Shuffle") {
                 act {
                     player.playNow(trackIds: $0.shuffled())
-                    library.showQueueWhenReady(watching: player)
+                    nav.showQueueWhenReady(watching: player)
                 }
             }
         }
@@ -82,15 +83,15 @@ struct PlayableMenu: View {
 
         if case .track(let track) = playable, let albumId = track.albumId {
             Divider()
-            Button("Go to Album") { library.reveal(album: albumId, highlighting: track.id) }
+            Button("Go to Album") { nav.open(album: albumId, highlighting: track.id) }
             if let artistId = track.artistId {
-                Button("Go to Artist") { library.reveal(artist: artistId) }
+                Button("Go to Artist") { nav.open(artist: artistId) }
             }
         }
         if case .album(let album) = playable {
             Divider()
-            Button("Go to Album") { library.reveal(album: album.id) }
-            Button("Go to Artist") { library.reveal(artist: album.artistId) }
+            Button("Go to Album") { nav.open(album: album.id) }
+            Button("Go to Artist") { nav.open(artist: album.artistId) }
         }
     }
 
@@ -267,6 +268,7 @@ struct PlayableHeaderButton: View {
     let playable: Playable
 
     @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @State private var loading = false
 
@@ -280,7 +282,7 @@ struct PlayableHeaderButton: View {
                 let ids = await playable.trackIds(using: engine)
                 loading = false
                 player.playNow(trackIds: ids)
-                library.showQueueWhenReady(watching: player)
+                nav.showQueueWhenReady(watching: player)
             }
         } label: {
             ZStack {

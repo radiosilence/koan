@@ -22,6 +22,7 @@ struct LinkText: View {
     var prominent = false
 
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
     @State private var hovering = false
 
     private func transfer(for target: Target) -> PlayableTransfer {
@@ -54,8 +55,8 @@ struct LinkText: View {
                 }
                 .onTapGesture {
                     switch target {
-                    case .artist(let id): library.reveal(artist: id)
-                    case .album(let id): library.reveal(album: id)
+                    case .artist(let id): nav.open(artist: id)
+                    case .album(let id): nav.open(album: id)
                     }
                 }
                 // Dragging the name drags what it names, which is not
@@ -80,6 +81,7 @@ struct PlayableArtwork: View {
     var cornerRadius: CGFloat = 6
 
     @Environment(PlayerModel.self) private var player
+    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @State private var hovering = false
     @State private var loading = false
@@ -124,7 +126,7 @@ struct PlayableArtwork: View {
             )) ?? []).map(\.id)
             loading = false
             player.playNow(trackIds: ids)
-            library.showQueueWhenReady(watching: player)
+            nav.showQueueWhenReady(watching: player)
         }
     }
 }

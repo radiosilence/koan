@@ -3,6 +3,7 @@ import SwiftUI
 
 struct ArtistBrowser: View {
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
     /// Without a selection binding a List row has nothing to do with a click —
     /// which is why this list felt completely dead.
     @State private var selection: Set<Int64> = []
@@ -17,7 +18,7 @@ struct ArtistBrowser: View {
                 PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
             }
         } primaryAction: { ids in
-            if let id = ids.first { library.reveal(artist: id) }
+            if let id = ids.first { nav.open(artist: id) }
         }
         .overlay {
             if library.visibleArtists.isEmpty {
@@ -90,6 +91,7 @@ struct ArtistDetailView: View {
     let artistId: Int64
 
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
 
     @State private var albums: [Album] = []
@@ -172,7 +174,7 @@ struct ArtistDetailView: View {
         Task {
             let ids = ((try? await engine.randomTracks(count: 50, artistId: id)) ?? []).map(\.id)
             player.playNow(trackIds: ids)
-            library.showQueueWhenReady(watching: player)
+            nav.showQueueWhenReady(watching: player)
         }
     }
 }
