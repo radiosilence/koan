@@ -1,3 +1,4 @@
+import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -24,7 +25,13 @@ struct OrganizeSheet: View {
             Divider()
             footer
         }
-        .frame(width: 780, height: 560)
+        // Fills whatever the sheet window is set to, rather than pinning a
+        // size. `SheetChrome` is what sets that — see below.
+        .frame(
+            minWidth: 560, maxWidth: .infinity,
+            minHeight: 400, maxHeight: .infinity
+        )
+        .background(SheetChrome(widthFraction: 0.9, heightFraction: 0.85))
     }
 
     // MARK: - Header
@@ -294,6 +301,68 @@ private struct OrganizeRow: View {
         case .unchanged: .secondary
         case .conflict: .orange
         case .error: .red
+        }
+    }
+}
+
+
+/// Makes the sheet resizable and opens it large.
+///
+/// Neither is available from SwiftUI on macOS 14. AppKit leaves `.resizable`
+/// off a sheet's style mask, so there is no grip however the content is framed;
+/// and a sheet sizes itself to its content, so a flexible frame with nothing
+/// driving it collapses toward the minimum instead of filling anything.
+/// `.presentationSizing` solves the second on macOS 15, which is past our floor.
+///
+/// So both are asked for directly: insert the style mask, and take a starting
+/// size from the window the sheet is attached to. The content's frame is
+/// flexible, so it follows the window from then on — including the user's own
+/// resizing, which is the point.
+private struct SheetChrome: NSViewRepresentable {
+    let widthFraction: CGFloat
+    let heightFraction: CGFloat
+
+    func makeNSView(context: Context) -> NSView {
+        ChromeView(widthFraction: widthFraction, heightFraction: heightFraction)
+    }
+
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class ChromeView: NSView {
+        let widthFraction: CGFloat
+        let heightFraction: CGFloat
+        /// The sheet is configured once. Re-applying on a later window change
+        /// would yank it back to the default size under the user's drag.
+        private var configured = false
+
+        init(widthFraction: CGFloat, heightFraction: CGFloat) {
+            self.widthFraction = widthFraction
+            self.heightFraction = heightFraction
+            super.init(frame: .zero)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard !configured, window != nil else { return }
+            // `sheetParent` is only set once the sheet has actually begun, which
+            // is after the view lands in it.
+            DispatchQueue.main.async { [weak self] in self?.configure() }
+        }
+
+        private func configure() {
+            guard !configured, let window else { return }
+            configured = true
+            window.styleMask.insert(.resizable)
+            guard let parent = window.sheetParent else { return }
+            window.setContentSize(
+                NSSize(
+                    width: parent.frame.width * widthFraction,
+                    height: parent.frame.height * heightFraction
+                )
+            )
         }
     }
 }
