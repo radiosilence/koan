@@ -256,7 +256,8 @@ private struct StageView: View {
             TrackListView(
                 title: "Favourites",
                 subtitle: Format.count(Int64(library.favourites.count), "track"),
-                tracks: library.favourites
+                tracks: library.favourites,
+                mixedAlbums: true
             )
         case .playHistory:
             HistoryView()

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Favourites rows carry their own cover.** A record's tracklist has one sleeve above it and numbers down the side; favourites is a list gathered from the whole library, where the cover and the album name are what tell one row from the next. The shared track list learned the mode history rows already used, so both now look the same and there is one row to change.
+
 ### Fixed
 
 - **The sidebar said no remote tracks were cached, however many were.** The count asked for tracks whose `source` is `'cached'` — a value the schema allows and nothing writes, because downloading a track does not change where it came from. What a download writes is `cached_path`, which is what `set_cached_path` sets and clearing the cache nulls. Counted from there it agrees with the files on disk.
