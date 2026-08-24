@@ -54,23 +54,29 @@ pub struct FuzzyMatch {
     pub kind: SearchKind,
 }
 
-/// Events pushed from the engine, so clients don't have to poll.
+/// Something the engine changed, delivered by awaiting `next_event`.
 ///
-/// Watching happens on a Rust thread reading atomics, not from the audio or
-/// decode threads: `set_position_ms` is a hot-path store and calling into a
-/// foreign language from there would put an unbounded amount of work in a
-/// timing-sensitive path. Discrete changes fire as they happen; position ticks
-/// only while something is playing, and only when the value actually moved.
-#[uniffi::export(with_foreign)]
-pub trait PlayerEvents: Send + Sync {
+/// A pull surface rather than a callback interface: a client writes a loop
+/// instead of an object, and the loop's lifetime is the subscription's, so
+/// there is nothing to unregister and nothing to leak across a reload.
+///
+/// Every variant carries an absolute value, never a delta, which is what makes
+/// it safe to drop the older ones when a client falls behind — the next one
+/// tells the whole truth on its own.
+// One variant carries a snapshot and two carry a u64. Boxing is what clippy
+// wants and is not on offer across the FFI, and the saving would be nothing:
+// these are built a handful of times a second, not held in a collection.
+#[allow(clippy::large_enum_variant)]
+#[derive(uniffi::Enum, Debug, Clone)]
+pub enum PlayerEvent {
     /// State, track, or format changed — anything a transport bar displays
     /// other than the position.
-    fn playback_changed(&self, now_playing: NowPlaying);
+    PlaybackChanged { now_playing: NowPlaying },
     /// The queue was mutated. Carries the version so a client can skip a
     /// refetch it has already done.
-    fn queue_changed(&self, version: u64);
+    QueueChanged { version: u64 },
     /// Playback position, while playing.
-    fn position_changed(&self, position_ms: u64);
+    PositionChanged { position_ms: u64 },
 }
 
 /// Reports how far a long task has got.
@@ -153,7 +159,7 @@ pub struct KoanEngine {
     state: Arc<SharedPlayerState>,
     tx: Sender<PlayerCommand>,
     db_path: PathBuf,
-    listener: Arc<parking_lot::RwLock<Option<Arc<dyn PlayerEvents>>>>,
+    events: tokio::sync::broadcast::Sender<PlayerEvent>,
     /// Set while the automatic sync is running, so a UI can say so rather than
     /// appearing to do nothing for the minute it takes.
     auto_syncing: Arc<std::sync::atomic::AtomicBool>,
@@ -219,22 +225,24 @@ impl KoanEngine {
     pub async fn now_playing(self: Arc<Self>) -> NowPlaying {
         offload::offload(move || self.now_playing_blocking()).await
     }
-    /// Start pushing events to `listener`. Replaces polling `now_playing()`.
+    /// Wait for the next thing to change.
     ///
-    /// One listener at a time — a second call replaces the first, which is what
-    /// a single UI wants and avoids leaking a listener across a reload.
-    pub async fn subscribe(self: Arc<Self>, listener: Arc<dyn PlayerEvents>) {
-        offload::offload(move || {
-            *self.listener.write() = Some(listener);
-        })
-        .await
-    }
-
-    pub async fn unsubscribe(self: Arc<Self>) {
-        offload::offload(move || {
-            *self.listener.write() = None;
-        })
-        .await
+    /// `None` once the engine is gone, which ends the caller's loop. A client
+    /// that falls behind loses the events it missed rather than delaying the
+    /// engine — every variant carries an absolute value, so the one that does
+    /// arrive is still correct.
+    pub async fn next_event(self: Arc<Self>) -> Option<PlayerEvent> {
+        let mut rx = self.events.subscribe();
+        loop {
+            match rx.recv().await {
+                Ok(event) => return Some(event),
+                // Fell behind. The next event supersedes whatever was dropped.
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    log::debug!("client missed {n} events");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
     }
 
     /// Cheap enough to poll every frame — use it to decide whether to call
@@ -1718,7 +1726,7 @@ impl OrganizeSelection {
 // --- Internals -------------------------------------------------------------
 
 impl KoanEngine {
-    /// Watch shared state and push changes to the listener.
+    /// Watch shared state and publish what changes.
     ///
     /// Polls, but in Rust and over atomics, which is nothing — and the client
     /// sees events. The alternative, notifying from the player's own mutation
@@ -1738,8 +1746,11 @@ impl KoanEngine {
                     let Some(engine) = engine.upgrade() else {
                         return; // Engine dropped; so is the app.
                     };
-                    let Some(listener) = engine.listener.read().clone() else {
-                        continue;
+                    // Nobody listening is not a reason to stop watching: a
+                    // client can start a loop at any point and expects the
+                    // next change, not the next change after it re-subscribes.
+                    let publish = |event| {
+                        let _ = engine.events.send(event);
                     };
 
                     let state = engine.state.playback_state();
@@ -1747,13 +1758,15 @@ impl KoanEngine {
                     let signature = (state, cursor);
                     if last_signature.as_ref() != Some(&signature) {
                         last_signature = Some(signature);
-                        listener.playback_changed(engine.now_playing_blocking());
+                        publish(PlayerEvent::PlaybackChanged {
+                            now_playing: engine.now_playing_blocking(),
+                        });
                     }
 
                     let version = engine.state.playlist_version();
                     if version != last_version {
                         last_version = version;
-                        listener.queue_changed(version);
+                        publish(PlayerEvent::QueueChanged { version });
                         ticks_since_download_nudge = 0;
                     } else if !engine.state.pending_downloads().is_empty() {
                         // Download progress moves without bumping the version,
@@ -1763,7 +1776,7 @@ impl KoanEngine {
                         ticks_since_download_nudge += 1;
                         if ticks_since_download_nudge >= 10 {
                             ticks_since_download_nudge = 0;
-                            listener.queue_changed(version);
+                            publish(PlayerEvent::QueueChanged { version });
                         }
                     }
 
@@ -1773,7 +1786,9 @@ impl KoanEngine {
                         let position = engine.state.position_ms();
                         if position != last_position {
                             last_position = position;
-                            listener.position_changed(position);
+                            publish(PlayerEvent::PositionChanged {
+                                position_ms: position,
+                            });
                         }
                     }
                 }
@@ -1918,16 +1933,17 @@ impl KoanEngine {
             });
         }
 
-        let listener: Arc<parking_lot::RwLock<Option<Arc<dyn PlayerEvents>>>> =
-            Arc::new(parking_lot::RwLock::new(None));
+        // Capacity, not a queue to drain: a client that falls behind drops the
+        // events it missed, and the next one it does get is a complete answer.
+        let (events, _) = tokio::sync::broadcast::channel(64);
         let engine = Arc::new(Self {
             state,
             tx,
             db_path,
+            events,
             auto_syncing,
             auto_scanning,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            listener,
         });
         engine.spawn_watcher();
         Ok(engine)

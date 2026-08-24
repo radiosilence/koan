@@ -50,7 +50,7 @@ Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server`
 
 GraphQL earns its keep for clients that genuinely *cannot* link the core -- a browser, or a phone controlling playback on a different machine.
 
-When you add a capability, ask whether both doors need it. `koan-ffi` returns cover art as raw bytes where GraphQL has to base64 it, and polls where GraphQL subscribes; otherwise the two mirror each other closely enough that a gap in one is usually a gap in both.
+When you add a capability, ask whether both doors need it. `koan-ffi` returns cover art as raw bytes where GraphQL has to base64 it, and hands out changes by awaiting `next_event` where GraphQL subscribes; otherwise the two mirror each other closely enough that a gap in one is usually a gap in both.
 
 ## Threading model
 
