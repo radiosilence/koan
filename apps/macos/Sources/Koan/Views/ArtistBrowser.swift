@@ -26,7 +26,12 @@ struct ArtistBrowser: View {
                 .frame(width: 18, height: 18)
                 // The name is the way in — a link, so a single click opens the
                 // artist while the rest of the row selects.
-                RowLink(artist.name) { library.reveal(artist: artist.id) }
+                LinkText(
+                    text: artist.name,
+                    target: .artist(artist.id),
+                    font: .body,
+                    prominent: true
+                )
                 FavouriteButton(
                     isOn: library.isFavourite(artist: artist.id),
                     showing: hovered == artist.id,

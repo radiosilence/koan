@@ -1,3 +1,4 @@
+import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -16,6 +17,9 @@ struct LinkText: View {
     let text: String
     let target: Target?
     var font: Font = .callout
+    /// The link is the row's own subject rather than a reference out of it —
+    /// an artist in the artists list, not the artist credited on a track.
+    var prominent = false
 
     @Environment(LibraryModel.self) private var library
     @State private var hovering = false
@@ -32,10 +36,22 @@ struct LinkText: View {
             Text(text)
                 .font(font)
                 .underline(hovering)
-                .foregroundStyle(hovering ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+                .foregroundStyle(
+                    hovering || prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary)
+                )
                 .lineLimit(1)
                 .contentShape(.rect)
-                .onHover { hovering = $0 }
+                .onHover { inside in
+                    hovering = inside
+                    // `.pointerStyle(.link)` needs macOS 15; the app targets 14.
+                    if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+                }
+                // A row that scrolls or filters away while hovered never sees
+                // the exit, and the hand cursor would be left on the stack.
+                .onDisappear {
+                    if hovering { NSCursor.pop() }
+                    hovering = false
+                }
                 .onTapGesture {
                     switch target {
                     case .artist(let id): library.reveal(artist: id)
@@ -51,7 +67,7 @@ struct LinkText: View {
         } else {
             Text(text)
                 .font(font)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(prominent ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
                 .lineLimit(1)
         }
     }
