@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.27.0 (2026-08-24)
 
 ### Added
 
@@ -24,17 +24,29 @@
 
   Generating destinations is separated from asking the disk about them, because only one of those is fast. `organize::generate` formats a pattern against an already-resolved selection and touches no files at all, so it reruns on every keystroke; `organize::check_against_disk` is the `stat`-per-file pass that finds occupied destinations and the artwork travelling alongside, and it lands a moment later. Ancillary files were previously discovered with a directory read *per file*, so an album of a dozen tracks did the same `readdir` a dozen times.
 
-### Fixed
-
-- **Menu shortcuts no longer reach past a field you are typing in.** ⌘← and ⌥← skipped tracks instead of moving the caret or the word, and ⌘Z undid a queue edit instead of the typing — in the search field, a filter, Settings, anywhere. Every shortcut whose key also means something while typing is now *disabled* while a field has focus, which releases its key equivalent to the responder chain; declining the action instead would leave the menu swallowing the key, so the shortcut would stop working without the field ever hearing it. The bare-key shortcuts already asked what had focus; the modified ones never did.
-
 ### Changed
 
 - **The macOS app requires macOS 26.** It was built against 14. Nothing in the app is holding the old floor up and the newer SwiftUI is worth having — `searchFocused`, which is what lets `/` put the caret in the search field, is 15-and-later on its own. The Homebrew cask requires Tahoe to match.
 
 - **`organizePreview` and `organizeExecute` both return `OrganizePlan`** (was `OrganizePreview` / `OrganizeResult`), an ordered list of per-file entries carrying `outcome` (`MOVE` / `UNCHANGED` / `CONFLICT` / `ERROR`), the destination, and the reason where there is one. **Breaking for GraphQL clients**: `moves`, `errors` and `skipped` are gone. A conflict previously arrived as a string in `errors` with the destination buried in the message, which is unusable for the thing a client most needs to render — a file about to be blocked, next to what is blocking it. The TUI's preview gains the same rows.
 
+- **The FFI never blocks its caller.** Every one of the 80 exported calls that can block is `async` now and runs on a worker thread; the six that stay synchronous read a single atomic or an O(1) length and cannot block by construction. Previously all of them were synchronous FFI functions and the hazard lived in doc comments, which had already failed — `lyrics()` was documented as safe to call from a view body and opened a database connection, and six paths in the macOS app reached the engine directly on the main actor, one of them from inside a SwiftUI `ForEach`.
+
+  Blocking moved into Rust rather than being wrapped at each call site. The app used to hop with `Task.detached`, which runs on Swift's cooperative pool — sized to the core count — so a cover-art storm or a scan starved every other task in the process. The engine's pool grows on demand and is deliberately not core-sized: a thread waiting on a socket costs a kernel stack, not CPU, and capping blocking work at the core count queues it behind nothing. koan-core stays synchronous, which is what its three synchronous consumers and its dedicated audio threads want; only the boundary changed.
+
+  Queue mutations and transport commands share one lane, in submission order. They previously each got their own `Task.detached`, so two in quick succession could reach the player in either order — dropping in an album and pressing undo could undo it before it landed.
+
+  Every `Task.detached` around an engine call is gone from the app, along with the helper that wrapped them.
+
+- **Nothing played when the library drive was offline, and nothing said why.** The log read `remote not configured` while the remote was configured perfectly well — what koan could not do was read the password, because macOS grants keychain access per binary and the app had never been granted it. `subsonic_client` returns nothing for four different reasons and every caller reported the same one, so "koan has no password" and "koan cannot read the password it has" printed identically, despite sending you to completely different places.
+
+  Tracks that cannot be fetched are marked failed with the reason now, instead of sitting as pending forever. The player waits for a track to become ready, so a download that was skipped left the queue silent until it ran off the end.
+
+  `koan remote status` asks the way koan asks. It read the config field directly and never consulted the credential store, so it reported `password: not set` for every keychain-backed sign-in — the arrangement `koan remote login` creates — and then skipped its own connectivity check because of that same flag. The one tool that should have diagnosed this was reporting the opposite of the truth.
+
 ### Fixed
+
+- **Menu shortcuts no longer reach past a field you are typing in.** ⌘← and ⌥← skipped tracks instead of moving the caret or the word, and ⌘Z undid a queue edit instead of the typing — in the search field, a filter, Settings, anywhere. Every shortcut whose key also means something while typing is now *disabled* while a field has focus, which releases its key equivalent to the responder chain; declining the action instead would leave the menu swallowing the key, so the shortcut would stop working without the field ever hearing it. The bare-key shortcuts already asked what had focus; the modified ones never did.
 
 - **The sync fetched 1,725 artists and threw the list away.** `get_artists` was called, counted, logged as "syncing 1725 artists" and then dropped — artists only ever came into being as a side effect of a track upsert, which saw nothing but a name and an id. That is why not one artist in a synced library had a MusicBrainz id or a sort name, and why the reported artist count was theatre. The list is applied now, and the count is what was actually written.
 
@@ -45,16 +57,6 @@
 - **A fresh HTTP client, and a fresh TLS handshake, for every remote request.** `subsonic_client()` built a new `SubsonicClient` on each call, and each of those builds two blocking `reqwest` clients — two runtimes on two threads with two cold connection pools. Browsing a synced library paid that per album cover. The download queue had already worked this out and kept a client of its own for the app's lifetime; the client is now shared process-wide and keyed on the credentials, so every caller gets connection reuse and logging in as someone else still replaces it.
 
 - **Reading the config forked a `git` process.** `Config::load()` re-read both TOML files, re-ran the figment merge, and re-scanned for credentials in version control — and that last check shells out to `git ls-files` whenever a password is present in the file, then panics if it is tracked. koan reaches config from paths that run per frame: the macOS settings pane reads `library_folders()` from a SwiftUI list body, so it did all of that per rendered frame. The check is what its own message says it is, a gate on starting, and runs once per process now. The merged config is cached and re-read when either file's mtime moves, so a config edited by hand is still picked up.
-
-### Changed
-
-- **The FFI never blocks its caller.** Every one of the 70 engine calls that can block is `async` now and runs on a worker thread; the five that stay synchronous read a single atomic and cannot block by construction. Previously all of them were synchronous FFI functions and the hazard lived in doc comments, which had already failed — `lyrics()` was documented as safe to call from a view body and opened a database connection, and six paths in the macOS app reached the engine directly on the main actor, one of them from inside a SwiftUI `ForEach`.
-
-  Blocking moved into Rust rather than being wrapped at each call site. The app used to hop with `Task.detached`, which runs on Swift's cooperative pool — sized to the core count — so a cover-art storm or a scan starved every other task in the process. The engine's pool grows on demand and is deliberately not core-sized: a thread waiting on a socket costs a kernel stack, not CPU, and capping blocking work at the core count queues it behind nothing. koan-core stays synchronous, which is what its three synchronous consumers and its dedicated audio threads want; only the boundary changed.
-
-  Queue mutations and transport commands share one lane, in submission order. They previously each got their own `Task.detached`, so two in quick succession could reach the player in either order — dropping in an album and pressing undo could undo it before it landed.
-
-  Every `Task.detached` around an engine call is gone from the app, along with the helper that wrapped them.
 
 ## v0.26.0 (2026-08-23)
 
