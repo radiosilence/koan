@@ -12,6 +12,12 @@ import SwiftUI
 /// glass floating on glass reads as neither.
 struct TransportBar: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    /// One per direction, so the arrow that was pressed is the only one that
+    /// bounces — `symbolEffect` fires on any change to the value it watches.
+    @State private var backSkips = 0
+    @State private var forwardSkips = 0
 
     /// Wide enough to read as a slab rather than a pill at this height.
     private static let radius: CGFloat = 26
@@ -90,6 +96,10 @@ struct TransportBar: View {
                 }
             }
             .frame(minWidth: 90, alignment: .leading)
+            // Gapless means a track can change with nothing else to mark it.
+            // A cross-fade catches the corner of the eye; a hard swap doesn't.
+            .contentTransition(.opacity)
+            .animation(.easeInOut(duration: 0.2), value: player.currentEntry?.queueItemId)
         }
     }
 
@@ -97,8 +107,18 @@ struct TransportBar: View {
 
     private var controls: some View {
         HStack(spacing: 22) {
-            Button(action: player.previous) {
+            // A skip is acknowledged by the arrow itself. On a remote library
+            // the next track can take a moment to load, and until it does
+            // nothing else on the bar has changed — so the press reads as
+            // dropped, and gets repeated. Reduce Motion watches a frozen
+            // value, which is how a symbol effect is opted out of: it fires
+            // on a change and there is never one.
+            Button {
+                backSkips += 1
+                player.previous()
+            } label: {
                 Image(systemName: "backward.fill")
+                    .symbolEffect(.bounce, value: reduceMotion ? 0 : backSkips)
             }
             .keyboardShortcut(.leftArrow, modifiers: .command)
             .help("Previous track (⌘←)")
@@ -113,8 +133,12 @@ struct TransportBar: View {
             }
             .help(player.isPlaying ? "Pause (Space)" : "Play (Space)")
 
-            Button(action: player.next) {
+            Button {
+                forwardSkips += 1
+                player.next()
+            } label: {
                 Image(systemName: "forward.fill")
+                    .symbolEffect(.bounce, value: reduceMotion ? 0 : forwardSkips)
             }
             .keyboardShortcut(.rightArrow, modifiers: .command)
             .help("Next track (⌘→)")

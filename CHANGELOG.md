@@ -18,6 +18,9 @@
 
 - **Everything laid over artwork is glass now.** The codec badge on a sleeve is clear glass rather than a black scrim hiding the corner it sits on; the favourite heart gets a ground of its own instead of a drop shadow fighting whatever is behind it, and grows in on hover. Artist chips, the shortcut sheet's key caps, the picker's commit bar and the error toast follow — the toast tinted rather than bordered, since glass already has an edge.
 
+- **The transport and the queue show what changed.** The playing indicator's rule — motion tells you a state is live, where a glyph only names it — applied to the four places that most needed it. Play/pause morphs between its symbols rather than swapping them. A skip bounces the arrow that was pressed: on a remote library the next track takes a moment to load, and until it does nothing else on the bar has moved, so the press reads as dropped and gets repeated. The transport's title and artist cross-fade on a track change, which gapless playback otherwise leaves unmarked. Cover art fades in rather than cutting, because in the album grid covers land tens of milliseconds apart and the hard cut reads as a stutter of pops.
+
+  A downloading queue row said the same thing twice — a static arrow in the status column and a progress bar further along it — so the bar is gone and the arrow is the ring that fills, in the column the eye already reads for state. Reduce Motion drops the bounce; the cross-fades stay, being fades rather than movement.
 - **Favourites rows carry their own cover.** A record's tracklist has one sleeve above it and numbers down the side; favourites is a list gathered from the whole library, where the cover and the album name are what tell one row from the next. The shared track list learned the mode history rows already used, so both now look the same and there is one row to change.
 
 ### Fixed

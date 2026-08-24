@@ -587,12 +587,6 @@ private struct QueueRow: View {
 
             Spacer(minLength: 8)
 
-            if let progress = item.downloadProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .frame(width: 54, height: 12)
-            }
-
             if let trackId = item.trackId {
                 FavouriteButton(
                     isOn: library.isFavourite(track: trackId),
@@ -638,9 +632,25 @@ private struct QueueRow: View {
         case .playing:
             PlayingIndicator(isPlaying: player.isPlaying)
         case .downloading:
-            Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
+            // The ring is the whole indicator — a static arrow beside a
+            // separate bar said the same thing twice, in two places, and the
+            // column the eye already reads for state was the mute one.
+            if let progress = item.downloadProgress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.circular)
+                    .controlSize(.mini)
+                    .frame(width: 14, height: 14)
+                    .help("Downloading — \(Int(progress * 100))%")
+            } else {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .controlSize(.mini)
+                    .help("Downloading")
+            }
         case .priorityPending:
-            Image(systemName: "arrow.down.circle.fill").foregroundStyle(.tint)
+            Image(systemName: "arrow.down.circle")
+                .foregroundStyle(.tint)
+                .help("Queued for download")
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
