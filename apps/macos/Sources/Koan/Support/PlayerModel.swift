@@ -368,6 +368,40 @@ final class PlayerModel {
         }
     }
 
+    /// Index files dropped from Finder into the library, then queue them.
+    ///
+    /// They are indexed where they lie rather than copied anywhere: a drop is
+    /// "play this", and giving the files library rows is what lets organize
+    /// move them into the music tree afterwards, on purpose and with a preview.
+    /// Folders are walked, so dropping a rip queues the album.
+    ///
+    /// `indexed` fires once rows exist, so the library browser can pick up the
+    /// artists and albums the drop just created. The player can't do that
+    /// itself — it doesn't own the browse caches.
+    func importFiles(_ urls: [URL], indexed: @escaping @MainActor () -> Void) {
+        let paths = urls.filter(\.isFileURL).map(\.path)
+        guard !paths.isEmpty else { return }
+        let engine = self.engine
+        Task {
+            // Exclusive: it reads tags and writes rows, so it queues behind the
+            // same SQLite writer a scan does. A folder of a few hundred files
+            // takes long enough that a drop with no sign of life reads as a
+            // drop that missed.
+            let summary = try? await activity?.run("Adding dropped files", exclusive: true) {
+                try await engine.importFiles(paths: paths)
+            }.get()
+            guard let summary, !summary.trackIds.isEmpty else {
+                lastError = "Nothing there koan can play."
+                return
+            }
+            if let first = summary.errors.first {
+                lastError = first
+            }
+            enqueue(trackIds: summary.trackIds)
+            indexed()
+        }
+    }
+
     /// Resolve dropped playables and queue them. Order is preserved: dropping a
     /// selection of albums queues them in the order they were dragged.
     func acceptDrop(_ dropped: [PlayableTransfer], playImmediately: Bool = false) {

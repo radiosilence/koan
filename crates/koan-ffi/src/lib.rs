@@ -8,10 +8,10 @@
 //! link the core (web, iOS, jukebox remotes).
 //!
 //! Threading: anything that can block is `async` and runs on a worker thread,
-//! so no caller is ever holding a thread while koan-core reads a file or waits
-//! on a socket. The handful of methods that stay synchronous read an atomic or
-//! a lock and nothing else — see `offload` for where the work actually goes and
-//! why ordering has a lane of its own.
+//! so no caller ever holds a thread while koan-core reads a file or waits on a
+//! socket. The few methods that stay synchronous read one atomic and nothing
+//! else. See `offload` for where the work goes, and why ordering has a lane of
+//! its own.
 //!
 //! DB connections are opened per call, matching what the GraphQL resolvers do —
 //! WAL makes that cheap and it sidesteps holding a lock across a scan.
@@ -224,11 +224,17 @@ impl KoanEngine {
     /// One listener at a time — a second call replaces the first, which is what
     /// a single UI wants and avoids leaking a listener across a reload.
     pub async fn subscribe(self: Arc<Self>, listener: Arc<dyn PlayerEvents>) {
-        offload::offload(move || *self.listener.write() = Some(listener)).await
+        offload::offload(move || {
+            *self.listener.write() = Some(listener);
+        })
+        .await
     }
 
     pub async fn unsubscribe(self: Arc<Self>) {
-        offload::offload(move || *self.listener.write() = None).await
+        offload::offload(move || {
+            *self.listener.write() = None;
+        })
+        .await
     }
 
     /// Cheap enough to poll every frame — use it to decide whether to call
@@ -237,8 +243,6 @@ impl KoanEngine {
         self.state.playlist_version()
     }
 
-    /// Off-thread despite touching no I/O: this clones every entry, strings
-    /// included, and runs on every queue change. A long queue is real work.
     pub async fn queue(self: Arc<Self>) -> Vec<QueueItem> {
         offload::offload(move || {
             self.state
@@ -596,8 +600,8 @@ impl KoanEngine {
     /// Embedded tags first, then the remote server. A library synced from
     /// Navidrome has no local files to read art out of, so without the remote
     /// fallback every album is blank. `size` requests a thumbnail; the grid
-    /// wants one, the now-playing pane doesn't. Network on the remote path —
-    /// call it off the main thread.
+    /// wants one, the now-playing pane doesn't. Hits the network on the remote
+    /// path.
     pub async fn cover_art(
         self: Arc<Self>,
         track_id: i64,
@@ -668,8 +672,8 @@ impl KoanEngine {
         .await
     }
 
-    /// Cache, then LRCLIB. Hits the network on a miss, so never call this from
-    /// the main thread — `lyrics()` is the non-blocking read.
+    /// Cache, then LRCLIB. Hits the network on a miss; `lyrics()` answers from
+    /// the cache alone and returns without one.
     pub async fn fetch_lyrics(self: Arc<Self>, track_id: i64) -> Result<Option<Lyrics>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -1358,8 +1362,7 @@ impl KoanEngine {
         .await
     }
 
-    /// Rescans every configured library folder. Blocking and slow — call it off
-    /// the main thread.
+    /// Rescans every configured library folder. Minutes, on a large library.
     pub async fn scan(self: Arc<Self>, force: bool) -> Result<ScanSummary, KoanError> {
         offload::offload(move || self.scan_blocking(force, None)).await
     }
@@ -1373,9 +1376,8 @@ impl KoanEngine {
         offload::offload(move || self.scan_blocking(force, reporter)).await
     }
 
-    /// Pull the remote library into the local database. Long and network-bound
-    /// — call it off the main thread. `full` ignores the incremental cursor and
-    /// re-walks every album.
+    /// Pull the remote library into the local database. Long and network-bound.
+    /// `full` ignores the incremental cursor and re-walks every album.
     pub async fn sync_remote(self: Arc<Self>, full: bool) -> Result<SyncSummary, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -1419,7 +1421,6 @@ impl KoanEngine {
     /// Only tracks the server knows about can go in it — the link points at the
     /// server, so a local-only file has nothing for it to point at. A mixed
     /// selection shares what it can; `skipped` says how much it left out.
-    /// Network-bound; keep it off the main thread.
     pub async fn create_share(
         self: Arc<Self>,
         track_ids: Vec<i64>,
@@ -1458,6 +1459,195 @@ impl KoanEngine {
         .await
     }
 
+    // --- File organization -------------------------------------------------
+
+    /// Named patterns from `[organize.patterns]`, sorted by name.
+    ///
+    /// Patterns are config, shared with the CLI and TUI, so this reads them
+    /// rather than offering somewhere else to define them.
+    pub async fn organize_patterns(self: Arc<Self>) -> Vec<OrganizePattern> {
+        offload::offload(move || {
+            let cfg = Config::load().unwrap_or_default().organize;
+            let mut patterns: Vec<OrganizePattern> = cfg
+                .patterns
+                .iter()
+                .map(|(name, pattern)| OrganizePattern {
+                    name: name.clone(),
+                    pattern: pattern.clone(),
+                    is_default: cfg.default.as_deref() == Some(name.as_str()),
+                })
+                .collect();
+            patterns.sort_by(|a, b| a.name.cmp(&b.name));
+            patterns
+        })
+        .await
+    }
+
+    /// Store a named pattern in `config.toml`, replacing one of the same name.
+    ///
+    /// Writes the base config rather than the local overlay: patterns are a
+    /// preference, not a machine fact, and the CLI and TUI read the same list.
+    pub async fn save_organize_pattern(
+        self: Arc<Self>,
+        name: String,
+        pattern: String,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let name = name.trim().to_string();
+            if name.is_empty() || pattern.trim().is_empty() {
+                return Err(KoanError::BadArgument {
+                    message: "a pattern needs both a name and a format string".into(),
+                });
+            }
+            // Parse it before storing it: a pattern that can't be evaluated would
+            // sit in the config failing on every future run.
+            koan_core::format::parse(&pattern).map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
+            })?;
+            Config::update_base(|cfg| {
+                cfg.organize.patterns.insert(name, pattern);
+            })
+            .map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
+            })
+        })
+        .await
+    }
+
+    /// Read a selection out of the library, ready to have patterns generated
+    /// against it.
+    ///
+    /// This is the expensive half — database rows, album facts, a `stat` per
+    /// file, and a tag read for anything the library has never seen — and it
+    /// happens once per selection.
+    /// `track_ids` of `None` means the whole library.
+    pub async fn organize_selection(
+        self: Arc<Self>,
+        track_ids: Option<Vec<i64>>,
+    ) -> Result<Arc<OrganizeSelection>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let requested = track_ids.as_ref().map(Vec::len);
+            let inner =
+                koan_core::organize::resolve(&db, track_ids.as_deref()).map_err(organize_err)?;
+            Ok(Arc::new(OrganizeSelection { inner, requested }))
+        })
+        .await
+    }
+
+    /// Whether cover art, cue sheets and logs travel with the music.
+    pub async fn organize_moves_ancillary(self: Arc<Self>) -> bool {
+        offload::offload(move || Config::load().unwrap_or_default().organize.move_ancillary).await
+    }
+
+    /// Remember the choice. Written to `config.toml`, so the CLI and TUI
+    /// organize the same way the app just did.
+    pub async fn set_organize_moves_ancillary(
+        self: Arc<Self>,
+        enabled: bool,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            Config::update_base(|cfg| cfg.organize.move_ancillary = enabled).map_err(|e| {
+                KoanError::BadArgument {
+                    message: e.to_string(),
+                }
+            })
+        })
+        .await
+    }
+
+    /// What `pattern` would do to these tracks. Touches nothing.
+    ///
+    /// `track_ids` of `None` means the whole library. `base_dir` picks which
+    /// library folder the pattern's relative paths hang off; `None` uses the
+    /// first configured one, matching the CLI. Resolves a destination per file.
+    pub async fn organize_preview(
+        self: Arc<Self>,
+        pattern: String,
+        track_ids: Option<Vec<i64>>,
+        base_dir: Option<String>,
+    ) -> Result<OrganizePlan, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let base = base_dir.map(PathBuf::from);
+            let result = match &track_ids {
+                Some(ids) => koan_core::organize::preview_for_tracks(
+                    &db,
+                    ids,
+                    &pattern,
+                    base.as_deref(),
+                    true,
+                ),
+                None => koan_core::organize::preview(&db, &pattern, base.as_deref(), true),
+            }
+            .map_err(organize_err)?;
+            Ok(OrganizePlan::build(
+                result,
+                track_ids.as_ref().map(Vec::len),
+            ))
+        })
+        .await
+    }
+
+    /// Carry out the moves, then point the queue at where the files went.
+    ///
+    /// The rename and the database rows land together, and playback survives it
+    /// — a Unix rename keeps the open descriptor. Destructive: run it only for
+    /// a plan the user has seen.
+    pub async fn organize_execute(
+        self: Arc<Self>,
+        pattern: String,
+        track_ids: Option<Vec<i64>>,
+        base_dir: Option<String>,
+    ) -> Result<OrganizePlan, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let base = base_dir.map(PathBuf::from);
+            let result = match &track_ids {
+                Some(ids) => {
+                    koan_core::organize::execute_for_tracks(&db, ids, &pattern, base.as_deref())
+                }
+                None => koan_core::organize::execute(&db, &pattern, base.as_deref()),
+            }
+            .map_err(organize_err)?;
+            self.follow_moved_files(&result);
+            Ok(OrganizePlan::build(
+                result,
+                track_ids.as_ref().map(Vec::len),
+            ))
+        })
+        .await
+    }
+
+    /// Index files from anywhere into the library, and return their track IDs.
+    ///
+    /// This is what a drop from Finder lands on: the files are read for tags,
+    /// given library rows where they sit, and handed back as IDs the caller can
+    /// queue. They are not moved — organize is what puts them under a library
+    /// folder, and it can only do that once they have rows. Directories are
+    /// walked recursively. Tag-bound, so it is proportional to the selection.
+    pub async fn import_files(
+        self: Arc<Self>,
+        paths: Vec<String>,
+    ) -> Result<ImportSummary, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
+            let result = koan_core::index::scanner::import_paths(&db, &paths);
+            Ok(ImportSummary {
+                track_ids: result.track_ids,
+                added: result.added as u32,
+                updated: result.updated as u32,
+                errors: result
+                    .errors
+                    .into_iter()
+                    .map(|(p, e)| format!("{}: {e}", p.display()))
+                    .collect(),
+            })
+        })
+        .await
+    }
+
     /// Where the library folders point. Shown in settings.
     pub async fn library_folders(self: Arc<Self>) -> Vec<String> {
         offload::offload(move || {
@@ -1469,6 +1659,59 @@ impl KoanEngine {
                 .collect()
         })
         .await
+    }
+}
+
+/// A resolved selection, held by the caller so a pattern can be generated
+/// against it many times without re-reading anything.
+///
+/// The split is the point. `generate` is pure string work and runs on every
+/// keystroke; `check` is the filesystem pass and runs once the typing settles.
+/// Neither can change what the other decided, so the fast answer is never
+/// wrong — only less complete.
+#[derive(uniffi::Object)]
+pub struct OrganizeSelection {
+    inner: koan_core::organize::ResolvedSelection,
+    /// How many tracks were asked for, so the shortfall can be reported.
+    requested: Option<usize>,
+}
+
+#[uniffi::export]
+impl OrganizeSelection {
+    /// Turn the pattern into destinations. **Touches no files** — the cost is
+    /// a destination per track, which is why it is off-thread like everything
+    /// else rather than resolved inline as someone types.
+    pub async fn generate(self: Arc<Self>, pattern: String, base_dir: String) -> OrganizePlan {
+        offload::offload(move || {
+            let result = koan_core::organize::generate(&self.inner, &pattern, Path::new(&base_dir));
+            OrganizePlan::build(result, self.requested)
+        })
+        .await
+    }
+
+    /// Generate, then ask the disk the two questions generation cannot answer:
+    /// which destinations are already occupied, and what ancillary files travel
+    /// with each move. A `stat` per file and a directory read per source
+    /// folder, so it runs once the typing settles rather than per keystroke.
+    pub async fn check(
+        self: Arc<Self>,
+        pattern: String,
+        base_dir: String,
+        move_ancillary: bool,
+    ) -> OrganizePlan {
+        offload::offload(move || {
+            let mut result =
+                koan_core::organize::generate(&self.inner, &pattern, Path::new(&base_dir));
+            koan_core::organize::check_against_disk(&mut result, move_ancillary);
+            OrganizePlan::build(result, self.requested)
+        })
+        .await
+    }
+
+    /// How many files resolved to something local. Fewer than were asked for
+    /// means the rest are remote-only or gone from disk.
+    pub fn count(&self) -> u32 {
+        self.inner.len() as u32
     }
 }
 
@@ -1536,6 +1779,35 @@ impl KoanEngine {
                 }
             })
             .ok();
+    }
+
+    /// Rewrite the queue to point at where organize put the files.
+    ///
+    /// The database rows moved with the files, but the playlist is in memory
+    /// and still holds the old paths — a queued track would fail to open on the
+    /// next play. Only the player may mutate it, so this goes through the
+    /// command channel like every other queue change.
+    fn follow_moved_files(&self, result: &koan_core::organize::OrganizeResult) {
+        let moved: std::collections::HashMap<&Path, &Path> = result
+            .moves()
+            .filter_map(|e| e.to.as_deref().map(|to| (e.from.as_path(), to)))
+            .collect();
+        if moved.is_empty() {
+            return;
+        }
+
+        let (items, _) = self.state.snapshot_playlist();
+        let updates: Vec<(QueueItemId, PathBuf)> = items
+            .iter()
+            .filter_map(|item| {
+                moved
+                    .get(item.path.as_path())
+                    .map(|to| (item.id, to.to_path_buf()))
+            })
+            .collect();
+        if !updates.is_empty() {
+            let _ = self.send(PlayerCommand::UpdatePaths(updates));
+        }
     }
 
     fn tracks_blocking(
@@ -1882,6 +2154,19 @@ fn parse_qids(ids: &[String]) -> Result<Vec<QueueItemId>, KoanError> {
 fn db_err(e: impl std::fmt::Display) -> KoanError {
     KoanError::Database {
         message: e.to_string(),
+    }
+}
+
+/// A pattern that can't be resolved, a library folder that isn't configured and
+/// a file that won't move are all things the user can act on, so they come back
+/// as bad arguments rather than as an opaque failure. Only the database going
+/// wrong is out of their hands.
+fn organize_err(e: koan_core::organize::OrganizeError) -> KoanError {
+    use koan_core::organize::OrganizeError as E;
+    let message = e.to_string();
+    match e {
+        E::Db(_) | E::Sqlite(_) => KoanError::Database { message },
+        _ => KoanError::BadArgument { message },
     }
 }
 

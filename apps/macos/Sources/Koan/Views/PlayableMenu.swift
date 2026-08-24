@@ -48,6 +48,8 @@ struct PlayableMenu: View {
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
+    @Environment(OrganizeModel.self) private var organize
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Button("Play") {
@@ -71,6 +73,12 @@ struct PlayableMenu: View {
 
         Button(favouriteTitle) { toggleFavourite() }
         Button("Copy Share Link") { share() }
+        Button("Organize Files…") {
+            act { ids in
+                openWindow(id: OrganizeWindow.id)
+                Task { await organize.begin(title: playable.name, trackIds: ids) }
+            }
+        }
 
         if case .track(let track) = playable, let albumId = track.albumId {
             Divider()

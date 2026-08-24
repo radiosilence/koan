@@ -80,14 +80,18 @@ final class Hotkeys {
     }
 
     /// The main window, or nil when focus is somewhere these keys have no
-    /// business being — a sheet, or the settings window, whose own controls are
-    /// what a key should reach.
+    /// business being — a sheet, the settings window, or the organize window,
+    /// whose own controls are what a key should reach.
     private var ownWindow: NSWindow? {
         guard let window = NSApp.keyWindow else { return nil }
         guard !window.isSheet, window.attachedSheet == nil else { return nil }
         guard window.identifier?.rawValue != "com_apple_SwiftUI_Settings_window" else {
             return nil
         }
+        // Organize is its own window with its own field and its own Esc. Same
+        // reasoning as the settings window: its controls are what a key there
+        // should reach.
+        guard window.identifier?.rawValue != "organize" else { return nil }
         return window
     }
 }

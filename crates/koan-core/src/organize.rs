@@ -53,17 +53,134 @@ pub enum OrganizeError {
     NotEnoughSpace { needed: u64, available: u64 },
 }
 
-#[derive(Debug)]
-pub struct OrganizeResult {
-    pub moves: Vec<FileMove>,
-    pub errors: Vec<(PathBuf, String)>,
-    pub skipped: usize,
+/// What the pattern means for one file.
+///
+/// Conflicts are an outcome rather than an error off to one side: "this would
+/// overwrite something" is the single most important thing a preview can tell
+/// you, and it belongs on the row it concerns, next to the destination it would
+/// have landed on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanOutcome {
+    /// The file will be moved, or was.
+    Move,
+    /// Already exactly where the pattern puts it. Nothing to do.
+    Unchanged,
+    /// Something holds the destination — a file already there, or another file
+    /// in the same run that claimed it first. Nothing is ever overwritten, so
+    /// this file stays where it is.
+    Conflict(String),
+    /// The pattern produced nothing usable for this file, or the move failed.
+    Error(String),
 }
 
-#[derive(Debug)]
-pub struct FileMove {
+impl PlanOutcome {
+    /// The reason a file isn't moving, for anything rendering it as text.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Self::Conflict(reason) | Self::Error(reason) => Some(reason),
+            _ => None,
+        }
+    }
+}
+
+/// One file's place in a plan: where it is, where the pattern puts it, and
+/// whether that can happen.
+#[derive(Debug, Clone)]
+pub struct PlanEntry {
     /// The library track this file belongs to, or `None` for a file the library
     /// doesn't know about. Either way the move is logged and can be undone.
+    pub track_id: Option<i64>,
+    pub from: PathBuf,
+    /// Where the pattern puts it. `None` only when the pattern failed before it
+    /// produced a path at all.
+    pub to: Option<PathBuf>,
+    pub ancillary: Vec<(PathBuf, PathBuf)>,
+    pub outcome: PlanOutcome,
+}
+
+impl PlanEntry {
+    /// Where this file is headed. Only call it on an entry that has a
+    /// destination — a plan that failed before producing one has none.
+    #[cfg(test)]
+    fn dest(&self) -> &Path {
+        self.to.as_deref().expect("plan entry has no destination")
+    }
+
+    /// The executable move this entry stands for, if it is one.
+    fn as_move(&self) -> Option<FileMove> {
+        match (&self.outcome, &self.to) {
+            (PlanOutcome::Move, Some(to)) => Some(FileMove {
+                track_id: self.track_id,
+                from: self.from.clone(),
+                to: to.clone(),
+                ancillary: self.ancillary.clone(),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// Every selected file and what happens to it, in the order it was planned.
+///
+/// One ordered list rather than separate buckets: a preview is a table with a
+/// row per file, and splitting the failures out of it loses both their place in
+/// the run and the destination they were headed for.
+#[derive(Debug, Default)]
+pub struct OrganizeResult {
+    pub entries: Vec<PlanEntry>,
+}
+
+impl OrganizeResult {
+    pub fn moves(&self) -> impl Iterator<Item = &PlanEntry> {
+        self.entries
+            .iter()
+            .filter(|e| e.outcome == PlanOutcome::Move)
+    }
+
+    pub fn moved_count(&self) -> usize {
+        self.moves().count()
+    }
+
+    /// Files already where the pattern puts them.
+    pub fn unchanged_count(&self) -> usize {
+        self.entries
+            .iter()
+            .filter(|e| e.outcome == PlanOutcome::Unchanged)
+            .count()
+    }
+
+    pub fn conflicts(&self) -> impl Iterator<Item = &PlanEntry> {
+        self.entries
+            .iter()
+            .filter(|e| matches!(e.outcome, PlanOutcome::Conflict(_)))
+    }
+
+    /// Everything that isn't happening and isn't already right — conflicts and
+    /// errors together, since a caller reporting failures wants both.
+    pub fn failures(&self) -> impl Iterator<Item = &PlanEntry> {
+        self.entries
+            .iter()
+            .filter(|e| matches!(e.outcome, PlanOutcome::Conflict(_) | PlanOutcome::Error(_)))
+    }
+
+    /// One line per failure, for callers that render a flat list. Includes the
+    /// destination where there was one — for a conflict that is the whole point.
+    pub fn failure_messages(&self) -> Vec<String> {
+        self.failures()
+            .map(|e| {
+                let reason = e.outcome.reason().unwrap_or("unknown");
+                match &e.to {
+                    Some(to) => format!("{}: {reason} ({})", e.from.display(), to.display()),
+                    None => format!("{}: {reason}", e.from.display()),
+                }
+            })
+            .collect()
+    }
+}
+
+/// An executable move, extracted from a plan entry that can proceed.
+#[derive(Debug)]
+pub struct FileMove {
     pub track_id: Option<i64>,
     pub from: PathBuf,
     pub to: PathBuf,
@@ -286,10 +403,11 @@ impl DestinationLedger {
     }
 }
 
-/// Plan a single file move: format pattern, sanitize path, build dest, find ancillary files.
+/// Plan one file: format the pattern, sanitize it into a path, and decide
+/// whether the file can actually go there.
 ///
-/// Returns `Ok(None)` when source == dest (skipped), `Ok(Some(FileMove))` for a planned move,
-/// or `Err(String)` for errors that should be collected by the caller.
+/// Always yields an entry. A file that can't move is still a row in the plan,
+/// carrying the destination it was headed for and why it isn't going.
 fn plan_single_move(
     source: &Path,
     track_id: Option<i64>,
@@ -297,15 +415,34 @@ fn plan_single_move(
     pattern: &str,
     base_dir: &Path,
     dests: &mut DestinationLedger,
-    planned_ancillary: &mut HashSet<PathBuf>,
-) -> Result<Option<FileMove>, String> {
-    let relative = format::format(pattern, metadata).map_err(|e| format!("format error: {e}"))?;
-
-    if relative.is_empty() {
-        return Err("format string produced empty path".into());
+) -> PlanEntry {
+    let entry = |to: Option<PathBuf>, outcome: PlanOutcome| PlanEntry {
+        track_id,
+        from: source.to_path_buf(),
+        to,
+        ancillary: Vec::new(),
+        outcome,
+    };
+    // Everything before a destination exists is an error with nothing to point at.
+    macro_rules! bail {
+        ($reason:expr) => {
+            return entry(None, PlanOutcome::Error($reason))
+        };
     }
 
-    let sanitized = sanitize_relative_path(&relative)?;
+    let relative = match format::format(pattern, metadata) {
+        Ok(r) => r,
+        Err(e) => bail!(format!("format error: {e}")),
+    };
+
+    if relative.is_empty() {
+        bail!("format string produced empty path".to_string());
+    }
+
+    let sanitized = match sanitize_relative_path(&relative) {
+        Ok(p) => p,
+        Err(e) => bail!(e),
+    };
 
     // Preserve the original file extension.
     // Don't use with_extension() — it replaces after the LAST dot, which
@@ -314,15 +451,14 @@ fn plan_single_move(
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("flac");
-    let stem = sanitized
-        .file_name()
-        .and_then(|n| n.to_str())
-        .ok_or_else(|| "format string produced an unusable file name".to_string())?;
+    let Some(stem) = sanitized.file_name().and_then(|n| n.to_str()) else {
+        bail!("format string produced an unusable file name".to_string());
+    };
     // Leave room for the extension, so a long title is shortened rather than
     // previewing cleanly and failing with ENAMETOOLONG at move time.
     let stem = truncate_bytes(stem, MAX_FILE_NAME_BYTES.saturating_sub(ext.len() + 1)).trim_end();
     if stem.is_empty() {
-        return Err("format string produced an empty file name".into());
+        bail!("format string produced an empty file name".to_string());
     }
     let mut dest = base_dir.to_path_buf();
     if let Some(parent) = sanitized.parent() {
@@ -332,42 +468,81 @@ fn plan_single_move(
 
     // Safety: verify dest stays under base_dir (defense-in-depth against path traversal).
     if !dest.starts_with(base_dir) {
-        return Err(format!(
+        let reason = format!(
             "path traversal blocked: destination {} escapes base dir {}",
             dest.display(),
             base_dir.display()
-        ));
+        );
+        return entry(Some(dest), PlanOutcome::Error(reason));
     }
 
     if source == dest {
         // Already in place — claim the name anyway so nothing else targets it.
         dests.claim(&dest);
-        return Ok(None);
+        return entry(Some(dest), PlanOutcome::Unchanged);
     }
 
     if !dests.claim(&dest) {
-        return Err(format!(
-            "two files resolve to the same destination: {}",
-            dest.display()
-        ));
+        return entry(
+            Some(dest),
+            PlanOutcome::Conflict("another file in this run is already going here".into()),
+        );
     }
 
-    // A destination that resolves to the source itself is a case-only rename, which
-    // is a real move; anything else already there would be overwritten.
-    if dest.exists() && !paths_equal(source, &dest) {
-        return Err(format!(
-            "destination already exists: {} (moving here would overwrite it)",
-            dest.display()
-        ));
+    // Whether something is *already* sitting at the destination is a question
+    // for the filesystem, and this function deliberately does not ask one —
+    // see `check_against_disk`.
+    PlanEntry {
+        track_id,
+        from: source.to_path_buf(),
+        to: Some(dest),
+        ancillary: Vec::new(),
+        outcome: PlanOutcome::Move,
     }
+}
 
-    // Plan ancillary moves — move files in source dir to dest dir.
-    let source_dir = source.parent().unwrap_or(Path::new("."));
-    let dest_dir = dest.parent().unwrap_or(Path::new("."));
-    let mut ancillary = Vec::new();
+/// Ask the filesystem the two questions formatting cannot answer: whether a
+/// destination is already occupied, and what ancillary files travel with each
+/// move.
+///
+/// Separate from planning because it is the only part that touches the disk. A
+/// preview that reruns on every keystroke wants the pure half immediately and
+/// this afterwards; an execute wants both before it moves anything.
+pub fn check_against_disk(result: &mut OrganizeResult, move_ancillary: bool) {
+    let mut dests = DestinationLedger::default();
+    let mut planned_ancillary: HashSet<PathBuf> = HashSet::new();
+    // One directory read per source folder. An album is one folder and a dozen
+    // tracks, so doing this per file repeated the same readdir a dozen times.
+    let mut ancillary_by_dir: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
 
-    if source_dir != dest_dir {
-        for anc_path in find_ancillary_files(source_dir) {
+    for entry in &mut result.entries {
+        let (PlanOutcome::Move, Some(dest)) = (&entry.outcome, entry.to.clone()) else {
+            continue;
+        };
+
+        // A destination that resolves to the source itself is a case-only
+        // rename, which is a real move; anything else already there would be
+        // overwritten.
+        if dest.exists() && !paths_equal(&entry.from, &dest) {
+            entry.outcome =
+                PlanOutcome::Conflict("a file is already here — it would be overwritten".into());
+            continue;
+        }
+        dests.claim(&dest);
+
+        if !move_ancillary {
+            continue;
+        }
+        let source_dir = entry.from.parent().unwrap_or(Path::new("."));
+        let dest_dir = dest.parent().unwrap_or(Path::new("."));
+        if source_dir == dest_dir {
+            continue;
+        }
+        let candidates = ancillary_by_dir
+            .entry(source_dir.to_path_buf())
+            .or_insert_with(|| find_ancillary_files(source_dir))
+            .clone();
+        for anc_path in candidates {
             if planned_ancillary.contains(&anc_path) {
                 continue;
             }
@@ -381,16 +556,9 @@ fn plan_single_move(
                 continue;
             }
             planned_ancillary.insert(anc_path.clone());
-            ancillary.push((anc_path, anc_dest));
+            entry.ancillary.push((anc_path, anc_dest));
         }
     }
-
-    Ok(Some(FileMove {
-        track_id,
-        from: source.to_path_buf(),
-        to: dest,
-        ancillary,
-    }))
 }
 
 fn resolve_from_rows(rows: Vec<TrackRow>, albums: &HashMap<i64, AlbumFacts>) -> Vec<ResolvedTrack> {
@@ -473,17 +641,55 @@ fn resolve_from_paths(
     Ok(resolved)
 }
 
-/// Build the list of moves. Every entry point plans through here, so a preview and the
-/// execute that follows it produce the same destinations from the same metadata.
-fn plan(
+/// A selection with every read already done: library rows, album facts, and
+/// tags for files the library has never seen.
+///
+/// This is the half that costs something. Generating destinations from it is
+/// pure string work, so a preview that reruns as a pattern is typed resolves
+/// once here and formats many times against the result.
+pub struct ResolvedSelection {
+    tracks: Vec<ResolvedTrack>,
+}
+
+impl ResolvedSelection {
+    /// How many files resolved to something with a local path. Fewer than were
+    /// asked for means the rest are remote-only or gone from disk.
+    pub fn len(&self) -> usize {
+        self.tracks.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tracks.is_empty()
+    }
+}
+
+/// Read a selection out of the library. `track_ids` of `None` means all of it.
+///
+/// Database reads and a `stat` per file, so it belongs off whatever thread is
+/// drawing — but it only has to happen once per selection.
+pub fn resolve(
+    db: &Database,
+    track_ids: Option<&[i64]>,
+) -> Result<ResolvedSelection, OrganizeError> {
+    let selection = match track_ids {
+        Some(ids) => Selection::TrackIds(ids),
+        None => Selection::All,
+    };
+    resolve_selection(db, selection)
+}
+
+/// Read a selection of file paths, which may or may not be in the library.
+/// Unknown files pay for a tag read; known ones come from their row.
+pub fn resolve_paths(db: &Database, paths: &[PathBuf]) -> Result<ResolvedSelection, OrganizeError> {
+    resolve_selection(db, Selection::Paths(paths))
+}
+
+fn resolve_selection(
     db: &Database,
     selection: Selection<'_>,
-    pattern: &str,
-    base_dir: &Path,
-) -> Result<OrganizeResult, OrganizeError> {
+) -> Result<ResolvedSelection, OrganizeError> {
     let albums = load_album_facts(&db.conn)?;
-
-    let resolved = match selection {
+    let tracks = match selection {
         Selection::All => resolve_from_rows(queries::all_tracks(&db.conn)?, &albums),
         Selection::TrackIds(ids) => {
             let mut rows = Vec::with_capacity(ids.len());
@@ -496,41 +702,62 @@ fn plan(
         }
         Selection::Paths(paths) => resolve_from_paths(db, paths, &albums)?,
     };
+    Ok(ResolvedSelection { tracks })
+}
 
-    let mut moves = Vec::new();
-    let mut errors = Vec::new();
-    let mut skipped = 0;
+/// Turn a pattern into destinations. **Touches no files at all.**
+///
+/// Everything here is formatting the pattern, sanitising what it produced, and
+/// checking the result against the destinations this same run has already
+/// claimed. That is fast enough to run on every keystroke, which is the whole
+/// reason it is separate from `check_against_disk`.
+pub fn generate(selection: &ResolvedSelection, pattern: &str, base_dir: &Path) -> OrganizeResult {
+    let mut entries = Vec::with_capacity(selection.tracks.len());
     let mut dests = DestinationLedger::default();
-    let mut planned_ancillary: HashSet<PathBuf> = HashSet::new();
 
-    for entry in resolved {
-        let metadata = match entry.metadata {
+    for track in &selection.tracks {
+        let metadata = match &track.metadata {
             Ok(m) => m,
             Err(msg) => {
-                errors.push((entry.source, msg));
+                entries.push(PlanEntry {
+                    track_id: track.track_id,
+                    from: track.source.clone(),
+                    to: None,
+                    ancillary: Vec::new(),
+                    outcome: PlanOutcome::Error(msg.clone()),
+                });
                 continue;
             }
         };
-        match plan_single_move(
-            &entry.source,
-            entry.track_id,
-            &metadata,
+        entries.push(plan_single_move(
+            &track.source,
+            track.track_id,
+            metadata,
             pattern,
             base_dir,
             &mut dests,
-            &mut planned_ancillary,
-        ) {
-            Ok(Some(file_move)) => moves.push(file_move),
-            Ok(None) => skipped += 1,
-            Err(msg) => errors.push((entry.source, msg)),
-        }
+        ));
     }
 
-    Ok(OrganizeResult {
-        moves,
-        errors,
-        skipped,
-    })
+    OrganizeResult { entries }
+}
+
+/// Resolve, generate, and optionally ask the disk. Every entry point plans
+/// through here, so a preview and the execute that follows it produce the same
+/// destinations from the same metadata.
+fn plan(
+    db: &Database,
+    selection: Selection<'_>,
+    pattern: &str,
+    base_dir: &Path,
+    check_disk: bool,
+) -> Result<OrganizeResult, OrganizeError> {
+    let resolved = resolve_selection(db, selection)?;
+    let mut result = generate(&resolved, pattern, base_dir);
+    if check_disk {
+        check_against_disk(&mut result, move_ancillary());
+    }
+    Ok(result)
 }
 
 /// Plan, then carry out the moves: each file's database rows and its rename land
@@ -541,44 +768,54 @@ fn run(
     pattern: &str,
     base_dir: &Path,
 ) -> Result<OrganizeResult, OrganizeError> {
-    let mut result = plan(db, selection, pattern, base_dir)?;
+    let mut result = plan(db, selection, pattern, base_dir, true)?;
 
-    if result.moves.is_empty() {
+    let pending: Vec<FileMove> = result
+        .entries
+        .iter()
+        .filter_map(PlanEntry::as_move)
+        .collect();
+    if pending.is_empty() {
         return Ok(result);
     }
 
-    check_free_space(&result.moves, base_dir)?;
+    check_free_space(&pending, base_dir)?;
 
     let batch_id = batch_id();
     let floors = cleanup_floors(Some(base_dir));
-    let mut completed_moves = Vec::new();
-    let mut new_errors = Vec::new();
 
-    for file_move in result.moves.drain(..) {
-        match execute_single_move(db, &file_move, &batch_id, &floors) {
-            Ok(()) => match verify_move(&file_move) {
-                Ok(()) => completed_moves.push(file_move),
-                Err(msg) => new_errors.push((file_move.from, msg)),
-            },
-            Err(e) => {
-                new_errors.push((file_move.from, e.to_string()));
-            }
+    // The plan is the report: a move that fails has its own row demoted to an
+    // error, so the caller sees the same table it confirmed, now saying what
+    // actually happened to each file.
+    for file_move in pending {
+        let failure = match execute_single_move(db, &file_move, &batch_id, &floors) {
+            Ok(()) => verify_move(&file_move).err(),
+            Err(e) => Some(e.to_string()),
+        };
+        let Some(reason) = failure else { continue };
+        if let Some(entry) = result.entries.iter_mut().find(|e| e.from == file_move.from) {
+            entry.outcome = PlanOutcome::Error(reason);
         }
     }
 
-    result.moves = completed_moves;
-    result.errors.extend(new_errors);
     Ok(result)
 }
 
 /// Preview what would happen without moving files.
+///
+/// `check_disk` is what finds destinations that are already occupied and the
+/// ancillary files travelling with each move. It is a `stat` per file and a
+/// directory read per source folder, and it changes none of the destinations —
+/// so a preview that reruns as a pattern is typed leaves it off and fills it in
+/// afterwards.
 pub fn preview(
     db: &Database,
     pattern: &str,
     base_dir: Option<&Path>,
+    check_disk: bool,
 ) -> Result<OrganizeResult, OrganizeError> {
     let base = resolve_base_dir(base_dir)?;
-    plan(db, Selection::All, pattern, &base)
+    plan(db, Selection::All, pattern, &base, check_disk)
 }
 
 /// Execute the moves: rename files, update DB, log for undo.
@@ -597,9 +834,16 @@ pub fn preview_for_tracks(
     track_ids: &[i64],
     pattern: &str,
     base_dir: Option<&Path>,
+    check_disk: bool,
 ) -> Result<OrganizeResult, OrganizeError> {
     let base = resolve_base_dir(base_dir)?;
-    plan(db, Selection::TrackIds(track_ids), pattern, &base)
+    plan(
+        db,
+        Selection::TrackIds(track_ids),
+        pattern,
+        &base,
+        check_disk,
+    )
 }
 
 /// Execute organize for a specific set of tracks.
@@ -618,10 +862,11 @@ pub fn preview_for_paths(
     paths: &[PathBuf],
     pattern: &str,
     base_dir: Option<&Path>,
+    check_disk: bool,
 ) -> Result<OrganizeResult, OrganizeError> {
     let db = Database::open_default()?;
     let base = resolve_base_dir(base_dir)?;
-    plan(&db, Selection::Paths(paths), pattern, &base)
+    plan(&db, Selection::Paths(paths), pattern, &base, check_disk)
 }
 
 /// Execute organize for file paths. Requires the library database: without it there is
@@ -1217,6 +1462,14 @@ fn resolve_base_dir(base_dir: Option<&Path>) -> Result<PathBuf, OrganizeError> {
     })
 }
 
+/// Whether cover art and cue sheets travel with the music. A preference, so it
+/// is read where it is used rather than threaded through every signature.
+fn move_ancillary() -> bool {
+    crate::config::Config::load()
+        .map(|c| c.organize.move_ancillary)
+        .unwrap_or(true)
+}
+
 fn batch_id() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1460,9 +1713,15 @@ mod tests {
         let source = tmp.path().join("src/test.flac");
         add_track(&db, &source, "Airbag", 1);
 
-        let result = preview(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
+        let result = preview(
+            &db,
+            "%album artist%/%album%/%title%",
+            Some(tmp.path()),
+            true,
+        )
+        .unwrap();
         assert!(source.exists());
-        assert_eq!(result.moves.len(), 1);
+        assert_eq!(result.moved_count(), 1);
     }
 
     #[test]
@@ -1473,10 +1732,10 @@ mod tests {
         let id = add_track(&db, &source, "Airbag", 1);
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
-        assert_eq!(result.moves.len(), 1);
-        assert!(result.errors.is_empty());
+        assert_eq!(result.moved_count(), 1);
+        assert_eq!(result.failures().count(), 0);
         assert!(!source.exists());
-        let dest = result.moves[0].to.clone();
+        let dest = result.moves().next().unwrap().dest().to_path_buf();
         assert!(dest.exists());
         assert_eq!(db_path_of(&db, id).as_deref(), Some(dest.to_str().unwrap()));
 
@@ -1508,15 +1767,181 @@ mod tests {
         meta.path = Some(source.to_string_lossy().into_owned());
         queries::upsert_track(&db.conn, &meta).unwrap();
 
-        let previewed = preview(&db, pattern, Some(tmp.path())).unwrap();
-        assert_eq!(previewed.moves.len(), 1);
-        let expected = previewed.moves[0].to.clone();
+        let previewed = preview(&db, pattern, Some(tmp.path()), true).unwrap();
+        assert_eq!(previewed.moved_count(), 1);
+        let expected = previewed.moves().next().unwrap().dest().to_path_buf();
         assert!(expected.starts_with(tmp.path().join("Warp Records")));
 
         let executed = execute(&db, pattern, Some(tmp.path())).unwrap();
-        assert_eq!(executed.moves.len(), 1);
-        assert_eq!(executed.moves[0].to, expected);
+        assert_eq!(executed.moved_count(), 1);
+        assert_eq!(executed.moves().next().unwrap().dest(), expected);
         assert!(expected.exists());
+    }
+
+    /// The whole macOS flow, end to end: files land from outside the library,
+    /// get rows where they lie, and organize is what puts them under the music
+    /// tree. Nothing about the import knows where they will end up.
+    #[test]
+    fn imported_files_organize_into_the_library_folder() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let outside = tmp.path().join("Downloads/rip");
+        let library = tmp.path().join("Music");
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&library).unwrap();
+
+        let dropped = outside.join("track.wav");
+        crate::test_utils::generate_wav(&dropped, 44100, 1, 0.2, 16);
+
+        let imported = crate::index::scanner::import_paths(&db, std::slice::from_ref(&outside));
+        assert_eq!(imported.track_ids.len(), 1, "errors: {:?}", imported.errors);
+
+        let result = execute_for_tracks(
+            &db,
+            &imported.track_ids,
+            "%album artist%/%album%/%title%",
+            Some(&library),
+        )
+        .unwrap();
+
+        assert_eq!(result.moved_count(), 1);
+        let dest = result.moves().next().unwrap().dest();
+        assert!(dest.starts_with(&library), "landed at {}", dest.display());
+        assert!(dest.exists());
+        assert!(
+            !dropped.exists(),
+            "the original should have moved, not copied"
+        );
+
+        // The row followed the file, so playing it afterwards still works.
+        assert_eq!(
+            db_path_of(&db, imported.track_ids[0]).as_deref(),
+            dest.to_str()
+        );
+    }
+
+    /// Generation is pure. It is what reruns on every keystroke, so if it ever
+    /// starts touching the filesystem this is what says so: the destination is
+    /// occupied and the source directory is full of cover art, and neither
+    /// shows up until the disk is actually asked.
+    #[test]
+    fn generate_touches_no_files() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/track.flac");
+        add_track(&db, &source, "Airbag", 1);
+        std::fs::write(source.parent().unwrap().join("cover.jpg"), b"art").unwrap();
+
+        // Something is already sitting where the pattern points.
+        let occupied = tmp.path().join("Radiohead/OK Computer/Airbag.flac");
+        std::fs::create_dir_all(occupied.parent().unwrap()).unwrap();
+        std::fs::write(&occupied, b"the good rip").unwrap();
+
+        let selection = resolve(&db, None).unwrap();
+        let mut result = generate(&selection, "%album artist%/%album%/%title%", tmp.path());
+
+        // Pure pass: a move, no conflict, no ancillary — it has not looked.
+        assert_eq!(result.moved_count(), 1);
+        assert_eq!(result.conflicts().count(), 0);
+        assert!(result.entries[0].ancillary.is_empty());
+
+        // Asking the disk is what finds both.
+        check_against_disk(&mut result, true);
+        assert_eq!(result.moved_count(), 0);
+        assert_eq!(result.conflicts().count(), 1);
+        assert_eq!(result.conflicts().next().unwrap().dest(), occupied);
+    }
+
+    /// Resolving once and generating many times must agree with planning from
+    /// scratch, or the preview would be lying about what execute will do.
+    #[test]
+    fn generate_agrees_with_a_full_plan() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        add_track(&db, &tmp.path().join("src/a.flac"), "Airbag", 1);
+        add_track(&db, &tmp.path().join("src/b.flac"), "Karma Police", 2);
+        let pattern = "%album artist%/%album%/%tracknumber%. %title%";
+
+        let selection = resolve(&db, None).unwrap();
+        let mut generated = generate(&selection, pattern, tmp.path());
+        check_against_disk(&mut generated, true);
+        let planned = preview(&db, pattern, Some(tmp.path()), true).unwrap();
+
+        assert_eq!(generated.entries.len(), planned.entries.len());
+        for (a, b) in generated.entries.iter().zip(&planned.entries) {
+            assert_eq!(a.from, b.from);
+            assert_eq!(a.to, b.to);
+            assert_eq!(a.outcome, b.outcome);
+            assert_eq!(a.ancillary, b.ancillary);
+        }
+    }
+
+    /// One readdir per source directory, not one per file — the thing that made
+    /// a preview over an album on a slow volume cost what it did.
+    #[test]
+    fn ancillary_is_scanned_once_per_directory() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        for (i, title) in ["Airbag", "Karma Police", "Lucky"].iter().enumerate() {
+            add_track(
+                &db,
+                &tmp.path().join(format!("src/{i}.flac")),
+                title,
+                i as i32 + 1,
+            );
+        }
+        std::fs::write(tmp.path().join("src/cover.jpg"), b"art").unwrap();
+
+        let result = preview(
+            &db,
+            "%album artist%/%album%/%title%",
+            Some(tmp.path()),
+            true,
+        )
+        .unwrap();
+
+        // The cover travels with exactly one of them, not all three.
+        let carrying: Vec<_> = result.moves().filter(|e| !e.ancillary.is_empty()).collect();
+        assert_eq!(carrying.len(), 1);
+        assert_eq!(carrying[0].ancillary.len(), 1);
+    }
+
+    /// The disk pass must not mistake a file for its own obstacle. Nothing
+    /// stops a caller planning against paths a previous run already moved, and
+    /// a bare `exists()` on the destination says "occupied" for every one of
+    /// them.
+    #[test]
+    fn a_file_already_at_its_destination_is_unchanged_not_a_conflict() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let pattern = "%album artist%/%album%/%title%";
+        add_track(&db, &tmp.path().join("src/a.flac"), "Airbag", 1);
+
+        let moved = execute(&db, pattern, Some(tmp.path())).unwrap();
+        assert_eq!(moved.moved_count(), 1);
+
+        // Plan again, from the rows as they now stand.
+        let again = preview(&db, pattern, Some(tmp.path()), true).unwrap();
+        assert_eq!(again.conflicts().count(), 0);
+        assert_eq!(again.unchanged_count(), 1);
+    }
+
+    #[test]
+    fn ancillary_files_stay_put_when_they_are_turned_off() {
+        let db = test_db();
+        let tmp = TempDir::new().unwrap();
+        let source = tmp.path().join("src/a.flac");
+        add_track(&db, &source, "Airbag", 1);
+        std::fs::write(source.parent().unwrap().join("cover.jpg"), b"art").unwrap();
+
+        let selection = resolve(&db, None).unwrap();
+        let mut off = generate(&selection, "%album artist%/%album%/%title%", tmp.path());
+        check_against_disk(&mut off, false);
+        assert!(off.moves().all(|e| e.ancillary.is_empty()));
+
+        let mut on = generate(&selection, "%album artist%/%album%/%title%", tmp.path());
+        check_against_disk(&mut on, true);
+        assert_eq!(on.moves().next().unwrap().ancillary.len(), 1);
     }
 
     // ---- Collisions ----
@@ -1534,9 +1959,14 @@ mod tests {
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
 
-        assert_eq!(result.moves.len(), 1);
-        assert_eq!(result.errors.len(), 1);
-        assert!(result.errors[0].1.contains("same destination"));
+        assert_eq!(result.moved_count(), 1);
+
+        // The loser is a row in the plan, flagged as a conflict and still
+        // carrying the destination it lost — that is what a preview shows.
+        let blocked = result.conflicts().next().unwrap();
+        assert_eq!(result.conflicts().count(), 1);
+        assert_eq!(blocked.from, second);
+        assert_eq!(blocked.dest(), result.moves().next().unwrap().dest());
 
         // The loser stays exactly where it was, byte for byte.
         assert!(second.exists());
@@ -1546,7 +1976,7 @@ mod tests {
             Some(second.to_str().unwrap())
         );
 
-        let dest = &result.moves[0].to;
+        let dest = result.moves().next().unwrap().dest();
         assert_eq!(
             std::fs::read(dest).unwrap(),
             b"audio bytes for Airbag".to_vec()
@@ -1570,8 +2000,16 @@ mod tests {
         std::fs::write(&dest, b"the good rip").unwrap();
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
-        assert!(result.moves.is_empty());
-        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.moved_count(), 0);
+
+        // Flagged as a conflict against the occupied path, so a preview can say
+        // what would have been overwritten before anyone presses the button.
+        let blocked = result.conflicts().next().unwrap();
+        assert_eq!(result.conflicts().count(), 1);
+        assert_eq!(blocked.from, source);
+        assert_eq!(blocked.dest(), dest);
+        assert!(blocked.outcome.reason().unwrap().contains("overwritten"));
+
         assert_eq!(std::fs::read(&dest).unwrap(), b"the good rip".to_vec());
         assert!(source.exists());
     }
@@ -1609,8 +2047,8 @@ mod tests {
         }
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
-        assert_eq!(result.moves.len(), 1);
-        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.moved_count(), 1);
+        assert_eq!(result.failures().count(), 1);
         assert!(second.exists());
         assert_eq!(
             std::fs::read(&second).unwrap(),
@@ -1699,9 +2137,9 @@ mod tests {
             Some(tmp.path()),
         )
         .unwrap();
-        assert!(result.moves.is_empty());
-        assert_eq!(result.errors.len(), 1);
-        assert!(result.errors[0].1.contains("unknown function"));
+        assert_eq!(result.moved_count(), 0);
+        assert_eq!(result.failures().count(), 1);
+        assert!(result.failure_messages()[0].contains("unknown function"));
         assert!(source.exists());
     }
 
@@ -1724,8 +2162,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(result.moves.is_empty());
-        assert_eq!(result.errors.len(), 2);
+        assert_eq!(result.moved_count(), 0);
+        assert_eq!(result.failures().count(), 2);
         assert!(first.exists());
         assert!(second.exists());
         assert!(!tmp.path().join("Radiohead/OK Computer.flac").exists());
@@ -1740,11 +2178,23 @@ mod tests {
         add_track(&db, &source, &title, 1);
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
-        assert_eq!(result.moves.len(), 1, "errors: {:?}", result.errors);
-        let name = result.moves[0].to.file_name().unwrap().to_string_lossy();
+        assert_eq!(
+            result.moved_count(),
+            1,
+            "errors: {:?}",
+            result.failure_messages()
+        );
+        let name = result
+            .moves()
+            .next()
+            .unwrap()
+            .dest()
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
         assert!(name.len() <= MAX_FILE_NAME_BYTES);
         assert!(name.ends_with(".flac"));
-        assert!(result.moves[0].to.exists());
+        assert!(result.moves().next().unwrap().dest().exists());
     }
 
     // ---- Directory cleanup ----
@@ -1799,7 +2249,7 @@ mod tests {
         add_track(&db, &source, "Airbag", 1);
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
-        let dest = result.moves[0].to.clone();
+        let dest = result.moves().next().unwrap().dest().to_path_buf();
 
         // A different rip lands at the vacated path before the undo.
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
@@ -1825,7 +2275,7 @@ mod tests {
         add_track(&db, &source, "Airbag", 1);
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
-        let dest = result.moves[0].to.clone();
+        let dest = result.moves().next().unwrap().dest().to_path_buf();
         std::fs::write(&dest, b"replaced with something else entirely").unwrap();
 
         let undone = undo(&db).unwrap();
@@ -1908,7 +2358,7 @@ mod tests {
             .unwrap();
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
-        let dest = result.moves[0].to.clone();
+        let dest = result.moves().next().unwrap().dest().to_path_buf();
         let dest_str = dest.to_string_lossy().into_owned();
 
         let favourites = queries::load_favourites(&db.conn).unwrap();
@@ -1947,7 +2397,13 @@ mod tests {
             .unwrap();
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
-        let dest = result.moves[0].to.to_string_lossy().into_owned();
+        let dest = result
+            .moves()
+            .next()
+            .unwrap()
+            .dest()
+            .to_string_lossy()
+            .into_owned();
 
         let cached: String = db
             .conn
@@ -1975,17 +2431,17 @@ mod tests {
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
 
-        assert_eq!(result.moves.len(), 2);
-        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.moved_count(), 2);
+        assert_eq!(result.failures().count(), 1);
 
         let logged = log_rows(&db);
         assert_eq!(logged.len(), 2);
-        for file_move in &result.moves {
-            assert!(file_move.to.exists());
+        for file_move in result.moves() {
+            assert!(file_move.dest().exists());
             assert!(
                 logged
                     .iter()
-                    .any(|(_, _, to)| Path::new(to) == file_move.to)
+                    .any(|(_, _, to)| Path::new(to) == file_move.dest())
             );
         }
 
@@ -2016,7 +2472,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(result.moves.len(), 1);
+        assert_eq!(result.moved_count(), 1);
         let logged = log_rows(&db);
         assert_eq!(logged.len(), 1);
         assert!(logged[0].0.is_some());
@@ -2034,8 +2490,8 @@ mod tests {
         std::fs::write(source.parent().unwrap().join("cover.jpg"), b"art").unwrap();
 
         let result = execute(&db, "%album artist%/%album%/%title%", Some(tmp.path())).unwrap();
-        assert_eq!(result.moves.len(), 1);
-        let dest_dir = result.moves[0].to.parent().unwrap();
+        assert_eq!(result.moved_count(), 1);
+        let dest_dir = result.moves().next().unwrap().dest().parent().unwrap();
         assert!(dest_dir.join("cover.jpg").exists());
 
         // Both the audio and the artwork are in the log, so undo restores both.
@@ -2063,10 +2519,17 @@ mod tests {
         queries::upsert_track(&db.conn, &meta).unwrap();
 
         let pattern = "%album artist%/['('$left(%date%,4)')' ]%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%";
-        let result = preview(&db, pattern, Some(tmp.path())).unwrap();
-        assert_eq!(result.moves.len(), 1);
+        let result = preview(&db, pattern, Some(tmp.path()), true).unwrap();
+        assert_eq!(result.moved_count(), 1);
         assert_eq!(
-            result.moves[0].to.file_name().unwrap().to_string_lossy(),
+            result
+                .moves()
+                .next()
+                .unwrap()
+                .dest()
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
             "0110. Bicep - CHROMA 011 A.L.O.E II.flac"
         );
     }
@@ -2087,10 +2550,17 @@ mod tests {
         queries::upsert_track(&db.conn, &meta).unwrap();
 
         let pattern = "%album artist%/['('$left(%date%,4)')' ]%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%";
-        let result = preview(&db, pattern, Some(tmp.path())).unwrap();
-        assert_eq!(result.moves.len(), 1);
+        let result = preview(&db, pattern, Some(tmp.path()), true).unwrap();
+        assert_eq!(result.moved_count(), 1);
         assert_eq!(
-            result.moves[0].to.file_name().unwrap().to_string_lossy(),
+            result
+                .moves()
+                .next()
+                .unwrap()
+                .dest()
+                .file_name()
+                .unwrap()
+                .to_string_lossy(),
             "0111. Bicep - CHROMA 012 TANGZ II.flac"
         );
     }
