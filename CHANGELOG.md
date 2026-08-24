@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **Scanning stops reading the cover art it throws away.** `ParseOptions::read_cover_art(false)` tells lofty not to *decode* a picture frame, not to skip it: holding nothing but a `Read`, it streams the frame into `io::sink()`. Embedded art is around 95% of the average ID3v2 tag, so a 48,000-file library spent 4.1 GiB of every scan pulling JPEGs off the disk to drop them on the floor. koan now walks the frame headers itself and hands lofty a reader that answers with zeros over the picture frames and the trailing padding — both of which lofty is contractually discarding — so those bytes never leave the disk. Over 4,000 real MP3s that is 865 MB unread, 216 KiB a file, with every tag and audio property parsing byte-for-byte as before. There is a per-file floor that bytes don't touch, so expect a scan to shorten by something nearer a fifth than a third. A tag the walk cannot mirror lofty over — unsynchronised v2.2/v2.3, an extended header, a frame ID that isn't one — is read the old way.
+
 - **The queue's album headings carry the record, not a label.** The cover was 22pt — too small to recognise a sleeve by — and the heading read as one run-on line of artist, album and year. Art is 52pt, and the text is the album, its artist, then year · track count · running time · codec, so a run in the queue says what it is without counting rows. The codec only shows when the whole run shares one.
 
 ## v0.28.0 (2026-08-24)

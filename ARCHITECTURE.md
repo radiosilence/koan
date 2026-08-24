@@ -241,6 +241,7 @@ Advancing parks on the next item that is not `Failed`, including one still downl
 |---|---|
 | `scanner.rs` | Parallel library scan: walkdir → rayon metadata extraction → sequential DB upsert, one transaction per 1000-file chunk |
 | `metadata.rs` | Tag reading via lofty (ID3, Vorbis, MP4, etc.), codec detection from extension |
+| `id3v2_pictures.rs` | MP3 tag reads with the embedded art held back — walks the ID3v2 frame headers and serves lofty zeros over the picture frames it would only discard |
 
 ### `format/`
 
