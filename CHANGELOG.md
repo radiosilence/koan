@@ -14,6 +14,10 @@
 
 ### Fixed
 
+- **Correcting a file's tags re-merges it with its remote copy.** `upsert_track` matched by path first, so once a row existed for a file every later scan updated it in place and never reconsidered the cross-source merge. That is wrong exactly when the original tags were bad: a track indexed as `Golden Skans (David E Sugar R` with no track number could not content-match the copy synced from the server, and fixing the tags gave it the right title and a second identical row rather than one. A row matched by path or remote id is now asked the content-match question again against the corrected metadata, and folds its counterpart in if it is there — play history concatenates, lyrics and the embedding fill a gap, favourites follow the path. The album the bad tags invented is dropped with it.
+
+  A library already holding duplicates from this is repaired by `koan scan --force`; a plain scan skips files whose mtime and size have not changed, and it is the re-read that spots the merge.
+
 - **A macOS build made without Xcode had invisible controls.** The accent is read from the asset catalog, compiling it needs `actool`, and that ships with Xcode proper rather than the command line tools. Without it the colour resolved to nothing and the whole app was tinted with nothing — which does not merely lose the colour: every borderless button and the playing row's title and speaker are drawn in `.tint`, so they were invisible rather than uncoloured. It falls back to the system accent, which is visible and still visibly not koan's.
 
 ## v0.28.0 (2026-08-24)
