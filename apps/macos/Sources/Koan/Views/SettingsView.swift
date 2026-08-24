@@ -1,5 +1,6 @@
 import KoanFFI
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Everything needed to set koan up, without opening a terminal.
 ///
@@ -82,6 +83,7 @@ private struct LibrarySettings: View {
     @Environment(ActivityModel.self) private var activity
     @State private var confirmingRebuild = false
     @State private var removing: LibraryFolder?
+    @State private var choosingFolder = false
 
     var body: some View {
         Form {
@@ -111,7 +113,7 @@ private struct LibrarySettings: View {
                         .help("Stop scanning this folder")
                     }
                 }
-                Button("Add Folder…") { model.addFolder() }
+                Button("Add Folder…") { choosingFolder = true }
                     .disabled(activity.isLibraryBusy)
             } header: {
                 Text("Folders")
@@ -185,6 +187,14 @@ private struct LibrarySettings: View {
             Button("Cancel", role: .cancel) { removing = nil }
         } message: {
             Text("Your files are not touched either way. Keeping them leaves records in the library that koan will not scan again.")
+        }
+        .fileImporter(
+            isPresented: $choosingFolder,
+            allowedContentTypes: [.folder],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case .success(let urls) = result else { return }
+            model.addFolders(urls.map(\.path))
         }
     }
 }

@@ -84,7 +84,7 @@ struct KoanApp: App {
     @AppStorage("showLyrics") private var showLyrics = false
 
     var body: some Scene {
-        Window("koan", id: "main") {
+        Window("koan", id: MainWindow.id) {
             Group {
                 if let state {
                     RootView(hotkeys: state.hotkeys)
@@ -346,4 +346,11 @@ private struct StartupErrorView: View {
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+}
+
+/// The main window's scene id. SwiftUI puts it on the `NSWindow`, which is how
+/// the single-key shortcuts tell koan's own window from a sheet or one of the
+/// auxiliary scenes.
+enum MainWindow {
+    static let id = "main"
 }

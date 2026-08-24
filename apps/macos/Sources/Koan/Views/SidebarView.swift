@@ -1,4 +1,3 @@
-import AppKit
 import KoanFFI
 import SwiftUI
 

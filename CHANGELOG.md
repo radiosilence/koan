@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Added
+
+- **The queue groups by album or gives every track its own row, and remembers which you chose.** Grouped is what it was: a heading per contiguous run of a record, tracks underneath carrying a number. Ungrouped drops the headings and gives each row its own sleeve and its full attribution, because there is no heading above it to say what record it is. Each suits a different queue — an album listen wants the headings, a long shuffled queue wants every row to identify itself — so it is a toggle in the queue bar rather than a decision made for you, and it persists.
+
+  Both modes are shown with the active one lit, the way Finder switches view. One icon would have had to choose between naming the mode you are in and the mode you would get, and whichever it named, the other reading is available and wrong.
+
+### Changed
+
+- **The macOS app drops the AppKit workarounds its old deployment target needed.** The floor is macOS 26, so: the hand cursor over a link is `.pointerStyle(.link)` rather than pushing and popping `NSCursor` — which leaked a cursor off the stack whenever a hovered row scrolled away; the artwork sheet sizes itself from a window `RootView` measures with `.onGeometryChange` rather than an `NSViewRepresentable` reaching for `sheetParent` and setting state from inside layout; Add Folder is `.fileImporter` rather than `NSOpenPanel.runModal()` spinning a nested run loop under the main actor; and the organize window no longer stamps its own `NSWindow.identifier`, because SwiftUI now puts the scene id there itself.
+
+  The single-key shortcuts ask for the main window by that scene id instead of naming the windows they must ignore, so a new window scene is no longer a bug waiting for someone to add it to the list. Six files stop importing AppKit; the seven that still do — the key monitor, the responder-chain edit commands, the pasteboard, `NSSearchField`, and Now Playing artwork — have no SwiftUI equivalent.
+
+- **The queue's album headings carry the record, not a label.** The cover was 22pt — too small to recognise a sleeve by — and the heading read as one run-on line of artist, album and year. Art is 52pt, and the text is the album, its artist, then year · track count · running time · codec, so a run in the queue says what it is without counting rows. The codec only shows when the whole run shares one.
+
 ### Fixed
 
 - **Clicks that registered and did nothing.** Four separate things cleared or replaced the detail column's navigation path — a section switch, the sidebar's selection setter, a history move, and the push itself — and none knew about the others, so a push could be undone by an unrelated update landing in the same pass. `Navigator` owns it now: one `Location` value holding the section and the stack pushed on top of it, one history of locations behind it, and a single move that writes both. The sidebar's highlight is stored rather than derived from the stack, so a `List` writing its selection back can no longer pop what was just pushed, and the stack's root is a view of its own, so changing section cannot make SwiftUI discard the path against it.
@@ -10,9 +24,11 @@
 
 - **Picking a search suggestion lands in the section the thing lives in.** It used to push onto the results page and then empty the field, which left you standing on a root that no longer had anything in it. An album opens under Albums, an artist under Artists, and Back returns to whatever you were doing before you searched.
 
-### Changed
+- **Correcting a file's tags re-merges it with its remote copy.** `upsert_track` matched by path first, so once a row existed for a file every later scan updated it in place and never reconsidered the cross-source merge. That is wrong exactly when the original tags were bad: a track indexed as `Golden Skans (David E Sugar R` with no track number could not content-match the copy synced from the server, and fixing the tags gave it the right title and a second identical row rather than one. A row matched by path or remote id is now asked the content-match question again against the corrected metadata, and folds its counterpart in if it is there — play history concatenates, lyrics and the embedding fill a gap, favourites follow the path. The album the bad tags invented is dropped with it.
 
-- **The queue's album headings carry the record, not a label.** The cover was 22pt — too small to recognise a sleeve by — and the heading read as one run-on line of artist, album and year. Art is 52pt, and the text is the album, its artist, then year · track count · running time · codec, so a run in the queue says what it is without counting rows. The codec only shows when the whole run shares one.
+  A library already holding duplicates from this is repaired by `koan scan --force`; a plain scan skips files whose mtime and size have not changed, and it is the re-read that spots the merge.
+
+- **A macOS build made without Xcode had invisible controls.** The accent is read from the asset catalog, compiling it needs `actool`, and that ships with Xcode proper rather than the command line tools. Without it the colour resolved to nothing and the whole app was tinted with nothing — which does not merely lose the colour: every borderless button and the playing row's title and speaker are drawn in `.tint`, so they were invisible rather than uncoloured. It falls back to the system accent, which is visible and still visibly not koan's.
 
 ## v0.28.0 (2026-08-24)
 

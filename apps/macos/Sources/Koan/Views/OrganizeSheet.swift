@@ -1,4 +1,3 @@
-import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -324,12 +323,8 @@ struct OrganizeWindow: View {
 
     @Environment(OrganizeModel.self) private var organize
 
-    var body: some View {
-        content.background(WindowIdentity(Self.id))
-    }
-
     @ViewBuilder
-    private var content: some View {
+    var body: some View {
         if organize.subject != nil {
             OrganizeSheet()
         } else {
@@ -343,31 +338,3 @@ struct OrganizeWindow: View {
     }
 }
 
-/// Stamps an identifier on the hosting window.
-///
-/// The single-key shortcuts are the main window's, and they decide that by
-/// asking the key window what it is. A SwiftUI `Window` scene does not reliably
-/// carry its scene id onto the `NSWindow`, so it is put there rather than
-/// guessed at from the title.
-private struct WindowIdentity: NSViewRepresentable {
-    let id: String
-
-    init(_ id: String) { self.id = id }
-
-    func makeNSView(context: Context) -> NSView {
-        let view = IdentifyingView()
-        view.id = id
-        return view
-    }
-
-    func updateNSView(_ view: NSView, context: Context) {}
-
-    private final class IdentifyingView: NSView {
-        var id = ""
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            window?.identifier = NSUserInterfaceItemIdentifier(id)
-        }
-    }
-}

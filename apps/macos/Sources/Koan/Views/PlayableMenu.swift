@@ -1,4 +1,3 @@
-import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -195,8 +194,7 @@ enum Share {
     private static func deliver(_ result: Result<KoanFFI.Share, Error>, to player: PlayerModel) {
         switch result {
         case .success(let share):
-            NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(share.url, forType: .string)
+            Pasteboard.write(text: share.url)
             if share.skipped > 0 {
                 player.report(
                     "Share link copied — \(share.shared) of \(share.shared + share.skipped) tracks; "
