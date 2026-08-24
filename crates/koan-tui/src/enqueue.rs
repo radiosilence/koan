@@ -10,7 +10,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{LoadState, QueueItemId};
 
 use crate::app::PickerAction;
-use crate::download_queue::DownloadQueue;
+use koan_core::remote::queue::DownloadQueue;
 
 /// Build PlaylistItems from track IDs and enqueue according to the action:
 /// - Append: add to end of queue, don't play.

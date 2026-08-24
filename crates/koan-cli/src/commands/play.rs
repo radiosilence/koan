@@ -10,7 +10,6 @@ use koan_core::player::state::LoadState;
 use owo_colors::OwoColorize;
 
 use koan_tui::app::PickerAction;
-use koan_tui::download_queue::DownloadQueue;
 use koan_tui::enqueue::enqueue_playlist;
 use koan_tui::play::TuiCallbacks;
 
@@ -67,7 +66,7 @@ pub fn cmd_play(
 
     let (state, _timeline, viz_snapshot, tx) = Player::spawn();
 
-    let download_queue = DownloadQueue::spawn(tx.clone(), state.clone(), log_buffer.clone());
+    let download_queue = koan_core::remote::queue::shared(&tx, &state, Some(log_buffer.clone())).clone();
 
     // Radio's top-up loop lives in koan-core so every client behaves the same.
     // The TUI used to carry its own copy, which meant a second implementation
@@ -251,7 +250,8 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
     let log_buffer: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
     BufferedLogger::set_buffer(log_buffer.clone());
 
-    let download_queue = DownloadQueue::spawn(cmd_tx.clone(), state.clone(), log_buffer.clone());
+    let download_queue =
+        koan_core::remote::queue::shared(&cmd_tx, &state, Some(log_buffer.clone())).clone();
 
     std::thread::sleep(Duration::from_millis(300));
 

@@ -1224,35 +1224,23 @@ pub fn remote_unavailable(cfg: &Config) -> String {
 }
 
 /// Spawn background downloads for remote tracks with LoadState::Pending.
+/// Submit tracks for download.
+///
+/// Everything that is not the TUI reaches downloads through here — the FFI, the
+/// GraphQL server and radio's auto-extend. It used to spawn a thread per batch
+/// and walk it with a `for` loop, which meant one track at a time no matter
+/// what `download_workers` said, and no reordering when the cursor moved. It
+/// hands the batch to the shared queue now, which is the same pool, priority
+/// lane and cursor watcher the TUI has always used.
 pub fn spawn_downloads(
     pending: Vec<(i64, QueueItemId)>,
     tx: crossbeam_channel::Sender<PlayerCommand>,
     state: Arc<SharedPlayerState>,
 ) {
-    let log_buf: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
-    if let Err(e) = std::thread::Builder::new()
-        .name("koan-download".into())
-        .spawn(move || {
-            let cfg = Config::load().unwrap_or_default();
-            let Some(client) = subsonic_client(&cfg) else {
-                // Marked failed rather than left Pending. A track that cannot
-                // be fetched will never become Ready, and the player waits for
-                // Ready — so returning here quietly meant a queue that sat
-                // saying nothing until it ran off the end.
-                let why = remote_unavailable(&cfg);
-                log::warn!("skipping {} downloads: {}", pending.len(), why);
-                for (_, queue_id) in pending {
-                    state.update_load_state(queue_id, LoadState::Failed(why.clone()));
-                }
-                return;
-            };
-            for (db_id, queue_id) in pending {
-                download_track(db_id, queue_id, &tx, &log_buf, &state, &cfg, &client);
-            }
-        })
-    {
-        log::error!("failed to spawn download thread: {}", e);
+    if pending.is_empty() {
+        return;
     }
+    crate::remote::queue::shared(&tx, &state, None).enqueue(pending);
 }
 
 #[cfg(test)]

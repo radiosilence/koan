@@ -12,7 +12,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::LoadState;
 
 use crate::app::{self, PickerAction};
-use crate::download_queue::DownloadQueue;
+use koan_core::remote::queue::DownloadQueue;
 use crate::enqueue::enqueue_playlist;
 use crate::picker::{
     PickerItem, PickerKind, PickerPartKind, PickerState, all_tracks_sentinel,
