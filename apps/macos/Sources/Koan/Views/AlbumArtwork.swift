@@ -35,6 +35,7 @@ struct AlbumArtwork: View {
                         .resizable()
                         .interpolation(.high)
                         .aspectRatio(contentMode: .fill)
+                        .transition(.opacity)
                 } else {
                     Rectangle()
                         .fill(.quaternary)
@@ -47,6 +48,9 @@ struct AlbumArtwork: View {
                         }
                 }
             }
+            // Covers in the grid land tens of milliseconds apart, and cutting
+            // straight from placeholder to art reads as a stutter of pops.
+            .animation(.easeOut(duration: 0.2), value: image == nil)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)
