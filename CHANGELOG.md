@@ -20,6 +20,12 @@
 
 ### Fixed
 
+- **A track that can never load no longer parks the queue on itself forever.** `play()` leaves the cursor on an item that is not yet Ready and waits for `TrackReady` — and a download that fails never sends one. With the library folder offline and the remote unreadable, every item failed and the player sat stopped on the first one, which is the same picture as a queue still fetching. Failures raise `TrackFailed` now, and the cursor walks on to the next item that can still load, or stops cleanly when there is none.
+
+- **The reason a track cannot play reaches the front ends.** It was a string inside `LoadState::Failed` that nothing read: the TUI drew `!`, the macOS app drew a triangle captioned "Couldn't be fetched", and the actual sentence — a locked keychain, a server that would not answer — lived in the log file. `QueueEntry` carries it, so the TUI raises it once per distinct reason rather than once per track, the triangle's tooltip says it, and GraphQL clients can read `QueueEntry.failureReason`.
+
+- **Sharing a track asked the config file whether there was a password.** The same mistake `koan remote status` had in v0.27: `remote.password` is empty for every keychain-backed sign-in, so "Remote not configured" was the answer on a perfectly good setup. It goes through `subsonic_client` and reports `remote_unavailable()` like everything else.
+
 - **Clicks that registered and did nothing.** Four separate things cleared or replaced the detail column's navigation path — a section switch, the sidebar's selection setter, a history move, and the push itself — and none knew about the others, so a push could be undone by an unrelated update landing in the same pass. `Navigator` owns it now: one `Location` value holding the section and the stack pushed on top of it, one history of locations behind it, and a single move that writes both. The sidebar's highlight is stored rather than derived from the stack, so a `List` writing its selection back can no longer pop what was just pushed, and the stack's root is a view of its own, so changing section cannot make SwiftUI discard the path against it.
 
   Two consequences worth knowing. Back and Forward now restore the whole location, so returning to a section you had pushed into puts you back where you were rather than at its top. And clicking the sidebar row you are already on does nothing — that write is indistinguishable from one SwiftUI makes itself, and honouring it was half the bug. Back, from the toolbar or ⌘[, is the way out of a detail view.

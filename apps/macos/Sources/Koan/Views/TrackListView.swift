@@ -293,7 +293,7 @@ private struct TrackAvailability: View {
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
-                .help("Couldn't be fetched")
+                .help(item.failureReason ?? "Couldn't be fetched")
         default:
             EmptyView()
         }

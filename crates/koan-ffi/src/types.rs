@@ -232,6 +232,8 @@ pub struct QueueItem {
     pub status: EntryStatus,
     /// 0.0–1.0 while downloading, `None` otherwise.
     pub download_progress: Option<f64>,
+    /// Why this item cannot play, when `status` is `Failed`.
+    pub failure_reason: Option<String>,
 }
 
 impl QueueItem {
@@ -271,6 +273,10 @@ impl QueueItem {
             duration_ms: item.duration_ms,
             status,
             download_progress,
+            failure_reason: match &item.load_state {
+                LoadState::Failed(reason) => Some(reason.clone()),
+                _ => None,
+            },
         }
     }
 }
@@ -294,6 +300,7 @@ impl From<&QueueEntry> for QueueItem {
             duration_ms: e.duration_ms,
             status: e.status.into(),
             download_progress,
+            failure_reason: e.error.clone(),
         }
     }
 }

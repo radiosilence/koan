@@ -150,6 +150,8 @@ pub struct QueueEntry {
     pub duration_ms: Option<u64>,
     pub status: QueueEntryStatus,
     pub download_progress: Option<(u64, u64)>,
+    /// Why this entry cannot play, when `status` is `Failed`.
+    pub error: Option<String>,
 }
 
 /// Pre-built visible queue — single atomic snapshot for the UI.
@@ -855,6 +857,10 @@ impl SharedPlayerState {
                 duration_ms,
                 status,
                 download_progress: dl_progress,
+                error: match &item.load_state {
+                    LoadState::Failed(reason) => Some(reason.clone()),
+                    _ => None,
+                },
             });
         }
 

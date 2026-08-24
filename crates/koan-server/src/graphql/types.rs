@@ -438,6 +438,7 @@ pub(super) struct GqlQueueEntry {
     pub is_current: bool,
     pub status: GqlQueueEntryStatus,
     pub download_progress: Option<GqlDownloadProgress>,
+    pub failure_reason: Option<String>,
 }
 
 #[Object(name = "QueueEntry")]
@@ -491,6 +492,11 @@ impl GqlQueueEntry {
     /// Download progress — present only when the track is being downloaded.
     async fn download_progress(&self) -> Option<&GqlDownloadProgress> {
         self.download_progress.as_ref()
+    }
+
+    /// Why the entry cannot play — present only when `status` is `FAILED`.
+    async fn failure_reason(&self) -> Option<&str> {
+        self.failure_reason.as_deref()
     }
 }
 
@@ -810,6 +816,7 @@ impl GqlQueueSnapshot {
                     download_progress: entry
                         .download_progress
                         .map(|(downloaded, total)| GqlDownloadProgress { downloaded, total }),
+                    failure_reason: entry.error.clone(),
                 }
             })
             .collect();
