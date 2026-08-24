@@ -1,10 +1,18 @@
+
 # koan
 
 A music player for people who give a shit about audio quality.
 
 <img width="874" height="942" alt="Screenshot 2026-03-04 at 18 30 07" src="https://github.com/user-attachments/assets/99782de3-5683-4dd9-97b6-10782e8e4099" />
 
-Pure Rust, Ratatui TUI. Bit-perfect playback, gapless transitions, fast library indexing, Subsonic/Navidrome integration, fb2k-style format strings. No Electron. No subscriptions. No bullshit.
+<img width="1405" height="905" alt="Screenshot 2026-08-24 at 23 32 18" src="https://github.com/user-attachments/assets/c0ac41f2-3cde-4ad4-8aa4-e53859d6559d" />
+
+<img width="1413" height="956" alt="Screenshot 2026-08-24 at 23 30 08" src="https://github.com/user-attachments/assets/8ec2f049-524a-4437-8bf3-91172c6b4f26" />
+
+
+<img width="1630" height="1167" alt="Screenshot 2026-08-24 at 23 35 01" src="https://github.com/user-attachments/assets/cb7f9ca0-61eb-4e7e-bebc-43fbc11a7c78" />
+
+Pure Rust, Ratatui TUI / macOS GUI. Bit-perfect playback, gapless transitions, fast library indexing, Subsonic/Navidrome integration, fb2k-style format strings. No Electron. No subscriptions. No bullshit.
 
 <img width="406" height="182" alt="Screenshot 2026-03-04 at 18 30 32" src="https://github.com/user-attachments/assets/d4fff1f7-7c1f-4aaa-87aa-41bd2b9c22f7" />
 
