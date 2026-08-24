@@ -47,6 +47,10 @@ struct TrackListView: View {
                         }
                     }
                     .listStyle(.inset)
+                    // Otherwise the List paints over the window's wash and the
+                    // record's colour stops in a line under the header.
+                    .scrollContentBackground(.hidden)
+
                     // The List's own double-click hook. Wired into selection
                     // rather than the gesture system, so it doesn't steal the
                     // first click.

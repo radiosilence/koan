@@ -79,7 +79,7 @@ struct ArtworkBleed: View {
         .allowsHitTesting(false)
         // One record dissolving into the next over long enough that you notice
         // the room has changed colour without ever catching it changing.
-        .animation(.easeInOut(duration: 3), value: generation)
+        .animation(.easeInOut(duration: 2), value: generation)
         .task(id: source) { await load() }
     }
 

@@ -46,6 +46,29 @@ struct RootView: View {
     /// it used to be.
     @State private var columns: NavigationSplitViewVisibility = .automatic
 
+    /// What the window is washed in: the record you opened, or the one playing,
+    /// and only where either means something. A library grid is its own colour.
+    private var washSource: AlbumArtwork.Source? {
+        if case .album(let id) = nav.stack.wrappedValue.last {
+            .album(id)
+        } else if nav.section == .queue {
+            bleed
+        } else {
+            nil
+        }
+    }
+
+    /// What the *controls* take their colour from. The page you are on first —
+    /// an album's own record — and what is playing everywhere else, so a
+    /// favourites list is still coloured by the music rather than by nothing.
+    private var tintSource: AlbumArtwork.Source? {
+        if case .album(let id) = nav.stack.wrappedValue.last {
+            .album(id)
+        } else {
+            bleed
+        }
+    }
+
     /// Which record is playing — artist as well as title, because "Greatest
     /// Hits" is not one record.
     private var playingRecord: String? {
@@ -61,15 +84,7 @@ struct RootView: View {
         // environment `RootView` was handed, so anything it needs is captured
         // here. Reading an `@Environment` inside that closure — including to
         // put one back — traps, and the app dies on launch.
-        // An album page washes the window in the record you opened; everywhere
-        // else it is the record playing, and only where that means something.
-        let wash: AlbumArtwork.Source? = if case .album(let id) = nav.stack.wrappedValue.last {
-            .album(id)
-        } else if nav.section == .queue {
-            bleed
-        } else {
-            nil
-        }
+        let wash = washSource
         let washDrifts = player.isPlaying
         let artCache = art
 
@@ -136,8 +151,8 @@ struct RootView: View {
         .onChange(of: playingRecord, initial: true) { _, _ in
             bleed = player.currentTrackId.map { .track($0) }
         }
-        .task(id: bleed) {
-            guard let bleed, let cover = await art.image(for: bleed) else {
+        .task(id: tintSource) {
+            guard let tintSource, let cover = await art.image(for: tintSource) else {
                 recordTint = nil
                 return
             }
@@ -148,7 +163,7 @@ struct RootView: View {
         // rings — keeps the declared accent, and that is deliberately a neutral
         // so the two never argue.
         .tint(recordTint ?? .koanAccent)
-        .animation(.easeInOut(duration: 3), value: recordTint)
+        .animation(.easeInOut(duration: 2), value: recordTint)
         // The toolbar paints its own ground over whatever is behind it, which
         // put a hard grey strip across the top of a queue washed in the colour
         // of the record. Hidden, the glass controls sit in that colour — which
