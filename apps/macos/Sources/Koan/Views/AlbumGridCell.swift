@@ -28,24 +28,33 @@ struct AlbumGridCell: View {
                         Text(codec.uppercased())
                             .font(.system(size: 9, weight: .semibold).monospaced())
                             .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 2)
-                            .background(.black.opacity(0.55), in: Capsule())
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            // Clear glass, not a black scrim: over artwork the
+                            // point is to stay readable without hiding the
+                            // corner of the cover it sits on.
+                            .glassEffect(.clear, in: .capsule)
                             .padding(6)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    FavouriteButton(
-                        isOn: library.isFavourite(album: album.id),
-                        showing: hovering,
-                        size: .callout
-                    ) {
-                        library.toggleFavourite(album: album.id)
-                    }
                     // Over artwork, which can be any colour — the plain
-                    // tertiary heart disappears against half of them.
-                    .shadow(color: .black.opacity(0.6), radius: 3)
-                    .padding(7)
+                    // tertiary heart disappears against half of them. Glass
+                    // gives it a ground of its own, so the shape is legible
+                    // whatever is behind it, and it grows in on hover rather
+                    // than fading a shadowed glyph up.
+                    if hovering || library.isFavourite(album: album.id) {
+                        FavouriteButton(
+                            isOn: library.isFavourite(album: album.id),
+                            size: .callout
+                        ) {
+                            library.toggleFavourite(album: album.id)
+                        }
+                        .padding(7)
+                        .glassEffect(.clear.interactive(), in: .circle)
+                        .glassEffectTransition(.materialize)
+                        .padding(7)
+                    }
                 }
 
             Text(album.title)
@@ -68,6 +77,7 @@ struct AlbumGridCell: View {
             }
         }
         .onHover { hovering = $0 }
+        .animation(.smooth(duration: 0.18), value: hovering)
         .contextMenu { PlayableMenu(playable: .album(album)) }
         .draggablePlayable(.album(album))
     }

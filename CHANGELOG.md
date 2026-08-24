@@ -1,8 +1,22 @@
 # Changelog
 
-## Unreleased
+## v0.30.0 (2026-08-24)
 
 ### Changed
+
+- **The window takes its colour from the record.** koan's chrome used to be pink whatever was playing. Now the cover of the record on — or of the album page you opened — is blurred out into a wash across the whole window, under the toolbar, the sidebar and the transport, so every piece of glass in the app sits in that colour. It drifts while something is playing, on three periods that never line up so it never reads as a loop, and settles where it is when you stop. One record dissolves into the next over two seconds; the old cover stays up until the new one is in hand rather than wiping through a placeholder, and a record with no art is no wash rather than a grey one.
+
+  The controls follow it. The declared accent becomes a near-black neutral — all it drives is what AppKit draws, list selection and focus rings, and at that weight it stops competing — while the SwiftUI tint is the dominant colour of the sleeve: a saturation-weighted circular mean of hue, clamped to stay legible on dark chrome. An average would not do, because averaging every pixel of a busy cover gives the same brown-grey every time as opposite hues cancel.
+
+  It follows the *record*, not the track: artwork is fetched per track, so re-deriving it would ask the server for another copy of the same sleeve every few minutes. And it is not tied to scroll position — the wash says what is playing, and following the scroll would have it announce whichever record you happened to be looking at.
+
+- **The macOS app is built out of Liquid Glass.** Not a coat of blur over the old chrome — the real macOS 26 material, and the layout changes it asks for. The transport is a slab of glass floating over the stage rather than a bar welded to the window's bottom edge behind a divider: the queue scrolls *under* it, fading out at the soft scroll edge as it goes, because glass with nothing moving behind it is just a grey rectangle.
+
+  It hangs off the window rather than the detail column. A `NavigationStack` drops decoration applied around it the moment it pushes, which took the transport off every album and artist page; each screen now makes its own room for it instead. It stops short of the sidebar, and takes the full width when the sidebar is closed. Play/pause is bigger than the two beside it and no longer goes dead when nothing is queued — it is the control you reach for without looking.
+
+- **The toolbar says what belongs together.** `ToolbarSpacer` replaces a `Spacer` smuggled inside a `ToolbarItem`, so filtering and sorting sit on separate panes of glass instead of sharing one joined capsule with the lyrics toggle. Its background is hidden, so the wash runs behind it rather than stopping in a grey line.
+
+- **Everything laid over artwork is glass now.** The codec badge on a sleeve is clear glass rather than a black scrim hiding the corner it sits on; the favourite heart gets a ground of its own instead of a drop shadow fighting whatever is behind it, and grows in on hover. Artist chips, the shortcut sheet's key caps, the picker's commit bar and the error toast follow — the toast tinted rather than bordered, since glass already has an edge.
 
 - **The transport and the queue show what changed.** The playing indicator's rule — motion tells you a state is live, where a glyph only names it — applied to the four places that most needed it. Play/pause morphs between its symbols rather than swapping them. A skip bounces the arrow that was pressed: on a remote library the next track takes a moment to load, and until it does nothing else on the bar has moved, so the press reads as dropped and gets repeated. The transport's title and artist cross-fade on a track change, which gapless playback otherwise leaves unmarked. Cover art fades in rather than cutting, because in the album grid covers land tens of milliseconds apart and the hard cut reads as a stutter of pops.
 
