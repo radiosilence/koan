@@ -23,15 +23,19 @@ struct SidebarView: View {
         @Bindable var library = library
         @Bindable var search = search
 
+        // The lit row is the section being browsed, and nothing else. Deriving
+        // it from the detail stack — so that an album reached from anywhere lit
+        // Albums — meant pushing a destination moved the selection, and a List
+        // writes a moved selection back through its binding. The setter below
+        // then popped the path it had just been given, so a click on a search
+        // result registered and went nowhere.
         List(selection: Binding(
-            get: { library.navSelection },
+            get: { library.section },
             set: { chosen in
                 guard let chosen else { return }
                 // Choosing a section always lands on its root — including the
                 // one you are already in, which is otherwise a trip out to
-                // another section and back. `navSelection` follows the detail
-                // stack, so this also covers choosing Albums from inside an
-                // album you reached through Favourites.
+                // another section and back.
                 library.section = chosen
                 library.popToRoot()
             }
