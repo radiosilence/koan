@@ -8,6 +8,10 @@
 
   A downloading queue row said the same thing twice — a static arrow in the status column and a progress bar further along it — so the bar is gone and the arrow is the ring that fills, in the column the eye already reads for state. Reduce Motion drops the bounce; the cross-fades stay, being fades rather than movement.
 
+### Fixed
+
+- **The sidebar said no remote tracks were cached, however many were.** The count asked for tracks whose `source` is `'cached'` — a value the schema allows and nothing writes, because downloading a track does not change where it came from. What a download writes is `cached_path`, which is what `set_cached_path` sets and clearing the cache nulls. Counted from there it agrees with the files on disk.
+
 ## v0.29.1 (2026-08-24)
 
 ### Changed
