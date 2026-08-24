@@ -165,3 +165,84 @@ pub fn generate_mp3_with_both_tags(path: &Path, id3v2_title: &str, id3v1_title: 
 
     std::fs::write(path, out).expect("failed to write MP3 file");
 }
+
+/// Generate an MP3 whose ID3v2 tag carries an embedded picture, at ID3v2 major
+/// version `version` (2, 3 or 4).
+///
+/// The artist frame is written *after* the picture on purpose: anything that
+/// miscounts the picture's length reads the artist out of the middle of a JPEG.
+/// Returns the picture frame's payload range in the file — the whole of what
+/// a tag reader skips, prefix included, not just the image bytes.
+pub fn generate_mp3_with_picture(
+    path: &Path,
+    version: u8,
+    title: &str,
+    artist: &str,
+    picture: &[u8],
+) -> std::ops::Range<u64> {
+    /// Encode a synchsafe integer — seven bits to the byte.
+    fn synch(n: u32) -> u32 {
+        (n & 0x7F)
+            | ((n & (0x7F << 7)) << 1)
+            | ((n & (0x7F << 14)) << 2)
+            | ((n & (0x7F << 21)) << 3)
+    }
+
+    let frame = |out: &mut Vec<u8>, id_v2: &str, id_v3: &str, body: &[u8]| {
+        let len = body.len() as u32;
+        if version == 2 {
+            out.extend_from_slice(id_v2.as_bytes());
+            out.extend_from_slice(&len.to_be_bytes()[1..]);
+        } else {
+            out.extend_from_slice(id_v3.as_bytes());
+            let len = if version == 4 { synch(len) } else { len };
+            out.extend_from_slice(&len.to_be_bytes());
+            out.extend_from_slice(&[0, 0]); // flags
+        }
+        out.extend_from_slice(body);
+    };
+
+    let mut frames: Vec<u8> = Vec::new();
+
+    let mut text = vec![0u8]; // ISO-8859-1
+    text.extend_from_slice(title.as_bytes());
+    frame(&mut frames, "TT2", "TIT2", &text);
+
+    let mut art = vec![0u8]; // ISO-8859-1
+    if version == 2 {
+        art.extend_from_slice(b"JPG");
+    } else {
+        art.extend_from_slice(b"image/jpeg\0");
+    }
+    art.push(3); // cover (front)
+    art.push(0); // empty description
+    art.extend_from_slice(picture);
+    let picture_start = frames.len() + if version == 2 { 6 } else { 10 };
+    let picture_len = art.len();
+    frame(&mut frames, "PIC", "APIC", &art);
+
+    let mut text = vec![0u8];
+    text.extend_from_slice(artist.as_bytes());
+    frame(&mut frames, "TP1", "TPE1", &text);
+
+    // Padding, which lofty reads and drops just as it does the picture.
+    let tag_len = frames.len() + 64;
+
+    let mut out: Vec<u8> = Vec::new();
+    out.extend_from_slice(b"ID3");
+    out.extend_from_slice(&[version, 0, 0]);
+    out.extend_from_slice(&synch(tag_len as u32).to_be_bytes());
+    out.extend_from_slice(&frames);
+    out.resize(10 + tag_len, 0);
+
+    // MPEG-1 Layer III, 128 kbps, 44.1 kHz, stereo — 417 bytes a frame.
+    for _ in 0..40 {
+        out.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x00]);
+        out.extend_from_slice(&[0u8; 413]);
+    }
+
+    std::fs::write(path, out).expect("failed to write MP3 file");
+
+    let start = (10 + picture_start) as u64;
+    start..start + picture_len as u64
+}
