@@ -3,6 +3,13 @@ import KoanFFI
 import SwiftUI
 
 struct SidebarView: View {
+    /// The transport bar's height. The bar is a `safeAreaInset` on the split
+    /// view, which reserves space in the window but not inside this List — so
+    /// the footer drew underneath it and everything below the first activity
+    /// row was cut off. Measured in `RootView` and passed down rather than
+    /// guessed at, for the same reason the detail column measures it.
+    let bottomInset: CGFloat
+
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
     @Environment(SearchModel.self) private var search
@@ -91,6 +98,7 @@ struct SidebarView: View {
         .onChange(of: searchFocused) { _, new in NSLog("SIDEBAR searchFocused = \(new)") }
         .safeAreaInset(edge: .bottom) {
             footer
+                .padding(.bottom, bottomInset)
         }
     }
 

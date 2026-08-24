@@ -35,7 +35,7 @@ struct RootView: View {
         @Bindable var ui = ui
 
         NavigationSplitView {
-            SidebarView()
+            SidebarView(bottomInset: transportHeight)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
             NavigationStack(path: $library.path) {
