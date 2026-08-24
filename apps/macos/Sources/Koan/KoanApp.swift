@@ -226,7 +226,7 @@ struct KoanApp: App {
                 Divider()
                 Button("Find") {
                     guard let state else { return }
-                    if state.nav.section.filterPlaceholder != nil {
+                    if state.nav.section?.filterPlaceholder != nil {
                         state.ui.focusFilter()
                     } else {
                         state.ui.focusSearch()

@@ -15,9 +15,10 @@ import SwiftUI
 /// `safeAreaInset` and the lyrics panel an `inspector` for the same reason —
 /// both add chrome without taking the detail column's width away.
 ///
-/// There is one `NavigationStack` for the whole detail column and one owner of
-/// its path, `Navigator`. Per-browser stacks can't be driven from outside, and
-/// search needs to push you into one.
+/// The detail column shows one page, chosen by `Navigator`. There is no
+/// `NavigationStack`: koan navigates like a browser — any page from any page,
+/// with a linear history — and a stack navigates a hierarchy that does not
+/// exist here.
 struct RootView: View {
     let hotkeys: Hotkeys
 
@@ -49,12 +50,10 @@ struct RootView: View {
     /// What the window is washed in: the record you opened, or the one playing,
     /// and only where either means something. A library grid is its own colour.
     private var washSource: AlbumArtwork.Source? {
-        if case .album(let id) = nav.stack.wrappedValue.last {
-            .album(id)
-        } else if nav.section == .queue {
-            bleed
-        } else {
-            nil
+        switch nav.current {
+        case .album(let id): .album(id)
+        case .section(.queue): bleed
+        default: nil
         }
     }
 
@@ -62,11 +61,7 @@ struct RootView: View {
     /// an album's own record — and what is playing everywhere else, so a
     /// favourites list is still coloured by the music rather than by nothing.
     private var tintSource: AlbumArtwork.Source? {
-        if case .album(let id) = nav.stack.wrappedValue.last {
-            .album(id)
-        } else {
-            bleed
-        }
+        if case .album(let id) = nav.current { .album(id) } else { bleed }
     }
 
     /// Which record is playing — artist as well as title, because "Greatest
@@ -92,48 +87,13 @@ struct RootView: View {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
-            NavigationStack(path: nav.stack) {
-                StageView()
-                    .clearsTransport(transportHeight)
-                    // A page with no wash needs a ground of its own. The
-                    // window's is the wash now, so anything transparent
-                    // composites onto it — and onto the page you came from,
-                    // which is what a library grid was doing.
-                    .background(nav.section == .queue ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
-                    // The stack draws its own back button for pushed
-                    // destinations, next to the pair we already have — three
-                    // chevrons in a row. Ours can cross sections and search
-                    // jumps, which the stack's cannot, so the stack's goes.
-                    .navigationDestination(for: Route.self) { route in
-                        switch route {
-                        case .album(let id):
-                            AlbumDetailView(albumId: id)
-                                .navigationBarBackButtonHidden(true)
-                                .clearsTransport(transportHeight)
-                                // Its own ground and its own wash, rather than
-                                // borrowing the window's. A pushed view lingers
-                                // in the hierarchy after you pop it, and a
-                                // transparent one goes on drawing itself over
-                                // the grid you came back to.
-                                .background {
-                                    ZStack {
-                                        Rectangle().fill(.background)
-                                        ArtworkBleed(
-                                            source: .album(id),
-                                            drifts: player.isPlaying
-                                        )
-                                    }
-                                }
-                        case .artist(let id):
-                            ArtistDetailView(artistId: id)
-                                .navigationBarBackButtonHidden(true)
-                                .clearsTransport(transportHeight)
-                                // An artist is a shelf of records rather than
-                                // one, so there is no wash to show through.
-                                .background(.background)
-                        }
-                    }
-            }
+            StageView()
+                .clearsTransport(transportHeight)
+                // Every page carries its own ground. The window's is the wash,
+                // so a transparent page composites onto it — and onto the page
+                // before it, which is what left an album drawing itself across
+                // the grid you came back to.
+                .background { PageGround(source: washSource, drifts: player.isPlaying) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .inspector(isPresented: $showLyrics) {
@@ -200,12 +160,9 @@ struct RootView: View {
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { handleSubmit() }
-        // On the window rather than inside the detail column: a
-        // `NavigationStack` drops decoration applied around it the moment it
-        // pushes, and the transport vanished on every album and artist page.
-        // Padded clear of the sidebar instead, because glass floating on glass
-        // reads as neither. Each screen makes its own room with
-        // `clearsTransport`.
+        // On the window rather than inside the detail column, padded clear of
+        // the sidebar: glass floating on glass reads as neither. The page makes
+        // its own room with `clearsTransport`.
         .overlay(alignment: .bottom) {
             TransportBar()
                 .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
@@ -221,8 +178,8 @@ struct RootView: View {
         .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { ui.windowSize = $0 }
         .toolbar {
-            // Spans section switches and search jumps, which a NavigationStack's
-            // own back button cannot — it only knows about one stack.
+            // Back and forward walk the pages you actually visited, in order,
+            // wherever they were.
             ToolbarItemGroup(placement: .navigation) {
                 Button { nav.goBack() } label: {
                     Label("Back", systemImage: "chevron.left")
@@ -244,7 +201,7 @@ struct RootView: View {
 
             // Filtering what is on screen belongs with it, not in the sidebar
             // search, which navigates away instead of narrowing.
-            if let placeholder = nav.section.filterPlaceholder {
+            if let placeholder = nav.section?.filterPlaceholder {
                 ToolbarItem(placement: .primaryAction) {
                     FilterField(
                         placeholder: placeholder,
@@ -346,48 +303,70 @@ struct RootView: View {
         switch selection {
         case .track(let id, let albumId):
             // A track lives on its album; that's where you'd play it from.
-            if let albumId { nav.jump(to: .album(albumId), highlighting: id) }
+            if let albumId { nav.open(album: albumId, highlighting: id) }
         case .album(let id):
-            nav.jump(to: .album(id))
+            nav.open(album: id)
         case .artist(let id):
-            nav.jump(to: .artist(id))
+            nav.open(artist: id)
         }
         search.reset()
     }
 }
 
-/// The root of the detail stack.
+/// The page. One `switch`, no stack.
 ///
-/// A view of its own rather than a `switch` written inline: a `NavigationStack`
-/// discards its path when its root changes identity in the same update, and
-/// each branch of a `switch` in a `ViewBuilder` is a different view. Keeping
-/// the switch one level inside gives the stack a root that never changes, which
-/// is what lets the section and the stack move together.
 private struct StageView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
 
     var body: some View {
-        switch nav.section {
-        case .queue:
+        switch nav.current {
+        case .section(.queue):
             QueueView()
-        case .searchResults:
+        case .section(.searchResults):
             SearchResultsView()
-        case .albums:
+        case .section(.albums):
             AlbumBrowser()
-        case .artists:
+        case .section(.artists):
             ArtistBrowser()
-        case .favourites:
+        case .section(.favourites):
             TrackListView(
                 title: "Favourites",
-                subtitle: Format.count(Int64(library.visibleFavourites.count), "track"),
-                tracks: library.visibleFavourites,
-                mixedAlbums: true
+                subtitle: Format.count(Int64(library.favourites.count), "track"),
+                tracks: library.favourites
             )
-        case .playHistory:
+        case .section(.playHistory):
             HistoryView()
-        case .snapshots:
+        case .section(.snapshots):
             SnapshotsView()
+        case .album(let id):
+            AlbumDetailView(albumId: id)
+        case .artist(let id):
+            ArtistDetailView(artistId: id)
+        }
+    }
+}
+
+/// What a page sits on.
+///
+/// A record washes itself in its own cover; everywhere else is either the
+/// window's wash showing through — the queue — or an opaque ground of its own.
+private struct PageGround: View {
+    let source: AlbumArtwork.Source?
+    let drifts: Bool
+
+    @Environment(Navigator.self) private var nav
+
+    var body: some View {
+        if case .album = nav.current {
+            ZStack {
+                Rectangle().fill(.background)
+                ArtworkBleed(source: source, drifts: drifts)
+            }
+        } else if nav.section == .queue {
+            Color.clear
+        } else {
+            Rectangle().fill(.background)
         }
     }
 }

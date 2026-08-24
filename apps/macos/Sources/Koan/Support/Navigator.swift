@@ -1,50 +1,27 @@
 import SwiftUI
 
-/// A pushed destination.
-///
-/// One enum rather than a type per kind. A `NavigationStack` matches
-/// destinations by type, so two `Int64`-shaped routes in one stack collide
-/// silently and send you to whichever was registered first. It also makes the
-/// stack a plain `Equatable` array, which is what lets the navigator tell a
-/// real move from SwiftUI echoing back what is already there.
-enum Route: Hashable {
-    case album(Int64)
-    case artist(Int64)
-
-    /// The section this thing lives in, for jumps that arrive from outside any
-    /// section — search, mainly.
-    var home: Navigator.Section {
-        switch self {
-        case .album: .albums
-        case .artist: .artists
-        }
-    }
-}
-
-/// Where the app is, as one value.
-///
-/// The section and the stack pushed on top of it move together or not at all.
-/// Splitting them is what made navigation unpredictable: a push could be undone
-/// by an unrelated update that only meant to change the section, and the
-/// symptom was always the same and always misleading — the click registered and
-/// nothing happened.
-struct Location: Hashable {
-    var section: Navigator.Section
-    var stack: [Route] = []
-}
-
 /// The one owner of where you are.
 ///
-/// Nothing else writes the detail stack's path, and nothing derives state from
-/// it that can be written back. Every move — a section, a push, a pop, a
-/// history replay — goes through `go(to:)`, which is also the only place that
-/// records history, so back and forward can never disagree with the screen.
+/// koan navigates like a browser, not like a hierarchy. An album is reachable
+/// from the queue, from the grid, from an artist, from search, and none of
+/// those is its parent — so there is no tree to walk and nothing to be "up".
+/// What there is, is a list of pages you have been to and a cursor into it.
+///
+/// This deliberately does not use a `NavigationStack`. A stack navigates by
+/// owning a root and a path below it, discards that path whenever the root
+/// changes, and writes the empty path back through its binding — which, with a
+/// root that switched per section, silently undid any move that changed both at
+/// once. Back and forward were already this class's job, and the stack's own
+/// back button was already hidden, so it was navigating nothing and charging a
+/// hierarchy for it.
 ///
 /// The library follows the location rather than the other way round: what is
 /// loaded is a consequence of where you are.
 @MainActor
 @Observable
 final class Navigator {
+    /// A row in the sidebar. Distinct from a page only in that these are the
+    /// ones you can click to.
     enum Section: Hashable, Identifiable {
         case queue
         case searchResults
@@ -70,17 +47,32 @@ final class Navigator {
         }
     }
 
-    private(set) var location = Location(section: .queue)
+    /// One page. Everywhere you can be, in one value, with nothing beside it.
+    enum Page: Hashable {
+        case section(Section)
+        case album(Int64)
+        case artist(Int64)
 
-    /// The track a jump was aimed at, so the album view can single it out
+        /// The sidebar row this page *is*, if it is one. A record or an artist
+        /// is not a row, so on those the sidebar lights nothing — which is the
+        /// truth, and is also what makes clicking a row from one of them a move
+        /// rather than a no-op.
+        var section: Section? {
+            if case .section(let section) = self { section } else { nil }
+        }
+    }
+
+    private(set) var current: Page = .section(.queue)
+
+    /// The track a move was aimed at, so the album view can single it out
     /// rather than dropping you at the top of a twenty-track record. Cleared by
     /// the view once it has scrolled to it.
     var highlightedTrackId: Int64?
 
-    /// Every location actually reached. A `NavigationStack` only goes back
-    /// within one stack, so it cannot return you across a section switch or a
-    /// jump from search — which is what "back" means to someone using the app.
-    private var history: [Location] = [Location(section: .queue)]
+    /// Every page actually reached, in the order reached, with a cursor.
+    /// Wandering `queue → album → artist → album` is four entries, not four
+    /// levels of anything.
+    private var history: [Page] = [.section(.queue)]
     private var cursor = 0
 
     private let library: LibraryModel
@@ -89,51 +81,23 @@ final class Navigator {
         self.library = library
     }
 
-    var section: Section { location.section }
+    var section: Section? { current.section }
     var canGoBack: Bool { cursor > 0 }
     var canGoForward: Bool { cursor < history.count - 1 }
 
     // MARK: - Moves
 
-    /// A section, at its root. Asking for the section you are already in comes
-    /// back out of whatever you pushed onto it, which is what ⌘2 on an album
-    /// page should do.
     func show(_ section: Section) {
-        go(to: Location(section: section))
+        go(to: .section(section))
     }
 
-    /// Push onto whatever is showing, so Back returns you to the door you came
-    /// through rather than to a list you never visited.
     func open(album id: Int64, highlighting trackId: Int64? = nil) {
         highlightedTrackId = trackId
-        push(.album(id))
+        go(to: .album(id))
     }
 
     func open(artist id: Int64) {
-        push(.artist(id))
-    }
-
-    /// Land in the section a thing lives in, with the thing pushed.
-    ///
-    /// For arrivals from search: the results page exists only while there is a
-    /// query, so pushing onto it would leave you standing on a root that is
-    /// about to empty. Back returns to what you were doing before you searched.
-    func jump(to route: Route, highlighting trackId: Int64? = nil) {
-        highlightedTrackId = trackId
-        // In two moves, because a `NavigationStack` throws its path away when
-        // its root changes under it — and a section change swaps the root. Set
-        // both at once and the stack answers the push by writing an empty path
-        // back over it, which is how picking an album out of the search
-        // dropdown left you on the album grid. The section lands first, then
-        // the route is pushed onto a stack that has finished rebuilding.
-        //
-        // The cost is a frame of the section's own root before the push. The
-        // cure for that is a stack whose root never changes; see #300.
-        go(to: Location(section: route.home, stack: []))
-        Task { @MainActor [weak self] in
-            guard let self, location.section == route.home, location.stack.isEmpty else { return }
-            go(to: Location(section: route.home, stack: [route]))
-        }
+        go(to: .artist(id))
     }
 
     func goBack() {
@@ -148,9 +112,9 @@ final class Navigator {
         apply(history[cursor])
     }
 
-    /// Go somewhere recorded earlier, stack and all.
-    func go(to next: Location) {
-        guard next != location else { return }
+    /// Go to a page, recording it. The only way anything moves.
+    func go(to next: Page) {
+        guard next != current else { return }
         apply(next)
         // The cursor can already point here: `forget` prunes history without
         // moving the screen, and what follows is usually a move back onto the
@@ -167,64 +131,38 @@ final class Navigator {
     /// Drop a section from history. Search results only exist while there is a
     /// query; once it is gone, they are not somewhere Back can return to.
     func forget(_ section: Section) {
-        guard history.contains(where: { $0.section == section }) else { return }
+        guard history.contains(.section(section)) else { return }
         // Whatever survives behind the cursor keeps its order, so the cursor
         // lands on the entry it was on — or on the last one, if that entry was
         // itself forgotten.
-        let surviving = history[..<cursor].filter { $0.section != section }.count
-        history.removeAll { $0.section == section }
-        if history.isEmpty { history = [location] }
+        let surviving = history[..<cursor].filter { $0 != .section(section) }.count
+        history.removeAll { $0 == .section(section) }
+        if history.isEmpty { history = [current] }
         cursor = min(surviving, history.count - 1)
     }
 
-    private func push(_ route: Route) {
-        var next = location
-        next.stack.append(route)
-        go(to: next)
-    }
-
-    private func apply(_ next: Location) {
-        let changedSection = next.section != location.section
-        location = next
-        if changedSection { library.showing(next.section) }
+    private func apply(_ next: Page) {
+        current = next
+        // Only a section decides what the library loads; arriving at a record
+        // is not a reason to throw away the filter behind it.
+        if let section = next.section, section != library.section {
+            library.showing(section)
+        }
     }
 
     // MARK: - Bindings
 
-    /// The detail stack's path.
-    ///
-    /// SwiftUI writes back through this whenever the stack believes its
-    /// contents changed, including writes carrying what is already there.
-    /// Comparing first is what makes those harmless — only a real change moves
-    /// anything, and a real change is a move like any other.
-    var stack: Binding<[Route]> {
-        Binding(
-            get: { self.location.stack },
-            set: { [weak self] written in
-                guard let self, written != location.stack else { return }
-                var next = location
-                next.stack = written
-                go(to: next)
-            }
-        )
-    }
-
     /// What the sidebar highlights, and what clicking it means.
     ///
-    /// Stored, never derived from the stack: deriving the highlight from the
-    /// path turned every push into a write, and the write popped the thing just
-    /// pushed. A write carrying the section already showing is discarded for
-    /// the same reason — a `List` writes back whenever it decides its selection
-    /// moved, which includes rebuilds it does for its own reasons, and the
-    /// Results row appearing or vanishing is one of those.
-    ///
-    /// So clicking the lit row does nothing. Back is the way out of a detail
-    /// view, from the toolbar or ⌘[, wherever you reached it from.
+    /// A row is lit when the page *is* that row, so a record or an artist lights
+    /// nothing. Nothing is derived from a path any more, so there is no write to
+    /// guard against: a `List` rebuilding and writing its selection back is
+    /// either the page it already shows, which `go(to:)` discards, or a click.
     var sidebarSelection: Binding<Section?> {
         Binding(
-            get: { self.location.section },
+            get: { self.current.section },
             set: { [weak self] chosen in
-                guard let self, let chosen, chosen != location.section else { return }
+                guard let self, let chosen else { return }
                 show(chosen)
             }
         )
