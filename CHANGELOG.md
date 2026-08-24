@@ -94,6 +94,8 @@
 
   The lit row is now the section being browsed and nothing else. Opening an album from search results keeps Results lit, and Back returns you to them.
 
+- **Picking from the search dropdown landed on an empty results page instead of what you picked.** Choosing a suggestion pushes its album or artist and then empties the field, and both happened in one update: the results page is the stack's root at that moment, so clearing the query changed what that root drew while the destination was still landing, and it was discarded against the root it had been pushed onto. Emptying the field is its own update now, so the push settles first.
+
 ## v0.26.0 (2026-08-23)
 
 ### Added
