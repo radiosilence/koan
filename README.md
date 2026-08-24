@@ -15,6 +15,9 @@ indexing, Subsonic/Navidrome integration, fb2k-style format strings.
 
 <img width="874" height="942" alt="The TUI" src="https://github.com/user-attachments/assets/99782de3-5683-4dd9-97b6-10782e8e4099" />
 
+<img width="1824" height="1355" alt="Screenshot 2026-08-25 at 00 06 31" src="https://github.com/user-attachments/assets/e6d734f1-f2a7-4364-a914-ad953ead7da5" />
+
+
 <img width="406" height="182" alt="Screenshot 2026-03-04 at 18 30 32" src="https://github.com/user-attachments/assets/d4fff1f7-7c1f-4aaa-87aa-41bd2b9c22f7" />
 
 ## Install
