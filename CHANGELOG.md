@@ -4,6 +4,10 @@
 
 ### Changed
 
+- **The macOS app drops the AppKit workarounds its old deployment target needed.** The floor is macOS 26, so: the hand cursor over a link is `.pointerStyle(.link)` rather than pushing and popping `NSCursor` — which leaked a cursor off the stack whenever a hovered row scrolled away; the artwork sheet sizes itself from a window `RootView` measures with `.onGeometryChange` rather than an `NSViewRepresentable` reaching for `sheetParent` and setting state from inside layout; Add Folder is `.fileImporter` rather than `NSOpenPanel.runModal()` spinning a nested run loop under the main actor; and the organize window no longer stamps its own `NSWindow.identifier`, because SwiftUI now puts the scene id there itself.
+
+  The single-key shortcuts ask for the main window by that scene id instead of naming the windows they must ignore, so a new window scene is no longer a bug waiting for someone to add it to the list. Six files stop importing AppKit; the seven that still do — the key monitor, the responder-chain edit commands, the pasteboard, `NSSearchField`, and Now Playing artwork — have no SwiftUI equivalent.
+
 - **The queue's album headings carry the record, not a label.** The cover was 22pt — too small to recognise a sleeve by — and the heading read as one run-on line of artist, album and year. Art is 52pt, and the text is the album, its artist, then year · track count · running time · codec, so a run in the queue says what it is without counting rows. The codec only shows when the whole run shares one.
 
 ## v0.28.0 (2026-08-24)

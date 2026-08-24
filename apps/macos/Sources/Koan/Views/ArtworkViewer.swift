@@ -1,4 +1,3 @@
-import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -13,16 +12,17 @@ struct ArtworkViewer: View {
     let subtitle: String?
 
     @Environment(\.dismiss) private var dismiss
-    @State private var host: CGSize = .zero
+    @Environment(UIState.self) private var ui
 
     /// Room for the caption below the cover, and the margin around the lot.
     private static let caption: CGFloat = 76
     private static let margin: CGFloat = 48
 
-    /// Covers are square, so the sheet has to be too — sized off the host
-    /// window rather than the sheet's own proposal, which AppKit answers with
-    /// a tall narrow box that leaves the cover no wider than a thumbnail.
+    /// Covers are square, so the sheet is too — sized off the window it hangs
+    /// from rather than its own proposal, which SwiftUI answers with a tall
+    /// narrow box that leaves the cover no wider than a thumbnail.
     private var side: CGFloat {
+        let host = ui.windowSize
         guard host != .zero else { return 700 }
         let width = host.width - Self.margin * 2
         let height = host.height - Self.margin * 2 - Self.caption
@@ -50,30 +50,10 @@ struct ArtworkViewer: View {
             .frame(height: Self.caption - 16)
         }
         .padding(Self.margin / 2)
-        .background(HostWindowSize(size: $host))
         // A click anywhere dismisses; there is no close button on a picture.
         .contentShape(.rect)
         .onTapGesture { dismiss() }
         .onExitCommand { dismiss() }
-    }
-}
-
-/// Reports the size of the window the sheet is attached to.
-///
-/// A sheet is bounded by its host window but cannot ask SwiftUI how big that
-/// is — `GeometryReader` only sees the sheet's own proposal. `sheetParent` is
-/// the window the sheet hangs from, which is the constraint that matters.
-private struct HostWindowSize: NSViewRepresentable {
-    @Binding var size: CGSize
-
-    func makeNSView(context: Context) -> NSView { NSView() }
-
-    func updateNSView(_ view: NSView, context: Context) {
-        DispatchQueue.main.async {
-            guard let host = view.window?.sheetParent ?? view.window else { return }
-            let frame = host.contentLayoutRect.size
-            if frame != size { size = frame }
-        }
     }
 }
 
