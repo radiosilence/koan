@@ -30,6 +30,12 @@
 
 ### Fixed
 
+- **`just` ran everything with the credential store switched off.** `export KOAN_NO_KEYCHAIN := "1"` sat directly above `check:`, reading as though it belonged to it — but a top-level `export` in a justfile reaches every recipe, so `just macos-run` launched the app with no keychain. With no password there is no server, and koan degraded three ways at once: nothing played, no downloads started, and every record came back with no artwork, which reads as an empty library rather than as being signed out. It is set per-recipe now, on the two that run unsigned test binaries.
+
+- **A client that cannot reach its server says so.** `remote_unavailable()` has produced the right sentence since v0.27 and was called in exactly one place — a `warn:` in the download queue that only a log reader would ever see. `KoanEngine::remote_problem()` asks the question directly, the macOS app asks at startup and reports through the error toast it already had, and `cover_art` returns an error when the server is configured but unusable instead of answering "no art" for every record in the library.
+
+- **A failed artwork fetch is no longer remembered as "this record has no art".** The cache could not tell a server that said no from one that could not be reached, so a blip during a scroll left permanent holes until relaunch. Only a definite answer is recorded now.
+
 - **Dragging an artist's name in the artists list dragged nothing.** The name was a `Button`, and a button consumes the press a drag starts from — so the row queued when dragged and the link on it, standing for the same artist, did not. The app now has one kind of link text rather than two, and every name that navigates to something playable is also a drag source for it.
 
 - **The Homebrew cask warned on every `brew` command.** `depends_on macos: ">= :tahoe"` is a deprecated string comparison; the bare symbol has always meant "that version or newer", so the requirement is unchanged. The workflow that regenerates the cask on release is fixed too, not just the published tap.

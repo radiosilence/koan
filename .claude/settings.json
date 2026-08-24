@@ -1,4 +1,7 @@
 {
+  "env": {
+    "KOAN_NO_KEYCHAIN": "1"
+  },
   "hooks": {
     "PreToolUse": [
       {
@@ -6,7 +9,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if echo \"$TOOL_INPUT\" | grep -q 'git push'; then cd \"$(git rev-parse --show-toplevel)\" && echo 'Pre-push: formatting...' && cargo fmt --all 2>&1 && if ! git diff --quiet; then echo 'Pre-push: cargo fmt changed files. Review and commit them yourself \u2014 refusing to amend.'; exit 1; fi && echo 'Pre-push: running clippy...' && cargo clippy --workspace --all-targets -- -D warnings 2>&1 || { echo 'Clippy failed \u2014 fix before pushing'; exit 1; } && echo 'fmt + clippy clean'; fi"
+            "command": "if echo \"$TOOL_INPUT\" | grep -q 'git push'; then cd \"$(git rev-parse --show-toplevel)\" && echo 'Pre-push: formatting...' && cargo fmt --all 2>&1 && if ! git diff --quiet; then echo 'Pre-push: cargo fmt changed files. Review and commit them yourself — refusing to amend.'; exit 1; fi && echo 'Pre-push: running clippy...' && cargo clippy --workspace --all-targets -- -D warnings 2>&1 || { echo 'Clippy failed — fix before pushing'; exit 1; } && echo 'fmt + clippy clean'; fi"
           }
         ]
       }

@@ -30,6 +30,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState,
 };
+use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
 mod offload;
@@ -642,20 +643,59 @@ impl KoanEngine {
                 return Ok(None);
             };
             let cfg = Config::cached();
+            // No server configured: this record simply has no art.
             if !cfg.remote.enabled {
                 return Ok(None);
             }
+            // Configured but unusable — signed out, or the password cannot be
+            // read. Reported rather than shrugged off: answering "no art" for
+            // every record makes a signed-out client look like a library that
+            // has no covers, which is a long way from where the problem is.
             let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-                return Ok(None);
+                return Err(KoanError::Remote {
+                    message: koan_core::helpers::remote_unavailable(&cfg),
+                });
             };
             match client.get_cover_art(&remote_id, size) {
                 Ok(data) if !data.is_empty() => {
                     let mime = sniff_mime(&data).to_string();
                     Ok(Some(CoverArt { data, mime }))
                 }
-                // No art on the server is normal, not a failure worth surfacing.
-                _ => Ok(None),
+                // The server answered and it has nothing. Normal, and worth
+                // remembering: this record has no art and never will.
+                Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => {
+                    Ok(None)
+                }
+                // A timeout or a dropped connection says nothing about whether
+                // art exists. Reported rather than swallowed, so the caller can
+                // ask again instead of recording "this album has none" for the
+                // rest of the session — and so it appears in the log at all.
+                Err(e) => {
+                    log::warn!("cover art for track {track_id} failed: {e}");
+                    Err(KoanError::Remote {
+                        message: e.to_string(),
+                    })
+                }
             }
+        })
+        .await
+    }
+
+    /// Why the configured server cannot be used, if it cannot.
+    ///
+    /// `None` means there is nothing to say: either no server is configured, or
+    /// the one that is works. A client should not have to watch playback fail
+    /// and artwork come back empty to work out that it is signed out — the
+    /// engine already knows, and every front end asks the same question.
+    pub async fn remote_problem(self: Arc<Self>) -> Option<String> {
+        offload::offload(move || {
+            let cfg = Config::cached();
+            if !cfg.remote.enabled || cfg.remote.url.is_empty() {
+                return None;
+            }
+            koan_core::helpers::subsonic_auth(&cfg)
+                .is_none()
+                .then(|| koan_core::helpers::remote_unavailable(&cfg))
         })
         .await
     }
