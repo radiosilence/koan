@@ -4,6 +4,12 @@
 
 ### Changed
 
+- **The queue takes its colour from the record playing.** A queue is a list of names, and the only thing in it with a colour is the record that is on. Its cover, blurred out, washes the top of the queue and fades across the first few rows — the same treatment an album page gives its header, applied to what is playing rather than to what you opened. It follows the *record*, not the track: artwork is fetched per track, so re-deriving it every few minutes would ask the server for another copy of the same sleeve.
+
+  It drifts while something is playing — a slow wander of scale, rotation and offset on three periods that never line up, so it never reads as a loop — and settles where it is when you stop. One record dissolves into the next over five seconds, long enough that you notice the room has changed colour without catching it changing. The old cover stays up until the new one is in hand rather than wiping through a placeholder, and a record with no art is no wash rather than a grey one.
+
+  Not tied to scroll position. The wash says what is playing, and following the scroll would have it announce whichever record you happened to be looking at instead.
+
 - **The macOS app is built out of Liquid Glass.** Not a coat of blur over the old chrome — the real macOS 26 material, and the layout changes it asks for. The transport is a slab of glass floating over the stage rather than a bar welded to the window's bottom edge behind a divider: the queue scrolls *under* it, fading out at the soft scroll edge as it goes, because glass with nothing moving behind it is just a grey rectangle. It stops short of the sidebar, which is glass in its own right on 26, and stacking the two reads as neither.
 
   It hangs off the window rather than the detail column. A `NavigationStack` drops decoration applied around it the moment it pushes, which took the transport off every album and artist page; each screen now makes its own room for it instead. Play/pause is bigger than the two beside it and no longer goes dead when nothing is queued — it is the control you reach for without looking.
