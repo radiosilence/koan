@@ -2,11 +2,10 @@
 
 A music player for people who give a shit about audio quality.
 
-Pure Rust. One engine, two front ends — a native macOS app and a full-screen
-terminal UI — over the same library, the same config and the same bit-perfect
-output. Gapless transitions, fast library indexing, Subsonic/Navidrome
-integration, fb2k-style format strings. No Electron. No subscriptions. No
-bullshit.
+A Rust audio engine with two front ends on top of it — a native SwiftUI app on
+macOS and a full-screen terminal UI — over the same library, the same config and
+the same output. Bit-perfect playback, gapless transitions, fast library
+indexing, Subsonic/Navidrome integration, fb2k-style format strings.
 
 <img width="1405" height="905" alt="The macOS app" src="https://github.com/user-attachments/assets/c0ac41f2-3cde-4ad4-8aa4-e53859d6559d" />
 
@@ -19,12 +18,6 @@ bullshit.
 <img width="406" height="182" alt="Screenshot 2026-03-04 at 18 30 32" src="https://github.com/user-attachments/assets/d4fff1f7-7c1f-4aaa-87aa-41bd2b9c22f7" />
 
 ## Install
-
-Downloading `Koan.dmg` from the releases page rather than using the cask? The app
-is signed but not notarised — Apple charges for that — so macOS refuses the first
-open and offers only "Move to Trash". Drag it to Applications and run
-`xattr -dr com.apple.quarantine /Applications/kōan.app` once. The cask does this
-for you.
 
 ```bash
 # homebrew (recommended)
@@ -43,6 +36,12 @@ cargo install koan-cli
 git clone https://github.com/radiosilence/koan.git && cd koan
 cargo install --path crates/koan-cli
 ```
+
+Downloading `Koan.dmg` from the releases page rather than using the cask? The app
+is signed but not notarised — Apple charges for that — so macOS refuses the first
+open and offers only "Move to Trash". Drag it to Applications and run
+`xattr -dr com.apple.quarantine /Applications/kōan.app` once. The cask does this
+for you.
 
 Single binary. macOS works out of the box (CoreAudio). Linux needs ALSA dev headers:
 
@@ -98,9 +97,9 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way favourite sync for tracks, albums and artists
 - **Radio mode** -- infinite play using Subsonic similarity, cached artist relationships, and genre matching
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
-- **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` for display and file organization
-- **File organization** -- rename/reorganize your library from inside the TUI using format string patterns
-- **GraphQL API** -- full programmatic control alongside the TUI, or headless. Relay pagination, rich filters, mutations for everything
+- **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` — 59 of them — for display and file organization
+- **File organization** -- rename/reorganize your library from the macOS app or the TUI using format string patterns
+- **GraphQL API** -- full programmatic control alongside the app and TUI, or headless. Relay pagination, rich filters, mutations for everything
 - **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol
 - **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
 - **SQLite FTS5 search** -- full-text search across your entire library
@@ -127,7 +126,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Local + remote unified** | **Yes** | -- | -- | -- | -- | -- | -- |
 | **Album art** | **Halfblock** | Kitty | No | No | Kitty/Sixel | Kitty/Sixel | No |
 | **ReplayGain** | **Yes** | Via MPD | Yes | Yes | No | Via MPD | No |
-| **fb2k format strings** | **55+ functions** | Column fmt | Basic | No | No | Basic | No |
+| **fb2k format strings** | **59 functions** | Column fmt | Basic | No | No | Basic | No |
 | **File organization** | **Yes** | No | No | No | No | No | No |
 | **FTS search** | **SQLite FTS5** | MPD search | Filter | Text | Filter | MPD search | Basic |
 | **Queue undo/redo** | **100-deep** | No | No | No | No | No | No |
@@ -140,7 +139,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Streaming playback** | **Yes (256KB)** | Via MPD | No | No | No | Via MPD | **Yes** |
 | **API / MCP** | **GraphQL + MCP** | MPD protocol | No | No | No | MPD protocol | No |
 | **Tag editing** | Soon | Via MPD | No | Yes | Yes | Via MPD | No |
-| **DSP / EQ** | Soon | Via MPD | Yes | Yes | No | Via MPD | No |
+| **DSP / EQ** | No | Via MPD | Yes | Yes | No | Via MPD | No |
 | **Auth** | **JWT + roles** | No | No | No | No | No | No |
 | **Platforms** | macOS, Linux | Linux/macOS | Linux/macOS/BSD | Linux/macOS/Win | Linux/macOS/Win | Linux/macOS | Linux/macOS |
 | **Maintained** | Yes | Yes | Yes (2.12.0) | Slowing | Yes | Very active | Stale |
@@ -160,7 +159,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Lyrics** | **Synced + plain** | Plugin | No | Plugin |
 | **Visualizer** | **22 modes** | Plugin | No | Plugin |
 | **Tag editing** | Soon | **Yes** | Yes | **Yes** |
-| **DSP / EQ** | Soon | **Yes (VST)** | Yes | Yes |
+| **DSP / EQ** | No | **Yes (VST)** | Yes | Yes |
 | **Platforms** | macOS (app + TUI), Linux (TUI) | Windows/macOS | All | All |
 
 <img width="768" height="612" alt="Screenshot 2026-03-04 at 18 31 01" src="https://github.com/user-attachments/assets/0ad4879e-815f-42f3-8ebe-f6d01616bc96" />
@@ -180,7 +179,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **[Configuration](docs/reference/configuration.md)** | All config fields, layered config, env var overrides |
 | **[Keybindings](docs/reference/keybindings.md)** | Every key in every mode |
 | **[CLI Reference](docs/reference/cli.md)** | All commands, flags, and shell completions |
-| **[Format Strings](docs/format-strings.md)** | fb2k-compatible template syntax and all 55+ functions |
+| **[Format Strings](docs/format-strings.md)** | fb2k-compatible template syntax and all 59 functions |
 | **[Troubleshooting](docs/recipes/troubleshooting.md)** | Common issues and fixes |
 | **[Cache Management](docs/recipes/cache-management.md)** | Download cache, eviction, disk usage |
 
@@ -228,9 +227,9 @@ Requires Swift 6 and macOS 26+.
 
 ## Coming soon
 
-- **DSP pipeline** -- EQ, headphone correction profiles, crossfeed ([plan](/.claude/plans/02-dsp-and-profiles.md))
 - **Tag editing** -- inline editing, bulk operations, vimv-style external editor ([plan](/.claude/plans/04-tagging.md))
 - **Artist metadata** -- bios, images, similar artists from MusicBrainz/Last.fm ([plan](/.claude/plans/09-artist-metadata.md))
+- **Playlists** -- proper playlists, beyond the queue snapshots that stand in for them today
 
 ## Dev
 
