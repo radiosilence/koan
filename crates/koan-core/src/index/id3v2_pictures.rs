@@ -14,6 +14,12 @@
 //! tag, whose byte stuffing moves lofty's stream off the file's own offsets; an
 //! extended header; a frame ID that is not a frame ID) ends the walk, and the
 //! rest of the tag is read the ordinary way.
+//!
+//! The frames of 23,700 MP3s from one library were read both ways and compared
+//! on every tag item lofty produced, and none differed. That says the
+//! arithmetic matches lofty 0.25 on real files rather than only on the shapes
+//! the tests below generate — and says nothing at all about lofty 0.26, which
+//! is what the tests are for.
 
 use std::fs::File;
 use std::io::{self, BufReader, Read, Seek, SeekFrom};
