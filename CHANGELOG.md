@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The transport and the queue show what changed.** The playing indicator's rule — motion tells you a state is live, where a glyph only names it — applied to the four places that most needed it. Play/pause morphs between its symbols rather than swapping them. A skip bounces the arrow that was pressed: on a remote library the next track takes a moment to load, and until it does nothing else on the bar has moved, so the press reads as dropped and gets repeated. The transport's title and artist cross-fade on a track change, which gapless playback otherwise leaves unmarked. Cover art fades in rather than cutting, because in the album grid covers land tens of milliseconds apart and the hard cut reads as a stutter of pops.
+
+  A downloading queue row said the same thing twice — a static arrow in the status column and a progress bar further along it — so the bar is gone and the arrow is the ring that fills, in the column the eye already reads for state. Reduce Motion drops the bounce; the cross-fades stay, being fades rather than movement.
+
 ## v0.29.1 (2026-08-24)
 
 ### Changed
