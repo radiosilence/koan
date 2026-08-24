@@ -19,6 +19,13 @@ enum Pasteboard {
         }
     }
 
+    /// Plain text, for things that are only ever text — a share link.
+    static func write(text: String) {
+        let board = NSPasteboard.general
+        board.clearContents()
+        board.setString(text, forType: .string)
+    }
+
     static func readTrackIds() -> [Int64] {
         guard let data = NSPasteboard.general.data(forType: trackType),
               let ids = try? JSONDecoder().decode([Int64].self, from: data)

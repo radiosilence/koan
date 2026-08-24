@@ -48,9 +48,9 @@ Another koan instance (or another process) is using port 4000. Either:
 
 ### Duplicate tracks after remote sync
 
-koan deduplicates using artist + album + title + track number. If you see duplicates:
+koan deduplicates using artist + album + title + track number, so a local file and the server's copy of it only merge when they agree. If you see duplicates:
 - Tags might differ between local files and the remote server (e.g. different artist spelling)
-- Run `koan scan` after `koan remote sync` to re-merge
+- Fix the tags, then `koan scan --force` — a plain scan skips files whose mtime and size have not changed, and it is the re-read that spots the merge
 
 ### Search returns nothing
 

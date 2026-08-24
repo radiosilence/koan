@@ -2,11 +2,29 @@
 
 ## Unreleased
 
+### Added
+
+- **The queue groups by album or gives every track its own row, and remembers which you chose.** Grouped is what it was: a heading per contiguous run of a record, tracks underneath carrying a number. Ungrouped drops the headings and gives each row its own sleeve and its full attribution, because there is no heading above it to say what record it is. Each suits a different queue — an album listen wants the headings, a long shuffled queue wants every row to identify itself — so it is a toggle in the queue bar rather than a decision made for you, and it persists.
+
+  Both modes are shown with the active one lit, the way Finder switches view. One icon would have had to choose between naming the mode you are in and the mode you would get, and whichever it named, the other reading is available and wrong.
+
 ### Changed
 
 - **Scanning stops reading the cover art it throws away.** `ParseOptions::read_cover_art(false)` tells lofty not to *decode* a picture frame, not to skip it: holding nothing but a `Read`, it streams the frame into `io::sink()`. Embedded art is around 95% of the average ID3v2 tag, so a 48,000-file library spent 4.1 GiB of every scan pulling JPEGs off the disk to drop them on the floor. koan now walks the frame headers itself and hands lofty a reader that answers with zeros over the picture frames and the trailing padding — both of which lofty is contractually discarding — so those bytes never leave the disk. Over 4,000 real MP3s that is 865 MB unread, 216 KiB a file, with every tag and audio property parsing byte-for-byte as before, and reading a file's tags goes about three times faster. A tag the walk cannot mirror lofty over — unsynchronised v2.2/v2.3, an extended header, a frame ID that isn't one — is read the old way.
 
+- **The macOS app drops the AppKit workarounds its old deployment target needed.** The floor is macOS 26, so: the hand cursor over a link is `.pointerStyle(.link)` rather than pushing and popping `NSCursor` — which leaked a cursor off the stack whenever a hovered row scrolled away; the artwork sheet sizes itself from a window `RootView` measures with `.onGeometryChange` rather than an `NSViewRepresentable` reaching for `sheetParent` and setting state from inside layout; Add Folder is `.fileImporter` rather than `NSOpenPanel.runModal()` spinning a nested run loop under the main actor; and the organize window no longer stamps its own `NSWindow.identifier`, because SwiftUI now puts the scene id there itself.
+
+  The single-key shortcuts ask for the main window by that scene id instead of naming the windows they must ignore, so a new window scene is no longer a bug waiting for someone to add it to the list. Six files stop importing AppKit; the seven that still do — the key monitor, the responder-chain edit commands, the pasteboard, `NSSearchField`, and Now Playing artwork — have no SwiftUI equivalent.
+
 - **The queue's album headings carry the record, not a label.** The cover was 22pt — too small to recognise a sleeve by — and the heading read as one run-on line of artist, album and year. Art is 52pt, and the text is the album, its artist, then year · track count · running time · codec, so a run in the queue says what it is without counting rows. The codec only shows when the whole run shares one.
+
+### Fixed
+
+- **Correcting a file's tags re-merges it with its remote copy.** `upsert_track` matched by path first, so once a row existed for a file every later scan updated it in place and never reconsidered the cross-source merge. That is wrong exactly when the original tags were bad: a track indexed as `Golden Skans (David E Sugar R` with no track number could not content-match the copy synced from the server, and fixing the tags gave it the right title and a second identical row rather than one. A row matched by path or remote id is now asked the content-match question again against the corrected metadata, and folds its counterpart in if it is there — play history concatenates, lyrics and the embedding fill a gap, favourites follow the path. The album the bad tags invented is dropped with it.
+
+  A library already holding duplicates from this is repaired by `koan scan --force`; a plain scan skips files whose mtime and size have not changed, and it is the re-read that spots the merge.
+
+- **A macOS build made without Xcode had invisible controls.** The accent is read from the asset catalog, compiling it needs `actool`, and that ships with Xcode proper rather than the command line tools. Without it the colour resolved to nothing and the whole app was tinted with nothing — which does not merely lose the colour: every borderless button and the playing row's title and speaker are drawn in `.tint`, so they were invisible rather than uncoloured. It falls back to the system accent, which is visible and still visibly not koan's.
 
 ## v0.28.0 (2026-08-24)
 

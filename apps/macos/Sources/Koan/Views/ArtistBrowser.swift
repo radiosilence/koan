@@ -177,7 +177,7 @@ struct ArtistDetailView: View {
     }
 }
 
-/// Wrapping row of chips. SwiftUI has no built-in flow layout on macOS 14.
+/// Wrapping row of chips. SwiftUI still has no built-in flow layout.
 struct FlowRow<Item: Identifiable, Content: View>: View {
     let items: [Item]
     @ViewBuilder let content: (Item) -> Content
