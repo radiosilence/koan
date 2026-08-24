@@ -3,58 +3,13 @@ import SwiftUI
 
 struct ArtistBrowser: View {
     @Environment(LibraryModel.self) private var library
-    @State private var hovered: Int64?
     /// Without a selection binding a List row has nothing to do with a click —
     /// which is why this list felt completely dead.
     @State private var selection: Set<Int64> = []
 
     var body: some View {
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
-            HStack(spacing: 10) {
-                Group {
-                    if hovered == artist.id {
-                        RowPlayButton(
-                            playable: .artist(id: artist.id, name: artist.name),
-                            visible: true
-                        )
-                    } else {
-                        Image(systemName: "music.mic")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .frame(width: 18, height: 18)
-                // The name is the way in — a link, so a single click opens the
-                // artist while the rest of the row selects.
-                LinkText(
-                    text: artist.name,
-                    target: .artist(artist.id),
-                    font: .body,
-                    prominent: true
-                )
-                FavouriteButton(
-                    isOn: library.isFavourite(artist: artist.id),
-                    showing: hovered == artist.id,
-                    size: .caption
-                ) {
-                    library.toggleFavourite(artist: artist.id)
-                }
-                .frame(width: 16)
-                Spacer(minLength: 12)
-                Text(Format.count(artist.albumCount, "album"))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 78, alignment: .trailing)
-                Text(Format.count(artist.trackCount, "track"))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 78, alignment: .trailing)
-            }
-            .onHover { inside in
-                if inside { hovered = artist.id } else if hovered == artist.id { hovered = nil }
-            }
-            .frame(height: 24)
-            .rowBehaviour(playable: .artist(id: artist.id, name: artist.name))
+            ArtistRow(artist: artist)
         }
         .contextMenu(forSelectionType: Int64.self) { ids in
             if let id = ids.first,
@@ -72,6 +27,63 @@ struct ArtistBrowser: View {
     }
 }
 
+/// One artist.
+///
+/// Its own view so that hovering it invalidates one row. With the hover state
+/// on the browser, every pointer move across the list rebuilt all of it —
+/// thousands of rows diffed to light up a play button.
+private struct ArtistRow: View {
+    let artist: Artist
+
+    @Environment(LibraryModel.self) private var library
+    @State private var hovered = false
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Group {
+                if hovered {
+                    RowPlayButton(playable: playable, visible: true)
+                } else {
+                    Image(systemName: "music.mic")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .frame(width: 18, height: 18)
+            // The name is the way in — a link, so a single click opens the
+            // artist while the rest of the row selects.
+            LinkText(
+                text: artist.name,
+                target: .artist(artist.id),
+                font: .body,
+                prominent: true
+            )
+            FavouriteButton(
+                isOn: library.isFavourite(artist: artist.id),
+                showing: hovered,
+                size: .caption
+            ) {
+                library.toggleFavourite(artist: artist.id)
+            }
+            .frame(width: 16)
+            Spacer(minLength: 12)
+            Text(Format.count(artist.albumCount, "album"))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 78, alignment: .trailing)
+            Text(Format.count(artist.trackCount, "track"))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .frame(width: 78, alignment: .trailing)
+        }
+        .onHover { hovered = $0 }
+        .frame(height: 24)
+        .rowBehaviour(playable: playable)
+    }
+
+    private var playable: Playable { .artist(id: artist.id, name: artist.name) }
+}
+
 /// An artist's records as a grid, since that's how people think about a
 /// discography — the flat track list is a click away on each album.
 struct ArtistDetailView: View {
@@ -85,7 +97,7 @@ struct ArtistDetailView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
 
-    private var artist: Artist? { library.artists.first { $0.id == artistId } }
+    private var artist: Artist? { library.artist(id: artistId) }
 
     var body: some View {
         ScrollView {
@@ -150,7 +162,7 @@ struct ArtistDetailView: View {
     private func load() async {
         let engine = library.engine
         let id = artistId
-        albums = (try? await engine.albums(artistId: id, sort: .year)) ?? []
+        albums = (try? await engine.albums(artistId: id, sort: .year, search: nil)) ?? []
         similar = (try? await engine.similarArtists(artistId: id)) ?? []
     }
 

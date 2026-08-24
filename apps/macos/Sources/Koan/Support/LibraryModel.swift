@@ -8,10 +8,12 @@ private let historyPageSize: UInt32 = 500
 
 /// Library browsing state.
 ///
-/// Albums and artists are loaded once and filtered in memory — a few thousand
-/// rows is nothing, and it makes the filter field feel instant. Tracks are
-/// never loaded wholesale; there are tens of thousands of them and you only
-/// ever look at one album's worth at a time.
+/// The full album and artist lists are loaded once, because search and the
+/// detail views resolve ids against them. Narrowing them is the database's job:
+/// filtering a few thousand rows in Swift cost sixteen milliseconds of main
+/// thread per keystroke, which is a filter field that visibly lags the typing.
+/// Tracks are never loaded wholesale; there are tens of thousands of them and
+/// you only ever look at one album's worth at a time.
 @MainActor
 @Observable
 final class LibraryModel {
@@ -48,6 +50,11 @@ final class LibraryModel {
             refilter()
         }
     }
+
+    /// In flight for the sections whose filter is a query. Long enough that a
+    /// burst of typing is one round trip, short enough not to read as lag.
+    private var filterQuery: Task<Void, Never>?
+    private static let filterDebounce = Duration.milliseconds(120)
 
     /// Newest first by default: the record you just added is the one you're
     /// looking for. Persisted so it survives a relaunch.
@@ -89,17 +96,8 @@ final class LibraryModel {
     func popToRoot() {
         guard !path.isEmpty else { return }
         path = NavigationPath()
-        selectedAlbumId = nil
-        selectedArtistId = nil
     }
 
-    var selectedArtistId: Int64? {
-        didSet {
-            guard selectedArtistId != oldValue else { return }
-            refilter()
-        }
-    }
-    var selectedAlbumId: Int64?
     private(set) var detailTracks: [Track] = []
 
     /// Set while a scan runs so the UI can show progress and refuse a second one.
@@ -127,7 +125,7 @@ final class LibraryModel {
         let engine = self.engine
         let sort = albumSort
         Task {
-            albums = (try? await engine.albums(artistId: nil, sort: sort)) ?? []
+            albums = (try? await engine.albums(artistId: nil, sort: sort, search: nil)) ?? []
             reindex()
         }
     }
@@ -135,10 +133,10 @@ final class LibraryModel {
     // MARK: - Filtered views
 
     /// Stored rather than computed. A `List` reads its collection far more than
-    /// once per update, and re-filtering forty thousand rows on every read
-    /// froze the artist list for a second or two whenever the filter changed.
-    /// The album grid is lazy and never noticed, which is what made it look
-    /// like a bug in the artist view specifically.
+    /// once per update, and narrowing it on every read froze the artist list for
+    /// a second or two whenever the filter changed. The album grid is lazy and
+    /// never noticed, which is what made it look like a bug in the artist view
+    /// specifically.
     private(set) var visibleAlbums: [Album] = []
     private(set) var visibleArtists: [Artist] = []
     private(set) var visibleFavourites: [Track] = []
@@ -146,36 +144,61 @@ final class LibraryModel {
 
     /// Recompute what each section shows. Called whenever the filter or any of
     /// the underlying collections change.
+    ///
+    /// Switching section clears the filter, so only the section on screen can
+    /// hold one and every other collection is handed over whole. Albums and
+    /// artists are unbounded and go to the database; favourites and a page of
+    /// history are small enough to narrow here.
     private func refilter() {
-        let scoped = selectedArtistId.map { id in albums.filter { $0.artistId == id } } ?? albums
-        guard !filter.isEmpty else {
-            visibleAlbums = scoped
+        visibleFavourites = section == .favourites
+            ? matching(favourites) { [$0.title, $0.artistName, $0.albumTitle] }
+            : favourites
+        visiblePlayHistory = section == .playHistory
+            ? matching(playHistory) { [$0.track.title, $0.track.artistName, $0.track.albumTitle] }
+            : playHistory
+
+        guard section == .albums || section == .artists, !filter.isEmpty else {
+            filterQuery?.cancel()
+            visibleAlbums = albums
             visibleArtists = artists
-            visibleFavourites = favourites
-            visiblePlayHistory = playHistory
             return
         }
-        visibleAlbums = scoped.filter {
-            $0.title.localizedCaseInsensitiveContains(filter)
-                || $0.artistName.localizedCaseInsensitiveContains(filter)
-        }
-        visibleArtists = artists.filter {
-            $0.name.localizedCaseInsensitiveContains(filter)
-        }
-        visibleFavourites = favourites.filter {
-            $0.title.localizedCaseInsensitiveContains(filter)
-                || $0.artistName.localizedCaseInsensitiveContains(filter)
-                || $0.albumTitle.localizedCaseInsensitiveContains(filter)
-        }
-        visiblePlayHistory = playHistory.filter {
-            $0.track.title.localizedCaseInsensitiveContains(filter)
-                || $0.track.artistName.localizedCaseInsensitiveContains(filter)
-                || $0.track.albumTitle.localizedCaseInsensitiveContains(filter)
+        runFilterQuery()
+    }
+
+    /// Ask the database for the matches.
+    ///
+    /// Debounced and cancellable, so holding a key down is one query rather than
+    /// one per character and an answer to a filter you have already typed past
+    /// never lands.
+    private func runFilterQuery() {
+        filterQuery?.cancel()
+        let engine = self.engine
+        let wantsAlbums = section == .albums
+        let sort = albumSort
+        let query = filter
+        filterQuery = Task {
+            try? await Task.sleep(for: Self.filterDebounce)
+            guard !Task.isCancelled else { return }
+            if wantsAlbums {
+                let rows = try? await engine.albums(
+                    artistId: nil, sort: sort, search: query
+                )
+                guard !Task.isCancelled else { return }
+                visibleAlbums = rows ?? []
+            } else {
+                let rows = try? await engine.artists(search: query)
+                guard !Task.isCancelled else { return }
+                visibleArtists = rows ?? []
+            }
         }
     }
 
-    var selectedAlbum: Album? {
-        selectedAlbumId.flatMap { id in albums.first { $0.id == id } }
+    private func matching<T>(_ rows: [T], _ fields: (T) -> [String]) -> [T] {
+        guard !filter.isEmpty else { return rows }
+        return rows.filter { row in
+            fields(row).contains { $0.localizedCaseInsensitiveContains(filter) }
+        }
     }
 
     // MARK: - Loading
@@ -199,7 +222,7 @@ final class LibraryModel {
         let sort = albumSort
         Task {
             if albums.isEmpty {
-                albums = (try? await engine.albums(artistId: nil, sort: sort)) ?? []
+                albums = (try? await engine.albums(artistId: nil, sort: sort, search: nil)) ?? []
             }
             if artists.isEmpty {
                 artists = (try? await engine.artists(search: nil)) ?? []
@@ -227,7 +250,7 @@ final class LibraryModel {
                 break  // owned by the player and search models respectively
             case .albums:
                 if albums.isEmpty {
-                    albums = (try? await engine.albums(artistId: nil, sort: sort)) ?? []
+                    albums = (try? await engine.albums(artistId: nil, sort: sort, search: nil)) ?? []
                     reindex()
                 }
             case .artists:

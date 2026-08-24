@@ -4,6 +4,23 @@ use crate::db::connection::DbError;
 
 use super::AlbumRow;
 
+/// The album column list, read the same way by every query that selects it.
+fn album_row(row: &rusqlite::Row) -> rusqlite::Result<AlbumRow> {
+    Ok(AlbumRow {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        artist_id: row.get(2)?,
+        artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
+        date: row.get(4)?,
+        total_discs: row.get(5)?,
+        total_tracks: row.get(6)?,
+        codec: row.get(7)?,
+        label: row.get(8)?,
+        remote_id: row.get(9)?,
+        added_at: row.get(10)?,
+    })
+}
+
 /// Get or create an album by title + artist. Returns the album ID.
 #[allow(clippy::too_many_arguments)]
 pub fn get_or_create_album(
@@ -68,21 +85,7 @@ pub fn albums_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<AlbumR
          ORDER BY al.date, al.title COLLATE LIBRARY",
     )?;
     let rows = stmt
-        .query_map(params![artist_id], |row| {
-            Ok(AlbumRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                artist_id: row.get(2)?,
-                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                date: row.get(4)?,
-                total_discs: row.get(5)?,
-                total_tracks: row.get(6)?,
-                codec: row.get(7)?,
-                label: row.get(8)?,
-                remote_id: row.get(9)?,
-                added_at: row.get(10)?,
-            })
-        })?
+        .query_map(params![artist_id], album_row)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
@@ -98,21 +101,7 @@ pub fn get_album(conn: &Connection, album_id: i64) -> Result<Option<AlbumRow>, D
              LEFT JOIN artists a ON al.artist_id = a.id
              WHERE al.id = ?1",
             params![album_id],
-            |row| {
-                Ok(AlbumRow {
-                    id: row.get(0)?,
-                    title: row.get(1)?,
-                    artist_id: row.get(2)?,
-                    artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                    date: row.get(4)?,
-                    total_discs: row.get(5)?,
-                    total_tracks: row.get(6)?,
-                    codec: row.get(7)?,
-                    label: row.get(8)?,
-                    remote_id: row.get(9)?,
-                    added_at: row.get(10)?,
-                })
-            },
+            album_row,
         )
         .ok();
     Ok(result)
@@ -130,6 +119,32 @@ pub fn album_date(conn: &Connection, album_id: i64) -> Result<Option<String>, Db
         .flatten())
 }
 
+/// Albums whose title or artist matches, case-insensitive substring.
+///
+/// The narrowing belongs here rather than in each client: every front end wants
+/// the same answer, and the ones that filtered a fully-loaded list in their own
+/// language paid for reading the whole table to throw most of it away. Matching
+/// is ASCII case-insensitive, like `find_artists` — SQLite's `NOCASE` does not
+/// fold accented letters, so `MOTLEY` finds `Motley` but `MÖTLEY` does not find
+/// `Mötley`.
+pub fn find_albums(conn: &Connection, query: &str) -> Result<Vec<AlbumRow>, DbError> {
+    let pattern = format!("%{}%", super::artists::escape_like(query));
+    let mut stmt = conn.prepare(
+        "SELECT al.id, al.title, al.artist_id, a.name, al.date,
+                al.total_discs, al.total_tracks, al.codec, al.label, al.remote_id,
+                al.added_at
+         FROM albums al
+         LEFT JOIN artists a ON al.artist_id = a.id
+         WHERE al.title LIKE ?1 COLLATE NOCASE ESCAPE '\\'
+            OR a.name LIKE ?1 COLLATE NOCASE ESCAPE '\\'
+         ORDER BY a.name COLLATE LIBRARY, al.date, al.title COLLATE LIBRARY",
+    )?;
+    let rows = stmt
+        .query_map(params![pattern], album_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Get all albums with their artist name, sorted.
 pub fn all_albums(conn: &Connection) -> Result<Vec<AlbumRow>, DbError> {
     let mut stmt = conn.prepare(
@@ -142,21 +157,7 @@ pub fn all_albums(conn: &Connection) -> Result<Vec<AlbumRow>, DbError> {
     )?;
 
     let rows = stmt
-        .query_map([], |row| {
-            Ok(AlbumRow {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                artist_id: row.get(2)?,
-                artist_name: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
-                date: row.get(4)?,
-                total_discs: row.get(5)?,
-                total_tracks: row.get(6)?,
-                codec: row.get(7)?,
-                label: row.get(8)?,
-                remote_id: row.get(9)?,
-                added_at: row.get(10)?,
-            })
-        })?
+        .query_map([], album_row)?
         .collect::<Result<Vec<_>, _>>()?;
 
     Ok(rows)

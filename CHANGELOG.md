@@ -8,6 +8,18 @@
 
 ### Changed
 
+- **Filtering the album and artist lists is a query, not a pass over everything the client is holding.** The macOS app narrowed its own copy of the library with `localizedCaseInsensitiveContains`: on a 5,500-album, 7,000-artist library that is 26ms of main thread per keystroke — and it ran for every section, not the one on screen. `find_albums` joins `find_artists` in koan-core so every front end narrows the same way, the FFI's `albums()` takes a `search`, and the GraphQL resolver stops filtering a fully-loaded list in Rust. The app debounces and cancels, so holding a key down is one round trip.
+
+  Matching is ASCII case-insensitive now, as `find_artists` already was — SQLite's `NOCASE` does not fold accented letters, so `MÖTLEY` no longer finds `Mötley`. A folded search column is the fix and is not here yet.
+
+- **The `LIBRARY` collation folds each name once per thread rather than once per comparison.** Building a sort key means an NFD pass and a `Vec` of fresh `String`s, and a collation is asked about the same name once per level of the sort — around two dozen times in a five-thousand-row list. Sorting an album list built roughly 140,000 keys where 5,500 would do. Every client's lists load faster for it.
+
+- **`koan-ffi` sorts albums with `sort_by_cached_key`.** `sort_by_key` recomputes its key on every comparison, so sorting by title lowercased each one a couple of dozen times over.
+
+- **Album artwork is decoded and downsampled off the main actor.** `NSImage(data:)` defers the decode until the image is drawn, which put it on the main thread mid-scroll — and embedded artwork is routinely 1500px square for a tile shown at under 200pt. Grid tiles are downsampled to 512px; a cover opened on its own is left alone.
+
+- **The artist list's hover state lives on the row.** It was on the browser, so every pointer move across the list invalidated all of it. The album and artist detail views also scanned the whole catalogue to find the record they were already showing; there is an index for that.
+
 - **Engine events are an async sequence rather than a callback interface.** `PlayerEvents` was a trait the client implemented and registered; it is now `next_event()`, awaited in a loop, and `PlayerEvent` carries what changed. The loop *is* the subscription, so its lifetime is the client's task and there is nothing to register or unregister.
 
   The macOS app loses the object that existed only to bridge the two worlds — a callback has to be `Sendable` while the model is main-actor isolated, so every one of its three methods did nothing but hop back with `Task { @MainActor }`. It also loses an FFI round trip per event: the change already carries the new state, and the app was re-fetching it.

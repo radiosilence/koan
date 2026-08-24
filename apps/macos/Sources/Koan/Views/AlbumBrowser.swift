@@ -35,7 +35,7 @@ struct AlbumDetailView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
 
-    private var album: Album? { library.albums.first { $0.id == albumId } }
+    private var album: Album? { library.album(id: albumId) }
 
     var body: some View {
         TrackListView(

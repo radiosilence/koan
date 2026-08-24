@@ -405,16 +405,24 @@ impl KoanEngine {
         .await
     }
 
+    /// The library's albums, narrowed by `search` if given.
+    ///
+    /// The search runs in SQL rather than over the returned list: a client that
+    /// filters what it has already been handed still pays to read and marshal
+    /// every album in the library on each keystroke.
     pub async fn albums(
         self: Arc<Self>,
         artist_id: Option<i64>,
         sort: AlbumSort,
+        search: Option<String>,
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = match artist_id {
-                Some(id) => queries::albums_for_artist(&db.conn, id),
-                None => queries::all_albums(&db.conn),
+            let query = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
+            let rows = match (artist_id, query) {
+                (Some(id), _) => queries::albums_for_artist(&db.conn, id),
+                (None, Some(q)) => queries::find_albums(&db.conn, q),
+                (None, None) => queries::all_albums(&db.conn),
             }
             .map_err(db_err)?;
 
@@ -428,10 +436,12 @@ impl KoanEngine {
                         .unwrap_or("")
                         .cmp(a.added_at.as_deref().unwrap_or(""))
                 }),
-                AlbumSort::Title => albums.sort_by_key(|a| a.title.to_lowercase()),
-                AlbumSort::Artist => {
-                    albums.sort_by_key(|a| (a.artist_name.to_lowercase(), a.year.unwrap_or(0)))
-                }
+                // Cached: `sort_by_key` recomputes the key on every
+                // comparison, so a plain sort lowercases each title a couple of
+                // dozen times over.
+                AlbumSort::Title => albums.sort_by_cached_key(|a| a.title.to_lowercase()),
+                AlbumSort::Artist => albums
+                    .sort_by_cached_key(|a| (a.artist_name.to_lowercase(), a.year.unwrap_or(0))),
                 AlbumSort::Year => albums.sort_by_key(|a| std::cmp::Reverse(a.year.unwrap_or(0))),
                 AlbumSort::Random => shuffle(&mut albums),
             }

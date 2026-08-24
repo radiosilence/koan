@@ -1,4 +1,7 @@
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::path::Path;
+use std::rc::Rc;
 
 use rusqlite::Connection;
 use thiserror::Error;
@@ -107,7 +110,34 @@ fn configure(conn: &Connection) -> Result<(), DbError> {
 /// than quietly sorting some other way.
 pub(crate) fn register_library_collation(conn: &Connection) -> rusqlite::Result<()> {
     conn.create_collation("LIBRARY", |a, b| {
-        sort_key(a).cmp(&sort_key(b)).then(a.cmp(b))
+        cached_sort_key(a).cmp(&cached_sort_key(b)).then(a.cmp(b))
+    })
+}
+
+thread_local! {
+    /// Sort keys, kept for the life of the thread.
+    ///
+    /// A collation sees the same name once per level of the sort — around two
+    /// dozen times in a five-thousand-row list — and building a key means an
+    /// NFD pass and a `Vec` of freshly allocated `String`s. Cached, each name is
+    /// folded once per thread instead of once per comparison.
+    static SORT_KEYS: RefCell<HashMap<Box<str>, Rc<[Chunk]>>> = RefCell::new(HashMap::new());
+}
+
+fn cached_sort_key(s: &str) -> Rc<[Chunk]> {
+    SORT_KEYS.with_borrow_mut(|cache| {
+        if let Some(key) = cache.get(s) {
+            return Rc::clone(key);
+        }
+        // A library's worth of names is tens of thousands of entries. Anything
+        // beyond that is a query sorting something other than names, and it
+        // should not grow this without bound.
+        if cache.len() >= 50_000 {
+            cache.clear();
+        }
+        let key: Rc<[Chunk]> = sort_key(s).into();
+        cache.insert(s.into(), Rc::clone(&key));
+        key
     })
 }
 

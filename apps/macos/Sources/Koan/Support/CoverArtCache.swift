@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import ImageIO
 import KoanFFI
 
 /// Album art, cached in memory and on disk.
@@ -77,24 +78,31 @@ final class CoverArtCache {
         let file = directory?.appendingPathComponent(Self.filename(for: key))
         let task = Task<NSImage?, Never> { [weak self] in
             // Detached for the disk cache, not for the engine: reading and
-            // writing the file would otherwise happen on the main actor.
-            let data = await Task.detached(priority: .utility) { () -> Data? in
-                if let file, let cached = try? Data(contentsOf: file) { return cached }
+            // writing the file would otherwise happen on the main actor. The
+            // hash comes back with the bytes because it is a pass over the
+            // whole payload and the main actor has no business doing it.
+            let payload = await Task.detached(priority: .utility) { () -> (Data, String)? in
+                if let file, let cached = try? Data(contentsOf: file) {
+                    return (cached, Self.digest(cached))
+                }
                 guard let fetched = await Self.fetch(source, engine) else { return nil }
                 if let file {
                     // Best effort: a cache that fails to write is still a cache.
                     try? fetched.write(to: file, options: .atomic)
                 }
-                return fetched
+                return (fetched, Self.digest(fetched))
             }.value
 
             guard let self else { return nil }
             self.tasks[key] = nil
-            guard let data else {
+            guard let payload, self.accept(hash: payload.1, for: key) else {
                 self.memory[key] = NSImage?.none
                 return nil
             }
-            let image = self.accept(data, for: key)
+            let data = payload.0
+            let image = await Task.detached(priority: .utility) {
+                Self.decode(data, source: source)
+            }.value
             self.memory[key] = image
             return image
         }
@@ -128,26 +136,56 @@ final class CoverArtCache {
         }
     }
 
-    /// Store the image unless it turns out to be the server's placeholder.
-    private func accept(_ data: Data, for key: String) -> NSImage? {
-        let hash = Self.digest(data)
-        if placeholderHashes.contains(hash) { return nil }
+    /// Whether this is real artwork, or the server's placeholder.
+    private func accept(hash: String, for key: String) -> Bool {
+        if placeholderHashes.contains(hash) { return false }
 
         // Track lookups never teach: a track's cover is its album's cover, so
         // counting it would make every played album look like a repeat.
-        guard key.hasPrefix("album-") else { return NSImage(data: data) }
+        guard key.hasPrefix("album-") else { return true }
 
         hashOwners[hash, default: []].insert(key)
-        guard hashOwners[hash]?.count ?? 0 >= 3 else {
-            return NSImage(data: data)
-        }
+        guard hashOwners[hash]?.count ?? 0 >= 3 else { return true }
 
         // Three unrelated albums with byte-identical art is a placeholder.
         placeholderHashes.insert(hash)
         for owner in hashOwners[hash] ?? [] {
             memory[owner] = NSImage?.none
         }
-        return nil
+        return false
+    }
+
+    /// Decode off the main actor, and downsample a grid tile while we are there.
+    ///
+    /// `NSImage(data:)` defers the decode until the image is drawn, which puts
+    /// it on the main thread in the middle of a scroll — and embedded artwork is
+    /// routinely fifteen hundred pixels square for a tile shown at under two
+    /// hundred points. A cover opened on its own is left at full size; there is
+    /// only ever one of those and it is the one place the detail shows.
+    private nonisolated static func decode(
+        _ data: Data,
+        source: AlbumArtwork.Source
+    ) -> NSImage? {
+        let limit: Int? = switch source {
+        case .album: 512
+        case .track: nil
+        }
+        guard let limit,
+              let cgSource = CGImageSourceCreateWithData(data as CFData, nil),
+              let scaled = CGImageSourceCreateThumbnailAtIndex(
+                  cgSource, 0,
+                  [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceCreateThumbnailWithTransform: true,
+                      kCGImageSourceShouldCacheImmediately: true,
+                      kCGImageSourceThumbnailMaxPixelSize: limit,
+                  ] as CFDictionary
+              )
+        else { return NSImage(data: data) }
+        return NSImage(
+            cgImage: scaled,
+            size: NSSize(width: scaled.width, height: scaled.height)
+        )
     }
 
     // MARK: - Disk
@@ -165,7 +203,7 @@ final class CoverArtCache {
         }
     }
 
-    private static func digest(_ data: Data) -> String {
+    private nonisolated static func digest(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
