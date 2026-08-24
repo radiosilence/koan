@@ -95,6 +95,11 @@ struct RootView: View {
             NavigationStack(path: nav.stack) {
                 StageView()
                     .clearsTransport(transportHeight)
+                    // A page with no wash needs a ground of its own. The
+                    // window's is the wash now, so anything transparent
+                    // composites onto it — and onto the page you came from,
+                    // which is what a library grid was doing.
+                    .background(washSource == nil ? AnyShapeStyle(.background) : AnyShapeStyle(.clear))
                     // The stack draws its own back button for pushed
                     // destinations, next to the pair we already have — three
                     // chevrons in a row. Ours can cross sections and search
@@ -109,6 +114,9 @@ struct RootView: View {
                             ArtistDetailView(artistId: id)
                                 .navigationBarBackButtonHidden(true)
                                 .clearsTransport(transportHeight)
+                                // An artist is a shelf of records rather than
+                                // one, so there is no wash to show through.
+                                .background(.background)
                         }
                     }
             }

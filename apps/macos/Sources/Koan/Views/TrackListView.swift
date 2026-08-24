@@ -47,9 +47,13 @@ struct TrackListView: View {
                         }
                     }
                     .listStyle(.inset)
-                    // Otherwise the List paints over the window's wash and the
-                    // record's colour stops in a line under the header.
-                    .scrollContentBackground(.hidden)
+                    // Gives up its ground only where there is a wash to show:
+                    // otherwise the List paints over it and the record's colour
+                    // stops in a line under the header. Without a cover — a
+                    // favourites list — it keeps its ground, or it composites
+                    // onto whatever the window is drawing, which is the page
+                    // you came from.
+                    .scrollContentBackground(artwork == nil ? .visible : .hidden)
 
                     // The List's own double-click hook. Wired into selection
                     // rather than the gesture system, so it doesn't steal the
