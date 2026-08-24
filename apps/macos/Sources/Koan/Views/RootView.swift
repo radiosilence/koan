@@ -110,6 +110,20 @@ struct RootView: View {
                             AlbumDetailView(albumId: id)
                                 .navigationBarBackButtonHidden(true)
                                 .clearsTransport(transportHeight)
+                                // Its own ground and its own wash, rather than
+                                // borrowing the window's. A pushed view lingers
+                                // in the hierarchy after you pop it, and a
+                                // transparent one goes on drawing itself over
+                                // the grid you came back to.
+                                .background {
+                                    ZStack {
+                                        Rectangle().fill(.background)
+                                        ArtworkBleed(
+                                            source: .album(id),
+                                            drifts: player.isPlaying
+                                        )
+                                    }
+                                }
                         case .artist(let id):
                             ArtistDetailView(artistId: id)
                                 .navigationBarBackButtonHidden(true)
