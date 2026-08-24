@@ -88,6 +88,8 @@
 
   The sidebar takes the same measured inset the detail column takes, so the footer grows upward from the top of the bar.
 
+- **Track results could not be dragged or right-clicked.** The album tiles and artist pills beside them could do both; the track row was a `Button`, which claims the press, so it was the one result you could only click. It takes the same row behaviour the library lists use — full-width hit area, drag to enqueue — and the same context menu the tiles and pills already had. Clicking still goes to the album.
+
 ## v0.26.0 (2026-08-23)
 
 ### Added
