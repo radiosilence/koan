@@ -24,7 +24,7 @@ struct TrackListView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
                 .padding(.bottom, 16)
-                .background(alignment: .top) { artworkBackdrop }
+                .background(alignment: .top) { ArtworkBleed(source: artwork) }
 
             if tracks.isEmpty {
                 EmptyState(icon: "music.note.list", title: "No tracks")
@@ -110,37 +110,6 @@ struct TrackListView: View {
     private var subtitleRest: String {
         let parts = subtitle.components(separatedBy: " · ").dropFirst()
         return parts.isEmpty ? "" : "· " + parts.joined(separator: " · ")
-    }
-
-    /// The cover, blurred out to fill the space behind the header.
-    ///
-    /// `backgroundExtensionEffect` is what makes it worth doing: it mirrors the
-    /// blur outwards into the insets around the detail column, so the colour of
-    /// the record carries under the glass sidebar and toolbar instead of
-    /// stopping at a hard edge where the pane begins. The gradient goes on
-    /// first so the mirrored copy fades out the same way the real one does.
-    @ViewBuilder
-    private var artworkBackdrop: some View {
-        if let artwork {
-            GeometryReader { geo in
-                AlbumArtwork(source: artwork, cornerRadius: 0)
-                    .frame(width: geo.size.width, height: geo.size.width)
-                    .offset(y: (geo.size.height - geo.size.width) / 2)
-                    .blur(radius: 64)
-                    .saturation(1.6)
-            }
-            .clipped()
-            .opacity(0.5)
-            .mask(
-                LinearGradient(
-                    colors: [.black, .black, .clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .backgroundExtensionEffect()
-            .allowsHitTesting(false)
-        }
     }
 
     private var header: some View {
