@@ -630,8 +630,7 @@ private struct QueueRow: View {
     private var statusIcon: some View {
         switch item.status {
         case .playing:
-            Image(systemName: player.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
-                .foregroundStyle(.tint)
+            PlayingIndicator(isPlaying: player.isPlaying)
         case .downloading:
             Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
         case .priorityPending:
