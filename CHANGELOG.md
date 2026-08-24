@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.27.0 (2026-08-24)
+## Unreleased
 
 ### Added
 
@@ -14,7 +14,7 @@
 
   Tests point the configuration at a disposable directory now, so they read a config nobody has edited. The ones that need a remote build their own rather than borrowing one.
 
-## Unreleased
+## v0.27.0 (2026-08-24)
 
 ### Added
 
