@@ -38,6 +38,13 @@ struct RootView: View {
     /// copy of the same sleeve at every track change within a record. It only
     /// moves when the record does.
     @State private var bleed: AlbumArtwork.Source?
+    /// The colour of the record playing. The app's own accent is a neutral, so
+    /// the only colour in the chrome is the one the music brought.
+    @State private var recordTint: Color?
+    /// Watched rather than inferred from the measured width: a collapsed
+    /// sidebar still reports its last width, so the transport kept a gap where
+    /// it used to be.
+    @State private var columns: NavigationSplitViewVisibility = .automatic
 
     /// Which record is playing — artist as well as title, because "Greatest
     /// Hits" is not one record.
@@ -54,11 +61,19 @@ struct RootView: View {
         // environment `RootView` was handed, so anything it needs is captured
         // here. Reading an `@Environment` inside that closure — including to
         // put one back — traps, and the app dies on launch.
-        let wash = nav.section == .queue ? bleed : nil
+        // An album page washes the window in the record you opened; everywhere
+        // else it is the record playing, and only where that means something.
+        let wash: AlbumArtwork.Source? = if case .album(let id) = nav.stack.wrappedValue.last {
+            .album(id)
+        } else if nav.section == .queue {
+            bleed
+        } else {
+            nil
+        }
         let washDrifts = player.isPlaying
         let artCache = art
 
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
@@ -121,6 +136,19 @@ struct RootView: View {
         .onChange(of: playingRecord, initial: true) { _, _ in
             bleed = player.currentTrackId.map { .track($0) }
         }
+        .task(id: bleed) {
+            guard let bleed, let cover = await art.image(for: bleed) else {
+                recordTint = nil
+                return
+            }
+            recordTint = .dominant(of: cover)
+        }
+        // Overrides the app-wide tint for everything below, which is every
+        // control koan draws itself. What AppKit draws — list selection, focus
+        // rings — keeps the declared accent, and that is deliberately a neutral
+        // so the two never argue.
+        .tint(recordTint ?? .koanAccent)
+        .animation(.easeInOut(duration: 3), value: recordTint)
         // The toolbar paints its own ground over whatever is behind it, which
         // put a hard grey strip across the top of a queue washed in the colour
         // of the record. Hidden, the glass controls sit in that colour — which
@@ -137,7 +165,7 @@ struct RootView: View {
         // `clearsTransport`.
         .overlay(alignment: .bottom) {
             TransportBar()
-                .padding(.leading, ui.sidebarWidth)
+                .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(

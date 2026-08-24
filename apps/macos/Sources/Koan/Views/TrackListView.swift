@@ -24,7 +24,6 @@ struct TrackListView: View {
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
                 .padding(.bottom, 16)
-                .background(alignment: .top) { ArtworkBleed(source: artwork) }
 
             if tracks.isEmpty {
                 EmptyState(icon: "music.note.list", title: "No tracks")
