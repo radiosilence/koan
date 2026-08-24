@@ -1,18 +1,20 @@
-
 # koan
 
 A music player for people who give a shit about audio quality.
 
-<img width="874" height="942" alt="Screenshot 2026-03-04 at 18 30 07" src="https://github.com/user-attachments/assets/99782de3-5683-4dd9-97b6-10782e8e4099" />
+Pure Rust. One engine, two front ends — a native macOS app and a full-screen
+terminal UI — over the same library, the same config and the same bit-perfect
+output. Gapless transitions, fast library indexing, Subsonic/Navidrome
+integration, fb2k-style format strings. No Electron. No subscriptions. No
+bullshit.
 
-<img width="1405" height="905" alt="Screenshot 2026-08-24 at 23 32 18" src="https://github.com/user-attachments/assets/c0ac41f2-3cde-4ad4-8aa4-e53859d6559d" />
+<img width="1405" height="905" alt="The macOS app" src="https://github.com/user-attachments/assets/c0ac41f2-3cde-4ad4-8aa4-e53859d6559d" />
 
-<img width="1413" height="956" alt="Screenshot 2026-08-24 at 23 30 08" src="https://github.com/user-attachments/assets/8ec2f049-524a-4437-8bf3-91172c6b4f26" />
+<img width="1413" height="956" alt="An album in the macOS app" src="https://github.com/user-attachments/assets/8ec2f049-524a-4437-8bf3-91172c6b4f26" />
 
+<img width="1630" height="1167" alt="The library in the macOS app" src="https://github.com/user-attachments/assets/cb7f9ca0-61eb-4e7e-bebc-43fbc11a7c78" />
 
-<img width="1630" height="1167" alt="Screenshot 2026-08-24 at 23 35 01" src="https://github.com/user-attachments/assets/cb7f9ca0-61eb-4e7e-bebc-43fbc11a7c78" />
-
-Pure Rust, Ratatui TUI / macOS GUI. Bit-perfect playback, gapless transitions, fast library indexing, Subsonic/Navidrome integration, fb2k-style format strings. No Electron. No subscriptions. No bullshit.
+<img width="874" height="942" alt="The TUI" src="https://github.com/user-attachments/assets/99782de3-5683-4dd9-97b6-10782e8e4099" />
 
 <img width="406" height="182" alt="Screenshot 2026-03-04 at 18 30 32" src="https://github.com/user-attachments/assets/d4fff1f7-7c1f-4aaa-87aa-41bd2b9c22f7" />
 
@@ -28,7 +30,7 @@ for you.
 # homebrew (recommended)
 brew install radiosilence/koan/koan
 
-# the macOS app (optional — same engine, native UI)
+# the macOS app — the same engine behind a native UI
 brew install --cask radiosilence/koan/koan-app
 
 # pre-built binary via mise
@@ -68,6 +70,13 @@ koan                                        # launch the TUI
 
 `space` to pause, `<`/`>` to skip, `p` to pick tracks, `a` for albums, `q` to quit. That's it.
 
+**Rather not touch a terminal?** Install the app instead and do all of the above
+inside it: **Settings → Library** points koan at your music and scans it,
+**Settings → Server** signs you in to Navidrome or Subsonic, and playback,
+output device and radio have their own panes. Everything in this quickstart can
+be done from the app; the headless server and the MCP endpoint still want a
+shell.
+
 **Remote server?** If you run Navidrome or Subsonic:
 
 ```bash
@@ -83,6 +92,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Bit-perfect playback** -- CoreAudio AUHAL / ALSA via cpal, automatic sample rate switching, no resampling
 - **Gapless transitions** -- decode thread keeps the ring buffer alive across track boundaries
 - **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV/AIFF/CAF, Ogg, MKV/WebM, MP4
+- **Native macOS app** -- SwiftUI, built out of Liquid Glass. Album-grouped queue with drag reorder, library and artist browsing, ⌘K picker, synced lyrics, play history, snapshots, file organization, and first-run setup — no terminal required
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way favourite sync for tracks, albums and artists
@@ -139,7 +149,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 
 | | koan | foobar2000 | Strawberry | DeaDBeeF |
 |---|:---:|:---:|:---:|:---:|
-| **Type** | TUI | GUI | GUI (Qt) | GUI (GTK) |
+| **Type** | **Native GUI + TUI** | GUI | GUI (Qt) | GUI (GTK) |
 | **Bit-perfect** | **Yes** | Yes (WASAPI/ASIO) | Yes (Linux) | Yes (ALSA) |
 | **Gapless** | **Yes** | Yes | Yes | Yes |
 | **Subsonic** | **Built-in** | Plugin | **Built-in** | No |
@@ -151,7 +161,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **Visualizer** | **22 modes** | Plugin | No | Plugin |
 | **Tag editing** | Soon | **Yes** | Yes | **Yes** |
 | **DSP / EQ** | Soon | **Yes (VST)** | Yes | Yes |
-| **Platforms** | macOS, Linux | Windows/macOS | All | All |
+| **Platforms** | macOS (app + TUI), Linux (TUI) | Windows/macOS | All | All |
 
 <img width="768" height="612" alt="Screenshot 2026-03-04 at 18 31 01" src="https://github.com/user-attachments/assets/0ad4879e-815f-42f3-8ebe-f6d01616bc96" />
 
@@ -184,13 +194,30 @@ Five crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (
 
 ## macOS app
 
-A native SwiftUI front-end lives in [`apps/macos`](apps/macos). It links `koan-core` directly through `koan-ffi` rather than talking to `koan serve` — the app is sitting on top of the audio engine, so round-tripping HTTP to reach it would buy nothing and cost a daemon, a port, and an auth surface. Playback stays bit-perfect because CoreAudio output never leaves Rust.
+A native SwiftUI app lives in [`apps/macos`](apps/macos), and it is a way to use
+koan rather than a viewer bolted onto the side of one. Browse and search the
+library, build and reorder the queue, favourite tracks, albums and artists, save
+and restore snapshots, read synced lyrics, look through play history, and
+reorganize files on disk — and set the whole thing up on first run, library
+folders and remote sign-in included, without opening a terminal.
 
-GraphQL remains the surface for clients that genuinely *can't* link the core: the web SPA, iOS, and jukebox-style remotes.
+It links `koan-core` directly through `koan-ffi` rather than talking to `koan
+serve` — the app is sitting on top of the audio engine, so round-tripping HTTP to
+reach it would buy nothing and cost a daemon, a port, and an auth surface.
+Playback stays bit-perfect because CoreAudio output never leaves Rust.
 
-It shares one library and one config with the CLI and TUI, so a queue saved in one shows up in the others. Visualizers are deliberately absent — that is what the TUI is for.
+One library and one config with the CLI and TUI, so a queue saved in one shows up
+in the others, and a scan run in either is a scan for both.
 
-Dropping a folder from Finder onto the queue indexes it into the library and plays it; **Organize Files…** then previews where a pattern puts each file — collisions included — before moving anything. See [File Organization](docs/guide/file-organization.md).
+Two things it deliberately leaves alone: visualizers, which are what the TUI is
+for, and running the server, which is a `koan serve` job. GraphQL remains the
+surface for clients that genuinely *can't* link the core — the web SPA, iOS, and
+jukebox-style remotes.
+
+Dropping a folder from Finder onto the queue indexes it into the library and
+plays it; **Organize Files…** then previews where a pattern puts each file —
+collisions included — before moving anything. See
+[File Organization](docs/guide/file-organization.md).
 
 ```bash
 just macos-run     # build and launch
