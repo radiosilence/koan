@@ -605,13 +605,56 @@ impl Config {
     }
 }
 
-/// `~/.config/koan/`
+/// Where koan keeps its configuration, library database and cache.
+///
+/// `~/.config/koan/` unless pointed elsewhere. `KOAN_CONFIG_DIR` is the
+/// user-facing way to do that — one machine, more than one library — and
+/// `set_config_dir` is the in-process one, which is what tests need: without
+/// it they read whatever configuration belongs to whoever ran them, right down
+/// to that person's server and their keychain.
 pub fn config_dir() -> PathBuf {
+    if let Some(dir) = CONFIG_DIR.read().clone() {
+        return dir;
+    }
+    if let Some(dir) = std::env::var_os("KOAN_CONFIG_DIR") {
+        return PathBuf::from(dir);
+    }
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
         .join("koan")
 }
+
+/// Point koan's configuration at `dir` for the life of the process.
+///
+/// Takes precedence over `KOAN_CONFIG_DIR`, and drops the cached config, which
+/// was keyed on the mtimes of files in a directory that is no longer the one
+/// being read. Set it before anything spawns: background threads resolve the
+/// directory when they run, not when they are created.
+pub fn set_config_dir(dir: impl Into<PathBuf>) {
+    *CONFIG_DIR.write() = Some(dir.into());
+    Config::invalidate_cache();
+}
+
+/// Point configuration at a directory belonging to this process alone.
+///
+/// Tests call this before anything reads configuration. Without it they read
+/// whatever belongs to whoever ran them — that person's library folders, their
+/// remote server, and a prompt for their keychain — so the same test does
+/// different things on different machines, and passes on CI only because it
+/// finds nothing there at all.
+///
+/// Process-wide rather than per-test on purpose: the threads koan spawns
+/// resolve the directory when they run, which is often after the test that
+/// started them has finished.
+pub fn isolate_config_for_tests() {
+    let dir = std::env::temp_dir().join(format!("koan-test-config-{}", std::process::id()));
+    let _ = fs::create_dir_all(&dir);
+    set_config_dir(dir);
+}
+
+static CONFIG_DIR: LazyLock<parking_lot::RwLock<Option<PathBuf>>> =
+    LazyLock::new(|| parking_lot::RwLock::new(None));
 
 /// Path to the base config TOML file (committable to dotfiles).
 pub fn config_file_path() -> PathBuf {

@@ -357,11 +357,23 @@ mod tests {
     use koan_core::player::commands::CommandChannel;
     use tempfile::TempDir;
 
+    /// One disposable configuration directory for the whole test binary.
+    ///
+    /// Deliberately not the per-test `TempDir`: enqueueing spawns downloads on
+    /// a thread that outlives the test which started it, and that thread reads
+    /// the configuration when it runs. Without this it reads the developer's
+    /// own — their library, their server, and a prompt for their keychain.
+    fn isolate_config() {
+        static DIR: std::sync::OnceLock<TempDir> = std::sync::OnceLock::new();
+        koan_core::config::set_config_dir(DIR.get_or_init(|| TempDir::new().unwrap()).path());
+    }
+
     fn test_schema() -> (
         KoanSchema,
         crossbeam_channel::Receiver<PlayerCommand>,
         TempDir,
     ) {
+        isolate_config();
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("test.db");
         let db = Database::open(&db_path).unwrap();
