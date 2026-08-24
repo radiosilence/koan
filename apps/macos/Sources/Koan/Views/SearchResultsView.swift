@@ -90,6 +90,11 @@ private struct SectionHeading: View {
 
 /// A track result points at its album — that's "the place in the library" the
 /// track lives, and where you'd play it from.
+///
+/// Behaves like any other row: click to go where it lives, drag it to enqueue,
+/// right-click for the same menu the tiles and pills have. It was a `Button`,
+/// which claims the press and left the row as the one result you could neither
+/// drag nor right-click.
 private struct SearchTrackRow: View {
     let track: Track
 
@@ -97,56 +102,53 @@ private struct SearchTrackRow: View {
     @State private var hovering = false
 
     var body: some View {
-        Button {
-            if let albumId = track.albumId {
-                library.reveal(album: albumId, highlighting: track.id)
-            }
-        } label: {
-            HStack(spacing: 10) {
-                // The cover is what you recognise a track by, and a results
-                // list is exactly where you are trying to recognise something.
-                Group {
-                    if let albumId = track.albumId {
-                        AlbumArtwork(source: .album(albumId), cornerRadius: 3)
-                    } else {
-                        Image(systemName: "music.note")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-                .frame(width: 40, height: 40)
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(track.title).lineLimit(1)
-                    Text("\(track.artistName) — \(track.albumTitle)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    SourceBadges(track: track)
-                }
-
-                Spacer(minLength: 8)
-
-                if track.albumId != nil && hovering {
-                    Text("Go to album")
+        HStack(spacing: 10) {
+            // The cover is what you recognise a track by, and a results
+            // list is exactly where you are trying to recognise something.
+            Group {
+                if let albumId = track.albumId {
+                    AlbumArtwork(source: .album(albumId), cornerRadius: 3)
+                } else {
+                    Image(systemName: "music.note")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
+            }
+            .frame(width: 40, height: 40)
 
-                Text(Format.duration(track.durationMs))
-                    .font(.caption.monospacedDigit())
+            VStack(alignment: .leading, spacing: 1) {
+                Text(track.title).lineLimit(1)
+                Text("\(track.artistName) — \(track.albumTitle)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                SourceBadges(track: track)
+            }
+
+            Spacer(minLength: 8)
+
+            if track.albumId != nil && hovering {
+                Text("Go to album")
+                    .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .contentShape(.rect)
-            .background {
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(hovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear))
-            }
+
+            Text(Format.duration(track.durationMs))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.tertiary)
         }
-        .buttonStyle(.plain)
-        .disabled(track.albumId == nil)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(hovering ? AnyShapeStyle(.quaternary.opacity(0.5)) : AnyShapeStyle(.clear))
+        }
+        .rowBehaviour(playable: .track(track))
+        .onTapGesture {
+            guard let albumId = track.albumId else { return }
+            library.reveal(album: albumId, highlighting: track.id)
+        }
+        .contextMenu { PlayableMenu(playable: .track(track)) }
         .onHover { hovering = $0 }
     }
 }

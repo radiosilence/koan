@@ -88,6 +88,8 @@
 
   The sidebar takes the same measured inset the detail column takes, so the footer grows upward from the top of the bar.
 
+- **Track results could not be dragged or right-clicked.** The album tiles and artist pills beside them could do both; the track row was a `Button`, which claims the press, so it was the one result you could only click. It takes the same row behaviour the library lists use — full-width hit area, drag to enqueue — and the same context menu the tiles and pills already had. Clicking still goes to the album.
+
 - **Clicking a search result did nothing.** Albums, artists and tracks on the results page all registered the click and stayed put; the same tiles and pills worked in the album and artist browsers, which is what made it look like a hit-testing problem rather than a navigation one.
 
   The sidebar's lit row was derived from the detail stack, so that an album opened from anywhere lit Albums. Opening one therefore *moved* the sidebar selection — and a `List` writes a moved selection back through its binding. That setter pops to the section root, which is right when you click a sidebar row and wrong when the List is echoing a move the app just made: it threw away the destination that had only just been pushed. The browsers were unaffected because the lit row was already the right one, so nothing moved and nothing echoed.
