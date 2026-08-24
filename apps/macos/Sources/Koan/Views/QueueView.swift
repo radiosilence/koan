@@ -540,21 +540,27 @@ private struct QueueRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            statusIcon
-                .font(.caption)
-                .frame(width: 16)
+            // The status and the number are one thing — where this track is and
+            // what it is doing — so they sit together. Apart, a mark narrower
+            // than its column and a number aligned to the right of its own left
+            // most of twenty points of air between them.
+            HStack(spacing: 6) {
+                statusIcon
+                    .font(.caption)
+                    .frame(width: 16, alignment: .trailing)
 
-            if artwork, let trackId = item.trackId {
-                AlbumArtwork(source: .track(trackId), cornerRadius: 3)
-                    .frame(width: 28, height: 28)
-            } else {
-                // Always occupies its column, number or not: a missing track
-                // number would otherwise shift the title left and break the
-                // alignment down the list.
-                Text(item.trackNumber.map(String.init) ?? "")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .frame(width: artwork ? 28 : 20, alignment: .trailing)
+                if artwork, let trackId = item.trackId {
+                    AlbumArtwork(source: .track(trackId), cornerRadius: 3)
+                        .frame(width: 28, height: 28)
+                } else {
+                    // Always occupies its column, number or not: a missing track
+                    // number would otherwise shift the title left and break the
+                    // alignment down the list.
+                    Text(item.trackNumber.map(String.init) ?? "")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .frame(width: artwork ? 28 : 20, alignment: .trailing)
+                }
             }
 
             VStack(alignment: .leading, spacing: 1) {
