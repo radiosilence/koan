@@ -130,11 +130,10 @@ struct RootView: View {
 
             // Filtering what is on screen belongs with it, not in the sidebar
             // search, which navigates away instead of narrowing.
-            if nav.section == .albums || nav.section == .artists {
+            if let placeholder = nav.section.filterPlaceholder {
                 ToolbarItem(placement: .primaryAction) {
                     FilterField(
-                        placeholder: nav.section == .albums
-                            ? "Filter albums" : "Filter artists",
+                        placeholder: placeholder,
                         text: $library.filter,
                         focusToken: ui.filterFocusToken
                     )
@@ -255,8 +254,8 @@ private struct StageView: View {
         case .favourites:
             TrackListView(
                 title: "Favourites",
-                subtitle: Format.count(Int64(library.favourites.count), "track"),
-                tracks: library.favourites,
+                subtitle: Format.count(Int64(library.visibleFavourites.count), "track"),
+                tracks: library.visibleFavourites,
                 mixedAlbums: true
             )
         case .playHistory:
