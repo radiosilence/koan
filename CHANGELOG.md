@@ -26,7 +26,7 @@
 
 ### Fixed
 
-- **Menu shortcuts no longer reach past a field you are typing in.** ⌘← and ⌥← skipped tracks instead of moving the caret, and ⌘Z undid a queue edit instead of the typing — in the search field, a filter, Settings, anywhere. A menu key equivalent is claimed before the responder chain sees it, so a command has to decline it: the ones whose key is also a text-editing command now do. The bare-key shortcuts already asked what had focus; the modified ones did not.
+- **Menu shortcuts no longer reach past a field you are typing in.** ⌘← and ⌥← skipped tracks instead of moving the caret or the word, and ⌘Z undid a queue edit instead of the typing — in the search field, a filter, Settings, anywhere. Every shortcut whose key also means something while typing is now *disabled* while a field has focus, which releases its key equivalent to the responder chain; declining the action instead would leave the menu swallowing the key, so the shortcut would stop working without the field ever hearing it. The bare-key shortcuts already asked what had focus; the modified ones never did.
 
 ### Changed
 

@@ -15,6 +15,7 @@ final class AppState {
     let art: CoverArtCache
     let organize: OrganizeModel
     let activity: ActivityModel
+    let textFocus = TextFocus()
     let ui = UIState()
     let hotkeys: Hotkeys
     private var nowPlaying: NowPlayingCentre?
@@ -57,6 +58,13 @@ final class AppState {
 @main
 struct KoanApp: App {
     @State private var state: AppState?
+
+    /// Someone is in a text field, so every shortcut whose key also means
+    /// something while typing stands down. Read in the Scene body, so flipping
+    /// it re-evaluates the menus — which is the point: a *disabled* menu item
+    /// releases its key equivalent to the responder chain, and that is the only
+    /// thing that hands the keystroke back to macOS.
+    private var isTyping: Bool { state?.textFocus.isEditing == true }
     @Environment(\.scenePhase) private var scenePhase
     @State private var startupError: String?
     @AppStorage("showLyrics") private var showLyrics = false
@@ -114,10 +122,12 @@ struct KoanApp: App {
                         .keyboardShortcut(command.key, modifiers: .command)
                 }
                 Divider()
-                Button("Back") { EditCommands.unlessEditing { state?.library.goBack() } }
+                Button("Back") { state?.library.goBack() }
                     .keyboardShortcut("[", modifiers: .command)
-                Button("Forward") { EditCommands.unlessEditing { state?.library.goForward() } }
+                    .disabled(isTyping)
+                Button("Forward") { state?.library.goForward() }
                     .keyboardShortcut("]", modifiers: .command)
+                    .disabled(isTyping)
                 Divider()
                 Button("Toggle Lyrics") { showLyrics.toggle() }
                     .keyboardShortcut("l", modifiers: [.command, .option])
@@ -129,22 +139,23 @@ struct KoanApp: App {
                 // contest. Hotkeys handles the key; this stays for
                 // discoverability and the menu shows the shortcut anyway.
                 Button("Play / Pause") { state?.player.togglePlayPause() }
-                // Arrow keys with a modifier are text navigation first: ⌘←
-                // is start-of-line and ⌥← is previous word. They only mean
-                // transport when nobody is typing.
-                Button("Next") { EditCommands.unlessEditing { state?.player.next() } }
+                // Arrow keys with a modifier are text navigation first: ⌘← is
+                // start-of-line, ⌥← is previous word. Disabled rather than
+                // declined — a disabled item releases its key equivalent, and
+                // that is the only way the field ever sees it.
+                Button("Next") { state?.player.next() }
                     .keyboardShortcut(.rightArrow, modifiers: .command)
-                Button("Previous") { EditCommands.unlessEditing { state?.player.previous() } }
+                    .disabled(isTyping)
+                Button("Previous") { state?.player.previous() }
                     .keyboardShortcut(.leftArrow, modifiers: .command)
+                    .disabled(isTyping)
                 Divider()
-                Button("Skip Forward") {
-                    EditCommands.unlessEditing { state?.player.seek(bySeconds: 10) }
-                }
-                .keyboardShortcut(.rightArrow, modifiers: .option)
-                Button("Skip Back") {
-                    EditCommands.unlessEditing { state?.player.seek(bySeconds: -10) }
-                }
-                .keyboardShortcut(.leftArrow, modifiers: .option)
+                Button("Skip Forward") { state?.player.seek(bySeconds: 10) }
+                    .keyboardShortcut(.rightArrow, modifiers: .option)
+                    .disabled(isTyping)
+                Button("Skip Back") { state?.player.seek(bySeconds: -10) }
+                    .keyboardShortcut(.leftArrow, modifiers: .option)
+                    .disabled(isTyping)
                 Divider()
                 Button("Favourite Current Track") { state?.player.toggleFavouriteCurrent() }
                     .keyboardShortcut("d", modifiers: .command)
@@ -155,11 +166,14 @@ struct KoanApp: App {
             // Replaces the stock Edit ▸ Undo, which has no undo manager behind
             // it here. Declaring ⌘Z anywhere else just loses to it.
             CommandGroup(replacing: .undoRedo) {
-                // ⌘Z while typing is undoing the typing, not the queue.
-                Button("Undo") { EditCommands.undo { state?.player.undo() } }
+                // ⌘Z while typing is undoing the typing, not the queue — and
+                // the field editor has its own undo stack to do it with.
+                Button("Undo") { state?.player.undo() }
                     .keyboardShortcut("z", modifiers: .command)
-                Button("Redo") { EditCommands.redo { state?.player.redo() } }
+                    .disabled(isTyping)
+                Button("Redo") { state?.player.redo() }
                     .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .disabled(isTyping)
             }
 
             // The queue borrows these, but they must still mean the ordinary

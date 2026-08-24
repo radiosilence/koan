@@ -18,18 +18,6 @@ enum EditCommands {
         return responder is NSTextView || responder is NSTextField
     }
 
-    /// Runs `action` unless someone is typing, in which case the keystroke is
-    /// left alone to mean what it means everywhere else on the platform.
-    ///
-    /// For shortcuts whose key is also a text-editing command — ⌘← is "start of
-    /// line", ⌘Z is "undo my typing". A menu key equivalent is claimed before
-    /// the responder chain sees it, so the field never gets the chance unless
-    /// the command declines it here.
-    static func unlessEditing(_ action: () -> Void) {
-        guard !isEditingText else { return }
-        action()
-    }
-
     /// Runs `action` unless text is being edited, in which case the standard
     /// editing selector is sent down the responder chain.
     static func route(_ selector: Selector, otherwise action: () -> Void) {
@@ -58,15 +46,5 @@ enum EditCommands {
 
     static func delete(otherwise action: () -> Void) {
         route(#selector(NSText.delete(_:)), otherwise: action)
-    }
-
-    /// The field editor keeps its own undo stack, so while typing this has to
-    /// reach that rather than the queue's.
-    static func undo(otherwise action: () -> Void) {
-        route(Selector(("undo:")), otherwise: action)
-    }
-
-    static func redo(otherwise action: () -> Void) {
-        route(Selector(("redo:")), otherwise: action)
     }
 }
