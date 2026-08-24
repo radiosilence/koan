@@ -110,7 +110,8 @@ struct QueueView: View {
         // this is the same treatment applied to what is on rather than to what
         // you opened.
         .background(alignment: .top) {
-            ArtworkBleed(source: bleed).frame(height: 320)
+            ArtworkBleed(source: bleed, drifts: player.isPlaying)
+                .frame(height: 320)
         }
         .onChange(of: playingRecord, initial: true) { _, _ in
             bleed = player.currentTrackId.map { .track($0) }
