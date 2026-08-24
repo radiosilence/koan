@@ -226,9 +226,10 @@ struct KoanApp: App {
                 Divider()
                 Button("Find") {
                     guard let state else { return }
-                    switch state.nav.section {
-                    case .albums, .artists: state.ui.focusFilter()
-                    default: state.ui.focusSearch()
+                    if state.nav.section.filterPlaceholder != nil {
+                        state.ui.focusFilter()
+                    } else {
+                        state.ui.focusSearch()
                     }
                 }
                 .keyboardShortcut("f", modifiers: .command)

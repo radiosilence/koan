@@ -55,6 +55,19 @@ final class Navigator {
         case snapshots
 
         var id: Self { self }
+
+        /// What the toolbar's filter field says — and, by its absence, which
+        /// sections have no filter at all. The field and ⌘F both read it, so
+        /// they cannot disagree about where narrowing is possible.
+        var filterPlaceholder: String? {
+            switch self {
+            case .albums: "Filter albums"
+            case .artists: "Filter artists"
+            case .favourites: "Filter favourites"
+            case .playHistory: "Filter history"
+            case .queue, .searchResults, .snapshots: nil
+            }
+        }
     }
 
     private(set) var location = Location(section: .queue)
