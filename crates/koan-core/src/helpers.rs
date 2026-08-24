@@ -629,10 +629,36 @@ pub fn subsonic_auth(cfg: &Config) -> Option<SubsonicAuth> {
     ))
 }
 
-/// Build a `SubsonicClient` from the merged config. Never call from async code.
-pub fn subsonic_client(cfg: &Config) -> Option<SubsonicClient> {
-    subsonic_auth(cfg).map(SubsonicClient::from_auth)
+/// One `SubsonicClient` per set of credentials, shared process-wide.
+///
+/// Constructing one builds two blocking `reqwest` clients, each carrying its
+/// own runtime on its own thread, and each starting with a cold connection
+/// pool — so a client per call means a fresh TLS handshake for every cover art
+/// request. The download queue had already worked this out and kept a client
+/// of its own for the app's lifetime; this is that, for everyone.
+///
+/// Keyed on the credentials, so logging in as someone else replaces the client
+/// rather than serving the old one. Never call from async code: building the
+/// inner clients panics inside a tokio runtime.
+pub fn subsonic_client(cfg: &Config) -> Option<Arc<SubsonicClient>> {
+    let auth = subsonic_auth(cfg)?;
+
+    let mut slot = SUBSONIC_CLIENT.lock();
+    if let Some((cached, client)) = slot.as_ref()
+        && *cached == auth
+    {
+        return Some(client.clone());
+    }
+
+    let client = Arc::new(SubsonicClient::from_auth(auth.clone()));
+    *slot = Some((auth, client.clone()));
+    Some(client)
 }
+
+type CachedClient = Option<(SubsonicAuth, Arc<SubsonicClient>)>;
+
+static SUBSONIC_CLIENT: std::sync::LazyLock<parking_lot::Mutex<CachedClient>> =
+    std::sync::LazyLock::new(|| parking_lot::Mutex::new(None));
 
 // ---------------------------------------------------------------------------
 // Sharing
@@ -1294,5 +1320,33 @@ mod share_tests {
             )
             .unwrap();
         assert_eq!(album_remote_id(&db.conn, album_id, ids.len()), None);
+    }
+}
+
+#[cfg(test)]
+mod client_cache_tests {
+    use super::*;
+
+    #[test]
+    fn one_subsonic_client_is_shared_per_credentials() {
+        let mut cfg = Config::default();
+        cfg.remote.enabled = true;
+        cfg.remote.url = "https://shared-client.invalid".into();
+        cfg.remote.username = "koan".into();
+        cfg.remote.password = "first".into();
+
+        let first = subsonic_client(&cfg).expect("a configured remote yields a client");
+        let again = subsonic_client(&cfg).expect("a configured remote yields a client");
+        assert!(
+            Arc::ptr_eq(&first, &again),
+            "rebuilding drops the connection pool and re-handshakes TLS per request"
+        );
+
+        cfg.remote.password = "second".into();
+        let relogged = subsonic_client(&cfg).expect("a configured remote yields a client");
+        assert!(
+            !Arc::ptr_eq(&first, &relogged),
+            "new credentials must not keep serving the client signed with the old ones"
+        );
     }
 }

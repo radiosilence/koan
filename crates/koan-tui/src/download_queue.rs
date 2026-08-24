@@ -39,7 +39,7 @@ struct Inner {
     log_buf: Arc<StdMutex<Vec<String>>>,
     cfg: config::Config,
     /// `None` when remote is not configured — nothing is downloadable.
-    client: Option<SubsonicClient>,
+    client: Option<Arc<SubsonicClient>>,
 }
 
 /// Queue state and the in-flight bookkeeping that keeps a track from being
@@ -112,8 +112,6 @@ impl DownloadQueue {
     ) -> Self {
         let cfg = config::Config::load().unwrap_or_default();
         let num_workers = cfg.remote.download_workers.max(1);
-        // One client for the app's lifetime: rebuilding it per track threw away
-        // the connection pool and re-ran the TLS handshake on every download.
         let client = koan_core::helpers::subsonic_client(&cfg);
         if client.is_none() {
             log::info!("remote not configured — download queue will idle");
