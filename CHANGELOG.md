@@ -1,20 +1,10 @@
 # Changelog
 
-## v0.27.0 (2026-08-24)
+## Unreleased
 
 ### Added
 
-- **`KOAN_CONFIG_DIR` points koan at a different configuration directory**, so one machine can run more than one library. `config_dir()` honours it, and `set_config_dir()` does the same in-process.
-
-### Fixed
-
-- **The test suite read the developer's own configuration, and asked for their keychain password.** `Config::load()` resolves its directory from `$HOME`, so tests inherited whatever library folders and remote server belonged to whoever ran them. A koan-tui *rendering* test spawned the download queue, which resolved the configured server and reached for the credentials to reach it with — and macOS put up a dialog asking for the login keychain password. The suite then blocked on it: koan-server's tests took 25.52s waiting, and 0.10s when the keychain was disabled.
-
-  Nothing was hardcoded; that is what made it easy to miss. The tests were simply configured as the person running them, and CI never noticed because a runner has no `~/.config/koan/` to inherit. On a developer's machine the same code path would have gone on to fetch tracks from their server.
-
-  Tests point the configuration at a disposable directory now, so they read a config nobody has edited. The ones that need a remote build their own rather than borrowing one.
-
-## Unreleased
+- **Track results drag and right-click like every other row.** The album tiles and artist pills beside them already did both; the track row was a `Button`, which claims the press, so it was the one result you could only click. It takes the row behaviour the library lists use — full-width hit area, drag to enqueue — and the context menu the tiles and pills already had. Clicking still goes to the album.
 
 ### Changed
 
@@ -24,7 +14,31 @@
 
   A client that falls behind now drops the events it missed instead of delaying the engine. Every variant carries an absolute value — a snapshot, a version, a position — so the one that does arrive is complete on its own.
 
+- **Drag sources outside list rows went through `.onDrag`.** It claims the press outright, which costs the tap underneath it — `RowBehaviour` had already found this and moved list rows to `.draggable`, whose recogniser has a movement threshold and leaves a press that never moves as a click. Album tiles, artist pills and artist names were still on the old path. `PlayableTransfer` is `Transferable` with the two representations the item provider was registering by hand, so drops inside koan and the plain-text fallback out of it are unchanged.
+
+### Fixed
+
+- **Dragging an artist's name in the artists list dragged nothing.** The name was a `Button`, and a button consumes the press a drag starts from — so the row queued when dragged and the link on it, standing for the same artist, did not. The app now has one kind of link text rather than two, and every name that navigates to something playable is also a drag source for it.
+
+- **The Homebrew cask warned on every `brew` command.** `depends_on macos: ">= :tahoe"` is a deprecated string comparison; the bare symbol has always meant "that version or newer", so the requirement is unchanged. The workflow that regenerates the cask on release is fixed too, not just the published tap.
+
+- **The foot of the macOS sidebar was cut off by the transport bar.** The bar is a `safeAreaInset` on the split view, which reserves space in the window but not inside a column's own scroll view. The detail column already compensated; the sidebar never did, so its footer was laid out against a frame whose bottom sits behind the bar — the divider and the first activity row showed, and the progress bar, the cancel button and the library counts underneath them did not. During a sync you got a label with nothing to say how far along it was.
+
+  The sidebar takes the same measured inset the detail column takes, so the footer grows upward from the top of the bar.
+
+- **Clicking a search result did nothing.** Albums, artists and tracks on the results page all registered the click and stayed put; the same tiles and pills worked in the album and artist browsers, which is what made it look like a hit-testing problem rather than a navigation one.
+
+  The sidebar's lit row was derived from the detail stack, so that an album opened from anywhere lit Albums. Opening one therefore *moved* the sidebar selection — and a `List` writes a moved selection back through its binding. That setter pops to the section root, which is right when you click a sidebar row and wrong when the List is echoing a move the app just made: it threw away the destination that had only just been pushed. The browsers were unaffected because the lit row was already the right one, so nothing moved and nothing echoed.
+
+  The lit row is now the section being browsed and nothing else. Opening an album from search results keeps Results lit, and Back returns you to them.
+
+- **Picking from the search dropdown landed on an empty results page instead of what you picked.** Choosing a suggestion pushes its album or artist and then empties the field, and both happened in one update: the results page is the stack's root at that moment, so clearing the query changed what that root drew while the destination was still landing, and it was discarded against the root it had been pushed onto. Emptying the field is its own update now, so the push settles first.
+
+## v0.27.0 (2026-08-24)
+
 ### Added
+
+- **`KOAN_CONFIG_DIR` points koan at a different configuration directory**, so one machine can run more than one library. `config_dir()` honours it, and `set_config_dir()` does the same in-process.
 
 - **The macOS app takes the TUI's single-key shortcuts.** `space`, `<`/`>`, `,`/`.`, `f`, `R`, `p`, `/`, `l`/`a`, `r`, `g`/`G`, `L`, `z` and `?` do there what they do in the TUI, and Help ▸ Keyboard Shortcuts (`?`) lists them — generated from the table that implements them, so the two cannot drift.
 
@@ -68,7 +82,11 @@
 
 ### Fixed
 
-- **Dragging an artist's name in the artists list dragged nothing.** The name was a `Button`, and a button consumes the press a drag starts from — so the row queued when dragged and the link on it, standing for the same artist, did not. The app now has one kind of link text rather than two, and every name that navigates to something playable is also a drag source for it.
+- **The test suite read the developer's own configuration, and asked for their keychain password.** `Config::load()` resolves its directory from `$HOME`, so tests inherited whatever library folders and remote server belonged to whoever ran them. A koan-tui *rendering* test spawned the download queue, which resolved the configured server and reached for the credentials to reach it with — and macOS put up a dialog asking for the login keychain password. The suite then blocked on it: koan-server's tests took 25.52s waiting, and 0.10s when the keychain was disabled.
+
+  Nothing was hardcoded; that is what made it easy to miss. The tests were simply configured as the person running them, and CI never noticed because a runner has no `~/.config/koan/` to inherit. On a developer's machine the same code path would have gone on to fetch tracks from their server.
+
+  Tests point the configuration at a disposable directory now, so they read a config nobody has edited. The ones that need a remote build their own rather than borrowing one.
 
 - **Menu shortcuts no longer reach past a field you are typing in.** ⌘← and ⌥← skipped tracks instead of moving the caret or the word, and ⌘Z undid a queue edit instead of the typing — in the search field, a filter, Settings, anywhere. Every shortcut whose key also means something while typing is now *disabled* while a field has focus, which releases its key equivalent to the responder chain; declining the action instead would leave the menu swallowing the key, so the shortcut would stop working without the field ever hearing it. The bare-key shortcuts already asked what had focus; the modified ones never did.
 
@@ -81,24 +99,6 @@
 - **A fresh HTTP client, and a fresh TLS handshake, for every remote request.** `subsonic_client()` built a new `SubsonicClient` on each call, and each of those builds two blocking `reqwest` clients — two runtimes on two threads with two cold connection pools. Browsing a synced library paid that per album cover. The download queue had already worked this out and kept a client of its own for the app's lifetime; the client is now shared process-wide and keyed on the credentials, so every caller gets connection reuse and logging in as someone else still replaces it.
 
 - **Reading the config forked a `git` process.** `Config::load()` re-read both TOML files, re-ran the figment merge, and re-scanned for credentials in version control — and that last check shells out to `git ls-files` whenever a password is present in the file, then panics if it is tracked. koan reaches config from paths that run per frame: the macOS settings pane reads `library_folders()` from a SwiftUI list body, so it did all of that per rendered frame. The check is what its own message says it is, a gate on starting, and runs once per process now. The merged config is cached and re-read when either file's mtime moves, so a config edited by hand is still picked up.
-
-- **The Homebrew cask warned on every `brew` command.** `depends_on macos: ">= :tahoe"` is a deprecated string comparison; the bare symbol has always meant "that version or newer", so the requirement is unchanged. The workflow that regenerates the cask on release is fixed too, not just the published tap.
-
-- **The foot of the macOS sidebar was cut off by the transport bar.** The bar is a `safeAreaInset` on the split view, which reserves space in the window but not inside a column's own scroll view. The detail column already compensated; the sidebar never did, so its footer was laid out against a frame whose bottom sits behind the bar — the divider and the first activity row showed, and the progress bar, the cancel button and the library counts underneath them did not. During a sync you got a label with nothing to say how far along it was.
-
-  The sidebar takes the same measured inset the detail column takes, so the footer grows upward from the top of the bar.
-
-- **Drag sources outside list rows went through `.onDrag`.** It claims the press outright, which costs the tap underneath it — `RowBehaviour` had already found this and moved list rows to `.draggable`, whose recogniser has a movement threshold and leaves a press that never moves as a click. Album tiles, artist pills and artist names were still on the old path. `PlayableTransfer` is `Transferable` with the two representations the item provider was registering by hand, so drops inside koan and the plain-text fallback out of it are unchanged.
-
-- **Track results could not be dragged or right-clicked.** The album tiles and artist pills beside them could do both; the track row was a `Button`, which claims the press, so it was the one result you could only click. It takes the same row behaviour the library lists use — full-width hit area, drag to enqueue — and the same context menu the tiles and pills already had. Clicking still goes to the album.
-
-- **Clicking a search result did nothing.** Albums, artists and tracks on the results page all registered the click and stayed put; the same tiles and pills worked in the album and artist browsers, which is what made it look like a hit-testing problem rather than a navigation one.
-
-  The sidebar's lit row was derived from the detail stack, so that an album opened from anywhere lit Albums. Opening one therefore *moved* the sidebar selection — and a `List` writes a moved selection back through its binding. That setter pops to the section root, which is right when you click a sidebar row and wrong when the List is echoing a move the app just made: it threw away the destination that had only just been pushed. The browsers were unaffected because the lit row was already the right one, so nothing moved and nothing echoed.
-
-  The lit row is now the section being browsed and nothing else. Opening an album from search results keeps Results lit, and Back returns you to them.
-
-- **Picking from the search dropdown landed on an empty results page instead of what you picked.** Choosing a suggestion pushes its album or artist and then empties the field, and both happened in one update: the results page is the stack's root at that moment, so clearing the query changed what that root drew while the destination was still landing, and it was discarded against the root it had been pushed onto. Emptying the field is its own update now, so the push settles first.
 
 ## v0.26.0 (2026-08-23)
 
@@ -251,7 +251,6 @@
 - **h2 unbounded empty DATA frames (RUSTSEC-2026-0258)** — `axum::serve` runs hyper-util's auto builder, which speaks h2c on a plaintext listener, so anyone able to reach the API port could grow server memory without limit. h2 is now 0.4.18 (patched in 0.4.16).
 - **rustls-webpki CRL panic and name-constraint bypasses (RUSTSEC-2026-0104, -0098, -0099, -0049)** — a hostile certificate chain from a Subsonic/Navidrome server could panic the sync client, and URI/wildcard name constraints were mis-evaluated. rustls-webpki is now 0.103.15.
 
-
 - **Cross-site WebSocket hijacking** — `/graphql/ws` upgraded with no `Origin` check. WebSocket handshakes are exempt from CORS, so any page the owner visited could open a socket, have the browser attach the session cookie, and run queries *and* mutations while reading every response. Requests carrying a foreign `Origin` are now refused before the upgrade; an absent `Origin` (non-browser client) still passes.
 - **CSRF via a CORS-safelisted content type** — `POST /graphql` with `Content-Type: text/plain` needs no preflight, so the browser sent it with cookies attached, and async-graphql parsed the body as JSON regardless. The response was unreadable but the mutation landed. `POST /graphql` now requires `application/json` or `application/graphql`.
 - **DNS rebinding** — no `Host` was ever checked, so a page whose DNS flipped to `127.0.0.1` after loading reached the API as same-origin, at which point CORS, Private Network Access and `SameSite` are all irrelevant. Requests are now refused unless the `Host` is `localhost`, a bare IP literal, or listed in `[graphql] allowed_hosts`.
@@ -274,7 +273,6 @@
 ### Added
 
 - **`koan scan --force-remove`** — deletes stale tracks even when the proportion missing trips the mount-failure brake, for the case where the files really were deleted. It lifts that one check and nothing else: a folder yielding no audio files is still left alone, and a path that cannot be stat'd is still not "gone". The run announces itself up front and lists what it removed.
-
 
 - **Render tests for the TUI** (`crates/koan-tui/tests/render.rs`) — the widget layer had no test coverage, and layout and unicode regressions compile cleanly while rendering wrong. Pins the main layout split at every terminal height, asserts the seek bar's click hit-test agrees with the columns actually painted, and sweeps every widget across terminal sizes from 1×1 upward with titles containing CJK, emoji, ZWJ sequences, combining marks and RTL text.
 
@@ -310,13 +308,11 @@ Also hardened, same blast radius:
 - `ARCHITECTURE.md` and `CLAUDE.md` claimed the koan-tui/koan-server boundary was compiler-enforced. It
   is not — koan-tui declares an (unused) dependency on koan-server.
 
-
 - MSRV declared (`rust-version = "1.89"`, set by async-graphql) and enforced by a CI job.
 - `cargo audit` job and Dependabot for both cargo and GitHub Actions.
 - Release gate that fails if the internal path-dep versions drift from the workspace version — the
   drift that `--no-verify` was hiding.
 - Job timeouts, and `.gitignore` entries for local secrets and state.
-
 
 - `koan subsonic setup|status|disable`.
 - `[graphql] allowed_hosts`, `cookie_secure`, `allow_organize`.
@@ -327,9 +323,7 @@ Also hardened, same blast radius:
 
 - `koan-core`: `SubsonicAuth` splits the credentials and URL signing out of `SubsonicClient`, which constructs blocking `reqwest` clients and so cannot be built inside a tokio runtime. `SubsonicClient::stream_to_file` fetches through `/rest/stream` for servers that implement only that. `GraphQLClient::stream_url` is gone — it was unused and omitted the auth parameters `/rest/*` requires.
 
-
 - **Symphonia 0.5 → 0.6.1** — 0.6 rebuilt the format/codec registry, audio primitives, and metadata types around multi-track (audio/video/subtitle) media. Track timing moved off `CodecParameters` onto `Track`, which is where the audible wins come from: 24-bit/96 kHz ALAC now reports 96 kHz instead of 48 kHz (it previously played at half speed, and switched the output device to the wrong rate — fatal for a bit-perfect player), and ALAC-in-CAF decodes at all instead of erroring out. Playback frame counts are byte-identical across every other format.
-
 
 - **GraphQL collections default to 50 rows and cap at 500.** A query with no `first` used to return
   the entire collection, so `{ tracks { edges { node { title } } } }` materialised a whole library as
@@ -347,7 +341,6 @@ Also hardened, same blast radius:
   everyone slowly instead of telling the excess to come back. Subscriptions are exempt from the
   timeout.
 
-
 - **Dependency refresh across the workspace.** Notable majors: rusqlite 0.40, keyring 4, jsonwebtoken 11, rtrb 0.4, cpal 0.18, rmcp 3.1, bliss-audio 0.13, lofty 0.25, base64 0.23, tower-http 0.7, pem 4, getrandom 0.4, toml 1.1, jwalk 0.9, core-foundation 0.10, clap 4.6.
 - **jsonwebtoken now uses the aws-lc-rs backend**, shared with rustls rather than pulling a second crypto stack. Token verification is stricter than under 9.x: the signature check can no longer be disabled, and the `alg` header is matched against the pinned `EdDSA` unconditionally.
 - **keyring on Linux talks to secret-service over zbus** instead of dbus-secret-service. macOS Keychain access is unchanged — same generic-password service/account attributes and the same user keychain — so existing credentials still resolve.
@@ -362,13 +355,11 @@ Also hardened, same blast radius:
 - **`SubsonicClient::stream_url` and the auth path are fallible** — the salt is generated from OS entropy and a request without it now fails instead of falling back to anything predictable. The salt is sent alongside `md5(password + salt)`, so a guessable one would make the token precomputable from a captured exchange.
 - **All remote downloads share one implementation** (`koan-core/src/remote/download.rs`) — there were three copies of "stream bytes to disk with progress" and only one wrote to a temp file and verified the result.
 
-
 - **ratatui 0.29 → 0.30, crossterm 0.28 → 0.29** — the two move together because `ratatui-crossterm` defaults to crossterm 0.29; bumping ratatui alone resolves two crossterm versions and breaks at the backend boundary. No source changes: koan's ratatui surface is `Buffer`, `Rect`, `Style`, `Line`/`Span`, `Widget` and `Length`/`Min`/`Percentage` constraints, and every 0.30 breaking change lands elsewhere.
 
   0.30 splits into `ratatui-core`/`ratatui-widgets`/`ratatui-crossterm` and replaces the cassowary layout solver with kasuari. Solver output is unchanged for koan's constraint sets, and `Buffer`'s out-of-bounds policy still panics rather than clamping, so nothing that used to render now renders differently or silently truncates. The one behavioural change is that halfwidth katakana dakuten/handakuten (`U+FF9E`/`U+FF9F`) now measure one cell instead of zero, matching how terminals actually draw them.
 
   The optional `termwiz`/`termina` backends appear in `Cargo.lock` but stay out of the build graph.
-
 
 - The pre-push hook no longer runs `git add -A && git commit --amend` when `cargo fmt` changes files —
   it swept unrelated working-tree changes into the user's commit. It now fails and asks. It also runs
@@ -387,7 +378,6 @@ Also hardened, same blast radius:
 - **A malformed `id` came back as a bare HTTP 400** from axum's extractor rather than a Subsonic error 10.
 - **Database errors read as an empty library.** `getAlbum`, `getGenres`, `getPlaylists` and the artist album counts swallowed failures and answered `status="ok"` with zero rows, which tells a client to drop its cached library.
 - **The Subsonic router was built twice at startup**, each build re-reading two config files and, on macOS, prompting the keychain. Proxied upstream streams also built a fresh HTTP client and re-read the config on every request; both are now resolved once.
-
 
 - **The Linux audio callback took a mutex on every buffer.** The rtrb consumer was wrapped in a
   `std::sync::Mutex` so it could move into cpal's `FnMut` callback — but `rtrb::Consumer` is already
@@ -451,7 +441,6 @@ Also hardened, same blast radius:
 - **Download workers survive panics** — a panicking download permanently shrank the worker pool for the process lifetime.
 - **Lost server connections are visible** — the remote bridge swallowed poll errors and froze on the last known state while retrying at 10Hz. Connection loss and recovery are now logged.
 
-
 - **Deleting the playing track jumped back to the top of the queue** — removing an item clears the cursor, and an unset cursor means "start from the beginning", so deleting track 25 of 40 resumed at track 1. The removed track's predecessor is now pinned before advancing, so playback continues at its successor. Reachable from the TUI, GraphQL and MCP.
 - **Deleting an upcoming track replayed the whole queue** — the decode thread's gapless lookahead runs up to ~4 seconds ahead of what is audible, and its reference item vanishing was read as "start of queue". Track 6 would run gaplessly into track 1. A missing reference now ends the lookahead so the audible track's own successor is used.
 - **Playback died for good when the next track had not finished downloading.** Advancing only accepted fully-downloaded tracks and left the cursor where it was, and the download completion signal is discarded unless the cursor is on that track — so on a slow link the queue stopped with every track showing Ready and nothing resumed it. The cursor now parks on the track being fetched and playback resumes when its bytes land.
@@ -499,7 +488,6 @@ Also hardened, same blast radius:
 - **Favouriting a track mid-download sticks** — the star was keyed on the in-progress `.part` path, which stops existing when the download completes, so it silently disappeared and was never pushed to the server.
 - **Download workers survive panics** — a panicking download permanently shrank the worker pool for the process lifetime.
 - **Lost server connections are visible** — the remote bridge swallowed poll errors and froze on the last known state while retrying at 10Hz. Connection loss and recovery are now logged.
-
 
 - **`remove_track_by_path` and `remove_tracks_by_source`** — unused outside their own tests, and both left orphaned foreign-key rows behind that would fail a later delete.
 
