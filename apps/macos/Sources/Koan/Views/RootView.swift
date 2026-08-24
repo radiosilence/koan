@@ -99,7 +99,7 @@ struct RootView: View {
                     // window's is the wash now, so anything transparent
                     // composites onto it — and onto the page you came from,
                     // which is what a library grid was doing.
-                    .background(washSource == nil ? AnyShapeStyle(.background) : AnyShapeStyle(.clear))
+                    .background(nav.section == .queue ? AnyShapeStyle(.clear) : AnyShapeStyle(.background))
                     // The stack draws its own back button for pushed
                     // destinations, next to the pair we already have — three
                     // chevrons in a row. Ours can cross sections and search
@@ -332,7 +332,14 @@ struct RootView: View {
     /// Return either picks a suggestion — in which case the field holds a token
     /// naming exactly what was chosen — or it means "show me everything".
     private func handleSubmit() {
-        guard let selection = SearchModel.Selection(token: search.query) else {
+        // Emptying the field submits it again. Acting on that sent you to the
+        // results page for a search you had not asked for — and since clearing
+        // the query then forgets that page, you landed on whatever list was
+        // behind it, one keystroke after picking an album.
+        let query = search.query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return }
+
+        guard let selection = SearchModel.Selection(token: query) else {
             nav.show(.searchResults)
             return
         }

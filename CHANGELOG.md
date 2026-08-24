@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Picking something from the search dropdown landed you on the list instead.** Choosing an album sent you to the album grid, an artist to the artist list. Two faults, one after the other. The navigation stack's root read the stack's own path — to decide whether the wash showed through — so changing the path invalidated the root, and the stack answered by throwing the path away and writing an empty one back. Then emptying the field after acting on a result submits it again, and an empty submit was treated as "search for nothing", which shows the results page; clearing the query then forgets that page, dropping you on whatever list was behind it. The root no longer reads the path, and a blank field submitting is no longer a request for anything.
+
 - **Navigating anywhere could take two seconds.** Opening an album from the queue and then clicking through to its artist slid the page in as though it were being dragged. `.animation(_:value:)` animates *every* animatable change in the subtree it is attached to, not only the value it names, and it was attached to the whole split view to cross-fade the tint between records — so any navigation that happened to coincide with a new colour was stretched to the length of that cross-fade. The tint is animated where it is set instead, which is the only thing that was ever meant to move.
 
 ## v0.30.0 (2026-08-24)
