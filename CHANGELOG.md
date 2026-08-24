@@ -80,6 +80,8 @@
 
 - **Reading the config forked a `git` process.** `Config::load()` re-read both TOML files, re-ran the figment merge, and re-scanned for credentials in version control — and that last check shells out to `git ls-files` whenever a password is present in the file, then panics if it is tracked. koan reaches config from paths that run per frame: the macOS settings pane reads `library_folders()` from a SwiftUI list body, so it did all of that per rendered frame. The check is what its own message says it is, a gate on starting, and runs once per process now. The merged config is cached and re-read when either file's mtime moves, so a config edited by hand is still picked up.
 
+- **The Homebrew cask warned on every `brew` command.** `depends_on macos: ">= :tahoe"` is a deprecated string comparison; the bare symbol has always meant "that version or newer", so the requirement is unchanged. The workflow that regenerates the cask on release is fixed too, not just the published tap.
+
 ## v0.26.0 (2026-08-23)
 
 ### Added
