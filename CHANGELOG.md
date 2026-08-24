@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.30.1 (2026-08-25)
+
+### Changed
+
+- **⌘K is the search.** It is the search everywhere it exists, and koan's knows albums, artists and tracks. It opened the sheet that builds a queue instead, which is a different job — that keeps its place in the menu and moves to ⇧⌘K.
+
+### Fixed
+
+- **Picking something from the search dropdown landed you on the list instead.** Choosing an album sent you to the album grid, an artist to the artist list. The detail column was a `NavigationStack` whose root switched per section, and a stack throws its path away when its root changes under it, then writes the empty path back — so a move that set a section and a destination at once was undone in the update that made it. Search was the only thing that did both, which is why nothing else broke.
+
+  The stack is gone. koan navigates like a browser and always did: any page reachable from any page, with a linear history and a cursor, which `Navigator` already owned — Back and Forward moved that cursor, and the stack's own back button was hidden so they could. It was navigating nothing and charging a hierarchy for it. An album is reachable from the queue, from the grid, from an artist and from search, and none of those is its parent. Now there is one page, one list of pages visited, and one cursor into it; the sidebar lights a row when the page *is* that row, and nothing when you are on a record.
+
+- **Navigating anywhere could take two seconds.** Opening an album from the queue and then clicking through to its artist slid the page in as though it were being dragged. `.animation(_:value:)` animates *every* animatable change in the subtree it is attached to, not only the value it names, and it was attached to the whole split view to cross-fade the tint between records — so any navigation that happened to coincide with a new colour was stretched to the length of that cross-fade. The tint is animated where it is set instead, which is the only thing that was ever meant to move.
+
 ## v0.30.0 (2026-08-24)
 
 ### Changed
