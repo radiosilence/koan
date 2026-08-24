@@ -30,7 +30,7 @@ struct TrackListView: View {
                 .padding(.bottom, 16)
 
             if tracks.isEmpty {
-                EmptyState(icon: "music.note.list", title: "No tracks")
+                EmptyState(icon: "music.note.list", title: emptyTitle)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 // A real List rather than a LazyVStack of tap gestures. Stacking
@@ -85,6 +85,12 @@ struct TrackListView: View {
                 }
             }
         }
+    }
+
+    /// Only a gathered list is narrowed by the filter; a record's tracklist
+    /// with nothing in it is a record with nothing in it.
+    private var emptyTitle: String {
+        mixedAlbums && !library.filter.isEmpty ? "No matches" : "No tracks"
     }
 
     /// Plays the list from the first of `ids`, keeping the rest behind it.
