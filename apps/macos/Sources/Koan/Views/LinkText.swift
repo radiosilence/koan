@@ -1,4 +1,3 @@
-import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -41,17 +40,11 @@ struct LinkText: View {
                 )
                 .lineLimit(1)
                 .contentShape(.rect)
-                .onHover { inside in
-                    hovering = inside
-                    // `.pointerStyle(.link)` needs macOS 15; the app targets 14.
-                    if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-                }
+                .pointerStyle(.link)
+                .onHover { hovering = $0 }
                 // A row that scrolls or filters away while hovered never sees
-                // the exit, and the hand cursor would be left on the stack.
-                .onDisappear {
-                    if hovering { NSCursor.pop() }
-                    hovering = false
-                }
+                // the exit, so it would come back still underlined.
+                .onDisappear { hovering = false }
                 .onTapGesture {
                     switch target {
                     case .artist(let id): library.reveal(artist: id)
