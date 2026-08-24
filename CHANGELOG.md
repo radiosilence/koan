@@ -2,9 +2,19 @@
 
 ## Unreleased
 
+### Added
+
+- **The queue groups by album or gives every track its own row, and remembers which you chose.** Grouped is what it was: a heading per contiguous run of a record, tracks underneath carrying a number. Ungrouped drops the headings and gives each row its own sleeve and its full attribution, because there is no heading above it to say what record it is. Each suits a different queue — an album listen wants the headings, a long shuffled queue wants every row to identify itself — so it is a toggle in the queue bar rather than a decision made for you, and it persists.
+
+  Both modes are shown with the active one lit, the way Finder switches view. One icon would have had to choose between naming the mode you are in and the mode you would get, and whichever it named, the other reading is available and wrong.
+
 ### Changed
 
 - **The queue's album headings carry the record, not a label.** The cover was 22pt — too small to recognise a sleeve by — and the heading read as one run-on line of artist, album and year. Art is 52pt, and the text is the album, its artist, then year · track count · running time · codec, so a run in the queue says what it is without counting rows. The codec only shows when the whole run shares one.
+
+### Fixed
+
+- **A macOS build made without Xcode had invisible controls.** The accent is read from the asset catalog, compiling it needs `actool`, and that ships with Xcode proper rather than the command line tools. Without it the colour resolved to nothing and the whole app was tinted with nothing — which does not merely lose the colour: every borderless button and the playing row's title and speaker are drawn in `.tint`, so they were invisible rather than uncoloured. It falls back to the system accent, which is visible and still visibly not koan's.
 
 ## v0.28.0 (2026-08-24)
 
