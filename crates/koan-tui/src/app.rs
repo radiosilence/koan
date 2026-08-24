@@ -282,6 +282,10 @@ pub struct App {
     /// Transient status message shown in the hint bar. Cleared after a timeout.
     pub status_message: Option<StatusMessage>,
 
+    /// Failure reasons already reported, so one dead remote raises one message
+    /// rather than one per track it took down. Reset once nothing is failed.
+    noted_failures: std::collections::HashSet<String>,
+
     /// Pending share result from background thread.
     pending_share_status: Option<Arc<Mutex<Option<StatusMessage>>>>,
 
@@ -370,6 +374,7 @@ impl App {
             frame_count: 0,
             favourites: std::collections::HashSet::new(),
             status_message: None,
+            noted_failures: std::collections::HashSet::new(),
             pending_share_status: None,
             show_fps: cfg.playback.show_fps,
             viz_fullscreen: false,
@@ -1378,8 +1383,11 @@ impl App {
 
     fn create_and_copy_share_link(&mut self) {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
-        if !cfg.remote.enabled || cfg.remote.password.is_empty() {
-            self.status_message = Some(("Remote not configured".into(), std::time::Instant::now()));
+        if koan_core::helpers::subsonic_client(&cfg).is_none() {
+            self.status_message = Some((
+                koan_core::helpers::remote_unavailable(&cfg),
+                std::time::Instant::now(),
+            ));
             return;
         }
 
@@ -2859,7 +2867,32 @@ impl App {
             // Clamp cursor after every external playlist change.
             self.clamp_queue_cursor();
             self.close_stale_track_info();
+            self.note_new_failures();
         }
+    }
+
+    /// Say why a track cannot play. The reason used to reach only the log file,
+    /// so a queue nothing could fetch looked exactly like a queue still loading.
+    fn note_new_failures(&mut self) {
+        let mut reasons = self
+            .queue
+            .vq_cache
+            .entries
+            .iter()
+            .filter_map(|e| e.error.as_deref())
+            .peekable();
+        if reasons.peek().is_none() {
+            self.noted_failures.clear();
+            return;
+        }
+        let Some(fresh) = reasons
+            .find(|r| !self.noted_failures.contains(*r))
+            .map(str::to_owned)
+        else {
+            return;
+        };
+        self.status_message = Some((format!("can't play — {fresh}"), std::time::Instant::now()));
+        self.noted_failures.insert(fresh);
     }
 
     /// The track info modal renders nothing once its track leaves the queue,

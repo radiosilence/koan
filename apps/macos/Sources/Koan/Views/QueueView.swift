@@ -599,7 +599,9 @@ private struct QueueRow: View {
         case .priorityPending:
             Image(systemName: "arrow.down.circle.fill").foregroundStyle(.tint)
         case .failed:
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .help(item.failureReason ?? "Couldn't be fetched")
         case .played:
             Image(systemName: "checkmark").foregroundStyle(.tertiary)
         case .queued:

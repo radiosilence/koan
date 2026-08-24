@@ -57,6 +57,12 @@ pub enum PlayerCommand {
     TrackReady(QueueItemId),
     /// Enough data buffered for streaming playback — check if cursor is waiting.
     TrackStreamReady(QueueItemId),
+    /// Download failed — a cursor parked on this item must stop waiting.
+    ///
+    /// Without it the player sits on a `Pending` item forever: `Ready` is the
+    /// only thing it listens for, and a track that cannot be fetched never
+    /// becomes Ready. That is the offline-library stall.
+    TrackFailed(QueueItemId),
     /// Decode thread exhausted the playlist — auto-advance or stop.
     DecodeFinished,
     /// Undo the last reversible playlist operation.

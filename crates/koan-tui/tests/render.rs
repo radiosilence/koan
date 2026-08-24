@@ -105,6 +105,7 @@ fn entry(title: &str, status: QueueEntryStatus) -> QueueEntry {
         duration_ms: Some(215_000),
         status,
         download_progress: Some((3, 10)),
+        error: None,
     }
 }
 

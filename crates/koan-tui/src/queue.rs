@@ -571,6 +571,7 @@ mod tests {
             duration_ms: Some(200_000),
             status: QueueEntryStatus::Queued,
             download_progress: None,
+            error: None,
         }
     }
 

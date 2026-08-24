@@ -1020,6 +1020,26 @@ impl Player {
         }
     }
 
+    /// A download the cursor is parked on will never land.
+    ///
+    /// `play()` leaves the cursor on an item that is not yet Ready and stops,
+    /// waiting for `TrackReady`. When the download fails instead, that wait has
+    /// no end — so walk on to the next item that can still load, or stop
+    /// cleanly if there is none.
+    pub fn track_failed(&mut self, id: QueueItemId) {
+        if !self.shared_state.is_cursor(id) {
+            return;
+        }
+        // Only a parked cursor is waiting on this. Playing means it is being
+        // streamed from the partial file — the pump sees the failure and ends
+        // the decode, which advances the queue — and paused is the user's.
+        if self.shared_state.playback_state() != PlaybackState::Stopped {
+            return;
+        }
+        log::info!("track {:?} cannot load, moving on", id);
+        self.next_track();
+    }
+
     /// Decode thread naturally finished (playlist exhausted or error).
     /// Advance to the next playable track; otherwise stop cleanly.
     ///
@@ -1180,6 +1200,7 @@ impl Player {
             PlayerCommand::TrackReady(id) => self.track_ready(id),
             PlayerCommand::DecodeFinished => self.on_decode_finished(),
             PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
+            PlayerCommand::TrackFailed(id) => self.track_failed(id),
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
             PlayerCommand::BeginUndoBatch => {
@@ -1547,6 +1568,76 @@ mod tests {
 
         assert_eq!(player.playback_starts, 1);
         assert_eq!(player.shared_state.cursor(), Some(waiting_id));
+    }
+
+    #[test]
+    fn a_download_that_cannot_land_moves_the_cursor_on() {
+        let mut player = Player::new();
+        let waiting = pending_item("waiting");
+        let later = make_item("later");
+        let (waiting_id, later_id) = (waiting.id, later.id);
+        player.process_command(PlayerCommand::AddToPlaylist(vec![waiting, later]));
+
+        player.process_command(PlayerCommand::Play(waiting_id));
+        assert_eq!(player.playback_starts, 0, "nothing to play yet");
+
+        // The download gives up. Ready will never come.
+        player
+            .shared_state
+            .update_load_state(waiting_id, LoadState::Failed("remote unavailable".into()));
+        player.process_command(PlayerCommand::TrackFailed(waiting_id));
+
+        assert_eq!(
+            player.shared_state.cursor(),
+            Some(later_id),
+            "the queue moves past a track that can never load"
+        );
+        assert_eq!(player.playback_starts, 1);
+    }
+
+    #[test]
+    fn a_queue_that_can_never_load_stops_rather_than_waiting() {
+        let mut player = Player::new();
+        let first = pending_item("first");
+        let second = pending_item("second");
+        let (first_id, second_id) = (first.id, second.id);
+        player.process_command(PlayerCommand::AddToPlaylist(vec![first, second]));
+
+        player.process_command(PlayerCommand::Play(first_id));
+        for id in [first_id, second_id] {
+            player
+                .shared_state
+                .update_load_state(id, LoadState::Failed("remote unavailable".into()));
+            player.process_command(PlayerCommand::TrackFailed(id));
+        }
+
+        assert_eq!(player.playback_starts, 0);
+        assert_eq!(
+            player.shared_state.playback_state(),
+            PlaybackState::Stopped,
+            "a stop the UI can see, not an indefinite wait for TrackReady"
+        );
+    }
+
+    #[test]
+    fn a_failure_elsewhere_in_the_queue_leaves_the_cursor_alone() {
+        let mut player = Player::new();
+        let waiting = pending_item("waiting");
+        let other = pending_item("other");
+        let (waiting_id, other_id) = (waiting.id, other.id);
+        player.process_command(PlayerCommand::AddToPlaylist(vec![waiting, other]));
+        player.process_command(PlayerCommand::Play(waiting_id));
+
+        player
+            .shared_state
+            .update_load_state(other_id, LoadState::Failed("remote unavailable".into()));
+        player.process_command(PlayerCommand::TrackFailed(other_id));
+
+        assert_eq!(
+            player.shared_state.cursor(),
+            Some(waiting_id),
+            "a track still downloading keeps the cursor"
+        );
     }
 
     #[test]

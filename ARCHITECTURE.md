@@ -189,6 +189,8 @@ struct Playlist {
 
 Advancing parks on the next item that is not `Failed`, including one still downloading — playback stops until its `TrackReady`/`TrackStreamReady` arrives, which only reaches the player because the cursor is sitting on it. Skipping ahead to the next `Ready` item instead would drop the track from the queue permanently. Both advance and peek treat a reference item that is no longer in the playlist as "nothing follows": restarting from index 0 would silently replay the queue from the top.
 
+A download that gives up sends `TrackFailed` instead, and the parked cursor advances past the item rather than waiting for a `TrackReady` that cannot come. The reason rides on the item as `LoadState::Failed(reason)` and out through `QueueEntry::error`, because a queue of unplayable tracks and a queue still fetching look identical without it.
+
 ## koan-core modules
 
 ### `audio/`

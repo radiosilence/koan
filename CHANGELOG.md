@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- **A track that can never load no longer parks the queue on itself forever.** `play()` leaves the cursor on an item that is not yet Ready and waits for `TrackReady` — and a download that fails never sends one. With the library folder offline and the remote unreadable, every item failed and the player sat stopped on the first one, which is the same picture as a queue still fetching. Failures raise `TrackFailed` now, and the cursor walks on to the next item that can still load, or stops cleanly when there is none.
+
+- **The reason a track cannot play reaches the front ends.** It was a string inside `LoadState::Failed` that nothing read: the TUI drew `!`, the macOS app drew a triangle captioned "Couldn't be fetched", and the actual sentence — a locked keychain, a server that would not answer — lived in the log file. `QueueEntry` carries it, so the TUI raises it once per distinct reason rather than once per track, the triangle's tooltip says it, and GraphQL clients can read `QueueEntry.failureReason`.
+
+- **Sharing a track asked the config file whether there was a password.** The same mistake `koan remote status` had in v0.27: `remote.password` is empty for every keychain-backed sign-in, so "Remote not configured" was the answer on a perfectly good setup. It goes through `subsonic_client` and reports `remote_unavailable()` like everything else.
+
 ### Changed
 
 - **The queue's album headings carry the record, not a label.** The cover was 22pt — too small to recognise a sleeve by — and the heading read as one run-on line of artist, album and year. Art is 52pt, and the text is the album, its artist, then year · track count · running time · codec, so a run in the queue says what it is without counting rows. The codec only shows when the whole run shares one.

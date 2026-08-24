@@ -216,9 +216,11 @@ fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
     let Some(client) = inner.client.as_ref() else {
         // Failed, not left Pending: the player waits for Ready, so a queue of
         // tracks that can never arrive would otherwise sit saying nothing.
-        inner.state.update_load_state(
+        crate::helpers::fail_track(
+            &inner.state,
+            &inner.cmd_tx,
             queue_id,
-            LoadState::Failed(crate::helpers::remote_unavailable(&inner.cfg)),
+            crate::helpers::remote_unavailable(&inner.cfg),
         );
         return;
     };
@@ -237,9 +239,12 @@ fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
 
     if outcome.is_err() {
         log::error!("download panicked for {:?}", queue_id);
-        inner
-            .state
-            .update_load_state(queue_id, LoadState::Failed("download panicked".into()));
+        crate::helpers::fail_track(
+            &inner.state,
+            &inner.cmd_tx,
+            queue_id,
+            "download panicked".into(),
+        );
     }
 }
 

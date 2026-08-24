@@ -1055,14 +1055,14 @@ pub fn download_track(
     let db = match Database::open_default() {
         Ok(db) => db,
         Err(e) => {
-            state.update_load_state(queue_id, LoadState::Failed(format!("db error: {}", e)));
+            fail_track(state, tx, queue_id, format!("db error: {}", e));
             return;
         }
     };
     let track = match queries::get_track_row(&db.conn, db_id) {
         Ok(Some(t)) => t,
         _ => {
-            state.update_load_state(queue_id, LoadState::Failed("track not found".into()));
+            fail_track(state, tx, queue_id, "track not found".into());
             return;
         }
     };
@@ -1082,7 +1082,12 @@ pub fn download_track(
                     return;
                 }
             }
-            state.update_load_state(queue_id, LoadState::Failed("no remote_id".into()));
+            fail_track(
+                state,
+                tx,
+                queue_id,
+                "not in the library folder, and no remote copy to fetch".into(),
+            );
             return;
         }
     };
@@ -1161,7 +1166,7 @@ pub fn download_track(
     });
 
     if let Err(e) = result {
-        state.update_load_state(queue_id, LoadState::Failed(e.to_string()));
+        fail_track(state, tx, queue_id, e.to_string());
         push_log(log_buf, format!("x {} — {}", track.title, e));
         return;
     }
@@ -1185,6 +1190,23 @@ pub fn download_track(
 
     if state.is_cursor(queue_id) {
         tx.send(PlayerCommand::TrackReady(queue_id)).ok();
+    }
+}
+
+/// Mark a queue item unplayable and tell the player, if it is waiting on it.
+///
+/// Setting `LoadState::Failed` alone is not enough: the player only wakes for
+/// `TrackReady`, so a cursor parked on the item would wait for a download that
+/// has already given up.
+pub(crate) fn fail_track(
+    state: &Arc<SharedPlayerState>,
+    tx: &crossbeam_channel::Sender<PlayerCommand>,
+    queue_id: QueueItemId,
+    reason: String,
+) {
+    state.update_load_state(queue_id, LoadState::Failed(reason));
+    if state.is_cursor(queue_id) {
+        tx.send(PlayerCommand::TrackFailed(queue_id)).ok();
     }
 }
 

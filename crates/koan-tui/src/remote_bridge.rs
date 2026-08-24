@@ -490,6 +490,7 @@ fn command_loop(
             // catches new variants.
             PlayerCommand::TrackReady(_)
             | PlayerCommand::TrackStreamReady(_)
+            | PlayerCommand::TrackFailed(_)
             | PlayerCommand::BeginUndoBatch
             | PlayerCommand::EndUndoBatch
             | PlayerCommand::UpdatePaths(_)
