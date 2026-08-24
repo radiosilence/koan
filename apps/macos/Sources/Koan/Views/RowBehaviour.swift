@@ -1,4 +1,3 @@
-import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -46,47 +45,6 @@ extension View {
     /// something playable.
     func rowBehaviour(playable: Playable? = nil) -> some View {
         modifier(RowBehaviour(playable: playable))
-    }
-}
-
-/// A link inside a row.
-///
-/// A `Button` wins hit-testing within its own frame, so the row's selection and
-/// primary action don't fire when you hit the link — which is what makes
-/// "click the artist name to go to the artist, click the row to select it"
-/// possible at all. It has to be a Button for that reason; it just shouldn't
-/// look like one.
-///
-/// Styled to match the links elsewhere in the app: ordinary text that underlines
-/// on hover. Link blue in a list of names reads as decoration rather than
-/// emphasis.
-struct RowLink: View {
-    let title: String
-    let font: Font
-    let action: () -> Void
-
-    @State private var hovering = false
-
-    init(_ title: String, font: Font = .body, action: @escaping () -> Void) {
-        self.title = title
-        self.font = font
-        self.action = action
-    }
-
-    var body: some View {
-        Button(action: action) {
-            Text(title)
-                .font(font)
-                .underline(hovering)
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-        }
-        .buttonStyle(.plain)
-        .onHover { inside in
-            hovering = inside
-            // `.pointerStyle(.link)` needs macOS 15; the app targets 14.
-            if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-        }
     }
 }
 

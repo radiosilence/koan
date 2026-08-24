@@ -68,6 +68,8 @@
 
 ### Fixed
 
+- **Dragging an artist's name in the artists list dragged nothing.** The name was a `Button`, and a button consumes the press a drag starts from — so the row queued when dragged and the link on it, standing for the same artist, did not. The app now has one kind of link text rather than two, and every name that navigates to something playable is also a drag source for it.
+
 - **Menu shortcuts no longer reach past a field you are typing in.** ⌘← and ⌥← skipped tracks instead of moving the caret or the word, and ⌘Z undid a queue edit instead of the typing — in the search field, a filter, Settings, anywhere. Every shortcut whose key also means something while typing is now *disabled* while a field has focus, which releases its key equivalent to the responder chain; declining the action instead would leave the menu swallowing the key, so the shortcut would stop working without the field ever hearing it. The bare-key shortcuts already asked what had focus; the modified ones never did.
 
 - **The sync fetched 1,725 artists and threw the list away.** `get_artists` was called, counted, logged as "syncing 1725 artists" and then dropped — artists only ever came into being as a side effect of a track upsert, which saw nothing but a name and an id. That is why not one artist in a synced library had a MusicBrainz id or a sort name, and why the reported artist count was theatre. The list is applied now, and the count is what was actually written.
