@@ -44,6 +44,9 @@ final class PlayerModel {
     /// polling the engine a second time on its own timer.
     var onTick: (() -> Void)?
 
+    /// The loop following the engine. Cancelling it ends the subscription.
+    @ObservationIgnored private var events: Task<Void, Never>?
+
     init(engine: KoanEngine) {
         self.engine = engine
         // Reading the engine is a suspension now, so the first frame renders
@@ -59,16 +62,41 @@ final class PlayerModel {
     /// rather than asking. The watching still happens — it just happens in
     /// Rust, over atomics, off the audio path.
     func start() async {
-        await engine.subscribe(listener: EventBridge(model: self))
         await tick()  // Seed from current state; events only carry changes.
         refreshDevices()
         startAutosave()
+        observe()
+    }
+
+    /// Follow the engine for as long as this model is alive.
+    ///
+    /// The loop *is* the subscription — there is nothing to register and
+    /// nothing to unregister, and cancelling the task ends it. Weakly held so
+    /// a model that goes away takes its loop with it.
+    private func observe() {
+        events?.cancel()
+        events = Task { [weak self] in
+            guard let engine = self?.engine else { return }
+            for await event in engine.events() {
+                guard let self else { return }
+                switch event {
+                case .playbackChanged(let nowPlaying):
+                    await self.tick(nowPlaying)
+                case .queueChanged:
+                    await self.applyQueueChange()
+                case .positionChanged(let positionMs):
+                    self.applyPosition(positionMs)
+                }
+            }
+        }
     }
 
     /// Apply a snapshot. Called on subscribe and whenever the engine says
     /// something changed.
-    fileprivate func tick() async {
-        let now = await engine.nowPlaying()
+    /// Apply a snapshot. `nil` fetches one — which only the initial seed needs,
+    /// since every event that reports a change carries the new state with it.
+    fileprivate func tick(_ snapshot: NowPlaying? = nil) async {
+        let now = if let snapshot { snapshot } else { await engine.nowPlaying() }
         nowPlaying = now
         updateDerived(now)
         // The queue only gets rebuilt when the engine says it changed.
@@ -492,27 +520,21 @@ final class PlayerModel {
     }
 }
 
-/// Bridges the engine's callbacks onto the main actor.
+/// Pulls events from the engine as an `AsyncSequence`.
 ///
-/// uniffi calls these from its own thread, so nothing here may touch the model
-/// directly — each hop is explicit. Separate from `PlayerModel` because the
-/// callback interface must be `Sendable` and the model is main-actor isolated.
-final class EventBridge: PlayerEvents, @unchecked Sendable {
-    private weak var model: PlayerModel?
-
-    init(model: PlayerModel) {
-        self.model = model
-    }
-
-    func playbackChanged(nowPlaying: NowPlaying) {
-        Task { @MainActor [weak model] in await model?.tick() }
-    }
-
-    func queueChanged(version: UInt64) {
-        Task { @MainActor [weak model] in await model?.applyQueueChange() }
-    }
-
-    func positionChanged(positionMs: UInt64) {
-        Task { @MainActor [weak model] in model?.applyPosition(positionMs) }
+/// `nextEvent()` answers one at a time and returns nil once the engine is
+/// gone; this makes that a `for await` loop, so a client's subscription lives
+/// exactly as long as the task reading it.
+extension KoanEngine {
+    func events() -> AsyncStream<PlayerEvent> {
+        AsyncStream { continuation in
+            let pump = Task {
+                while let event = await self.nextEvent() {
+                    continuation.yield(event)
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in pump.cancel() }
+        }
     }
 }
