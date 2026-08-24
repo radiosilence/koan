@@ -14,6 +14,12 @@
 
 - **Everything laid over artwork is glass now.** The codec badge on a sleeve is clear glass rather than a black scrim hiding the corner it sits on; the favourite heart gets a ground of its own instead of a drop shadow fighting whatever is behind it, and grows in on hover. Artist chips, the shortcut sheet's key caps, the picker's commit bar and the error toast follow — the toast tinted rather than bordered, since glass already has an edge.
 
+## v0.29.1 (2026-08-24)
+
+### Changed
+
+- **The playing row is marked by bars rather than a speaker.** A speaker glyph says "sound comes out of here", which is true of the whole application; what a row needs to say is *this one, and it is still moving*. Three bars ride a pair of sine waves whose frequencies sit at an irrational ratio, so the pattern never settles into a loop the eye can catch, and they freeze where they stand when the transport pauses — paused is the absence of motion, so it costs no second glyph. Reduce Motion gets the bars at rest.
+
 ## v0.29.0 (2026-08-24)
 
 ### Added

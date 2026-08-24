@@ -208,7 +208,7 @@ private struct TrackRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // The row number becomes a speaker for whatever is playing —
+            // The row number becomes bars for whatever is playing —
             // same width either way so the column doesn't twitch.
             Group {
                 if hovering {
@@ -218,8 +218,7 @@ private struct TrackRow: View {
                         inContext: (trackIds: allTrackIds, startAt: position - 1)
                     )
                 } else if isCurrent {
-                    Image(systemName: player.isPlaying ? "speaker.wave.2.fill" : "speaker.fill")
-                        .foregroundStyle(.tint)
+                    PlayingIndicator(isPlaying: player.isPlaying)
                 } else {
                     Text("\(position)")
                         .foregroundStyle(.tertiary)
