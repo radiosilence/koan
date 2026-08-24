@@ -441,28 +441,59 @@ private struct QueueAlbumHeader: View {
     let group: QueueGroup
 
     var body: some View {
-        HStack(spacing: 9) {
+        HStack(spacing: 12) {
+            // No tap-to-view here, unlike the album page: this cover sits in a
+            // selectable, draggable row, and a tap gesture on it would eat the
+            // click that selects the row.
             if let trackId = group.items.first?.trackId {
-                AlbumArtwork(source: .track(trackId), cornerRadius: 3)
-                    .frame(width: 22, height: 22)
+                AlbumArtwork(source: .track(trackId), cornerRadius: 5)
+                    .frame(width: 52, height: 52)
+                    .shadow(color: .black.opacity(0.28), radius: 4, y: 2)
             }
-            Text(group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist)
-                .foregroundStyle(.primary)
-            if !group.album.isEmpty {
-                Text("—")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                // Only when the line above is the record: a group with no album
+                // title already leads with the artist.
+                if !group.album.isEmpty {
+                    Text(group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Text(detail)
+                    .font(.caption2.monospacedDigit())
                     .foregroundStyle(.tertiary)
-                Text(group.album)
-                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
-            if let year = group.year, !year.isEmpty {
-                Text(year)
-                    .foregroundStyle(.tertiary)
-            }
+
             Spacer()
         }
-        .font(.caption.weight(.medium))
         .textCase(nil)
-        .padding(.vertical, 3)
+        .padding(.vertical, 6)
+    }
+
+    private var title: String {
+        if !group.album.isEmpty { return group.album }
+        return group.albumArtist.isEmpty ? "Unknown Artist" : group.albumArtist
+    }
+
+    /// "2007 · 11 tracks · 59:10 · FLAC". The codec only earns its place when
+    /// the whole run shares one — a mixed group would be lying.
+    private var detail: String {
+        var parts: [String] = []
+        if let year = group.year, !year.isEmpty { parts.append(year) }
+        parts.append(Format.count(Int64(group.items.count), "track"))
+        let total = group.items.compactMap(\.durationMs).reduce(0, +)
+        if total > 0 { parts.append(Format.duration(total)) }
+        let codecs = Set(group.items.compactMap(\.codec))
+        if let codec = codecs.first, codecs.count == 1 { parts.append(codec.uppercased()) }
+        return parts.joined(separator: " · ")
     }
 }
 
