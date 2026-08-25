@@ -99,9 +99,9 @@ Local and remote tracks merge into one library. Local files take playback priori
 
 ## What it does
 
-- **Bit-perfect playback** -- CoreAudio AUHAL / ALSA via cpal, automatic sample rate switching, no resampling
+- **Bit-perfect playback** -- CoreAudio AUHAL / ALSA via cpal, the device switched to the source rate rather than resampled to reach it. When a device refuses the switch, the format badge says the output is resampled instead of claiming otherwise
 - **Gapless transitions** -- decode thread keeps the ring buffer alive across track boundaries
-- **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV/AIFF/CAF, Ogg, MKV/WebM, MP4
+- **Format support** -- FLAC, MP3, AAC, Vorbis, ALAC, ADPCM, WAV/AIFF/CAF, Ogg, MKV/WebM, MP4
 - **Native macOS app** -- SwiftUI, built out of Liquid Glass. Album-grouped queue with drag reorder, library and artist browsing, ⌘K search, synced lyrics, play history, snapshots, file organization, and first-run setup — no terminal required
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
@@ -114,7 +114,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol
 - **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
 - **SQLite FTS5 search** -- full-text search across your entire library
-- **Media keys** -- macOS Control Center integration (play/pause, next/prev, now playing info)
+- **Media keys** -- macOS Control Center and Linux MPRIS (play/pause, next/prev, now playing info)
 - **Lyrics** -- synced (LRC) and plain lyrics from LRCLIB, current line highlighting
 - **22 visualizer modes** -- spectrum bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moiré, kaleidoscope, julia fractal, spiral, interference, wormhole, matrix rain. Picker with live preview (`v`), matrix overlay (`X`), bass shake (`S`), configurable reactivity
 
@@ -142,7 +142,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **FTS search** | **SQLite FTS5** | MPD search | Filter | Text | Filter | MPD search | Basic |
 | **Queue undo/redo** | **100-deep** | No | No | No | No | No | No |
 | **Mouse support** | **Full** | Yes | Yes | Basic | Yes | Yes | No |
-| **Media keys** | **macOS CC** | Via MPRIS | Via MPRIS | -- | Via MPRIS | Via MPRIS | -- |
+| **Media keys** | **macOS CC + MPRIS** | Via MPRIS | Via MPRIS | -- | Via MPRIS | Via MPRIS | -- |
 | **Drag & drop** | **Finder -> TUI** | No | No | No | No | No | No |
 | **Lyrics** | **Synced + plain** | Via MPD | No | Plugin | No | Via MPD | No |
 | **Visualizer** | **22 modes** | No | No | No | No | No | No |
