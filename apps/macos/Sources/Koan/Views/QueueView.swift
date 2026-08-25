@@ -76,10 +76,7 @@ struct QueueView: View {
                         guard ui.queueScrollY > 0 else { return }
                         scrollPosition.scrollTo(y: ui.queueScrollY)
                     }
-                    // Otherwise the List paints over the wash and it stops at
-                    // the header in a hard line, rather than fading out across
-                    // the first few rows.
-                    .scrollContentBackground(.hidden)
+                    .washedGround()
                     // `g` / `G`. Watches the token rather than the edge: jumping
                     // to where you already are still has to scroll, because the
                     // list may have been moved since.

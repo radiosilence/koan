@@ -48,6 +48,7 @@ struct FavouritesView: View {
                     if !tracks.isEmpty { trackSection }
                 }
                 .listStyle(.inset)
+                .washedGround()
                 .clearsSelection($selection)
                 .contextMenu(forSelectionType: Int64.self) { ids in
                     menu(for: ids)

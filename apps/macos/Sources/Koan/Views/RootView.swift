@@ -43,23 +43,17 @@ struct RootView: View {
     /// it used to be.
     @State private var columns: NavigationSplitViewVisibility = .automatic
 
-    /// What the window is washed in: the record you opened, or the one playing,
-    /// and only where either means something. A library grid is its own colour.
-    private var washSource: AlbumArtwork.Source? {
-        switch nav.current {
-        case .album(let id): .album(id)
-        case .section(.queue): player.currentArtwork
-        // A playlist is a page about a set of records, so it is washed in the
-        // first of them — the same one that leads its mosaic.
-        case .section(.playlist(let id)): playlists.covers[id]?.first
-        default: nil
-        }
-    }
-
-    /// What the *controls* take their colour from. The page you are on first —
-    /// an album's own record — and what is playing everywhere else, so a
-    /// favourites list is still coloured by the music rather than by nothing.
-    private var tintSource: AlbumArtwork.Source? {
+    /// The record the room takes its colour from — both the wash on the window
+    /// and the tint on the controls, which are the same answer and were once
+    /// two.
+    ///
+    /// A page about one record answers with it: an album with its own sleeve, a
+    /// playlist with the first of its records, the same one that leads its
+    /// mosaic. Every other page — a grid, a list of artists, favourites,
+    /// history — is not about any record in particular, so it answers with the
+    /// one playing. The room is coloured by the music wherever you have
+    /// wandered off to, and only a page that disagrees says otherwise.
+    private var colourSource: AlbumArtwork.Source? {
         switch nav.current {
         case .album(let id): .album(id)
         case .section(.playlist(let id)): playlists.covers[id]?.first ?? player.currentArtwork
@@ -76,7 +70,7 @@ struct RootView: View {
         // environment `RootView` was handed, so anything it needs is captured
         // here. Reading an `@Environment` inside that closure — including to
         // put one back — traps, and the app dies on launch.
-        let wash = washSource
+        let wash = colourSource
         let washDrifts = player.isPlaying
         let artCache = art
 
@@ -86,17 +80,11 @@ struct RootView: View {
         } detail: {
             StageView()
                 .clearsTransport(transportHeight)
-                // Filled *before* the ground goes behind it. A background sizes
-                // itself to what it backs, so expanding afterwards left the
-                // ground the size of the page's content — and a page that
-                // measures nothing, like results while the query is still
-                // running, showed the window's wash everywhere around it.
+                // A page fills the column whether or not it has anything in it
+                // to fill it with. Results while the query is still running
+                // measure nothing, and an unfilled page leaves the transport
+                // and the scroll edges sized to it.
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                // Every page carries its own ground. The window's is the wash,
-                // so a transparent page composites onto it — and onto the page
-                // before it, which is what left an album drawing itself across
-                // the grid you came back to.
-                .background { PageGround() }
         }
         .inspector(isPresented: $showLyrics) {
             LyricsPanel()
@@ -132,7 +120,7 @@ struct RootView: View {
                     .environment(artCache)
             }
         }
-        .task(id: tintSource) {
+        .task(id: colourSource) {
             // Animated at the point the colour changes rather than by an
             // `.animation(_:value:)` on the view. That modifier animates *every*
             // animatable change in the subtree it is attached to whenever its
@@ -141,7 +129,7 @@ struct RootView: View {
             // record was dragged out over two seconds along with it.
             // A thumbnail: the dominant colour of a sleeve is the same at 128
             // pixels as at 512, and this is a size the grid already holds.
-            guard let tintSource, let cover = await art.image(for: tintSource, size: .thumb)
+            guard let colourSource, let cover = await art.image(for: colourSource, size: .thumb)
             else {
                 withAnimation(.easeInOut(duration: 2)) { recordTint = nil }
                 return
@@ -344,37 +332,6 @@ private struct StageView: View {
             AlbumDetailView(albumId: id)
         case .artist(let id):
             ArtistDetailView(artistId: id)
-        }
-    }
-}
-
-/// What a page sits on.
-///
-/// An unwashed page is opaque, so it never composites onto the window or onto
-/// the page before it — which is what left an album drawing itself across the
-/// grid you came back to.
-///
-/// A washed page draws nothing at all and lets the window's own wash through.
-/// There is only ever one bleed: two of them meant the page's copy sat on an
-/// opaque ground hiding the window's, and the window's kept animating behind it
-/// for no one. The window is the one that survives because it is the one
-/// `backgroundExtensionEffect` mirrors out under the sidebar and toolbar.
-private struct PageGround: View {
-    @Environment(Navigator.self) private var nav
-
-    /// Whether this page is washed in a record's colour, or is its own ground.
-    /// Matches `RootView.washSource` — where that has a wash, this stands back.
-    private var washed: Bool {
-        switch nav.current {
-        case .album: true
-        case .section(.queue), .section(.playlist): true
-        default: false
-        }
-    }
-
-    var body: some View {
-        if !washed {
-            Rectangle().fill(.background)
         }
     }
 }

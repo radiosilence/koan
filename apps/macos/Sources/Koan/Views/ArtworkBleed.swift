@@ -136,3 +136,15 @@ struct ArtworkBleed: View {
         generation += 1
     }
 }
+
+extension View {
+    /// Stands a list's own ground down so the window's wash shows through it.
+    ///
+    /// A `List` paints an opaque background by default, which lands on top of
+    /// the wash and stops the record's colour in a hard line under the header
+    /// instead of letting it fade out across the first few rows. Every list in
+    /// the app sits in the wash, so every list gives its ground up.
+    func washedGround() -> some View {
+        scrollContentBackground(.hidden)
+    }
+}
