@@ -10,6 +10,12 @@
 
 - **The queue comes back to where you left it.** A trip to an album and back dropped you at the top of it again. The stage builds one page at a time, so leaving the queue destroyed it — and a macOS `List` cannot be put back: its scroll position belongs to AppKit's table, and every SwiftUI way of asking for one (`scrollPosition`, `scrollTo(y:)`, `scrollPosition(id:)`) is quietly inert on it. The queue is no longer torn down. It stays where it is, behind whatever you navigated to: invisible, untouchable, and off stage, which is also what stops the bars on the playing row dancing to an analyser nobody can see. The selection you left survives the trip too.
 
+### Removed
+
+- **The macOS app is Apple silicon only.** It shipped as a universal binary, and the Intel slice was over half the release build: two cross compilations of the engine, lipo'd together, then a universal Swift build on top. That is a long time and a lot of a runner's disk — enough that the v0.31.1 release ran out of it partway through writing the disk image — to serve machines whose newest supported macOS is the app's minimum.
+
+  koan itself is unchanged on Intel: `koan` the terminal player still builds and ships for `x86_64-apple-darwin`, and an Intel Mac that wants koan can run that. It is the SwiftUI app, and only the app, that now needs Apple silicon.
+
 ## v0.31.1 (2026-08-25)
 
 ### Changed
