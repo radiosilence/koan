@@ -220,9 +220,9 @@ private struct RemoteSettings: View {
                     )
                     HStack {
                         // Only the syncs wait on the database writer. Signing
-                        // out is a config write and a keychain delete, and
-                        // greying it out while a sync runs strands you on a
-                        // server you are trying to leave.
+                        // out is a config write, and greying it out while a
+                        // sync runs strands you on a server you are trying to
+                        // leave.
                         Group {
                             Button("Sync Now") { model.syncNow(full: false) }
                             Button("Full Sync") { model.syncNow(full: true) }
@@ -242,14 +242,14 @@ private struct RemoteSettings: View {
                     SecureField(
                         "Password",
                         text: Binding(get: { model.password }, set: { model.password = $0 }),
-                        prompt: Text("not stored in any file")
+                        prompt: Text("hunter2")
                     )
                     Button("Sign In") { model.signIn(url: url, username: username) }
                         .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                 } header: {
                     Text("Subsonic or Navidrome")
                 } footer: {
-                    Text("The password goes to your keychain, never to a file. koan checks it against the server before saving.")
+                    Text("Checked against the server, then saved to config.local.toml, readable only by you.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }

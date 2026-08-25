@@ -72,6 +72,21 @@ final class PlayerModel {
         refreshDevices()
         startAutosave()
         observe()
+        await reportSignedOutRemote()
+    }
+
+    /// Say so when the server is configured but koan has no password for it.
+    ///
+    /// Nothing else does. The queue fills with tracks that never load, every
+    /// sleeve comes back empty and no download starts — which reads as a broken
+    /// library rather than as being signed out, and sends people looking in the
+    /// wrong place. The one thing that fixes it is a sign-in, so name it.
+    private func reportSignedOutRemote() async {
+        let settings = await engine.settings()
+        guard settings.remoteEnabled, !settings.remoteUrl.isEmpty, !settings.remoteSignedIn
+        else { return }
+        let host = URL(string: settings.remoteUrl)?.host() ?? settings.remoteUrl
+        report("koan has no password for \(host). Sign in again in Settings.")
     }
 
     /// Follow the engine for as long as this model is alive.

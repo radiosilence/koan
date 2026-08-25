@@ -93,8 +93,6 @@ pub fn cmd_remote_sync(full: bool) {
 }
 
 pub fn cmd_remote_status() {
-    use koan_core::helpers::PasswordSource;
-
     let cfg = config::Config::load().unwrap_or_default();
     if !cfg.remote.enabled || cfg.remote.url.is_empty() {
         println!("no remote server configured");
@@ -104,19 +102,12 @@ pub fn cmd_remote_status() {
     println!("{} {}", "server:".cyan(), cfg.remote.url);
     println!("{} {}", "username:".cyan(), cfg.remote.username);
 
-    // Asked the way everything else asks. Reporting on a field koan itself does
-    // not consult is how a keychain-backed sign-in — the arrangement `remote
-    // login` creates — came to be reported as having no password at all.
-    let (_, source) = koan_core::helpers::remote_password(&cfg);
-    let described = match &source {
-        PasswordSource::Keychain => "from the keychain".green().to_string(),
-        PasswordSource::Config => "from config.local.toml".green().to_string(),
-        PasswordSource::Missing => "not set".red().to_string(),
-        PasswordSource::Unreadable(why) => format!(
-            "{} {}",
-            "in the keychain, but koan cannot read it".red(),
-            format!("\u{2014} {why}").dimmed()
-        ),
+    // Asked the way everything else asks, rather than by reading the field
+    // directly: a status that consults a different source from the code doing
+    // the work will eventually disagree with it.
+    let described = match koan_core::helpers::get_remote_password(&cfg) {
+        Some(_) => "set".green().to_string(),
+        None => "not set".red().to_string(),
     };
     println!("{} {}", "password:".cyan(), described);
 
@@ -124,13 +115,11 @@ pub fn cmd_remote_status() {
     // about whether they would. The reach is the only part of this that
     // actually proves anything.
     let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-        if matches!(source, PasswordSource::Unreadable(_)) {
-            println!(
-                "{} {}",
-                "hint:".yellow(),
-                "`koan remote login` rewrites the entry for this build".dimmed()
-            );
-        }
+        println!(
+            "{} {}",
+            "status:".cyan(),
+            koan_core::helpers::remote_unavailable(&cfg).red()
+        );
         return;
     };
 

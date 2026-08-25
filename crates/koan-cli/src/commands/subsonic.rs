@@ -1,8 +1,7 @@
 //! CLI commands for koan's own Subsonic REST API.
 
+use koan_core::auth;
 use koan_core::config::Config;
-use koan_core::helpers::SUBSONIC_CREDENTIAL_ACCOUNT;
-use koan_core::{auth, credentials};
 use owo_colors::OwoColorize;
 
 /// `koan subsonic setup [--username <u>]` — enable `/rest/*` with a fresh secret.
@@ -12,17 +11,10 @@ pub fn cmd_subsonic_setup(username: &str) {
         std::process::exit(1);
     });
 
-    let stored_in_keychain = credentials::store_password(SUBSONIC_CREDENTIAL_ACCOUNT, &secret)
-        .inspect_err(|e| eprintln!("{} keychain unavailable: {}", "warning:".yellow(), e))
-        .is_ok();
-
-    let fallback_secret = (!stored_in_keychain).then(|| secret.clone());
     if let Err(e) = Config::persist(|cfg| {
         cfg.subsonic.enabled = true;
         cfg.subsonic.username = username.to_string();
-        if let Some(secret) = fallback_secret {
-            cfg.subsonic.password = secret;
-        }
+        cfg.subsonic.password = secret.clone();
     }) {
         eprintln!("{} {}", "config error:".red().bold(), e);
         std::process::exit(1);
@@ -31,14 +23,7 @@ pub fn cmd_subsonic_setup(username: &str) {
     println!("{} Subsonic API enabled.", "✓".green().bold());
     println!("  username: {}", username);
     println!("  password: {}", secret);
-    println!(
-        "  stored in: {}",
-        if stored_in_keychain {
-            "OS keychain"
-        } else {
-            "config.local.toml"
-        }
-    );
+    println!("  stored in: config.local.toml");
     println!(
         "\n{}",
         "This secret is shown once. It is not your Navidrome password, and it must not be —\n\
@@ -75,7 +60,6 @@ pub fn cmd_subsonic_status() {
 
 /// `koan subsonic disable` — stop serving `/rest/*` and drop the secret.
 pub fn cmd_subsonic_disable() {
-    let _ = credentials::delete_password(SUBSONIC_CREDENTIAL_ACCOUNT);
     if let Err(e) = Config::persist(|cfg| {
         cfg.subsonic.enabled = false;
         cfg.subsonic.password = String::new();

@@ -194,6 +194,43 @@ cache_dir = "/custom/path"       # explicit cache dir (default: ~/.config/koan/c
 
 See [Remote Servers](../guide/remote-servers.md) for the full setup guide.
 
+### Where credentials live
+
+Every secret koan holds -- the remote password, the Subsonic shared secret, the
+refresh token for a koan server -- is written to `config.local.toml`, which is
+gitignored and created `0600`.
+
+Not the OS keychain, which koan used until v0.31.2. A keychain item's ACL is
+keyed on the reading binary's code signature, and koan has no stable signing
+identity: ad-hoc signing derives that identity from the binary's own hash, so
+every release is a different application to macOS, no grant ever matches twice,
+and the password dialog returns on every launch after every update.
+
+The dialog was not buying much in exchange. Subsonic authenticates every request
+with the password or a salted MD5 of it, so a client has to keep something
+password-equivalent indefinitely -- there is no token to exchange it for, and
+Navidrome offers no OAuth. A `0600` file guards it from other accounts on the
+machine and from an unencrypted backup, which is the bargain `~/.netrc`,
+`~/.aws/credentials` and `gh`'s `hosts.yml` all make.
+
+## `[auth]`
+
+Credentials for a remote koan server *this machine signs in to* -- the other
+direction from `[graphql]`, which configures the server koan is.
+
+```toml
+# config.local.toml
+[auth]
+server = "http://localhost:4000"   # written by `koan auth login`
+refresh_token = "..."              # exchanged for short-lived access tokens
+```
+
+Written by `koan auth login` and cleared by `koan auth logout`, which also
+revokes the token at the server. Unlike a password this is revocable, so losing
+it costs you one session rather than the account.
+
+See [Authentication](../guide/authentication.md).
+
 ---
 
 ## `[visualizer]`
@@ -318,7 +355,7 @@ username = "koan"             # username Subsonic clients authenticate as
 `enabled` mounts `/rest/*` on the GraphQL port. `port` adds a second listener for
 clients that insist on Subsonic having one of its own.
 
-Run `koan subsonic setup` to enable it. That generates a secret, stores it in the OS keychain (falling back to `config.local.toml`), and prints it once.
+Run `koan subsonic setup` to enable it. That generates a secret, writes it to `config.local.toml`, and prints it once.
 
 The secret is deliberately **not** your Navidrome/`[remote]` password. The Subsonic protocol authenticates with `md5(secret + salt)` where the client picks the salt, over whatever transport it likes — so anyone who can capture one request walks away with a digest to crack offline. A generated 256-bit secret makes that worthless; your Navidrome password would not.
 

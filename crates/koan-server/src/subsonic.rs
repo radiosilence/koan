@@ -50,7 +50,7 @@ struct AppState {
     password: String,
     /// Upstream Navidrome/Subsonic, used to build signed stream URLs for tracks
     /// with no local file. Resolved once at startup — resolving it per request
-    /// re-read two TOML files and, on macOS, hit the keychain. Credentials
+    /// re-read two TOML files. Credentials
     /// rather than a `SubsonicClient`: that builds blocking `reqwest` clients,
     /// which panics when constructed inside the tokio runtime.
     upstream: Option<SubsonicAuth>,

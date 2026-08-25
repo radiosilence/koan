@@ -18,54 +18,10 @@ use crate::remote::client::{SubsonicAuth, SubsonicClient};
 // Subsonic client builder
 // ---------------------------------------------------------------------------
 
-/// Where the remote password came from, or why there is not one.
-///
-/// "koan has no password" and "koan cannot read the password it has" are
-/// different problems with different fixes, and anything reporting on the
-/// remote needs to tell them apart. A credential store that holds an entry and
-/// declines to hand it over — a locked keychain, a dismissed dialog, an item
-/// whose ACL does not list the binary asking — looks exactly like no password
-/// at all to a caller that only sees `Option<String>`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PasswordSource {
-    /// The platform credential store answered.
-    Keychain,
-    /// `config.local.toml`, or `KOAN_REMOTE__PASSWORD` layered over it.
-    Config,
-    /// Neither has one to give.
-    Missing,
-    /// The store holds an entry and would not part with it. Carries the
-    /// platform's own message, which is the only thing separating a locked
-    /// keychain from a refused one.
-    Unreadable(String),
-}
-
-/// Get the remote password. Keychain first, config second.
-///
-/// The config copy is only a migration path now: `set_remote_credentials` writes
-/// to the keychain and clears it, so a plaintext password survives exactly until
-/// the next sign-in.
+/// The remote password, from `config.local.toml` or a `KOAN_REMOTE__PASSWORD`
+/// layered over it.
 pub fn get_remote_password(cfg: &Config) -> Option<String> {
-    remote_password(cfg).0
-}
-
-/// `get_remote_password`, and how it got there.
-pub fn remote_password(cfg: &Config) -> (Option<String>, PasswordSource) {
-    let refusal = match crate::credentials::get_password(&cfg.remote.url) {
-        Ok(pw) if !pw.is_empty() => return (Some(pw), PasswordSource::Keychain),
-        // An empty stored password is no more useful than no entry at all.
-        Ok(_) | Err(crate::credentials::CredentialError::NotFound) => None,
-        Err(e) => Some(e.to_string()),
-    };
-
-    if !cfg.remote.password.is_empty() {
-        return (Some(cfg.remote.password.clone()), PasswordSource::Config);
-    }
-
-    (
-        None,
-        refusal.map_or(PasswordSource::Missing, PasswordSource::Unreadable),
-    )
+    (!cfg.remote.password.is_empty()).then(|| cfg.remote.password.clone())
 }
 
 /// Index files that appear in the library folders while koan is running.
@@ -623,18 +579,16 @@ pub fn sync_collection_favourite_to_remote(
 pub enum SignInError {
     #[error("the server did not accept those credentials: {0}")]
     Rejected(#[from] crate::remote::client::SubsonicError),
-    #[error("could not save the password: {0}")]
-    Credentials(#[from] crate::credentials::CredentialError),
     #[error("could not write the configuration: {0}")]
     Config(#[from] crate::config::ConfigError),
 }
 
 /// Sign in to a Subsonic/Navidrome server and remember it.
 ///
-/// The password goes to the platform credential store — Keychain on macOS,
-/// secret-service on Linux — and never to `config.local.toml`, which is a plain
-/// file on disk. Any plaintext password already there is cleared, so signing in
-/// again migrates an older setup.
+/// The password goes to `config.local.toml`, which is gitignored and written
+/// `0600`. Subsonic authenticates every request with the password or a salted
+/// MD5 of it, so there is no token to hold instead — whatever koan keeps is
+/// password-equivalent wherever it is kept.
 ///
 /// The credentials are checked against the server before anything is written; a
 /// stored password that does not work is worse than none.
@@ -648,35 +602,20 @@ pub fn set_remote_credentials(
 ) -> Result<(), SignInError> {
     let url = url.trim_end_matches('/');
     SubsonicClient::new(url, username, password).ping()?;
-    crate::credentials::store_password(url, password)?;
 
     Config::persist(|cfg| {
         cfg.remote.enabled = true;
         cfg.remote.url = url.to_string();
         cfg.remote.username = username.to_string();
-        // Explicitly emptied: a password left here would keep being read by
-        // anything still preferring the config copy.
-        cfg.remote.password = String::new();
+        cfg.remote.password = password.to_string();
     })?;
     Ok(())
 }
 
-/// Keychain account holding the Subsonic API shared secret.
-pub const SUBSONIC_CREDENTIAL_ACCOUNT: &str = "koan-subsonic";
-
-/// Shared secret for koan's own Subsonic API. Keychain first, then config.
-///
-/// Same precedence as `remote_password`: the credential store is where
-/// `koan subsonic setup` puts the secret, and the config field is the fallback
-/// for machines without one. A stale plaintext copy must never win over it.
+/// Shared secret for koan's own Subsonic API.
 ///
 /// Deliberately not the same secret as `get_remote_password` — see `SubsonicConfig`.
 pub fn get_subsonic_password(cfg: &Config) -> Option<String> {
-    if let Ok(secret) = crate::credentials::get_password(SUBSONIC_CREDENTIAL_ACCOUNT)
-        && !secret.is_empty()
-    {
-        return Some(secret);
-    }
     (!cfg.subsonic.password.is_empty()).then(|| cfg.subsonic.password.clone())
 }
 
@@ -1287,10 +1226,9 @@ fn push_log(log_buf: &Arc<Mutex<Vec<String>>>, msg: String) {
 
 /// Why there is no remote client, in words worth showing someone.
 ///
-/// Every caller of `subsonic_client` gets `None` for four different reasons and
-/// used to report the same one. "koan has no password" sends you to sign in;
-/// "koan cannot read the password it has" sends you to the keychain, and the
-/// two are indistinguishable to a caller holding an `Option`.
+/// Every caller of `subsonic_client` gets `None` for three different reasons and
+/// used to report the same one — so "koan has no password", which sends you to
+/// sign in, arrived looking like a server that was merely down.
 pub fn remote_unavailable(cfg: &Config) -> String {
     if !cfg.remote.enabled {
         return "no remote server is configured".into();
@@ -1298,17 +1236,12 @@ pub fn remote_unavailable(cfg: &Config) -> String {
     if cfg.remote.url.is_empty() {
         return "the remote server has no address".into();
     }
-    match remote_password(cfg).1 {
-        PasswordSource::Missing => "no password is stored for the remote server".into(),
-        PasswordSource::Unreadable(why) => {
-            format!("the remote password is in the keychain but could not be read: {why}")
-        }
-        // A password resolved, so the client should have built. Nothing else
-        // returns `None`, but saying so beats claiming a cause that is wrong.
-        PasswordSource::Keychain | PasswordSource::Config => {
-            "the remote server could not be reached".into()
-        }
+    if get_remote_password(cfg).is_none() {
+        return "no password is stored for the remote server".into();
     }
+    // A password resolved, so the client should have built. Nothing else
+    // returns `None`, but saying so beats claiming a cause that is wrong.
+    "the remote server could not be reached".into()
 }
 
 /// Spawn background downloads for remote tracks with LoadState::Pending.

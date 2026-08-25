@@ -23,7 +23,6 @@ chrono = "0.4"
 dirs = "6"
 figment = { version = "0.10", features = ["toml", "env"] }
 # Credentials (cross-platform: macOS Keychain, Linux secret-service)
-keyring = "4"
 # Metadata
 lofty = "0.25"
 unicode-normalization = "0.1"

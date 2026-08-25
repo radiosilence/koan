@@ -3,7 +3,7 @@
 use std::io::{Write, stdin, stdout};
 
 use koan_core::auth::{self, Role};
-use koan_core::credentials;
+use koan_core::config::Config;
 use koan_core::db::queries::auth as auth_queries;
 use owo_colors::OwoColorize;
 
@@ -468,18 +468,15 @@ pub fn cmd_auth_login(server_url: &str, username: &str) {
         std::process::exit(1);
     }
 
-    // Store refresh token in keychain (keyed by server URL).
-    let keychain_key = format!("koan-auth:{}", server_url);
-    if let Err(e) = credentials::store_password(&keychain_key, refresh_token) {
-        eprintln!(
-            "{} Failed to store token in keychain: {}",
-            "✗".red().bold(),
-            e
-        );
+    if let Err(e) = Config::persist(|cfg| {
+        cfg.auth.server = server_url.to_string();
+        cfg.auth.refresh_token = refresh_token.to_string();
+    }) {
+        eprintln!("{} Failed to store token: {}", "✗".red().bold(), e);
         eprintln!("Refresh token (save manually): {}", refresh_token);
     } else {
         println!(
-            "{} Logged in. Token stored in keychain.",
+            "{} Logged in. Token stored in config.local.toml.",
             "✓".green().bold()
         );
     }
@@ -552,22 +549,32 @@ pub fn cmd_auth_reset() {
 }
 
 pub fn cmd_auth_logout(server_url: &str) {
-    let keychain_key = format!("koan-auth:{}", server_url);
+    let cfg = Config::load().unwrap_or_default();
+    let token_is_for_this_server =
+        cfg.auth.server == server_url && !cfg.auth.refresh_token.is_empty();
 
-    // Try to revoke the token on the server.
-    if let Ok(refresh_token) = credentials::get_password(&keychain_key) {
+    // Revoking at the server is what actually ends the session — dropping our
+    // copy only stops this machine from using it.
+    if token_is_for_this_server {
         let url = format!("{}/auth/logout", server_url.trim_end_matches('/'));
         let client = reqwest::blocking::Client::new();
         let _ = client
             .post(&url)
-            .json(&serde_json::json!({ "refresh_token": refresh_token }))
+            .json(&serde_json::json!({ "refresh_token": cfg.auth.refresh_token }))
             .send();
     }
 
-    // Clear from keychain.
-    match credentials::delete_password(&keychain_key) {
-        Ok(_) => println!("{} Logged out. Token cleared.", "✓".green().bold()),
-        Err(_) => println!("{} No stored token found.", "✓".green().bold()),
+    if !token_is_for_this_server {
+        println!("{} No stored token found.", "✓".green().bold());
+        return;
+    }
+
+    match Config::persist(|cfg| {
+        cfg.auth.server = String::new();
+        cfg.auth.refresh_token = String::new();
+    }) {
+        Ok(()) => println!("{} Logged out. Token cleared.", "✓".green().bold()),
+        Err(e) => eprintln!("{} Could not clear the token: {}", "✗".red().bold(), e),
     }
 }
 

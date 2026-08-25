@@ -33,6 +33,7 @@ pub struct Config {
     pub radio: RadioConfig,
     pub graphql: GraphqlConfig,
     pub subsonic: SubsonicConfig,
+    pub auth: AuthConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -337,8 +338,8 @@ pub struct SubsonicConfig {
     pub port: Option<u16>,
     /// Username Subsonic clients authenticate as.
     pub username: String,
-    /// Shared secret. Prefer the OS keychain (`koan subsonic setup`); this field
-    /// is the fallback for machines without one, and lives in config.local.toml.
+    /// Shared secret, written by `koan subsonic setup`. Lives in
+    /// config.local.toml, which is gitignored and `0600`.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub password: String,
 }
@@ -352,6 +353,22 @@ impl Default for SubsonicConfig {
             password: String::new(),
         }
     }
+}
+
+/// Credentials for a remote koan server this machine signs in to.
+///
+/// The other direction from `GraphqlConfig`, which configures the server koan
+/// *is*. Written by `koan auth login` and cleared by `koan auth logout`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AuthConfig {
+    /// Server the token below belongs to. One at a time.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub server: String,
+    /// Refresh token, exchanged for short-lived access tokens. Revocable at the
+    /// server, which is what separates it from a password.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub refresh_token: String,
 }
 
 /// Radio / infinite play mode configuration.
@@ -406,6 +423,7 @@ pub fn layer_of(path: &str) -> Layer {
         // Secrets.
         "remote.password"
         | "subsonic.password"
+        | "auth.refresh_token"
         // This machine's paths, disk and account.
         | "library.folders"
         | "remote.enabled"
@@ -420,6 +438,8 @@ pub fn layer_of(path: &str) -> Layer {
         | "subsonic.enabled"
         | "subsonic.port"
         | "subsonic.username"
+        // Which koan server this machine signs in to.
+        | "auth.server"
         // Volatile: UI state behind a keybind or a mouse drag.
         | "playback.art_size"
         | "visualizer.enabled"
@@ -758,7 +778,7 @@ fn to_edit_value(value: &toml::Value) -> toml_edit::Value {
 /// user-facing way to do that — one machine, more than one library — and
 /// `set_config_dir` is the in-process one, which is what tests need: without
 /// it they read whatever configuration belongs to whoever ran them, right down
-/// to that person's server and their keychain.
+/// to that person's server and their password.
 pub fn config_dir() -> PathBuf {
     if let Some(dir) = CONFIG_DIR.read().clone() {
         return dir;
@@ -787,7 +807,7 @@ pub fn set_config_dir(dir: impl Into<PathBuf>) {
 ///
 /// Tests call this before anything reads configuration. Without it they read
 /// whatever belongs to whoever ran them — that person's library folders, their
-/// remote server, and a prompt for their keychain — so the same test does
+/// remote server, and their password — so the same test does
 /// different things on different machines, and passes on CI only because it
 /// finds nothing there at all.
 ///
@@ -874,7 +894,7 @@ fn scan_for_tracked_secrets() {
             eprintln!("║  2. Add it to .gitignore                                     ║");
             eprintln!("║  3. Rotate your credentials immediately                      ║");
             eprintln!("║  4. Move secrets to config.local.toml (gitignored)           ║");
-            eprintln!("║     or use `koan remote login` for keyring storage           ║");
+            eprintln!("║     `koan remote login` writes there for you                 ║");
             eprintln!("║                                                              ║");
             eprintln!("╚══════════════════════════════════════════════════════════════╝");
             eprintln!();

@@ -184,7 +184,7 @@ koan auth setup                       # generate keypair + create first admin us
 koan auth create-user --username alice --role user  # create a user (admin, user, readonly)
 koan auth delete-user alice           # delete a user
 koan auth list-users                  # list all users
-koan auth login --server http://localhost:4000 --username admin  # login (stores refresh token in keychain)
+koan auth login --server http://localhost:4000 --username admin  # login (stores refresh token in config.local.toml)
 koan auth logout --server http://localhost:4000  # logout (revoke token)
 koan auth reset-password admin        # reset password (revokes all tokens for that user)
 koan auth set-role alice admin        # change role

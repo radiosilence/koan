@@ -1,7 +1,4 @@
 {
-  "env": {
-    "KOAN_NO_KEYCHAIN": "1"
-  },
   "hooks": {
     "PreToolUse": [
       {
