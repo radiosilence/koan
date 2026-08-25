@@ -1,11 +1,10 @@
 # koan
 
-A music player for people who give a shit about audio quality.
+It is a music player, for both local music and remote (subsonic/navidrome). It caches locally, is s super fast, gapless, high quality. Built from 25 years of experience messing about with music and being annoyed with pretty much everything and wanting my dream application. There are some organisational features such as file renaming, which is compatible with fb2k syntax, and I plan to add a decent well thought out tagger once I have pondered the UX more.
 
-A Rust audio engine with two front ends on top of it — a native SwiftUI app on
-macOS and a full-screen terminal UI — over the same library, the same config and
-the same output. Bit-perfect playback, gapless transitions, fast library
-indexing, Subsonic/Navidrome integration, fb2k-style format strings.
+Originally built as a Rust TUI and core, I've now added a beautiful macOS SwiftUI app (no Electron) that uses FFI to bridge to the shared rust core. It's fast, it's pretty, it has these lush transitions, and the point is to do all the basics properly and well before adding features, I'm really proud of it. 
+
+Full disclaimer: AI assisted coding was used. I have been building somewhat high quality software for a long time (decades) before AI existed, and I'd like to think the decisions I've been making reflect this as opposed to just vibing slop. I probably could have written it myself, but I kind of wanted to take a step back and be more of an architect/technical lead/product owner rather than a coder for this.
 
 
 <img width="1413" height="956" alt="An album in the macOS app" src="https://github.com/user-attachments/assets/8ec2f049-524a-4437-8bf3-91172c6b4f26" />
