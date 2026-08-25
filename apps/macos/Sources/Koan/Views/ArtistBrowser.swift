@@ -12,6 +12,7 @@ struct ArtistBrowser: View {
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             ArtistRow(artist: artist)
         }
+        .clearsSelection($selection)
         .contextMenu(forSelectionType: Int64.self) { ids in
             if let id = ids.first,
                let artist = library.visibleArtists.first(where: { $0.id == id }) {
