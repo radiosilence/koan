@@ -229,26 +229,42 @@ private struct SeekBar: View {
                 .frame(width: 40, alignment: .trailing)
 
             GeometryReader { geo in
-                // Drawn rather than sized. A capsule whose `frame(width:)`
+                // Drawn rather than sized. Capsules whose `frame(width:)`
                 // followed the position invalidated layout ten times a second,
                 // and AppKit answered each one with a full window Auto Layout
-                // pass. The bar is the same bar; only the pixels change now.
-                Canvas { context, size in
-                    let track = CGRect(
-                        x: 0, y: (size.height - Self.thickness) / 2,
-                        width: size.width, height: Self.thickness
-                    )
-                    context.fill(Capsule().path(in: track), with: .style(.quaternary))
-                    let played = size.width * player.progress
-                    guard played >= Self.thickness else { return }
+                // pass. Same bar, same marks; only the pixels change now.
+                ZStack {
+                    Canvas { context, size in
+                        context.fill(Self.mark(in: size, fraction: 1), with: .style(.quaternary))
+                    }
+                    // How much of a streaming track has arrived. A fraction of
+                    // bytes drawn on an axis of time: right for lossless and
+                    // CBR, out by however far the bitrate wanders on VBR. Hence
+                    // the weaker mark and the word "roughly" — what it answers
+                    // is whether playback is about to run out of track, not
+                    // where in the track anything is. Its own layer so it sits
+                    // under the played extent: an approximation that lands
+                    // behind the playhead is covered rather than drawn wrong.
+                    Canvas { context, size in
+                        context.fill(Self.mark(in: size, fraction: fetched ?? 0), with: .style(.secondary))
+                    }
+                    // On whether there is a mark at all, not on how long it is:
+                    // the fetched extent moves several times a second and a
+                    // quarter of a second of easing on every one of those would
+                    // leave both it and the playhead beside it perpetually
+                    // behind. Opacity rather than a transition, because this
+                    // layer is always present — and opacity is one of the few
+                    // things CoreAnimation can carry without touching layout.
+                    .opacity(fetched == nil ? 0 : 1)
+                    .animation(.easeOut(duration: 0.25), value: fetched == nil)
+                    .help(fetched.map { "Roughly \(Int($0 * 100))% downloaded" } ?? "")
                     // Not the tint. The tint is the colour of the record now,
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a
                     // position off, not a thing that needs to say whose it is.
-                    context.fill(
-                        Capsule().path(in: CGRect(origin: track.origin, size: .init(width: played, height: Self.thickness))),
-                        with: .style(.primary)
-                    )
+                    Canvas { context, size in
+                        context.fill(Self.mark(in: size, fraction: player.progress), with: .style(.primary))
+                    }
                 }
                 .contentShape(.rect)
                 .gesture(
@@ -273,9 +289,24 @@ private struct SeekBar: View {
 
     private static let thickness = 4.0
 
+    /// A capsule covering `fraction` of the bar, centred vertically. Shorter
+    /// than its own thickness it would draw as a squashed dot, so it doesn't.
+    private static func mark(in size: CGSize, fraction: Double) -> Path {
+        let width = size.width * fraction.clamped()
+        guard width >= thickness else { return Path() }
+        return Capsule().path(
+            in: CGRect(x: 0, y: (size.height - thickness) / 2, width: width, height: thickness)
+        )
+    }
+
     private var displayedPosition: UInt64 {
         UInt64(player.progress * Double(player.clock.durationMs))
     }
+
+    /// How much of what is playing has been fetched, while it is still being
+    /// fetched. `nil` for anything already on disk, and for a transfer the
+    /// server gave no length for — there is nothing to draw a fraction of.
+    private var fetched: Double? { player.currentEntry?.downloadProgress }
 }
 
 private struct DeviceMenu: View {
