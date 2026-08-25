@@ -11,13 +11,22 @@ use super::theme::Theme;
 /// Format audio quality info as a human-readable string.
 ///
 /// Examples: "CD quality", "FLAC 96kHz/24bit", "Opus 48kHz/128kbps", "MP3 320kbps"
+///
+/// `output_rate` is what the device settled at. Where it differs from the
+/// source, the string says so — a device that refused the rate is being fed
+/// resampled audio, and the one claim this player cannot afford to leave
+/// unqualified is the one about what reaches the DAC.
 #[allow(clippy::manual_is_multiple_of)]
-pub fn format_quality(info: &TrackInfo) -> String {
-    let rate = info.sample_rate;
-    let ch = info.channels;
+pub fn format_quality(info: &TrackInfo, output_rate: Option<u32>) -> String {
+    let resampled = match output_rate {
+        Some(out) if out != info.sample_rate => format!(" → {}", rate_label(out)),
+        _ => String::new(),
+    };
+    format!("{}{}", format_source(info), resampled)
+}
 
-    // Human-friendly sample rate.
-    let rate_str = match rate {
+fn rate_label(rate: u32) -> String {
+    match rate {
         44100 => "44.1kHz".to_string(),
         48000 => "48kHz".to_string(),
         88200 => "88.2kHz".to_string(),
@@ -26,9 +35,15 @@ pub fn format_quality(info: &TrackInfo) -> String {
         192000 => "192kHz".to_string(),
         352800 => "352.8kHz".to_string(),
         384000 => "384kHz".to_string(),
-        _ if rate % 1000 == 0 => format!("{}kHz", rate / 1000),
+        _ if rate.is_multiple_of(1000) => format!("{}kHz", rate / 1000),
         _ => format!("{}Hz", rate),
-    };
+    }
+}
+
+fn format_source(info: &TrackInfo) -> String {
+    let rate = info.sample_rate;
+    let ch = info.channels;
+    let rate_str = rate_label(rate);
 
     // Red-book audio gets its own name.
     match (rate, info.bit_depth, ch) {
@@ -66,6 +81,8 @@ pub struct TransportBar<'a> {
     ticker_offset: usize,
     /// Download fraction (0.0..1.0) for streaming tracks. None = fully downloaded.
     download_fraction: Option<f64>,
+    /// What the output device settled at. None until a track has started.
+    output_rate: Option<u32>,
 }
 
 impl<'a> TransportBar<'a> {
@@ -84,6 +101,7 @@ impl<'a> TransportBar<'a> {
             theme,
             ticker_offset: 0,
             download_fraction: None,
+            output_rate: None,
         }
     }
 
@@ -94,6 +112,11 @@ impl<'a> TransportBar<'a> {
 
     pub fn with_download_fraction(mut self, fraction: Option<f64>) -> Self {
         self.download_fraction = fraction;
+        self
+    }
+
+    pub fn with_output_rate(mut self, rate: Option<u32>) -> Self {
+        self.output_rate = rate;
         self
     }
 
@@ -303,7 +326,7 @@ impl Widget for TransportBar<'_> {
                     album_spans.push(Span::styled(format!(" ({})", year), self.theme.hint_desc));
                 }
 
-                let format_info = format!(" \u{00B7} {}", format_quality(info));
+                let format_info = format!(" \u{00B7} {}", format_quality(info, self.output_rate));
                 album_spans.push(Span::styled(format_info, self.theme.hint_desc));
 
                 let album_line = Line::from(album_spans);
@@ -318,7 +341,7 @@ impl Widget for TransportBar<'_> {
                 .to_string_lossy()
                 .to_string();
 
-            let format_info = format_quality(info);
+            let format_info = format_quality(info, self.output_rate);
 
             let info_line = Line::from(vec![
                 Span::raw(" "),

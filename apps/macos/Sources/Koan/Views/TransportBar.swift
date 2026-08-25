@@ -156,11 +156,14 @@ struct TransportBar: View {
             if let format = player.currentFormat {
                 Text(Format.quality(format))
                     .font(.caption.monospaced())
+                    // A refused rate isn't a fault to raise an alarm over, so
+                    // it reads at the same weight as the rest of the badge and
+                    // explains itself only to someone who looks.
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(.quaternary, in: Capsule())
-                    .help("Source format — koan matches the device rate rather than resampling")
+                    .help(Format.outputExplanation(format))
             }
 
             Toggle(isOn: Binding(

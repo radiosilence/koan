@@ -2013,7 +2013,9 @@ impl KoanEngine {
             duration_ms: info.as_ref().map(|i| i.duration_ms).unwrap_or(0),
             queue_item_id: cursor.map(|c| c.0.to_string()),
             entry,
-            format: info.as_ref().map(StreamFormat::from),
+            format: info
+                .as_ref()
+                .map(|i| StreamFormat::of(i, self.state.output_sample_rate())),
             playlist_version: self.state.playlist_version(),
             radio_enabled: self.state.radio_mode(),
         }
