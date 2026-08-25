@@ -28,7 +28,7 @@ final class SearchModel {
     private var task: Task<Void, Never>?
     /// Where to put the user back when they clear the field — the whole
     /// location, so a detail view you searched from is still there afterwards.
-    private var locationBeforeSearch: Location?
+    private var locationBeforeSearch: Navigator.Page?
 
     init(engine: KoanEngine, library: LibraryModel, nav: Navigator) {
         self.engine = engine
@@ -100,7 +100,7 @@ final class SearchModel {
         }
 
         if nav.section != .searchResults {
-            locationBeforeSearch = nav.location
+            locationBeforeSearch = nav.current
             nav.show(.searchResults)
         }
 

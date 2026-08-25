@@ -94,7 +94,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Bit-perfect playback** -- CoreAudio AUHAL / ALSA via cpal, automatic sample rate switching, no resampling
 - **Gapless transitions** -- decode thread keeps the ring buffer alive across track boundaries
 - **Format support** -- FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV/AIFF/CAF, Ogg, MKV/WebM, MP4
-- **Native macOS app** -- SwiftUI, built out of Liquid Glass. Album-grouped queue with drag reorder, library and artist browsing, ⌘K picker, synced lyrics, play history, snapshots, file organization, and first-run setup — no terminal required
+- **Native macOS app** -- SwiftUI, built out of Liquid Glass. Album-grouped queue with drag reorder, library and artist browsing, ⌘K search, synced lyrics, play history, snapshots, file organization, and first-run setup — no terminal required
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way favourite sync for tracks, albums and artists
