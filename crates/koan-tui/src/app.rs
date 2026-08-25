@@ -2860,8 +2860,22 @@ impl App {
     /// Call once per frame before any queue-related reads.
     pub fn refresh_visible_queue(&mut self) {
         let v = self.state.playlist_version();
-        if v != self.queue.vq_version {
-            self.queue.vq_cache = self.state.derive_visible_queue();
+        let mutated = v != self.queue.vq_version;
+        // Download progress lives in an atomic the download thread writes
+        // directly, so it moves without the version moving. A queue with
+        // something in flight re-derives every frame; nothing else does.
+        let downloading = self
+            .queue
+            .vq_cache
+            .entries
+            .iter()
+            .any(|e| e.download_progress.is_some());
+        if !mutated && !downloading {
+            return;
+        }
+
+        self.queue.vq_cache = self.state.derive_visible_queue();
+        if mutated {
             self.queue.vq_version = v;
             self.state_dirty = true; // Queue mutated — persist.
             // Clamp cursor after every external playlist change.

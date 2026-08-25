@@ -236,6 +236,17 @@ pub struct QueueItem {
     pub failure_reason: Option<String>,
 }
 
+/// How far one in-flight download has got.
+///
+/// Its own record rather than a queue refetch: progress moves several times a
+/// second and the queue does not, so the two travel separately.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DownloadProgress {
+    pub queue_item_id: String,
+    /// 0.0–1.0, or `None` when the server sent no Content-Length.
+    pub progress: Option<f64>,
+}
+
 impl QueueItem {
     /// Build directly from a playlist item, skipping `derive_visible_queue()`.
     /// The transport bar polls several times a second and only ever wants the

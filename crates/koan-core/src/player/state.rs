@@ -70,9 +70,11 @@ pub const STREAM_THRESHOLD: u64 = 256 * 1024; // 256 KB
 pub enum LoadState {
     Pending,
     Downloading {
-        downloaded: u64,
+        /// Total bytes expected, or 0 when the server sent no Content-Length.
         total: u64,
-        /// Shared counter updated atomically by the download thread after each chunk.
+        /// How many bytes have landed. The download thread writes it per chunk
+        /// without taking the playlist lock — which is the point: progress
+        /// moves far too often to be worth a queue mutation each time.
         bytes_written: Arc<AtomicU64>,
     },
     Ready,
@@ -621,6 +623,25 @@ impl SharedPlayerState {
             .collect()
     }
 
+    /// Every item mid-transfer, with the bytes it has and the bytes it expects.
+    ///
+    /// Progress moves without the playlist version moving — the download thread
+    /// writes the byte counter directly — so anything following the version
+    /// alone shows a frozen bar. This is how a watcher sees it move.
+    pub fn downloads_in_flight(&self) -> Vec<(QueueItemId, u64, u64)> {
+        let pl = self.playlist.read();
+        pl.items
+            .iter()
+            .filter_map(|item| match &item.load_state {
+                LoadState::Downloading {
+                    total,
+                    bytes_written,
+                } => Some((item.id, bytes_written.load(Ordering::Relaxed), *total)),
+                _ => None,
+            })
+            .collect()
+    }
+
     /// Get the db_id for a specific playlist item.
     pub fn item_db_id(&self, id: QueueItemId) -> Option<i64> {
         let pl = self.playlist.read();
@@ -799,11 +820,16 @@ impl SharedPlayerState {
             let is_cursor = cursor_pos == Some(i);
             let is_before_cursor = cursor_pos.is_some_and(|cp| i < cp);
 
-            // Derive download progress from load_state uniformly for all tracks.
+            // Byte count comes from the shared atomic, not from the load
+            // state's own copy: the download thread writes it per chunk
+            // without taking the playlist lock, which is what keeps a
+            // transfer from bumping the playlist version a thousand times.
             let dl_progress = match &item.load_state {
                 LoadState::Downloading {
-                    downloaded, total, ..
-                } => Some((*downloaded, *total)),
+                    total,
+                    bytes_written,
+                    ..
+                } => Some((bytes_written.load(Ordering::Relaxed), *total)),
                 _ => None,
             };
 
@@ -1112,7 +1138,6 @@ mod tests {
         let dl_cursor = make_item(
             "downloading-at-cursor",
             LoadState::Downloading {
-                downloaded: 0,
                 total: 1_000_000,
                 bytes_written: bytes_cursor.clone(),
             },
@@ -1120,7 +1145,6 @@ mod tests {
         let dl_queued = make_item(
             "downloading-queued",
             LoadState::Downloading {
-                downloaded: 0,
                 total: 500_000,
                 bytes_written: bytes_queued.clone(),
             },
@@ -1134,6 +1158,38 @@ mod tests {
 
         assert_eq!(snap.entries[0].status, QueueEntryStatus::PriorityPending);
         assert_eq!(snap.entries[1].status, QueueEntryStatus::Downloading);
+    }
+
+    #[test]
+    fn progress_follows_the_counter_without_touching_the_playlist() {
+        // The download thread writes bytes and nothing else. A queue derived
+        // afterwards must see them — the version has not moved, and the load
+        // state it was given is the one it still holds.
+        let state = SharedPlayerState::new();
+        let bytes = Arc::new(AtomicU64::new(0));
+        let item = make_item(
+            "downloading",
+            LoadState::Downloading {
+                total: 1_000,
+                bytes_written: bytes.clone(),
+            },
+        );
+        state.add_items(vec![item]);
+
+        let version = state.playlist_version();
+        bytes.store(250, Ordering::Release);
+
+        let snap = state.derive_visible_queue();
+        assert_eq!(snap.entries[0].download_progress, Some((250, 1_000)));
+        assert_eq!(
+            state.playlist_version(),
+            version,
+            "progress must not read as a queue mutation"
+        );
+        assert_eq!(
+            state.downloads_in_flight(),
+            vec![(snap.entries[0].id, 250, 1_000)]
+        );
     }
 
     #[test]

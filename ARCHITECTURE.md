@@ -191,6 +191,8 @@ Advancing parks on the next item that is not `Failed`, including one still downl
 
 A download that gives up sends `TrackFailed` instead, and the parked cursor advances past the item rather than waiting for a `TrackReady` that cannot come. The reason rides on the item as `LoadState::Failed(reason)` and out through `QueueEntry::error`, because a queue of unplayable tracks and a queue still fetching look identical without it.
 
+**Download progress is not a queue mutation.** `LoadState::Downloading` says *that* a transfer is running and carries the `Arc<AtomicU64>` the download thread writes bytes into; the state itself is set once per attempt. Progress therefore moves without the playlist lock and without bumping `playlist_version` — which matters because every front end reads that version as "refetch the queue", and a transfer produces a byte count several hundred times a second. Anything that wants to *watch* progress reads `downloads_in_flight()` on its own poll rather than waiting for a version change.
+
 ## koan-core modules
 
 ### `audio/`

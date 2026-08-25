@@ -86,6 +86,8 @@ final class PlayerModel {
                     await self.applyQueueChange()
                 case .positionChanged(let positionMs):
                     self.applyPosition(positionMs)
+                case .downloadsChanged(let downloads):
+                    self.applyDownloads(downloads)
                 }
             }
         }
@@ -134,6 +136,43 @@ final class PlayerModel {
             uniquingKeysWith: { a, b in b.status == .queued ? a : b }
         )
     }
+
+    /// Queue items mid-transfer at the last report.
+    ///
+    /// A track leaving this set has landed on disk, which is the only thing
+    /// that moves the library's cached count — and nothing else would tell it.
+    private var downloading: Set<String> = []
+
+    /// Download progress moved.
+    ///
+    /// Patched into the queue in place rather than refetching it. This arrives
+    /// several times a second while the queue behind it has not changed, and
+    /// rebuilding the whole list for a byte counter is what made the rest of
+    /// the app stutter while an album cached.
+    fileprivate func applyDownloads(_ downloads: [DownloadProgress]) {
+        let byItem = Dictionary(
+            downloads.map { ($0.queueItemId, $0.progress) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for index in queue.indices {
+            let progress = byItem[queue[index].queueItemId] ?? nil
+            guard queue[index].downloadProgress != progress else { continue }
+            queue[index].downloadProgress = progress
+            if let trackId = queue[index].trackId {
+                queuedByTrack[trackId] = queue[index]
+            }
+        }
+
+        let active = Set(byItem.keys)
+        if !downloading.subtracting(active).isEmpty {
+            onDownloadsLanded?()
+        }
+        downloading = active
+    }
+
+    /// A download finished. Set by `AppState` — the library's cached count is
+    /// the only thing that knows it moved, and it has no other way to find out.
+    var onDownloadsLanded: (() -> Void)?
 
     /// The queue changed — rebuild it and refresh what depends on it.
     fileprivate func applyQueueChange() async {
