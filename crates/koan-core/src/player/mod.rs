@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::audio::{
     analyzer::VizAnalyzer,
-    backend::{self, AudioBackend, AudioEngineHandle, BackendError},
+    backend::{self, AudioBackend, AudioEngineHandle, BackendError, SampleRateWatch},
     buffer, streaming,
     viz::{VizBuffer, VizSnapshot},
 };
@@ -68,6 +68,9 @@ pub struct Player {
 struct ActivePlayback {
     engine: Box<dyn AudioEngineHandle>,
     decode_handle: buffer::DecodeHandle,
+    /// Keeps the device rate subscription alive for as long as this engine is
+    /// the one feeding the DAC. Dropped with it.
+    _rate_watch: Option<Box<dyn SampleRateWatch>>,
 }
 
 impl Default for Player {
@@ -142,14 +145,20 @@ impl Player {
     /// count — the format the decode thread writes into the ring buffer. A
     /// device that cannot take the requested rate (MPEG-2/2.5 MP3 rates are
     /// commonly refused) resamples instead of playing at the wrong speed.
+    #[allow(clippy::type_complexity)]
     fn create_engine_for(
         &self,
         info: &buffer::StreamInfo,
         consumer: rtrb::Consumer<f32>,
-    ) -> Result<Box<dyn AudioEngineHandle>, PlayerError> {
+    ) -> Result<(Box<dyn AudioEngineHandle>, Option<Box<dyn SampleRateWatch>>), PlayerError> {
         let device = self.resolve_device()?;
         let device_rate = self.backend.get_device_sample_rate(&device)?;
         let source_rate = info.sample_rate as f64;
+
+        // The track info is already published, so anything read between here
+        // and the switch landing would pair this track with the last one's
+        // output rate — and a rate switch is not instant. Say nothing instead.
+        self.shared_state.clear_output_sample_rate();
 
         let settled = if (device_rate - source_rate).abs() > 0.1 {
             log::info!(
@@ -181,13 +190,28 @@ impl Player {
         self.shared_state
             .set_output_sample_rate(settled.round() as u32);
 
-        Ok(self.backend.create_engine(
+        // koan is not the only client of this device. Subscribe so the front
+        // ends learn about a rate someone else moved instead of trusting the
+        // reading above until the next track happens to build an engine.
+        let watch_state = self.shared_state.clone();
+        let watch_name = device.name.clone();
+        let rate_watch = self.backend.watch_device_sample_rate(
+            &device,
+            Box::new(move |rate| {
+                log::info!("device sample rate changed externally: {rate}Hz on '{watch_name}'");
+                watch_state.set_output_sample_rate(rate.round() as u32);
+            }),
+        );
+
+        let engine = self.backend.create_engine(
             &device,
             source_rate,
             info.channels as u32,
             consumer,
             self.timeline.samples_played_counter(),
-        )?)
+        )?;
+
+        Ok((engine, rate_watch))
     }
 
     /// Resolve the output device: use configured device name if set,
@@ -401,7 +425,7 @@ impl Player {
             },
         )?;
 
-        let engine = self.create_engine_for(&info, consumer)?;
+        let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
         engine.start()?;
 
         self.shared_state.set_playback_state(PlaybackState::Playing);
@@ -409,6 +433,7 @@ impl Player {
         self.active_playback = Some(ActivePlayback {
             engine,
             decode_handle,
+            _rate_watch: rate_watch,
         });
 
         Ok(())
@@ -660,7 +685,7 @@ impl Player {
             },
         )?;
 
-        let engine = self.create_engine_for(&info, consumer)?;
+        let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
         engine.start()?;
 
         self.shared_state.set_playback_state(PlaybackState::Playing);
@@ -668,6 +693,7 @@ impl Player {
         self.active_playback = Some(ActivePlayback {
             engine,
             decode_handle,
+            _rate_watch: rate_watch,
         });
 
         Ok(())
@@ -787,6 +813,7 @@ impl Player {
         let ActivePlayback {
             engine,
             mut decode_handle,
+            _rate_watch,
         } = playback;
 
         // Stop audio output first, then get the decode thread gone *before* the
@@ -2259,6 +2286,7 @@ mod tests {
                 dropped: dropped.clone(),
             }),
             decode_handle,
+            _rate_watch: None,
         });
 
         player.stop_engine();
@@ -2406,5 +2434,188 @@ mod tests {
         assert_eq!(settled_rate_for(22050, 48000.0), Some(48000));
         // No switch needed, so nothing resampled: the two rates agree.
         assert_eq!(settled_rate_for(44100, 44100.0), Some(44100));
+    }
+
+    /// A device that takes its time reclocking, as real hardware does.
+    struct SlowBackend {
+        observed: Arc<std::sync::Mutex<Vec<Option<u32>>>>,
+        state: Arc<SharedPlayerState>,
+    }
+
+    impl AudioBackend for SlowBackend {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            Ok(vec![self.default_device()?])
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            Ok(backend::DeviceInfo {
+                name: "Slow DAC".into(),
+                sample_rates: vec![44100.0, 48000.0],
+                platform_id: 0,
+            })
+        }
+        fn supported_sample_rates(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            Ok(vec![44100.0, 48000.0])
+        }
+        fn get_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            Ok(48000.0)
+        }
+        fn set_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            // What a front end polling mid-switch would see.
+            self.observed
+                .lock()
+                .unwrap()
+                .push(self.state.output_sample_rate());
+            Ok(rate)
+        }
+        fn create_engine(
+            &self,
+            _device: &backend::DeviceInfo,
+            _sample_rate: f64,
+            _channels: u32,
+            _consumer: rtrb::Consumer<f32>,
+            _samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            Ok(Box::new(NullEngine))
+        }
+    }
+
+    #[test]
+    fn the_previous_rate_is_not_published_while_the_device_reclocks() {
+        // A 48 kHz track followed by a 44.1 kHz one: for as long as the switch
+        // takes — the better part of a second on USB — the new track's info is
+        // published against the old track's output rate. A front end polling in
+        // that window used to latch "44.1 → 48" and, since nothing about the
+        // codec or the source rate changed afterwards, never let go of it.
+        let mut player = Player::new();
+        let state = player.shared_state.clone();
+        state.set_output_sample_rate(48000);
+
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        player.backend = Box::new(SlowBackend {
+            observed: observed.clone(),
+            state: state.clone(),
+        });
+
+        let info = buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate: 44100,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_producer, consumer) = rtrb::RingBuffer::new(16);
+        player
+            .create_engine_for(&info, consumer)
+            .expect("engine creation should succeed");
+
+        assert_eq!(
+            *observed.lock().unwrap(),
+            vec![None],
+            "mid-switch the output rate must read as unknown, not as the last track's"
+        );
+        assert_eq!(state.output_sample_rate(), Some(44100));
+    }
+
+    /// Backend that hands its rate-change callback back to the test.
+    struct WatchedBackend {
+        inner: StuckBackend,
+        #[allow(clippy::type_complexity)]
+        captured: Arc<std::sync::Mutex<Option<Box<dyn Fn(f64) + Send + Sync>>>>,
+    }
+
+    struct NullWatch;
+    impl backend::SampleRateWatch for NullWatch {}
+
+    impl AudioBackend for WatchedBackend {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            self.inner.list_devices()
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            self.inner.default_device()
+        }
+        fn supported_sample_rates(
+            &self,
+            device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            self.inner.supported_sample_rates(device)
+        }
+        fn get_device_sample_rate(
+            &self,
+            device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            self.inner.get_device_sample_rate(device)
+        }
+        fn set_device_sample_rate(
+            &self,
+            device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            self.inner.set_device_sample_rate(device, rate)
+        }
+        fn watch_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            on_change: Box<dyn Fn(f64) + Send + Sync>,
+        ) -> Option<Box<dyn backend::SampleRateWatch>> {
+            *self.captured.lock().unwrap() = Some(on_change);
+            Some(Box::new(NullWatch))
+        }
+        fn create_engine(
+            &self,
+            device: &backend::DeviceInfo,
+            sample_rate: f64,
+            channels: u32,
+            consumer: rtrb::Consumer<f32>,
+            samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            self.inner
+                .create_engine(device, sample_rate, channels, consumer, samples_played)
+        }
+    }
+
+    #[test]
+    fn external_rate_change_reaches_the_shared_state() {
+        // The device is shared. Another client moving the rate mid-track used
+        // to leave the front ends asserting bit-perfection while the HAL
+        // resampled underneath them.
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let mut player = Player::new();
+        player.backend = Box::new(WatchedBackend {
+            inner: StuckBackend {
+                rate: 44100.0,
+                asked: Arc::new(std::sync::Mutex::new(None)),
+            },
+            captured: captured.clone(),
+        });
+        let state = player.shared_state.clone();
+
+        let info = buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate: 44100,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_producer, consumer) = rtrb::RingBuffer::new(16);
+        player
+            .create_engine_for(&info, consumer)
+            .expect("engine creation should succeed");
+        assert_eq!(state.output_sample_rate(), Some(44100));
+
+        let on_change = captured.lock().unwrap().take().expect("watch registered");
+        on_change(48000.0);
+        assert_eq!(state.output_sample_rate(), Some(48000));
     }
 }

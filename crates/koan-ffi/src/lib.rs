@@ -1238,7 +1238,6 @@ impl KoanEngine {
                     .as_ref()
                     .map(koan_core::helpers::tracks_from_server)
                     .unwrap_or(0),
-                transcode_quality: cfg.remote.transcode_quality.clone(),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
                 cache_dir: cache_dir.to_string_lossy().into_owned(),
@@ -1290,10 +1289,6 @@ impl KoanEngine {
             remote.insert("enabled".into(), Value::Boolean(s.remote_enabled));
             remote.insert("url".into(), Value::String(s.remote_url.clone()));
             remote.insert("username".into(), Value::String(s.remote_username.clone()));
-            remote.insert(
-                "transcode_quality".into(),
-                Value::String(s.transcode_quality.clone()),
-            );
             remote.insert(
                 "download_workers".into(),
                 Value::Integer(s.download_workers.max(1) as i64),

@@ -22,7 +22,7 @@ struct SidebarView: View {
         List(selection: nav.sidebarSelection) {
             Section {
                 HStack {
-                    Label("Queue", systemImage: "list.bullet")
+                    Label("Queue", systemImage: Icon.queueSection)
                     if player.isBusy {
                         Spacer()
                         ProgressView().controlSize(.small)
@@ -46,24 +46,24 @@ struct SidebarView: View {
                             : nil
                     )
                 if search.hasQuery {
-                    Label("Results", systemImage: "magnifyingglass")
+                    Label("Results", systemImage: Icon.search)
                         .tag(Navigator.Section.searchResults)
                 }
             }
 
             Section("Library") {
-                Label("Albums", systemImage: "square.stack")
+                Label("Albums", systemImage: Icon.album)
                     .tag(Navigator.Section.albums)
-                Label("Artists", systemImage: "music.mic")
+                Label("Artists", systemImage: Icon.artist)
                     .tag(Navigator.Section.artists)
-                Label("Favourites", systemImage: "heart")
+                Label("Favourites", systemImage: Icon.favourite)
                     .tag(Navigator.Section.favourites)
-                Label("History", systemImage: "clock.arrow.circlepath")
+                Label("History", systemImage: Icon.history)
                     .tag(Navigator.Section.playHistory)
             }
 
             Section("Playlists") {
-                Label("Snapshots", systemImage: "bookmark")
+                Label("Snapshots", systemImage: Icon.snapshot)
                     .tag(Navigator.Section.snapshots)
             }
         }
@@ -124,7 +124,7 @@ struct SidebarView: View {
                 // "Radio on" only repeats what the lit button already says.
                 // What is worth knowing is whether it is about to do anything,
                 // which is a question about how much queue is left.
-                Label(radioStatus, systemImage: "dot.radiowaves.left.and.right")
+                Label(radioStatus, systemImage: Icon.radio)
                     .font(.caption)
                     .foregroundStyle(.tint)
             }

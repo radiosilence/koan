@@ -660,8 +660,6 @@ pub struct Settings {
     pub remote_signed_in: bool,
     /// Tracks the server accounts for.
     pub remote_tracks: u64,
-    /// `original`, `opus-128` or `mp3-320`.
-    pub transcode_quality: String,
     pub download_workers: u32,
     /// Human-readable, e.g. "50GB". Empty means unlimited.
     pub cache_limit: String,
