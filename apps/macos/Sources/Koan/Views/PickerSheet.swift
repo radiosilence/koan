@@ -11,7 +11,6 @@ struct PickerSheet: View {
     @Binding var isPresented: Bool
 
     @Environment(PlayerModel.self) private var player
-    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
 
     @State private var kind: SearchKind = .track
@@ -224,7 +223,6 @@ struct PickerSheet: View {
                 }
             case .replace:
                 player.playNow(trackIds: trackIds)
-                nav.showQueueWhenReady(watching: player)
             }
             isPresented = false
         }
