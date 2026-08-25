@@ -50,6 +50,9 @@
 - **Favourites and history can be filtered, which they were already built for.** Both narrow on title, artist and album, history has an empty state for when a filter matches nothing, and neither could be typed into: the toolbar offered its field to albums and artists by name, and ⌘F named the same two. Which sections have a filter is now one answer on `Navigator.Section` that the field and ⌘F both read, so a section cannot be filterable in the model and not on screen. Favourites also draws the narrowed list rather than the whole one, and counts what it is showing.
 
 - **The sidebar said no remote tracks were cached, however many were.** The count asked for tracks whose `source` is `'cached'` — a value the schema allows and nothing writes, because downloading a track does not change where it came from. What a download writes is `cached_path`, which is what `set_cached_path` sets and clearing the cache nulls. Counted from there it agrees with the files on disk.
+### Added
+
+- **The artist and album in the transport bar are links.** The bar named what was playing and gave you no way to get to it — its second line was the artist as plain text, and the record it came from was not shown at all. It reads `artist — album` now, each name going where its own name says, through the same `LinkText` the rows, grid cells and queue headers use. That was the last place in the app an artist name was not a link.
 
 ## v0.29.1 (2026-08-24)
 
