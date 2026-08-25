@@ -1322,6 +1322,39 @@ impl Player {
         }
     }
 
+    /// Put playback back in agreement with the playlist.
+    ///
+    /// The engine keeps decoding whatever it was on while the playlist changes
+    /// underneath it, which an undo can turn into a lie: undoing a replace
+    /// restores the queue but leaves the engine playing a track that queue does
+    /// not contain. The transport then describes an item nothing can select,
+    /// and the decode lookahead — which finds the next track by locating the
+    /// current one — has nothing to follow, so the queue ends at the end of the
+    /// track instead of carrying on.
+    ///
+    /// Done once, after the entry is applied, rather than inside each variant:
+    /// any undo that takes items away can orphan the engine, not only
+    /// `Replaced`.
+    fn reconcile_playback(&mut self) {
+        let Some(playing) = self.shared_state.track_info().map(|t| t.id) else {
+            return;
+        };
+        if self.shared_state.get_item(playing).is_some() {
+            return;
+        }
+        // Pick the restored queue back up where its cursor says it was, but
+        // only if something was already playing — an undo is not a reason to
+        // start the music, and the position is not part of what was snapshotted
+        // so the track begins again.
+        let resume = (self.shared_state.playback_state() == PlaybackState::Playing)
+            .then(|| self.shared_state.cursor())
+            .flatten();
+        self.stop_playback_and_clear_state();
+        if let Some(id) = resume {
+            self.play(id);
+        }
+    }
+
     /// Execute an undo operation, pushing the inverse onto the redo stack.
     fn execute_undo(&mut self) {
         let Some(entry) = self.undo_stack.pop_undo() else {
@@ -1330,6 +1363,7 @@ impl Player {
         if let Some(inverse) = self.apply_entry(entry) {
             self.undo_stack.push_redo(inverse);
         }
+        self.reconcile_playback();
     }
 
     /// Execute a redo operation, pushing the inverse onto the undo stack.
@@ -1340,6 +1374,7 @@ impl Player {
         if let Some(inverse) = self.apply_entry(entry) {
             self.undo_stack.push_undo_keep_redo(inverse);
         }
+        self.reconcile_playback();
     }
 
     /// Run the command loop. Blocks until the sender is dropped.
@@ -1422,6 +1457,33 @@ mod tests {
             load_state: LoadState::Pending,
             ..make_item(title)
         }
+    }
+
+    /// Stand in for an engine that is playing `id`. The test items have no
+    /// files behind them, so `start_playback` can never get far enough to leave
+    /// this state on its own.
+    fn pretend_playing(player: &mut Player, id: QueueItemId) {
+        let item = player
+            .shared_state
+            .get_item(id)
+            .expect("item is in the queue");
+        player.shared_state.set_track_info(Some(TrackInfo {
+            id,
+            path: item.path,
+            codec: String::new(),
+            sample_rate: 44_100,
+            bit_depth: None,
+            bitrate_kbps: None,
+            channels: 2,
+            duration_ms: 1_000,
+        }));
+        player
+            .shared_state
+            .set_playback_state(PlaybackState::Playing);
+    }
+
+    fn playing_id(player: &Player) -> Option<QueueItemId> {
+        player.shared_state.track_info().map(|t| t.id)
     }
 
     /// Build `n` ready items, add them, and return their IDs.
@@ -1953,6 +2015,77 @@ mod tests {
 
         player.process_command(PlayerCommand::Undo);
         assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
+    }
+
+    /// The bug: replacing the queue starts the new track, and undoing restored
+    /// the old queue while leaving the engine on a track that queue no longer
+    /// contains — a transport describing a row nobody can see, and a decode
+    /// lookahead with nothing to follow.
+    #[test]
+    fn undoing_a_replace_does_not_leave_the_engine_on_an_orphaned_track() {
+        let mut player = Player::new();
+        let original = seed(&mut player, 3);
+        player.shared_state.set_cursor(Some(original[0]));
+        pretend_playing(&mut player, original[0]);
+
+        let replacement = vec![make_item("something else")];
+        let orphan = replacement[0].id;
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items: replacement,
+            start: 0,
+        });
+        // What `play()` would have left behind if the file existed.
+        pretend_playing(&mut player, orphan);
+
+        player.process_command(PlayerCommand::Undo);
+
+        assert_eq!(playlist_ids(&player), original, "the queue comes back");
+        assert!(
+            player.shared_state.get_item(orphan).is_none(),
+            "and the replacement is gone from it"
+        );
+        assert!(
+            playing_id(&player).is_none_or(|id| player.shared_state.get_item(id).is_some()),
+            "so nothing may still be playing out of it"
+        );
+    }
+
+    /// The same orphaning, reached by undoing an add rather than a replace.
+    #[test]
+    fn undoing_an_add_does_not_leave_the_engine_on_a_removed_track() {
+        let mut player = Player::new();
+        seed(&mut player, 2);
+        let added = seed(&mut player, 1);
+        pretend_playing(&mut player, added[0]);
+
+        player.process_command(PlayerCommand::Undo);
+
+        assert!(player.shared_state.get_item(added[0]).is_none());
+        assert!(
+            playing_id(&player).is_none_or(|id| player.shared_state.get_item(id).is_some()),
+            "the engine cannot be left on the item the undo removed"
+        );
+    }
+
+    /// An undo that leaves the playing item where it is must not restart it.
+    #[test]
+    fn undoing_a_move_leaves_playback_alone() {
+        let mut player = Player::new();
+        let ids = seed(&mut player, 3);
+        player.shared_state.set_cursor(Some(ids[0]));
+        pretend_playing(&mut player, ids[0]);
+        let starts = player.playback_starts;
+
+        player.process_command(PlayerCommand::MoveInPlaylist {
+            id: ids[2],
+            target: ids[0],
+            after: false,
+        });
+        player.process_command(PlayerCommand::Undo);
+
+        assert_eq!(playlist_ids(&player), ids);
+        assert_eq!(playing_id(&player), Some(ids[0]), "still on the same track");
+        assert_eq!(player.playback_starts, starts, "and not restarted");
     }
 
     #[test]
