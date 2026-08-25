@@ -9,6 +9,7 @@ Feasibility research and implementation plans for koan's next major features.
 | [02](02-dsp-and-profiles.md) | DSP + Headphone Profiles | ~5-7 days | Insert between decode and ring buffer. `biquad` for parametric EQ. AutoEQ profiles trivially parseable. |
 | [04](04-tagging.md) | Tag Editing | ~8-12 days | vimv-style (TSV + $EDITOR) first, TUI inline editor second. Terminal suspend/resume is a standard ratatui pattern. |
 | [09](09-artist-metadata.md) | Artist Metadata | — | Bios, images and similar artists from MusicBrainz/Last.fm. |
+| [10](10-ios.md) | koan on iOS | ~2-4 weeks | The core already builds and links for both iOS targets; 51 of 60 app files typecheck. The work is the build system and a phone shell. |
 
 ## Shipped
 
