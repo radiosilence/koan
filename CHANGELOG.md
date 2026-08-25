@@ -10,7 +10,7 @@
 
 - **Favourites rows lost their covers again.** They were given their own sleeve and album name in v0.30.0, on the grounds that a list gathered from the whole library has nothing above it saying what each row is. Rebuilding the detail column in v0.30.1 reproduced the call that draws it without the flag that turns the mode on.
 
-- **A flash of bare colour on the first keystroke of a search.** The queue drew no ground of its own and let the window's wash show through it, so for the frame between one page and the next neither was painted and the wash filled the window. Every page carries its own ground now, and the ones that are washed draw the wash over it rather than through it.
+- **A flash of bare colour on the first keystroke of a search.** The page's ground was put behind it before it was told to fill the column, and a background sizes itself to what it backs — so the ground was only ever as big as the page's content. The results page measures nothing while the query is still running, which left the window's wash showing everywhere around it. The page is filled first now, and every page carries an opaque ground of its own with the wash drawn over it rather than through it.
 
 ## v0.30.1 (2026-08-25)
 

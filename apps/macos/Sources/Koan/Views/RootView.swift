@@ -89,12 +89,17 @@ struct RootView: View {
         } detail: {
             StageView()
                 .clearsTransport(transportHeight)
+                // Filled *before* the ground goes behind it. A background sizes
+                // itself to what it backs, so expanding afterwards left the
+                // ground the size of the page's content — and a page that
+                // measures nothing, like results while the query is still
+                // running, showed the window's wash everywhere around it.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Every page carries its own ground. The window's is the wash,
                 // so a transparent page composites onto it — and onto the page
                 // before it, which is what left an album drawing itself across
                 // the grid you came back to.
                 .background { PageGround(source: washSource, drifts: player.isPlaying) }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .inspector(isPresented: $showLyrics) {
             LyricsPanel()
@@ -352,8 +357,9 @@ private struct StageView: View {
 
 /// What a page sits on.
 ///
-/// A record washes itself in its own cover; everywhere else is either the
-/// window's wash showing through — the queue — or an opaque ground of its own.
+/// Every page is opaque. A washed one — the queue, a record — draws its bleed
+/// over that ground rather than in place of it, so no page ever composites onto
+/// the window or onto the page before it.
 private struct PageGround: View {
     let source: AlbumArtwork.Source?
     let drifts: Bool
@@ -367,10 +373,6 @@ private struct PageGround: View {
 
     var body: some View {
         ZStack {
-            // Always opaque, never a hole onto the window. Letting the queue
-            // show the window's wash through itself meant that for one frame
-            // between two pages neither was painted, and the bare wash filled
-            // the window — the flash on the first keystroke of a search.
             Rectangle().fill(.background)
             if washed {
                 ArtworkBleed(source: source, drifts: drifts)
