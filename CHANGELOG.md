@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The playing mark crowded the sleeve beside it.** Six points pairs a status mark with a right-aligned track number, which carries slack of its own; a cover is a solid block flush to its frame and the same six points read as a squeeze. A list that draws sleeves gives the mark the same ten points the title gets on the other side.
+
 ### Added
 
 - **Playlists.** Named, ordered lists of tracks that outlive the session — the thing the queue could never be, and the thing saved queues were standing in for. They live in the sidebar under their own heading, with a 2×2 mosaic of the first four records in them for a face.
