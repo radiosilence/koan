@@ -89,12 +89,17 @@ struct RootView: View {
         } detail: {
             StageView()
                 .clearsTransport(transportHeight)
+                // Filled *before* the ground goes behind it. A background sizes
+                // itself to what it backs, so expanding afterwards left the
+                // ground the size of the page's content — and a page that
+                // measures nothing, like results while the query is still
+                // running, showed the window's wash everywhere around it.
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 // Every page carries its own ground. The window's is the wash,
                 // so a transparent page composites onto it — and onto the page
                 // before it, which is what left an album drawing itself across
                 // the grid you came back to.
                 .background { PageGround(source: washSource, drifts: player.isPlaying) }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .inspector(isPresented: $showLyrics) {
             LyricsPanel()
@@ -333,7 +338,10 @@ private struct StageView: View {
             TrackListView(
                 title: "Favourites",
                 subtitle: Format.count(Int64(library.favourites.count), "track"),
-                tracks: library.favourites
+                tracks: library.favourites,
+                // Gathered from the whole library, so a row's cover and album
+                // are what tell it from the one above it.
+                mixedAlbums: true
             )
         case .section(.playHistory):
             HistoryView()
@@ -349,24 +357,26 @@ private struct StageView: View {
 
 /// What a page sits on.
 ///
-/// A record washes itself in its own cover; everywhere else is either the
-/// window's wash showing through — the queue — or an opaque ground of its own.
+/// Every page is opaque. A washed one — the queue, a record — draws its bleed
+/// over that ground rather than in place of it, so no page ever composites onto
+/// the window or onto the page before it.
 private struct PageGround: View {
     let source: AlbumArtwork.Source?
     let drifts: Bool
 
     @Environment(Navigator.self) private var nav
 
+    /// Whether this page is washed in a record's colour, or is its own ground.
+    private var washed: Bool {
+        if case .album = nav.current { true } else { nav.section == .queue }
+    }
+
     var body: some View {
-        if case .album = nav.current {
-            ZStack {
-                Rectangle().fill(.background)
+        ZStack {
+            Rectangle().fill(.background)
+            if washed {
                 ArtworkBleed(source: source, drifts: drifts)
             }
-        } else if nav.section == .queue {
-            Color.clear
-        } else {
-            Rectangle().fill(.background)
         }
     }
 }

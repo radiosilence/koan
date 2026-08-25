@@ -12,6 +12,7 @@ import SwiftUI
 /// glass floating on glass reads as neither.
 struct TransportBar: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// One per direction, so the arrow that was pressed is the only one that
@@ -118,6 +119,20 @@ struct TransportBar: View {
             // A cross-fade catches the corner of the eye; a hard swap doesn't.
             .contentTransition(.opacity)
             .animation(.easeInOut(duration: 0.2), value: player.currentEntry?.queueItemId)
+
+            // Next to what is playing, because that is what it acts on. ⌘D
+            // does the same from anywhere, but a heart you can see also tells
+            // you whether this one is already in.
+            if let trackId = player.currentTrackId {
+                FavouriteButton(
+                    isOn: library.isFavourite(track: trackId),
+                    size: .callout
+                ) {
+                    library.toggleFavourite(track: trackId)
+                }
+                .help(library.isFavourite(track: trackId)
+                    ? "Remove favourite (⌘D)" : "Favourite this track (⌘D)")
+            }
         }
     }
 
