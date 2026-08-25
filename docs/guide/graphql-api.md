@@ -62,8 +62,10 @@ playground = false             # GraphiQL IDE at GET /graphql (default: false)
 auth_enabled = true           # JWT authentication (default: true)
 access_token_ttl = "15m"      # access token lifetime (default: 15m)
 refresh_token_ttl = "30d"     # refresh token lifetime (default: 30d)
-# subsonic_port = 4040         # optional Subsonic REST API port (default: disabled, set to enable)
 ```
+
+koan's own Subsonic API is configured separately, under `[subsonic]` — see
+[Configuration](../reference/configuration.md#subsonic).
 
 The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in config to expose on all interfaces.
 

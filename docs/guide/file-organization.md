@@ -56,7 +56,7 @@ Or define them in your config directly:
 
 ```toml
 [organize]
-default = "standard"       # pattern selected by default in the modal
+default = "standard"       # preselected in the TUI modal and the macOS sheet
 move_ancillary = true      # cover art, .cue and .log travel with the music
 
 [organize.patterns]

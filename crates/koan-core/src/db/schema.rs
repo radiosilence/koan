@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -303,43 +303,8 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
 
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
-    playlist_entries_get_ids(conn)?;
 
     Ok(())
-}
-
-/// Give playlist entries ids of their own.
-///
-/// They shipped keyed on `(playlist_id, position)`, which names a slot rather
-/// than an entry: reorder the playlist and every key changes, so nothing could
-/// hold a reference to a row. A queue item needs to, or two copies of the same
-/// track in one playlist cannot be told apart. SQLite cannot add a primary key
-/// in place, so the table is rebuilt; the entries themselves are kept.
-fn playlist_entries_get_ids(conn: &Connection) -> rusqlite::Result<()> {
-    if !table_exists(conn, "playlist_tracks")? || column_exists(conn, "playlist_tracks", "id")? {
-        return Ok(());
-    }
-
-    conn.pragma_update(None, "foreign_keys", "off")?;
-    let rebuild = conn.execute_batch(
-        "BEGIN;
-         CREATE TABLE playlist_tracks_new (
-             id          INTEGER PRIMARY KEY,
-             playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
-             position    INTEGER NOT NULL,
-             track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
-             UNIQUE (playlist_id, position)
-         );
-         INSERT INTO playlist_tracks_new (playlist_id, position, track_id)
-             SELECT playlist_id, position, track_id FROM playlist_tracks
-             ORDER BY playlist_id, position;
-         DROP TABLE playlist_tracks;
-         ALTER TABLE playlist_tracks_new RENAME TO playlist_tracks;
-         CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);
-         COMMIT;",
-    );
-    conn.pragma_update(None, "foreign_keys", "on")?;
-    rebuild
 }
 
 /// Turn saved queues into playlists, then drop the table they lived in.

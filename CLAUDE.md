@@ -62,7 +62,7 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 - **Decode cursor ≠ UI cursor** — decode thread peeks ahead for gapless without moving the playlist cursor.
 - **One `derive_visible_queue()` per frame** — cached snapshot, all render/mouse ops see consistent state.
 - **Track dedup across sources** — local file + remote entry = one DB row. 3-strategy match: path → remote_id → content.
-- **Figment-layered config** — defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Use `Config::update_base()` for base config writes, `patch_local(section, values)` for machine-specific updates to `config.local.toml`.
+- **Figment-layered config** — defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. All writes go through `Config::persist()`, which diffs the mutation and routes each changed key by `config::layer_of` — secrets, this machine's paths/hardware/account and volatile UI state to `config.local.toml`, taste to `config.toml`. Comments survive; untouched keys are never rewritten.
 
 ## Git
 
