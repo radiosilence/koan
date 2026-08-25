@@ -68,7 +68,7 @@ struct QueueView: View {
                     // to where you already are still has to scroll, because the
                     // list may have been moved since.
                     .onChange(of: ui.queueJumpToken) { _, _ in
-                        jump(to: ui.queueJumpEdge, using: scroll)
+                        jump(to: ui.queueJumpTarget, using: scroll)
                     }
                     // Double-click and context menu both come from the List, keyed
                     // on the rows under the pointer rather than on a gesture.
@@ -154,6 +154,16 @@ struct QueueView: View {
                 Button("Clear") { selection = [] }
                 Button("Remove", role: .destructive) { removeSelected() }
             }
+
+            // Beside the layout picker because both are about what you are
+            // looking at rather than what is in the queue. Disabled rather than
+            // hidden when nothing is playing: a control that comes and goes is
+            // one you have to look for.
+            Button { ui.jumpQueue(to: .playing) } label: {
+                Image(systemName: Icon.jumpToPlaying)
+            }
+            .disabled(player.currentItemId == nil)
+            .help("Scroll to what's playing")
 
             // Both modes shown with the active one lit, the way Finder switches
             // view. A single icon has to choose between naming the mode you are
@@ -349,10 +359,25 @@ struct QueueView: View {
     /// Scrolls only. The TUI's `g` moves a cursor because the cursor is how you
     /// look around there; here the pointer and the selection are separate things
     /// and moving the selection would throw away what you had picked.
-    private func jump(to edge: UIState.Edge, using scroll: ScrollViewProxy) {
-        guard let target = edge == .top ? rows.first?.id : rows.last?.id else { return }
+    ///
+    /// The playing row is centred rather than put at the top: what is playing
+    /// is read against what comes after it, and a row at the top edge has no
+    /// after.
+    private func jump(to target: UIState.Jump, using scroll: ScrollViewProxy) {
+        let row: String? = switch target {
+        case .top: rows.first?.id
+        case .bottom: rows.last?.id
+        // A track row's id *is* its queue item's, in either layout.
+        case .playing: player.currentItemId
+        }
+        guard let row else { return }
+        let anchor: UnitPoint = switch target {
+        case .top: .top
+        case .bottom: .bottom
+        case .playing: .center
+        }
         withAnimation(.easeOut(duration: 0.18)) {
-            scroll.scrollTo(target, anchor: edge == .top ? .top : .bottom)
+            scroll.scrollTo(row, anchor: anchor)
         }
     }
 

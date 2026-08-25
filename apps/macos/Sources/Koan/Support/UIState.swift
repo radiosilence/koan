@@ -27,14 +27,15 @@ final class UIState {
     /// where the sidebar ends in order not to sit on it.
     var sidebarWidth: CGFloat = 0
 
-    enum Edge { case top, bottom }
+    /// Where the queue can be sent. Two ends and the row the music is on.
+    enum Jump { case top, bottom, playing }
 
     /// Counters, not booleans: pressing `g` twice has to jump twice, and a flag
     /// that is already true is not a change anything can observe.
     private(set) var searchFocusToken = 0
     private(set) var filterFocusToken = 0
     private(set) var queueJumpToken = 0
-    private(set) var queueJumpEdge = Edge.top
+    private(set) var queueJumpTarget = Jump.top
     /// Escape drops the selection wherever you are, so every list that has one
     /// watches this rather than each binding its own key and disagreeing about
     /// which of them the keystroke belonged to.
@@ -52,8 +53,8 @@ final class UIState {
 
     func selectAll() { selectAllToken += 1 }
 
-    func jumpQueue(to edge: Edge) {
-        queueJumpEdge = edge
+    func jumpQueue(to target: Jump) {
+        queueJumpTarget = target
         queueJumpToken += 1
     }
 
