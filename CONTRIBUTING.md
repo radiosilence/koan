@@ -29,6 +29,13 @@ just fmt
 4. Keep commits focused. We squash-merge PRs, so don't stress about perfect history.
 5. Describe what your PR does and why in the PR description.
 
+The build, test and lint jobs only run when a PR touches something that feeds
+a build — `crates/`, `apps/`, `Cargo.toml`, `Cargo.lock`, `.cargo/`, `justfile`,
+`mise.toml` or `.github/workflows/`. A documentation PR sees them reported as
+skipped, which counts as passing. Adding a new top-level source directory means
+adding it to the `changes` job in `.github/workflows/ci-cd.yml`, or CI will sit
+the PR out.
+
 ## Architecture
 
 Four crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), and `koan-cli` (binary -- CLI entry point). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
