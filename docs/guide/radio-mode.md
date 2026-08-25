@@ -1,6 +1,6 @@
 # Radio Mode
 
-Radio mode turns koan into an infinite jukebox. When enabled, koan automatically queues similar tracks as you listen -- you never run out of music.
+Radio mode turns koan into an infinite jukebox. When enabled, koan keeps the queue topped up from your own library as you listen -- you never run out of music.
 
 ## Quick start
 
@@ -8,19 +8,52 @@ Press `R` in the TUI to toggle radio mode. That's it. koan starts adding tracks 
 
 ## How it works
 
-Radio mode uses a multi-signal scoring system to find tracks similar to what you're currently listening to:
+Radio mode scores every candidate track on several signals and picks from the top
+with a weighted random draw, so the same seed does not produce the same queue twice.
 
-1. **Subsonic similarity** -- if you have a remote server configured, koan queries `getSimilarSongs2` for server-side recommendations. This is the strongest signal when available.
+Every signal it uses is a database read:
 
-2. **Cached artist relationships** -- koan builds a local cache of "similar artist" relationships from your Subsonic server. Even when offline, these cached relationships inform radio selections.
+1. **Genre and era matching** -- tracks sharing genres with the seed window score
+   higher, and tracks from within five years of the seed's average year higher again.
 
-3. **Genre matching** -- tracks sharing genres with the current seed tracks get a relevance boost.
+2. **Same artist** -- other tracks by the artists in the seed window.
 
-4. **Artist matching** -- other tracks by the same artist (or similar artists) score higher.
+3. **Acoustic similarity** -- if you have run `koan scan --analyze`, koan takes the
+   centroid of the seed tracks' feature vectors and finds its nearest neighbours.
+   This is the only signal that hears the music rather than reading about it, and
+   it is the one worth turning on.
 
-5. **Acoustic similarity** -- if you've run `koan scan --analyze`, radio mode factors in acoustic features (tempo, energy, spectral characteristics). The same `seed_window` that picks the seed artists picks the seed vectors.
+4. **Random** -- a handful of tracks from the rest of the library, scored low enough
+   that they only win when nothing else has anything to say. On an unanalysed library
+   with sparse genre tags this is most of what you get.
 
-The scoring system blends these signals and avoids repeating recently-played tracks (controlled by `history_window`).
+On top of those, tracks matching on more than one signal are boosted, and tracks you
+have not played recently -- or ever -- are boosted by `discovery_weight`. Anything in
+the last `history_window` plays, or already in the queue, is excluded outright.
+
+### What it does not use
+
+koan can query **ListenBrainz** and **MusicBrainz** for similar artists, and
+**Subsonic `getSimilarSongs2`** for server-side recommendations. None of them run
+when radio picks a track.
+
+They are synchronous HTTP calls, and the two metadata services rate-limit themselves
+to one request per second *per seed artist*, so a queue about to run dry would get a
+better-chosen track some seconds after the music had already stopped. The code is
+still there, behind an `allow_network` flag that the auto-queue loop turns off, and
+it is waiting on a background pass that can fill the similar-artist cache while there
+is time for it rather than in front of a pick that is needed now.
+
+Until then: radio is local metadata, acoustic vectors if you have them, and a random
+tail. It is not asking anyone what sounds like what.
+
+Two consequences worth knowing, since they follow from the same gap:
+
+- The `similar_artists` cache is only ever written by those network signals, so it
+  stays empty. `similarArtists` over GraphQL and FFI, and `getSimilarSongs2` on
+  koan's own Subsonic API, return nothing.
+- Radio works exactly the same offline as online. That is not the graceful
+  degradation it looks like -- there is no online path to degrade from.
 
 ## Configuration
 
@@ -60,7 +93,7 @@ For the best radio experience, run acoustic analysis on your library:
 koan scan --analyze
 ```
 
-This computes acoustic features (tempo, timbre, chroma, and spectral features — a 23-dimensional vector) for each track using bliss-audio. With acoustic analysis data available, radio mode can find tracks that genuinely *sound* similar, not just tracks that share metadata.
+This computes acoustic features (tempo, timbre, chroma, and spectral features — a 23-dimensional vector) for each track using bliss-audio. It is the difference between radio finding tracks that genuinely *sound* similar and radio shuffling things that share a genre string.
 
 ```toml
 [library]
@@ -74,4 +107,4 @@ Setting `analyze_on_scan = true` runs acoustic analysis on every `koan scan`, ke
 - **Start with a track you like.** Radio mode uses whatever's playing as its seed. Queue up a track that sets the vibe you want, then press `R`.
 - **Queue some variety first.** If you queue tracks from different genres before enabling radio, the seed window will pick up on the mix and produce more varied results.
 - **Still edit the queue.** Radio mode only adds tracks -- you can still remove tracks you don't want (`e` to edit, `d` to delete). Radio will refill around your changes.
-- **Works offline.** Without a Subsonic server, radio falls back to local genre/artist matching and acoustic similarity. Less accurate but still functional.
+- **Run the analysis.** `koan scan --analyze` is the single biggest thing you can do for radio quality. Without it, radio has only genre tags, artist names and chance to work with -- and genre tags on a ripped library are often blank or wrong.

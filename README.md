@@ -108,7 +108,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
 - **Playlists** -- ordered, named, reorderable; synced both ways with Navidrome, exportable as M3U8
-- **Radio mode** -- infinite play using Subsonic similarity, cached artist relationships, and genre matching
+- **Radio mode** -- infinite play, scored from your own library: acoustic similarity over bliss-audio feature vectors (once you have run `koan scan --analyze`), genre and era matching, same-artist, and a random tail. It does not query anyone for recommendations -- [the guide says why](docs/guide/radio-mode.md#what-it-does-not-use)
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` — 59 of them — for display and file organization
 - **File organization** -- rename/reorganize your library from the macOS app or the TUI using format string patterns
@@ -183,7 +183,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 |-------|---------------|
 | **[Getting Started](docs/getting-started.md)** | First-time setup, local and remote libraries, your first session |
 | **[Authentication](docs/guide/authentication.md)** | JWT auth, user management, 1Password integration, recovery |
-| **[Radio Mode](docs/guide/radio-mode.md)** | Infinite play, similarity scoring, tuning discovery |
+| **[Radio Mode](docs/guide/radio-mode.md)** | Infinite play, what it scores on and what it doesn't, tuning discovery |
 | **[Remote Servers](docs/guide/remote-servers.md)** | Navidrome/Subsonic setup, sync, streaming, cache management |
 | **[File Organization](docs/guide/file-organization.md)** | Rename and reorganize your library from the TUI |
 | **[GraphQL API](docs/guide/graphql-api.md)** | Headless operation, queries, mutations, daemon mode |
