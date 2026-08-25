@@ -1,3 +1,5 @@
+# Changelog
+
 ## Unreleased
 
 ### Added
@@ -26,6 +28,10 @@
 
 - **Favourites shows records and artists, not only tracks.** koan has always let you favourite an album or an artist — the heart is on both — and the Favourites page only ever listed tracks, so there was nowhere in the app those went. It is one page in three sections now, the way search results are: a section only appears when you have favourited something of that kind, so a tracks-only library reads exactly as it did. The filter narrows all three at once.
 
+- **The seek bar shows how much of a streaming track has arrived.** Playing something off a remote library while it is still downloading, the bar showed a position on a full-width track: whether the rest of it was on the machine, or the transfer was limping and playback was about to stall, was not visible anywhere near the thing that would stall. The fetched extent is now drawn behind the played one, and retires when the track lands.
+
+  It is a fraction of bytes on an axis of time — right for lossless and CBR, out by however far the bitrate wanders on VBR — so it is drawn as a distinctly weaker mark than the played extent and the tooltip says "roughly". The question it answers is whether the music is about to run out of track, not where in the track anything is; a hard-edged fill would be read as a promise it cannot keep. The TUI has drawn the same three-way bar all along.
+
 ### Removed
 
 - **Snapshots.** They were playlists with a resume position: a whole second feature, a second table, a second sidebar row and a second set of API calls, all to remember one number the server had no idea about. Existing snapshots become playlists on first launch, keeping their names, their track order and the date they were saved; only the position is lost. The Subsonic API already served them as playlists, so its clients see the same names either side of this.
@@ -42,8 +48,6 @@ Unknown keys are ignored rather than rejected, so a stale config still loads. Tw
 renames change behaviour silently and are worth grepping your config for:
 `[graphql] subsonic_port` (now `[subsonic] port`) and `[discovery]
 analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
-
->>>>>>> origin/main
 
 ### Changed
 
