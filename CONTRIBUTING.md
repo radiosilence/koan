@@ -29,6 +29,10 @@ just fmt
 4. Keep commits focused. We squash-merge PRs, so don't stress about perfect history.
 5. Describe what your PR does and why in the PR description.
 
+A PR that touches only Markdown, `docs/`, `LICENSE` or `.gitignore` skips the
+build, test and lint jobs — they report as skipped, which counts as passing.
+Touch anything else and the full matrix runs.
+
 ## Architecture
 
 Four crates: `koan-core` (library -- audio engine, player, database, indexer), `koan-tui` (TUI, visualizers, media keys), `koan-server` (GraphQL, Subsonic REST, MCP), and `koan-cli` (binary -- CLI entry point). See [ARCHITECTURE.md](ARCHITECTURE.md) for the full technical manual.
