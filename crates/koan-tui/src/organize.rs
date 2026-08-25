@@ -58,6 +58,7 @@ pub struct OrganizeModalState {
 impl OrganizeModalState {
     pub fn new(
         patterns: Vec<(String, String)>,
+        pattern_cursor: usize,
         selected_paths: Vec<PathBuf>,
         queue_entries: Vec<(QueueItemId, PathBuf)>,
     ) -> Self {
@@ -65,7 +66,7 @@ impl OrganizeModalState {
 
         let mut state = Self {
             patterns,
-            pattern_cursor: 0,
+            pattern_cursor,
             preview: None,
             scroll: 0,
             status: None,

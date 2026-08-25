@@ -109,11 +109,7 @@ struct TrackListView: View {
         if chosen.count == 1, let track = chosen.first {
             PlayableMenu(playable: .track(track))
         } else if !chosen.isEmpty {
-            Button("Play") {
-                player.playNow(trackIds: chosen.map(\.id))
-            }
-            Button("Play Next") { player.playNext(trackIds: chosen.map(\.id)) }
-            Button("Add to Queue") { player.enqueue(trackIds: chosen.map(\.id)) }
+            QueueActions(trackIds: chosen.map(\.id))
         }
     }
 
@@ -219,7 +215,7 @@ struct TrackRow: View {
                 // gathered from the whole library is exactly that job.
                 Group {
                     if let albumId = track.albumId {
-                        AlbumArtwork(source: .album(albumId), cornerRadius: 3)
+                        AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: 3)
                     } else {
                         Image(systemName: "music.note")
                             .font(.caption)

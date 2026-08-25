@@ -100,6 +100,13 @@ pub struct PlaylistItem {
     pub id: QueueItemId,
     /// Database track ID — set for tracks loaded from DB, used for downloads.
     pub db_id: Option<i64>,
+    /// The playlist entry this came from, when it came from a playlist.
+    ///
+    /// A playlist may hold the same track twice, and two copies are two queue
+    /// items. Without this a playlist row can only ask "is my *track* playing?"
+    /// and both copies answer yes. The entry id is the one thing that tells
+    /// them apart, so the queue carries it.
+    pub playlist_entry_id: Option<i64>,
     pub path: PathBuf,
     pub title: String,
     pub artist: String,
@@ -140,6 +147,8 @@ pub struct QueueEntry {
     pub id: QueueItemId,
     /// Database track ID — set for tracks loaded from DB, used for downloads.
     pub db_id: Option<i64>,
+    /// The playlist row this came from — see `PlaylistItem::playlist_entry_id`.
+    pub playlist_entry_id: Option<i64>,
     pub path: PathBuf,
     pub title: String,
     pub artist: String,
@@ -903,6 +912,7 @@ impl SharedPlayerState {
             entries.push(QueueEntry {
                 id: item.id,
                 db_id: item.db_id,
+                playlist_entry_id: item.playlist_entry_id,
                 path: item.path.clone(),
                 title: item.title.clone(),
                 artist: item.artist.clone(),
@@ -939,6 +949,7 @@ mod tests {
 
     fn make_item(title: &str, load_state: LoadState) -> PlaylistItem {
         PlaylistItem {
+            playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
             path: PathBuf::from(format!("/music/{title}.flac")),
@@ -1244,6 +1255,7 @@ mod tests {
 
     fn make_album_item(title: &str, album: &str, album_artist: &str) -> PlaylistItem {
         PlaylistItem {
+            playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
             path: PathBuf::from(format!("/music/{title}.flac")),

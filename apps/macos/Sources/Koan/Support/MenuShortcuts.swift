@@ -9,6 +9,7 @@ import SwiftUI
 /// menu bar already says.
 struct MenuShortcut: Identifiable {
     let title: String
+    let icon: String
     let key: KeyEquivalent
     let modifiers: EventModifiers
     let group: Hotkey.Group
@@ -42,58 +43,81 @@ struct MenuShortcut: Identifiable {
 /// A sidebar section reachable by number.
 struct NavigationCommand {
     let title: String
+    let icon: String
     let key: KeyEquivalent
     let section: Navigator.Section
 
+    /// Same symbols the sidebar uses — the View menu and the sidebar are two
+    /// ways to the same page.
     static let all: [NavigationCommand] = [
-        .init(title: "Queue", key: "1", section: .queue),
-        .init(title: "Albums", key: "2", section: .albums),
-        .init(title: "Artists", key: "3", section: .artists),
-        .init(title: "Favourites", key: "4", section: .favourites),
-        .init(title: "History", key: "5", section: .playHistory),
-        .init(title: "Snapshots", key: "6", section: .snapshots),
+        .init(title: "Queue", icon: Icon.queueSection, key: "1", section: .queue),
+        .init(title: "Albums", icon: Icon.album, key: "2", section: .albums),
+        .init(title: "Artists", icon: Icon.artist, key: "3", section: .artists),
+        .init(title: "Favourites", icon: Icon.favourite, key: "4", section: .favourites),
+        .init(title: "History", icon: Icon.history, key: "5", section: .playHistory),
     ]
 
     var shortcut: MenuShortcut {
-        MenuShortcut(title: title, key: key, modifiers: .command, group: .navigation)
+        MenuShortcut(title: title, icon: icon, key: key, modifiers: .command, group: .navigation)
     }
 }
 
 extension MenuShortcut {
-    static let search = Self(title: "Search…", key: "k", modifiers: .command, group: .navigation)
+    static let search = Self(
+        title: "Search…", icon: Icon.search, key: "k", modifiers: .command, group: .navigation)
     static let addMusic = Self(
-        title: "Add Music…", key: "k", modifiers: [.command, .shift], group: .navigation)
-    static let back = Self(title: "Back", key: "[", modifiers: .command, group: .navigation)
-    static let forward = Self(title: "Forward", key: "]", modifiers: .command, group: .navigation)
+        title: "Add Music…", icon: Icon.add, key: "k", modifiers: [.command, .shift],
+        group: .navigation)
+    static let back = Self(
+        title: "Back", icon: Icon.back, key: "[", modifiers: .command, group: .navigation)
+    static let forward = Self(
+        title: "Forward", icon: Icon.forward, key: "]", modifiers: .command, group: .navigation)
 
-    static let next = Self(title: "Next", key: .rightArrow, modifiers: .command, group: .playback)
+    static let next = Self(
+        title: "Next", icon: Icon.next, key: .rightArrow, modifiers: .command, group: .playback)
     static let previous = Self(
-        title: "Previous", key: .leftArrow, modifiers: .command, group: .playback)
+        title: "Previous", icon: Icon.previous, key: .leftArrow, modifiers: .command,
+        group: .playback)
     static let skipForward = Self(
-        title: "Skip Forward", key: .rightArrow, modifiers: .option, group: .playback)
+        title: "Skip Forward", icon: Icon.skipForward, key: .rightArrow, modifiers: .option,
+        group: .playback)
     static let skipBack = Self(
-        title: "Skip Back", key: .leftArrow, modifiers: .option, group: .playback)
+        title: "Skip Back", icon: Icon.skipBack, key: .leftArrow, modifiers: .option,
+        group: .playback)
     static let favourite = Self(
-        title: "Favourite Current Track", key: "d", modifiers: .command, group: .playback)
+        title: "Favourite Current Track", icon: Icon.favourite, key: "d", modifiers: .command,
+        group: .playback)
     static let radio = Self(
-        title: "Toggle Radio", key: "r", modifiers: [.command, .option], group: .playback)
+        title: "Toggle Radio", icon: Icon.radio, key: "r", modifiers: [.command, .option],
+        group: .playback)
 
     static let lyrics = Self(
-        title: "Toggle Lyrics", key: "l", modifiers: [.command, .option], group: .view)
+        title: "Toggle Lyrics", icon: Icon.lyrics, key: "l", modifiers: [.command, .option],
+        group: .view)
     static let shortcuts = Self(
-        title: "Keyboard Shortcuts", key: "/", modifiers: .command, group: .view)
+        title: "Keyboard Shortcuts", icon: Icon.shortcuts, key: "/", modifiers: .command,
+        group: .view)
 
-    static let undo = Self(title: "Undo", key: "z", modifiers: .command, group: .edit)
-    static let redo = Self(title: "Redo", key: "z", modifiers: [.command, .shift], group: .edit)
-    static let cut = Self(title: "Cut", key: "x", modifiers: .command, group: .edit)
-    static let copy = Self(title: "Copy", key: "c", modifiers: .command, group: .edit)
-    static let paste = Self(title: "Paste", key: "v", modifiers: .command, group: .edit)
-    static let delete = Self(title: "Delete", key: .delete, modifiers: [], group: .edit)
-    static let selectAll = Self(title: "Select All", key: "a", modifiers: .command, group: .edit)
-    static let find = Self(title: "Find", key: "f", modifiers: .command, group: .edit)
+    static let undo = Self(
+        title: "Undo", icon: Icon.undo, key: "z", modifiers: .command, group: .edit)
+    static let redo = Self(
+        title: "Redo", icon: Icon.redo, key: "z", modifiers: [.command, .shift], group: .edit)
+    static let cut = Self(
+        title: "Cut", icon: Icon.cut, key: "x", modifiers: .command, group: .edit)
+    static let copy = Self(
+        title: "Copy", icon: Icon.copy, key: "c", modifiers: .command, group: .edit)
+    static let paste = Self(
+        title: "Paste", icon: Icon.paste, key: "v", modifiers: .command, group: .edit)
+    static let delete = Self(
+        title: "Delete", icon: Icon.remove, key: .delete, modifiers: [], group: .edit)
+    static let selectAll = Self(
+        title: "Select All", icon: Icon.selectAll, key: "a", modifiers: .command, group: .edit)
+    static let find = Self(
+        title: "Find", icon: Icon.search, key: "f", modifiers: .command, group: .edit)
 
     static let rescan = Self(
-        title: "Rescan Local Folders", key: "r", modifiers: [.command, .shift], group: .library)
+        title: "Rescan Local Folders", icon: Icon.rescan, key: "r", modifiers: [.command, .shift],
+        group: .library)
 
     /// Everything with a modifier, in the order the sheet lists it.
     /// Built a line at a time: one long `+` chain of array literals is what the
@@ -122,7 +146,9 @@ struct ShortcutButton: View {
     }
 
     var body: some View {
-        Button(shortcut.title, action: action)
-            .keyboardShortcut(shortcut.key, modifiers: shortcut.modifiers)
+        Button(action: action) {
+            Label(shortcut.title, systemImage: shortcut.icon)
+        }
+        .keyboardShortcut(shortcut.key, modifiers: shortcut.modifiers)
     }
 }

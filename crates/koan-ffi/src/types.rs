@@ -4,6 +4,8 @@
 //! `PathBuf`, no `Arc`. These conversions are the only place that translation
 //! happens; everything above and below speaks its own native vocabulary.
 
+use std::collections::HashMap;
+
 use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, TrackRow};
 use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueEntry, QueueEntryStatus, TrackInfo,
@@ -227,6 +229,10 @@ pub struct NowPlaying {
 pub struct QueueItem {
     pub queue_item_id: String,
     pub track_id: Option<i64>,
+    /// The record this came off, where the library still knows. Carried so a
+    /// client can draw one sleeve per album rather than asking for artwork once
+    /// per track and fetching the same image a dozen times.
+    pub album_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album_artist: String,
@@ -237,6 +243,10 @@ pub struct QueueItem {
     pub disc: Option<i64>,
     pub duration_ms: Option<u64>,
     pub status: EntryStatus,
+    /// The playlist row this came from, when it came from one. Survives the
+    /// queue being shuffled or cut about — the queue is a view onto the
+    /// playlist, not a copy of it.
+    pub playlist_entry_id: Option<i64>,
     /// 0.0–1.0 while downloading, `None` otherwise.
     pub download_progress: Option<f64>,
     /// Why this item cannot play, when `status` is `Failed`.
@@ -280,6 +290,10 @@ impl QueueItem {
         Self {
             queue_item_id: item.id.0.to_string(),
             track_id: item.db_id,
+            playlist_entry_id: item.playlist_entry_id,
+            // The transport polls this and there is no connection here to ask.
+            // `PlayerModel` resolves the album for what is playing on its own.
+            album_id: None,
             title: item.title.clone(),
             artist: item.artist.clone(),
             album_artist: item.album_artist.clone(),
@@ -299,14 +313,19 @@ impl QueueItem {
     }
 }
 
-impl From<&QueueEntry> for QueueItem {
-    fn from(e: &QueueEntry) -> Self {
+impl QueueItem {
+    /// Build from a derived queue entry, taking album IDs from a map resolved
+    /// for the whole queue in one query — one statement per queue read rather
+    /// than one per row.
+    pub(crate) fn from_entry(e: &QueueEntry, album_ids: &HashMap<i64, i64>) -> Self {
         let download_progress = e.download_progress.and_then(|(done, total)| {
             (total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0))
         });
         Self {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,
+            playlist_entry_id: e.playlist_entry_id,
+            album_id: e.db_id.and_then(|id| album_ids.get(&id).copied()),
             title: e.title.clone(),
             artist: e.artist.clone(),
             album_artist: e.album_artist.clone(),
@@ -419,22 +438,58 @@ impl From<koan_core::lyrics::Lyrics> for Lyrics {
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
-pub struct Snapshot {
+pub struct Playlist {
+    pub id: i64,
     pub name: String,
+    pub comment: Option<String>,
+    /// Set once the playlist exists on the server. Its absence is what tells a
+    /// client the playlist is local-only.
+    pub remote_id: Option<String>,
+    pub public: bool,
+    pub owner: Option<String>,
     pub track_count: u32,
-    pub position_ms: u64,
+    pub duration_ms: i64,
     pub created_at: String,
+    pub changed_at: String,
+    /// How this machine likes to look at it. `None` follows the app default.
+    pub grouped: Option<bool>,
 }
 
-impl From<queries::QueueSnapshotSummary> for Snapshot {
-    fn from(s: queries::QueueSnapshotSummary) -> Self {
+impl From<queries::PlaylistRow> for Playlist {
+    fn from(p: queries::PlaylistRow) -> Self {
         Self {
-            name: s.name,
-            track_count: s.track_count as u32,
-            position_ms: s.position_ms,
-            created_at: s.created_at,
+            id: p.id,
+            name: p.name,
+            comment: p.comment,
+            remote_id: p.remote_id,
+            public: p.public,
+            owner: p.owner,
+            track_count: p.track_count as u32,
+            duration_ms: p.duration_ms,
+            created_at: p.created_at,
+            changed_at: p.changed_at,
+            grouped: p.grouped,
         }
     }
+}
+
+/// One row of a playlist: the track, and the entry it sits in.
+///
+/// The id is the entry's. It is what a queue item remembers, so a client can
+/// tell which of two copies of a song is the one playing.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PlaylistEntry {
+    pub id: i64,
+    pub track: Track,
+}
+
+/// What writing a playlist out to a file managed.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PlaylistExport {
+    pub written: u32,
+    /// Tracks with no file on this machine — a playlist file is a list of
+    /// paths, and an undownloaded remote track has none.
+    pub skipped: u32,
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
@@ -456,6 +511,8 @@ pub struct SyncSummary {
     pub albums_failed: u32,
     pub favourites_pushed: u32,
     pub favourites_imported: u32,
+    pub playlists_pulled: u32,
+    pub playlists_pushed: u32,
 }
 
 /// A named pattern from `[organize.patterns]`.

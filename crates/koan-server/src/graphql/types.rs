@@ -557,12 +557,36 @@ pub(super) struct GqlPlayHistoryTrack {
 }
 
 #[derive(SimpleObject)]
-#[graphql(name = "Snapshot")]
-pub(super) struct GqlSnapshot {
+#[graphql(name = "Playlist")]
+pub(super) struct GqlPlaylist {
+    pub id: i64,
     pub name: String,
+    pub comment: Option<String>,
+    /// Present once the playlist exists on the upstream server.
+    pub remote_id: Option<String>,
+    pub public: bool,
+    pub owner: Option<String>,
     pub track_count: i32,
-    pub position_ms: u64,
+    pub duration_ms: i64,
     pub created_at: String,
+    pub changed_at: String,
+}
+
+impl From<koan_core::db::queries::PlaylistRow> for GqlPlaylist {
+    fn from(p: koan_core::db::queries::PlaylistRow) -> Self {
+        Self {
+            id: p.id,
+            name: p.name,
+            comment: p.comment,
+            remote_id: p.remote_id,
+            public: p.public,
+            owner: p.owner,
+            track_count: p.track_count as i32,
+            duration_ms: p.duration_ms,
+            created_at: p.created_at,
+            changed_at: p.changed_at,
+        }
+    }
 }
 
 #[derive(SimpleObject)]

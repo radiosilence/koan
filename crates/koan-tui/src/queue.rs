@@ -557,6 +557,7 @@ mod tests {
 
     fn entry(n: usize, album: &str) -> QueueEntry {
         QueueEntry {
+            playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
             path: PathBuf::from(format!("/music/{}.flac", n)),

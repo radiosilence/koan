@@ -66,7 +66,7 @@ private struct SuggestionRow: View {
         HStack(spacing: 9) {
             Group {
                 if let albumId {
-                    AlbumArtwork(source: .album(albumId), cornerRadius: 3)
+                    AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: 3)
                 } else {
                     Image(systemName: icon)
                         .foregroundStyle(.tertiary)

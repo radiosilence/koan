@@ -1,43 +1,118 @@
-# Changelog
-
 ## Unreleased
-
-### Fixed
-
-- **The queue got slower the more of it you had played.** A played row was the whole row at 45% alpha, and any alpha below 1 makes SwiftUI flatten that row into an offscreen layer before compositing it — its children overlap, so they cannot each be drawn at 45% and still look like one row. A long tail of played tracks behind the cursor was a long list of offscreen passes, on every frame the list drew. Played rows now step back in colour instead: a rung down the hierarchical styles, which costs a colour lookup. Only the sleeve still uses alpha, because no colour can dim an image — and one 28pt image is not a flattened row.
-- **The filter on the Favourites page did nothing.** `LibraryModel` narrowed the list into `visibleFavourites` and the page rendered the unfiltered `favourites` beside it. Every other filtered section read the right one.
-- **Ungrouped queue rows had no room for their covers.** Every row carries its own sleeve when the queue is not grouped by album, and the fixed row height around it left the art all but touching the separators above and below. It gets the same six points the album heading already gives its own cover — they are rows in the same list and should breathe alike.
-- **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
-- **Undoing a queue replace left the player on a track the queue no longer had.** The queue came back, which is the part you could see working, but the engine kept decoding whatever the replace had started — an item the restored queue does not contain. The transport then described a row nothing could select, and the decode lookahead finds the next track by locating the current one, so with the current one gone the queue ended at the end of that track rather than carrying on.
-
-  Playback is reconciled with the playlist after every undo and redo, not just this one: any undo that takes items away can strand the engine the same way — undoing an add while the added track is playing did it too. If something was playing, the restored cursor picks up where the queue says it was; if it was paused or stopped, the undo stays quiet, because an undo is not a reason to start the music. The position is not part of what a replace snapshots, so the track starts again rather than resuming mid-way.
-
-
-- **The format badge latched a rate the device was on its way off.** A 48 kHz track followed by a 44.1 kHz one publishes the new track's info before the device has finished reclocking, and a switch is not instant — the better part of a second on USB. A front end polling in that window paired 44.1 with the outgoing 48, and then never let go: the macOS app only republished the format when the codec, source rate or bit depth changed, and none of those move once the rate lands. "FLAC 16/44.1 → 48" could sit there, wrong, for half an hour. The output rate now reads as unknown while the device is between rates, rather than as the last track's.
-
-- **The format badge could claim bit-perfect while the HAL was resampling.** The output rate behind "FLAC 16/44.1 → 48" was read once, when the engine was built, and never again. But the device rate belongs to no one app: Audio MIDI Setup, Focusrite Control, anything else holding the device can move it a second later, and koan then resamples to reach it without noticing — or, the other way round, goes on asserting a match that no longer holds. Since koan does not take hog mode, losing the rate is expected; reporting it wrongly is not. The rate is now watched for as long as the engine lives, and both front ends follow it. The macOS app also had to be told that the output rate is a reason to redraw the badge — it only republished the format when the codec, source rate or bit depth changed, none of which move when another app steals the clock.
-- **Every Opus track started 40 ms late.** The bridge between symphonia's demuxer and `opus-decoder` dropped its first two packets, on the reasoning that an Ogg stream opens with `OpusHead` and `OpusTags`. Symphonia consumes both into `extra_data` before we ever see a packet — it is where the bridge reads the channel count and pre-skip from — so the two it threw away were music, and Matroska and WebM never carry those headers as packets at all. Header packets are recognised by their magic now, which costs nothing to a reader that strips them and is correct for one that doesn't.
-- **A bad Opus packet could take the decode thread down with it.** `opus-decoder` 0.1.1 overflows a shift building CELT's collapse mask on the first packet of some stereo streams: a panic in a debug build, a wrong mask in a release one. It is the only Opus decoder on crates.io that isn't libopus over FFI, and it is unmaintained, so the decode call is contained — that packet is skipped and logged, and playback carries on, which is already how a malformed packet is handled.
-- **The README said Opus wasn't supported.** It was removed from the format list on the grounds that symphonia ships no Opus decoder. That much is true and always has been, which is why koan has bridged `opus-decoder` since v0.20.3.
 
 ### Added
 
-- **Favourites shows records and artists, not only tracks.** koan has always let you favourite an album or an artist — the heart is on both — and the Favourites page only ever listed tracks, so there was nowhere in the app those went. It is one page in three sections now, the way search results are: a section only appears when you have favourited something of that kind, so a tracks-only library reads exactly as it did. The filter narrows all three at once.
+- **Playlists.** Named, ordered lists of tracks that outlive the session — the thing the queue could never be, and the thing saved queues were standing in for. They live in the sidebar under their own heading, with a 2×2 mosaic of the first four records in them for a face.
+
+  Almost everything the queue does applies: album headings over contiguous runs, multi-select, drag to reorder, ⌫ to remove, drop to add. A playlist opens ungrouped rather than grouped, because a playlist is a sequence someone chose rather than a shelf of records — and that choice is remembered per playlist, on this machine, since no server has anywhere to put it.
+
+  Anything playable goes in one: a track, a record, an artist, a selection, the whole queue. Drag onto a playlist's row to append; drag onto the *heading* to be asked for a name and get a new playlist of what you dropped. Double-click one, or press Play in its header, and it replaces the queue. Playback state is mirrored back onto it the way it is on an album page. There is a **Shuffle** that reorders the queue and a **Shuffle Playlist** that reorders the playlist; they are different verbs and they are both there.
+
+  They can be exported as extended M3U8. Only tracks with a file on this machine go in — a Subsonic stream URL carries the credentials that authorise it, and a playlist file is something people mail to each other — so the export says how many it had to leave out.
+
+- **Dropping into a playlist lands where you dropped it,** with a line showing where that is. Adding used to mean adding to the end, wherever the pointer was.
+
+- **Playlists sync with Navidrome, both ways.** A playlist made here appears on the server; one made there appears here, contents and order included. Every edit pushes in the background, so nothing waits on the network; a push that never got out leaves the local copy newer, and the next sync notices and sends it. Deleting on either side deletes on the other, because a playlist that comes back after you delete it cannot be deleted at all.
+
+  Only what Subsonic itself carries is stored — name, comment, owner, public, and the ordered song list — so the two sides are the same object rather than koan's idea of one. Where a playlist sits in your sidebar, and how you like to look at it, are the exceptions: those are facts about this machine.
+
+- **Subsonic playlist endpoints serve real playlists.** `getPlaylists`, `getPlaylist`, `createPlaylist` and `deletePlaylist` used to fake playlists out of saved queues; they now read and write the real thing, and `updatePlaylist` — add and remove members by index — works at last.
+
 - **`q` goes to the queue.** `g` and `G` already went to its ends; there was no key for simply going there.
+
 - **Escape clears the selection, wherever you are.** The queue also grew a Clear button beside Remove — a selection with no visible way out of it is a trap, and on a list you have scrolled away from you cannot even see what you are still holding.
+
+- **The TUI organize modal honours `[organize] default`.** The macOS sheet already preselected the pattern it names; the TUI took whichever sorted first.
+
+- **Favourites shows records and artists, not only tracks.** koan has always let you favourite an album or an artist — the heart is on both — and the Favourites page only ever listed tracks, so there was nowhere in the app those went. It is one page in three sections now, the way search results are: a section only appears when you have favourited something of that kind, so a tracks-only library reads exactly as it did. The filter narrows all three at once.
+
+### Removed
+
+- **Snapshots.** They were playlists with a resume position: a whole second feature, a second table, a second sidebar row and a second set of API calls, all to remember one number the server had no idea about. Existing snapshots become playlists on first launch, keeping their names, their track order and the date they were saved; only the position is lost. The Subsonic API already served them as playlists, so its clients see the same names either side of this.
+
+  ⌘6 is gone with them, and **Save as Snapshot…** in the queue menu is now **Save as Playlist…**.
+
+- **The download quality setting.** It offered Original, Opus 128 and MP3 320, wrote your choice to `config.toml`, carried it over GraphQL and FFI, and was read by nothing — no request has ever asked a server to transcode. Re-encoding a stream is the opposite of what koan is for, so the setting goes rather than gains an implementation. `remote.transcode_quality` in an existing config is ignored; the GraphQL `Config.transcodeQuality` field and its input are gone.
+
+- **`[radio] use_subsonic` and `[discovery] acoustic_weight` never did anything.** Both were documented as tuning knobs and neither was read: Subsonic similarity ran whenever a server was configured, and the acoustic signal's weight was a constant in the scoring function. Removed rather than wired up — the defaults are the behaviour everyone has been getting.
+
+- **`[playback] ticker_fps`.** The transport ticker scrolls at a fixed 8 characters per second.
+
+Unknown keys are ignored rather than rejected, so a stale config still loads. Two
+renames change behaviour silently and are worth grepping your config for:
+`[graphql] subsonic_port` (now `[subsonic] port`) and `[discovery]
+analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
+
+>>>>>>> origin/main
 
 ### Changed
 
 - **The shortcuts sheet says what the menus say.** It listed the single-key shortcuts and then told you the rest were "in the menus", which is true and no help — nobody opens six menus to find out that Back is ⌘[. The ⌘ shortcuts are now a second table on the same sheet, and both halves are generated from the same declarations the menu bar is built from, so they cannot drift.
+
 - **Leaving the queue and coming back keeps your place.** The stage is one `switch`, so every move destroys the page it left and takes its scroll position with it. The queue remembers where it was.
+
 - **Playing something no longer throws you at the queue.** Every play button replaced the queue and then moved you to it, which is backwards: the queue runs behind whatever you are doing and is somewhere you go, not somewhere you are sent. Play a track from a record, a row in favourites, a selection in history, an album from the picker — you stay where you were and the music changes.
 
   Two places still move you, because staying put would show you nothing. An artist page is a wall of covers with no tracks on it, so its play and shuffle buttons go to the queue. And a click on an album's cover art opens the record it just started, since that is where its tracks are.
 
+- **The database schema is now version 2, and older koan builds will refuse to open it.** That is the point of the version: a build that does not know about `playlists` must not write to a library that has them. Upgrade rather than downgrading.
 
-### Removed
+- **Settings are routed to the file they belong in.** `config.toml` is meant to be shareable, so three kinds of setting never land there: secrets, anything naming this machine's paths, hardware or account, and volatile UI state a keypress flips — `playback.art_size` and the four visualiser toggles that have keybinds. Everything else is taste and travels. Three call sites previously disagreed about this: the player wrote `output_device` to the shared file, the GraphQL settings mutation wrote `art_size` and the remote account there too, and the FFI wrote everything to the local one. `config::layer_of` is now the single answer, and `koan config init` builds its template from it, so the file it writes and the files koan writes cannot drift.
 
-- **The download quality setting.** It offered Original, Opus 128 and MP3 320, wrote your choice to `config.toml`, carried it over GraphQL and FFI, and was read by nothing — no request has ever asked a server to transcode. Re-encoding a stream is the opposite of what koan is for, so the setting goes rather than gains an implementation. `remote.transcode_quality` in an existing config is ignored; the GraphQL `Config.transcodeQuality` field and its input are gone.
+- **A write clears the same key from the other file.** `config.local.toml` wins the merge, so a shared write left shadowed by a local copy silently did nothing. In the other direction it drains machine-scoped keys out of `config.toml`, which cleans up a file an older koan polluted as you use the app.
+
+- **`[graphql] subsonic_port` is now `[subsonic] port`.** The port for the Subsonic API lived in the GraphQL section, so turning Subsonic on meant a key in each of two sections. `[subsonic] enabled` mounts `/rest/*` on the GraphQL port; `port` adds a dedicated listener.
+
+- **`[discovery]` is gone.** It held one setting koan read and one it did not; `analysis_on_scan` moves to `[library] analyze_on_scan`, where the rest of the scan options are.
+
+- **The menus have their icons back.** Every action in the app now carries the same symbol wherever it appears: Add to Queue is the same icon on an album page, in the row's context menu and in the menu bar, and the Edit menu — replaced wholesale so ⌘Z can reach koan's own undo stack rather than a text field's — draws its own icons again instead of arriving bare. The symbols are named in one place, which is what stops the three copies of a verb drifting apart.
+
+### Fixed
+
+- **The queue got slower the more of it you had played.** A played row was the whole row at 45% alpha, and any alpha below 1 makes SwiftUI flatten that row into an offscreen layer before compositing it — its children overlap, so they cannot each be drawn at 45% and still look like one row. A long tail of played tracks behind the cursor was a long list of offscreen passes, on every frame the list drew. Played rows now step back in colour instead: a rung down the hierarchical styles, which costs a colour lookup. Only the sleeve still uses alpha, because no colour can dim an image — and one 34pt image is not a flattened row.
+- **The queue quietly dropped repeats.** Adding a track already in the queue added nothing, and a playlist holding the same song twice played it once. The batch fetch behind every queue add took each row out of its map as it matched it, so an id asked for twice came back once.
+
+- **koan wrote your whole configuration to the file you commit.** Every setting koan saved itself — a visualiser toggle, the output device, dragging the album art wider — reserialised the entire `Config` struct over `config.toml`. That erased the commented-out reference `koan config init` writes, and filled the file people are told to put in a dotfiles repo with all fifty-odd keys, including `[library] folders` set to koan's *default* music directory and a `[remote]` block belonging to one machine's account. Writes now go through `Config::persist`, which diffs the mutation and touches only the keys that actually changed.
+
+- **`koan config init` deleted the patterns you wrote by hand.** It is documented as safe to run on an existing setup, but it regenerated the template from koan's default serialisation — and `[organize] default` and `[organize.patterns]` are held back by `skip_serializing_if`, so they never appeared in it and were dropped. It also emitted `[organize]` twice when carrying values across, which is not valid TOML, and resurrected settings koan had retired. It now re-comments any value that matches the default too, so a `config.toml` an older koan filled with its own serialisation shrinks back to a template.
+
+- **`koan remote login` wrote your password to disk.** The macOS sign-in path already stored it in the platform credential store and explicitly cleared any plaintext copy; the CLI wrote it straight into `config.local.toml`. Both go through `helpers::set_remote_credentials` now. koan's own Subsonic secret also read the config field *before* the keychain, so a stale plaintext copy beat the real secret — the credential store wins in both, and the config field stays what it always was: the fallback for machines without one.
+
+- **`[radio] seed_window` was half honoured.** It picked the seed artists, while the acoustic seeder asked for the last five tracks regardless. One window, one answer.
+
+- **Documented settings that were not true.** `bass_shake` defaults to `true`, not `false`. `[organize] default` preselects a pattern in the organize UI, not "the TUI modal" it had no effect on. The format-string reference showed a `koan organize --pattern` command that has never existed — organize runs from the TUI and the macOS sheet.
+
+- **koan grew to a gigabyte of artwork and never gave any of it back.** Every cover you scrolled past was decoded and held for the life of the process — nothing evicted, so an hour of browsing a remote library reached 978 MB of decoded bitmaps, most of it swapped out rather than released. Covers are now held in a bounded cache that hands memory back under pressure.
+
+  Bitmaps are also kept at the size they are drawn rather than the size they arrived. A queue row shows a sleeve at 28 points; it was holding the full 600-pixel image to do it, one per row. Rows and the transport keep a thumbnail, the grid and a record's own page keep a tile, and full size is decoded on demand for the artwork viewer and released with it — which is the only place the detail was ever visible.
+
+- **The queue raced to fetch the same sleeve once per track.** Queue rows asked for artwork by track, so a twelve-track album was twelve HTTP round trips, twelve files on disk and twelve identical bitmaps in memory for one image. `QueueItem` now carries the album it came off — resolved for the whole queue in one query — and every row on a record shares a single fetch.
+
+  This also closes a hole in the placeholder detection. Navidrome answers with a stock blue vinyl for anything with no artwork, and koan spots it by noticing the same image on three unrelated albums; lookups by track never took part in that vote, so the queue and the transport would draw the placeholder the grid had already learned to hide.
+
+- **The window wash cost a quarter of a core to sit still.** It was drawn twice — once on the window, once on the page on top of it — and the page's copy sat on an opaque ground hiding the window's, which kept animating behind it for no one. There is one now, on the window, which is the one that mirrors out under the sidebar and toolbar.
+
+  The one that remains no longer redraws on a timer. It moved its blur through scale, rotation and offset twenty times a second, and each tick invalidated layout: a full window Auto Layout pass, 20 Hz, whether or not anything had changed. The drift is handed to CoreAnimation instead, which runs it off the main thread and smoother for it. Stopping playback now settles the wash back to rest over a couple of seconds rather than freezing it mid-breath.
+
+- **The filter on the Favourites page did nothing.** `LibraryModel` narrowed the list into `visibleFavourites` and the page rendered the unfiltered `favourites` beside it. Every other filtered section read the right one.
+
+- **Ungrouped queue rows had no room for their covers.** Every row carries its own sleeve when the queue is not grouped by album, and the fixed row height around it left the art all but touching the separators above and below. It gets the same six points the album heading already gives its own cover — they are rows in the same list and should breathe alike.
+
+- **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
+
+- **Undoing a queue replace left the player on a track the queue no longer had.** The queue came back, which is the part you could see working, but the engine kept decoding whatever the replace had started — an item the restored queue does not contain. The transport then described a row nothing could select, and the decode lookahead finds the next track by locating the current one, so with the current one gone the queue ended at the end of that track rather than carrying on.
+
+  Playback is reconciled with the playlist after every undo and redo, not just this one: any undo that takes items away can strand the engine the same way — undoing an add while the added track is playing did it too. If something was playing, the restored cursor picks up where the queue says it was; if it was paused or stopped, the undo stays quiet, because an undo is not a reason to start the music. The position is not part of what a replace snapshots, so the track starts again rather than resuming mid-way.
+
+- **The format badge latched a rate the device was on its way off.** A 48 kHz track followed by a 44.1 kHz one publishes the new track's info before the device has finished reclocking, and a switch is not instant — the better part of a second on USB. A front end polling in that window paired 44.1 with the outgoing 48, and then never let go: the macOS app only republished the format when the codec, source rate or bit depth changed, and none of those move once the rate lands. "FLAC 16/44.1 → 48" could sit there, wrong, for half an hour. The output rate now reads as unknown while the device is between rates, rather than as the last track's.
+
+- **The format badge could claim bit-perfect while the HAL was resampling.** The output rate behind "FLAC 16/44.1 → 48" was read once, when the engine was built, and never again. But the device rate belongs to no one app: Audio MIDI Setup, Focusrite Control, anything else holding the device can move it a second later, and koan then resamples to reach it without noticing — or, the other way round, goes on asserting a match that no longer holds. Since koan does not take hog mode, losing the rate is expected; reporting it wrongly is not. The rate is now watched for as long as the engine lives, and both front ends follow it. The macOS app also had to be told that the output rate is a reason to redraw the badge — it only republished the format when the codec, source rate or bit depth changed, none of which move when another app steals the clock.
+
+- **Every Opus track started 40 ms late.** The bridge between symphonia's demuxer and `opus-decoder` dropped its first two packets, on the reasoning that an Ogg stream opens with `OpusHead` and `OpusTags`. Symphonia consumes both into `extra_data` before we ever see a packet — it is where the bridge reads the channel count and pre-skip from — so the two it threw away were music, and Matroska and WebM never carry those headers as packets at all. Header packets are recognised by their magic now, which costs nothing to a reader that strips them and is correct for one that doesn't.
+
+- **A bad Opus packet could take the decode thread down with it.** `opus-decoder` 0.1.1 overflows a shift building CELT's collapse mask on the first packet of some stereo streams: a panic in a debug build, a wrong mask in a release one. It is the only Opus decoder on crates.io that isn't libopus over FFI, and it is unmaintained, so the decode call is contained — that packet is skipped and logged, and playback carries on, which is already how a malformed packet is handled.
+
+- **The README said Opus wasn't supported.** It was removed from the format list on the grounds that symphonia ships no Opus decoder. That much is true and always has been, which is why koan has bridged `opus-decoder` since v0.20.3.
 
 ## v0.30.2 (2026-08-25)
 

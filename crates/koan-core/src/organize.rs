@@ -952,28 +952,24 @@ fn rewrite_path_references(conn: &Connection, old: &Path, new: &Path) -> Result<
         params![new_path, old_path],
     )?;
     conn.execute(
-        "UPDATE queue_snapshots SET cursor_path = ?1 WHERE cursor_path = ?2",
-        params![new_path, old_path],
-    )?;
-    conn.execute(
         "UPDATE playback_state SET cursor_id = ?1 WHERE cursor_id = ?2",
         params![new_path, old_path],
     )?;
-    rewrite_queue_json(conn, "queue_snapshots", old_path, new_path)?;
-    rewrite_queue_json(conn, "playback_state", old_path, new_path)?;
+    rewrite_queue_json(conn, old_path, new_path)?;
     Ok(())
 }
 
-/// Rewrite paths inside a table's serialized queue.
+/// Rewrite paths inside the saved session's serialized queue.
+///
+/// Playlists need no equivalent: they point at library rows, and a row's path
+/// changing is a column this function has already updated.
 fn rewrite_queue_json(
     conn: &Connection,
-    table: &str,
     old_path: &str,
     new_path: &str,
 ) -> Result<(), OrganizeError> {
-    let mut stmt = conn.prepare(&format!(
-        "SELECT id, queue_json FROM {table} WHERE instr(queue_json, ?1) > 0"
-    ))?;
+    let mut stmt =
+        conn.prepare("SELECT id, queue_json FROM playback_state WHERE instr(queue_json, ?1) > 0")?;
     let rows: Vec<(i64, String)> = stmt
         .query_map(params![old_path], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()?;
@@ -997,7 +993,7 @@ fn rewrite_queue_json(
             continue;
         };
         conn.execute(
-            &format!("UPDATE {table} SET queue_json = ?1 WHERE id = ?2"),
+            "UPDATE playback_state SET queue_json = ?1 WHERE id = ?2",
             params![updated, id],
         )?;
     }
@@ -2346,14 +2342,6 @@ mod tests {
             duration_ms: None,
             db_id: None,
         };
-        queries::save_snapshot(
-            &db.conn,
-            "mine",
-            std::slice::from_ref(&item),
-            Some(&source_str),
-            0,
-        )
-        .unwrap();
         queries::save_playback_state(&db.conn, &[item], Some(&source_str), 0, false, false)
             .unwrap();
 
@@ -2365,10 +2353,6 @@ mod tests {
         assert!(favourites.contains(&dest));
         assert!(!favourites.contains(&source));
 
-        let snapshot = queries::load_snapshot(&db.conn, "mine").unwrap().unwrap();
-        assert_eq!(snapshot.items[0].path, dest_str);
-        assert_eq!(snapshot.cursor_path.as_deref(), Some(dest_str.as_str()));
-
         let state = queries::load_playback_state(&db.conn).unwrap().unwrap();
         assert_eq!(state.items[0].path, dest_str);
         assert_eq!(state.cursor_path.as_deref(), Some(dest_str.as_str()));
@@ -2378,9 +2362,9 @@ mod tests {
         let favourites = queries::load_favourites(&db.conn).unwrap();
         assert!(favourites.contains(&source));
         assert!(!favourites.contains(&dest));
-        let snapshot = queries::load_snapshot(&db.conn, "mine").unwrap().unwrap();
-        assert_eq!(snapshot.items[0].path, source_str);
-        assert_eq!(snapshot.cursor_path.as_deref(), Some(source_str.as_str()));
+        let state = queries::load_playback_state(&db.conn).unwrap().unwrap();
+        assert_eq!(state.items[0].path, source_str);
+        assert_eq!(state.cursor_path.as_deref(), Some(source_str.as_str()));
     }
 
     #[test]

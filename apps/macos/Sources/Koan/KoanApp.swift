@@ -15,6 +15,7 @@ final class AppState {
     let search: SearchModel
     let art: CoverArtCache
     let organize: OrganizeModel
+    let playlists: PlaylistsModel
     let activity: ActivityModel
     let textFocus = TextFocus()
     let ui = UIState()
@@ -34,11 +35,17 @@ final class AppState {
         let art = CoverArtCache(engine: engine)
         self.art = art
         self.organize = OrganizeModel(engine: engine)
+        let playlists = PlaylistsModel(engine: engine)
+        self.playlists = playlists
         let activity = ActivityModel()
         self.activity = activity
         library.activity = activity
         player.activity = activity
         organize.activity = activity
+        playlists.activity = activity
+        // Playlist failures go where every other engine failure goes rather
+        // than into a modal of their own.
+        playlists.report = { [weak player] message in player?.lastError = message }
 
         // The engine syncs and scans on its own — on startup, on a timer, and
         // when the library folders change. Those are the slow things a user is
@@ -101,6 +108,7 @@ struct KoanApp: App {
                         .environment(state.search)
                         .environment(state.art)
                         .environment(state.organize)
+                        .environment(state.playlists)
                         .environment(state.activity)
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
@@ -119,6 +127,7 @@ struct KoanApp: App {
                     await created.player.start()
                     created.player.restoreSession()
                     created.library.loadInitial()
+                    created.playlists.load()
                     state = created
                 } catch {
                     startupError = String(describing: error)
@@ -159,7 +168,9 @@ struct KoanApp: App {
                 // No `.keyboardShortcut(.space)`: a focused list wins that
                 // contest. Hotkeys handles the key; this stays for
                 // discoverability and the menu shows the shortcut anyway.
-                Button("Play / Pause") { state?.player.togglePlayPause() }
+                Button { state?.player.togglePlayPause() } label: {
+                    Label("Play / Pause", systemImage: Icon.playPause)
+                }
                 // Arrow keys with a modifier are text navigation first: ⌘← is
                 // start-of-line, ⌥← is previous word. Disabled rather than
                 // declined — a disabled item releases its key equivalent, and
@@ -213,7 +224,7 @@ struct KoanApp: App {
                 }
                 Divider()
                 ShortcutButton(.selectAll) {
-                    EditCommands.selectAll { state?.player.selectAllQueue() }
+                    EditCommands.selectAll { state?.ui.selectAll() }
                 }
             }
 
@@ -232,8 +243,12 @@ struct KoanApp: App {
             }
 
             CommandMenu("Queue") {
-                Button("Save Session") { Task { await state?.player.saveSession() } }
-                Button("Clear Queue") { state?.player.clearQueue() }
+                Button { Task { await state?.player.saveSession() } } label: {
+                    Label("Save Session", systemImage: Icon.save)
+                }
+                Button { state?.player.clearQueue() } label: {
+                    Label("Clear Queue", systemImage: Icon.clear)
+                }
             }
 
             CommandGroup(replacing: .help) {
@@ -247,14 +262,22 @@ struct KoanApp: App {
                 // every progress tick and would rebuild the menus with it.
                 Group {
                     ShortcutButton(.rescan) { state?.library.scan() }
-                    Button("Force Rescan") { state?.library.scan(force: true) }
+                    Button { state?.library.scan(force: true) } label: {
+                        Label("Force Rescan", systemImage: Icon.rescanAll)
+                    }
                     Divider()
-                    Button("Sync Remote Library") { state?.library.syncRemote() }
-                    Button("Full Remote Sync") { state?.library.syncRemote(full: true) }
+                    Button { state?.library.syncRemote() } label: {
+                        Label("Sync Remote Library", systemImage: Icon.sync)
+                    }
+                    Button { state?.library.syncRemote(full: true) } label: {
+                        Label("Full Remote Sync", systemImage: Icon.syncAll)
+                    }
                 }
                 .disabled(state?.activity.isLibraryBusy ?? false)
                 Divider()
-                Button("Clear Artwork Cache") { state?.art.purge() }
+                Button { state?.art.purge() } label: {
+                    Label("Clear Artwork Cache", systemImage: Icon.clear)
+                }
             }
         }
 

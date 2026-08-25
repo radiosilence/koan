@@ -15,28 +15,34 @@ use super::{PlaybackSource, TrackMeta, TrackRow};
 /// codec, sample_rate, bit_depth, channels, bitrate,
 /// genre, source, remote_id, cached_path
 pub(crate) fn row_to_track_row(row: &rusqlite::Row) -> rusqlite::Result<TrackRow> {
-    let artist_name: String = row.get::<_, Option<String>>(3)?.unwrap_or_default();
+    row_to_track_row_at(row, 0)
+}
+
+/// The same, for a query that selects something of its own before the track's
+/// columns — a playlist entry selects its id and position first.
+pub(crate) fn row_to_track_row_at(row: &rusqlite::Row, at: usize) -> rusqlite::Result<TrackRow> {
+    let artist_name: String = row.get::<_, Option<String>>(at + 3)?.unwrap_or_default();
     Ok(TrackRow {
-        id: row.get(0)?,
-        album_id: row.get(1)?,
-        artist_id: row.get(2)?,
+        id: row.get(at)?,
+        album_id: row.get(at + 1)?,
+        artist_id: row.get(at + 2)?,
         artist_name: artist_name.clone(),
-        album_artist_name: row.get::<_, Option<String>>(4)?.unwrap_or(artist_name),
-        album_title: row.get::<_, Option<String>>(5)?.unwrap_or_default(),
-        disc: row.get(6)?,
-        track_number: row.get(7)?,
-        title: row.get(8)?,
-        duration_ms: row.get(9)?,
-        path: row.get(10)?,
-        codec: row.get(11)?,
-        sample_rate: row.get(12)?,
-        bit_depth: row.get(13)?,
-        channels: row.get(14)?,
-        bitrate: row.get(15)?,
-        genre: row.get(16)?,
-        source: row.get(17)?,
-        remote_id: row.get(18)?,
-        cached_path: row.get(19)?,
+        album_artist_name: row.get::<_, Option<String>>(at + 4)?.unwrap_or(artist_name),
+        album_title: row.get::<_, Option<String>>(at + 5)?.unwrap_or_default(),
+        disc: row.get(at + 6)?,
+        track_number: row.get(at + 7)?,
+        title: row.get(at + 8)?,
+        duration_ms: row.get(at + 9)?,
+        path: row.get(at + 10)?,
+        codec: row.get(at + 11)?,
+        sample_rate: row.get(at + 12)?,
+        bit_depth: row.get(at + 13)?,
+        channels: row.get(at + 14)?,
+        bitrate: row.get(at + 15)?,
+        genre: row.get(at + 16)?,
+        source: row.get(at + 17)?,
+        remote_id: row.get(at + 18)?,
+        cached_path: row.get(at + 19)?,
     })
 }
 
@@ -855,8 +861,14 @@ pub fn tracks_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<TrackRow>, Db
 
     // SQL returns them in whatever order it likes; callers care about the order
     // they asked for, because that is the order they will be queued in.
-    let mut by_id: HashMap<i64, TrackRow> = rows.into_iter().map(|r| (r.id, r)).collect();
-    Ok(ids.iter().filter_map(|id| by_id.remove(id)).collect())
+    //
+    // Looked up rather than taken: an id asked for twice must come back twice.
+    // Removing each row as it was matched meant the second copy found nothing
+    // and was quietly dropped — so queueing a track you already had in the
+    // queue added nothing, and a playlist holding the same song twice played it
+    // once.
+    let by_id: HashMap<i64, TrackRow> = rows.into_iter().map(|r| (r.id, r)).collect();
+    Ok(ids.iter().filter_map(|id| by_id.get(id).cloned()).collect())
 }
 
 /// Get a single track by ID with full metadata.
@@ -1282,6 +1294,20 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    #[test]
+    fn an_id_asked_for_twice_comes_back_twice() {
+        let db = test_db();
+        let a = upsert_track(&db.conn, &sample_meta("One", "Artist", "Album")).unwrap();
+        let b = upsert_track(&db.conn, &sample_meta("Two", "Artist", "Album")).unwrap();
+
+        let rows = tracks_by_ids(&db.conn, &[a, b, a]).unwrap();
+        assert_eq!(
+            rows.iter().map(|r| r.id).collect::<Vec<_>>(),
+            vec![a, b, a],
+            "a queue may hold the same track twice, and a playlist certainly may"
+        );
     }
 
     #[test]

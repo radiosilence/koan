@@ -62,8 +62,10 @@ playground = false             # GraphiQL IDE at GET /graphql (default: false)
 auth_enabled = true           # JWT authentication (default: true)
 access_token_ttl = "15m"      # access token lifetime (default: 15m)
 refresh_token_ttl = "30d"     # refresh token lifetime (default: 30d)
-# subsonic_port = 4040         # optional Subsonic REST API port (default: disabled, set to enable)
 ```
+
+koan's own Subsonic API is configured separately, under `[subsonic]` — see
+[Configuration](../reference/configuration.md#subsonic).
 
 The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in config to expose on all interfaces.
 
@@ -120,8 +122,16 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
 
 # Queue management
 mutation { replaceQueue(trackIds: [42, 43, 44]) { ok, addedCount } }
-mutation { saveSnapshot(name: "techno friday") { ok } }
+mutation { saveQueueAsPlaylist(name: "techno friday") { id, name, trackCount } }
 mutation { enableRadio { ok } }
+
+# Playlists
+{ playlists { id, name, trackCount, durationMs, remoteId } }
+{ playlistTracks(id: 3) { id, title, artistName } }
+mutation { addToPlaylist(id: 3, trackIds: [42, 43]) { ok } }
+# A reorder, a removal and a shuffle are all the same call: the list you want.
+mutation { setPlaylistTracks(id: 3, trackIds: [43, 42]) { ok } }
+mutation { playPlaylist(id: 3, shuffled: true) { ok } }
 ```
 
 ### Filtering
@@ -186,7 +196,7 @@ every other client slow:
 | **Library** | `search`, `list_artists`, `list_albums`, `list_tracks`, `get_track`, `library_stats` |
 | **State** | `now_playing`, `list_devices`, `set_device` |
 | **Favourites** | `favourite`, `unfavourite`, `list_favourites` |
-| **Snapshots** | `save_snapshot`, `restore_snapshot`, `list_snapshots`, `delete_snapshot` |
+| **Playlists** | `playlists`, `playlistTracks`, `createPlaylist`, `saveQueueAsPlaylist`, `addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist` |
 | **Radio** | `enable_radio`, `disable_radio` |
 
 ## Subsonic REST API
