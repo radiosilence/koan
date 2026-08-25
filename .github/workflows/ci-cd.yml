@@ -38,9 +38,11 @@ jobs:
             # cannot be worked out, code stays true and everything runs.
             if files=$(git diff --name-only HEAD^1 HEAD); then
               src='^crates/|^apps/|^Cargo\.(toml|lock)$|^\.cargo/|^\.github/workflows/|^justfile$|^mise\.toml$|^rust-toolchain'
-              # Markdown is documentation wherever it sits, including beside code.
-              hits=$(printf '%s\n' "$files" | grep -E "$src" | grep -vE '\.md$')
-              if [ -z "$hits" ]; then
+              # Steps run under `bash -e`, where grep finding nothing is a failing
+              # command rather than an answer -- so the question is asked in a
+              # condition, which is the form that survives it. Markdown is
+              # documentation wherever it sits, including beside code.
+              if ! printf '%s\n' "$files" | grep -E "$src" | grep -qvE '\.md$'; then
                 code=false
                 echo "no source changes -- skipping build, test and lint:"
               fi
@@ -70,7 +72,6 @@ jobs:
     name: Clippy (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: changes
-    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 45
     concurrency:
       group: clippy-${{ matrix.os }}-${{ github.ref }}
@@ -78,22 +79,31 @@ jobs:
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest]
+    # A matrix job skipped at job level reports one check named after the
+    # unexpanded expression -- `Clippy (${{ matrix.os }})` -- so the per-OS
+    # contexts the ruleset requires never appear and the pull request waits
+    # on them forever. The job starts; its steps are what the filter stops.
+    env:
+      RUN: ${{ needs.changes.outputs.code }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: env.RUN == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps (Linux)
-        if: runner.os == 'Linux'
+        if: env.RUN == 'true' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+      - if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
-      - run: cargo clippy --all-targets -- -D warnings
+      - if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - if: env.RUN == 'true'
+        run: cargo clippy --all-targets -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: changes
-    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 45
     concurrency:
       group: test-${{ matrix.os }}-${{ github.ref }}
@@ -101,23 +111,33 @@ jobs:
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest]
+    # A matrix job skipped at job level reports one check named after the
+    # unexpanded expression -- `Test (${{ matrix.os }})` -- so the per-OS
+    # contexts the ruleset requires never appear and the pull request waits
+    # on them forever. The job starts; its steps are what the filter stops.
+    env:
+      RUN: ${{ needs.changes.outputs.code }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: env.RUN == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps (Linux)
-        if: runner.os == 'Linux'
+        if: env.RUN == 'true' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+      - if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
-      - run: cargo test --all-targets
-      - run: cargo test --doc
+      - if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - if: env.RUN == 'true'
+        run: cargo test --all-targets
+      - if: env.RUN == 'true'
+        run: cargo test --doc
 
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     needs: changes
-    if: needs.changes.outputs.code == 'true'
     timeout-minutes: 45
     concurrency:
       group: build-${{ matrix.os }}-${{ github.ref }}
@@ -125,16 +145,26 @@ jobs:
     strategy:
       matrix:
         os: [macos-latest, ubuntu-latest]
+    # A matrix job skipped at job level reports one check named after the
+    # unexpanded expression -- `Build (${{ matrix.os }})` -- so the per-OS
+    # contexts the ruleset requires never appear and the pull request waits
+    # on them forever. The job starts; its steps are what the filter stops.
+    env:
+      RUN: ${{ needs.changes.outputs.code }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: env.RUN == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install system deps (Linux)
-        if: runner.os == 'Linux'
+        if: env.RUN == 'true' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libdbus-1-dev
-      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+      - if: env.RUN == 'true'
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
-      - run: cargo build --release
+      - if: env.RUN == 'true'
+        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - if: env.RUN == 'true'
+        run: cargo build --release
 
   macos-app:
     name: macOS App
