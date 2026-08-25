@@ -22,9 +22,10 @@ final class PlayingLevels {
     @ObservationIgnored private(set) var travel = idle
 
     /// The carrier's phase at `stamp`, and how fast it is advancing. Read it
-    /// through `phase(at:)`: the bars run at display rate and this moves at
-    /// poll rate, and winding the phase on keeps the motion continuous rather
-    /// than stepped at whatever rate the frames arrive.
+    /// through `phase(at:)` rather than directly: a frame and a poll are on
+    /// separate clocks even at the same nominal rate, and winding the phase on
+    /// to the moment being drawn keeps the motion continuous rather than
+    /// stepped at whatever rate the frames actually arrive.
     @ObservationIgnored private var phase = 0.0
     @ObservationIgnored private var stamp = Date().timeIntervalSinceReferenceDate
     @ObservationIgnored private var rate = 1.0
@@ -59,7 +60,9 @@ final class PlayingLevels {
     private static let floor = 0.3
     /// How much of the bars' rate the music gets to move.
     private static let rateSwing = 0.4
-    private static let interval = 1.0 / 30.0
+    /// How often the levels are resampled — and, since new numbers are the
+    /// only reason to redraw, the rate the indicators run at too.
+    static let interval = 1.0 / 30.0
 
     init(engine: KoanEngine) {
         self.engine = engine

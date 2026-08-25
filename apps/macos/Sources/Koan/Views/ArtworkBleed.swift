@@ -70,6 +70,14 @@ struct ArtworkBleed: View {
             .frame(width: Self.side, height: Self.side)
             .blur(radius: 14)
             .saturation(1.6)
+            // Rasterised here, once, and magnified as a texture from this point
+            // down. Without it the blur and the saturation were recomputed on
+            // every frame of the drift below — the transforms were never the
+            // expensive part, re-blurring behind them was, and it cost about a
+            // tenth of a core for as long as anything was playing. The wash is
+            // already blurred to mush at 360 points, so there is no detail left
+            // for the magnification to lose.
+            .drawingGroup()
             // Driven by animation rather than by a `TimelineView` re-rendering
             // at 20fps. Every tick of that invalidated layout through the
             // geometry modifiers below, and a full window Auto Layout pass

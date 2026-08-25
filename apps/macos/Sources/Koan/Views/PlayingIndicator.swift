@@ -43,7 +43,12 @@ struct PlayingIndicator: View {
     private var live: Bool { isPlaying && !reduceMotion }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 60, paused: !live)) { timeline in
+        // At the rate the levels arrive, not the rate the display can manage.
+        // Every tick is a SwiftUI graph update, and in this window each of
+        // those costs a whole-window Auto Layout pass and a re-render of the
+        // transport's glass — so a frame that redraws numbers that have not
+        // changed is not free, it is the expensive half of the work.
+        TimelineView(.animation(minimumInterval: PlayingLevels.interval, paused: !live)) { timeline in
             let now = timeline.date.timeIntervalSinceReferenceDate
             // Drawn rather than sized. Heights driven through `frame(height:)`
             // invalidated layout on every frame, and AppKit answered each one
