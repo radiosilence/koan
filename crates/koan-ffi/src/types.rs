@@ -243,6 +243,10 @@ pub struct QueueItem {
     pub disc: Option<i64>,
     pub duration_ms: Option<u64>,
     pub status: EntryStatus,
+    /// The playlist row this came from, when it came from one. Survives the
+    /// queue being shuffled or cut about — the queue is a view onto the
+    /// playlist, not a copy of it.
+    pub playlist_entry_id: Option<i64>,
     /// 0.0–1.0 while downloading, `None` otherwise.
     pub download_progress: Option<f64>,
     /// Why this item cannot play, when `status` is `Failed`.
@@ -286,6 +290,7 @@ impl QueueItem {
         Self {
             queue_item_id: item.id.0.to_string(),
             track_id: item.db_id,
+            playlist_entry_id: item.playlist_entry_id,
             // The transport polls this and there is no connection here to ask.
             // `PlayerModel` resolves the album for what is playing on its own.
             album_id: None,
@@ -319,6 +324,7 @@ impl QueueItem {
         Self {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,
+            playlist_entry_id: e.playlist_entry_id,
             album_id: e.db_id.and_then(|id| album_ids.get(&id).copied()),
             title: e.title.clone(),
             artist: e.artist.clone(),
@@ -465,6 +471,16 @@ impl From<queries::PlaylistRow> for Playlist {
             grouped: p.grouped,
         }
     }
+}
+
+/// One row of a playlist: the track, and the entry it sits in.
+///
+/// The id is the entry's. It is what a queue item remembers, so a client can
+/// tell which of two copies of a song is the one playing.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PlaylistEntry {
+    pub id: i64,
+    pub track: Track,
 }
 
 /// What writing a playlist out to a file managed.

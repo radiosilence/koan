@@ -182,6 +182,48 @@ pub fn set_playlist_remote(
     Ok(())
 }
 
+/// One entry: a place in a playlist, and the track sitting in it.
+///
+/// The id is the entry's, not the track's. It survives a reorder, and it is
+/// what a queue item remembers — which is how the two copies of a song in one
+/// playlist are told apart when one of them is playing.
+#[derive(Debug, Clone)]
+pub struct PlaylistEntry {
+    pub id: i64,
+    pub position: i64,
+    pub track: TrackRow,
+}
+
+/// The entries of this playlist, in order, with their tracks.
+pub fn playlist_entries(conn: &Connection, id: i64) -> Result<Vec<PlaylistEntry>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT pt.id, pt.position,
+                t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM playlist_tracks pt
+         JOIN tracks t ON t.id = pt.track_id
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         WHERE pt.playlist_id = ?1
+         ORDER BY pt.position",
+    )?;
+    let rows = stmt
+        .query_map(params![id], |row| {
+            Ok(PlaylistEntry {
+                id: row.get(0)?,
+                position: row.get(1)?,
+                // The track's own columns start at 2; the mapper counts from
+                // whatever offset it is given.
+                track: super::tracks::row_to_track_row_at(row, 2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// The track ids in this playlist, in order. Duplicates kept.
 pub fn playlist_track_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, DbError> {
     let mut stmt = conn
@@ -218,16 +260,16 @@ pub fn playlist_tracks(conn: &Connection, id: i64) -> Result<Vec<TrackRow>, DbEr
 /// A track already in the playlist is added again rather than skipped: putting
 /// a song in twice is a thing people do on purpose, and silently refusing it is
 /// worse than the duplicate.
-pub fn add_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Result<usize, DbError> {
+pub fn add_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Result<Vec<i64>, DbError> {
     if track_ids.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
     let mut next: i64 = conn.query_row(
         "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_tracks WHERE playlist_id = ?1",
         params![id],
         |r| r.get(0),
     )?;
-    let mut added = 0;
+    let mut added = Vec::new();
     for track_id in track_ids {
         // A track that no longer exists would fail the foreign key and take the
         // whole add down with it.
@@ -238,15 +280,82 @@ pub fn add_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Result<usize
         )?;
         if inserted > 0 {
             next += 1;
-            added += 1;
+            added.push(conn.last_insert_rowid());
         }
     }
     touch(conn, id)?;
     Ok(added)
 }
 
-/// Replace the whole contents in one go — what a reorder, a shuffle and a
-/// removal all are once the caller has worked out the list it wants.
+/// Put the entries in this order. Ids are kept, so nothing holding a reference
+/// to an entry loses it because the playlist was rearranged.
+///
+/// Entries not named are left where they are relative to each other and pushed
+/// to the end — a caller that names all of them, which every caller does, never
+/// meets that case.
+pub fn reorder_entries(conn: &Connection, id: i64, entry_ids: &[i64]) -> Result<(), DbError> {
+    // Positions are unique per playlist, so they cannot be rewritten in place
+    // without colliding on the way through. Negative numbers are out of the way
+    // of anything the table holds.
+    for (position, entry) in entry_ids.iter().enumerate() {
+        conn.execute(
+            "UPDATE playlist_tracks SET position = ?3
+             WHERE id = ?1 AND playlist_id = ?2",
+            params![entry, id, -(position as i64) - 1],
+        )?;
+    }
+    conn.execute(
+        "UPDATE playlist_tracks SET position = -position - 1
+         WHERE playlist_id = ?1 AND position < 0",
+        params![id],
+    )?;
+    touch(conn, id)
+}
+
+/// Drop entries by id. Everything after them closes up.
+pub fn remove_entries(conn: &Connection, id: i64, entry_ids: &[i64]) -> Result<usize, DbError> {
+    let mut removed = 0;
+    for entry in entry_ids {
+        removed += conn.execute(
+            "DELETE FROM playlist_tracks WHERE id = ?1 AND playlist_id = ?2",
+            params![entry, id],
+        )?;
+    }
+    if removed > 0 {
+        renumber(conn, id)?;
+        touch(conn, id)?;
+    }
+    Ok(removed)
+}
+
+/// Close the gaps left by a removal, keeping the order and the ids.
+fn renumber(conn: &Connection, id: i64) -> Result<(), DbError> {
+    let order: Vec<i64> = {
+        let mut stmt = conn
+            .prepare("SELECT id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position")?;
+        stmt.query_map(params![id], |row| row.get(0))?
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    for (position, entry) in order.iter().enumerate() {
+        conn.execute(
+            "UPDATE playlist_tracks SET position = ?2 WHERE id = ?1",
+            params![entry, -(position as i64) - 1],
+        )?;
+    }
+    conn.execute(
+        "UPDATE playlist_tracks SET position = -position - 1
+         WHERE playlist_id = ?1 AND position < 0",
+        params![id],
+    )?;
+    Ok(())
+}
+
+/// Replace the whole contents in one go.
+///
+/// Entry ids do not survive this, so it is only for the case where they cannot
+/// mean anything anyway: the server handing over its copy of the playlist,
+/// which knows nothing about them. Editing goes through [`reorder_entries`] and
+/// [`remove_entries`].
 ///
 /// Positions are rewritten from zero, so nothing depends on what was there
 /// before.
@@ -369,7 +478,7 @@ mod tests {
         let b = track(&conn, "Two", "Album");
         let id = create_playlist(&conn, "Evening", None).unwrap();
 
-        assert_eq!(add_tracks(&conn, id, &[b, a]).unwrap(), 2);
+        assert_eq!(add_tracks(&conn, id, &[b, a]).unwrap().len(), 2);
         assert_eq!(playlist_track_ids(&conn, id).unwrap(), vec![b, a]);
 
         let row = get_playlist(&conn, id).unwrap().unwrap();
@@ -387,6 +496,71 @@ mod tests {
         add_tracks(&conn, id, &[a, a]).unwrap();
         assert_eq!(playlist_track_ids(&conn, id).unwrap(), vec![a, a]);
         assert_eq!(playlist_tracks(&conn, id).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn entry_ids_survive_a_reorder() {
+        let conn = test_conn();
+        let a = track(&conn, "One", "Album");
+        let b = track(&conn, "Two", "Album");
+        let id = create_playlist(&conn, "Mix", None).unwrap();
+        let made = add_tracks(&conn, id, &[a, b]).unwrap();
+
+        reorder_entries(&conn, id, &[made[1], made[0]]).unwrap();
+
+        let entries = playlist_entries(&conn, id).unwrap();
+        assert_eq!(
+            entries.iter().map(|e| e.id).collect::<Vec<_>>(),
+            vec![made[1], made[0]],
+            "the rows swapped places and kept their identities"
+        );
+        assert_eq!(
+            entries.iter().map(|e| e.position).collect::<Vec<_>>(),
+            vec![0, 1],
+            "positions are renumbered from zero"
+        );
+    }
+
+    /// The case the whole entry id exists for: a queue item pointing at one of
+    /// two copies of the same track has to keep pointing at that one.
+    #[test]
+    fn the_two_copies_of_a_track_are_different_entries() {
+        let conn = test_conn();
+        let a = track(&conn, "One", "Album");
+        let b = track(&conn, "Two", "Album");
+        let id = create_playlist(&conn, "Repeat", None).unwrap();
+        let made = add_tracks(&conn, id, &[a, b, a]).unwrap();
+        assert_eq!(made.len(), 3);
+        assert_ne!(made[0], made[2], "same track, different rows");
+
+        // Move the second copy to the front; the first copy stays where it is.
+        reorder_entries(&conn, id, &[made[2], made[0], made[1]]).unwrap();
+        let entries = playlist_entries(&conn, id).unwrap();
+        assert_eq!(entries[0].id, made[2]);
+        assert_eq!(entries[0].track.id, a);
+        assert_eq!(entries[1].id, made[0]);
+    }
+
+    #[test]
+    fn removing_an_entry_closes_the_gap_and_leaves_the_rest_alone() {
+        let conn = test_conn();
+        let a = track(&conn, "One", "Album");
+        let b = track(&conn, "Two", "Album");
+        let c = track(&conn, "Three", "Album");
+        let id = create_playlist(&conn, "Mix", None).unwrap();
+        let made = add_tracks(&conn, id, &[a, b, c]).unwrap();
+
+        assert_eq!(remove_entries(&conn, id, &[made[1]]).unwrap(), 1);
+
+        let entries = playlist_entries(&conn, id).unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|e| (e.id, e.position))
+                .collect::<Vec<_>>(),
+            vec![(made[0], 0), (made[2], 1)],
+            "the survivors keep their ids and close up"
+        );
     }
 
     #[test]
@@ -408,7 +582,7 @@ mod tests {
         let a = track(&conn, "One", "Album");
         let id = create_playlist(&conn, "Mix", None).unwrap();
 
-        assert_eq!(add_tracks(&conn, id, &[a, 9999]).unwrap(), 1);
+        assert_eq!(add_tracks(&conn, id, &[a, 9999]).unwrap().len(), 1);
         assert_eq!(playlist_track_ids(&conn, id).unwrap(), vec![a]);
     }
 

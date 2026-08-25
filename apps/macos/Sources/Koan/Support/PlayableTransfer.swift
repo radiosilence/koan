@@ -24,6 +24,18 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
     let kind: Kind
     let id: Int64
     let name: String
+    /// Where the drag started, when that matters.
+    ///
+    /// A track dragged out of a playlist is still just a track — the queue
+    /// wants its id and nothing else. Dropped back into the playlist it came
+    /// from it is a *move*, and since a playlist may hold the same track twice,
+    /// only the position says which copy moved.
+    var origin: Origin?
+
+    struct Origin: Codable, Hashable {
+        let playlistId: Int64
+        let position: Int
+    }
 
     static var transferRepresentation: some TransferRepresentation {
         CodableRepresentation(contentType: .koanPlayable)
@@ -32,13 +44,15 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
         ProxyRepresentation(exporting: \.name)
     }
 
-    init(kind: Kind, id: Int64, name: String) {
+    init(kind: Kind, id: Int64, name: String, origin: Origin? = nil) {
         self.kind = kind
         self.id = id
         self.name = name
+        self.origin = origin
     }
 
     init(_ playable: Playable) {
+        origin = nil
         switch playable {
         case .track(let track):
             kind = .track

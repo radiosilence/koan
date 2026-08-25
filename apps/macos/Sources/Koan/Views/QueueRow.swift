@@ -45,12 +45,19 @@ struct QueueRowContent {
         failureReason = item.failureReason
     }
 
-    /// A playlist track, wearing whatever the queue currently thinks of it.
+    /// A playlist row, wearing whatever the queue currently thinks of it.
+    ///
+    /// `queued` is found by *entry*, not by track: two copies of one song in a
+    /// playlist are two rows and two queue items, and only the entry tells them
+    /// apart. Which is also why the queue may be shuffled or cut about and this
+    /// still answers correctly — the queue is a view onto the playlist, not a
+    /// copy of it.
     ///
     /// Only the *live* states are mirrored — playing, fetching, failed. A
     /// playlist is not a queue, so "queued" and "played" say nothing about the
     /// track in front of you and would dot or dim half the list.
-    init(track: Track, position: Int, queued: QueueItem?, isCurrent: Bool) {
+    init(entry: PlaylistEntry, position: Int, queued: QueueItem?, isCurrent: Bool) {
+        let track = entry.track
         trackId = track.id
         title = track.title
         artist = track.artistName

@@ -18,9 +18,12 @@ final class PlaylistsModel {
 
     private(set) var playlists: [Playlist] = []
 
-    /// The playlist on screen, and its tracks. Only one is ever open.
+    /// The playlist on screen, and its entries. Only one is ever open.
+    ///
+    /// Entries, not tracks: a playlist may hold the same track twice, so a
+    /// track id names neither a row nor a place. The entry id does.
     private(set) var openId: Int64?
-    private(set) var tracks: [Track] = []
+    private(set) var entries: [PlaylistEntry] = []
     private(set) var isLoading = false
 
     /// Up to four cover sources per playlist, for its 2×2 tile. Loaded lazily
@@ -79,7 +82,7 @@ final class PlaylistsModel {
     func open(id: Int64) {
         guard openId != id else { return }
         openId = id
-        tracks = []
+        entries = []
         reloadTracks()
     }
 
@@ -91,7 +94,7 @@ final class PlaylistsModel {
             let rows = (try? await engine.playlistTracks(playlistId: id)) ?? []
             // The page moved on while we were reading.
             guard openId == id else { return }
-            tracks = rows
+            entries = rows
             isLoading = false
         }
     }
@@ -137,7 +140,7 @@ final class PlaylistsModel {
     func delete(id: Int64) {
         if openId == id {
             openId = nil
-            tracks = []
+            entries = []
         }
         act { _ = try await $0.deletePlaylist(playlistId: id) }
     }
@@ -159,11 +162,18 @@ final class PlaylistsModel {
         }
     }
 
-    /// Replace the contents — a reorder or a removal, once the caller has
-    /// worked out the list it wants.
-    func setTracks(_ trackIds: [Int64], in id: Int64) {
+    /// Put the entries in this order. Ids survive, so the queue keeps knowing
+    /// which row each of its items came from.
+    func reorder(entryIds: [Int64], in id: Int64) {
         act(reloadingTracks: id == openId) {
-            try await $0.setPlaylistTracks(playlistId: id, trackIds: trackIds)
+            try await $0.reorderPlaylist(playlistId: id, entryIds: entryIds)
+        }
+    }
+
+    func remove(entryIds: [Int64], from id: Int64) {
+        guard !entryIds.isEmpty else { return }
+        act(reloadingTracks: id == openId) {
+            _ = try await $0.removeFromPlaylist(playlistId: id, entryIds: entryIds)
         }
     }
 

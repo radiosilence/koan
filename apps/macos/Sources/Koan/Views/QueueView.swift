@@ -106,7 +106,7 @@ struct QueueView: View {
                     .onChange(of: selection) { _, new in
                         player.queueSelection = Set(itemIds(in: new))
                     }
-                    .onChange(of: player.selectAllToken) { _, _ in
+                    .onChange(of: ui.selectAllToken) { _, _ in
                         selection = Set(rows.map(\.id))
                     }
                     .clearsSelection($selection)

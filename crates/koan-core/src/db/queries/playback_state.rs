@@ -171,6 +171,9 @@ impl PersistedQueueItem {
         crate::player::state::PlaylistItem {
             id: crate::player::state::QueueItemId::new(),
             db_id: self.db_id,
+            // A restored session is a queue, not a view onto a playlist: the
+            // playlist it may once have come from has been free to change since.
+            playlist_entry_id: None,
             path,
             title: self.title.clone(),
             artist: self.artist.clone(),

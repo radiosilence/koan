@@ -19,6 +19,7 @@ struct PlaylistView: View {
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
+    @Environment(UIState.self) private var ui
 
     /// Selection is local `@State` for the same reason the queue's is: reading
     /// an observable in `body` invalidates the whole List under the click that
@@ -28,12 +29,12 @@ struct PlaylistView: View {
     @State private var renameTo = ""
 
     private var playlist: Playlist? { playlists.playlist(id: playlistId) }
-    private var tracks: [Track] { playlists.tracks }
+    private var entries: [PlaylistEntry] { playlists.entries }
 
     /// A playlist can hold the same track twice, so a row's identity is its
     /// position, not its track id. Selecting one copy must not light the other.
     private var rows: [Row] {
-        grouped ? Row.build(from: tracks) : tracks.enumerated().map(Row.track)
+        grouped ? Row.build(from: entries) : entries.map(Row.entry)
     }
 
     var body: some View {
@@ -43,7 +44,7 @@ struct PlaylistView: View {
                 .padding(.top, 18)
                 .padding(.bottom, 16)
 
-            if tracks.isEmpty {
+            if entries.isEmpty {
                 EmptyState(
                     icon: "music.note.list",
                     title: playlists.isLoading ? "Loading…" : "Nothing in here yet",
@@ -55,7 +56,6 @@ struct PlaylistView: View {
                     ForEach(rows) { row in
                         rowView(row)
                     }
-                    .onMove(perform: move)
                 }
                 .listStyle(.inset)
                 // Otherwise the List paints its own ground over the wash and
@@ -74,6 +74,9 @@ struct PlaylistView: View {
                 }
                 .onDeleteCommand { removeSelected() }
                 .clearsSelection($selection)
+                .onChange(of: ui.selectAllToken) { _, _ in
+                    selection = Set(rows.map(\.id))
+                }
             }
         }
         // On the whole page, not the List: an empty playlist is exactly when
@@ -130,7 +133,7 @@ struct PlaylistView: View {
                         Label("Shuffle", systemImage: "shuffle")
                     }
                     .help("Reorder the playlist itself, for good")
-                    .disabled(tracks.count < 2)
+                    .disabled(entries.count < 2)
                 }
                 .padding(.top, 4)
             }
@@ -193,8 +196,8 @@ struct PlaylistView: View {
     }
 
     private var summary: String {
-        var parts = [Format.count(Int64(tracks.count), "track")]
-        let total = tracks.compactMap(\.durationMs).reduce(0, +)
+        var parts = [Format.count(Int64(entries.count), "track")]
+        let total = entries.compactMap(\.track.durationMs).reduce(0, +)
         if total > 0 { parts.append(Format.duration(total)) }
         // Worth saying: it means edits made here show up on the server, and
         // edits made there show up here.
@@ -210,24 +213,40 @@ struct PlaylistView: View {
         case .album(_, let group):
             PlaylistAlbumHeader(group: group)
                 .rowBehaviour()
-        case .track(let position, let track):
+                .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+                    accept(dropped, before: group.positions.first ?? 0)
+                }
+        case .entry(let entry):
+            let position = entries.firstIndex { $0.id == entry.id } ?? 0
             QueueRow(
                 item: QueueRowContent(
-                    track: track,
+                    entry: entry,
                     position: position + 1,
-                    // Play state is mirrored from the queue rather than owned
-                    // here, the way it is on an album page.
-                    queued: player.queuedByTrack[track.id],
-                    isCurrent: player.currentTrackId == track.id
+                    // Found by entry, not by track: two copies of one song are
+                    // two rows, and each wears its own queue item's state.
+                    queued: player.queuedByPlaylistEntry[entry.id],
+                    isCurrent: player.currentPlaylistEntryId == entry.id
                 ),
-                isCurrent: player.currentTrackId == track.id,
+                isCurrent: player.currentPlaylistEntryId == entry.id,
                 isSelected: selection.contains(row.id),
                 // Ungrouped there is no heading above to say what record this
                 // is, so the row says it itself.
                 showArtist: true,
                 artwork: !grouped
             )
-            .rowBehaviour(playable: .track(track))
+            .rowBehaviour()
+            // Carries where it came from, so dropping it back into this
+            // playlist is a move of *this* row rather than of its track — and
+            // dropping it anywhere else is just a track.
+            .draggable(PlayableTransfer(
+                kind: .track,
+                id: entry.track.id,
+                name: entry.track.title,
+                origin: .init(playlistId: playlistId, position: position)
+            ))
+            .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+                accept(dropped, before: position)
+            }
         }
     }
 
@@ -263,131 +282,156 @@ struct PlaylistView: View {
     /// Expand a set of row ids to the playlist positions they stand for. An
     /// album heading stands for its whole run.
     private func positions(in rowIds: Set<String>) -> [Int] {
-        rows.filter { rowIds.contains($0.id) }.flatMap(\.positions)
+        rows.filter { rowIds.contains($0.id) }.flatMap { $0.positions(in: entries) }
+    }
+
+    private func entryIds(in rowIds: Set<String>) -> [Int64] {
+        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.id }
+    }
+
+    private func trackIds(in rowIds: Set<String>) -> [Int64] {
+        positions(in: rowIds).sorted().compactMap { entries[safe: $0]?.track.id }
     }
 
     private func removeSelected() {
-        remove(positions: positions(in: selection))
+        playlists.remove(entryIds: entryIds(in: selection), from: playlistId)
         selection = []
-    }
-
-    private func remove(positions doomed: [Int]) {
-        guard !doomed.isEmpty else { return }
-        let dropping = Set(doomed)
-        let kept = tracks.enumerated()
-            .filter { !dropping.contains($0.offset) }
-            .map(\.element.id)
-        playlists.setTracks(kept, in: playlistId)
     }
 
     @ViewBuilder
     private func menu(forRows ids: Set<String>) -> some View {
-        let chosen = positions(in: ids)
-        Button("Play") { play(rowIds: ids) }
-        Button("Play Next") { player.playNext(trackIds: trackIds(at: chosen)) }
-        Button("Add to Queue") { player.enqueue(trackIds: trackIds(at: chosen)) }
+        Button { play(rowIds: ids) } label: {
+            Label("Play", systemImage: Icon.play)
+        }
+        Button { player.playNext(trackIds: trackIds(in: ids)) } label: {
+            Label("Play Next", systemImage: Icon.playNext)
+        }
+        Button { player.enqueue(trackIds: trackIds(in: ids)) } label: {
+            Label("Add to Queue", systemImage: Icon.queue)
+        }
         Divider()
-        Button("Remove from Playlist", role: .destructive) {
-            remove(positions: chosen)
+        AddToPlaylistMenu { $0(trackIds(in: ids)) }
+        Divider()
+        Button(role: .destructive) {
+            playlists.remove(entryIds: entryIds(in: ids), from: playlistId)
             selection = []
+        } label: {
+            Label("Remove from Playlist", systemImage: Icon.remove)
         }
-        if chosen.count == 1, let track = tracks[safe: chosen[0]] {
+        if ids.count == 1, let position = positions(in: ids).first,
+           let entry = entries[safe: position] {
             Divider()
-            Button(library.isFavourite(track: track.id) ? "Remove Favourite" : "Favourite Track") {
-                library.toggleFavourite(track: track.id)
+            Button {
+                library.toggleFavourite(track: entry.track.id)
+            } label: {
+                Label(
+                    library.isFavourite(track: entry.track.id)
+                        ? "Remove Favourite" : "Favourite Track",
+                    systemImage: library.isFavourite(track: entry.track.id)
+                        ? Icon.favourited : Icon.favourite
+                )
             }
-            if let albumId = track.albumId {
-                Button("Go to Album") { nav.open(album: albumId, highlighting: track.id) }
+            if let albumId = entry.track.albumId {
+                Button {
+                    nav.open(album: albumId, highlighting: entry.track.id)
+                } label: {
+                    Label("Go to Album", systemImage: Icon.album)
+                }
             }
         }
-    }
-
-    private func trackIds(at positions: [Int]) -> [Int64] {
-        positions.sorted().compactMap { tracks[safe: $0]?.id }
     }
 
     // MARK: - Reordering
 
-    /// Moving a heading moves its whole album, which is why headings are rows.
+    /// A drop landed on `position`: either rows of this playlist being moved,
+    /// or tracks from elsewhere being added.
     ///
-    /// Positions rather than ids throughout: a playlist can hold the same track
-    /// twice, and moving "that track" would be ambiguous.
-    private func move(from source: IndexSet, to destination: Int) {
-        let moving = source.sorted().flatMap { rows[$0].positions }
-        guard !moving.isEmpty else { return }
-        let movingSet = Set(moving)
+    /// Drop-based rather than `ForEach.onMove`, because `onMove` claims the
+    /// drag — rows could be shuffled within the list but never dragged *out* of
+    /// it, so a playlist could not feed the queue. The payload says where it
+    /// came from, so one gesture covers both readings.
+    @discardableResult
+    private func accept(_ dropped: [PlayableTransfer], before position: Int) -> Bool {
+        let mine = dropped.compactMap { $0.origin }.filter { $0.playlistId == playlistId }
+        let foreign = dropped.filter { $0.origin?.playlistId != playlistId }
 
-        // Anchor on the first row at or after the drop that isn't itself
-        // moving. Anchoring on the row above instead has no way to express "at
-        // the very top".
-        let anchor = rows[min(destination, rows.count)...]
-            .first { row in !row.positions.contains(where: movingSet.contains) }?
-            .positions.first
+        if !mine.isEmpty {
+            let moving = Set(mine.map(\.position))
+            // The row dropped onto, by identity: its index shifts once the
+            // moved rows are lifted out of the list.
+            let anchor = entries[safe: position]?.id
+            var order = entries.enumerated()
+                .filter { !moving.contains($0.offset) }
+                .map(\.element.id)
+            let lifted = moving.sorted().compactMap { entries[safe: $0]?.id }
+            let at = anchor.flatMap { order.firstIndex(of: $0) } ?? order.count
+            order.insert(contentsOf: lifted, at: at)
+            playlists.reorder(entryIds: order, in: playlistId)
+        }
 
-        var kept = tracks.enumerated()
-            .filter { !movingSet.contains($0.offset) }
-            .map { ($0.offset, $0.element.id) }
-        let lifted = moving.map { tracks[$0].id }
-
-        let insertAt = anchor.flatMap { position in
-            kept.firstIndex { $0.0 == position }
-        } ?? kept.count
-        kept.insert(contentsOf: lifted.map { (-1, $0) }, at: insertAt)
-
-        playlists.setTracks(kept.map(\.1), in: playlistId)
+        if !foreign.isEmpty {
+            // Appended rather than inserted at the drop: the engine adds to the
+            // end, and a reorder straight after would race its reload.
+            playlists.add(dropped: foreign, to: playlistId)
+        }
+        return true
     }
 }
 
 // MARK: - Rows
 
 extension PlaylistView {
-    /// A playlist row: an album heading, or one track at one position.
+    /// A playlist row: an album heading, or one entry.
     enum Row: Identifiable {
         case album(id: String, group: PlaylistGroup)
-        case track(position: Int, track: Track)
+        case entry(PlaylistEntry)
 
-        /// Keyed on position, not on track id — the same track can be in the
-        /// playlist twice and the two copies are different rows.
+        /// The entry's own id. Two copies of one track are two entries and so
+        /// two rows — selecting one must not light the other.
         var id: String {
             switch self {
             case .album(let id, _): id
-            case .track(let position, _): "track:\(position)"
+            case .entry(let entry): "entry:\(entry.id)"
             }
         }
 
-        var positions: [Int] {
+        /// Where this row sits. An album heading stands for its whole run; an
+        /// entry finds itself by id, since its index moves as the list is
+        /// edited underneath it.
+        func positions(in entries: [PlaylistEntry]) -> [Int] {
             switch self {
             case .album(_, let group): group.positions
-            case .track(let position, _): [position]
+            case .entry(let entry):
+                entries.firstIndex { $0.id == entry.id }.map { [$0] } ?? []
             }
         }
 
         /// Contiguous runs of the same record, mirroring the queue's grouping.
         /// Playlist order is the user's, so two separate visits to a record are
         /// two headings rather than one.
-        static func build(from tracks: [Track]) -> [Row] {
+        static func build(from entries: [PlaylistEntry]) -> [Row] {
             var rows: [Row] = []
             var index = 0
-            while index < tracks.count {
-                let first = tracks[index]
-                guard !first.albumTitle.isEmpty else {
-                    rows.append(.track(position: index, track: first))
+            while index < entries.count {
+                let first = entries[index]
+                guard !first.track.albumTitle.isEmpty else {
+                    rows.append(.entry(first))
                     index += 1
                     continue
                 }
-                let run = tracks[index...].prefix { $0.albumTitle == first.albumTitle }
+                let run = entries[index...].prefix {
+                    $0.track.albumTitle == first.track.albumTitle
+                }
                 rows.append(.album(
-                    id: "album:\(index)",
+                    id: "album:\(first.id)",
                     group: PlaylistGroup(
-                        album: first.albumTitle,
-                        artist: first.artistName,
+                        album: first.track.albumTitle,
+                        artist: first.track.artistName,
                         positions: Array(index..<(index + run.count)),
-                        tracks: Array(run)
+                        entries: Array(run)
                     )
                 ))
-                rows.append(contentsOf: run.enumerated().map { offset, track in
-                    Row.track(position: index + offset, track: track)
-                })
+                rows.append(contentsOf: run.map { Row.entry($0) })
                 index += run.count
             }
             return rows
@@ -400,7 +444,7 @@ struct PlaylistGroup {
     let album: String
     let artist: String
     let positions: [Int]
-    let tracks: [Track]
+    let entries: [PlaylistEntry]
 }
 
 private struct PlaylistAlbumHeader: View {
@@ -408,7 +452,7 @@ private struct PlaylistAlbumHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            if let trackId = group.tracks.first?.id {
+            if let trackId = group.entries.first?.track.id {
                 AlbumArtwork(source: .track(trackId), cornerRadius: 5)
                     .frame(width: 44, height: 44)
                     .shadow(color: .black.opacity(0.28), radius: 4, y: 2)

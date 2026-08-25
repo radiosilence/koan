@@ -463,7 +463,10 @@ impl MutationRoot {
             let added = queries::add_tracks(&db.conn, id, &track_ids)
                 .map_err(|e| super::internal_error("db", e))?;
             koan_core::playlists::push_to_remote(id);
-            Ok(GqlStatus::success(format!("added {added} track(s)")))
+            Ok(GqlStatus::success(format!(
+                "added {} track(s)",
+                added.len()
+            )))
         })
         .await
     }

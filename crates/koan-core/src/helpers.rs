@@ -951,6 +951,7 @@ pub fn playlist_item_from_track(
         }
     });
     PlaylistItem {
+        playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: Some(track.id),
         path: dest,
@@ -1014,6 +1015,7 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
     });
 
     PlaylistItem {
+        playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: Some(track.id),
         path,

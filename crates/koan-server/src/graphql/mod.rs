@@ -835,6 +835,7 @@ mod tests {
         let schema = build_schema(state.clone(), ch.tx.clone(), db_path, None);
 
         let item = |title: &str, path: &str, db_id: Option<i64>| PlaylistItem {
+            playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id,
             path: std::path::PathBuf::from(path),
@@ -898,6 +899,7 @@ mod tests {
 
         // Directly add items to the playlist (simulating what the player thread does).
         let item = PlaylistItem {
+            playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
             path: std::path::PathBuf::from("/tmp/test/windowlicker.flac"),

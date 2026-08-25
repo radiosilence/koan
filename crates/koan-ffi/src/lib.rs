@@ -1003,11 +1003,17 @@ impl KoanEngine {
     pub async fn playlist_tracks(
         self: Arc<Self>,
         playlist_id: i64,
-    ) -> Result<Vec<Track>, KoanError> {
+    ) -> Result<Vec<PlaylistEntry>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = queries::playlist_tracks(&db.conn, playlist_id).map_err(db_err)?;
-            Ok(self.decorate(&db, rows))
+            let entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
+            let ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+            let tracks = self.decorate(&db, entries.into_iter().map(|e| e.track).collect());
+            Ok(ids
+                .into_iter()
+                .zip(tracks)
+                .map(|(id, track)| PlaylistEntry { id, track })
+                .collect())
         })
         .await
     }
@@ -1106,23 +1112,39 @@ impl KoanEngine {
             let db = self.db()?;
             let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
             koan_core::playlists::push_to_remote(playlist_id);
-            Ok(added as u32)
+            Ok(added.len() as u32)
         })
         .await
     }
 
-    /// Replace the contents wholesale — what a reorder, a removal and a shuffle
-    /// all are once the caller has worked out the list it wants.
-    pub async fn set_playlist_tracks(
+    /// Put the entries in this order. Ids survive, so anything holding one —
+    /// a queue item, say — still knows which row it means.
+    pub async fn reorder_playlist(
         self: Arc<Self>,
         playlist_id: i64,
-        track_ids: Vec<i64>,
+        entry_ids: Vec<i64>,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            queries::set_playlist_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
+            queries::reorder_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
+        })
+        .await
+    }
+
+    /// Take entries out. Returns how many went.
+    pub async fn remove_from_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        entry_ids: Vec<i64>,
+    ) -> Result<u32, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let removed =
+                queries::remove_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
+            koan_core::playlists::push_to_remote(playlist_id);
+            Ok(removed as u32)
         })
         .await
     }
@@ -1132,9 +1154,10 @@ impl KoanEngine {
     pub async fn shuffle_playlist(self: Arc<Self>, playlist_id: i64) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let mut ids = queries::playlist_track_ids(&db.conn, playlist_id).map_err(db_err)?;
-            koan_core::helpers::shuffle(&mut ids);
-            queries::set_playlist_tracks(&db.conn, playlist_id, &ids).map_err(db_err)?;
+            let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
+            koan_core::helpers::shuffle(&mut entries);
+            let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
+            queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
@@ -1178,13 +1201,20 @@ impl KoanEngine {
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
             let db = self.db()?;
-            let mut track_ids =
-                queries::playlist_track_ids(&db.conn, playlist_id).map_err(db_err)?;
+            let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
             if shuffled {
-                koan_core::helpers::shuffle(&mut track_ids);
+                koan_core::helpers::shuffle(&mut entries);
             }
+            let track_ids: Vec<i64> = entries.iter().map(|e| e.track.id).collect();
 
-            let (items, pending) = self.build_items(&db, &track_ids);
+            let (mut items, pending) = self.build_items(&db, &track_ids);
+            // Each queue item remembers the row it came from. The queue is an
+            // ephemeral view onto the playlist and may be shuffled, cut about
+            // or added to; this is what still says which row is playing, and
+            // which of two copies of a song it is.
+            for (item, entry) in items.iter_mut().zip(&entries) {
+                item.playlist_entry_id = Some(entry.id);
+            }
             if items.is_empty() {
                 self.send(PlayerCommand::ClearPlaylist)?;
                 return Ok(Vec::new());

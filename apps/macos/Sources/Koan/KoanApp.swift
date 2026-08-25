@@ -224,7 +224,7 @@ struct KoanApp: App {
                 }
                 Divider()
                 ShortcutButton(.selectAll) {
-                    EditCommands.selectAll { state?.player.selectAllQueue() }
+                    EditCommands.selectAll { state?.ui.selectAll() }
                 }
             }
 

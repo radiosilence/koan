@@ -91,6 +91,7 @@ fn track_info(title_len_hint: u64) -> TrackInfo {
 
 fn entry(title: &str, status: QueueEntryStatus) -> QueueEntry {
     QueueEntry {
+        playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: Some(1),
         path: PathBuf::from("/music/a.flac"),
