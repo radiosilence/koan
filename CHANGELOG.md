@@ -79,6 +79,8 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 ### Fixed
 
+- **The queue got slower the more of it you had played.** A played row was the whole row at 45% alpha, and any alpha below 1 makes SwiftUI flatten that row into an offscreen layer before compositing it — its children overlap, so they cannot each be drawn at 45% and still look like one row. A long tail of played tracks behind the cursor was a long list of offscreen passes, on every frame the list drew. Played rows now step back in colour instead: a rung down the hierarchical styles, which costs a colour lookup. Only the sleeve still uses alpha, because no colour can dim an image — and one 34pt image is not a flattened row.
+
 - **Most of the ways koan syncs never touched playlists, and koan's own auto-sync never touched favourites either.** Four callers each knew separately what a sync consists of — the app, the CLI, the GraphQL job and the background auto-sync — so a star or a playlist made on the server arrived only if you happened to press the right button. There is one `sync_remote` now and all four go through it.
 
 - **The queue quietly dropped repeats.** Adding a track already in the queue added nothing, and a playlist holding the same song twice played it once. The batch fetch behind every queue add took each row out of its map as it matched it, so an id asked for twice came back once.
