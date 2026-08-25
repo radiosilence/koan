@@ -37,6 +37,10 @@ struct AlbumArtwork: View {
     let source: Source
     var size: Size = .tile
     var cornerRadius: CGFloat = 6
+    /// Fill whatever frame it is handed rather than sizing itself square. The
+    /// pieces of a playlist's 2×2 mosaic are given rectangles to fill; every
+    /// other caller wants the square below.
+    var fills = false
 
     @Environment(CoverArtCache.self) private var cache
 
@@ -49,13 +53,21 @@ struct AlbumArtwork: View {
     @State private var image: NSImage?
     @State private var isLoading = false
 
+    /// A square Color drives the layout and the image sits in an overlay, so a
+    /// non-square cover can't stretch the cell it lives in. Sizing the
+    /// container from the image instead lets a wide cover push into its
+    /// neighbours, which is what it was doing.
+    @ViewBuilder
+    private var square: some View {
+        if fills {
+            Color.clear
+        } else {
+            Color.clear.aspectRatio(1, contentMode: .fit)
+        }
+    }
+
     var body: some View {
-        // A square Color drives the layout and the image sits in an overlay, so
-        // a non-square cover can't stretch the cell it lives in. Sizing the
-        // container from the image instead lets a wide cover push into its
-        // neighbours, which is what it was doing.
-        Color.clear
-            .aspectRatio(1, contentMode: .fit)
+        square
             .overlay {
                 if let image {
                     Image(nsImage: image)

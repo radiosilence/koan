@@ -10,6 +10,7 @@ pub mod index;
 pub mod lyrics;
 pub mod organize;
 pub mod player;
+pub mod playlists;
 pub mod radio;
 pub mod remote;
 

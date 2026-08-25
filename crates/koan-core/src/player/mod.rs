@@ -1425,6 +1425,7 @@ mod tests {
 
     fn make_item(title: &str) -> PlaylistItem {
         PlaylistItem {
+            playlist_entry_id: None,
             id: QueueItemId::new(),
             db_id: None,
             path: PathBuf::from(format!("/music/{title}.flac")),
@@ -1453,6 +1454,7 @@ mod tests {
 
     fn pending_item(title: &str) -> PlaylistItem {
         PlaylistItem {
+            playlist_entry_id: None,
             load_state: LoadState::Pending,
             ..make_item(title)
         }

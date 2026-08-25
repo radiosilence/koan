@@ -422,6 +422,99 @@ impl SubsonicClient {
         Ok(resp.top_songs.and_then(|t| t.song).unwrap_or_default())
     }
 
+    // --- Playlists ---------------------------------------------------------
+
+    /// Every playlist the server will show this user, without their contents.
+    pub fn get_playlists(&self) -> Result<Vec<SubsonicPlaylist>, SubsonicError> {
+        let resp = self.get("getPlaylists")?;
+        Ok(resp.playlists.map(|p| p.playlist).unwrap_or_default())
+    }
+
+    /// One playlist, with its songs in order.
+    pub fn get_playlist(&self, id: &str) -> Result<SubsonicPlaylistFull, SubsonicError> {
+        let resp = self.get_with_params("getPlaylist", &[("id", id)])?;
+        resp.playlist.ok_or(SubsonicError::BadResponse)
+    }
+
+    /// Create a playlist, or replace an existing one's contents wholesale.
+    ///
+    /// `createPlaylist` is the only Subsonic call that can set a playlist's
+    /// order: `updatePlaylist` appends and removes by index, which cannot
+    /// express a reorder. Passing `playlist_id` turns this into "these songs,
+    /// in this order, from now on", which is exactly what koan has after any
+    /// edit — so every push takes this path and there is one way for the two
+    /// sides to disagree instead of five.
+    pub fn create_playlist(
+        &self,
+        playlist_id: Option<&str>,
+        name: &str,
+        song_ids: &[String],
+    ) -> Result<Option<SubsonicPlaylistFull>, SubsonicError> {
+        let url = format!("{}/rest/createPlaylist", self.auth.base_url);
+        let mut params = self.auth_params()?;
+        match playlist_id {
+            Some(id) => {
+                params.insert("playlistId".into(), id.to_string());
+                // Navidrome keeps the stored name when updating, but a rename
+                // that happened offline has to travel somehow.
+                params.insert("name".into(), name.to_string());
+            }
+            None => {
+                params.insert("name".into(), name.to_string());
+            }
+        }
+
+        // Repeated `songId`, in order — that order is the playlist.
+        let mut query: Vec<(String, String)> = params.into_iter().collect();
+        for id in song_ids {
+            query.push(("songId".into(), id.clone()));
+        }
+
+        let resp: SubsonicResponseWrapper = self.http.get(&url).query(&query).send()?.json()?;
+        let inner = resp.subsonic_response;
+        if inner.status != "ok" {
+            if let Some(err) = inner.error {
+                return Err(SubsonicError::Api {
+                    code: err.code,
+                    message: err.message,
+                });
+            }
+            return Err(SubsonicError::BadResponse);
+        }
+        // Servers before 1.14.0 answer with an empty body, so an absent
+        // playlist here is not an error — only a caller that needed the new id
+        // has a problem, and it says so itself.
+        Ok(inner.playlist)
+    }
+
+    /// Change what can be changed without touching the song list.
+    pub fn update_playlist(
+        &self,
+        id: &str,
+        name: Option<&str>,
+        comment: Option<&str>,
+        public: Option<bool>,
+    ) -> Result<(), SubsonicError> {
+        let mut extra: Vec<(&str, String)> = vec![("playlistId", id.to_string())];
+        if let Some(name) = name {
+            extra.push(("name", name.to_string()));
+        }
+        if let Some(comment) = comment {
+            extra.push(("comment", comment.to_string()));
+        }
+        if let Some(public) = public {
+            extra.push(("public", public.to_string()));
+        }
+        let borrowed: Vec<(&str, &str)> = extra.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        self.get_with_params("updatePlaylist", &borrowed)?;
+        Ok(())
+    }
+
+    pub fn delete_playlist(&self, id: &str) -> Result<(), SubsonicError> {
+        self.get_with_params("deletePlaylist", &[("id", id)])?;
+        Ok(())
+    }
+
     /// The configured server base URL (for constructing share links etc).
     pub fn base_url(&self) -> &str {
         &self.auth.base_url
@@ -449,6 +542,8 @@ struct SubsonicResponse {
     shares: Option<SubsonicShares>,
     similar_songs2: Option<SubsonicSimilarSongs>,
     top_songs: Option<SubsonicTopSongs>,
+    playlists: Option<SubsonicPlaylists>,
+    playlist: Option<SubsonicPlaylistFull>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -583,6 +678,37 @@ pub struct SubsonicSimilarSongs {
 #[derive(Debug, Deserialize)]
 pub struct SubsonicTopSongs {
     pub song: Option<Vec<SubsonicSong>>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct SubsonicPlaylists {
+    #[serde(default)]
+    playlist: Vec<SubsonicPlaylist>,
+}
+
+/// A playlist as the server describes it, without its songs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubsonicPlaylist {
+    pub id: String,
+    pub name: String,
+    pub comment: Option<String>,
+    pub owner: Option<String>,
+    #[serde(default)]
+    pub public: bool,
+    pub song_count: Option<i64>,
+    pub duration: Option<i64>,
+    pub created: Option<String>,
+    pub changed: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubsonicPlaylistFull {
+    #[serde(flatten)]
+    pub playlist: SubsonicPlaylist,
+    #[serde(default)]
+    pub entry: Vec<SubsonicSong>,
 }
 
 #[derive(Debug, Deserialize)]

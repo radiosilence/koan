@@ -29,6 +29,9 @@ struct RootView: View {
     @Environment(PlayerModel.self) private var player
     /// Read here only to hand back to the window background — see below.
     @Environment(CoverArtCache.self) private var art
+    /// Read for the wash a playlist page sits in: its colour is the first
+    /// record in it, since a playlist has no cover of its own.
+    @Environment(PlaylistsModel.self) private var playlists
 
     @AppStorage("showLyrics") private var showLyrics = false
     @State private var transportHeight: CGFloat = 0
@@ -46,6 +49,9 @@ struct RootView: View {
         switch nav.current {
         case .album(let id): .album(id)
         case .section(.queue): player.currentArtwork
+        // A playlist is a page about a set of records, so it is washed in the
+        // first of them — the same one that leads its mosaic.
+        case .section(.playlist(let id)): playlists.covers[id]?.first
         default: nil
         }
     }
@@ -54,7 +60,11 @@ struct RootView: View {
     /// an album's own record — and what is playing everywhere else, so a
     /// favourites list is still coloured by the music rather than by nothing.
     private var tintSource: AlbumArtwork.Source? {
-        if case .album(let id) = nav.current { .album(id) } else { player.currentArtwork }
+        switch nav.current {
+        case .album(let id): .album(id)
+        case .section(.playlist(let id)): playlists.covers[id]?.first ?? player.currentArtwork
+        default: player.currentArtwork
+        }
     }
 
     var body: some View {
@@ -252,6 +262,9 @@ struct RootView: View {
             }
 
         }
+        // Named here, not where it was asked for: most of the things that ask
+        // are context menus, and a menu takes its own alerts down with it.
+        .newPlaylistAlert()
         .sheet(isPresented: $ui.showingPicker) {
             PickerSheet(isPresented: $ui.showingPicker)
         }
@@ -325,8 +338,8 @@ private struct StageView: View {
             FavouritesView()
         case .section(.playHistory):
             HistoryView()
-        case .section(.snapshots):
-            SnapshotsView()
+        case .section(.playlist(let id)):
+            PlaylistView(playlistId: id)
         case .album(let id):
             AlbumDetailView(albumId: id)
         case .artist(let id):
@@ -352,7 +365,11 @@ private struct PageGround: View {
     /// Whether this page is washed in a record's colour, or is its own ground.
     /// Matches `RootView.washSource` — where that has a wash, this stands back.
     private var washed: Bool {
-        if case .album = nav.current { true } else { nav.section == .queue }
+        switch nav.current {
+        case .album: true
+        case .section(.queue), .section(.playlist): true
+        default: false
+        }
     }
 
     var body: some View {

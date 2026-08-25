@@ -14,9 +14,7 @@ struct QueueView: View {
     @Environment(OrganizeModel.self) private var organize
     @Environment(\.openWindow) private var openWindow
     @Environment(UIState.self) private var ui
-
-    @State private var savingSnapshot = false
-    @State private var snapshotName = ""
+    @Environment(PlaylistsModel.self) private var playlists
 
 
     /// Grouped or one row per track. Persisted because it is a preference about
@@ -108,7 +106,7 @@ struct QueueView: View {
                     .onChange(of: selection) { _, new in
                         player.queueSelection = Set(itemIds(in: new))
                     }
-                    .onChange(of: player.selectAllToken) { _, _ in
+                    .onChange(of: ui.selectAllToken) { _, _ in
                         selection = Set(rows.map(\.id))
                     }
                     .clearsSelection($selection)
@@ -120,17 +118,6 @@ struct QueueView: View {
         .dropDestination(for: URL.self) { urls, _ in
             player.importFiles(urls) { library.libraryChanged() }
             return true
-        }
-        .alert("Save Queue", isPresented: $savingSnapshot) {
-            TextField("Name", text: $snapshotName)
-            Button("Cancel", role: .cancel) { snapshotName = "" }
-            Button("Save") {
-                guard !snapshotName.isEmpty else { return }
-                library.saveSnapshot(name: snapshotName)
-                snapshotName = ""
-            }
-        } message: {
-            Text("Stores the queue and playback position under a name you can restore later.")
         }
     }
 
@@ -175,8 +162,10 @@ struct QueueView: View {
                 .help("Redo (⇧⌘Z)")
 
             Menu {
-                Button { savingSnapshot = true } label: {
-                    Label("Save as Snapshot…", systemImage: Icon.snapshot)
+                Button {
+                    playlists.naming = player.queue.compactMap(\.trackId)
+                } label: {
+                    Label("Save as Playlist…", systemImage: Icon.playlist)
                 }
                 Divider()
                 Button(role: .destructive) { player.clearQueue() } label: {
@@ -212,7 +201,7 @@ struct QueueView: View {
                 .rowBehaviour()
         case .track(let item):
             QueueRow(
-                item: item,
+                item: QueueRowContent(item: item),
                 isCurrent: item.queueItemId == player.currentItemId,
                 isSelected: selection.contains(item.queueItemId),
                 // Ungrouped there is no heading above to say what record this
@@ -236,6 +225,8 @@ struct QueueView: View {
         } label: {
             Label("Remove Album", systemImage: Icon.remove)
         }
+        Divider()
+        AddToPlaylistMenu { $0(group.items.compactMap(\.trackId)) }
         Divider()
         organizeButton(trackIds: group.items.compactMap(\.trackId), title: group.album)
         if let trackId = group.items.compactMap(\.trackId).first {
@@ -281,6 +272,8 @@ struct QueueView: View {
             Label("Remove", systemImage: Icon.remove)
         }
         if let trackId = item.trackId {
+            Divider()
+            AddToPlaylistMenu { $0([trackId]) }
             Divider()
             organizeButton(trackIds: [trackId], title: item.title)
             let favourited = library.isFavourite(track: trackId)
@@ -355,6 +348,8 @@ struct QueueView: View {
             Button { player.remove(itemIds: itemIds(in: ids)) } label: {
                 Label("Remove", systemImage: Icon.remove)
             }
+            Divider()
+            AddToPlaylistMenu { $0(trackIds(in: ids)) }
             Divider()
             organizeButton(trackIds: trackIds(in: ids), title: nil)
         }
@@ -581,147 +576,5 @@ private struct QueueAlbumHeader: View {
         let codecs = Set(group.items.compactMap(\.codec))
         if let codec = codecs.first, codecs.count == 1 { parts.append(codec.uppercased()) }
         return parts.joined(separator: " · ")
-    }
-}
-
-private struct QueueRow: View {
-    let item: QueueItem
-    let isCurrent: Bool
-    let isSelected: Bool
-    let showArtist: Bool
-    /// Its own sleeve, for when there is no album heading above carrying one.
-    var artwork = false
-
-    @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            // The status and the number are one thing — where this track is and
-            // what it is doing — so they sit together. Apart, a mark narrower
-            // than its column and a number aligned to the right of its own left
-            // most of twenty points of air between them.
-            HStack(spacing: 6) {
-                statusIcon
-                    .font(.caption)
-                    .frame(width: 16, alignment: .trailing)
-
-                if artwork, let sleeve = item.sleeve {
-                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 3)
-                        .frame(width: 28, height: 28)
-                } else {
-                    // Always occupies its column, number or not: a missing track
-                    // number would otherwise shift the title left and break the
-                    // alignment down the list.
-                    Text(item.trackNumber.map(String.init) ?? "")
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                        .frame(width: artwork ? 28 : 20, alignment: .trailing)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(item.title)
-                    .lineLimit(1)
-                    // Tinted to mark the playing track — but not when the row
-                    // is selected, where accent-on-accent is unreadable.
-                    .foregroundStyle(
-                        isCurrent && !isSelected
-                            ? AnyShapeStyle(.tint)
-                            : AnyShapeStyle(.primary)
-                    )
-                // Only worth a second line when it differs from the album
-                // artist — compilations and features, not every track.
-                if showArtist && !item.artist.isEmpty {
-                    Text(artwork && !item.album.isEmpty
-                        ? "\(item.artist) — \(item.album)"
-                        : item.artist)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-            }
-
-            Spacer(minLength: 8)
-
-            if let trackId = item.trackId {
-                FavouriteButton(
-                    isOn: library.isFavourite(track: trackId),
-                    showing: hovering,
-                    size: .caption
-                ) {
-                    library.toggleFavourite(track: trackId)
-                }
-                .frame(width: 16)
-            } else {
-                // Keeps the column even for an item with no library row, so
-                // the durations stay in line down the queue.
-                Color.clear.frame(width: 16, height: 1)
-            }
-
-            if let codec = item.codec {
-                Text(codec.uppercased())
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
-            }
-
-            if let ms = item.durationMs {
-                Text(Format.duration(ms))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 44, alignment: .trailing)
-            }
-        }
-        // Fixed height so a row doesn't grow when a download indicator appears
-        // and shrink when it finishes, reflowing the list each time.
-        .frame(height: artwork ? 40 : 34)
-        // Ungrouped, the row carries a sleeve and two lines of text, and the
-        // frame around them left the cover all but touching the separators.
-        // The same six points the album heading gives its own cover — the two
-        // kinds of row are in the same list and should breathe alike.
-        .padding(.vertical, artwork ? 6 : 0)
-        // Without this the row is only clickable where a view actually sits —
-        // the Spacer between the title and the duration is a dead zone, and
-        // clicks landing there select nothing.
-        .contentShape(Rectangle())
-        .opacity(item.status == .played ? 0.45 : 1)
-        .onHover { hovering = $0 }
-    }
-
-    @ViewBuilder
-    private var statusIcon: some View {
-        switch item.status {
-        case .playing:
-            PlayingIndicator(isPlaying: player.isPlaying)
-        case .downloading:
-            // The ring is the whole indicator — a static arrow beside a
-            // separate bar said the same thing twice, in two places, and the
-            // column the eye already reads for state was the mute one.
-            if let progress = item.downloadProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-                    .frame(width: 14, height: 14)
-                    .help("Downloading — \(Int(progress * 100))%")
-            } else {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-                    .help("Downloading")
-            }
-        case .priorityPending:
-            Image(systemName: "arrow.down.circle")
-                .foregroundStyle(.tint)
-                .help("Queued for download")
-        case .failed:
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-                .help(item.failureReason ?? "Couldn't be fetched")
-        case .played:
-            Image(systemName: "checkmark").foregroundStyle(.tertiary)
-        case .queued:
-            Image(systemName: "circle.dotted").foregroundStyle(.quaternary)
-        }
     }
 }
