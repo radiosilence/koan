@@ -318,21 +318,25 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
       - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
         with:
           key: macos-app
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
-      # Both slices, lipo'd into one static library, so the app runs on Intel
-      # and Apple silicon from a single download.
-      - run: just macos-ffi "aarch64-apple-darwin x86_64-apple-darwin"
-      - run: cd apps/macos && swift build -c release --arch arm64 --arch x86_64
       # Bundle, check, then package. `macos-verify` inspects the assembled
       # kōan.app, so it has to come after something that assembles one —
       # `macos-dmg` does that itself via `macos-bundle`, which put the check
       # before the thing it checks.
+      #
+      # `macos-bundle` builds what it needs, so nothing is asked for twice.
+      # The job used to run `macos-ffi` for both slices and a universal
+      # `swift build` itself, and then call `macos-bundle`, which re-entered
+      # `macos-ffi` with no targets — a third full optimised build of koan-ffi
+      # that overwrote the universal archive staged for SwiftPM and forced a
+      # single-arch relink on top of the universal build that had just
+      # finished. The app stayed universal only because the bundle step
+      # preferred a product left over from that earlier build.
       - run: just macos-bundle
-      - run: just macos-verify arm64 x86_64
+      - run: just macos-verify arm64
       - run: just macos-dmg
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
