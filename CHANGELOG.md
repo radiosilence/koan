@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The format badge says when the output is being resampled.** koan switches the device to the source rate, and when a device refuses — MPEG-2 and MPEG-2.5 MP3 rates routinely are — the system resamples to reach it. The player has always known which of those happened, because `set_device_sample_rate` returns the rate the device settled at, and it compared the two and wrote a line to the log. Nothing else ever saw it. Meanwhile the badge showed the source format either way, captioned "koan matches the device rate rather than resampling" — an unconditional claim that is false in exactly the case worth knowing about.
+
+  The settled rate now reaches the front ends: the macOS badge appends it — `FLAC 24/96 → 48` — the TUI's format line does the same, and `nowPlaying.track.outputSampleRate` carries it over GraphQL. What it does not do is claim bit-perfection. koan never takes the device exclusively, so another application's audio can be mixed in and the volume stage may scale in software, and none of that is visible from inside the process. What koan can say for certain is whether it handed the device the samples as they are, or something had to resample to reach it — so that is all it says.
+
 ## v0.30.0 (2026-08-24)
 
 ### Changed

@@ -16,8 +16,11 @@ enum Format {
             : String(format: "%d:%02d", m, s)
     }
 
-    /// The bit that makes this a bit-perfect player rather than iTunes:
-    /// what the DAC is actually being fed. "FLAC 24/96" and so on.
+    /// What the source is: "FLAC 24/96" and so on.
+    ///
+    /// A rate the device refused is appended — "FLAC 24/96 → 48" — because a
+    /// badge that reads the same whether or not something resampled is the one
+    /// claim this player cannot afford to get wrong.
     static func quality(_ f: StreamFormat) -> String {
         var parts = [f.codec.uppercased()]
         if let depth = f.bitDepth {
@@ -28,7 +31,29 @@ enum Format {
         if f.channels != 2 {
             parts.append("\(f.channels)ch")
         }
+        if isResampled(f), let out = f.outputSampleRate {
+            parts.append("→ \(rate(out))")
+        }
         return parts.joined(separator: " ")
+    }
+
+    /// Whether anything had to resample to reach the device. `false` while the
+    /// device rate is unknown — silence is better than a guess here.
+    static func isResampled(_ f: StreamFormat) -> Bool {
+        guard let out = f.outputSampleRate else { return false }
+        return out != f.sampleRate
+    }
+
+    /// What koan can honestly say about the path to the DAC. It never claims
+    /// bit-perfection outright: the device is shared, so another app's audio
+    /// and the system volume stage are both past the point koan can see.
+    static func outputExplanation(_ f: StreamFormat) -> String {
+        guard let out = f.outputSampleRate else {
+            return "Source format — koan matches the device to the source rate rather than resampling"
+        }
+        return out == f.sampleRate
+            ? "Device is running at \(rate(out)) kHz, the source rate — koan is resampling nothing"
+            : "Device stayed at \(rate(out)) kHz, so \(rate(f.sampleRate)) kHz is being resampled to reach it"
     }
 
     static func quality(_ t: Track) -> String? {
