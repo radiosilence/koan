@@ -52,21 +52,11 @@ struct PlayableMenu: View {
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
-        Button("Play") {
-            act {
-                player.playNow(trackIds: $0)
-                nav.showQueueWhenReady(watching: player)
-            }
-        }
+        Button("Play") { act { player.playNow(trackIds: $0) } }
         Button("Play Next") { act { player.playNext(trackIds: $0) } }
         Button("Add to Queue") { act { player.enqueue(trackIds: $0) } }
         if playable.hasChildren {
-            Button("Shuffle") {
-                act {
-                    player.playNow(trackIds: $0.shuffled())
-                    nav.showQueueWhenReady(watching: player)
-                }
-            }
+            Button("Shuffle") { act { player.playNow(trackIds: $0.shuffled()) } }
         }
 
         Divider()
@@ -266,6 +256,11 @@ struct FavouriteHeaderButton: View {
 }
 
 /// The big play button on an album or artist page, sat beside the title.
+///
+/// On an album you can already see what you started, so the page stays put. An
+/// artist page is a wall of covers with no tracks on it, and is the one place
+/// where nothing on screen would show that anything happened — so that one, and
+/// only that one, goes to the queue.
 struct PlayableHeaderButton: View {
     let playable: Playable
 
@@ -284,7 +279,7 @@ struct PlayableHeaderButton: View {
                 let ids = await playable.trackIds(using: engine)
                 loading = false
                 player.playNow(trackIds: ids)
-                nav.showQueueWhenReady(watching: player)
+                if case .artist = playable { nav.showQueueWhenReady(watching: player) }
             }
         } label: {
             ZStack {

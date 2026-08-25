@@ -137,6 +137,8 @@ DAC → Speakers
 
 **No resampling.** On macOS, the device sample rate is switched to match the source file (bit-perfect). On Linux, the sample rate is set at stream creation. Float32 PCM from Symphonia all the way to the platform audio output.
 
+The device rate is not koan's to own — it is one property shared by every client, and Audio MIDI Setup, a vendor control panel or any other app can move it back at any moment, after which the HAL resamples koan to reach it. So the rate the front ends report is not the one read at engine creation: a `SampleRateWatch` (`audio/device.rs`) stays registered on `kAudioDevicePropertyNominalSampleRate` for as long as the engine lives and writes every change into `SharedPlayerState`. koan does not take hog mode, so losing the rate is possible by design — saying so is not.
+
 **Backpressure:** If the ring buffer is full, decode sleeps 500µs and retries. If the ring buffer is empty (underrun), the render callback zeros the output (silence beats glitches).
 
 ## Gapless playback
@@ -203,7 +205,7 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `coreaudio_backend.rs` | macOS: `CoreAudioBackend` impl wrapping `engine.rs` + `device.rs` (`#[cfg(target_os = "macos")]`) |
 | `cpal_backend.rs` | Linux: `CpalBackend` impl using cpal (ALSA/PipeWire/PulseAudio) (`#[cfg(target_os = "linux")]`) |
 | `engine.rs` | CoreAudio AUHAL setup, render callback (unsafe extern "C"), AudioEngine lifecycle (macOS only) |
-| `device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
+| `device.rs` | CoreAudio device enumeration, sample rate get/set/watch (macOS only) |
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
 | `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread) |

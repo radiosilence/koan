@@ -68,6 +68,7 @@ struct PlaylistView: View {
                     return .handled
                 }
                 .onDeleteCommand { removeSelected() }
+                .clearsSelection($selection)
             }
         }
         // On the whole page, not the List: an empty playlist is exactly when
@@ -119,6 +120,18 @@ struct PlaylistView: View {
             }
 
             Spacer()
+
+            if !selection.isEmpty {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Text("\(positions(in: selection).count) selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        Button("Remove", role: .destructive) { removeSelected() }
+                        Button("Clear") { selection = [] }
+                    }
+                }
+            }
 
             VStack(alignment: .trailing, spacing: 10) {
                 // Both modes shown with the active one lit, the way the queue
@@ -202,6 +215,9 @@ struct PlaylistView: View {
 
     /// Play from a position, keeping the rest of the playlist behind it — the
     /// same thing clicking track nine of an album does.
+    ///
+    /// Stays put afterwards: the playing row is lit on this page, so there is
+    /// nothing the queue would show that this does not.
     private func start(at position: Int?, shuffled: Bool = false) {
         let engine = playlists.engine
         Task {
@@ -210,7 +226,6 @@ struct PlaylistView: View {
                 startAt: position.map(UInt32.init),
                 shuffled: shuffled
             )
-            nav.show(.queue)
         }
     }
 
@@ -453,6 +468,9 @@ private struct PlaylistTrackRow: View {
             }
         }
         .frame(height: showsAlbum ? 40 : 34)
+        // The same six points the queue gives a row carrying its own sleeve,
+        // and the album heading gives its cover.
+        .padding(.vertical, showsAlbum ? 6 : 0)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
     }

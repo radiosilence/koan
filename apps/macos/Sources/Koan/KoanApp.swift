@@ -66,7 +66,7 @@ final class AppState {
         player.onTick = { [weak centre] in centre?.refresh() }
 
         // Single-key shortcuts, caught before the focused list eats them.
-        self.hotkeys = Hotkeys.standard(player: player, nav: nav, ui: ui)
+        self.hotkeys = Hotkeys.standard(player: player, library: library, nav: nav, ui: ui)
 
         // A client that cannot reach its server fails at everything quietly:
         // nothing plays, nothing downloads, and every record comes back with no
@@ -146,27 +146,21 @@ struct KoanApp: App {
                 // ⌘K is the search everywhere else it exists, and koan's
                 // search knows albums, artists and tracks — so it goes to the
                 // field rather than to the sheet that builds a queue.
-                Button("Search…") { state?.ui.focusSearch() }
-                    .keyboardShortcut("k", modifiers: .command)
-                Button("Add Music…") { state?.ui.showingPicker = true }
-                    .keyboardShortcut("k", modifiers: [.command, .shift])
+                ShortcutButton(.search) { state?.ui.focusSearch() }
+                ShortcutButton(.addMusic) { state?.ui.showingPicker = true }
             }
 
             CommandGroup(replacing: .sidebar) {
                 ForEach(NavigationCommand.all, id: \.section) { command in
-                    Button(command.title) { state?.nav.show(command.section) }
-                        .keyboardShortcut(command.key, modifiers: .command)
+                    ShortcutButton(command.shortcut) { state?.nav.show(command.section) }
                 }
                 Divider()
-                Button("Back") { state?.nav.goBack() }
-                    .keyboardShortcut("[", modifiers: .command)
+                ShortcutButton(.back) { state?.nav.goBack() }
                     .disabled(isTyping)
-                Button("Forward") { state?.nav.goForward() }
-                    .keyboardShortcut("]", modifiers: .command)
+                ShortcutButton(.forward) { state?.nav.goForward() }
                     .disabled(isTyping)
                 Divider()
-                Button("Toggle Lyrics") { showLyrics.toggle() }
-                    .keyboardShortcut("l", modifiers: [.command, .option])
+                ShortcutButton(.lyrics) { showLyrics.toggle() }
                 Divider()
             }
 
@@ -179,24 +173,24 @@ struct KoanApp: App {
                 // start-of-line, ⌥← is previous word. Disabled rather than
                 // declined — a disabled item releases its key equivalent, and
                 // that is the only way the field ever sees it.
-                Button("Next") { state?.player.next() }
-                    .keyboardShortcut(.rightArrow, modifiers: .command)
+                ShortcutButton(.next) { state?.player.next() }
                     .disabled(isTyping)
-                Button("Previous") { state?.player.previous() }
-                    .keyboardShortcut(.leftArrow, modifiers: .command)
+                ShortcutButton(.previous) { state?.player.previous() }
                     .disabled(isTyping)
                 Divider()
-                Button("Skip Forward") { state?.player.seek(bySeconds: 10) }
-                    .keyboardShortcut(.rightArrow, modifiers: .option)
+                ShortcutButton(.skipForward) { state?.player.seek(bySeconds: 10) }
                     .disabled(isTyping)
-                Button("Skip Back") { state?.player.seek(bySeconds: -10) }
-                    .keyboardShortcut(.leftArrow, modifiers: .option)
+                ShortcutButton(.skipBack) { state?.player.seek(bySeconds: -10) }
                     .disabled(isTyping)
                 Divider()
-                Button("Favourite Current Track") { state?.player.toggleFavouriteCurrent() }
-                    .keyboardShortcut("d", modifiers: .command)
-                Button("Toggle Radio") { state?.player.toggleRadio() }
-                    .keyboardShortcut("r", modifiers: [.command, .option])
+                // Through the library, which is what every heart in the app
+                // reads. Going straight to the engine flipped the row and left
+                // the UI showing the old answer.
+                ShortcutButton(.favourite) {
+                    guard let state, let trackId = state.player.currentTrackId else { return }
+                    state.library.toggleFavourite(track: trackId)
+                }
+                ShortcutButton(.radio) { state?.player.toggleRadio() }
             }
 
             // Replaces the stock Edit ▸ Undo, which has no undo manager behind
@@ -204,11 +198,9 @@ struct KoanApp: App {
             CommandGroup(replacing: .undoRedo) {
                 // ⌘Z while typing is undoing the typing, not the queue — and
                 // the field editor has its own undo stack to do it with.
-                Button("Undo") { state?.player.undo() }
-                    .keyboardShortcut("z", modifiers: .command)
+                ShortcutButton(.undo) { state?.player.undo() }
                     .disabled(isTyping)
-                Button("Redo") { state?.player.redo() }
-                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                ShortcutButton(.redo) { state?.player.redo() }
                     .disabled(isTyping)
             }
 
@@ -216,34 +208,29 @@ struct KoanApp: App {
             // thing while typing — ⌘A in the search field selects the text, not
             // the whole queue. EditCommands routes on what has focus.
             CommandGroup(replacing: .pasteboard) {
-                Button("Cut") {
+                ShortcutButton(.cut) {
                     EditCommands.cut { state?.player.cutSelection() }
                 }
-                .keyboardShortcut("x", modifiers: .command)
-                Button("Copy") {
+                ShortcutButton(.copy) {
                     EditCommands.copy { state?.player.copySelection() }
                 }
-                .keyboardShortcut("c", modifiers: .command)
-                Button("Paste") {
+                ShortcutButton(.paste) {
                     EditCommands.paste { state?.player.paste() }
                 }
-                .keyboardShortcut("v", modifiers: .command)
-                Button("Delete") {
+                ShortcutButton(.delete) {
                     EditCommands.delete { state?.player.removeSelected() }
                 }
-                .keyboardShortcut(.delete, modifiers: [])
                 Divider()
-                Button("Select All") {
+                ShortcutButton(.selectAll) {
                     EditCommands.selectAll { state?.player.selectAllQueue() }
                 }
-                .keyboardShortcut("a", modifiers: .command)
             }
 
             // ⌘F means "narrow what I'm looking at" where there is a filter for
             // that, and the library lookup everywhere else.
             CommandGroup(after: .pasteboard) {
                 Divider()
-                Button("Find") {
+                ShortcutButton(.find) {
                     guard let state else { return }
                     if state.nav.section?.filterPlaceholder != nil {
                         state.ui.focusFilter()
@@ -251,7 +238,6 @@ struct KoanApp: App {
                         state.ui.focusSearch()
                     }
                 }
-                .keyboardShortcut("f", modifiers: .command)
             }
 
             CommandMenu("Queue") {
@@ -260,8 +246,7 @@ struct KoanApp: App {
             }
 
             CommandGroup(replacing: .help) {
-                Button("Keyboard Shortcuts") { state?.ui.showingShortcuts = true }
-                    .keyboardShortcut("/", modifiers: .command)
+                ShortcutButton(.shortcuts) { state?.ui.showingShortcuts = true }
             }
 
             CommandMenu("Library") {
@@ -270,8 +255,7 @@ struct KoanApp: App {
                 // `isLibraryBusy` rather than the task list, which changes on
                 // every progress tick and would rebuild the menus with it.
                 Group {
-                    Button("Rescan Local Folders") { state?.library.scan() }
-                        .keyboardShortcut("r", modifiers: [.command, .shift])
+                    ShortcutButton(.rescan) { state?.library.scan() }
                     Button("Force Rescan") { state?.library.scan(force: true) }
                     Divider()
                     Button("Sync Remote Library") { state?.library.syncRemote() }
@@ -328,20 +312,6 @@ struct KoanApp: App {
 /// titles here are fixed and the bodies only ever call methods.
 ///
 /// Sections reachable from the View menu, in sidebar order.
-private struct NavigationCommand {
-    let title: String
-    let key: KeyEquivalent
-    let section: Navigator.Section
-
-    static let all: [NavigationCommand] = [
-        .init(title: "Queue", key: "1", section: .queue),
-        .init(title: "Albums", key: "2", section: .albums),
-        .init(title: "Artists", key: "3", section: .artists),
-        .init(title: "Favourites", key: "4", section: .favourites),
-        .init(title: "History", key: "5", section: .playHistory),
-    ]
-}
-
 /// The library is a file on disk; if it can't be opened there is no app to show.
 private struct StartupErrorView: View {
     let message: String

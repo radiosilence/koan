@@ -15,7 +15,6 @@ struct RowPlayButton: View {
     var inContext: (trackIds: [Int64], startAt: Int)?
 
     @Environment(PlayerModel.self) private var player
-    @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @State private var loading = false
 
@@ -33,13 +32,12 @@ struct RowPlayButton: View {
         .help("Play \(playable.name)")
     }
 
-    /// Replaces the queue. Resolution happens off the main actor — an artist is
-    /// a lot of rows.
+    /// Replaces the queue and stays put. Resolution happens off the main actor
+    /// — an artist is a lot of rows.
     private func play() {
         guard !loading else { return }
         if let context = inContext {
             player.playNow(trackIds: context.trackIds, startingAt: context.startAt)
-            nav.showQueueWhenReady(watching: player)
             return
         }
         loading = true
@@ -49,7 +47,6 @@ struct RowPlayButton: View {
             let ids = await playable.trackIds(using: engine)
             loading = false
             player.playNow(trackIds: ids)
-            nav.showQueueWhenReady(watching: player)
         }
     }
 }

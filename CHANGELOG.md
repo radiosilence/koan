@@ -18,6 +18,9 @@
 
 - **Subsonic playlist endpoints serve real playlists.** `getPlaylists`, `getPlaylist`, `createPlaylist` and `deletePlaylist` used to fake playlists out of saved queues; they now read and write the real thing, and `updatePlaylist` — add and remove members by index — works at last.
 
+- **`q` goes to the queue.** `g` and `G` already went to its ends; there was no key for simply going there.
+- **Escape clears the selection, wherever you are.** The queue also grew a Clear button beside Remove — a selection with no visible way out of it is a trap, and on a list you have scrolled away from you cannot even see what you are still holding.
+
 ### Removed
 
 - **Snapshots.** They were playlists with a resume position: a whole second feature, a second table, a second sidebar row and a second set of API calls, all to remember one number the server had no idea about. Existing snapshots become playlists on first launch, keeping their names, their track order and the date they were saved; only the position is lost. The Subsonic API already served them as playlists, so its clients see the same names either side of this.
@@ -26,7 +29,28 @@
 
 ### Changed
 
+- **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
+- **The shortcuts sheet says what the menus say.** It listed the single-key shortcuts and then told you the rest were "in the menus", which is true and no help — nobody opens six menus to find out that Back is ⌘[. The ⌘ shortcuts are now a second table on the same sheet, and both halves are generated from the same declarations the menu bar is built from, so they cannot drift.
+- **Leaving the queue and coming back keeps your place.** The stage is one `switch`, so every move destroys the page it left and takes its scroll position with it. The queue remembers where it was.
+- **Playing something no longer throws you at the queue.** Every play button replaced the queue and then moved you to it, which is backwards: the queue runs behind whatever you are doing and is somewhere you go, not somewhere you are sent. Play a track from a record, a row in favourites, a selection in history, an album from the picker — you stay where you were and the music changes.
+
+  Two places still move you, because staying put would show you nothing. An artist page is a wall of covers with no tracks on it, so its play and shuffle buttons go to the queue. And a click on an album's cover art opens the record it just started, since that is where its tracks are.
+
 - **The database schema is now version 2, and older koan builds will refuse to open it.** That is the point of the version: a build that does not know about `playlists` must not write to a library that has them. Upgrade rather than downgrading.
+
+### Fixed
+
+- **Ungrouped queue rows had no room for their covers.** Every row carries its own sleeve when the queue is not grouped by album, and the fixed row height around it left the art all but touching the separators above and below. It gets the same six points the album heading already gives its own cover — they are rows in the same list and should breathe alike.
+- **Undoing a queue replace left the player on a track the queue no longer had.** The queue came back, which is the part you could see working, but the engine kept decoding whatever the replace had started — an item the restored queue does not contain. The transport then described a row nothing could select, and the decode lookahead finds the next track by locating the current one, so with the current one gone the queue ended at the end of that track rather than carrying on.
+
+  Playback is reconciled with the playlist after every undo and redo, not just this one: any undo that takes items away can strand the engine the same way — undoing an add while the added track is playing did it too. If something was playing, the restored cursor picks up where the queue says it was; if it was paused or stopped, the undo stays quiet, because an undo is not a reason to start the music. The position is not part of what a replace snapshots, so the track starts again rather than resuming mid-way.
+
+- **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
+
+- **The format badge latched a rate the device was on its way off.** A 48 kHz track followed by a 44.1 kHz one publishes the new track's info before the device has finished reclocking, and a switch is not instant — the better part of a second on USB. A front end polling in that window paired 44.1 with the outgoing 48, and then never let go: the macOS app only republished the format when the codec, source rate or bit depth changed, and none of those move once the rate lands. "FLAC 16/44.1 → 48" could sit there, wrong, for half an hour. The output rate now reads as unknown while the device is between rates, rather than as the last track's.
+
+- **The format badge could claim bit-perfect while the HAL was resampling.** The output rate behind "FLAC 16/44.1 → 48" was read once, when the engine was built, and never again. But the device rate belongs to no one app: Audio MIDI Setup, Focusrite Control, anything else holding the device can move it a second later, and koan then resamples to reach it without noticing — or, the other way round, goes on asserting a match that no longer holds. Since koan does not take hog mode, losing the rate is expected; reporting it wrongly is not. The rate is now watched for as long as the engine lives, and both front ends follow it. The macOS app also had to be told that the output rate is a reason to redraw the badge — it only republished the format when the codec, source rate or bit depth changed, none of which move when another app steals the clock.
+
 
 ## v0.30.2 (2026-08-25)
 

@@ -35,6 +35,9 @@ struct QueueView: View {
     /// change instead: written, never read, so it stays out of the render path.
     @State private var selection: Set<String> = []
 
+    /// Bound so the list can be put back where it was left.
+    @State private var scrollPosition = ScrollPosition()
+
     /// Album headings are rows in their own right, not decoration attached to
     /// the first track. That is what lets an album be selected and dragged as a
     /// unit — and stops selecting a track from lighting up the heading above it,
@@ -63,6 +66,19 @@ struct QueueView: View {
                         .onMove(perform: move)
                     }
                     .listStyle(.inset)
+                    // The stage is one `switch`, so leaving the queue destroys
+                    // this view and its scroll position with it. Coming back
+                    // should be coming back, not starting again.
+                    .scrollPosition($scrollPosition)
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.contentOffset.y
+                    } action: { _, y in
+                        ui.queueScrollY = y
+                    }
+                    .onAppear {
+                        guard ui.queueScrollY > 0 else { return }
+                        scrollPosition.scrollTo(y: ui.queueScrollY)
+                    }
                     // Otherwise the List paints over the wash and it stops at
                     // the header in a hard line, rather than fading out across
                     // the first few rows.
@@ -96,6 +112,7 @@ struct QueueView: View {
                     .onChange(of: player.selectAllToken) { _, _ in
                         selection = Set(rows.map(\.id))
                     }
+                    .clearsSelection($selection)
                 }
             }
         }
@@ -142,6 +159,7 @@ struct QueueView: View {
                 Text("\(selectedItemIds.count) selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Clear") { selection = [] }
                 Button("Remove", role: .destructive) { removeSelected() }
             }
 
@@ -631,6 +649,11 @@ private struct QueueRow: View {
         // Fixed height so a row doesn't grow when a download indicator appears
         // and shrink when it finishes, reflowing the list each time.
         .frame(height: artwork ? 40 : 34)
+        // Ungrouped, the row carries a sleeve and two lines of text, and the
+        // frame around them left the cover all but touching the separators.
+        // The same six points the album heading gives its own cover — the two
+        // kinds of row are in the same list and should breathe alike.
+        .padding(.vertical, artwork ? 6 : 0)
         // Without this the row is only clickable where a view actually sits —
         // the Spacer between the title and the duration is a dead zone, and
         // clicks landing there select nothing.

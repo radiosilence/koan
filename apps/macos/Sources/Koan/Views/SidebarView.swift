@@ -233,13 +233,15 @@ struct SidebarView: View {
         playlists.export(id: playlist.id, to: url)
     }
 
+    /// Play it where you stand. Double-clicking a row selects it first, so you
+    /// land on the playlist itself and watch it start — and playing something
+    /// is not on its own a reason to be moved anywhere.
     private func play(_ playlist: Playlist, shuffled: Bool = false) {
         let engine = playlists.engine
         Task {
             _ = try? await engine.playPlaylist(
                 playlistId: playlist.id, startAt: nil, shuffled: shuffled
             )
-            nav.show(.queue)
         }
     }
 
