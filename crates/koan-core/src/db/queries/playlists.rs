@@ -224,6 +224,29 @@ pub fn playlist_entries(conn: &Connection, id: i64) -> Result<Vec<PlaylistEntry>
     Ok(rows)
 }
 
+/// The entry ids of this playlist, in order. The cheap half of
+/// [`playlist_entries`], for the times only identity and order matter.
+pub fn playlist_entry_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, DbError> {
+    let mut stmt =
+        conn.prepare("SELECT id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position")?;
+    let rows = stmt
+        .query_map(params![id], |row| row.get(0))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
+/// Which playlist an entry belongs to.
+pub fn playlist_of_entry(conn: &Connection, entry_id: i64) -> Result<Option<i64>, DbError> {
+    let found = conn
+        .query_row(
+            "SELECT playlist_id FROM playlist_tracks WHERE id = ?1",
+            params![entry_id],
+            |row| row.get(0),
+        )
+        .ok();
+    Ok(found)
+}
+
 /// The track ids in this playlist, in order. Duplicates kept.
 pub fn playlist_track_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, DbError> {
     let mut stmt = conn

@@ -732,6 +732,31 @@ impl SharedPlayerState {
     /// Undo replays these left to right, so an item whose recorded predecessor is
     /// also in `ids` must come after it — otherwise the predecessor is missing at
     /// replay time and the item lands at the end of the playlist instead.
+    /// Put the items in exactly this order.
+    ///
+    /// Items not named keep their relative order and follow at the end, so a
+    /// stale order cannot lose anything. The items themselves are moved, not
+    /// rebuilt: their ids, load states and download progress are what the rest
+    /// of the player is holding on to.
+    pub fn reorder_to(&self, order: &[QueueItemId]) {
+        let mut pl = self.playlist.write();
+        let mut taken: Vec<Option<PlaylistItem>> = pl.items.drain(..).map(Some).collect();
+        let mut sorted = Vec::with_capacity(taken.len());
+        for id in order {
+            if let Some(slot) = taken
+                .iter_mut()
+                .find(|i| i.as_ref().is_some_and(|i| i.id == *id))
+                && let Some(item) = slot.take()
+            {
+                sorted.push(item);
+            }
+        }
+        sorted.extend(taken.into_iter().flatten());
+        pl.items = sorted;
+        drop(pl);
+        self.bump_version();
+    }
+
     pub fn items_before(&self, ids: &[QueueItemId]) -> Vec<(QueueItemId, Option<QueueItemId>)> {
         use std::collections::HashSet;
         let wanted: HashSet<QueueItemId> = ids.iter().copied().collect();

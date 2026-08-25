@@ -37,6 +37,25 @@ final class PlaylistsModel {
     /// had the first time it was drawn — for a new playlist, nothing at all.
     private var coverStamp: [Int64: String] = [:]
 
+    /// What the queue is still exactly, if it is still something.
+    ///
+    /// While this names a playlist, the queue *follows* it: an edit there is an
+    /// edit to what you are listening to. A record cannot be edited, so locking
+    /// to one only says what you are listening to — which is worth saying.
+    ///
+    /// It clears the moment the queue is rearranged, added to, or extended by
+    /// radio, and the header says so either way: a rule this quiet has to be
+    /// visible, or the first silent update reads as the app moving things on
+    /// its own.
+    private(set) var lockedTo: QueueLock?
+
+    /// Ask the engine what the queue is. Cheap — two indexed reads — and only
+    /// worth doing when the queue or a playlist has actually moved.
+    func refreshLock() {
+        let engine = self.engine
+        Task { lockedTo = (try? await engine.queueLock()) ?? nil }
+    }
+
     /// Tracks waiting for a name, and the new playlist they will become.
     ///
     /// A request rather than a dialog, because the dialog cannot live where it
@@ -272,6 +291,7 @@ final class PlaylistsModel {
                 report?(String(describing: error))
             }
             load()
+            refreshLock()
             if reloadingTracks { reloadTracks() }
         }
     }

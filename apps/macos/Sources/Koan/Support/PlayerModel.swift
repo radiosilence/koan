@@ -135,6 +135,12 @@ final class PlayerModel {
 
     private func rebuildQueue() async {
         queue = await engine.queue()
+        // Here rather than at one of the callers: the queue is rebuilt from
+        // two places — a queue event, and a playback event carrying a version
+        // that moved — and only one of them used to say so. Which of the two
+        // arrived last decided whether anything watching the queue heard about
+        // it, so a playlist would light up as locked sometimes and not others.
+        defer { onQueueChanged?() }
         queuedByTrack = Dictionary(
             queue.compactMap { item in item.trackId.map { ($0, item) } },
             // A track queued twice: prefer the entry that is actually doing
@@ -179,6 +185,11 @@ final class PlayerModel {
         }
         downloading = active
     }
+
+    /// The queue changed. Set by `AppState` — whether the queue is still
+    /// exactly some playlist is a question only the engine can answer, and this
+    /// is the moment the answer can have changed.
+    var onQueueChanged: (() -> Void)?
 
     /// A download finished. Set by `AppState` — the library's cached count is
     /// the only thing that knows it moved, and it has no other way to find out.

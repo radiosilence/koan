@@ -30,6 +30,13 @@ pub enum PlayerCommand {
         target: QueueItemId,
         after: bool,
     },
+    /// Put the queue in exactly this order, keeping every item.
+    ///
+    /// A queue locked to a playlist follows it, and following a reorder means
+    /// moving the items that are already there — rebuilding them would issue
+    /// new ids and throw away what has played, what is mid-download and where
+    /// the cursor is. Ids not named keep their relative order at the end.
+    ReorderPlaylist(Vec<QueueItemId>),
     /// Update file paths for playlist items after an organize operation.
     /// On Unix, rename() doesn't invalidate open FDs so playback continues.
     UpdatePaths(Vec<(QueueItemId, PathBuf)>),
