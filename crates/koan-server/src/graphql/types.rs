@@ -379,6 +379,10 @@ pub(super) struct GqlNowPlayingTrack {
     pub bitrate_kbps: Option<u32>,
     pub channels: u16,
     pub duration_ms: u64,
+    /// What the output device settled at, where it is known. Equal to
+    /// `sampleRate` means koan handed the device the samples as they are;
+    /// anything else means something resampled to reach it.
+    pub output_sample_rate: Option<u32>,
 }
 
 impl GqlNowPlaying {
@@ -419,6 +423,7 @@ impl GqlNowPlaying {
                 bitrate_kbps: info.bitrate_kbps,
                 channels: info.channels,
                 duration_ms: info.duration_ms,
+                output_sample_rate: state.output_sample_rate(),
             }),
             queue_item_id: Some(info.id.0.to_string()),
         }

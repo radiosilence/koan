@@ -138,7 +138,8 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         &app.theme,
     )
     .with_ticker_offset(app.ticker_offset)
-    .with_download_fraction(dl_fraction);
+    .with_download_fraction(dl_fraction)
+    .with_output_rate(app.state.output_sample_rate());
     frame.render_widget(transport, text_area);
 
     // Visualizer — renders in the space above the transport text.
