@@ -760,7 +760,6 @@ impl QueryRoot {
                 remote_enabled: cfg.remote.enabled,
                 remote_url: cfg.remote.url.clone(),
                 remote_username: cfg.remote.username.clone(),
-                transcode_quality: cfg.remote.transcode_quality.clone(),
                 cache_limit: cfg.remote.cache_limit.clone(),
                 visualizer_fps: cfg.visualizer.fps as i32,
                 radio_enabled,

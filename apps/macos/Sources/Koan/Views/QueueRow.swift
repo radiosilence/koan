@@ -21,6 +21,10 @@ struct QueueRowContent {
     var number: Int64?
     var codec: String?
     var durationMs: Int64?
+    /// The record to draw, asked for by album wherever one is known — art is
+    /// stored per record, so asking by track draws the same image at the cost
+    /// of a round trip and a cache entry each.
+    var sleeve: AlbumArtwork.Source?
     /// What the queue is doing about this track, or `nil` when the queue has
     /// never heard of it — which is most of a playlist, most of the time.
     var status: EntryStatus?
@@ -35,6 +39,7 @@ struct QueueRowContent {
         number = item.trackNumber
         codec = item.codec
         durationMs = item.durationMs.map(Int64.init)
+        sleeve = item.sleeve
         status = item.status
         downloadProgress = item.downloadProgress
         failureReason = item.failureReason
@@ -53,6 +58,7 @@ struct QueueRowContent {
         number = Int64(position)
         codec = track.codec
         durationMs = track.durationMs
+        sleeve = track.albumId.map { .album($0) } ?? .track(track.id)
         downloadProgress = queued?.downloadProgress
         failureReason = queued?.failureReason
         status =
@@ -86,8 +92,8 @@ struct QueueRow: View {
                     .font(.caption)
                     .frame(width: 16, alignment: .trailing)
 
-                if artwork, let trackId = item.trackId {
-                    AlbumArtwork(source: .track(trackId), cornerRadius: 3)
+                if artwork, let sleeve = item.sleeve {
+                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 3)
                         .frame(width: 28, height: 28)
                 } else {
                     // Always occupies its column, number or not: a missing track

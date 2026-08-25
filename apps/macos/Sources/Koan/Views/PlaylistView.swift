@@ -58,6 +58,11 @@ struct PlaylistView: View {
                     .onMove(perform: move)
                 }
                 .listStyle(.inset)
+                // Otherwise the List paints its own ground over the wash and
+                // the record's colour stops in a hard line under the header,
+                // rather than fading out across the first few rows. The queue
+                // and every album page give theirs up for the same reason.
+                .scrollContentBackground(.hidden)
                 .contextMenu(forSelectionType: String.self) { ids in
                     menu(forRows: ids)
                 } primaryAction: { ids in

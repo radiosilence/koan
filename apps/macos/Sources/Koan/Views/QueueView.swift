@@ -148,25 +148,29 @@ struct QueueView: View {
             // in and the mode you would get, and whichever it picks the other
             // reading is available and wrong.
             Picker("Queue layout", selection: $grouped) {
-                Image(systemName: "square.stack").tag(true)
-                Image(systemName: "list.bullet").tag(false)
+                Image(systemName: Icon.album).tag(true)
+                Image(systemName: Icon.queueSection).tag(false)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
             .help("Group by album, or one row per track")
 
-            Button { player.undo() } label: { Image(systemName: "arrow.uturn.backward") }
+            Button { player.undo() } label: { Image(systemName: Icon.undo) }
                 .help("Undo (⌘Z)")
-            Button { player.redo() } label: { Image(systemName: "arrow.uturn.forward") }
+            Button { player.redo() } label: { Image(systemName: Icon.redo) }
                 .help("Redo (⇧⌘Z)")
 
             Menu {
-                Button("Save as Playlist…") {
+                Button {
                     playlists.naming = player.queue.compactMap(\.trackId)
+                } label: {
+                    Label("Save as Playlist…", systemImage: Icon.playlist)
                 }
                 Divider()
-                Button("Clear Queue", role: .destructive) { player.clearQueue() }
+                Button(role: .destructive) { player.clearQueue() } label: {
+                    Label("Clear Queue", systemImage: Icon.clear)
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
             }
@@ -211,26 +215,34 @@ struct QueueView: View {
 
     @ViewBuilder
     private func albumMenu(_ group: QueueGroup) -> some View {
-        Button("Play") {
+        Button {
             if let first = group.items.first { player.play(itemId: first.queueItemId) }
+        } label: {
+            Label("Play", systemImage: Icon.play)
         }
-        Button("Remove Album") {
+        Button {
             player.remove(itemIds: group.items.map(\.queueItemId))
+        } label: {
+            Label("Remove Album", systemImage: Icon.remove)
         }
         Divider()
         AddToPlaylistMenu { $0(group.items.compactMap(\.trackId)) }
         Divider()
         organizeButton(trackIds: group.items.compactMap(\.trackId), title: group.album)
         if let trackId = group.items.compactMap(\.trackId).first {
-            Button("Go to Album") { showInLibrary(trackId: trackId, highlight: false) }
+            Button { showInLibrary(trackId: trackId, highlight: false) } label: {
+                Label("Go to Album", systemImage: Icon.album)
+            }
         }
-        Button("Copy Album Share Link") {
+        Button {
             Share.link(
                 trackIds: group.items.compactMap(\.trackId),
                 named: "\(group.albumArtist) — \(group.album)",
                 engine: library.engine,
                 player: player
             )
+        } label: {
+            Label("Copy Album Share Link", systemImage: Icon.share)
         }
     }
 
@@ -253,24 +265,36 @@ struct QueueView: View {
 
     @ViewBuilder
     private func trackMenu(_ item: QueueItem) -> some View {
-        Button("Play") { player.play(itemId: item.queueItemId) }
-        Button("Remove") { player.remove(itemIds: [item.queueItemId]) }
+        Button { player.play(itemId: item.queueItemId) } label: {
+            Label("Play", systemImage: Icon.play)
+        }
+        Button { player.remove(itemIds: [item.queueItemId]) } label: {
+            Label("Remove", systemImage: Icon.remove)
+        }
         if let trackId = item.trackId {
             Divider()
             AddToPlaylistMenu { $0([trackId]) }
             Divider()
             organizeButton(trackIds: [trackId], title: item.title)
-            Button(library.isFavourite(track: trackId) ? "Remove Favourite" : "Favourite Track") {
-                library.toggleFavourite(track: trackId)
+            let favourited = library.isFavourite(track: trackId)
+            Button { library.toggleFavourite(track: trackId) } label: {
+                Label(
+                    favourited ? "Remove Favourite" : "Favourite Track",
+                    systemImage: favourited ? Icon.favourited : Icon.favourite
+                )
             }
-            Button("Go to Album") { showInLibrary(trackId: trackId, highlight: true) }
-            Button("Copy Share Link") {
+            Button { showInLibrary(trackId: trackId, highlight: true) } label: {
+                Label("Go to Album", systemImage: Icon.album)
+            }
+            Button {
                 Share.link(
                     trackIds: [trackId],
                     named: item.title,
                     engine: library.engine,
                     player: player
                 )
+            } label: {
+                Label("Copy Share Link", systemImage: Icon.share)
             }
         }
     }
@@ -321,7 +345,9 @@ struct QueueView: View {
             case .track(let item): trackMenu(item)
             }
         } else {
-            Button("Remove") { player.remove(itemIds: itemIds(in: ids)) }
+            Button { player.remove(itemIds: itemIds(in: ids)) } label: {
+                Label("Remove", systemImage: Icon.remove)
+            }
             Divider()
             AddToPlaylistMenu { $0(trackIds(in: ids)) }
             Divider()
@@ -340,7 +366,7 @@ struct QueueView: View {
     /// name, so it is described by its size instead.
     @ViewBuilder
     private func organizeButton(trackIds: [Int64], title: String?) -> some View {
-        Button("Organize Files…") {
+        Button {
             // The window opens first: `begin` reads the config and resolves the
             // selection, and waiting on that would leave the click dead.
             openWindow(id: OrganizeWindow.id)
@@ -350,6 +376,8 @@ struct QueueView: View {
                     trackIds: trackIds
                 )
             }
+        } label: {
+            Label("Organize Files…", systemImage: Icon.organize)
         }
         .disabled(trackIds.isEmpty)
     }
@@ -445,6 +473,18 @@ extension QueueView {
 
 // MARK: - Grouping
 
+extension QueueItem {
+    /// Which sleeve to draw for this row.
+    ///
+    /// The record wherever the library still knows it, so a queued album is one
+    /// fetch and one cached bitmap rather than one of each per track on it.
+    /// Anything the library has lost falls back to its own file.
+    var sleeve: AlbumArtwork.Source? {
+        if let albumId { return .album(albumId) }
+        return trackId.map { .track($0) }
+    }
+}
+
 struct QueueGroup: Identifiable {
     let id: String
     let albumArtist: String
@@ -487,8 +527,8 @@ private struct QueueAlbumHeader: View {
             // No tap-to-view here, unlike the album page: this cover sits in a
             // selectable, draggable row, and a tap gesture on it would eat the
             // click that selects the row.
-            if let trackId = group.items.first?.trackId {
-                AlbumArtwork(source: .track(trackId), cornerRadius: 5)
+            if let sleeve = group.items.first?.sleeve {
+                AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 5)
                     .frame(width: 52, height: 52)
                     .shadow(color: .black.opacity(0.28), radius: 4, y: 2)
             }

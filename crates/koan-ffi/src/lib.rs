@@ -263,11 +263,22 @@ impl KoanEngine {
 
     pub async fn queue(self: Arc<Self>) -> Vec<QueueItem> {
         offload::offload(move || {
-            self.state
-                .derive_visible_queue()
-                .entries
+            let entries = self.state.derive_visible_queue().entries;
+            // One query for the whole queue. A client draws one sleeve per
+            // album, and without an ID to group by it asks for artwork per
+            // track — the same image fetched once for every track on the
+            // record. A queue with no database behind it simply has no album
+            // IDs; the art falls back to the per-track lookup as before.
+            let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
+            let album_ids = self
+                .db()
+                .ok()
+                .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
+                .unwrap_or_default();
+
+            entries
                 .iter()
-                .map(QueueItem::from)
+                .map(|e| QueueItem::from_entry(e, &album_ids))
                 .collect()
         })
         .await
@@ -1401,7 +1412,6 @@ impl KoanEngine {
                     .as_ref()
                     .map(koan_core::helpers::tracks_from_server)
                     .unwrap_or(0),
-                transcode_quality: cfg.remote.transcode_quality.clone(),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
                 cache_dir: cache_dir.to_string_lossy().into_owned(),
@@ -1453,10 +1463,6 @@ impl KoanEngine {
             remote.insert("enabled".into(), Value::Boolean(s.remote_enabled));
             remote.insert("url".into(), Value::String(s.remote_url.clone()));
             remote.insert("username".into(), Value::String(s.remote_username.clone()));
-            remote.insert(
-                "transcode_quality".into(),
-                Value::String(s.transcode_quality.clone()),
-            );
             remote.insert(
                 "download_workers".into(),
                 Value::Integer(s.download_workers.max(1) as i64),

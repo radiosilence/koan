@@ -135,7 +135,7 @@ struct ArtistDetailView: View {
                     Button {
                         shufflePlay()
                     } label: {
-                        Label("Shuffle", systemImage: "shuffle")
+                        Label("Shuffle", systemImage: Icon.shuffle)
                     }
                 }
 

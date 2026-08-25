@@ -69,8 +69,8 @@ final class LibraryModel {
     // it left the album view showing an unfilled heart on a track that was
     // already favourited.
     private(set) var favouriteTrackIds: Set<Int64> = []
-    private(set) var favouriteAlbumIds: Set<Int64> = []
-    private(set) var favouriteArtistIds: Set<Int64> = []
+    private(set) var favouriteAlbumIds: Set<Int64> = [] { didSet { refilter() } }
+    private(set) var favouriteArtistIds: Set<Int64> = [] { didSet { refilter() } }
 
     func isFavourite(track id: Int64) -> Bool { favouriteTrackIds.contains(id) }
     func isFavourite(album id: Int64) -> Bool { favouriteAlbumIds.contains(id) }
@@ -121,6 +121,12 @@ final class LibraryModel {
     private(set) var visibleAlbums: [Album] = []
     private(set) var visibleArtists: [Artist] = []
     private(set) var visibleFavourites: [Track] = []
+    /// Favourited records and artists, resolved out of the catalogue already in
+    /// memory — the engine hands back ids, and `prefetchCatalogue` holds the
+    /// rows. Taken in the catalogue's order rather than the set's, which has
+    /// none, so the grid does not reshuffle itself on every toggle.
+    private(set) var visibleFavouriteAlbums: [Album] = []
+    private(set) var visibleFavouriteArtists: [Artist] = []
     private(set) var visiblePlayHistory: [PlayHistoryEntry] = []
 
     /// Recompute what each section shows. Called whenever the filter or any of
@@ -134,6 +140,20 @@ final class LibraryModel {
         visibleFavourites = section == .favourites
             ? matching(favourites) { [$0.title, $0.artistName, $0.albumTitle] }
             : favourites
+        // Only ever built for the page that shows them: this walks the whole
+        // catalogue, and every other section would be paying for it on each
+        // keystroke of its own filter.
+        if section == .favourites {
+            visibleFavouriteAlbums = matching(
+                albums.filter { favouriteAlbumIds.contains($0.id) }
+            ) { [$0.title, $0.artistName] }
+            visibleFavouriteArtists = matching(
+                artists.filter { favouriteArtistIds.contains($0.id) }
+            ) { [$0.name] }
+        } else {
+            visibleFavouriteAlbums = []
+            visibleFavouriteArtists = []
+        }
         visiblePlayHistory = section == .playHistory
             ? matching(playHistory) { [$0.track.title, $0.track.artistName, $0.track.albumTitle] }
             : playHistory

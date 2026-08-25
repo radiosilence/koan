@@ -682,9 +682,6 @@ impl MutationRoot {
                 if let Some(ref username) = input.remote_username {
                     cfg.remote.username = username.clone();
                 }
-                if let Some(ref quality) = input.transcode_quality {
-                    cfg.remote.transcode_quality = quality.clone();
-                }
                 if let Some(ref limit) = input.cache_limit {
                     cfg.remote.cache_limit = if limit.is_empty() {
                         None
