@@ -39,6 +39,31 @@ a local copy would silently do nothing. In the other direction it drains
 machine-scoped keys out of the file you commit, which is how a `config.toml`
 polluted by an older koan cleans itself up as you use the app.
 
+## What is not in the config files
+
+The macOS app's own view state -- whether the lyrics panel is open, whether the
+queue is grouped, how much the app draws -- lives in macOS defaults
+(`defaults read cc.blit.koan`), not in `config.toml`. None of it means anything
+to the CLI or the TUI, and a setting that travels between machines in a
+committed dotfile should be one that makes sense on all of them.
+
+The graphics level is the one worth knowing about. Settings -> Appearance, or:
+
+```bash
+defaults write cc.blit.koan graphics -int 0   # 0 plain, 1 reduced, 2 full
+```
+
+| | Wash | Indicators | Chrome | Cost |
+|---|---|---|---|---|
+| `2` Full (default) | drifts | dance | glass | 15-18% of a core |
+| `1` Reduced | held still | dance | glass | ~9% |
+| `0` Plain | none | held still | flat materials | ~6% |
+
+Measured on an M1 Pro, playing, window frontmost. The wash's blur is close to
+free -- it is rasterised once and magnified as a texture -- so holding it still
+costs about what not drawing it costs. It is the drift that is expensive, which
+is why `Reduced` keeps the record's colour and only stops it moving.
+
 ## Environment variable overrides
 
 Any config field can be overridden via environment variables using the `KOAN_` prefix with `__` (double underscore) as the section separator:

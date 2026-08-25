@@ -19,11 +19,13 @@ struct ArtworkBleed: View {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
     let source: AlbumArtwork.Source?
-    /// Whether the wash drifts. The room breathes while something is playing
-    /// and settles when it stops.
+    /// Whether there is anything to breathe to. The room breathes while
+    /// something is playing and settles when it stops.
     var drifts = false
 
     @Environment(CoverArtCache.self) private var cache
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("graphics") private var graphics = Graphics.full
     /// Held rather than drawn through `AlbumArtwork`, which shows a placeholder
     /// while it loads. Over a five second dissolve that placeholder is a long
     /// grey wipe between two records, so the old cover stays up until the new
@@ -43,16 +45,28 @@ struct ArtworkBleed: View {
     /// fraction of blurring one the width of the window.
     private static let side: CGFloat = 360
 
+    /// Whether the wash is actually moving: something to breathe to, a setting
+    /// that allows it, and a system that has not asked for less motion.
+    private var breathes: Bool { drifts && graphics.drifts && !reduceMotion }
+
     /// Three incommensurate periods, so the drift never arrives back where it
     /// started and never reads as a loop. Settling is a plain ease: playback
     /// stopping should let the room come to rest, not stop it mid-breath.
     private func drift(_ period: Double) -> Animation {
-        drifts
+        breathes
             ? .easeInOut(duration: period).repeatForever(autoreverses: true)
             : .easeInOut(duration: 2)
     }
 
     var body: some View {
+        // Below `reduced` this is nothing at all rather than a transparent
+        // wash: no cover fetched, no blur, no mirrored copy under the glass.
+        if graphics.showsWash {
+            bleed
+        }
+    }
+
+    private var bleed: some View {
         GeometryReader { geo in
             // The transforms live on this container rather than on the image,
             // so a record change swaps what is inside without interrupting the
@@ -110,8 +124,8 @@ struct ArtworkBleed: View {
         // the room has changed colour without ever catching it changing.
         .animation(.easeInOut(duration: 2), value: generation)
         .task(id: source) { await load() }
-        .onAppear { drifted = drifts }
-        .onChange(of: drifts) { _, now in drifted = now }
+        .onAppear { drifted = breathes }
+        .onChange(of: breathes) { _, now in drifted = now }
     }
 
     private func load() async {

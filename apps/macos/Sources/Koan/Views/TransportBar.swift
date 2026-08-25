@@ -51,7 +51,7 @@ struct TransportBar: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
-        .glassEffect(.regular, in: .rect(cornerRadius: Self.radius))
+        .glass(.regular, fallback: .regularMaterial, in: .rect(cornerRadius: Self.radius))
         .padding(.horizontal, 16)
         .padding(.bottom, 14)
     }
