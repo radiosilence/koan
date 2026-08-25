@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo};
+use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo, SampleRateWatch};
 use super::{device, engine};
 
 /// CoreAudio AUHAL backend for macOS. Wraps the existing `engine.rs` and
@@ -17,6 +17,8 @@ impl CoreAudioBackend {
         }
     }
 }
+
+impl SampleRateWatch for device::RateWatch {}
 
 impl AudioBackend for CoreAudioBackend {
     fn list_devices(&self) -> Result<Vec<DeviceInfo>, BackendError> {
@@ -53,6 +55,24 @@ impl AudioBackend for CoreAudioBackend {
     fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<f64, BackendError> {
         let id = device.platform_id as u32;
         device::set_device_sample_rate(id, rate).map_err(|e| BackendError::Platform(e.to_string()))
+    }
+
+    fn watch_device_sample_rate(
+        &self,
+        device: &DeviceInfo,
+        on_change: Box<dyn Fn(f64) + Send + Sync>,
+    ) -> Option<Box<dyn SampleRateWatch>> {
+        let id = device.platform_id as u32;
+        match device::watch_device_sample_rate(id, on_change) {
+            Ok(watch) => Some(Box::new(watch)),
+            Err(e) => {
+                log::warn!(
+                    "failed to watch device sample rate on '{}': {e}",
+                    device.name
+                );
+                None
+            }
+        }
     }
 
     fn create_engine(
