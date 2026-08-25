@@ -94,7 +94,15 @@ struct QueueRow: View {
             // what it is doing — so they sit together. Apart, a mark narrower
             // than its column and a number aligned to the right of its own left
             // most of twenty points of air between them.
-            HStack(spacing: 6) {
+            //
+            // A sleeve is not a number. A right-aligned number carries its own
+            // slack, so six points between the two still reads as a gap; a
+            // cover is a solid block flush to its frame, and the same six
+            // points crowd it. It gets the ten the title gets on its other
+            // side. Constant per list either way — the spacing keys off
+            // whether the list draws sleeves at all, not off whether this row
+            // resolved one, or the titles would step in and out down the page.
+            HStack(spacing: artwork ? 10 : 6) {
                 statusIcon
                     .font(.caption)
                     .frame(width: 16, alignment: .trailing)
