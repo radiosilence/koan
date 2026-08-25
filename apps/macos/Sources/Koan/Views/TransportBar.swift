@@ -233,6 +233,21 @@ private struct SeekBar: View {
                     Capsule()
                         .fill(.quaternary)
                         .frame(height: 4)
+                    // How much of a streaming track has arrived. A fraction of
+                    // bytes drawn on an axis of time: right for lossless and
+                    // CBR, out by however far the bitrate wanders on VBR. Hence
+                    // the weaker mark and the word "roughly" — what it answers
+                    // is whether playback is about to run out of track, not
+                    // where in the track anything is. It sits under the played
+                    // extent, so an approximation that lands behind the
+                    // playhead is simply covered rather than drawn wrong.
+                    if let fetched {
+                        Capsule()
+                            .fill(.secondary)
+                            .frame(width: geo.size.width * fetched, height: 4)
+                            .transition(.opacity)
+                            .help("Roughly \(Int(fetched * 100))% downloaded")
+                    }
                     // Not the tint. The tint is the colour of the record now,
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a
@@ -241,6 +256,11 @@ private struct SeekBar: View {
                         .fill(.primary)
                         .frame(width: geo.size.width * player.progress, height: 4)
                 }
+                // On whether there is a mark at all, not on how long it is: the
+                // fetched extent moves several times a second and a quarter of
+                // a second of easing on every one of those would leave both it
+                // and the playhead beside it perpetually behind.
+                .animation(.easeOut(duration: 0.25), value: fetched == nil)
                 .frame(maxHeight: .infinity, alignment: .center)
                 .contentShape(.rect)
                 .gesture(
@@ -266,6 +286,11 @@ private struct SeekBar: View {
     private var displayedPosition: UInt64 {
         UInt64(player.progress * Double(player.clock.durationMs))
     }
+
+    /// How much of what is playing has been fetched, while it is still being
+    /// fetched. `nil` for anything already on disk, and for a transfer the
+    /// server gave no length for — there is nothing to draw a fraction of.
+    private var fetched: Double? { player.currentEntry?.downloadProgress }
 }
 
 private struct DeviceMenu: View {

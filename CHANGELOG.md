@@ -20,6 +20,10 @@
 
 ### Added
 
+- **The seek bar shows how much of a streaming track has arrived.** Playing something off a remote library while it is still downloading, the bar showed a position on a full-width track: whether the rest of it was on the machine, or the transfer was limping and playback was about to stall, was not visible anywhere near the thing that would stall. The fetched extent is now drawn behind the played one, and retires when the track lands.
+
+  It is a fraction of bytes on an axis of time — right for lossless and CBR, out by however far the bitrate wanders on VBR — so it is drawn as a distinctly weaker mark than the played extent and the tooltip says "roughly". The question it answers is whether the music is about to run out of track, not where in the track anything is; a hard-edged fill would be read as a promise it cannot keep. The TUI has drawn the same three-way bar all along.
+
 - **`q` goes to the queue.** `g` and `G` already went to its ends; there was no key for simply going there.
 - **Escape clears the selection, wherever you are.** The queue also grew a Clear button beside Remove — a selection with no visible way out of it is a trap, and on a list you have scrolled away from you cannot even see what you are still holding.
 
