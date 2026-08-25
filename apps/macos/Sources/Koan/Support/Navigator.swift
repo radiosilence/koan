@@ -172,10 +172,10 @@ final class Navigator {
 
     /// Show the queue once it holds what was just started.
     ///
-    /// Called after anything that starts playback outright, so you end up
-    /// looking at what you started. Not called for "add to queue" or "play
-    /// next" — those are things you do while browsing, and being thrown across
-    /// the app for them would be rude.
+    /// Playing something is not a reason to move: you stay where you were, and
+    /// the queue keeps running behind you until you go to it yourself. The one
+    /// exception is the artist page — a wall of covers with no tracks on it,
+    /// where nothing on screen would show that playback had started at all.
     ///
     /// Queue mutations run off the main actor, so switching immediately shows
     /// the old queue for a frame or two and then flickers. Waiting for the

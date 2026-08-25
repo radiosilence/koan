@@ -6,6 +6,9 @@
 
 - **The filter on the Favourites page did nothing.** `LibraryModel` narrowed the list into `visibleFavourites` and the page rendered the unfiltered `favourites` beside it. Every other filtered section read the right one.
 - **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
+- **Undoing a queue replace left the player on a track the queue no longer had.** The queue came back, which is the part you could see working, but the engine kept decoding whatever the replace had started — an item the restored queue does not contain. The transport then described a row nothing could select, and the decode lookahead finds the next track by locating the current one, so with the current one gone the queue ended at the end of that track rather than carrying on.
+
+  Playback is reconciled with the playlist after every undo and redo, not just this one: any undo that takes items away can strand the engine the same way — undoing an add while the added track is playing did it too. If something was playing, the restored cursor picks up where the queue says it was; if it was paused or stopped, the undo stays quiet, because an undo is not a reason to start the music. The position is not part of what a replace snapshots, so the track starts again rather than resuming mid-way.
 
 ### Added
 
@@ -15,8 +18,17 @@
 
 ### Changed
 
+- **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
 - **The shortcuts sheet says what the menus say.** It listed the single-key shortcuts and then told you the rest were "in the menus", which is true and no help — nobody opens six menus to find out that Back is ⌘[. The ⌘ shortcuts are now a second table on the same sheet, and both halves are generated from the same declarations the menu bar is built from, so they cannot drift.
 - **Leaving the queue and coming back keeps your place.** The stage is one `switch`, so every move destroys the page it left and takes its scroll position with it. The queue remembers where it was.
+- **Playing something no longer throws you at the queue.** Every play button replaced the queue and then moved you to it, which is backwards: the queue runs behind whatever you are doing and is somewhere you go, not somewhere you are sent. Play a track from a record, a row in favourites, a selection in history, an album from the picker — you stay where you were and the music changes.
+
+  Two places still move you, because staying put would show you nothing. An artist page is a wall of covers with no tracks on it, so its play and shuffle buttons go to the queue. And a click on an album's cover art opens the record it just started, since that is where its tracks are.
+
+### Added
+
+- **`q` goes to the queue.** `g` and `G` already went to its ends; there was no key for simply going there.
+- **Escape clears the selection, wherever you are.** The queue also grew a Clear button beside Remove — a selection with no visible way out of it is a trap, and on a list you have scrolled away from you cannot even see what you are still holding.
 
 ## v0.30.2 (2026-08-25)
 
