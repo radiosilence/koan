@@ -1145,16 +1145,25 @@ pub fn download_track(
     let progress_tx = tx.clone();
     let stream_ready_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stream_ready_flag = stream_ready_sent.clone();
+    // Announced once, not per chunk. The load state says *that* a download is
+    // running and hands out the counter; the counter itself is where progress
+    // lives. Rewriting the state every 64KB took the playlist write lock and
+    // bumped the queue version a thousand times a transfer, and every front end
+    // reads that version as "the queue changed" and rebuilds it.
+    //
+    // A retry restarts the byte count from zero, so a changed total re-announces.
+    let announced_total = AtomicU64::new(u64::MAX);
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
         bytes_written_progress.store(downloaded, Ordering::Release);
-        progress_state.update_load_state(
-            progress_qid,
-            LoadState::Downloading {
-                downloaded,
-                total,
-                bytes_written: bytes_written_progress.clone(),
-            },
-        );
+        if announced_total.swap(total, Ordering::Relaxed) != total {
+            progress_state.update_load_state(
+                progress_qid,
+                LoadState::Downloading {
+                    total,
+                    bytes_written: bytes_written_progress.clone(),
+                },
+            );
+        }
         if !stream_ready_flag.load(Ordering::Relaxed)
             && downloaded >= crate::player::state::STREAM_THRESHOLD
         {

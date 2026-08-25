@@ -60,7 +60,9 @@ impl SubscriptionRoot {
         }
     }
 
-    /// Queue updates — pushes the full queue snapshot whenever the playlist version changes.
+    /// Queue updates — pushes the full queue snapshot whenever the playlist
+    /// version changes, and while anything is downloading, since progress moves
+    /// without the version moving.
     async fn queue_updated(
         &self,
         ctx: &Context<'_>,
@@ -75,8 +77,9 @@ impl SubscriptionRoot {
 
             loop {
                 let version = state.playlist_version();
+                let downloading = !state.downloads_in_flight().is_empty();
 
-                if version != last_version {
+                if version != last_version || downloading {
                     last_version = version;
                     yield GqlQueueSnapshot::capture(&state);
                 }

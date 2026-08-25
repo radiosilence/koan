@@ -22,6 +22,16 @@ final class NowPlayingCentre {
     private var publishedTrack: Int64?
     private var publishedState: PlayState?
     private var publishedPosition: UInt64 = 0
+    /// Which track's artwork actually made it into the published info.
+    ///
+    /// Art arrives after the track does — on a remote library the fetch is an
+    /// HTTP round trip — so the first publish for a track carries none, and
+    /// without this nothing would ever publish it: the guard below sees an
+    /// unchanged track, an unchanged state and no seek, and returns.
+    private var publishedArtwork: Int64?
+    /// The track a fetch has already been started for, so a record with no art
+    /// doesn't start one on every tick.
+    private var requestedArtwork: Int64?
 
     init(player: PlayerModel, art: CoverArtCache) {
         self.player = player
@@ -92,10 +102,15 @@ final class NowPlayingCentre {
             return
         }
 
-        // Republish on a track change, a state change, or a jump the system
-        // couldn't have extrapolated — a seek, in other words.
+        // Republish on a track change, a state change, a jump the system
+        // couldn't have extrapolated — a seek, in other words — or the artwork
+        // finally arriving.
+        let artwork = entry.trackId.flatMap { art.cached(.track($0)) }
         let drifted = abs(Int64(now.positionMs) - Int64(publishedPosition)) > 2000
-        guard entry.trackId != publishedTrack || now.state != publishedState || drifted else {
+        let artworkArrived = artwork != nil && publishedArtwork != entry.trackId
+        guard entry.trackId != publishedTrack || now.state != publishedState || drifted
+            || artworkArrived
+        else {
             return
         }
 
@@ -109,10 +124,7 @@ final class NowPlayingCentre {
         if now.durationMs > 0 {
             info[MPMediaItemPropertyPlaybackDuration] = Double(now.durationMs) / 1000
         }
-        // Whatever is already loaded — the transport bar is showing this same
-        // cover, so it usually is. Fetching here would put a network round trip
-        // on the path of every position update.
-        if let trackId = entry.trackId, let image = art.cached(.track(trackId)) {
+        if let image = artwork {
             info[MPMediaItemPropertyArtwork] = Self.artwork(for: image)
         }
 
@@ -126,5 +138,24 @@ final class NowPlayingCentre {
         publishedTrack = entry.trackId
         publishedState = now.state
         publishedPosition = now.positionMs
+        publishedArtwork = artwork == nil ? nil : entry.trackId
+
+        if artwork == nil, let trackId = entry.trackId {
+            fetchArtwork(trackId)
+        }
+    }
+
+    /// Load the cover so a later `refresh` finds it.
+    ///
+    /// The transport bar asks for this same key, but relying on that makes Now
+    /// Playing depend on a view being on screen. The cache shares one fetch per
+    /// key, so asking twice costs nothing.
+    private func fetchArtwork(_ trackId: Int64) {
+        guard requestedArtwork != trackId else { return }
+        requestedArtwork = trackId
+        Task {
+            _ = await art.image(for: .track(trackId))
+            refresh()
+        }
     }
 }

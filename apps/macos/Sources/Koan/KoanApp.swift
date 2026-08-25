@@ -48,6 +48,11 @@ final class AppState {
         activity.mirror("Scanning library") { engine.isAutoScanning() }
         activity.cancelLibraryTask = { engine.cancelLibraryTask() }
 
+        // A finished download changes the library's cached count and nothing
+        // else would say so — the count is a database read, and the download
+        // ran in the engine.
+        player.onDownloadsLanded = { [weak library] in library?.loadStats() }
+
         // Control Center and the media keys ride the player's existing poll.
         let centre = NowPlayingCentre(player: player, art: art)
         self.nowPlaying = centre

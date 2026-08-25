@@ -78,6 +78,15 @@ pub enum PlayerEvent {
     QueueChanged { version: u64 },
     /// Playback position, while playing.
     PositionChanged { position_ms: u64 },
+    /// What is downloading, and how far each has got.
+    ///
+    /// Separate from `QueueChanged` because progress moves several times a
+    /// second while the queue itself does not — announcing it as a queue change
+    /// makes every client refetch the whole list for a byte counter, which is
+    /// the thing the version guard exists to avoid. An empty list means nothing
+    /// is in flight any more, which is also how a client learns a download
+    /// finished.
+    DownloadsChanged { downloads: Vec<DownloadProgress> },
 }
 
 /// Reports how far a long task has got.
@@ -1789,7 +1798,7 @@ impl KoanEngine {
                 let mut last_version = u64::MAX;
                 let mut last_position = u64::MAX;
                 let mut last_signature: Option<(PlaybackState, Option<String>)> = None;
-                let mut ticks_since_download_nudge = 0u32;
+                let mut last_downloads: Vec<DownloadProgress> = Vec::new();
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -1817,17 +1826,24 @@ impl KoanEngine {
                     if version != last_version {
                         last_version = version;
                         publish(PlayerEvent::QueueChanged { version });
-                        ticks_since_download_nudge = 0;
-                    } else if !engine.state.pending_downloads().is_empty() {
-                        // Download progress moves without bumping the version,
-                        // so nothing above would announce it. Once a second is
-                        // plenty for a progress bar and keeps the client from
-                        // having to poll for the one thing events don't cover.
-                        ticks_since_download_nudge += 1;
-                        if ticks_since_download_nudge >= 10 {
-                            ticks_since_download_nudge = 0;
-                            publish(PlayerEvent::QueueChanged { version });
-                        }
+                    }
+
+                    // Progress moves without the version moving, so it gets its
+                    // own event — one per tick while bytes are landing, and one
+                    // empty list when the last transfer ends.
+                    let downloads: Vec<DownloadProgress> = engine
+                        .state
+                        .downloads_in_flight()
+                        .into_iter()
+                        .map(|(id, done, total)| DownloadProgress {
+                            queue_item_id: id.0.to_string(),
+                            progress: (total > 0)
+                                .then(|| (done as f64 / total as f64).clamp(0.0, 1.0)),
+                        })
+                        .collect();
+                    if downloads != last_downloads {
+                        last_downloads = downloads.clone();
+                        publish(PlayerEvent::DownloadsChanged { downloads });
                     }
 
                     // Only while playing: a paused position doesn't move, and

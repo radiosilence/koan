@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The Now Playing widget had no cover on it.** Control Center, the lock screen and the media-key HUD showed the title and the artist against a blank square. Now Playing was only ever handed the artwork if the cover happened to already be in the cache at the instant the track started — and it never is: fetching it is an HTTP round trip on a remote library, and it lands a moment later. By then the guard that stops a 10 Hz poll republishing unchanged metadata saw the same track, the same state and no seek, and returned. The art arriving is now a reason to republish, and Now Playing asks for the cover itself rather than hoping the transport bar's request has landed, so it works with the window closed.
+
+- **The cached count sat still while an album downloaded.** "N of M remote cached" in the sidebar was read once at launch and again after a scan or a sync, and a download is neither — the count moved in the database and nothing told the library to look again. A finished transfer refreshes it now.
+
+- **Download progress juddered, and everything else slowed down while it ran.** Progress was announced by rewriting the queue item's load state after every 64KB — which took the playlist write lock and bumped the queue version, a thousand times a transfer, five transfers at once. Every front end reads that version as "the queue changed", so the macOS app was refetching the whole queue across the FFI ten to twenty times a second for what is a byte counter.
+
+  The load state says *that* a download is running and hands out the counter; the counter is where progress lives, and the download thread writes it without taking a lock at all. It is announced once per attempt. Progress reaches the macOS app as its own event instead of as a queue change, so it moves at 10 Hz without anything being rebuilt — and the last few tracks of an album no longer freeze at whatever fraction they had reached, which is what happened when nothing was left *waiting* to download and the old nudge stopped firing.
+
 ### Changed
 
 - **The format badge says when the output is being resampled.** koan switches the device to the source rate, and when a device refuses — MPEG-2 and MPEG-2.5 MP3 rates routinely are — the system resamples to reach it. The player has always known which of those happened, because `set_device_sample_rate` returns the rate the device settled at, and it compared the two and wrote a line to the log. Nothing else ever saw it. Meanwhile the badge showed the source format either way, captioned "koan matches the device rate rather than resampling" — an unconditional claim that is false in exactly the case worth knowing about.

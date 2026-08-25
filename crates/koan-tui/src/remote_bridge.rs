@@ -190,16 +190,20 @@ fn download_and_play(
     let bytes_written = Arc::new(AtomicU64::new(0));
     let stream_ready_sent = std::sync::atomic::AtomicBool::new(false);
 
+    // Once per attempt, not per chunk — see `helpers::download_track`. The
+    // counter carries progress; the load state only carries the fact.
+    let announced_total = AtomicU64::new(u64::MAX);
     let result = streamer.stream_to_file(&track_id.to_string(), dest, |downloaded, total| {
         bytes_written.store(downloaded, Ordering::Release);
-        state.update_load_state(
-            queue_id,
-            LoadState::Downloading {
-                downloaded,
-                total,
-                bytes_written: bytes_written.clone(),
-            },
-        );
+        if announced_total.swap(total, Ordering::Relaxed) != total {
+            state.update_load_state(
+                queue_id,
+                LoadState::Downloading {
+                    total,
+                    bytes_written: bytes_written.clone(),
+                },
+            );
+        }
         if !stream_ready_sent.load(Ordering::Relaxed)
             && downloaded >= koan_core::player::state::STREAM_THRESHOLD
         {
