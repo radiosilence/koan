@@ -14,7 +14,6 @@ import SwiftUI
 /// usual play/queue menu, but there is nothing here to reorder or remove.
 struct HistoryView: View {
     @Environment(LibraryModel.self) private var library
-    @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
     @State private var selection: Set<Int64> = []
     @State private var confirmingClear = false
@@ -92,7 +91,6 @@ struct HistoryView: View {
         let chosen = tracks(for: ids)
         guard !chosen.isEmpty else { return }
         player.playNow(trackIds: chosen.map(\.id))
-        nav.showQueueWhenReady(watching: player)
     }
 
     /// Forgets the selected plays. The tracks themselves are untouched —
@@ -111,10 +109,7 @@ struct HistoryView: View {
             PlayableMenu(playable: .track(track))
         } else if !chosen.isEmpty {
             let trackIds = chosen.map(\.id)
-            Button("Play") {
-                player.playNow(trackIds: trackIds)
-                nav.showQueueWhenReady(watching: player)
-            }
+            Button("Play") { player.playNow(trackIds: trackIds) }
             Button("Play Next") { player.playNext(trackIds: trackIds) }
             Button("Add to Queue") { player.enqueue(trackIds: trackIds) }
         }
