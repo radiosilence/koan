@@ -7,11 +7,12 @@ macOS and a full-screen terminal UI — over the same library, the same config a
 the same output. Bit-perfect playback, gapless transitions, fast library
 indexing, Subsonic/Navidrome integration, fb2k-style format strings.
 
-<img width="1405" height="905" alt="The macOS app" src="https://github.com/user-attachments/assets/c0ac41f2-3cde-4ad4-8aa4-e53859d6559d" />
 
 <img width="1413" height="956" alt="An album in the macOS app" src="https://github.com/user-attachments/assets/8ec2f049-524a-4437-8bf3-91172c6b4f26" />
 
 <img width="1630" height="1167" alt="The library in the macOS app" src="https://github.com/user-attachments/assets/cb7f9ca0-61eb-4e7e-bebc-43fbc11a7c78" />
+
+<img width="1405" height="905" alt="The macOS app albums view" src="https://github.com/user-attachments/assets/c0ac41f2-3cde-4ad4-8aa4-e53859d6559d" />
 
 <img width="874" height="942" alt="The TUI" src="https://github.com/user-attachments/assets/99782de3-5683-4dd9-97b6-10782e8e4099" />
 
