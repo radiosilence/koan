@@ -191,13 +191,12 @@ folders = [{folders_str}]
 
 /// Generate config.toml content with all defaults commented out.
 /// User's existing values stay uncommented. Keys already in config.local.toml are skipped.
-/// Sections that belong in config.local.toml (library, remote) are excluded entirely.
+///
+/// Only shared settings are listed: `config::layer_of` decides, so the template
+/// and koan's own writes can never disagree about what belongs here.
 fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>) -> String {
     let defaults = config::Config::default();
     let default_toml = toml::to_string_pretty(&defaults).expect("default config serializes");
-
-    // Sections that should never appear in config.toml (machine-specific / sensitive).
-    let skip_sections = ["library", "remote"];
 
     let mut output = String::from(
         "# koan — shareable defaults (safe to commit to dotfiles)\n\
@@ -205,7 +204,6 @@ fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>)
     );
 
     let mut current_section = String::new();
-    let mut skip = false;
     let mut section_buf = String::new();
     let mut section_has_content = false;
 
@@ -222,19 +220,12 @@ fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>)
             section_buf.clear();
             section_has_content = false;
 
-            let section = trimmed.trim_start_matches('[').trim_end_matches(']');
-            let top_level = section.split('.').next().unwrap_or(section);
-            skip = skip_sections.contains(&top_level);
-
-            if !skip {
-                current_section = section.to_string();
-                section_buf.push_str(line);
-                section_buf.push('\n');
-            }
-            continue;
-        }
-
-        if skip {
+            current_section = trimmed
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_string();
+            section_buf.push_str(line);
+            section_buf.push('\n');
             continue;
         }
 
@@ -246,6 +237,12 @@ fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>)
         // key = value line.
         if let Some((key, default_val_str)) = trimmed.split_once(" = ") {
             let key = key.trim();
+
+            // Machine-scoped settings live in config.local.toml; listing them
+            // here, even commented, invites them into a dotfiles repo.
+            if config::layer_of(&format!("{}.{}", current_section, key)) == config::Layer::Machine {
+                continue;
+            }
 
             let base_section = existing_base
                 .get(&current_section)
@@ -272,9 +269,7 @@ fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>)
     let default_val = toml::Value::try_from(&defaults).expect("default config serializes");
     let default_table = default_val.as_table().unwrap();
     for (section_name, section_val) in existing_base {
-        if default_table.contains_key(section_name)
-            || skip_sections.contains(&section_name.as_str())
-        {
+        if default_table.contains_key(section_name) {
             continue;
         }
         if let Some(table) = section_val.as_table() {

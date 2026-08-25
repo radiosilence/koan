@@ -618,14 +618,14 @@ pub fn set_remote_credentials(
     SubsonicClient::new(url, username, password).ping()?;
     crate::credentials::store_password(url, password)?;
 
-    let mut values = toml::map::Map::new();
-    values.insert("enabled".into(), toml::Value::Boolean(true));
-    values.insert("url".into(), toml::Value::String(url.to_string()));
-    values.insert("username".into(), toml::Value::String(username.to_string()));
-    // Explicitly emptied: a password left here would keep being read by anything
-    // still preferring the config copy.
-    values.insert("password".into(), toml::Value::String(String::new()));
-    Config::patch_local("remote", &values)?;
+    Config::persist(|cfg| {
+        cfg.remote.enabled = true;
+        cfg.remote.url = url.to_string();
+        cfg.remote.username = username.to_string();
+        // Explicitly emptied: a password left here would keep being read by
+        // anything still preferring the config copy.
+        cfg.remote.password = String::new();
+    })?;
     Ok(())
 }
 

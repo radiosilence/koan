@@ -22,13 +22,12 @@ pub fn cmd_remote_login(url: &str, username: &str) {
         }
     }
 
-    // Patch only the [remote] section in config.local.toml — don't touch other sections.
-    let mut remote_vals = toml::map::Map::new();
-    remote_vals.insert("enabled".into(), toml::Value::Boolean(true));
-    remote_vals.insert("url".into(), toml::Value::String(url.to_string()));
-    remote_vals.insert("username".into(), toml::Value::String(username.to_string()));
-    remote_vals.insert("password".into(), toml::Value::String(password));
-    if let Err(e) = config::Config::patch_local("remote", &remote_vals) {
+    if let Err(e) = config::Config::persist(|cfg| {
+        cfg.remote.enabled = true;
+        cfg.remote.url = url.to_string();
+        cfg.remote.username = username.to_string();
+        cfg.remote.password = password;
+    }) {
         eprintln!("{} {}", "config error:".red().bold(), e);
         std::process::exit(1);
     }

@@ -33,22 +33,21 @@ pub struct Config {
     pub radio: RadioConfig,
     pub graphql: GraphqlConfig,
     pub subsonic: SubsonicConfig,
-    pub discovery: DiscoveryConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LibraryConfig {
     pub folders: Vec<PathBuf>,
+    /// Run acoustic analysis as part of every scan rather than only on
+    /// `koan scan --analyze`. It roughly doubles a scan, so it is off.
+    pub analyze_on_scan: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlaybackConfig {
     pub replaygain: ReplayGainMode,
-    /// Ticker scroll speed in frames-per-second (default: 8).
-    /// The title scrolls one character per frame. Higher = faster scroll.
-    pub ticker_fps: u8,
     /// UI render rate in frames-per-second (default: 60).
     /// Controls how often the TUI redraws. 30, 60, or 120 are typical values.
     pub target_fps: u8,
@@ -112,6 +111,7 @@ impl Default for LibraryConfig {
         });
         Self {
             folders: vec![music_dir],
+            analyze_on_scan: false,
         }
     }
 }
@@ -120,7 +120,6 @@ impl Default for PlaybackConfig {
     fn default() -> Self {
         Self {
             replaygain: ReplayGainMode::Off,
-            ticker_fps: 8,
             target_fps: 60,
             show_fps: false,
             pre_amp_db: 0.0,
@@ -235,7 +234,7 @@ pub fn parse_size_bytes(s: &str) -> Option<u64> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OrganizeConfig {
-    /// Default named pattern to use when --pattern is omitted.
+    /// Named pattern preselected when an organize sheet or modal opens.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default: Option<String>,
     /// Named patterns — keys are names, values are format strings.
@@ -258,25 +257,6 @@ impl Default for OrganizeConfig {
     }
 }
 
-impl OrganizeConfig {
-    /// Resolve a pattern argument: if it matches a named pattern, return the stored
-    /// format string. Otherwise return it as-is (raw format string).
-    pub fn resolve_pattern<'a>(&'a self, name_or_raw: &'a str) -> &'a str {
-        self.patterns
-            .get(name_or_raw)
-            .map(|s| s.as_str())
-            .unwrap_or(name_or_raw)
-    }
-
-    /// Get the default pattern's format string, if configured.
-    pub fn default_pattern(&self) -> Option<&str> {
-        self.default
-            .as_ref()
-            .and_then(|name| self.patterns.get(name))
-            .map(|s| s.as_str())
-    }
-}
-
 /// GraphQL API server configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -292,9 +272,6 @@ pub struct GraphqlConfig {
     pub bind: std::net::IpAddr,
     /// Enable GraphiQL web IDE at GET /graphql.
     pub playground: bool,
-    /// Enable Subsonic REST API on this port. Omit or null to disable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub subsonic_port: Option<u16>,
     /// Require authentication for API access (default: true).
     /// When false, all requests are treated as admin. When true, JWT auth is enforced.
     pub auth_enabled: bool,
@@ -332,7 +309,6 @@ impl Default for GraphqlConfig {
             port: 4000,
             bind: default_bind(),
             playground: false,
-            subsonic_port: None,
             auth_enabled: true,
             access_token_ttl: "15m".into(),
             refresh_token_ttl: "30d".into(),
@@ -355,7 +331,13 @@ impl Default for GraphqlConfig {
 #[serde(default)]
 pub struct SubsonicConfig {
     /// Serve `/rest/*`. Off unless explicitly enabled.
+    ///
+    /// The routes are mounted on the GraphQL port. `port` adds a second
+    /// listener for clients that expect Subsonic on one of its own.
     pub enabled: bool,
+    /// Serve `/rest/*` on a dedicated port as well as the GraphQL one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
     /// Username Subsonic clients authenticate as.
     pub username: String,
     /// Shared secret. Prefer the OS keychain (`koan subsonic setup`); this field
@@ -368,6 +350,7 @@ impl Default for SubsonicConfig {
     fn default() -> Self {
         Self {
             enabled: false,
+            port: None,
             username: "koan".into(),
             password: String::new(),
         }
@@ -382,8 +365,6 @@ pub struct RadioConfig {
     pub lookahead: usize,
     /// Number of tracks to add each time the queue runs low.
     pub batch_size: usize,
-    /// Use Subsonic getSimilarSongs2 when a remote server is configured.
-    pub use_subsonic: bool,
     /// Don't repeat any of the last N tracks (play history exclusion window).
     pub history_window: usize,
     /// Number of recently played tracks to use as seed (drifting seed window).
@@ -398,7 +379,6 @@ impl Default for RadioConfig {
         Self {
             lookahead: 5,
             batch_size: 5,
-            use_subsonic: true,
             history_window: 200,
             seed_window: 5,
             discovery_weight: 0.3,
@@ -406,22 +386,50 @@ impl Default for RadioConfig {
     }
 }
 
-/// Acoustic analysis / discovery configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct DiscoveryConfig {
-    /// Run acoustic analysis automatically after library scan (default: false).
-    pub analysis_on_scan: bool,
-    /// Weight for acoustic similarity signal in radio mode scoring (0.0..1.0).
-    pub acoustic_weight: f64,
+/// Which of the two files a setting is written to when koan changes it itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Layer {
+    /// `config.toml` — taste, meaningful on any machine, safe in a dotfiles repo.
+    Shared,
+    /// `config.local.toml` — belongs to this machine and nowhere else.
+    Machine,
 }
 
-impl Default for DiscoveryConfig {
-    fn default() -> Self {
-        Self {
-            analysis_on_scan: false,
-            acoustic_weight: 0.5,
-        }
+/// Where the setting at a dotted path belongs.
+///
+/// `config.toml` is meant to be committed to a dotfiles repo, so three kinds of
+/// setting have no business in it: secrets, anything naming this machine's
+/// hardware, paths or account, and UI state that a keypress flips — the last
+/// kind would rewrite the shared file every session and land on the next
+/// machine as someone else's window size.
+///
+/// Anything not named here is taste, and taste travels.
+pub fn layer_of(path: &str) -> Layer {
+    match path {
+        // Secrets.
+        "remote.password"
+        | "subsonic.password"
+        // This machine's paths, disk and account.
+        | "library.folders"
+        | "remote.enabled"
+        | "remote.url"
+        | "remote.username"
+        | "remote.cache_dir"
+        | "remote.cache_limit"
+        // This machine's hardware.
+        | "playback.output_device"
+        // Which machine serves Subsonic, and as whom. Enabling a REST API is a
+        // decision about one host, and the secret guarding it is per-machine.
+        | "subsonic.enabled"
+        | "subsonic.port"
+        | "subsonic.username"
+        // Volatile: UI state behind a keybind or a mouse drag.
+        | "playback.art_size"
+        | "visualizer.enabled"
+        | "visualizer.mode"
+        | "visualizer.matrix_overlay"
+        | "visualizer.bass_shake" => Layer::Machine,
+        _ => Layer::Shared,
     }
 }
 
@@ -518,72 +526,68 @@ impl Config {
         Ok(config)
     }
 
-    /// Patch config.toml with a mutation closure. Reads the base file only (not
-    /// config.local.toml or env vars), applies the closure, writes back.
-    /// This prevents secrets from config.local.toml or env vars leaking into config.toml.
-    pub fn update_base<F>(mutate: F) -> Result<(), ConfigError>
+    /// The two files merged, without the env layer.
+    ///
+    /// `persist` diffs against this rather than against `config.toml` alone, so
+    /// a mutation setting a value the user already has writes nothing at all.
+    /// `KOAN_*` is left out because there is no file to write it back to.
+    fn from_files() -> Result<Self, ConfigError> {
+        Figment::from(Serialized::defaults(Config::default()))
+            .merge(Toml::file(config_file_path()))
+            .merge(Toml::file(config_local_file_path()))
+            .extract()
+            .map_err(|e| ConfigError::Figment(Box::new(e)))
+    }
+
+    /// Apply a mutation and write each changed setting to the file that owns it.
+    ///
+    /// Only what the closure actually changed is written, so comments, layout
+    /// and every untouched key survive — including the commented-out defaults
+    /// `koan config init` leaves as a reference. `layer_of` decides the file.
+    ///
+    /// A shared write also clears any copy of that key from
+    /// `config.local.toml`: the local layer wins, so leaving one there would
+    /// make the write silently do nothing. A machine write clears the key from
+    /// `config.toml` for the same reason in reverse, which drains settings that
+    /// older versions of koan wrongly wrote to the shared file.
+    pub fn persist<F>(mutate: F) -> Result<(), ConfigError>
     where
         F: FnOnce(&mut Config),
     {
-        let path = config_file_path();
-        let mut cfg = if path.exists() {
-            Config::load_from(&path)?
-        } else {
-            Config::default()
-        };
-        mutate(&mut cfg);
-        cfg.write_to(&path)?;
-        Self::invalidate_cache();
-        Ok(())
-    }
+        let before = Self::from_files()?;
+        let mut after = before.clone();
+        mutate(&mut after);
 
-    /// Write this config to a specific path as TOML.
-    fn write_to(&self, path: &Path) -> Result<(), ConfigError> {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        let contents = toml::to_string_pretty(self)?;
-        fs::write(path, contents)?;
-        Ok(())
-    }
-
-    /// Patch a single section in config.local.toml, preserving all other content.
-    /// Creates the file if it doesn't exist. Sets 0o600 permissions on Unix.
-    pub fn patch_local(
-        section: &str,
-        values: &toml::map::Map<String, toml::Value>,
-    ) -> Result<(), ConfigError> {
-        let path = config_local_file_path();
-        let mut doc: toml::Value = if path.exists() {
-            let contents = fs::read_to_string(&path)?;
-            toml::from_str(&contents).unwrap_or_else(|_| toml::Value::Table(toml::map::Map::new()))
-        } else {
-            toml::Value::Table(toml::map::Map::new())
-        };
-
-        let table = doc.as_table_mut().expect("root is always a table");
-        let section_table = table
-            .entry(section)
-            .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
-            .as_table_mut()
-            .ok_or_else(|| {
-                ConfigError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("[{}] is not a table", section),
-                ))
-            })?;
-
-        for (key, value) in values {
-            section_table.insert(key.clone(), value.clone());
+        let mut changes = Vec::new();
+        diff_into(
+            "",
+            &toml::Value::try_from(&before)?,
+            &toml::Value::try_from(&after)?,
+            &mut changes,
+        );
+        if changes.is_empty() {
+            return Ok(());
         }
 
-        let contents = toml::to_string_pretty(&doc)?;
-        fs::write(&path, contents)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
+        let base_path = config_file_path();
+        let local_path = config_local_file_path();
+        let mut base = read_document(&base_path)?;
+        let mut local = read_document(&local_path)?;
+
+        for (path, value) in &changes {
+            let (target, other) = match layer_of(path) {
+                Layer::Shared => (&mut base, &mut local),
+                Layer::Machine => (&mut local, &mut base),
+            };
+            match value {
+                Some(v) => doc_set(target, path, v),
+                None => doc_remove(target, path),
+            }
+            doc_remove(other, path);
         }
+
+        write_document(&base_path, &base, false)?;
+        write_document(&local_path, &local, true)?;
         Self::invalidate_cache();
         Ok(())
     }
@@ -602,6 +606,152 @@ impl Config {
             .cache_limit
             .as_deref()
             .and_then(parse_size_bytes)
+    }
+}
+
+/// Collect the leaf settings that differ between two serialized configs, as
+/// `(dotted path, new value)`. `None` means the key is gone and should be
+/// removed rather than written — which is how an emptied password or a cleared
+/// output device reaches the file as an absent key rather than a blank one.
+fn diff_into(
+    prefix: &str,
+    before: &toml::Value,
+    after: &toml::Value,
+    out: &mut Vec<(String, Option<toml::Value>)>,
+) {
+    let (b, a) = match (before.as_table(), after.as_table()) {
+        (Some(b), Some(a)) => (b, a),
+        _ => {
+            if before != after {
+                out.push((prefix.to_string(), Some(after.clone())));
+            }
+            return;
+        }
+    };
+
+    let empty = toml::Value::Table(toml::map::Map::new());
+    for key in b
+        .keys()
+        .chain(a.keys())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{prefix}.{key}")
+        };
+        match (b.get(key), a.get(key)) {
+            (Some(bv), Some(av)) => diff_into(&path, bv, av, out),
+            // Newly present: recurse into tables so a new pattern writes one
+            // key rather than replacing the whole table.
+            (None, Some(av)) => diff_into(&path, &empty, av, out),
+            (Some(_), None) => out.push((path, None)),
+            (None, None) => unreachable!("key came from one of the two tables"),
+        }
+    }
+}
+
+fn read_document(path: &Path) -> Result<toml_edit::DocumentMut, ConfigError> {
+    let Ok(contents) = fs::read_to_string(path) else {
+        return Ok(toml_edit::DocumentMut::new());
+    };
+    contents
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| ConfigError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
+}
+
+/// Write a document, skipping files that would be created empty. `secret` marks
+/// the file 0o600 — it is the one that holds passwords.
+fn write_document(
+    path: &Path,
+    doc: &toml_edit::DocumentMut,
+    secret: bool,
+) -> Result<(), ConfigError> {
+    let contents = doc.to_string();
+    if contents.trim().is_empty() && !path.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(path, contents)?;
+    #[cfg(unix)]
+    if secret {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    }
+    #[cfg(not(unix))]
+    let _ = secret;
+    Ok(())
+}
+
+fn implicit_table() -> toml_edit::Item {
+    let mut table = toml_edit::Table::new();
+    // Implicit: the header prints only if the table ends up holding something,
+    // so writing a nested key never leaves a bare `[organize]` behind.
+    table.set_implicit(true);
+    toml_edit::Item::Table(table)
+}
+
+fn doc_set(doc: &mut toml_edit::DocumentMut, path: &str, value: &toml::Value) {
+    let segments: Vec<&str> = path.split('.').collect();
+    let (last, parents) = segments.split_last().expect("a diffed path is never empty");
+
+    let mut table = doc.as_table_mut();
+    for segment in parents {
+        let item = table.entry(segment).or_insert_with(implicit_table);
+        // A scalar sitting where a section belongs is malformed either way;
+        // the setting koan is writing wins.
+        if !item.is_table() {
+            *item = implicit_table();
+        }
+        table = item.as_table_mut().expect("just ensured it is a table");
+    }
+    // Comments attach to the key, and `insert` replaces the key. Overwrite the
+    // value in place where one already exists so the line keeps its notes.
+    match table.get_mut(last) {
+        Some(existing) => *existing = toml_edit::value(to_edit_value(value)),
+        None => {
+            table.insert(last, toml_edit::value(to_edit_value(value)));
+        }
+    }
+}
+
+fn doc_remove(doc: &mut toml_edit::DocumentMut, path: &str) {
+    let segments: Vec<&str> = path.split('.').collect();
+    let (last, parents) = segments.split_last().expect("a diffed path is never empty");
+
+    let mut table = doc.as_table_mut();
+    for segment in parents {
+        match table.get_mut(segment).and_then(|i| i.as_table_mut()) {
+            Some(child) => table = child,
+            None => return,
+        }
+    }
+    // An emptied table keeps its header: it still carries the commented-out
+    // defaults `koan config init` wrote, and those are the reference.
+    table.remove(last);
+}
+
+fn to_edit_value(value: &toml::Value) -> toml_edit::Value {
+    match value {
+        toml::Value::String(s) => s.as_str().into(),
+        toml::Value::Integer(i) => (*i).into(),
+        toml::Value::Float(f) => (*f).into(),
+        toml::Value::Boolean(b) => (*b).into(),
+        toml::Value::Datetime(d) => d.to_string().into(),
+        toml::Value::Array(items) => items
+            .iter()
+            .map(to_edit_value)
+            .collect::<toml_edit::Array>()
+            .into(),
+        toml::Value::Table(t) => {
+            let mut inline = toml_edit::InlineTable::new();
+            for (k, v) in t {
+                inline.insert(k, to_edit_value(v));
+            }
+            inline.into()
+        }
     }
 }
 
@@ -809,10 +959,10 @@ replaygain = "track"
     fn test_partial_toml_uses_defaults() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("partial.toml");
-        fs::write(&path, "[playback]\nticker_fps = 12\n").unwrap();
+        fs::write(&path, "[playback]\ntarget_fps = 30\n").unwrap();
 
         let cfg = Config::load_from(&path).unwrap();
-        assert_eq!(cfg.playback.ticker_fps, 12);
+        assert_eq!(cfg.playback.target_fps, 30);
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Off);
     }
 
@@ -930,56 +1080,6 @@ url = "https://file.example.com"
     }
 
     #[test]
-    fn test_update_base_does_not_leak_secrets() {
-        let dir = tempfile::tempdir().unwrap();
-        let base_path = dir.path().join("config.toml");
-
-        // Write an initial base config.
-        fs::write(
-            &base_path,
-            r#"
-[playback]
-target_fps = 60
-
-[remote]
-url = "https://base.example.com"
-"#,
-        )
-        .unwrap();
-
-        // Simulate: update_base patches base config only.
-        let mut base_cfg = Config::load_from(&base_path).unwrap();
-        base_cfg.visualizer.enabled = false;
-        base_cfg.write_to(&base_path).unwrap();
-
-        // Verify: no password leaked into config.toml.
-        let written = fs::read_to_string(&base_path).unwrap();
-        assert!(!written.contains("secret"));
-        assert!(!written.contains("password"));
-
-        // Verify the field was saved.
-        let reloaded = Config::load_from(&base_path).unwrap();
-        assert!(!reloaded.visualizer.enabled);
-        assert_eq!(reloaded.remote.url, "https://base.example.com");
-    }
-
-    #[test]
-    fn test_subsonic_defaults_off_and_keeps_secret_out_of_base_config() {
-        let cfg = Config::default();
-        assert!(!cfg.subsonic.enabled);
-        assert!(cfg.subsonic.password.is_empty());
-
-        // Serialising a config never invents a `password` key, so a base
-        // config.toml rewritten by any other setting cannot acquire one.
-        let dir = tempfile::tempdir().unwrap();
-        let base_path = dir.path().join("config.toml");
-        cfg.write_to(&base_path).unwrap();
-        let written = fs::read_to_string(&base_path).unwrap();
-        assert!(written.contains("[subsonic]"));
-        assert!(!written.contains("password"));
-    }
-
-    #[test]
     fn test_cache_dir_default() {
         let cfg = Config::default();
         assert!(cfg.cache_dir().ends_with("cache"));
@@ -1023,39 +1123,6 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,%album%
         assert!(cfg.organize.patterns.contains_key("va-aware"));
 
         fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn test_organize_resolve_named_pattern() {
-        let mut cfg = OrganizeConfig::default();
-        cfg.patterns
-            .insert("standard".into(), "%artist%/%title%".into());
-
-        assert_eq!(cfg.resolve_pattern("standard"), "%artist%/%title%");
-        // Unknown name falls through as raw pattern
-        assert_eq!(cfg.resolve_pattern("%raw%pattern%"), "%raw%pattern%");
-    }
-
-    #[test]
-    fn test_organize_default_pattern() {
-        let mut cfg = OrganizeConfig {
-            default: Some("standard".into()),
-            ..OrganizeConfig::default()
-        };
-        cfg.patterns
-            .insert("standard".into(), "%artist%/%title%".into());
-
-        assert_eq!(cfg.default_pattern(), Some("%artist%/%title%"));
-    }
-
-    #[test]
-    fn test_organize_default_pattern_missing_name() {
-        let cfg = OrganizeConfig {
-            default: Some("nonexistent".into()),
-            ..OrganizeConfig::default()
-        };
-        // Name doesn't match any pattern → None
-        assert_eq!(cfg.default_pattern(), None);
     }
 
     #[test]
@@ -1350,5 +1417,206 @@ fps = 30
             !Arc::ptr_eq(&first, &Config::cached()),
             "koan's own writes invalidate explicitly; the next read must re-parse"
         );
+    }
+
+    // ---- persist: which file a setting lands in -------------------------
+
+    /// `persist` reads and writes process-global paths, so these run one at a
+    /// time rather than racing each other through `set_config_dir`.
+    static PERSIST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Point config at a fresh directory and hand back (base, local) paths.
+    fn persist_sandbox(name: &str) -> (PathBuf, PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("koan-persist-{}-{}", name, std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        set_config_dir(&dir);
+        (config_file_path(), config_local_file_path())
+    }
+
+    #[test]
+    fn persist_keeps_comments_and_untouched_keys() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, _local) = persist_sandbox("comments");
+        fs::write(
+            &base,
+            "# koan — shareable defaults\n\n[visualizer]\n# fps = 60\npalette = \"fire\"\n",
+        )
+        .unwrap();
+
+        Config::persist(|cfg| cfg.visualizer.palette = "neon".into()).unwrap();
+
+        let written = fs::read_to_string(&base).unwrap();
+        assert!(
+            written.contains("# koan — shareable defaults"),
+            "the header comment must survive a write: {written}"
+        );
+        assert!(
+            written.contains("# fps = 60"),
+            "commented-out defaults are the template's whole point: {written}"
+        );
+        assert!(written.contains("palette = \"neon\""));
+        assert!(
+            !written.contains("[graphql]"),
+            "an untouched section must not be invented: {written}"
+        );
+    }
+
+    #[test]
+    fn persist_routes_machine_settings_to_the_local_file() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, local) = persist_sandbox("routing");
+
+        Config::persist(|cfg| {
+            cfg.playback.replaygain = ReplayGainMode::Album;
+            cfg.playback.output_device = Some("My DAC".into());
+            cfg.playback.art_size = 40;
+            cfg.visualizer.mode = "starfield".into();
+        })
+        .unwrap();
+
+        let shared = fs::read_to_string(&base).unwrap();
+        let machine = fs::read_to_string(&local).unwrap();
+
+        assert!(shared.contains("replaygain = \"album\""), "{shared}");
+        for machine_only in ["output_device", "art_size", "starfield"] {
+            assert!(
+                !shared.contains(machine_only),
+                "{machine_only} is this machine's, not the dotfiles repo's: {shared}"
+            );
+            assert!(machine.contains(machine_only), "{machine}");
+        }
+    }
+
+    #[test]
+    fn persist_never_writes_the_default_library_folder_into_the_shared_file() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, _local) = persist_sandbox("folders");
+
+        // Toggling the visualiser used to serialise the whole struct, baking
+        // the *default* music directory into the file people commit.
+        Config::persist(|cfg| cfg.visualizer.enabled = false).unwrap();
+
+        let shared = fs::read_to_string(&base).unwrap_or_default();
+        assert!(
+            !shared.contains("folders"),
+            "a visualiser toggle must not invent library folders: {shared}"
+        );
+    }
+
+    #[test]
+    fn persist_drains_machine_settings_an_older_koan_left_in_the_shared_file() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, local) = persist_sandbox("drain");
+        fs::write(&base, "[playback]\nart_size = 24\ntarget_fps = 60\n").unwrap();
+
+        Config::persist(|cfg| cfg.playback.art_size = 48).unwrap();
+
+        let shared = fs::read_to_string(&base).unwrap();
+        assert!(
+            !shared.contains("art_size"),
+            "the stale shared copy has to go, or dotfiles keep carrying it: {shared}"
+        );
+        assert!(shared.contains("target_fps"), "{shared}");
+        assert!(
+            fs::read_to_string(&local)
+                .unwrap()
+                .contains("art_size = 48")
+        );
+    }
+
+    #[test]
+    fn persist_clears_the_local_copy_so_a_shared_write_takes_effect() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (_base, local) = persist_sandbox("shadow");
+        fs::write(&local, "[playback]\ntarget_fps = 30\n").unwrap();
+
+        Config::persist(|cfg| cfg.playback.target_fps = 120).unwrap();
+
+        assert_eq!(
+            Config::from_files().unwrap().playback.target_fps,
+            120,
+            "local wins the merge, so a shared write over a local copy would \
+             otherwise be silently ignored: {}",
+            fs::read_to_string(&local).unwrap()
+        );
+    }
+
+    #[test]
+    fn persist_writes_nothing_when_the_mutation_changes_nothing() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, _local) = persist_sandbox("noop");
+        fs::write(&base, "# untouched\n[playback]\ntarget_fps = 60\n").unwrap();
+
+        Config::persist(|cfg| cfg.playback.target_fps = 60).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&base).unwrap(),
+            "# untouched\n[playback]\ntarget_fps = 60\n"
+        );
+    }
+
+    #[test]
+    fn persist_keeps_passwords_out_of_the_shared_file() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, local) = persist_sandbox("secrets");
+
+        Config::persist(|cfg| {
+            cfg.remote.password = "hunter2".into();
+            cfg.subsonic.password = "s3cret".into();
+            cfg.visualizer.palette = "mono".into();
+        })
+        .unwrap();
+
+        let shared = fs::read_to_string(&base).unwrap();
+        assert!(!shared.contains("hunter2"), "{shared}");
+        assert!(!shared.contains("s3cret"), "{shared}");
+        assert!(shared.contains("mono"));
+
+        let machine = fs::read_to_string(&local).unwrap();
+        assert!(machine.contains("hunter2") && machine.contains("s3cret"));
+    }
+
+    #[test]
+    fn persist_removes_a_cleared_password_rather_than_blanking_it() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (_base, local) = persist_sandbox("clear-secret");
+        fs::write(
+            &local,
+            "[remote]\nurl = \"https://a.example\"\npassword = \"old\"\n",
+        )
+        .unwrap();
+
+        Config::persist(|cfg| cfg.remote.password = String::new()).unwrap();
+
+        let machine = fs::read_to_string(&local).unwrap();
+        assert!(
+            !machine.contains("password"),
+            "an emptied secret should leave no key behind: {machine}"
+        );
+        assert!(machine.contains("url"), "{machine}");
+    }
+
+    #[test]
+    fn persist_adds_one_organize_pattern_without_disturbing_the_others() {
+        let _guard = PERSIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let (base, _local) = persist_sandbox("patterns");
+        fs::write(
+            &base,
+            "[organize.patterns]\nflat = \"%artist% - %title%\"\n",
+        )
+        .unwrap();
+
+        Config::persist(|cfg| {
+            cfg.organize
+                .patterns
+                .insert("standard".into(), "%album artist%/%album%".into());
+        })
+        .unwrap();
+
+        let cfg = Config::from_files().unwrap();
+        assert_eq!(cfg.organize.patterns["flat"], "%artist% - %title%");
+        assert_eq!(cfg.organize.patterns["standard"], "%album artist%/%album%");
     }
 }

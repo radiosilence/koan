@@ -601,7 +601,7 @@ impl MutationRoot {
         }
 
         super::blocking(move || {
-            Config::update_base(|cfg| {
+            Config::persist(|cfg| {
                 if let Some(ref mode) = input.replaygain_mode {
                     cfg.playback.replaygain = match mode.to_lowercase().as_str() {
                         "track" => ReplayGainMode::Track,

@@ -43,8 +43,12 @@ koan logs to `~/.config/koan/koan.log` in daemon mode. The GraphQL API is availa
 enabled = true            # redundant in headless mode, but controls TUI+API mode
 port = 4000               # GraphQL API port
 bind = "127.0.0.1"        # bind address
-playground = false         # GraphiQL IDE
-subsonic_port = 4040       # Subsonic REST API port (default: disabled, set port to enable)
+playground = false        # GraphiQL IDE
+
+# config.local.toml — which machine serves Subsonic
+[subsonic]
+enabled = true            # mount /rest/* on the GraphQL port
+port = 4040               # and on a dedicated port too (optional)
 ```
 
 Or via environment variables:

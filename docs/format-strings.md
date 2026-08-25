@@ -1,6 +1,6 @@
 # Format Strings
 
-fb2k-compatible format string engine used by `koan organize` and library display formatting.
+fb2k-compatible format string engine used by organize and library display formatting.
 
 ## Syntax
 
@@ -186,22 +186,18 @@ va-aware = "%album artist%/$if($stricmp(%album artist%,Various Artists),,['('$le
 label = "$if2(%label%,%album artist%)/%album% '['%codec%']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%"
 ```
 
-```bash
-koan organize                    # uses default pattern
-koan organize --pattern va-aware # use named pattern
-koan organize --list             # show all configured patterns
-```
-
-If `--pattern` doesn't match a named pattern, it's treated as a raw format string.
+Organize runs from the TUI (`o` on a queue selection) and from the macOS
+Organize sheet. Both list the patterns above and preselect the one `default`
+names; there is no `koan organize` subcommand.
 
 ## Organize examples
 
-Slashes in the pattern create directory structure. `--execute` applies, default is preview.
+Slashes in the pattern create directory structure. Both front ends preview the whole plan before anything moves.
 
 ### Standard layout
 
-```bash
-koan organize --pattern '%album artist%/(%date%) %album%/%tracknumber%. %title%'
+```
+%album artist%/(%date%) %album%/%tracknumber%. %title%
 ```
 
 ```
@@ -211,8 +207,8 @@ Aphex Twin/(1999) Windowlicker EP/02. Nannou.flac
 
 ### With disc number for multi-disc albums
 
-```bash
-koan organize --pattern '%album artist%/[(%date%) ]%album%/[%discnumber%-]%tracknumber%. %title%'
+```
+%album artist%/[(%date%) ]%album%/[%discnumber%-]%tracknumber%. %title%
 ```
 
 ```
@@ -226,8 +222,8 @@ The `[%discnumber%-]` conditional means the disc prefix only appears if `discnum
 
 Skip the date prefix for Various Artists compilations:
 
-```bash
-koan organize --pattern '%album artist%/$if($stricmp(%album artist%,Various Artists),,'\''('\''$left(%date%,4)'\'')'\'')%album% '\''['\''\''%codec%'\'''\'']'\''/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%'
+```
+%album artist%/$if($stricmp(%album artist%,Various Artists),,'('$left(%date%,4)')')%album% '['\%codec%'']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%
 ```
 
 Or in a config file where quoting is simpler:
@@ -243,8 +239,8 @@ Various Artists/Warp 20 Recreated [FLAC]/03. Flying Lotus - Roygbiv.flac
 
 ### Label-based with $if2 fallback
 
-```bash
-koan organize --pattern '$if2(%label%,%album artist%)/%album% '\''['\''\''%codec%'\'''\'']'\''/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%'
+```
+$if2(%label%,%album artist%)/%album% '['\%codec%'']'/[$num(%discnumber%,2)][%tracknumber%. ][%artist% - ]%title%
 ```
 
 ```
@@ -255,8 +251,8 @@ Uses record label if tagged, falls back to album artist.
 
 ### Artist - Title flat layout
 
-```bash
-koan organize --pattern '%artist% - %title%'
+```
+%artist% - %title%
 ```
 
 ```
@@ -266,16 +262,16 @@ Boards of Canada - Roygbiv.flac
 
 ### Fallback artist with $if2
 
-```bash
-koan organize --pattern '$if2(%album artist%,%artist%)/%album%/%tracknumber%. %title%'
+```
+$if2(%album artist%,%artist%)/%album%/%tracknumber%. %title%
 ```
 
 Uses album artist if available, falls back to track artist.
 
 ### Genre-based structure
 
-```bash
-koan organize --pattern '[%genre%/]%album artist%/%album%/%tracknumber%. %title%'
+```
+[%genre%/]%album artist%/%album%/%tracknumber%. %title%
 ```
 
 ```

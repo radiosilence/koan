@@ -4,17 +4,44 @@
 
 ### Fixed
 
+- **koan wrote your whole configuration to the file you commit.** Every setting koan saved itself — a visualiser toggle, the output device, dragging the album art wider — reserialised the entire `Config` struct over `config.toml`. That erased the commented-out reference `koan config init` writes, and filled the file people are told to put in a dotfiles repo with all fifty-odd keys, including `[library] folders` set to koan's *default* music directory and a `[remote]` block belonging to one machine's account. Writes now go through `Config::persist`, which diffs the mutation and touches only the keys that actually changed.
+
+- **`[radio] seed_window` was half honoured.** It picked the seed artists, while the acoustic seeder asked for the last five tracks regardless. One window, one answer.
+
+- **Documented settings that were not true.** `bass_shake` defaults to `true`, not `false`. `[organize] default` preselects a pattern in the organize UI, not "the TUI modal" it had no effect on. The format-string reference showed a `koan organize --pattern` command that has never existed — organize runs from the TUI and the macOS sheet.
+
 - **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
 
 ### Added
+
+- **The TUI organize modal honours `[organize] default`.** The macOS sheet already preselected the pattern it names; the TUI took whichever sorted first.
 
 - **`q` goes to the queue.** `g` and `G` already went to its ends; there was no key for simply going there.
 - **Escape clears the selection, wherever you are.** The queue also grew a Clear button beside Remove — a selection with no visible way out of it is a trap, and on a list you have scrolled away from you cannot even see what you are still holding.
 
 ### Changed
 
+- **Settings are routed to the file they belong in.** `config.toml` is meant to be shareable, so three kinds of setting never land there: secrets, anything naming this machine's paths, hardware or account, and volatile UI state a keypress flips — `playback.art_size` and the four visualiser toggles that have keybinds. Everything else is taste and travels. Three call sites previously disagreed about this: the player wrote `output_device` to the shared file, the GraphQL settings mutation wrote `art_size` and the remote account there too, and the FFI wrote everything to the local one. `config::layer_of` is now the single answer, and `koan config init` builds its template from it, so the file it writes and the files koan writes cannot drift.
+
+- **A write clears the same key from the other file.** `config.local.toml` wins the merge, so a shared write left shadowed by a local copy silently did nothing. In the other direction it drains machine-scoped keys out of `config.toml`, which cleans up a file an older koan polluted as you use the app.
+
+- **`[graphql] subsonic_port` is now `[subsonic] port`.** The port for the Subsonic API lived in the GraphQL section, so turning Subsonic on meant a key in each of two sections. `[subsonic] enabled` mounts `/rest/*` on the GraphQL port; `port` adds a dedicated listener.
+
+- **`[discovery]` is gone.** It held one setting koan read and one it did not; `analysis_on_scan` moves to `[library] analyze_on_scan`, where the rest of the scan options are.
+
 - **The shortcuts sheet says what the menus say.** It listed the single-key shortcuts and then told you the rest were "in the menus", which is true and no help — nobody opens six menus to find out that Back is ⌘[. The ⌘ shortcuts are now a second table on the same sheet, and both halves are generated from the same declarations the menu bar is built from, so they cannot drift.
 - **Leaving the queue and coming back keeps your place.** The stage is one `switch`, so every move destroys the page it left and takes its scroll position with it. The queue remembers where it was.
+
+### Removed
+
+- **`[radio] use_subsonic` and `[discovery] acoustic_weight` never did anything.** Both were documented as tuning knobs and neither was read: Subsonic similarity ran whenever a server was configured, and the acoustic signal's weight was a constant in the scoring function. Removed rather than wired up — the defaults are the behaviour everyone has been getting.
+
+- **`[playback] ticker_fps`.** The transport ticker scrolls at a fixed 8 characters per second.
+
+Unknown keys are ignored rather than rejected, so a stale config still loads. Two
+renames change behaviour silently and are worth grepping your config for:
+`[graphql] subsonic_port` (now `[subsonic] port`) and `[discovery]
+analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 ## v0.30.2 (2026-08-25)
 
