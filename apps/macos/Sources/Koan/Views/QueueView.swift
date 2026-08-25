@@ -618,6 +618,11 @@ private struct QueueRow: View {
         // Fixed height so a row doesn't grow when a download indicator appears
         // and shrink when it finishes, reflowing the list each time.
         .frame(height: artwork ? 40 : 34)
+        // Ungrouped, the row carries a sleeve and two lines of text, and the
+        // frame around them left the cover all but touching the separators.
+        // The same six points the album heading gives its own cover — the two
+        // kinds of row are in the same list and should breathe alike.
+        .padding(.vertical, artwork ? 6 : 0)
         // Without this the row is only clickable where a view actually sits —
         // the Spacer between the title and the duration is a dead zone, and
         // clicks landing there select nothing.
