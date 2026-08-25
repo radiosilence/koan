@@ -5,10 +5,10 @@ import SwiftUI
 
 /// The bits of presentation a keystroke has to reach.
 ///
-/// Sheets, the search field and the queue's scroll position belong to views,
-/// but a hotkey arrives from outside all of them — so the flags live here,
-/// where the key monitor can set them and the view that owns the thing can
-/// watch. The menu bar drives the same flags, so both routes agree.
+/// Sheets and the search field belong to views, but a hotkey arrives from
+/// outside all of them — so the flags live here, where the key monitor can set
+/// them and the view that owns the thing can watch. The menu bar drives the
+/// same flags, so both routes agree.
 @MainActor
 @Observable
 final class UIState {
@@ -43,11 +43,6 @@ final class UIState {
     /// list knows what "everything" is. It lived on the player, so it only ever
     /// reached the queue.
     private(set) var selectAllToken = 0
-
-    /// Where the queue was left, so coming back to it is coming back rather
-    /// than starting again. The page is a `switch` in one view, so leaving the
-    /// queue destroys it and takes its scroll position with it.
-    var queueScrollY: CGFloat = 0
 
     func focusSearch() { searchFocusToken += 1 }
 

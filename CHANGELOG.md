@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The queue comes back to where you left it.** A trip to an album and back dropped you at the top of it again. The stage builds one page at a time, so leaving the queue destroyed it — and a macOS `List` cannot be put back: its scroll position belongs to AppKit's table, and every SwiftUI way of asking for one (`scrollPosition`, `scrollTo(y:)`, `scrollPosition(id:)`) is quietly inert on it. The queue is no longer torn down. It stays where it is, behind whatever you navigated to: invisible, untouchable, and off stage, which is also what stops the bars on the playing row dancing to an analyser nobody can see. The selection you left survives the trip too.
+
 ## v0.31.1 (2026-08-25)
 
 ### Changed

@@ -13,6 +13,10 @@ struct PlayingIndicator: View {
 
     @Environment(PlayingLevels.self) private var levels
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// The queue stays mounted while you are elsewhere, so an indicator can be
+    /// off screen without ever disappearing. Off stage it stops asking the
+    /// analyser for levels and its timeline stops ticking.
+    @Environment(\.onStage) private var onStage
     @State private var watching = false
 
     private struct Bar {
@@ -40,7 +44,7 @@ struct PlayingIndicator: View {
 
     /// Whether there is anything to follow. Reduce Motion keeps the still bars,
     /// and still bars need no analyser.
-    private var live: Bool { isPlaying && !reduceMotion }
+    private var live: Bool { isPlaying && !reduceMotion && onStage }
 
     var body: some View {
         // At the rate the levels arrive, not the rate the display can manage.

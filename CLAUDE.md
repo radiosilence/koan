@@ -171,7 +171,7 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale. Follows the navigator; never moves it |
 | `Support/CoverArtCache.swift` | Album-keyed art cache: bytes once per record on disk, bitmaps per record and draw size in a bounded `NSCache`. Each miss is an HTTP round trip on remote libraries |
 | `Support/PlayingLevels.swift` | One analyser poller for every playing indicator on screen. Runs only while something is playing and something is watching |
-| `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select |
+| `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select. Never torn down: `StageView` keeps it mounted behind other pages, because a macOS `List` cannot be scrolled back to where it was |
 | `Views/PickerSheet.swift` | ⇧⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |

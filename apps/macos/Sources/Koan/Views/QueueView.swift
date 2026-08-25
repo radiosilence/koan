@@ -15,6 +15,9 @@ struct QueueView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(UIState.self) private var ui
     @Environment(PlaylistsModel.self) private var playlists
+    /// The queue outlives the page you are on — see `StageView`. Anything
+    /// aimed at whatever list is in front of you has to check.
+    @Environment(\.onStage) private var onStage
 
 
     /// Grouped or one row per track. Persisted because it is a preference about
@@ -31,9 +34,6 @@ struct QueueView: View {
     /// is what made clicking here so unreliable. It is mirrored to the model on
     /// change instead: written, never read, so it stays out of the render path.
     @State private var selection: Set<String> = []
-
-    /// Bound so the list can be put back where it was left.
-    @State private var scrollPosition = ScrollPosition()
 
     /// Album headings are rows in their own right, not decoration attached to
     /// the first track. That is what lets an album be selected and dragged as a
@@ -63,19 +63,6 @@ struct QueueView: View {
                         .onMove(perform: move)
                     }
                     .listStyle(.inset)
-                    // The stage is one `switch`, so leaving the queue destroys
-                    // this view and its scroll position with it. Coming back
-                    // should be coming back, not starting again.
-                    .scrollPosition($scrollPosition)
-                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
-                        geometry.contentOffset.y
-                    } action: { _, y in
-                        ui.queueScrollY = y
-                    }
-                    .onAppear {
-                        guard ui.queueScrollY > 0 else { return }
-                        scrollPosition.scrollTo(y: ui.queueScrollY)
-                    }
                     .washedGround()
                     // `g` / `G`. Watches the token rather than the edge: jumping
                     // to where you already are still has to scroll, because the
@@ -104,6 +91,7 @@ struct QueueView: View {
                         player.queueSelection = Set(itemIds(in: new))
                     }
                     .onChange(of: ui.selectAllToken) { _, _ in
+                        guard onStage else { return }
                         selection = Set(rows.map(\.id))
                     }
                     .clearsSelection($selection)
