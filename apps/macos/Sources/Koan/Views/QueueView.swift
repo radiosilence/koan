@@ -18,6 +18,7 @@ struct QueueView: View {
     @State private var savingSnapshot = false
     @State private var snapshotName = ""
 
+
     /// Grouped or one row per track. Persisted because it is a preference about
     /// how you listen rather than about the queue in front of you: an album
     /// listen wants the headings, a long shuffled queue wants every row to say
@@ -44,7 +45,6 @@ struct QueueView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
 
             if player.queue.isEmpty {
                 EmptyState(
@@ -62,6 +62,10 @@ struct QueueView: View {
                         .onMove(perform: move)
                     }
                     .listStyle(.inset)
+                    // Otherwise the List paints over the wash and it stops at
+                    // the header in a hard line, rather than fading out across
+                    // the first few rows.
+                    .scrollContentBackground(.hidden)
                     // `g` / `G`. Watches the token rather than the edge: jumping
                     // to where you already are still has to scroll, because the
                     // list may have been moved since.
@@ -536,21 +540,27 @@ private struct QueueRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            statusIcon
-                .font(.caption)
-                .frame(width: 16)
+            // The status and the number are one thing — where this track is and
+            // what it is doing — so they sit together. Apart, a mark narrower
+            // than its column and a number aligned to the right of its own left
+            // most of twenty points of air between them.
+            HStack(spacing: 6) {
+                statusIcon
+                    .font(.caption)
+                    .frame(width: 16, alignment: .trailing)
 
-            if artwork, let trackId = item.trackId {
-                AlbumArtwork(source: .track(trackId), cornerRadius: 3)
-                    .frame(width: 28, height: 28)
-            } else {
-                // Always occupies its column, number or not: a missing track
-                // number would otherwise shift the title left and break the
-                // alignment down the list.
-                Text(item.trackNumber.map(String.init) ?? "")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .frame(width: artwork ? 28 : 20, alignment: .trailing)
+                if artwork, let trackId = item.trackId {
+                    AlbumArtwork(source: .track(trackId), cornerRadius: 3)
+                        .frame(width: 28, height: 28)
+                } else {
+                    // Always occupies its column, number or not: a missing track
+                    // number would otherwise shift the title left and break the
+                    // alignment down the list.
+                    Text(item.trackNumber.map(String.init) ?? "")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.tertiary)
+                        .frame(width: artwork ? 28 : 20, alignment: .trailing)
+                }
             }
 
             VStack(alignment: .leading, spacing: 1) {
@@ -576,12 +586,6 @@ private struct QueueRow: View {
             }
 
             Spacer(minLength: 8)
-
-            if let progress = item.downloadProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .frame(width: 54, height: 12)
-            }
 
             if let trackId = item.trackId {
                 FavouriteButton(
@@ -628,9 +632,25 @@ private struct QueueRow: View {
         case .playing:
             PlayingIndicator(isPlaying: player.isPlaying)
         case .downloading:
-            Image(systemName: "arrow.down.circle").foregroundStyle(.secondary)
+            // The ring is the whole indicator — a static arrow beside a
+            // separate bar said the same thing twice, in two places, and the
+            // column the eye already reads for state was the mute one.
+            if let progress = item.downloadProgress {
+                ProgressView(value: progress)
+                    .progressViewStyle(.circular)
+                    .controlSize(.mini)
+                    .frame(width: 14, height: 14)
+                    .help("Downloading — \(Int(progress * 100))%")
+            } else {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .controlSize(.mini)
+                    .help("Downloading")
+            }
         case .priorityPending:
-            Image(systemName: "arrow.down.circle.fill").foregroundStyle(.tint)
+            Image(systemName: "arrow.down.circle")
+                .foregroundStyle(.tint)
+                .help("Queued for download")
         case .failed:
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)

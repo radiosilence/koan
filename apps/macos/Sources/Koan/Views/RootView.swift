@@ -15,9 +15,10 @@ import SwiftUI
 /// `safeAreaInset` and the lyrics panel an `inspector` for the same reason —
 /// both add chrome without taking the detail column's width away.
 ///
-/// There is one `NavigationStack` for the whole detail column and one owner of
-/// its path, `Navigator`. Per-browser stacks can't be driven from outside, and
-/// search needs to push you into one.
+/// The detail column shows one page, chosen by `Navigator`. There is no
+/// `NavigationStack`: koan navigates like a browser — any page from any page,
+/// with a linear history — and a stack navigates a hierarchy that does not
+/// exist here.
 struct RootView: View {
     let hotkeys: Hotkeys
 
@@ -26,46 +27,73 @@ struct RootView: View {
     @Environment(Navigator.self) private var nav
     @Environment(SearchModel.self) private var search
     @Environment(PlayerModel.self) private var player
+    /// Read here only to hand back to the window background — see below.
+    @Environment(CoverArtCache.self) private var art
 
     @AppStorage("showLyrics") private var showLyrics = false
     @State private var transportHeight: CGFloat = 0
+    /// The record the window is washed in.
+    ///
+    /// Held rather than derived from `currentTrackId` on every frame: artwork
+    /// is fetched per *track*, so re-deriving it would ask the server for a new
+    /// copy of the same sleeve at every track change within a record. It only
+    /// moves when the record does.
+    @State private var bleed: AlbumArtwork.Source?
+    /// The colour of the record playing. The app's own accent is a neutral, so
+    /// the only colour in the chrome is the one the music brought.
+    @State private var recordTint: Color?
+    /// Watched rather than inferred from the measured width: a collapsed
+    /// sidebar still reports its last width, so the transport kept a gap where
+    /// it used to be.
+    @State private var columns: NavigationSplitViewVisibility = .automatic
+
+    /// What the window is washed in: the record you opened, or the one playing,
+    /// and only where either means something. A library grid is its own colour.
+    private var washSource: AlbumArtwork.Source? {
+        switch nav.current {
+        case .album(let id): .album(id)
+        case .section(.queue): bleed
+        default: nil
+        }
+    }
+
+    /// What the *controls* take their colour from. The page you are on first —
+    /// an album's own record — and what is playing everywhere else, so a
+    /// favourites list is still coloured by the music rather than by nothing.
+    private var tintSource: AlbumArtwork.Source? {
+        if case .album(let id) = nav.current { .album(id) } else { bleed }
+    }
+
+    /// Which record is playing — artist as well as title, because "Greatest
+    /// Hits" is not one record.
+    private var playingRecord: String? {
+        player.currentEntry.map { "\($0.albumArtist)\u{1}\($0.album)" }
+    }
 
     var body: some View {
         @Bindable var library = library
         @Bindable var search = search
         @Bindable var ui = ui
 
-        NavigationSplitView {
-            SidebarView(bottomInset: transportHeight)
+        // The window background is evaluated by the *scene*, outside every
+        // environment `RootView` was handed, so anything it needs is captured
+        // here. Reading an `@Environment` inside that closure — including to
+        // put one back — traps, and the app dies on launch.
+        let wash = washSource
+        let washDrifts = player.isPlaying
+        let artCache = art
+
+        NavigationSplitView(columnVisibility: $columns) {
+            SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
-            NavigationStack(path: nav.stack) {
-                StageView()
-                    // The transport is a safeAreaInset on the split view, which
-                    // reserves space in the *window* but not inside the detail
-                    // column's own scroll views — a List draws its last rows
-                    // under the bar, where they cannot be read or clicked.
-                    //
-                    // Measured rather than a constant. The bar's height is a
-                    // stack of paddings and a control size, so any number
-                    // written here would be right until one of them changed and
-                    // then be a gap or a clipped row with nothing to say why.
-                    .safeAreaPadding(.bottom, transportHeight)
-                    // The stack draws its own back button for pushed
-                    // destinations, next to the pair we already have — three
-                    // chevrons in a row. Ours can cross sections and search
-                    // jumps, which the stack's cannot, so the stack's goes.
-                    .navigationDestination(for: Route.self) { route in
-                        switch route {
-                        case .album(let id):
-                            AlbumDetailView(albumId: id)
-                                .navigationBarBackButtonHidden(true)
-                        case .artist(let id):
-                            ArtistDetailView(artistId: id)
-                                .navigationBarBackButtonHidden(true)
-                        }
-                    }
-            }
+            StageView()
+                .clearsTransport(transportHeight)
+                // Every page carries its own ground. The window's is the wash,
+                // so a transparent page composites onto it — and onto the page
+                // before it, which is what left an album drawing itself across
+                // the grid you came back to.
+                .background { PageGround(source: washSource, drifts: player.isPlaying) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .inspector(isPresented: $showLyrics) {
@@ -86,27 +114,72 @@ struct RootView: View {
                     }
                 }
         }
+        // The queue is a list of names, and the record playing is the only
+        // thing in it with a colour. On the *window* rather than behind the
+        // queue: nothing inside a split view column reaches past the toolbar's
+        // inset, and a wash that stops in a line under the toolbar is worse
+        // than none. An album page washes its own header, so the window stays
+        // out of its way.
+        .containerBackground(for: .window) {
+            // Over an opaque ground, because this *replaces* the window's own
+            // background rather than sitting on it — a half-transparent wash on
+            // its own leaves you looking through the app at the desktop.
+            ZStack {
+                Rectangle().fill(.background)
+                ArtworkBleed(source: wash, drifts: washDrifts)
+                    .environment(artCache)
+            }
+        }
+        .onChange(of: playingRecord, initial: true) { _, _ in
+            bleed = player.currentTrackId.map { .track($0) }
+        }
+        .task(id: tintSource) {
+            // Animated at the point the colour changes rather than by an
+            // `.animation(_:value:)` on the view. That modifier animates *every*
+            // animatable change in the subtree it is attached to whenever its
+            // value moves — and attached here that subtree is the whole split
+            // view, so a navigation push that happened to coincide with a new
+            // record was dragged out over two seconds along with it.
+            guard let tintSource, let cover = await art.image(for: tintSource) else {
+                withAnimation(.easeInOut(duration: 2)) { recordTint = nil }
+                return
+            }
+            let colour = Color.dominant(of: cover)
+            withAnimation(.easeInOut(duration: 2)) { recordTint = colour }
+        }
+        // Overrides the app-wide tint for everything below, which is every
+        // control koan draws itself. What AppKit draws — list selection, focus
+        // rings — keeps the declared accent, and that is deliberately a neutral
+        // so the two never argue.
+        .tint(recordTint ?? .koanAccent)
+        // The toolbar paints its own ground over whatever is behind it, which
+        // put a hard grey strip across the top of a queue washed in the colour
+        // of the record. Hidden, the glass controls sit in that colour — which
+        // is the whole point of them being glass — and the scroll edge effect
+        // keeps rows legible as they pass under.
+        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { handleSubmit() }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            VStack(spacing: 0) {
-                Divider()
-                TransportBar()
-            }
-            .background(
-                GeometryReader { proxy in
-                    Color.clear.preference(
-                        key: TransportHeightKey.self,
-                        value: proxy.size.height
-                    )
-                }
-            )
+        // On the window rather than inside the detail column, padded clear of
+        // the sidebar: glass floating on glass reads as neither. The page makes
+        // its own room with `clearsTransport`.
+        .overlay(alignment: .bottom) {
+            TransportBar()
+                .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
+                .background(
+                    GeometryReader { proxy in
+                        Color.clear.preference(
+                            key: TransportHeightKey.self,
+                            value: proxy.size.height
+                        )
+                    }
+                )
         }
         .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { ui.windowSize = $0 }
         .toolbar {
-            // Spans section switches and search jumps, which a NavigationStack's
-            // own back button cannot — it only knows about one stack.
+            // Back and forward walk the pages you actually visited, in order,
+            // wherever they were.
             ToolbarItemGroup(placement: .navigation) {
                 Button { nav.goBack() } label: {
                     Label("Back", systemImage: "chevron.left")
@@ -121,20 +194,17 @@ struct RootView: View {
                 .help("Forward (⌘])")
             }
 
-            // Separate items, not one ToolbarItemGroup: a group is drawn as a
-            // single joined control, which put the filter field and the lyrics
-            // toggle inside the same capsule.
-            ToolbarItem(placement: .primaryAction) {
-                Spacer()
-            }
+            // Separate items with `ToolbarSpacer` between them, not one
+            // `ToolbarItemGroup`: a group shares a single pane of glass, which
+            // put the filter field and the lyrics toggle in the same capsule.
+            ToolbarSpacer(.flexible, placement: .primaryAction)
 
             // Filtering what is on screen belongs with it, not in the sidebar
             // search, which navigates away instead of narrowing.
-            if nav.section == .albums || nav.section == .artists {
+            if let placeholder = nav.section?.filterPlaceholder {
                 ToolbarItem(placement: .primaryAction) {
                     FilterField(
-                        placeholder: nav.section == .albums
-                            ? "Filter albums" : "Filter artists",
+                        placeholder: placeholder,
                         text: $library.filter,
                         focusToken: ui.filterFocusToken
                     )
@@ -144,6 +214,10 @@ struct RootView: View {
 
             // Sort belongs next to what it sorts, so it only appears there.
             if nav.section == .albums {
+                // Filtering and sorting are different questions, so they get
+                // different panes of glass rather than one joined control.
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+
                 // A pull-down with the current choice ticked, the way Finder's
                 // arrange control works — rather than a picker forced to a
                 // fixed width, which reads as a control that did not fit.
@@ -206,7 +280,8 @@ struct RootView: View {
         .overlay(alignment: .bottom) {
             if let error = player.lastError {
                 ErrorToast(message: error) { player.lastError = nil }
-                    .padding(.bottom, 24)
+                    // Above the transport, not behind it.
+                    .padding(.bottom, transportHeight + 10)
             }
         }
     }
@@ -214,54 +289,84 @@ struct RootView: View {
     /// Return either picks a suggestion — in which case the field holds a token
     /// naming exactly what was chosen — or it means "show me everything".
     private func handleSubmit() {
-        guard let selection = SearchModel.Selection(token: search.query) else {
+        // Emptying the field submits it again. Acting on that sent you to the
+        // results page for a search you had not asked for — and since clearing
+        // the query then forgets that page, you landed on whatever list was
+        // behind it, one keystroke after picking an album.
+        let query = search.query.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return }
+
+        guard let selection = SearchModel.Selection(token: query) else {
             nav.show(.searchResults)
             return
         }
         switch selection {
         case .track(let id, let albumId):
             // A track lives on its album; that's where you'd play it from.
-            if let albumId { nav.jump(to: .album(albumId), highlighting: id) }
+            if let albumId { nav.open(album: albumId, highlighting: id) }
         case .album(let id):
-            nav.jump(to: .album(id))
+            nav.open(album: id)
         case .artist(let id):
-            nav.jump(to: .artist(id))
+            nav.open(artist: id)
         }
         search.reset()
     }
 }
 
-/// The root of the detail stack.
+/// The page. One `switch`, no stack.
 ///
-/// A view of its own rather than a `switch` written inline: a `NavigationStack`
-/// discards its path when its root changes identity in the same update, and
-/// each branch of a `switch` in a `ViewBuilder` is a different view. Keeping
-/// the switch one level inside gives the stack a root that never changes, which
-/// is what lets the section and the stack move together.
 private struct StageView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
 
     var body: some View {
-        switch nav.section {
-        case .queue:
+        switch nav.current {
+        case .section(.queue):
             QueueView()
-        case .searchResults:
+        case .section(.searchResults):
             SearchResultsView()
-        case .albums:
+        case .section(.albums):
             AlbumBrowser()
-        case .artists:
+        case .section(.artists):
             ArtistBrowser()
-        case .favourites:
+        case .section(.favourites):
             TrackListView(
                 title: "Favourites",
                 subtitle: Format.count(Int64(library.favourites.count), "track"),
                 tracks: library.favourites
             )
-        case .playHistory:
+        case .section(.playHistory):
             HistoryView()
-        case .snapshots:
+        case .section(.snapshots):
             SnapshotsView()
+        case .album(let id):
+            AlbumDetailView(albumId: id)
+        case .artist(let id):
+            ArtistDetailView(artistId: id)
+        }
+    }
+}
+
+/// What a page sits on.
+///
+/// A record washes itself in its own cover; everywhere else is either the
+/// window's wash showing through — the queue — or an opaque ground of its own.
+private struct PageGround: View {
+    let source: AlbumArtwork.Source?
+    let drifts: Bool
+
+    @Environment(Navigator.self) private var nav
+
+    var body: some View {
+        if case .album = nav.current {
+            ZStack {
+                Rectangle().fill(.background)
+                ArtworkBleed(source: source, drifts: drifts)
+            }
+        } else if nav.section == .queue {
+            Color.clear
+        } else {
+            Rectangle().fill(.background)
         }
     }
 }
@@ -285,11 +390,11 @@ private struct ErrorToast: View {
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.separator))
-        .shadow(radius: 12, y: 4)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 11)
+        // Tinted glass rather than a material and a border: the tint carries
+        // the warning without a second colour, and glass already has an edge.
+        .glassEffect(.regular.tint(.orange.opacity(0.22)), in: .capsule)
         .task {
             try? await Task.sleep(for: .seconds(6))
             dismiss()
@@ -304,5 +409,21 @@ private struct TransportHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = max(value, nextValue())
+    }
+}
+
+private extension View {
+    /// Room for the transport, which floats over every screen in the stack.
+    ///
+    /// Measured rather than a constant. The bar's height is a stack of paddings
+    /// and a control size, so any number written here would be right until one
+    /// of them changed and then be a gap, or a row clipped by a bar with
+    /// nothing to say why.
+    func clearsTransport(_ height: CGFloat) -> some View {
+        // Content passing under the glass is what makes it glass. The soft edge
+        // fades a row out as it goes, so one half under the bar reads as behind
+        // it rather than cut off.
+        safeAreaPadding(.bottom, height)
+            .scrollEdgeEffectStyle(.soft, for: .bottom)
     }
 }

@@ -151,27 +151,35 @@ impl Player {
         let device_rate = self.backend.get_device_sample_rate(&device)?;
         let source_rate = info.sample_rate as f64;
 
-        if (device_rate - source_rate).abs() > 0.1 {
+        let settled = if (device_rate - source_rate).abs() > 0.1 {
             log::info!(
                 "switching device sample rate: {}Hz → {}Hz",
                 device_rate,
                 source_rate
             );
-            let settled = match self.backend.set_device_sample_rate(&device, source_rate) {
+            match self.backend.set_device_sample_rate(&device, source_rate) {
                 Ok(rate) => rate,
                 Err(e) => {
                     log::warn!("failed to set device sample rate: {}", e);
                     device_rate
                 }
-            };
-            if (settled - source_rate).abs() > 0.1 {
-                log::warn!(
-                    "device stayed at {}Hz (wanted {}Hz) — output is resampled, not bit-perfect",
-                    settled,
-                    source_rate
-                );
             }
+        } else {
+            device_rate
+        };
+
+        if (settled - source_rate).abs() > 0.1 {
+            log::warn!(
+                "device stayed at {}Hz (wanted {}Hz) — output is resampled, not bit-perfect",
+                settled,
+                source_rate
+            );
         }
+
+        // The front ends compare this against the source rate to say whether
+        // anything had to resample. A log line was the only place it went.
+        self.shared_state
+            .set_output_sample_rate(settled.round() as u32);
 
         Ok(self.backend.create_engine(
             &device,
@@ -2231,5 +2239,39 @@ mod tests {
     #[test]
     fn engine_uses_source_channel_count() {
         assert_eq!(engine_format_for(44100, 1, 44100.0), (44100.0, 1));
+    }
+
+    /// The rate the device settled at, as the front ends read it.
+    fn settled_rate_for(source_rate: u32, device_rate: f64) -> Option<u32> {
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: device_rate,
+            asked: Arc::new(std::sync::Mutex::new(None)),
+        });
+        let state = player.shared_state.clone();
+
+        let info = buffer::StreamInfo {
+            codec: "MP3".into(),
+            sample_rate: source_rate,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_producer, consumer) = rtrb::RingBuffer::new(16);
+        player
+            .create_engine_for(&info, consumer)
+            .expect("engine creation should succeed");
+        state.output_sample_rate()
+    }
+
+    #[test]
+    fn settled_device_rate_reaches_the_shared_state() {
+        // A device that refuses the switch is being fed resampled audio, and
+        // that is the case the front ends have to be able to see. Before this
+        // the comparison happened once, in a log line.
+        assert_eq!(settled_rate_for(22050, 48000.0), Some(48000));
+        // No switch needed, so nothing resampled: the two rates agree.
+        assert_eq!(settled_rate_for(44100, 44100.0), Some(44100));
     }
 }

@@ -21,6 +21,10 @@ final class UIState {
     /// that is — a `GeometryReader` inside one only ever sees the sheet's own
     /// proposal. The window measures itself and leaves the answer here.
     var windowSize: CGSize = .zero
+    /// How far in the stage starts. The transport floats over the window — the
+    /// only place a `NavigationStack` push cannot drop it — so it needs to know
+    /// where the sidebar ends in order not to sit on it.
+    var sidebarWidth: CGFloat = 0
 
     enum Edge { case top, bottom }
 

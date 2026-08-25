@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+### Changed
+
+- **The format badge says when the output is being resampled.** koan switches the device to the source rate, and when a device refuses — MPEG-2 and MPEG-2.5 MP3 rates routinely are — the system resamples to reach it. The player has always known which of those happened, because `set_device_sample_rate` returns the rate the device settled at, and it compared the two and wrote a line to the log. Nothing else ever saw it. Meanwhile the badge showed the source format either way, captioned "koan matches the device rate rather than resampling" — an unconditional claim that is false in exactly the case worth knowing about.
+
+  The settled rate now reaches the front ends: the macOS badge appends it — `FLAC 24/96 → 48` — the TUI's format line does the same, and `nowPlaying.track.outputSampleRate` carries it over GraphQL. What it does not do is claim bit-perfection. koan never takes the device exclusively, so another application's audio can be mixed in and the volume stage may scale in software, and none of that is visible from inside the process. What koan can say for certain is whether it handed the device the samples as they are, or something had to resample to reach it — so that is all it says.
+
+## v0.30.1 (2026-08-25)
+
+### Changed
+
+- **⌘K is the search.** It is the search everywhere it exists, and koan's knows albums, artists and tracks. It opened the sheet that builds a queue instead, which is a different job — that keeps its place in the menu and moves to ⇧⌘K.
+
+### Fixed
+
+- **Picking something from the search dropdown landed you on the list instead.** Choosing an album sent you to the album grid, an artist to the artist list. The detail column was a `NavigationStack` whose root switched per section, and a stack throws its path away when its root changes under it, then writes the empty path back — so a move that set a section and a destination at once was undone in the update that made it. Search was the only thing that did both, which is why nothing else broke.
+
+  The stack is gone. koan navigates like a browser and always did: any page reachable from any page, with a linear history and a cursor, which `Navigator` already owned — Back and Forward moved that cursor, and the stack's own back button was hidden so they could. It was navigating nothing and charging a hierarchy for it. An album is reachable from the queue, from the grid, from an artist and from search, and none of those is its parent. Now there is one page, one list of pages visited, and one cursor into it; the sidebar lights a row when the page *is* that row, and nothing when you are on a record.
+
+- **Navigating anywhere could take two seconds.** Opening an album from the queue and then clicking through to its artist slid the page in as though it were being dragged. `.animation(_:value:)` animates *every* animatable change in the subtree it is attached to, not only the value it names, and it was attached to the whole split view to cross-fade the tint between records — so any navigation that happened to coincide with a new colour was stretched to the length of that cross-fade. The tint is animated where it is set instead, which is the only thing that was ever meant to move.
+
+## v0.30.0 (2026-08-24)
+
+### Changed
+
+- **The window takes its colour from the record.** koan's chrome used to be pink whatever was playing. Now the cover of the record on — or of the album page you opened — is blurred out into a wash across the whole window, under the toolbar, the sidebar and the transport, so every piece of glass in the app sits in that colour. It drifts while something is playing, on three periods that never line up so it never reads as a loop, and settles where it is when you stop. One record dissolves into the next over two seconds; the old cover stays up until the new one is in hand rather than wiping through a placeholder, and a record with no art is no wash rather than a grey one.
+
+  The controls follow it. The declared accent becomes a near-black neutral — all it drives is what AppKit draws, list selection and focus rings, and at that weight it stops competing — while the SwiftUI tint is the dominant colour of the sleeve: a saturation-weighted circular mean of hue, clamped to stay legible on dark chrome. An average would not do, because averaging every pixel of a busy cover gives the same brown-grey every time as opposite hues cancel.
+
+  It follows the *record*, not the track: artwork is fetched per track, so re-deriving it would ask the server for another copy of the same sleeve every few minutes. And it is not tied to scroll position — the wash says what is playing, and following the scroll would have it announce whichever record you happened to be looking at.
+
+- **The macOS app is built out of Liquid Glass.** Not a coat of blur over the old chrome — the real macOS 26 material, and the layout changes it asks for. The transport is a slab of glass floating over the stage rather than a bar welded to the window's bottom edge behind a divider: the queue scrolls *under* it, fading out at the soft scroll edge as it goes, because glass with nothing moving behind it is just a grey rectangle.
+
+  It hangs off the window rather than the detail column. A `NavigationStack` drops decoration applied around it the moment it pushes, which took the transport off every album and artist page; each screen now makes its own room for it instead. It stops short of the sidebar, and takes the full width when the sidebar is closed. Play/pause is bigger than the two beside it and no longer goes dead when nothing is queued — it is the control you reach for without looking.
+
+- **The toolbar says what belongs together.** `ToolbarSpacer` replaces a `Spacer` smuggled inside a `ToolbarItem`, so filtering and sorting sit on separate panes of glass instead of sharing one joined capsule with the lyrics toggle. Its background is hidden, so the wash runs behind it rather than stopping in a grey line.
+
+- **Everything laid over artwork is glass now.** The codec badge on a sleeve is clear glass rather than a black scrim hiding the corner it sits on; the favourite heart gets a ground of its own instead of a drop shadow fighting whatever is behind it, and grows in on hover. Artist chips, the shortcut sheet's key caps, the picker's commit bar and the error toast follow — the toast tinted rather than bordered, since glass already has an edge.
+
+- **The transport and the queue show what changed.** The playing indicator's rule — motion tells you a state is live, where a glyph only names it — applied to the four places that most needed it. Play/pause morphs between its symbols rather than swapping them. A skip bounces the arrow that was pressed: on a remote library the next track takes a moment to load, and until it does nothing else on the bar has moved, so the press reads as dropped and gets repeated. The transport's title and artist cross-fade on a track change, which gapless playback otherwise leaves unmarked. Cover art fades in rather than cutting, because in the album grid covers land tens of milliseconds apart and the hard cut reads as a stutter of pops.
+
+  A downloading queue row said the same thing twice — a static arrow in the status column and a progress bar further along it — so the bar is gone and the arrow is the ring that fills, in the column the eye already reads for state. Reduce Motion drops the bounce; the cross-fades stay, being fades rather than movement.
+- **Favourites rows carry their own cover.** A record's tracklist has one sleeve above it and numbers down the side; favourites is a list gathered from the whole library, where the cover and the album name are what tell one row from the next. The shared track list learned the mode history rows already used, so both now look the same and there is one row to change.
+
+### Fixed
+
+- **Favourites and history can be filtered, which they were already built for.** Both narrow on title, artist and album, history has an empty state for when a filter matches nothing, and neither could be typed into: the toolbar offered its field to albums and artists by name, and ⌘F named the same two. Which sections have a filter is now one answer on `Navigator.Section` that the field and ⌘F both read, so a section cannot be filterable in the model and not on screen. Favourites also draws the narrowed list rather than the whole one, and counts what it is showing.
+
+- **The sidebar said no remote tracks were cached, however many were.** The count asked for tracks whose `source` is `'cached'` — a value the schema allows and nothing writes, because downloading a track does not change where it came from. What a download writes is `cached_path`, which is what `set_cached_path` sets and clearing the cache nulls. Counted from there it agrees with the files on disk.
 ### Added
 
 - **The artist and album in the transport bar are links.** The bar named what was playing and gave you no way to get to it — its second line was the artist as plain text, and the record it came from was not shown at all. It reads `artist — album` now, each name going where its own name says, through the same `LinkText` the rows, grid cells and queue headers use. That was the last place in the app an artist name was not a link.

@@ -129,8 +129,13 @@ struct KoanApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(after: .newItem) {
-                Button("Add Music…") { state?.ui.showingPicker = true }
+                // ⌘K is the search everywhere else it exists, and koan's
+                // search knows albums, artists and tracks — so it goes to the
+                // field rather than to the sheet that builds a queue.
+                Button("Search…") { state?.ui.focusSearch() }
                     .keyboardShortcut("k", modifiers: .command)
+                Button("Add Music…") { state?.ui.showingPicker = true }
+                    .keyboardShortcut("k", modifiers: [.command, .shift])
             }
 
             CommandGroup(replacing: .sidebar) {
@@ -226,9 +231,10 @@ struct KoanApp: App {
                 Divider()
                 Button("Find") {
                     guard let state else { return }
-                    switch state.nav.section {
-                    case .albums, .artists: state.ui.focusFilter()
-                    default: state.ui.focusSearch()
+                    if state.nav.section?.filterPlaceholder != nil {
+                        state.ui.focusFilter()
+                    } else {
+                        state.ui.focusSearch()
                     }
                 }
                 .keyboardShortcut("f", modifiers: .command)
