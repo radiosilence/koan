@@ -12,8 +12,6 @@
 
 - **A flash of bare colour on the first keystroke of a search.** The page's ground was put behind it before it was told to fill the column, and a background sizes itself to what it backs — so the ground was only ever as big as the page's content. The results page measures nothing while the query is still running, which left the window's wash showing everywhere around it. The page is filled first now, and every page carries an opaque ground of its own with the wash drawn over it rather than through it.
 
-### Fixed
-
 - **The Now Playing widget had no cover on it.** Control Center, the lock screen and the media-key HUD showed the title and the artist against a blank square. Now Playing was only ever handed the artwork if the cover happened to already be in the cache at the instant the track started — and it never is: fetching it is an HTTP round trip on a remote library, and it lands a moment later. By then the guard that stops a 10 Hz poll republishing unchanged metadata saw the same track, the same state and no seek, and returned. The art arriving is now a reason to republish, and Now Playing asks for the cover itself rather than hoping the transport bar's request has landed, so it works with the window closed.
 
 - **The cached count sat still while an album downloaded.** "N of M remote cached" in the sidebar was read once at launch and again after a scan or a sync, and a download is neither — the count moved in the database and nothing told the library to look again. A finished transfer refreshes it now.
