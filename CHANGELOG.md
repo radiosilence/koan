@@ -12,6 +12,8 @@
 
   They can be exported as extended M3U8. Only tracks with a file on this machine go in — a Subsonic stream URL carries the credentials that authorise it, and a playlist file is something people mail to each other — so the export says how many it had to leave out.
 
+- **Dropping into a playlist lands where you dropped it,** with a line showing where that is. Adding used to mean adding to the end, wherever the pointer was.
+
 - **Playlists sync with Navidrome, both ways.** A playlist made here appears on the server; one made there appears here, contents and order included. Every edit pushes in the background, so nothing waits on the network; a push that never got out leaves the local copy newer, and the next sync notices and sends it. Deleting on either side deletes on the other, because a playlist that comes back after you delete it cannot be deleted at all.
 
   Only what Subsonic itself carries is stored — name, comment, owner, public, and the ordered song list — so the two sides are the same object rather than koan's idea of one. Where a playlist sits in your sidebar, and how you like to look at it, are the exceptions: those are facts about this machine.
@@ -39,6 +41,9 @@
 - **The database schema is now version 2, and older koan builds will refuse to open it.** That is the point of the version: a build that does not know about `playlists` must not write to a library that has them. Upgrade rather than downgrading.
 
 ### Fixed
+
+- **The queue quietly dropped repeats.** Adding a track already in the queue added nothing, and a playlist holding the same song twice played it once. The batch fetch behind every queue add took each row out of its map as it matched it, so an id asked for twice came back once.
+
 
 - **koan grew to a gigabyte of artwork and never gave any of it back.** Every cover you scrolled past was decoded and held for the life of the process — nothing evicted, so an hour of browsing a remote library reached 978 MB of decoded bitmaps, most of it swapped out rather than released. Covers are now held in a bounded cache that hands memory back under pressure.
 

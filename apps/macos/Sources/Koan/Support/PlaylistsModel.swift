@@ -162,6 +162,21 @@ final class PlaylistsModel {
         }
     }
 
+    /// The same, landing where they were dropped rather than at the end. The
+    /// engine adds and reorders in one go — doing it in two from here would be
+    /// reordering against the list as it was before the add landed.
+    func insert(dropped: [PlayableTransfer], into id: Int64, at position: Int) {
+        Task {
+            let ids = await resolve(dropped)
+            guard !ids.isEmpty else { return }
+            act(reloadingTracks: id == openId) {
+                _ = try await $0.insertIntoPlaylist(
+                    playlistId: id, trackIds: ids, at: UInt32(position)
+                )
+            }
+        }
+    }
+
     /// Put the entries in this order. Ids survive, so the queue keeps knowing
     /// which row each of its items came from.
     func reorder(entryIds: [Int64], in id: Int64) {

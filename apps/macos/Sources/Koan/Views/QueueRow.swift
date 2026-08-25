@@ -101,7 +101,7 @@ struct QueueRow: View {
 
                 if artwork, let sleeve = item.sleeve {
                     AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 3)
-                        .frame(width: 28, height: 28)
+                        .frame(width: 34, height: 34)
                 } else {
                     // Always occupies its column, number or not: a missing track
                     // number would otherwise shift the title left and break the
@@ -109,7 +109,7 @@ struct QueueRow: View {
                     Text(item.number.map(String.init) ?? "")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.tertiary)
-                        .frame(width: artwork ? 28 : 20, alignment: .trailing)
+                        .frame(width: artwork ? 34 : 20, alignment: .trailing)
                 }
             }
 
@@ -167,7 +167,10 @@ struct QueueRow: View {
         }
         // Fixed height so a row doesn't grow when a download indicator appears
         // and shrink when it finishes, reflowing the list each time.
-        .frame(height: artwork ? 40 : 34)
+        // The same 34pt sleeve in the same 44pt row as an album's tracklist —
+        // a cover crammed into a row sized for a number reads as cramped
+        // however much padding is put around it.
+        .frame(height: artwork ? 44 : 34)
         // Ungrouped, the row carries a sleeve and two lines of text, and the
         // frame around them left the cover all but touching the separators.
         // The same six points the album heading gives its own cover — the two

@@ -25,6 +25,9 @@ struct PlaylistView: View {
     /// an observable in `body` invalidates the whole List under the click that
     /// caused it.
     @State private var selection: Set<String> = []
+    /// Where a drop would land, so the gesture says what it will do. Dropping
+    /// `onMove` lost the insertion indicator that came with it; this is it.
+    @State private var dropBefore: Int?
     @State private var renaming = false
     @State private var renameTo = ""
 
@@ -56,6 +59,7 @@ struct PlaylistView: View {
                     ForEach(rows) { row in
                         rowView(row)
                     }
+                    endOfList
                 }
                 .listStyle(.inset)
                 // Otherwise the List paints its own ground over the wash and
@@ -211,10 +215,15 @@ struct PlaylistView: View {
     private func rowView(_ row: Row) -> some View {
         switch row {
         case .album(_, let group):
+            let position = group.positions.first ?? 0
             PlaylistAlbumHeader(group: group)
                 .rowBehaviour()
+                .insertionLine(showing: dropBefore == position)
                 .dropDestination(for: PlayableTransfer.self) { dropped, _ in
-                    accept(dropped, before: group.positions.first ?? 0)
+                    dropBefore = nil
+                    return accept(dropped, before: position)
+                } isTargeted: { targeted in
+                    dropBefore = targeted ? position : (dropBefore == position ? nil : dropBefore)
                 }
         case .entry(let entry):
             let position = entries.firstIndex { $0.id == entry.id } ?? 0
@@ -244,10 +253,36 @@ struct PlaylistView: View {
                 name: entry.track.title,
                 origin: .init(playlistId: playlistId, position: position)
             ))
+            .insertionLine(showing: dropBefore == position)
             .dropDestination(for: PlayableTransfer.self) { dropped, _ in
-                accept(dropped, before: position)
+                dropBefore = nil
+                return accept(dropped, before: position)
+            } isTargeted: { targeted in
+                dropBefore = targeted ? position : (dropBefore == position ? nil : dropBefore)
             }
         }
+    }
+
+    /// Somewhere to drop that means "after everything".
+    ///
+    /// Every other target is a row, and a row can only mean "before this one" —
+    /// so without this there is no gesture for the end of the list, which is
+    /// where most things are added.
+    private var endOfList: some View {
+        Color.clear
+            .frame(height: 28)
+            .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
+            .selectionDisabled()
+            .insertionLine(showing: dropBefore == entries.count)
+            .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+                dropBefore = nil
+                return accept(dropped, before: entries.count)
+            } isTargeted: { targeted in
+                dropBefore = targeted
+                    ? entries.count
+                    : (dropBefore == entries.count ? nil : dropBefore)
+            }
     }
 
     private var grouped: Bool { playlist?.grouped ?? false }
@@ -370,9 +405,7 @@ struct PlaylistView: View {
         }
 
         if !foreign.isEmpty {
-            // Appended rather than inserted at the drop: the engine adds to the
-            // end, and a reorder straight after would race its reload.
-            playlists.add(dropped: foreign, to: playlistId)
+            playlists.insert(dropped: foreign, into: playlistId, at: position)
         }
         return true
     }
@@ -478,5 +511,25 @@ extension Array {
     /// a row list built off a track list that may have been reloaded since.
     subscript(safe index: Int) -> Element? {
         indices.contains(index) ? self[index] : nil
+    }
+}
+
+
+private extension View {
+    /// The line that says where a drop will land.
+    ///
+    /// Drawn on the row it would land *before*, which is what a drop on a row
+    /// means here. `ForEach.onMove` drew one of these and had to go — it claims
+    /// the drag, so nothing could be dragged out of the playlist.
+    func insertionLine(showing: Bool) -> some View {
+        overlay(alignment: .top) {
+            if showing {
+                Capsule()
+                    .fill(.tint)
+                    .frame(height: 2)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: showing)
     }
 }

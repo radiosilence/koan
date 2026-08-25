@@ -1117,6 +1117,39 @@ impl KoanEngine {
         .await
     }
 
+    /// Add tracks at a position rather than at the end — what dropping between
+    /// two rows means.
+    ///
+    /// Both halves happen here rather than as an add followed by a reorder from
+    /// the caller: the caller would be reordering against the list as it was
+    /// before its own insert landed, and racing the reload that tells it
+    /// otherwise.
+    pub async fn insert_into_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        track_ids: Vec<i64>,
+        at: u32,
+    ) -> Result<u32, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
+            if !added.is_empty() {
+                let mut order: Vec<i64> = queries::playlist_entries(&db.conn, playlist_id)
+                    .map_err(db_err)?
+                    .into_iter()
+                    .map(|e| e.id)
+                    .filter(|id| !added.contains(id))
+                    .collect();
+                let at = (at as usize).min(order.len());
+                order.splice(at..at, added.iter().copied());
+                queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
+            }
+            koan_core::playlists::push_to_remote(playlist_id);
+            Ok(added.len() as u32)
+        })
+        .await
+    }
+
     /// Put the entries in this order. Ids survive, so anything holding one —
     /// a queue item, say — still knows which row it means.
     pub async fn reorder_playlist(
