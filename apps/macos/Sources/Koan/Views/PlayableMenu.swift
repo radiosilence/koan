@@ -12,12 +12,17 @@ enum Playable {
     case track(Track)
     case album(Album)
     case artist(id: Int64, name: String)
+    /// A playlist is playable like anything else, which is what lets it use the
+    /// same header buttons and the same drag payload as a record. It is not
+    /// *library* content, though — see `isLibraryContent` for what that costs.
+    case playlist(id: Int64, name: String)
 
     var name: String {
         switch self {
         case .track(let t): t.title
         case .album(let a): a.title
         case .artist(_, let name): name
+        case .playlist(_, let name): name
         }
     }
 
@@ -25,8 +30,16 @@ enum Playable {
     var hasChildren: Bool {
         switch self {
         case .track: false
-        case .album, .artist: true
+        case .album, .artist, .playlist: true
         }
+    }
+
+    /// Whether this *is* something in the library, rather than a list pointing
+    /// at things in it. Favouriting, sharing and organizing all act on library
+    /// rows; a playlist has none of its own, and offering them on one would
+    /// mean silently acting on its members instead.
+    var isLibraryContent: Bool {
+        if case .playlist = self { false } else { true }
     }
 
     func trackIds(using engine: KoanEngine) async -> [Int64] {
@@ -37,6 +50,8 @@ enum Playable {
             return (try? await engine.trackIds(albumId: a.id, artistId: nil)) ?? []
         case .artist(let id, _):
             return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
+        case .playlist(let id, _):
+            return (try? await engine.playlistTracks(playlistId: id))?.map(\.id) ?? []
         }
     }
 }
@@ -69,19 +84,28 @@ struct PlayableMenu: View {
 
         Divider()
 
-        Button { toggleFavourite() } label: {
-            Label(favouriteTitle, systemImage: isFavourite ? Icon.favourited : Icon.favourite)
-        }
-        Button { share() } label: {
-            Label("Copy Share Link", systemImage: Icon.share)
-        }
-        Button {
-            act { ids in
-                openWindow(id: OrganizeWindow.id)
-                Task { await organize.begin(title: playable.name, trackIds: ids) }
+        AddToPlaylistMenu { body in act(body) }
+
+        // Favouriting, sharing and organizing act on library rows. A playlist
+        // has none of its own, so offering them on one would silently act on
+        // its members instead.
+        if playable.isLibraryContent {
+            Divider()
+
+            Button { toggleFavourite() } label: {
+                Label(favouriteTitle, systemImage: isFavourite ? Icon.favourited : Icon.favourite)
             }
-        } label: {
-            Label("Organize Files…", systemImage: Icon.organize)
+            Button { share() } label: {
+                Label("Copy Share Link", systemImage: Icon.share)
+            }
+            Button {
+                act { ids in
+                    openWindow(id: OrganizeWindow.id)
+                    Task { await organize.begin(title: playable.name, trackIds: ids) }
+                }
+            } label: {
+                Label("Organize Files…", systemImage: Icon.organize)
+            }
         }
 
         if case .track(let track) = playable, let albumId = track.albumId {
@@ -111,6 +135,7 @@ struct PlayableMenu: View {
         case .track(let t): library.isFavourite(track: t.id)
         case .album(let a): library.isFavourite(album: a.id)
         case .artist(let id, _): library.isFavourite(artist: id)
+        case .playlist: false
         }
     }
 
@@ -123,6 +148,7 @@ struct PlayableMenu: View {
         case .track: return "Favourite Track"
         case .album: return "Favourite Album"
         case .artist: return "Favourite Artist"
+        case .playlist: return ""  // Never shown — see `isLibraryContent`.
         }
     }
 
@@ -131,6 +157,7 @@ struct PlayableMenu: View {
         case .track(let t): library.toggleFavourite(track: t.id)
         case .album(let a): library.toggleFavourite(album: a.id)
         case .artist(let id, _): library.toggleFavourite(artist: id)
+        case .playlist: break
         }
     }
 
@@ -284,6 +311,7 @@ struct FavouriteHeaderButton: View {
         case .track(let t): library.isFavourite(track: t.id)
         case .album(let a): library.isFavourite(album: a.id)
         case .artist(let id, _): library.isFavourite(artist: id)
+        case .playlist: false
         }
     }
 
@@ -293,6 +321,7 @@ struct FavouriteHeaderButton: View {
             case .track(let t): library.toggleFavourite(track: t.id)
             case .album(let a): library.toggleFavourite(album: a.id)
             case .artist(let id, _): library.toggleFavourite(artist: id)
+            case .playlist: break
             }
         } label: {
             Label(isOn ? "Favourited" : "Favourite", systemImage: isOn ? Icon.favourited : Icon.favourite)
@@ -387,6 +416,39 @@ struct QueueButtons: View {
             working = false
             guard !ids.isEmpty else { return }
             body(ids)
+        }
+    }
+}
+
+
+/// "Add to Playlist" — every playlist, plus a new one.
+///
+/// Its own view rather than lines inside each menu: the same submenu belongs on
+/// a library row, a queue row and a playlist row, and the three would otherwise
+/// drift. `resolve` defers working out the tracks until something is chosen —
+/// an artist is thousands of them, and resolving to *draw* a menu is what froze
+/// the window when the queue's context menus did it.
+///
+/// "New Playlist…" only records the request; the dialog belongs to the window.
+/// A context menu is gone the moment you pick from it, and an alert attached to
+/// its contents goes with it — which is why this used to do nothing at all.
+struct AddToPlaylistMenu: View {
+    /// Hands the chosen action the track ids, off the main actor.
+    let resolve: (@escaping @MainActor ([Int64]) -> Void) -> Void
+
+    @Environment(PlaylistsModel.self) private var playlists
+
+    var body: some View {
+        Menu("Add to Playlist") {
+            Button("New Playlist…") { resolve { playlists.naming = $0 } }
+            if !playlists.playlists.isEmpty {
+                Divider()
+                ForEach(playlists.playlists, id: \.id) { playlist in
+                    Button(playlist.name) {
+                        resolve { playlists.add(trackIds: $0, to: playlist.id) }
+                    }
+                }
+            }
         }
     }
 }

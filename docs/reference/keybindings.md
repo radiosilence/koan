@@ -185,7 +185,7 @@ Single keys never fire while a text field has focus, so typing an `f` into the s
 |-----|--------|
 | `⌘K` | Search the library |
 | `⇧⌘K` | Add music |
-| `⌘1`–`⌘6` | Queue, Albums, Artists, Favourites, History, Snapshots |
+| `⌘1`–`⌘5` | Queue, Albums, Artists, Favourites, History |
 | `⌘[` / `⌘]` | Back / forward |
 | `⌘F` | Filter what's on screen (albums, artists), otherwise search the library |
 | `⌘←` / `⌘→` | Previous / next track |

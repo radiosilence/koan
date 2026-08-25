@@ -804,6 +804,25 @@ fn album_remote_id(conn: &rusqlite::Connection, album_id: i64, selected: usize) 
 // Path utilities
 // ---------------------------------------------------------------------------
 
+/// Fisher-Yates over a fresh seed, so consecutive calls differ.
+///
+/// Deliberately not seeded from anything stable: "shuffle again" has to
+/// actually produce a new order, which a process-lifetime seed wouldn't.
+pub fn shuffle<T>(items: &mut [T]) {
+    let mut seed = [0u8; 8];
+    if getrandom::fill(&mut seed).is_err() {
+        return; // Leave the order alone rather than pretending to shuffle.
+    }
+    let mut state = u64::from_le_bytes(seed) | 1;
+    for i in (1..items.len()).rev() {
+        // xorshift64 — plenty for shuffling a list nobody is betting on.
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        items.swap(i, (state % (i as u64 + 1)) as usize);
+    }
+}
+
 /// Truncate a string to at most `max` bytes, cutting on a char boundary.
 pub fn truncate_bytes(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -936,6 +955,7 @@ pub fn playlist_item_from_track(
         }
     });
     PlaylistItem {
+        playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: Some(track.id),
         path: dest,
@@ -999,6 +1019,7 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
     });
 
     PlaylistItem {
+        playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: Some(track.id),
         path,

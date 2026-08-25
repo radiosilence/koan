@@ -29,7 +29,9 @@ final class Navigator {
         case artists
         case favourites
         case playHistory
-        case snapshots
+        /// One playlist. A sidebar row like any other — which is what makes
+        /// clicking it light it up, and what lets Back return to it.
+        case playlist(Int64)
 
         var id: Self { self }
 
@@ -42,7 +44,9 @@ final class Navigator {
             case .artists: "Filter artists"
             case .favourites: "Filter favourites"
             case .playHistory: "Filter history"
-            case .queue, .searchResults, .snapshots: nil
+            // A playlist is a sequence someone chose, and narrowing it hides
+            // part of that sequence rather than telling you anything.
+            case .queue, .searchResults, .playlist: nil
             }
         }
     }
@@ -100,6 +104,10 @@ final class Navigator {
         go(to: .artist(id))
     }
 
+    func open(playlist id: Int64) {
+        go(to: .section(.playlist(id)))
+    }
+
     func goBack() {
         guard canGoBack else { return }
         cursor -= 1
@@ -129,7 +137,8 @@ final class Navigator {
     }
 
     /// Drop a section from history. Search results only exist while there is a
-    /// query; once it is gone, they are not somewhere Back can return to.
+    /// query, and a deleted playlist no longer exists at all; once either is
+    /// gone, they are not somewhere Back can return to.
     func forget(_ section: Section) {
         guard history.contains(.section(section)) else { return }
         // Whatever survives behind the cursor keeps its order, so the cursor

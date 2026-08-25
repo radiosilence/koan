@@ -275,6 +275,7 @@ fn poll_and_stream_loop(
                         if !jukebox {
                             let cached = dest.exists();
                             let item = PlaylistItem {
+                                playlist_entry_id: None,
                                 id: queue_id,
                                 db_id: None,
                                 path: if cached {
@@ -371,6 +372,7 @@ fn poll_and_stream_loop(
                             .map(QueueItemId)
                             .unwrap_or_else(|_| QueueItemId::new());
                         PlaylistItem {
+                            playlist_entry_id: None,
                             id: qid,
                             db_id: None,
                             path: PathBuf::from(format!("/remote/{}", e.queue_item_id)),
