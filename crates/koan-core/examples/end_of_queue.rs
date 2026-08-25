@@ -18,6 +18,7 @@ fn main() {
     let (state, _timeline, _viz, tx) = Player::spawn();
 
     let item = PlaylistItem {
+        playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: None,
         path,

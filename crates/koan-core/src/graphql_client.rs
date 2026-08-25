@@ -276,18 +276,18 @@ impl GraphQLClient {
         Ok(())
     }
 
-    pub fn save_snapshot(&self, name: &str) -> Result<(), GraphQLError> {
+    pub fn save_queue_as_playlist(&self, name: &str) -> Result<(), GraphQLError> {
         self.execute(
-            "mutation($name: String!) { saveSnapshot(name: $name) { ok } }",
+            "mutation($name: String!) { saveQueueAsPlaylist(name: $name) { id } }",
             Some(serde_json::json!({ "name": name })),
         )?;
         Ok(())
     }
 
-    pub fn restore_snapshot(&self, name: &str) -> Result<(), GraphQLError> {
+    pub fn play_playlist(&self, id: i64, shuffled: bool) -> Result<(), GraphQLError> {
         self.execute(
-            "mutation($name: String!) { restoreSnapshot(name: $name) { ok } }",
-            Some(serde_json::json!({ "name": name })),
+            "mutation($id: Int!, $shuffled: Boolean!)              { playPlaylist(id: $id, shuffled: $shuffled) { ok } }",
+            Some(serde_json::json!({ "id": id, "shuffled": shuffled })),
         )?;
         Ok(())
     }

@@ -61,11 +61,11 @@ struct TransportBar: View {
     @ViewBuilder
     private var nowPlaying: some View {
         HStack(spacing: 11) {
-            if let trackId = player.currentTrackId {
-                AlbumArtwork(source: .track(trackId), cornerRadius: 8)
+            if let sleeve = player.currentArtwork {
+                AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 8)
                     .frame(width: 44, height: 44)
                     .showsArtworkFullSize(
-                        source: .track(trackId),
+                        source: sleeve,
                         title: player.nowPlaying.entry?.title ?? "",
                         subtitle: player.nowPlaying.entry.map {
                             "\($0.artist) — \($0.album)"
@@ -150,7 +150,7 @@ struct TransportBar: View {
                 backSkips += 1
                 player.previous()
             } label: {
-                Image(systemName: "backward.fill")
+                Image(systemName: Icon.previous)
                     .symbolEffect(.bounce, value: reduceMotion ? 0 : backSkips)
             }
             .keyboardShortcut(.leftArrow, modifiers: .command)
@@ -159,7 +159,7 @@ struct TransportBar: View {
             // Bigger than the pair either side of it: it is the one you reach
             // for without looking.
             Button(action: player.togglePlayPause) {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
                     .font(.system(size: 25))
                     .contentTransition(.symbolEffect(.replace))
                     .frame(width: 30)
@@ -170,7 +170,7 @@ struct TransportBar: View {
                 forwardSkips += 1
                 player.next()
             } label: {
-                Image(systemName: "forward.fill")
+                Image(systemName: Icon.next)
                     .symbolEffect(.bounce, value: reduceMotion ? 0 : forwardSkips)
             }
             .keyboardShortcut(.rightArrow, modifiers: .command)
@@ -203,7 +203,7 @@ struct TransportBar: View {
                 get: { player.radioEnabled },
                 set: { player.setRadio($0) }
             )) {
-                Label("Radio", systemImage: "dot.radiowaves.left.and.right")
+                Label("Radio", systemImage: Icon.radio)
                     .labelStyle(.titleAndIcon)
                     .font(.caption)
             }

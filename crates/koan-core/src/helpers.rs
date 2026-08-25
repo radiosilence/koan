@@ -618,30 +618,34 @@ pub fn set_remote_credentials(
     SubsonicClient::new(url, username, password).ping()?;
     crate::credentials::store_password(url, password)?;
 
-    let mut values = toml::map::Map::new();
-    values.insert("enabled".into(), toml::Value::Boolean(true));
-    values.insert("url".into(), toml::Value::String(url.to_string()));
-    values.insert("username".into(), toml::Value::String(username.to_string()));
-    // Explicitly emptied: a password left here would keep being read by anything
-    // still preferring the config copy.
-    values.insert("password".into(), toml::Value::String(String::new()));
-    Config::patch_local("remote", &values)?;
+    Config::persist(|cfg| {
+        cfg.remote.enabled = true;
+        cfg.remote.url = url.to_string();
+        cfg.remote.username = username.to_string();
+        // Explicitly emptied: a password left here would keep being read by
+        // anything still preferring the config copy.
+        cfg.remote.password = String::new();
+    })?;
     Ok(())
 }
 
 /// Keychain account holding the Subsonic API shared secret.
 pub const SUBSONIC_CREDENTIAL_ACCOUNT: &str = "koan-subsonic";
 
-/// Shared secret for koan's own Subsonic API. Config first, then the keychain.
+/// Shared secret for koan's own Subsonic API. Keychain first, then config.
 ///
-/// Deliberately not `get_remote_password` — see `SubsonicConfig`.
+/// Same precedence as `remote_password`: the credential store is where
+/// `koan subsonic setup` puts the secret, and the config field is the fallback
+/// for machines without one. A stale plaintext copy must never win over it.
+///
+/// Deliberately not the same secret as `get_remote_password` — see `SubsonicConfig`.
 pub fn get_subsonic_password(cfg: &Config) -> Option<String> {
-    if !cfg.subsonic.password.is_empty() {
-        return Some(cfg.subsonic.password.clone());
+    if let Ok(secret) = crate::credentials::get_password(SUBSONIC_CREDENTIAL_ACCOUNT)
+        && !secret.is_empty()
+    {
+        return Some(secret);
     }
-    crate::credentials::get_password(SUBSONIC_CREDENTIAL_ACCOUNT)
-        .ok()
-        .filter(|p| !p.is_empty())
+    (!cfg.subsonic.password.is_empty()).then(|| cfg.subsonic.password.clone())
 }
 
 /// Upstream Subsonic credentials from the merged config, returning `None` if
@@ -800,6 +804,25 @@ fn album_remote_id(conn: &rusqlite::Connection, album_id: i64, selected: usize) 
 // Path utilities
 // ---------------------------------------------------------------------------
 
+/// Fisher-Yates over a fresh seed, so consecutive calls differ.
+///
+/// Deliberately not seeded from anything stable: "shuffle again" has to
+/// actually produce a new order, which a process-lifetime seed wouldn't.
+pub fn shuffle<T>(items: &mut [T]) {
+    let mut seed = [0u8; 8];
+    if getrandom::fill(&mut seed).is_err() {
+        return; // Leave the order alone rather than pretending to shuffle.
+    }
+    let mut state = u64::from_le_bytes(seed) | 1;
+    for i in (1..items.len()).rev() {
+        // xorshift64 — plenty for shuffling a list nobody is betting on.
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        items.swap(i, (state % (i as u64 + 1)) as usize);
+    }
+}
+
 /// Truncate a string to at most `max` bytes, cutting on a char boundary.
 pub fn truncate_bytes(s: &str, max: usize) -> &str {
     if s.len() <= max {
@@ -932,6 +955,7 @@ pub fn playlist_item_from_track(
         }
     });
     PlaylistItem {
+        playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: Some(track.id),
         path: dest,
@@ -995,6 +1019,7 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
     });
 
     PlaylistItem {
+        playlist_entry_id: None,
         id: QueueItemId::new(),
         db_id: Some(track.id),
         path,

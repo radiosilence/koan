@@ -277,11 +277,22 @@ impl KoanEngine {
 
     pub async fn queue(self: Arc<Self>) -> Vec<QueueItem> {
         offload::offload(move || {
-            self.state
-                .derive_visible_queue()
-                .entries
+            let entries = self.state.derive_visible_queue().entries;
+            // One query for the whole queue. A client draws one sleeve per
+            // album, and without an ID to group by it asks for artwork per
+            // track — the same image fetched once for every track on the
+            // record. A queue with no database behind it simply has no album
+            // IDs; the art falls back to the per-track lookup as before.
+            let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
+            let album_ids = self
+                .db()
+                .ok()
+                .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
+                .unwrap_or_default();
+
+            entries
                 .iter()
-                .map(QueueItem::from)
+                .map(|e| QueueItem::from_entry(e, &album_ids))
                 .collect()
         })
         .await
@@ -467,7 +478,7 @@ impl KoanEngine {
                 AlbumSort::Artist => albums
                     .sort_by_cached_key(|a| (a.artist_name.to_lowercase(), a.year.unwrap_or(0))),
                 AlbumSort::Year => albums.sort_by_key(|a| std::cmp::Reverse(a.year.unwrap_or(0))),
-                AlbumSort::Random => shuffle(&mut albums),
+                AlbumSort::Random => koan_core::helpers::shuffle(&mut albums),
             }
             Ok(albums)
         })
@@ -969,93 +980,330 @@ impl KoanEngine {
         .await
     }
 
-    // --- Snapshots ---------------------------------------------------------
+    // --- Playlists ---------------------------------------------------------
+    //
+    // A playlist is a named, ordered list of library tracks — the same object
+    // Navidrome holds, so the two can be reconciled. Every edit writes locally
+    // and then pushes to the server in the background; nothing waits on the
+    // network, and a push that never got out is settled by the next sync.
 
-    pub async fn snapshots(self: Arc<Self>) -> Result<Vec<Snapshot>, KoanError> {
+    pub async fn playlists(self: Arc<Self>) -> Result<Vec<Playlist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            Ok(queries::list_snapshots(&db.conn)
-                .map_err(fav_err)?
+            Ok(queries::list_playlists(&db.conn)
+                .map_err(db_err)?
                 .into_iter()
-                .map(Snapshot::from)
+                .map(Playlist::from)
                 .collect())
         })
         .await
     }
 
-    pub async fn save_snapshot(self: Arc<Self>, name: String) -> Result<(), KoanError> {
+    pub async fn playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+    ) -> Result<Option<Playlist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let (items, cursor) = self.state.snapshot_playlist();
-            let persisted: Vec<PersistedQueueItem> = items
-                .iter()
-                .map(PersistedQueueItem::from_playlist_item)
-                .collect();
-            let cursor_path = cursor.and_then(|cid| {
-                items
-                    .iter()
-                    .find(|i| i.id == cid)
-                    .map(|i| i.path.to_string_lossy().into_owned())
-            });
-
-            queries::save_snapshot(
-                &db.conn,
-                &name,
-                &persisted,
-                cursor_path.as_deref(),
-                self.state.position_ms(),
-            )
-            .map_err(fav_err)
-            .map(|_| ())
+            Ok(queries::get_playlist(&db.conn, playlist_id)
+                .map_err(db_err)?
+                .map(Playlist::from))
         })
         .await
     }
 
-    /// Replaces the queue and resumes at the saved position. Items still in the
-    /// library are re-resolved so cache paths and downloads stay correct.
-    pub async fn restore_snapshot(self: Arc<Self>, name: String) -> Result<(), KoanError> {
-        offload::sequenced(move || {
+    /// The playlist's tracks, in playlist order. Duplicates are kept — the same
+    /// song twice in a row is a thing people do on purpose.
+    pub async fn playlist_tracks(
+        self: Arc<Self>,
+        playlist_id: i64,
+    ) -> Result<Vec<PlaylistEntry>, KoanError> {
+        offload::offload(move || {
             let db = self.db()?;
-            let snap = queries::load_snapshot(&db.conn, &name)
-                .map_err(fav_err)?
+            let entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
+            let ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+            let tracks = self.decorate(&db, entries.into_iter().map(|e| e.track).collect());
+            Ok(ids
+                .into_iter()
+                .zip(tracks)
+                .map(|(id, track)| PlaylistEntry { id, track })
+                .collect())
+        })
+        .await
+    }
+
+    /// Up to four tracks whose covers make the playlist's tile — one per album,
+    /// in playlist order.
+    pub async fn playlist_cover_track_ids(
+        self: Arc<Self>,
+        playlist_id: i64,
+    ) -> Result<Vec<i64>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            queries::playlist_cover_track_ids(&db.conn, playlist_id).map_err(db_err)
+        })
+        .await
+    }
+
+    pub async fn create_playlist(
+        self: Arc<Self>,
+        name: String,
+        track_ids: Vec<i64>,
+    ) -> Result<Playlist, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let id = queries::create_playlist(&db.conn, &name, None).map_err(db_err)?;
+            if !track_ids.is_empty() {
+                queries::add_tracks(&db.conn, id, &track_ids).map_err(db_err)?;
+            }
+            koan_core::playlists::push_to_remote(id);
+            queries::get_playlist(&db.conn, id)
+                .map_err(db_err)?
+                .map(Playlist::from)
                 .ok_or_else(|| KoanError::NotFound {
-                    message: format!("snapshot '{name}'"),
-                })?;
-
-            let (items, pending) = restore_items(&db, &snap.items);
-
-            self.send(PlayerCommand::ClearPlaylist)?;
-            if items.is_empty() {
-                return Ok(());
-            }
-
-            let cursor = snap
-                .cursor_path
-                .as_ref()
-                .and_then(|cp| {
-                    items
-                        .iter()
-                        .find(|i| i.path.to_string_lossy() == cp.as_str())
+                    message: format!("playlist {id}"),
                 })
-                .map(|i| i.id)
-                .unwrap_or(items[0].id);
+        })
+        .await
+    }
 
-            self.send(PlayerCommand::AddToPlaylist(items))?;
-            let _ = self.tx.send(PlayerCommand::Play(cursor));
-            if snap.position_ms > 0 {
-                let _ = self.tx.send(PlayerCommand::Seek(snap.position_ms));
-            }
-            self.start_downloads(pending);
+    /// The current queue, kept. Items with no library row behind them — a file
+    /// played before it was indexed — cannot come across, because a playlist
+    /// points at library rows.
+    pub async fn save_queue_as_playlist(
+        self: Arc<Self>,
+        name: String,
+    ) -> Result<Playlist, KoanError> {
+        let track_ids: Vec<i64> = self
+            .state
+            .snapshot_playlist()
+            .0
+            .iter()
+            .filter_map(|item| item.db_id)
+            .collect();
+        self.create_playlist(name, track_ids).await
+    }
 
+    pub async fn rename_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        name: String,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            queries::rename_playlist(&db.conn, playlist_id, &name).map_err(db_err)?;
+            koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
         .await
     }
 
-    pub async fn delete_snapshot(self: Arc<Self>, name: String) -> Result<bool, KoanError> {
+    pub async fn delete_playlist(self: Arc<Self>, playlist_id: i64) -> Result<bool, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            queries::delete_snapshot(&db.conn, &name).map_err(fav_err)
+            // Read the server id before the row goes: the delete has to reach
+            // the server too, or the next sync brings the playlist back.
+            let remote_id = queries::get_playlist(&db.conn, playlist_id)
+                .ok()
+                .flatten()
+                .and_then(|p| p.remote_id);
+            let deleted = queries::delete_playlist(&db.conn, playlist_id).map_err(db_err)?;
+            if deleted && let Some(remote_id) = remote_id {
+                koan_core::playlists::delete_on_remote(remote_id);
+            }
+            Ok(deleted)
+        })
+        .await
+    }
+
+    /// Append tracks. Returns how many landed.
+    pub async fn add_to_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        track_ids: Vec<i64>,
+    ) -> Result<u32, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
+            koan_core::playlists::push_to_remote(playlist_id);
+            Ok(added.len() as u32)
+        })
+        .await
+    }
+
+    /// Add tracks at a position rather than at the end — what dropping between
+    /// two rows means.
+    ///
+    /// Both halves happen here rather than as an add followed by a reorder from
+    /// the caller: the caller would be reordering against the list as it was
+    /// before its own insert landed, and racing the reload that tells it
+    /// otherwise.
+    pub async fn insert_into_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        track_ids: Vec<i64>,
+        at: u32,
+    ) -> Result<u32, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
+            if !added.is_empty() {
+                let mut order: Vec<i64> = queries::playlist_entries(&db.conn, playlist_id)
+                    .map_err(db_err)?
+                    .into_iter()
+                    .map(|e| e.id)
+                    .filter(|id| !added.contains(id))
+                    .collect();
+                let at = (at as usize).min(order.len());
+                order.splice(at..at, added.iter().copied());
+                queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
+            }
+            koan_core::playlists::push_to_remote(playlist_id);
+            Ok(added.len() as u32)
+        })
+        .await
+    }
+
+    /// Put the entries in this order. Ids survive, so anything holding one —
+    /// a queue item, say — still knows which row it means.
+    pub async fn reorder_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        entry_ids: Vec<i64>,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            queries::reorder_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
+            koan_core::playlists::push_to_remote(playlist_id);
+            Ok(())
+        })
+        .await
+    }
+
+    /// Take entries out. Returns how many went.
+    pub async fn remove_from_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        entry_ids: Vec<i64>,
+    ) -> Result<u32, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let removed =
+                queries::remove_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
+            koan_core::playlists::push_to_remote(playlist_id);
+            Ok(removed as u32)
+        })
+        .await
+    }
+
+    /// Shuffle the playlist itself, in place. Distinct from shuffling it into
+    /// the queue, which leaves the playlist alone.
+    pub async fn shuffle_playlist(self: Arc<Self>, playlist_id: i64) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
+            koan_core::helpers::shuffle(&mut entries);
+            let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
+            queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
+            koan_core::playlists::push_to_remote(playlist_id);
+            Ok(())
+        })
+        .await
+    }
+
+    /// Where the playlists sit in the sidebar, in the order given. Local only —
+    /// no server has anywhere to put it.
+    pub async fn reorder_playlists(self: Arc<Self>, ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            queries::reorder_playlists(&db.conn, &ids).map_err(db_err)
+        })
+        .await
+    }
+
+    /// Remember whether this playlist is looked at grouped by album. `None`
+    /// follows the app default, which for a playlist is ungrouped: a playlist
+    /// is a sequence someone chose, not a shelf of records.
+    pub async fn set_playlist_grouped(
+        self: Arc<Self>,
+        playlist_id: i64,
+        grouped: Option<bool>,
+    ) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            queries::set_playlist_grouped(&db.conn, playlist_id, grouped).map_err(db_err)
+        })
+        .await
+    }
+
+    /// Replace the queue with the playlist and start playing at `start_at`.
+    ///
+    /// `shuffled` orders the queue, not the playlist — the playlist on disk is
+    /// untouched.
+    pub async fn play_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        start_at: Option<u32>,
+        shuffled: bool,
+    ) -> Result<Vec<String>, KoanError> {
+        offload::sequenced(move || {
+            let db = self.db()?;
+            let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
+            if shuffled {
+                koan_core::helpers::shuffle(&mut entries);
+            }
+            let track_ids: Vec<i64> = entries.iter().map(|e| e.track.id).collect();
+
+            let (mut items, pending) = self.build_items(&db, &track_ids);
+            // Each queue item remembers the row it came from. The queue is an
+            // ephemeral view onto the playlist and may be shuffled, cut about
+            // or added to; this is what still says which row is playing, and
+            // which of two copies of a song it is.
+            for (item, entry) in items.iter_mut().zip(&entries) {
+                item.playlist_entry_id = Some(entry.id);
+            }
+            if items.is_empty() {
+                self.send(PlayerCommand::ClearPlaylist)?;
+                return Ok(Vec::new());
+            }
+
+            let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
+            self.send(PlayerCommand::ReplacePlaylist {
+                items,
+                start: if shuffled {
+                    0
+                } else {
+                    start_at.unwrap_or(0) as usize
+                },
+            })?;
+            self.start_downloads(pending);
+
+            Ok(ids)
+        })
+        .await
+    }
+
+    /// Write the playlist out as an extended M3U8.
+    ///
+    /// Only tracks with a file on this machine can go in it: a playlist file is
+    /// a list of paths, and writing stream URLs instead would put the
+    /// credentials that authorise them into a file people mail to each other.
+    pub async fn export_playlist(
+        self: Arc<Self>,
+        playlist_id: i64,
+        dest_path: String,
+    ) -> Result<PlaylistExport, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let summary =
+                koan_core::playlists::export_m3u8(&db, playlist_id, Path::new(&dest_path))
+                    .map_err(|e| KoanError::BadArgument {
+                        message: e.to_string(),
+                    })?;
+            Ok(PlaylistExport {
+                written: summary.written as u32,
+                skipped: summary.skipped as u32,
+            })
         })
         .await
     }
@@ -1241,7 +1489,6 @@ impl KoanEngine {
                     .as_ref()
                     .map(koan_core::helpers::tracks_from_server)
                     .unwrap_or(0),
-                transcode_quality: cfg.remote.transcode_quality.clone(),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
                 cache_dir: cache_dir.to_string_lossy().into_owned(),
@@ -1266,67 +1513,41 @@ impl KoanEngine {
 
     /// Write the settings back.
     ///
-    /// Everything lands in `config.local.toml`, which is the machine-specific
-    /// layer — the same file the CLI writes and one the TUI will pick up. The
-    /// password is not here; it goes through `sign_in_remote`.
+    /// Each setting lands in the file that owns it — `Config::persist` routes
+    /// folders and the server account to `config.local.toml` and taste like
+    /// ReplayGain to `config.toml`. The password is not here; it goes through
+    /// `sign_in_remote`.
     pub async fn update_settings(self: Arc<Self>, s: Settings) -> Result<(), KoanError> {
         offload::offload(move || {
-            use toml::Value;
+            Config::persist(|cfg| {
+                cfg.library.folders = s
+                    .library_folders
+                    .iter()
+                    .map(|f| PathBuf::from(&f.path))
+                    .collect();
 
-            let cfg_err = |e: config::ConfigError| KoanError::BadArgument {
+                cfg.remote.enabled = s.remote_enabled;
+                cfg.remote.url = s.remote_url.clone();
+                cfg.remote.username = s.remote_username.clone();
+                cfg.remote.download_workers = s.download_workers.max(1) as usize;
+                cfg.remote.cache_limit = (!s.cache_limit.is_empty()).then(|| s.cache_limit.clone());
+                cfg.remote.auto_sync = s.auto_sync;
+                cfg.remote.auto_sync_interval_mins = s.auto_sync_interval_mins;
+
+                cfg.playback.replaygain = match s.replaygain.as_str() {
+                    "track" => config::ReplayGainMode::Track,
+                    "album" => config::ReplayGainMode::Album,
+                    _ => config::ReplayGainMode::Off,
+                };
+                cfg.playback.pre_amp_db = s.pre_amp_db;
+
+                cfg.radio.lookahead = s.radio_lookahead as usize;
+                cfg.radio.batch_size = (s.radio_batch_size.max(1)) as usize;
+                cfg.radio.discovery_weight = s.radio_discovery_weight.clamp(0.0, 1.0);
+            })
+            .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
-            };
-
-            let mut library = toml::map::Map::new();
-            library.insert(
-                "folders".into(),
-                Value::Array(
-                    s.library_folders
-                        .iter()
-                        .map(|f| Value::String(f.path.clone()))
-                        .collect(),
-                ),
-            );
-            Config::patch_local("library", &library).map_err(cfg_err)?;
-
-            let mut remote = toml::map::Map::new();
-            remote.insert("enabled".into(), Value::Boolean(s.remote_enabled));
-            remote.insert("url".into(), Value::String(s.remote_url.clone()));
-            remote.insert("username".into(), Value::String(s.remote_username.clone()));
-            remote.insert(
-                "transcode_quality".into(),
-                Value::String(s.transcode_quality.clone()),
-            );
-            remote.insert(
-                "download_workers".into(),
-                Value::Integer(s.download_workers.max(1) as i64),
-            );
-            remote.insert("cache_limit".into(), Value::String(s.cache_limit.clone()));
-            remote.insert("auto_sync".into(), Value::Boolean(s.auto_sync));
-            remote.insert(
-                "auto_sync_interval_mins".into(),
-                Value::Integer(s.auto_sync_interval_mins as i64),
-            );
-            Config::patch_local("remote", &remote).map_err(cfg_err)?;
-
-            let mut playback = toml::map::Map::new();
-            playback.insert("replaygain".into(), Value::String(s.replaygain.clone()));
-            playback.insert("pre_amp_db".into(), Value::Float(s.pre_amp_db));
-            Config::patch_local("playback", &playback).map_err(cfg_err)?;
-
-            let mut radio = toml::map::Map::new();
-            radio.insert("lookahead".into(), Value::Integer(s.radio_lookahead as i64));
-            radio.insert(
-                "batch_size".into(),
-                Value::Integer(s.radio_batch_size.max(1) as i64),
-            );
-            radio.insert(
-                "discovery_weight".into(),
-                Value::Float(s.radio_discovery_weight.clamp(0.0, 1.0)),
-            );
-            Config::patch_local("radio", &radio).map_err(cfg_err)?;
-
-            Ok(())
+            })
         })
         .await
     }
@@ -1378,10 +1599,11 @@ impl KoanEngine {
             let cfg = Config::load().unwrap_or_default();
             let _ = koan_core::credentials::delete_password(&cfg.remote.url);
 
-            let mut remote = toml::map::Map::new();
-            remote.insert("enabled".into(), toml::Value::Boolean(false));
-            remote.insert("password".into(), toml::Value::String(String::new()));
-            Config::patch_local("remote", &remote).map_err(|e| KoanError::BadArgument {
+            Config::persist(|cfg| {
+                cfg.remote.enabled = false;
+                cfg.remote.password = String::new();
+            })
+            .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })
         })
@@ -1484,6 +1706,8 @@ impl KoanEngine {
             // a star made on the server — or on another machine — never reaches
             // the app, and one made here only leaves if you happen to run the CLI.
             let favourites = koan_core::helpers::reconcile_favourites(&db, &client);
+            let playlists =
+                koan_core::playlists::reconcile_playlists(&db, &client, &cfg.remote.username);
 
             Ok(SyncSummary {
                 artists: result.artists_synced as u32,
@@ -1492,6 +1716,8 @@ impl KoanEngine {
                 albums_failed: result.albums_failed as u32,
                 favourites_pushed: favourites.pushed as u32,
                 favourites_imported: favourites.imported as u32,
+                playlists_pulled: playlists.pulled as u32,
+                playlists_pushed: playlists.pushed as u32,
             })
         })
         .await
@@ -1585,7 +1811,7 @@ impl KoanEngine {
             koan_core::format::parse(&pattern).map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })?;
-            Config::update_base(|cfg| {
+            Config::persist(|cfg| {
                 cfg.organize.patterns.insert(name, pattern);
             })
             .map_err(|e| KoanError::BadArgument {
@@ -1628,7 +1854,7 @@ impl KoanEngine {
         enabled: bool,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
-            Config::update_base(|cfg| cfg.organize.move_ancillary = enabled).map_err(|e| {
+            Config::persist(|cfg| cfg.organize.move_ancillary = enabled).map_err(|e| {
                 KoanError::BadArgument {
                     message: e.to_string(),
                 }
@@ -2190,25 +2416,6 @@ fn restore_items(
         }
     }
     (items, pending)
-}
-
-/// Fisher-Yates over a fresh seed, so consecutive calls differ.
-///
-/// Deliberately not seeded from anything stable: "shuffle again" has to
-/// actually produce a new order, which a process-lifetime seed wouldn't.
-fn shuffle<T>(items: &mut [T]) {
-    let mut seed = [0u8; 8];
-    if getrandom::fill(&mut seed).is_err() {
-        return; // Leave the order alone rather than pretending to shuffle.
-    }
-    let mut state = u64::from_le_bytes(seed) | 1;
-    for i in (1..items.len()).rev() {
-        // xorshift64 — plenty for shuffling a list nobody is betting on.
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        items.swap(i, (state % (i as u64 + 1)) as usize);
-    }
 }
 
 fn sort_rows(mut rows: Vec<queries::TrackRow>, sort: TrackSort) -> Vec<queries::TrackRow> {

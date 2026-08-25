@@ -137,6 +137,8 @@ DAC → Speakers
 
 **No resampling.** On macOS, the device sample rate is switched to match the source file (bit-perfect). On Linux, the sample rate is set at stream creation. Float32 PCM from Symphonia all the way to the platform audio output.
 
+The device rate is not koan's to own — it is one property shared by every client, and Audio MIDI Setup, a vendor control panel or any other app can move it back at any moment, after which the HAL resamples koan to reach it. So the rate the front ends report is not the one read at engine creation: a `SampleRateWatch` (`audio/device.rs`) stays registered on `kAudioDevicePropertyNominalSampleRate` for as long as the engine lives and writes every change into `SharedPlayerState`. koan does not take hog mode, so losing the rate is possible by design — saying so is not.
+
 **Backpressure:** If the ring buffer is full, decode sleeps 500µs and retries. If the ring buffer is empty (underrun), the render callback zeros the output (silence beats glitches).
 
 ## Gapless playback
@@ -203,7 +205,7 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `coreaudio_backend.rs` | macOS: `CoreAudioBackend` impl wrapping `engine.rs` + `device.rs` (`#[cfg(target_os = "macos")]`) |
 | `cpal_backend.rs` | Linux: `CpalBackend` impl using cpal (ALSA/PipeWire/PulseAudio) (`#[cfg(target_os = "linux")]`) |
 | `engine.rs` | CoreAudio AUHAL setup, render callback (unsafe extern "C"), AudioEngine lifecycle (macOS only) |
-| `device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
+| `device.rs` | CoreAudio device enumeration, sample rate get/set/watch (macOS only) |
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
 | `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread), `VizLevels` (spectrum reduced to low/mid/high, cloning no waveform) |
@@ -276,7 +278,7 @@ fb2k-compatible template engine.
 |---|---|
 | `config.rs` | Figment-based layered config: defaults → `config.toml` → `config.local.toml` → `KOAN_*` env vars. Playback, library, remote, graphql, radio, visualizer, organize, discovery settings. See `Config::update_base()` for safe writes. |
 | `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service) |
-| `organize.rs` | File renaming using format strings. Preview/execute/undo, all planned by one `plan()` so a preview and the execute that follows it agree. Scoped by track id or by path. Refuses to overwrite; database rows (track paths, scan cache, favourites, snapshots, playback state) are rewritten in the same transaction as the move. Every move is logged for undo. Moves ancillary files (cover art, cue sheets). |
+| `organize.rs` | File renaming using format strings. Preview/execute/undo, all planned by one `plan()` so a preview and the execute that follows it agree. Scoped by track id or by path. Refuses to overwrite; database rows (track paths, scan cache, favourites, playback state) are rewritten in the same transaction as the move. Playlists need no rewriting — they point at library rows, not at paths. Every move is logged for undo. Moves ancillary files (cover art, cue sheets). |
 | `lyrics.rs` | LRCLIB lyrics fetching and parsing (synced LRC + plain text). Cached per-track in SQLite. |
 
 ## koan-cli modules
@@ -310,7 +312,7 @@ Thin binary crate. `main.rs` has the clap CLI struct definitions, match dispatch
 
 | File | Purpose |
 |---|---|
-| `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/snapshots/radio. rusqlite is blocking, so resolvers run their DB and HTTP work on `spawn_blocking` with a pooled connection; parent → child edges go through dataloaders. |
+| `graphql/` | async-graphql schema, resolvers, axum HTTP server. Relay pagination, rich filters, mutations for playback/queue/library/favourites/playlists/radio. rusqlite is blocking, so resolvers run their DB and HTTP work on `spawn_blocking` with a pooled connection; parent → child edges go through dataloaders. |
 | `subsonic/` | Subsonic REST API endpoints for compatibility with existing clients (DSub, Symfonium, play:Sub). |
 | `mcp.rs` | MCP server on stdio -- exposes `schema_sdl` and `graphql` tools for Claude Desktop integration. |
 | `auth.rs` | JWT middleware, Ed25519 token generation/validation, role-based guards. |

@@ -31,7 +31,7 @@ struct ArtworkViewer: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            AlbumArtwork(source: source, cornerRadius: 10)
+            AlbumArtwork(source: source, size: .full, cornerRadius: 10)
                 .frame(width: side, height: side)
                 .shadow(color: .black.opacity(0.45), radius: 32, y: 14)
 

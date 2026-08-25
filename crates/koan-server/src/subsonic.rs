@@ -1843,7 +1843,7 @@ async fn get_genres(
 }
 
 // ---------------------------------------------------------------------------
-// Playlist endpoints (mapped to koan snapshots)
+// Playlist endpoints
 // ---------------------------------------------------------------------------
 
 async fn get_playlists(
@@ -1851,52 +1851,63 @@ async fn get_playlists(
     Query(params): Query<SubsonicParams>,
 ) -> Response {
     respond_db(&state, &params, |db, b| {
-        let snaps = queries::list_snapshots(&db.conn)
+        let lists = queries::list_playlists(&db.conn)
             .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
         let mut playlists_node = XmlNode::new("playlists").array_of("playlist");
-        for snap in &snaps {
-            playlists_node = playlists_node.child(
-                XmlNode::new("playlist")
-                    .attr("id", &snap.name)
-                    .attr("name", &snap.name)
-                    .attr_int("songCount", snap.track_count as i64)
-                    .attr("owner", &state.username)
-                    .attr_bool("public", false)
-                    .attr("created", &snap.created_at),
-            );
+        for list in &lists {
+            playlists_node = playlists_node.child(playlist_attrs(
+                XmlNode::new("playlist"),
+                list,
+                &state.username,
+            ));
         }
 
         Ok(b.child(playlists_node))
     })
 }
 
-/// A saved snapshot as a `<playlist>` with its members resolved.
-fn playlist_node(db: &Database, name: &str, owner: &str) -> Result<XmlNode, SubsonicError> {
-    let snap = queries::load_snapshot(&db.conn, name)
+/// The attributes every `<playlist>` carries, list or detail.
+fn playlist_attrs(node: XmlNode, list: &queries::PlaylistRow, username: &str) -> XmlNode {
+    let node = node
+        .attr("id", &list.id.to_string())
+        .attr("name", &list.name)
+        .attr_int("songCount", list.track_count)
+        .attr_int("duration", list.duration_ms / 1000)
+        .attr("owner", list.owner.as_deref().unwrap_or(username))
+        .attr_bool("public", list.public)
+        .attr("created", &list.created_at)
+        .attr("changed", &list.changed_at);
+    match &list.comment {
+        Some(comment) => node.attr("comment", comment),
+        None => node,
+    }
+}
+
+/// A playlist as a `<playlist>` with its members resolved.
+fn playlist_node(db: &Database, id: i64, owner: &str) -> Result<XmlNode, SubsonicError> {
+    let list = queries::get_playlist(&db.conn, id)
         .map_err(|e| SubsonicError::internal(e.to_string()))?
         .ok_or_else(|| SubsonicError::not_found("Playlist"))?;
 
-    let mut node = XmlNode::new("playlist")
-        .attr("id", &snap.name)
-        .attr("name", &snap.name)
-        .attr_int("songCount", snap.items.len() as i64)
-        .attr("owner", owner)
-        .attr_bool("public", false)
-        .attr("created", &snap.created_at)
-        .array_of("entry");
+    let mut node = playlist_attrs(XmlNode::new("playlist"), &list, owner).array_of("entry");
 
     // Playlist members are `<entry>`, not `<song>` — an XML client shown
     // `<song>` sees an empty playlist.
-    for item in &snap.items {
-        if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &item.path)
-            && let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
-        {
-            node = node.child(track_node(&track, "entry"));
-        }
+    for track in queries::playlist_tracks(&db.conn, id)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?
+    {
+        node = node.child(track_node(&track, "entry"));
     }
 
     Ok(node)
+}
+
+/// Parse a playlist id. Subsonic ids are opaque strings; koan's are its row ids.
+fn playlist_id(raw: Option<&str>) -> Result<i64, SubsonicError> {
+    raw.ok_or_else(|| SubsonicError::missing_param("id"))?
+        .parse()
+        .map_err(|_| SubsonicError::not_found("Playlist"))
 }
 
 async fn get_playlist(
@@ -1904,60 +1915,103 @@ async fn get_playlist(
     Query(params): Query<IdParam>,
 ) -> Response {
     respond_db(&state, &params.auth, |db, b| {
-        let name = params
-            .id
-            .as_deref()
-            .ok_or_else(|| SubsonicError::missing_param("id"))?;
-        Ok(b.child(playlist_node(db, name, &state.username)?))
+        let id = playlist_id(params.id.as_deref())?;
+        Ok(b.child(playlist_node(db, id, &state.username)?))
     })
 }
 
+/// `createPlaylist` — new when given a `name`, a wholesale replacement when
+/// given a `playlistId`. That second form is the only Subsonic call that can
+/// set a playlist's order, which is why koan's own pushes use it too.
 async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     let params = RawParams::parse(raw.as_deref());
     let auth = params.auth();
 
     respond_db(&state, &auth, |db, b| {
-        let name = params
-            .get("name")
-            .or_else(|| params.get("playlistId"))
-            .ok_or_else(|| SubsonicError::missing_param("name"))?;
+        let track_ids: Vec<i64> = params
+            .all("songId")
+            .filter_map(|id| id.parse::<i64>().ok())
+            .collect();
 
-        let mut items = Vec::new();
-        for id_str in params.all("songId") {
-            let Ok(tid) = id_str.parse::<i64>() else {
-                continue;
-            };
-            let Some(track) = queries::get_track_row(&db.conn, tid)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-            else {
-                continue;
-            };
-            let path = track
-                .path
-                .as_deref()
-                .or(track.cached_path.as_deref())
-                .unwrap_or("");
-            items.push(koan_core::db::queries::playback_state::PersistedQueueItem {
-                path: path.to_string(),
-                title: track.title,
-                artist: track.artist_name,
-                album_artist: track.album_artist_name,
-                album: track.album_title,
-                year: None,
-                codec: track.codec,
-                track_number: track.track_number.map(|n| n as i64),
-                disc: track.disc.map(|n| n as i64),
-                duration_ms: track.duration_ms.map(|d| d as u64),
-                db_id: Some(tid),
-            });
-        }
-
-        queries::save_snapshot(&db.conn, name, &items, None, 0)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        let id = match params.get("playlistId") {
+            Some(existing) => {
+                let id = playlist_id(Some(existing))?;
+                if let Some(name) = params.get("name") {
+                    queries::rename_playlist(&db.conn, id, name)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                }
+                queries::set_playlist_tracks(&db.conn, id, &track_ids)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                id
+            }
+            None => {
+                let name = params
+                    .get("name")
+                    .ok_or_else(|| SubsonicError::missing_param("name"))?;
+                let id = queries::create_playlist(&db.conn, name, None)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                queries::add_tracks(&db.conn, id, &track_ids)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                id
+            }
+        };
 
         // Since 1.14.0 the response carries the playlist that was created;
         // clients read the id back off it rather than guessing.
-        Ok(b.child(playlist_node(db, name, &state.username)?))
+        Ok(b.child(playlist_node(db, id, &state.username)?))
+    })
+}
+
+/// `updatePlaylist` — rename, re-comment, and add or remove members by index.
+///
+/// Removals are applied by descending index so each one does not shift the
+/// next; a client sends them against the list as it stood when it asked.
+async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    let params = RawParams::parse(raw.as_deref());
+    let auth = params.auth();
+
+    respond_db(&state, &auth, |db, b| {
+        let id = playlist_id(params.get("playlistId").or_else(|| params.get("id")))?;
+        if queries::get_playlist(&db.conn, id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+            .is_none()
+        {
+            return Err(SubsonicError::not_found("Playlist"));
+        }
+
+        if let Some(name) = params.get("name") {
+            queries::rename_playlist(&db.conn, id, name)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        }
+
+        let mut doomed: Vec<usize> = params
+            .all("songIndexToRemove")
+            .filter_map(|i| i.parse::<usize>().ok())
+            .collect();
+        if !doomed.is_empty() {
+            doomed.sort_unstable();
+            doomed.dedup();
+            let mut ids = queries::playlist_track_ids(&db.conn, id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            for index in doomed.into_iter().rev() {
+                if index < ids.len() {
+                    ids.remove(index);
+                }
+            }
+            queries::set_playlist_tracks(&db.conn, id, &ids)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        }
+
+        let added: Vec<i64> = params
+            .all("songIdToAdd")
+            .filter_map(|s| s.parse::<i64>().ok())
+            .collect();
+        if !added.is_empty() {
+            queries::add_tracks(&db.conn, id, &added)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        }
+
+        Ok(b)
     })
 }
 
@@ -1966,12 +2020,8 @@ async fn delete_playlist(
     Query(params): Query<IdParam>,
 ) -> Response {
     respond_db(&state, &params.auth, |db, b| {
-        let name = params
-            .id
-            .as_deref()
-            .ok_or_else(|| SubsonicError::missing_param("id"))?;
-
-        match queries::delete_snapshot(&db.conn, name) {
+        let id = playlist_id(params.id.as_deref())?;
+        match queries::delete_playlist(&db.conn, id) {
             Ok(true) => Ok(b),
             Ok(false) => Err(SubsonicError::not_found("Playlist")),
             Err(e) => Err(SubsonicError::internal(e.to_string())),
@@ -2057,13 +2107,15 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         .route("/rest/getUser.view", get(get_user))
         .route("/rest/getScanStatus", get(get_scan_status))
         .route("/rest/getScanStatus.view", get(get_scan_status))
-        // Playlists (mapped to koan snapshots)
+        // Playlists
         .route("/rest/getPlaylists", get(get_playlists))
         .route("/rest/getPlaylists.view", get(get_playlists))
         .route("/rest/getPlaylist", get(get_playlist))
         .route("/rest/getPlaylist.view", get(get_playlist))
         .route("/rest/createPlaylist", get(create_playlist))
         .route("/rest/createPlaylist.view", get(create_playlist))
+        .route("/rest/updatePlaylist", get(update_playlist))
+        .route("/rest/updatePlaylist.view", get(update_playlist))
         .route("/rest/deletePlaylist", get(delete_playlist))
         .route("/rest/deletePlaylist.view", get(delete_playlist))
         // Everything else under /rest/
@@ -2897,19 +2949,31 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::OK);
         assert!(body.contains("status=\"ok\""), "createPlaylist: {}", body);
-        // The response carries the playlist itself, per 1.14.0.
-        assert!(body.contains("<playlist id=\"testmix\""), "{}", body);
+        // The response carries the playlist itself, per 1.14.0 — which is how
+        // the client learns the id it was given.
+        assert!(body.contains("name=\"testmix\""), "{}", body);
+        let id = playlist_id_in(&body);
 
         let app = build_test_router(state);
         let (_, body) = get_response(
             app,
-            &format!("/rest/getPlaylist?{}&id=testmix", auth_query("")),
+            &format!("/rest/getPlaylist?{}&id={id}", auth_query("")),
         )
         .await;
         assert!(body.contains("songCount=\"2\""), "{}", body);
         // Playlist members are `<entry>`, never `<song>`.
         assert_eq!(body.matches("<entry ").count(), 2, "{}", body);
         assert!(!body.contains("<song "));
+    }
+
+    /// The `id` off a `<playlist>` element in a response body.
+    fn playlist_id_in(body: &str) -> String {
+        let start = body
+            .find("<playlist id=\"")
+            .expect("a playlist in the response")
+            + "<playlist id=\"".len();
+        let rest = &body[start..];
+        rest[..rest.find('"').unwrap()].to_string()
     }
 
     #[tokio::test]
@@ -2928,6 +2992,7 @@ mod tests {
             "createPlaylist failed: {}",
             body
         );
+        let id = playlist_id_in(&body);
 
         // List
         let app = build_test_router(state.clone());
@@ -2938,7 +3003,7 @@ mod tests {
         let app = build_test_router(state.clone());
         let (_, body) = get_response(
             app,
-            &format!("/rest/getPlaylist?{}&id=testmix", auth_query("")),
+            &format!("/rest/getPlaylist?{}&id={id}", auth_query("")),
         )
         .await;
         assert!(body.contains("testmix"));
@@ -2947,7 +3012,7 @@ mod tests {
         let app = build_test_router(state.clone());
         let (_, body) = get_response(
             app,
-            &format!("/rest/deletePlaylist?{}&id=testmix", auth_query("")),
+            &format!("/rest/deletePlaylist?{}&id={id}", auth_query("")),
         )
         .await;
         assert!(body.contains("status=\"ok\""));
@@ -2956,10 +3021,53 @@ mod tests {
         let app = build_test_router(state);
         let (_, body) = get_response(
             app,
-            &format!("/rest/getPlaylist?{}&id=testmix", auth_query("")),
+            &format!("/rest/getPlaylist?{}&id={id}", auth_query("")),
         )
         .await;
         assert!(body.contains("status=\"failed\""));
+    }
+
+    /// `updatePlaylist` adds and removes members by index, and a removal must
+    /// not shift the index of the one after it.
+    #[tokio::test]
+    async fn test_update_playlist_adds_and_removes() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let a = queries::upsert_track(&db.conn, &track_meta("/music/a.flac", "A", "Test Album", 1))
+            .unwrap();
+        let b = queries::upsert_track(&db.conn, &track_meta("/music/b.flac", "B", "Test Album", 2))
+            .unwrap();
+        let c = queries::upsert_track(&db.conn, &track_meta("/music/c.flac", "C", "Test Album", 3))
+            .unwrap();
+        drop(db);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/createPlaylist?{}&name=mix&songId={a}&songId={b}&songId={c}",
+                auth_query("")
+            ),
+        )
+        .await;
+        let id = playlist_id_in(&body);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/updatePlaylist?{}&playlistId={id}&songIndexToRemove=0&songIndexToRemove=1&songIdToAdd={a}",
+                auth_query("")
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""), "updatePlaylist: {}", body);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let left = queries::playlist_track_ids(&db.conn, id.parse().unwrap()).unwrap();
+        assert_eq!(left, vec![c, a]);
     }
 
     #[tokio::test]

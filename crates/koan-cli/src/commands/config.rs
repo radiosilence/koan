@@ -189,23 +189,45 @@ folders = [{folders_str}]
     println!("  {} {}", "log:".cyan(), dir.join("koan.log").display());
 }
 
+/// Sections koan used to have. Preserved user sections are how a config
+/// survives a koan that does not know about them yet, but that same rule would
+/// keep a retired section alive forever once koan stopped reading it.
+const RETIRED_SECTIONS: &[&str] = &["discovery"];
+
 /// Generate config.toml content with all defaults commented out.
-/// User's existing values stay uncommented. Keys already in config.local.toml are skipped.
-/// Sections that belong in config.local.toml (library, remote) are excluded entirely.
+///
+/// A value the user has changed stays uncommented; one that matches the default
+/// goes back to being a comment, which is how a file an older koan filled with
+/// its own serialisation shrinks back to a template.
+///
+/// Only shared settings are listed: `config::layer_of` decides, so the template
+/// and koan's own writes can never disagree about what belongs here.
 fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>) -> String {
     let defaults = config::Config::default();
     let default_toml = toml::to_string_pretty(&defaults).expect("default config serializes");
-
-    // Sections that should never appear in config.toml (machine-specific / sensitive).
-    let skip_sections = ["library", "remote"];
 
     let mut output = String::from(
         "# koan — shareable defaults (safe to commit to dotfiles)\n\
          # Uncomment to customise. Run `koan config` to see resolved values.\n\n",
     );
 
+    // `skip_serializing_if` keys never appear in the default TOML the template
+    // is generated from, so they have to be carried across by hand or the
+    // patterns people wrote would be deleted by a command billed as safe.
+    let held_back = |section: &str| -> String {
+        let mut out = String::new();
+        if section == "organize"
+            && let Some(v) = existing_base
+                .get("organize")
+                .and_then(|s| s.as_table())
+                .and_then(|t| t.get("default"))
+        {
+            out.push_str(&format!("default = {}\n", format_toml_value(v)));
+        }
+        out
+    };
+
     let mut current_section = String::new();
-    let mut skip = false;
     let mut section_buf = String::new();
     let mut section_has_content = false;
 
@@ -215,26 +237,21 @@ fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>)
         // Section header: [section] or [section.sub]
         if trimmed.starts_with('[') {
             // Flush previous section if it had content.
-            if section_has_content {
+            let extra = held_back(&current_section);
+            if section_has_content || !extra.is_empty() {
+                section_buf.push_str(&extra);
                 output.push_str(&section_buf);
                 output.push('\n');
             }
             section_buf.clear();
             section_has_content = false;
 
-            let section = trimmed.trim_start_matches('[').trim_end_matches(']');
-            let top_level = section.split('.').next().unwrap_or(section);
-            skip = skip_sections.contains(&top_level);
-
-            if !skip {
-                current_section = section.to_string();
-                section_buf.push_str(line);
-                section_buf.push('\n');
-            }
-            continue;
-        }
-
-        if skip {
+            current_section = trimmed
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .to_string();
+            section_buf.push_str(line);
+            section_buf.push('\n');
             continue;
         }
 
@@ -247,12 +264,22 @@ fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>)
         if let Some((key, default_val_str)) = trimmed.split_once(" = ") {
             let key = key.trim();
 
+            // Machine-scoped settings live in config.local.toml; listing them
+            // here, even commented, invites them into a dotfiles repo.
+            if config::layer_of(&format!("{}.{}", current_section, key)) == config::Layer::Machine {
+                continue;
+            }
+
             let base_section = existing_base
                 .get(&current_section)
                 .and_then(|v| v.as_table());
 
-            if let Some(user_val) = base_section.and_then(|t| t.get(key)) {
-                // User has explicitly set this in config.toml — keep uncommented.
+            let user_val = base_section
+                .and_then(|t| t.get(key))
+                .filter(|v| format_toml_value(v) != default_val_str);
+
+            if let Some(user_val) = user_val {
+                // Differs from the default — the user meant it. Keep it.
                 section_buf.push_str(&format!("{} = {}\n", key, format_toml_value(user_val)));
             } else {
                 // Default — commented out as reference.
@@ -263,17 +290,38 @@ fn generate_config_template(existing_base: &toml::map::Map<String, toml::Value>)
     }
 
     // Flush last section.
-    if section_has_content {
+    let extra = held_back(&current_section);
+    if section_has_content || !extra.is_empty() {
+        section_buf.push_str(&extra);
         output.push_str(&section_buf);
         output.push('\n');
     }
 
-    // Preserve any user sections in config.toml that aren't in defaults.
+    // Named patterns are a sub-table, held back when empty, and the reason
+    // people hand-edit this file at all.
+    if let Some(patterns) = existing_base
+        .get("organize")
+        .and_then(|s| s.as_table())
+        .and_then(|t| t.get("patterns"))
+        .and_then(|v| v.as_table())
+        .filter(|t| !t.is_empty())
+    {
+        output.push_str("[organize.patterns]\n");
+        for (name, pattern) in patterns {
+            output.push_str(&format!("{} = {}\n", name, format_toml_value(pattern)));
+        }
+        output.push('\n');
+    }
+
+    // Whole sections this koan does not know about are kept, so a config from a
+    // newer build survives an older one. Unknown *keys* inside a section koan
+    // does know are dropped: those are settings it used to have and no longer
+    // reads, and carrying them would keep them alive forever.
     let default_val = toml::Value::try_from(&defaults).expect("default config serializes");
     let default_table = default_val.as_table().unwrap();
     for (section_name, section_val) in existing_base {
         if default_table.contains_key(section_name)
-            || skip_sections.contains(&section_name.as_str())
+            || RETIRED_SECTIONS.contains(&section_name.as_str())
         {
             continue;
         }
@@ -311,5 +359,102 @@ fn format_toml_value(val: &toml::Value) -> String {
             toml::to_string(val).unwrap_or_else(|_| "{}".into())
         }
         toml::Value::Datetime(d) => d.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn template_from(existing: &str) -> String {
+        let table = toml::from_str::<toml::Value>(existing)
+            .unwrap()
+            .as_table()
+            .cloned()
+            .unwrap();
+        generate_config_template(&table)
+    }
+
+    /// The template is regenerated over the user's own file, so anything it
+    /// drops is gone. It has to parse, too — emitting `[organize]` twice does
+    /// not.
+    #[test]
+    fn the_generated_template_is_valid_toml() {
+        let out = template_from(
+            r#"
+[organize]
+default = "mine"
+
+[organize.patterns]
+mine = "%artist%/%title%"
+"#,
+        );
+        let parsed: config::Config = toml::from_str(&out).expect("template must parse");
+        assert_eq!(parsed.organize.default.as_deref(), Some("mine"));
+        assert_eq!(parsed.organize.patterns["mine"], "%artist%/%title%");
+    }
+
+    /// Both are held back by `skip_serializing_if`, so they never appear in the
+    /// default TOML the template is built from — and a hand-written pattern is
+    /// the main reason anyone edits this file.
+    #[test]
+    fn hand_written_patterns_survive_regeneration() {
+        let out = template_from(
+            r#"
+[organize.patterns]
+va = "%album artist%/%album%/%title%"
+"#,
+        );
+        assert!(out.contains("[organize.patterns]"), "{out}");
+        assert!(
+            out.contains(r#"va = "%album artist%/%album%/%title%""#),
+            "{out}"
+        );
+    }
+
+    /// koan wrote these itself when it serialised the whole struct. Left
+    /// uncommented they make the file look hand-tuned when none of it is.
+    #[test]
+    fn values_matching_the_default_go_back_to_being_comments() {
+        let out = template_from("[playback]\ntarget_fps = 60\nshow_fps = true\n");
+        assert!(out.contains("# target_fps = 60"), "{out}");
+        assert!(out.contains("\nshow_fps = true"), "{out}");
+    }
+
+    /// A setting koan no longer reads must not be carried forward, or it sits
+    /// in the file looking load-bearing forever.
+    #[test]
+    fn retired_settings_are_not_resurrected() {
+        let out = template_from(
+            "[playback]\nticker_fps = 8\n\n[radio]\nuse_subsonic = true\n\n\
+             [discovery]\nacoustic_weight = 0.5\n",
+        );
+        for gone in [
+            "ticker_fps",
+            "use_subsonic",
+            "[discovery]",
+            "acoustic_weight",
+        ] {
+            assert!(!out.contains(gone), "{gone} should be gone:\n{out}");
+        }
+    }
+
+    /// Forward compatibility: an older koan regenerating a newer koan's config
+    /// should not delete the section it does not understand.
+    #[test]
+    fn sections_this_build_does_not_know_are_kept() {
+        let out = template_from("[dsp]\ncrossfeed = true\n");
+        assert!(out.contains("[dsp]"), "{out}");
+        assert!(out.contains("crossfeed = true"), "{out}");
+    }
+
+    /// Machine-scoped settings belong in config.local.toml; listing them here,
+    /// even commented out, invites them into a dotfiles repo.
+    #[test]
+    fn machine_settings_never_reach_the_shared_template() {
+        let out = template_from("[playback]\nart_size = 56\n\n[library]\nfolders = [\"/music\"]\n");
+        for machine in ["art_size", "folders", "output_device", "[subsonic]"] {
+            assert!(!out.contains(machine), "{machine} should be gone:\n{out}");
+        }
     }
 }

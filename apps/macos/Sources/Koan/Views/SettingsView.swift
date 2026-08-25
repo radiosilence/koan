@@ -281,14 +281,6 @@ private struct RemoteSettings: View {
             }
 
             Section("Downloads") {
-                Picker("Quality", selection: Binding(
-                    get: { model.settings.transcodeQuality },
-                    set: { v in model.edit { $0.transcodeQuality = v } }
-                )) {
-                    Text("Original").tag("original")
-                    Text("Opus 128").tag("opus-128")
-                    Text("MP3 320").tag("mp3-320")
-                }
                 Stepper(
                     "Parallel downloads: \(model.settings.downloadWorkers)",
                     value: Binding(

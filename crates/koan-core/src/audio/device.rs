@@ -387,3 +387,80 @@ pub fn set_device_sample_rate(device_id: AudioDeviceID, rate: f64) -> Result<f64
     }
     // _guard drops here → AudioObjectRemovePropertyListener called before tx is dropped
 }
+
+/// Callback data for a live rate subscription. Boxed so the pointer handed to
+/// CoreAudio stays put for the life of the watch.
+struct RateSink {
+    device_id: AudioDeviceID,
+    on_change: Box<dyn Fn(f64) + Send + Sync>,
+}
+
+/// A live subscription to a device's nominal sample rate.
+///
+/// The device rate is shared: koan sets it, but Audio MIDI Setup, a vendor
+/// control panel or any other client can move it back at any moment, and the
+/// HAL then resamples koan to reach it. A rate read once at engine creation
+/// goes stale the instant that happens — and the claim it feeds is the one
+/// this player exists to make. Dropping the watch unsubscribes.
+pub struct RateWatch {
+    _guard: ListenerGuard,
+    _sink: Box<RateSink>,
+}
+
+// SAFETY: the raw pointer in `_guard` addresses `_sink`'s heap allocation,
+// which the watch owns. Fields drop in declaration order, so the listener is
+// removed before the sink it points at. Nothing else observes either.
+unsafe impl Send for RateWatch {}
+unsafe impl Sync for RateWatch {}
+
+/// Fires on the HAL notification thread whenever the nominal rate moves.
+///
+/// # Safety
+/// `in_client_data` must point to a `RateSink` kept alive by the `RateWatch`
+/// that registered this listener.
+unsafe extern "C" fn rate_watch_callback(
+    _in_object_id: AudioObjectID,
+    _in_number_addresses: UInt32,
+    _in_addresses: *const AudioObjectPropertyAddress,
+    in_client_data: *mut c_void,
+) -> OSStatus {
+    // SAFETY: the registering `RateWatch` owns the sink and removes this
+    // listener on drop, so the pointer is live for every call that can reach here.
+    let sink = unsafe { &*(in_client_data as *const RateSink) };
+    if let Ok(rate) = get_device_sample_rate(sink.device_id) {
+        (sink.on_change)(rate);
+    }
+    0
+}
+
+/// Subscribe to nominal sample rate changes on a device.
+pub fn watch_device_sample_rate(
+    device_id: AudioDeviceID,
+    on_change: Box<dyn Fn(f64) + Send + Sync>,
+) -> Result<RateWatch> {
+    let property = AudioObjectPropertyAddress {
+        mSelector: kAudioDevicePropertyNominalSampleRate,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain,
+    };
+
+    let sink = Box::new(RateSink {
+        device_id,
+        on_change,
+    });
+    let client_data = &*sink as *const RateSink as *mut c_void;
+
+    check(unsafe {
+        AudioObjectAddPropertyListener(device_id, &property, Some(rate_watch_callback), client_data)
+    })?;
+
+    Ok(RateWatch {
+        _guard: ListenerGuard {
+            device_id,
+            property,
+            callback: Some(rate_watch_callback),
+            client_data,
+        },
+        _sink: sink,
+    })
+}

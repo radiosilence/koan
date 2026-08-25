@@ -39,6 +39,10 @@ final class UIState {
     /// watches this rather than each binding its own key and disagreeing about
     /// which of them the keystroke belonged to.
     private(set) var clearSelectionToken = 0
+    /// ⌘A, likewise: it belongs to whatever list is on screen, and only that
+    /// list knows what "everything" is. It lived on the player, so it only ever
+    /// reached the queue.
+    private(set) var selectAllToken = 0
 
     /// Where the queue was left, so coming back to it is coming back rather
     /// than starting again. The page is a `switch` in one view, so leaving the
@@ -50,6 +54,8 @@ final class UIState {
     func focusFilter() { filterFocusToken += 1 }
 
     func clearSelection() { clearSelectionToken += 1 }
+
+    func selectAll() { selectAllToken += 1 }
 
     func jumpQueue(to edge: Edge) {
         queueJumpEdge = edge

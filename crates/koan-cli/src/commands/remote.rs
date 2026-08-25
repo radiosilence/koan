@@ -13,26 +13,14 @@ pub fn cmd_remote_login(url: &str, username: &str) {
         std::process::exit(1);
     });
 
-    let client = koan_core::remote::client::SubsonicClient::new(url, username, &password);
-    match client.ping() {
-        Ok(()) => println!("{} {}", "connected".green(), url),
-        Err(e) => {
-            eprintln!("{} {}", "connection failed:".red().bold(), e);
-            std::process::exit(1);
-        }
-    }
-
-    // Patch only the [remote] section in config.local.toml — don't touch other sections.
-    let mut remote_vals = toml::map::Map::new();
-    remote_vals.insert("enabled".into(), toml::Value::Boolean(true));
-    remote_vals.insert("url".into(), toml::Value::String(url.to_string()));
-    remote_vals.insert("username".into(), toml::Value::String(username.to_string()));
-    remote_vals.insert("password".into(), toml::Value::String(password));
-    if let Err(e) = config::Config::patch_local("remote", &remote_vals) {
-        eprintln!("{} {}", "config error:".red().bold(), e);
+    // Pings, stores the password in the platform credential store, and clears
+    // any plaintext copy an older koan left in config.local.toml.
+    if let Err(e) = koan_core::helpers::set_remote_credentials(url, username, &password) {
+        eprintln!("{} {}", "sign-in failed:".red().bold(), e);
         std::process::exit(1);
     }
-    println!("{}", "credentials saved to config.local.toml".green());
+    println!("{} {}", "connected".green(), url);
+    println!("{}", "password stored in the OS credential store".green());
 }
 
 pub fn cmd_remote_sync(full: bool) {
@@ -101,6 +89,18 @@ pub fn cmd_remote_sync(full: bool) {
         "favourites synced:".green().bold(),
         synced.pushed.to_string().bold(),
         synced.imported.to_string().bold(),
+    );
+
+    print!("{}", "syncing playlists...".dimmed());
+    std::io::stdout().flush().ok();
+
+    let playlists = koan_core::playlists::reconcile_playlists(&db, &client, &cfg.remote.username);
+
+    println!(
+        "\r{} {} pulled, {} pushed",
+        "playlists synced:".green().bold(),
+        playlists.pulled.to_string().bold(),
+        playlists.pushed.to_string().bold(),
     );
 }
 
