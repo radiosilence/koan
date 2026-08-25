@@ -5,6 +5,7 @@
 ### Fixed
 
 - **The filter on the Favourites page did nothing.** `LibraryModel` narrowed the list into `visibleFavourites` and the page rendered the unfiltered `favourites` beside it. Every other filtered section read the right one.
+- **Ungrouped queue rows had no room for their covers.** Every row carries its own sleeve when the queue is not grouped by album, and the fixed row height around it left the art all but touching the separators above and below. It gets the same six points the album heading already gives its own cover — they are rows in the same list and should breathe alike.
 - **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
 - **Undoing a queue replace left the player on a track the queue no longer had.** The queue came back, which is the part you could see working, but the engine kept decoding whatever the replace had started — an item the restored queue does not contain. The transport then described a row nothing could select, and the decode lookahead finds the next track by locating the current one, so with the current one gone the queue ended at the end of that track rather than carrying on.
 
