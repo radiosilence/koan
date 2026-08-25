@@ -215,10 +215,39 @@ final class PlayerModel {
     private(set) var currentEntry: QueueItem?
     private(set) var currentFormat: StreamFormat?
 
+    /// Where what is playing lives, so the transport bar can link to it.
+    ///
+    /// A `QueueItem` carries names, not ids — it has to stand for things that
+    /// were never in the library. Resolved once when the track changes rather
+    /// than per frame: the transport polls at 10 Hz and this is a database
+    /// read.
+    private(set) var currentAlbumId: Int64?
+    private(set) var currentArtistId: Int64?
+
+    private func resolveCurrentPlace(trackId: Int64?) {
+        guard let trackId else {
+            currentAlbumId = nil
+            currentArtistId = nil
+            return
+        }
+        let engine = self.engine
+        Task { @MainActor in
+            let track = (try? await engine.track(trackId: trackId)) ?? nil
+            // The track moved on while we were asking, so whatever came back
+            // belongs to something that is no longer playing.
+            guard trackId == self.currentTrackId else { return }
+            self.currentAlbumId = track?.albumId
+            self.currentArtistId = track?.artistId
+        }
+    }
+
     private func updateDerived(_ now: NowPlaying) {
         let playing = now.state == .playing
         if playing != isPlaying { isPlaying = playing }
-        if now.entry?.trackId != currentTrackId { currentTrackId = now.entry?.trackId }
+        if now.entry?.trackId != currentTrackId {
+            currentTrackId = now.entry?.trackId
+            resolveCurrentPlace(trackId: currentTrackId)
+        }
         if now.queueItemId != currentItemId { currentItemId = now.queueItemId }
         if now.radioEnabled != radioEnabled { radioEnabled = now.radioEnabled }
         if now.playlistVersion != queueVersion { queueVersion = now.playlistVersion }

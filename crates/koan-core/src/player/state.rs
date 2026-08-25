@@ -187,6 +187,14 @@ pub struct SharedPlayerState {
     /// The UI loop checks this to force a souvlaki/cover-art update without a track change.
     metadata_refresh_pending: AtomicBool,
 
+    /// The rate the output device settled at for the current track, or 0 when
+    /// nothing has played yet. Compared against the source rate, it is the one
+    /// thing koan can say for certain about the path to the DAC: whether it
+    /// handed the device the samples as they are, or something had to resample
+    /// to reach it. Everything past that — other clients, the volume stage — is
+    /// the system's, and not ours to claim.
+    output_sample_rate: AtomicU64,
+
     /// Radio mode — automatically queue similar tracks when the queue runs low.
     /// Shared so GQL/MCP can toggle it without going through the TUI.
     radio_mode: AtomicBool,
@@ -202,6 +210,7 @@ impl SharedPlayerState {
             playlist_version: AtomicU64::new(0),
             quit_requested: AtomicBool::new(false),
             metadata_refresh_pending: AtomicBool::new(false),
+            output_sample_rate: AtomicU64::new(0),
             radio_mode: AtomicBool::new(false),
         })
     }
@@ -293,6 +302,21 @@ impl SharedPlayerState {
 
     pub fn set_radio_mode(&self, enabled: bool) {
         self.radio_mode.store(enabled, Ordering::Release);
+    }
+
+    // --- Output device rate ---
+
+    /// `None` until a track has started and the device rate is known.
+    pub fn output_sample_rate(&self) -> Option<u32> {
+        match self.output_sample_rate.load(Ordering::Acquire) {
+            0 => None,
+            rate => Some(rate as u32),
+        }
+    }
+
+    pub fn set_output_sample_rate(&self, rate: u32) {
+        self.output_sample_rate
+            .store(u64::from(rate), Ordering::Release);
     }
 
     // --- Playlist version ---

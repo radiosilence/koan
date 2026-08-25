@@ -85,10 +85,28 @@ struct TransportBar: View {
                     Text(entry.title)
                         .font(.callout.weight(.medium))
                         .lineLimit(1)
-                    Text(entry.artist)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    // Both names go where they say they go, rather than the
+                    // line as a whole meaning one of them. `LinkText` is the
+                    // same one the rows and headers use — this was the last
+                    // place an artist name was not a link.
+                    HStack(spacing: 0) {
+                        LinkText(
+                            text: entry.artist,
+                            target: player.currentArtistId.map { .artist($0) },
+                            font: .caption
+                        )
+                        if !entry.album.isEmpty {
+                            Text(" — ")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            LinkText(
+                                text: entry.album,
+                                target: player.currentAlbumId.map { .album($0) },
+                                font: .caption
+                            )
+                        }
+                    }
+                    .lineLimit(1)
                 } else {
                     Text("Nothing playing")
                         .font(.callout)
@@ -156,11 +174,14 @@ struct TransportBar: View {
             if let format = player.currentFormat {
                 Text(Format.quality(format))
                     .font(.caption.monospaced())
+                    // A refused rate isn't a fault to raise an alarm over, so
+                    // it reads at the same weight as the rest of the badge and
+                    // explains itself only to someone who looks.
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
                     .background(.quaternary, in: Capsule())
-                    .help("Source format — koan matches the device rate rather than resampling")
+                    .help(Format.outputExplanation(format))
             }
 
             Toggle(isOn: Binding(

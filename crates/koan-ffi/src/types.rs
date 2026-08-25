@@ -188,11 +188,18 @@ pub struct StreamFormat {
     pub bit_depth: Option<u16>,
     pub bitrate_kbps: Option<u32>,
     pub channels: u16,
+    /// What the output device settled at, where it is known. Equal to
+    /// `sample_rate` means koan handed the device the samples as they are;
+    /// anything else means something resampled to reach it. What happens
+    /// past the device — other clients, the volume stage — is the system's,
+    /// and this says nothing about it.
+    pub output_sample_rate: Option<u32>,
 }
 
-impl From<&TrackInfo> for StreamFormat {
-    fn from(t: &TrackInfo) -> Self {
+impl StreamFormat {
+    pub(crate) fn of(t: &TrackInfo, output_sample_rate: Option<u32>) -> Self {
         Self {
+            output_sample_rate,
             codec: t.codec.clone(),
             sample_rate: t.sample_rate,
             bit_depth: t.bit_depth,

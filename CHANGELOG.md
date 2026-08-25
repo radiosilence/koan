@@ -12,6 +12,12 @@
 
   The load state says *that* a download is running and hands out the counter; the counter is where progress lives, and the download thread writes it without taking a lock at all. It is announced once per attempt. Progress reaches the macOS app as its own event instead of as a queue change, so it moves at 10 Hz without anything being rebuilt — and the last few tracks of an album no longer freeze at whatever fraction they had reached, which is what happened when nothing was left *waiting* to download and the old nudge stopped firing.
 
+### Changed
+
+- **The format badge says when the output is being resampled.** koan switches the device to the source rate, and when a device refuses — MPEG-2 and MPEG-2.5 MP3 rates routinely are — the system resamples to reach it. The player has always known which of those happened, because `set_device_sample_rate` returns the rate the device settled at, and it compared the two and wrote a line to the log. Nothing else ever saw it. Meanwhile the badge showed the source format either way, captioned "koan matches the device rate rather than resampling" — an unconditional claim that is false in exactly the case worth knowing about.
+
+  The settled rate now reaches the front ends: the macOS badge appends it — `FLAC 24/96 → 48` — the TUI's format line does the same, and `nowPlaying.track.outputSampleRate` carries it over GraphQL. What it does not do is claim bit-perfection. koan never takes the device exclusively, so another application's audio can be mixed in and the volume stage may scale in software, and none of that is visible from inside the process. What koan can say for certain is whether it handed the device the samples as they are, or something had to resample to reach it — so that is all it says.
+
 ## v0.30.1 (2026-08-25)
 
 ### Changed
@@ -54,6 +60,9 @@
 - **Favourites and history can be filtered, which they were already built for.** Both narrow on title, artist and album, history has an empty state for when a filter matches nothing, and neither could be typed into: the toolbar offered its field to albums and artists by name, and ⌘F named the same two. Which sections have a filter is now one answer on `Navigator.Section` that the field and ⌘F both read, so a section cannot be filterable in the model and not on screen. Favourites also draws the narrowed list rather than the whole one, and counts what it is showing.
 
 - **The sidebar said no remote tracks were cached, however many were.** The count asked for tracks whose `source` is `'cached'` — a value the schema allows and nothing writes, because downloading a track does not change where it came from. What a download writes is `cached_path`, which is what `set_cached_path` sets and clearing the cache nulls. Counted from there it agrees with the files on disk.
+### Added
+
+- **The artist and album in the transport bar are links.** The bar named what was playing and gave you no way to get to it — its second line was the artist as plain text, and the record it came from was not shown at all. It reads `artist — album` now, each name going where its own name says, through the same `LinkText` the rows, grid cells and queue headers use. That was the last place in the app an artist name was not a link.
 
 ## v0.29.1 (2026-08-24)
 
