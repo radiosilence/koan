@@ -1,11 +1,12 @@
 # koan
 
-It is a music player, for both local music and remote (subsonic/navidrome). It caches locally, is s super fast, gapless, high quality. Built from 25 years of experience messing about with music and being annoyed with pretty much everything and wanting my dream application. There are some organisational features such as file renaming, which is compatible with fb2k syntax, and I plan to add a decent well thought out tagger once I have pondered the UX more.
+> It is a music player, for both local music and remote (subsonic/navidrome). It caches locally, is s super fast and handles 1TB+ libraries with ease, gapless, high quality. Built from 25 years of experience messing about with music and being annoyed with pretty much everything and wanting my dream application. There are some organisational features such as file renaming, which is compatible with fb2k syntax, and I plan to add a decent well thought out tagger once I have pondered the UX more.
 
-Originally built as a Rust TUI and core, I've now added a beautiful macOS SwiftUI app (no Electron) that uses FFI to bridge to the shared rust core. It's fast, it's pretty, it has these lush transitions, and the point is to do all the basics properly and well before adding features, I'm really proud of it. 
+> Originally built as a Rust TUI and core, I've now added a beautiful macOS SwiftUI app (no Electron) that uses FFI to bridge to the shared rust core. It's fast, it's pretty, it has these lush transitions, and the point is to do all the basics properly and well before adding features, I'm really proud of it. 
 
-Full disclaimer: AI assisted coding was used. I have been building somewhat high quality software for a long time (decades) before AI existed, and I'd like to think the decisions I've been making reflect this as opposed to just vibing slop. I probably could have written it myself, but I kind of wanted to take a step back and be more of an architect/technical lead/product owner rather than a coder for this.
+> Full disclaimer: AI assisted coding was used. I have been building somewhat high quality software for a long time (decades) before AI existed, and I'd like to think the decisions I've been making reflect this as opposed to just vibing slop. I probably could have written it myself, but I kind of wanted to take a step back and be more of an architect/technical lead/product owner rather than a coder for this.
 
+-- James
 
 <img width="1413" height="956" alt="An album in the macOS app" src="https://github.com/user-attachments/assets/8ec2f049-524a-4437-8bf3-91172c6b4f26" />
 
@@ -22,15 +23,27 @@ Full disclaimer: AI assisted coding was used. I have been building somewhat high
 
 ## Install
 
+macOS App:
+
 ```bash
-# homebrew (recommended)
-brew install radiosilence/koan/koan
-
-# the macOS app — the same engine behind a native UI
 brew install --cask radiosilence/koan/koan-app
+```
 
-# pre-built binary via mise
+You may have to update brew's trust settings to trust the tap.
+Alternatively you can get `Koan.dmg` from the releases page. The app
+is signed but not notarised because Apple wants $$ — so macOS refuses the first
+open and offers only "Move to Trash". Drag it to Applications and run
+`xattr -dr com.apple.quarantine /Applications/kōan.app` once. The cask does this
+for you.
+
+CLI/TUI:
+
+```bash
+# mise (recommended)
 mise use -g github:radiosilence/koan@latest
+
+# homebrew
+brew install radiosilence/koan/koan
 
 # or via cargo
 cargo install koan-cli
@@ -40,11 +53,6 @@ git clone https://github.com/radiosilence/koan.git && cd koan
 cargo install --path crates/koan-cli
 ```
 
-Downloading `Koan.dmg` from the releases page rather than using the cask? The app
-is signed but not notarised — Apple charges for that — so macOS refuses the first
-open and offers only "Move to Trash". Drag it to Applications and run
-`xattr -dr com.apple.quarantine /Applications/kōan.app` once. The cask does this
-for you.
 
 Single binary. macOS works out of the box (CoreAudio). Linux needs ALSA dev headers:
 
@@ -59,7 +67,7 @@ sudo dnf install alsa-lib-devel dbus-devel
 sudo pacman -S alsa-lib dbus
 ```
 
-## 30-second quickstart
+## 30-second quickstart (for CLI - for GUI just open settings and mess about)
 
 ```bash
 koan config init                            # create config dir + commented template
