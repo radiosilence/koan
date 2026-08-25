@@ -29,6 +29,9 @@ struct RootView: View {
     @Environment(PlayerModel.self) private var player
     /// Read here only to hand back to the window background — see below.
     @Environment(CoverArtCache.self) private var art
+    /// Read for the wash a playlist page sits in: its colour is the first
+    /// record in it, since a playlist has no cover of its own.
+    @Environment(PlaylistsModel.self) private var playlists
 
     @AppStorage("showLyrics") private var showLyrics = false
     @State private var transportHeight: CGFloat = 0
@@ -53,6 +56,9 @@ struct RootView: View {
         switch nav.current {
         case .album(let id): .album(id)
         case .section(.queue): bleed
+        // A playlist is a page about a set of records, so it is washed in the
+        // first of them — the same one that leads its mosaic.
+        case .section(.playlist(let id)): playlists.covers[id]?.first
         default: nil
         }
     }
@@ -61,7 +67,11 @@ struct RootView: View {
     /// an album's own record — and what is playing everywhere else, so a
     /// favourites list is still coloured by the music rather than by nothing.
     private var tintSource: AlbumArtwork.Source? {
-        if case .album(let id) = nav.current { .album(id) } else { bleed }
+        switch nav.current {
+        case .album(let id): .album(id)
+        case .section(.playlist(let id)): playlists.covers[id]?.first ?? bleed
+        default: bleed
+        }
     }
 
     /// Which record is playing — artist as well as title, because "Greatest
@@ -371,7 +381,11 @@ private struct PageGround: View {
 
     /// Whether this page is washed in a record's colour, or is its own ground.
     private var washed: Bool {
-        if case .album = nav.current { true } else { nav.section == .queue }
+        switch nav.current {
+        case .album: true
+        case .section(.queue), .section(.playlist): true
+        default: false
+        }
     }
 
     var body: some View {

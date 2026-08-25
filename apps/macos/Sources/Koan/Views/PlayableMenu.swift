@@ -12,12 +12,17 @@ enum Playable {
     case track(Track)
     case album(Album)
     case artist(id: Int64, name: String)
+    /// A playlist is playable like anything else, which is what lets it use the
+    /// same header buttons and the same drag payload as a record. It is not
+    /// *library* content, though — see `isLibraryContent` for what that costs.
+    case playlist(id: Int64, name: String)
 
     var name: String {
         switch self {
         case .track(let t): t.title
         case .album(let a): a.title
         case .artist(_, let name): name
+        case .playlist(_, let name): name
         }
     }
 
@@ -25,8 +30,16 @@ enum Playable {
     var hasChildren: Bool {
         switch self {
         case .track: false
-        case .album, .artist: true
+        case .album, .artist, .playlist: true
         }
+    }
+
+    /// Whether this *is* something in the library, rather than a list pointing
+    /// at things in it. Favouriting, sharing and organizing all act on library
+    /// rows; a playlist has none of its own, and offering them on one would
+    /// mean silently acting on its members instead.
+    var isLibraryContent: Bool {
+        if case .playlist = self { false } else { true }
     }
 
     func trackIds(using engine: KoanEngine) async -> [Int64] {
@@ -37,6 +50,8 @@ enum Playable {
             return (try? await engine.trackIds(albumId: a.id, artistId: nil)) ?? []
         case .artist(let id, _):
             return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
+        case .playlist(let id, _):
+            return (try? await engine.playlistTracks(playlistId: id))?.map(\.id) ?? []
         }
     }
 }
@@ -65,12 +80,14 @@ struct PlayableMenu: View {
 
         Divider()
 
-        Button(favouriteTitle) { toggleFavourite() }
-        Button("Copy Share Link") { share() }
-        Button("Organize Files…") {
-            act { ids in
-                openWindow(id: OrganizeWindow.id)
-                Task { await organize.begin(title: playable.name, trackIds: ids) }
+        if playable.isLibraryContent {
+            Button(favouriteTitle) { toggleFavourite() }
+            Button("Copy Share Link") { share() }
+            Button("Organize Files…") {
+                act { ids in
+                    openWindow(id: OrganizeWindow.id)
+                    Task { await organize.begin(title: playable.name, trackIds: ids) }
+                }
             }
         }
 
@@ -99,6 +116,8 @@ struct PlayableMenu: View {
             return library.isFavourite(album: a.id) ? "Remove Favourite" : "Favourite Album"
         case .artist(let id, _):
             return library.isFavourite(artist: id) ? "Remove Favourite" : "Favourite Artist"
+        case .playlist:
+            return ""  // Never shown — see `isLibraryContent`.
         }
     }
 
@@ -107,6 +126,7 @@ struct PlayableMenu: View {
         case .track(let t): library.toggleFavourite(track: t.id)
         case .album(let a): library.toggleFavourite(album: a.id)
         case .artist(let id, _): library.toggleFavourite(artist: id)
+        case .playlist: break
         }
     }
 
@@ -237,6 +257,7 @@ struct FavouriteHeaderButton: View {
         case .track(let t): library.isFavourite(track: t.id)
         case .album(let a): library.isFavourite(album: a.id)
         case .artist(let id, _): library.isFavourite(artist: id)
+        case .playlist: false
         }
     }
 
@@ -246,6 +267,7 @@ struct FavouriteHeaderButton: View {
             case .track(let t): library.toggleFavourite(track: t.id)
             case .album(let a): library.toggleFavourite(album: a.id)
             case .artist(let id, _): library.toggleFavourite(artist: id)
+            case .playlist: break
             }
         } label: {
             Label(isOn ? "Favourited" : "Favourite", systemImage: isOn ? "heart.fill" : "heart")

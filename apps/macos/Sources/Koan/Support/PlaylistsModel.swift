@@ -29,6 +29,11 @@ final class PlaylistsModel {
     /// per keystroke.
     private(set) var covers: [Int64: [AlbumArtwork.Source]] = [:]
 
+    /// The `changedAt` each playlist's mosaic was built from. Adding tracks to
+    /// a playlist changes its face, and without this the tile kept whatever it
+    /// had the first time it was drawn — for a new playlist, nothing at all.
+    private var coverStamp: [Int64: String] = [:]
+
     /// Tracks waiting for a name, and the new playlist they will become.
     ///
     /// A request rather than a dialog, because the dialog cannot live where it
@@ -62,8 +67,10 @@ final class PlaylistsModel {
             // deleted one should stop holding memory.
             let live = Set(playlists.map(\.id))
             covers = covers.filter { live.contains($0.key) }
-            for playlist in playlists where covers[playlist.id] == nil {
+            coverStamp = coverStamp.filter { live.contains($0.key) }
+            for playlist in playlists where coverStamp[playlist.id] != playlist.changedAt {
                 await loadCovers(for: playlist.id)
+                coverStamp[playlist.id] = playlist.changedAt
             }
         }
     }
@@ -166,13 +173,22 @@ final class PlaylistsModel {
         act(reloadingTracks: id == openId) { try await $0.shufflePlaylist(playlistId: id) }
     }
 
-    /// Where they sit in the sidebar. Applied locally first so the row lands
-    /// under the pointer rather than a round trip later.
-    func reorder(to ids: [Int64]) {
+    /// Put `moving` where `target` currently sits.
+    ///
+    /// Applied locally first, so the row lands under the pointer rather than a
+    /// round trip later. Dropping a playlist onto itself is a no-op rather than
+    /// an error — it is the commonest way to abandon a drag.
+    func reorder(moving: [Int64], onto target: Int64) {
+        let doomed = Set(moving)
+        guard !doomed.contains(target) else { return }
+        var order = playlists.map(\.id).filter { !doomed.contains($0) }
+        guard let at = order.firstIndex(of: target) else { return }
+        order.insert(contentsOf: moving, at: at)
+
         let byId = Dictionary(playlists.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        playlists = ids.compactMap { byId[$0] }
+        playlists = order.compactMap { byId[$0] }
         let engine = self.engine
-        Task { try? await engine.reorderPlaylists(ids: ids) }
+        Task { try? await engine.reorderPlaylists(ids: order) }
     }
 
     /// Remember how this playlist is looked at. Local to this machine — a

@@ -18,7 +18,7 @@ extension UTType {
 /// resolves, by which point the user has committed.
 struct PlayableTransfer: Codable, Transferable, Hashable {
     enum Kind: String, Codable {
-        case track, album, artist
+        case track, album, artist, playlist
     }
 
     let kind: Kind
@@ -52,6 +52,10 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
             kind = .artist
             id = artistId
             name = artistName
+        case .playlist(let playlistId, let playlistName):
+            kind = .playlist
+            id = playlistId
+            name = playlistName
         }
     }
 
@@ -65,6 +69,8 @@ struct PlayableTransfer: Codable, Transferable, Hashable {
             return (try? await engine.trackIds(albumId: id, artistId: nil)) ?? []
         case .artist:
             return (try? await engine.trackIds(albumId: nil, artistId: id)) ?? []
+        case .playlist:
+            return (try? await engine.playlistTracks(playlistId: id))?.map(\.id) ?? []
         }
     }
 }

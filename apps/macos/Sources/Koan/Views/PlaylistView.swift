@@ -33,7 +33,7 @@ struct PlaylistView: View {
     /// A playlist can hold the same track twice, so a row's identity is its
     /// position, not its track id. Selecting one copy must not light the other.
     private var rows: [Row] {
-        playlist?.grouped == true ? Row.build(from: tracks) : tracks.enumerated().map(Row.track)
+        grouped ? Row.build(from: tracks) : tracks.enumerated().map(Row.track)
     }
 
     var body: some View {
@@ -90,89 +90,99 @@ struct PlaylistView: View {
 
     // MARK: - Header
 
+    /// A playlist is playable like a record is, so it gets the record's header:
+    /// the big round play button beside the title, Play Next and Queue under
+    /// it. It had three text buttons in a row, which is a shape nothing else in
+    /// the app uses.
+    private var playable: Playable? {
+        playlist.map { .playlist(id: $0.id, name: $0.name) }
+    }
+
     private var header: some View {
-        HStack(alignment: .top, spacing: 16) {
-            PlaylistArtwork(sources: playlists.covers[playlistId] ?? [])
-                .frame(width: 108, height: 108)
-                .shadow(color: .black.opacity(0.28), radius: 6, y: 3)
+        HStack(alignment: .bottom, spacing: 18) {
+            PlaylistArtwork(sources: playlists.covers[playlistId] ?? [], cornerRadius: 8)
+                .frame(width: 132, height: 132)
+                .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
 
             VStack(alignment: .leading, spacing: 6) {
-                Text(playlist?.name ?? "Playlist")
-                    .font(.title2.weight(.semibold))
-                    .lineLimit(2)
+                HStack(spacing: 12) {
+                    if let playable {
+                        PlayableHeaderButton(playable: playable)
+                    }
+                    Text(playlist?.name ?? "Playlist")
+                        .font(.system(size: 26, weight: .semibold))
+                        .lineLimit(2)
+                }
                 Text(summary)
-                    .font(.caption)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
 
                 HStack(spacing: 10) {
-                    Button { playAll() } label: {
-                        Label("Play", systemImage: "play.fill")
-                    }
-                    Button { playAll(shuffled: true) } label: {
+                    QueueButtons(playable: playable)
+                    Button {
+                        playlists.shuffle(id: playlistId)
+                    } label: {
                         Label("Shuffle", systemImage: "shuffle")
                     }
-                    Button { player.enqueue(trackIds: tracks.map(\.id)) } label: {
-                        Label("Queue", systemImage: "text.append")
-                    }
+                    .help("Reorder the playlist itself, for good")
+                    .disabled(tracks.count < 2)
                 }
-                .disabled(tracks.isEmpty)
-                .padding(.top, 2)
+                .padding(.top, 4)
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
-            if !selection.isEmpty {
-                VStack(alignment: .trailing, spacing: 4) {
-                    Text("\(positions(in: selection).count) selected")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            VStack(alignment: .trailing, spacing: 10) {
+                if !selection.isEmpty {
                     HStack(spacing: 8) {
+                        Text("\(positions(in: selection).count) selected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         Button("Remove", role: .destructive) { removeSelected() }
                         Button("Clear") { selection = [] }
                     }
+                    .buttonStyle(.borderless)
                 }
-            }
 
-            VStack(alignment: .trailing, spacing: 10) {
-                // Both modes shown with the active one lit, the way the queue
-                // does it: a single icon has to choose between naming the mode
-                // you are in and the mode you would get.
-                Picker("Playlist layout", selection: groupedBinding) {
-                    Image(systemName: "square.stack").tag(true)
-                    Image(systemName: "list.bullet").tag(false)
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("Group by album, or one row per track — remembered for this playlist")
+                HStack(spacing: 10) {
+                    // Both modes shown with the active one lit, the way the
+                    // queue does it: a single icon has to choose between naming
+                    // the mode you are in and the mode you would get.
+                    Picker("Playlist layout", selection: groupedBinding) {
+                        Image(systemName: "square.stack").tag(true)
+                        Image(systemName: "list.bullet").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("Group by album, or one row per track — remembered for this playlist")
 
-                Menu {
-                    Button("Rename…") {
-                        renameTo = playlist?.name ?? ""
-                        renaming = true
+                    Menu {
+                        Button("Rename…") {
+                            renameTo = playlist?.name ?? ""
+                            renaming = true
+                        }
+                        Divider()
+                        Button("Delete Playlist", role: .destructive) {
+                            playlists.delete(id: playlistId)
+                            nav.forget(.playlist(playlistId))
+                            nav.show(.queue)
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
-                    Button("Shuffle Playlist") { playlists.shuffle(id: playlistId) }
-                    Divider()
-                    Button("Delete Playlist", role: .destructive) {
-                        playlists.delete(id: playlistId)
-                        nav.forget(.playlist(playlistId))
-                        nav.show(.queue)
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .frame(width: 22)
                 }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 22)
             }
         }
-        .buttonStyle(.borderless)
     }
 
     /// The remembered choice, defaulting to ungrouped.
     private var groupedBinding: Binding<Bool> {
         Binding(
-            get: { playlist?.grouped ?? false },
+            get: { grouped },
             set: { playlists.setGrouped($0, for: playlistId) }
         )
     }
@@ -196,16 +206,27 @@ struct PlaylistView: View {
             PlaylistAlbumHeader(group: group)
                 .rowBehaviour()
         case .track(let position, let track):
-            PlaylistTrackRow(
-                track: track,
-                position: position + 1,
+            QueueRow(
+                item: QueueRowContent(
+                    track: track,
+                    position: position + 1,
+                    // Play state is mirrored from the queue rather than owned
+                    // here, the way it is on an album page.
+                    queued: player.queuedByTrack[track.id],
+                    isCurrent: player.currentTrackId == track.id
+                ),
                 isCurrent: player.currentTrackId == track.id,
                 isSelected: selection.contains(row.id),
-                showsAlbum: playlist?.grouped != true
+                // Ungrouped there is no heading above to say what record this
+                // is, so the row says it itself.
+                showArtist: true,
+                artwork: !grouped
             )
             .rowBehaviour(playable: .track(track))
         }
     }
+
+    private var grouped: Bool { playlist?.grouped ?? false }
 
     // MARK: - Actions
 
@@ -400,79 +421,6 @@ private struct PlaylistAlbumHeader: View {
         }
         .textCase(nil)
         .padding(.vertical, 5)
-    }
-}
-
-private struct PlaylistTrackRow: View {
-    let track: Track
-    let position: Int
-    let isCurrent: Bool
-    let isSelected: Bool
-    /// Ungrouped there is no heading above saying what record this is, so the
-    /// row carries its own sleeve and names it.
-    let showsAlbum: Bool
-
-    @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
-    @State private var hovering = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            if showsAlbum {
-                AlbumArtwork(source: .track(track.id), cornerRadius: 3)
-                    .frame(width: 28, height: 28)
-            } else {
-                Text("\(position)")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .frame(width: 24, alignment: .trailing)
-            }
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(track.title)
-                    .lineLimit(1)
-                    .foregroundStyle(
-                        isCurrent && !isSelected
-                            ? AnyShapeStyle(.tint)
-                            : AnyShapeStyle(.primary)
-                    )
-                Text(showsAlbum ? "\(track.artistName) — \(track.albumTitle)" : track.artistName)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-
-            Spacer(minLength: 8)
-
-            // Playback state is mirrored from the queue, not owned here: a row
-            // is lit because that track is what is playing.
-            if isCurrent {
-                PlayingIndicator(isPlaying: player.isPlaying)
-                    .font(.caption)
-            }
-
-            FavouriteButton(
-                isOn: library.isFavourite(track: track.id),
-                showing: hovering,
-                size: .caption
-            ) {
-                library.toggleFavourite(track: track.id)
-            }
-            .frame(width: 16)
-
-            if let ms = track.durationMs {
-                Text(Format.duration(ms))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-                    .frame(width: 44, alignment: .trailing)
-            }
-        }
-        .frame(height: showsAlbum ? 40 : 34)
-        // The same six points the queue gives a row carrying its own sleeve,
-        // and the album heading gives its cover.
-        .padding(.vertical, showsAlbum ? 6 : 0)
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
     }
 }
 

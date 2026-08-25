@@ -127,22 +127,32 @@ struct SidebarView: View {
     /// The playlists, in the order they were arranged, and a standing row for
     /// making another.
     ///
-    /// That row is the section's whole answer when there are none — a heading
-    /// with nothing under it says only that the feature exists somewhere — and
-    /// it is where a drop makes a new playlist out of what you dropped. The
-    /// heading takes a drop too, but a row is the target a `List` reliably
-    /// delivers to, and it is the one you can see.
+    /// Every row here is built like the Queue row above, because that is the
+    /// one drop target in this window that has ever worked. What broke the
+    /// others was structure, not payload: `ForEach.onMove` takes over dropping
+    /// for the rows it covers, a `Section` header is not a row a `List` will
+    /// deliver to, and a `Button` swallows the drag before it lands. So there
+    /// is no `onMove` — reordering rides the same drop as everything else, on
+    /// a payload that says which playlist it is — and no button.
     @ViewBuilder
     private var playlistSection: some View {
-        Section {
+        Section("Playlists") {
             ForEach(playlists.playlists, id: \.id) { playlist in
                 PlaylistRow(
                     playlist: playlist,
                     covers: playlists.covers[playlist.id] ?? []
                 )
                     .tag(Navigator.Section.playlist(playlist.id))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    // Dragging a playlist somewhere else means its tracks —
+                    // onto the queue, onto another playlist. Dropping it back
+                    // into this list means where it sits.
+                    .draggable(PlayableTransfer(
+                        kind: .playlist, id: playlist.id, name: playlist.name
+                    ))
                     .dropDestination(for: PlayableTransfer.self) { dropped, _ in
-                        playlists.add(dropped: dropped, to: playlist.id)
+                        accept(dropped, on: playlist)
                         return true
                     } isTargeted: { targeted in
                         playlistDropTarget = targeted ? playlist.id : nil
@@ -153,41 +163,37 @@ struct SidebarView: View {
                             : nil
                     )
             }
-            .onMove { source, destination in
-                var order = playlists.playlists.map(\.id)
-                order.move(fromOffsets: source, toOffset: destination)
-                playlists.reorder(to: order)
-            }
 
             newPlaylistRow
-        } header: {
-            Text("Playlists")
-                // Full width so the whole heading takes a drop, not just the
-                // eight characters of the word.
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .dropDestination(for: PlayableTransfer.self) { dropped, _ in
-                    playlists.beginNaming(dropped: dropped)
-                    return true
-                }
+        }
+    }
+
+    /// A drop landed on a playlist: either another playlist being put in its
+    /// place, or things to add to it.
+    private func accept(_ dropped: [PlayableTransfer], on playlist: Playlist) {
+        let moving = dropped.filter { $0.kind == .playlist }.map(\.id)
+        if !moving.isEmpty {
+            playlists.reorder(moving: moving, onto: playlist.id)
+        }
+        let adding = dropped.filter { $0.kind != .playlist }
+        if !adding.isEmpty {
+            playlists.add(dropped: adding, to: playlist.id)
         }
     }
 
     /// Make one — by clicking, or by dropping something on it.
+    ///
+    /// A row rather than a button, for the reason above: a button never gets
+    /// the drop. Which means the click is a tap gesture, and that is safe here
+    /// only because the row takes no selection — on a selectable row it would
+    /// be racing the gesture that selects it.
     private var newPlaylistRow: some View {
-        // A Button, not a tap gesture on a row: this is a verb, and the list's
-        // own selection machinery is for places. A gesture here would also be
-        // competing with the one that selects rows, which is how clicks start
-        // landing about one in twenty.
-        Button { playlists.naming = [] } label: {
-            Label("New Playlist…", systemImage: "plus")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-        }
-            .buttonStyle(.plain)
-            // Never somewhere the sidebar thinks you are.
+        Label("New Playlist…", systemImage: "plus")
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
             .selectionDisabled()
+            .onTapGesture { playlists.naming = [] }
             .dropDestination(for: PlayableTransfer.self) { dropped, _ in
                 playlists.beginNaming(dropped: dropped)
                 return true

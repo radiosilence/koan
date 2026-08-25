@@ -169,6 +169,26 @@ fn push(
         return Err(());
     }
 
+    // The name has to travel on its own. Navidrome's `createPlaylist` with a
+    // `playlistId` replaces the songs and ignores the `name` it is handed, so a
+    // rename pushed that way reached the server and changed nothing — which is
+    // exactly what it looked like from the outside. `updatePlaylist` is the
+    // call that carries metadata; `createPlaylist` is the one that carries
+    // order. A push needs both.
+    if let Some(remote_id) = remote_id
+        && let Err(e) = client.update_playlist(
+            remote_id,
+            Some(&local.name),
+            local.comment.as_deref(),
+            Some(local.public),
+        )
+    {
+        log::warn!(
+            "could not rename playlist '{}' on the server: {e}",
+            local.name
+        );
+    }
+
     match client.create_playlist(remote_id, &local.name, &song_ids) {
         Ok(created) => {
             let new_id = created
