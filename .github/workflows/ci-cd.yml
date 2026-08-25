@@ -188,6 +188,10 @@ jobs:
       # the app. The bindings are generated, so this catches drift between the
       # Rust surface and the Swift that calls it.
       - run: just macos-build
+      # The shared sources are meant to build for iOS too, and there is no iOS
+      # app yet to notice when they stop. Rides in this job because it needs the
+      # same bindings and nothing else -- no Rust iOS build, no simulator.
+      - run: just ios-typecheck
 
   msrv:
     name: MSRV (1.89)

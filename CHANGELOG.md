@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **koan runs on iOS.** Same engine, same models, same pages as the Mac app — the shell around them is a tab bar with the transport above it rather than a sidebar with it across the top. `just ios-run` builds it and puts it on a booted simulator.
+
+  Output goes through RemoteIO. AUHAL, which the Mac uses, is declared inside `#if !TARGET_OS_IPHONE`, and iOS ships no `AudioHardware.h` at all — so there is no device list, no nominal sample rate to set and no exclusive access. `engine.rs` is one implementation for both: the two platforms differ in which output component to instantiate and whether a device can be named, and nothing else. The decode pipeline, the timeline, the gapless cursor and the teardown order all stay exactly where they are, which is the point — iOS has no second set of those bugs to find.
+
+  What that costs is the bit-perfect claim. `AVAudioSession.setPreferredSampleRate` is a request the system may decline and everything crosses the system mixer regardless, so on iOS koan asks for the source rate and takes what it is given.
+
+  The session — category, activation, interruptions, route changes — is the app's, because it needs a run loop and a lifecycle. A phone call pauses playback; unplugging headphones pauses rather than announcing the record to the room.
+
+  Not yet: no Xcode project, so this is a simulator build only — a device needs a provisioning profile and the Apple Developer Program. No iPhone-shaped transport yet either; the Mac's is doing the job and it is cramped.
+
+### Internal
+
+- **koan-core's test suite runs on the iOS simulator** — 719 of 719. Two things came out of it. `DestinationLedger` treated iOS as a case-sensitive filesystem when it is not, so `Rain.flac` and `rain.flac` would not have collided. And `case_only_rename_keeps_the_file` is now macOS-only: the simulator's sandbox answers `stat` for `Rain.flac` with ENOENT while `open(O_CREAT|O_EXCL)` on the same name in the same directory answers EEXIST, so the case-only rename `paths_equal` exists to catch cannot be detected there. Unverified on a device.
+
+- **The macOS app's SwiftUI sources build for iOS.** Not an iOS app — there is no scene root, no audio backend and no project to build one with — but the shared half of the app now compiles against the iOS SDK, and `just ios-typecheck` fails the build if it stops. Seven files are the macOS shell (the scene root, the split view, the menu bar and the machinery that serves it) and are excluded; everything else crosses.
+
+  The work was smaller than the AppKit import count suggested. `NSImage` becomes a `PlatformImage` typealias — the art pipeline is `CGImageSource` end to end and only meets a platform image at the last step — the pasteboard and the accent colour get a UIKit half, and the modifiers iOS does not have (`.onDeleteCommand`, `.onExitCommand`, `.pointerStyle`, `.toggleStyle(.checkbox)`, `controlActiveState`) are fenced. The search field gets a plain `TextField` twin, since `UISearchBar` is built to sit at the top of a screen rather than inline above a list.
+
+  Nothing about the macOS app changes.
+
 ## v0.31.2 (2026-08-25)
 
 ### Changed
