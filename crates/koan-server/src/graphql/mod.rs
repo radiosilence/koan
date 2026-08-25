@@ -724,6 +724,146 @@ mod tests {
         }
     }
 
+    // ---- Playlists ----
+
+    /// The whole life of a playlist over the API: made, added to, reordered,
+    /// renamed, played, deleted.
+    #[tokio::test]
+    async fn playlists_round_trip_over_the_api() {
+        let (schema, rx, tmp) = test_schema();
+        let db_path = tmp.path().join("test.db");
+
+        let a = insert_test_track(&db_path, "Track A", "Artist", "Album");
+        let b = insert_test_track(&db_path, "Track B", "Artist", "Album");
+        let c = insert_test_track(&db_path, "Track C", "Artist", "Album");
+
+        let resp = schema
+            .execute(&format!(
+                "mutation {{ createPlaylist(name: \"Evening\", trackIds: [{a}, {b}]) \
+                 {{ id name trackCount }} }}"
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["createPlaylist"]["name"], "Evening");
+        assert_eq!(data["createPlaylist"]["trackCount"], 2);
+        let id = data["createPlaylist"]["id"].as_i64().unwrap();
+
+        let resp = schema
+            .execute(&format!(
+                "mutation {{ addToPlaylist(id: {id}, trackIds: [{c}]) {{ ok }} }}"
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+
+        let resp = schema
+            .execute(&format!("{{ playlistTracks(id: {id}) {{ title }} }}"))
+            .await;
+        let data = resp.data.into_json().unwrap();
+        let titles: Vec<&str> = data["playlistTracks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["title"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            titles,
+            ["Track A", "Track B", "Track C"],
+            "playlist order is kept"
+        );
+
+        // A reorder is a wholesale replacement — the only shape Subsonic can
+        // express, so it is the only shape koan stores.
+        let resp = schema
+            .execute(&format!(
+                "mutation {{ setPlaylistTracks(id: {id}, trackIds: [{c}, {a}]) {{ ok }} }}"
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+
+        let resp = schema
+            .execute(&format!(
+                "mutation {{ renamePlaylist(id: {id}, name: \"Late\") {{ ok }} }}"
+            ))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+
+        let resp = schema.execute("{ playlists { id name trackCount } }").await;
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["playlists"][0]["name"], "Late");
+        assert_eq!(data["playlists"][0]["trackCount"], 2);
+
+        // Playing it replaces the queue rather than adding to it.
+        let resp = schema
+            .execute(&format!("mutation {{ playPlaylist(id: {id}) {{ ok }} }}"))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            PlayerCommand::ClearPlaylist
+        ));
+        match rx.try_recv().unwrap() {
+            PlayerCommand::AddToPlaylist(items) => assert_eq!(items.len(), 2),
+            other => panic!("expected AddToPlaylist, got {:?}", other),
+        }
+        assert!(matches!(rx.try_recv().unwrap(), PlayerCommand::Play(_)));
+
+        let resp = schema
+            .execute(&format!("mutation {{ deletePlaylist(id: {id}) {{ ok }} }}"))
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let resp = schema.execute("{ playlists { id } }").await;
+        let data = resp.data.into_json().unwrap();
+        assert!(data["playlists"].as_array().unwrap().is_empty());
+    }
+
+    /// A queue item with no library row behind it cannot go in a playlist: a
+    /// playlist points at rows, not at paths.
+    #[tokio::test]
+    async fn saving_the_queue_keeps_only_what_the_library_knows() {
+        use koan_core::player::state::{LoadState, PlaylistItem};
+
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("test.db");
+        let db = Database::open(&db_path).unwrap();
+        koan_core::db::schema::create_tables(&db.conn).unwrap();
+        drop(db);
+        let known = insert_test_track(&db_path, "Known", "Artist", "Album");
+
+        let state = SharedPlayerState::new();
+        let ch = CommandChannel::new();
+        let schema = build_schema(state.clone(), ch.tx.clone(), db_path, None);
+
+        let item = |title: &str, path: &str, db_id: Option<i64>| PlaylistItem {
+            id: QueueItemId::new(),
+            db_id,
+            path: std::path::PathBuf::from(path),
+            title: title.to_string(),
+            artist: "Artist".to_string(),
+            album_artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            load_state: LoadState::Ready,
+        };
+        state.add_items(vec![
+            item("Known", "/music/known.flac", Some(known)),
+            // Played from a file that was never indexed — a queue can hold one,
+            // a playlist cannot.
+            item("Stranger", "/elsewhere/stranger.flac", None),
+        ]);
+
+        let resp = schema
+            .execute("mutation { saveQueueAsPlaylist(name: \"Tonight\") { id trackCount } }")
+            .await;
+        assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
+        let data = resp.data.into_json().unwrap();
+        assert_eq!(data["saveQueueAsPlaylist"]["trackCount"], 1);
+    }
+
     // ---- Phase 1 tests: queue snapshot, viz, config, playlist version, subscriptions ----
 
     #[tokio::test]

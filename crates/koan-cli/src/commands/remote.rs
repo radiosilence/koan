@@ -102,6 +102,18 @@ pub fn cmd_remote_sync(full: bool) {
         synced.pushed.to_string().bold(),
         synced.imported.to_string().bold(),
     );
+
+    print!("{}", "syncing playlists...".dimmed());
+    std::io::stdout().flush().ok();
+
+    let playlists = koan_core::playlists::reconcile_playlists(&db, &client, &cfg.remote.username);
+
+    println!(
+        "\r{} {} pulled, {} pushed",
+        "playlists synced:".green().bold(),
+        playlists.pulled.to_string().bold(),
+        playlists.pushed.to_string().bold(),
+    );
 }
 
 pub fn cmd_remote_status() {

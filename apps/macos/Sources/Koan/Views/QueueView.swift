@@ -14,9 +14,10 @@ struct QueueView: View {
     @Environment(OrganizeModel.self) private var organize
     @Environment(\.openWindow) private var openWindow
     @Environment(UIState.self) private var ui
+    @Environment(PlaylistsModel.self) private var playlists
 
-    @State private var savingSnapshot = false
-    @State private var snapshotName = ""
+    @State private var savingPlaylist = false
+    @State private var playlistName = ""
 
 
     /// Grouped or one row per track. Persisted because it is a preference about
@@ -104,16 +105,22 @@ struct QueueView: View {
             player.importFiles(urls) { library.libraryChanged() }
             return true
         }
-        .alert("Save Queue", isPresented: $savingSnapshot) {
-            TextField("Name", text: $snapshotName)
-            Button("Cancel", role: .cancel) { snapshotName = "" }
+        .alert("Save as Playlist", isPresented: $savingPlaylist) {
+            TextField("Name", text: $playlistName)
+            Button("Cancel", role: .cancel) { playlistName = "" }
             Button("Save") {
-                guard !snapshotName.isEmpty else { return }
-                library.saveSnapshot(name: snapshotName)
-                snapshotName = ""
+                let name = playlistName
+                playlistName = ""
+                Task {
+                    guard let created = await playlists.create(
+                        named: name,
+                        trackIds: player.queue.compactMap(\.trackId)
+                    ) else { return }
+                    nav.open(playlist: created.id)
+                }
             }
         } message: {
-            Text("Stores the queue and playback position under a name you can restore later.")
+            Text("Keeps what is in the queue, in this order. Playback position is not part of a playlist.")
         }
     }
 
@@ -157,7 +164,7 @@ struct QueueView: View {
                 .help("Redo (⇧⌘Z)")
 
             Menu {
-                Button("Save as Snapshot…") { savingSnapshot = true }
+                Button("Save as Playlist…") { savingPlaylist = true }
                 Divider()
                 Button("Clear Queue", role: .destructive) { player.clearQueue() }
             } label: {
@@ -211,6 +218,8 @@ struct QueueView: View {
             player.remove(itemIds: group.items.map(\.queueItemId))
         }
         Divider()
+        AddToPlaylistMenu { $0(group.items.compactMap(\.trackId)) }
+        Divider()
         organizeButton(trackIds: group.items.compactMap(\.trackId), title: group.album)
         if let trackId = group.items.compactMap(\.trackId).first {
             Button("Go to Album") { showInLibrary(trackId: trackId, highlight: false) }
@@ -247,6 +256,8 @@ struct QueueView: View {
         Button("Play") { player.play(itemId: item.queueItemId) }
         Button("Remove") { player.remove(itemIds: [item.queueItemId]) }
         if let trackId = item.trackId {
+            Divider()
+            AddToPlaylistMenu { $0([trackId]) }
             Divider()
             organizeButton(trackIds: [trackId], title: item.title)
             Button(library.isFavourite(track: trackId) ? "Remove Favourite" : "Favourite Track") {
@@ -311,6 +322,8 @@ struct QueueView: View {
             }
         } else {
             Button("Remove") { player.remove(itemIds: itemIds(in: ids)) }
+            Divider()
+            AddToPlaylistMenu { $0(trackIds(in: ids)) }
             Divider()
             organizeButton(trackIds: trackIds(in: ids), title: nil)
         }

@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -173,14 +173,34 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_play_history_track ON play_history(track_id);
         CREATE INDEX IF NOT EXISTS idx_play_history_time ON play_history(played_at);
 
-        CREATE TABLE IF NOT EXISTS queue_snapshots (
-            id          INTEGER PRIMARY KEY,
-            name        TEXT NOT NULL UNIQUE,
-            queue_json  TEXT NOT NULL DEFAULT '[]',
-            cursor_path TEXT,
-            position_ms INTEGER NOT NULL DEFAULT 0,
-            created_at  TEXT DEFAULT (datetime('now'))
+        -- Playlists carry what Subsonic carries and nothing else, so a
+        -- playlist made here and one made on the server are the same object.
+        -- `sort_order` and `grouped` are the exceptions: where a playlist sits
+        -- in your sidebar and how you like to look at it are facts about this
+        -- machine, and no server has anywhere to put them.
+        CREATE TABLE IF NOT EXISTS playlists (
+            id         INTEGER PRIMARY KEY,
+            name       TEXT NOT NULL,
+            comment    TEXT,
+            public     INTEGER NOT NULL DEFAULT 0,
+            owner      TEXT,
+            remote_id  TEXT UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            changed_at TEXT NOT NULL DEFAULT (datetime('now')),
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            grouped    INTEGER
         );
+
+        -- Position is part of the key: a playlist is an ordered list, and the
+        -- same track may legitimately appear in it twice.
+        CREATE TABLE IF NOT EXISTS playlist_tracks (
+            playlist_id INTEGER NOT NULL REFERENCES playlists(id) ON DELETE CASCADE,
+            position    INTEGER NOT NULL,
+            track_id    INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            PRIMARY KEY (playlist_id, position)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_playlist_tracks_track ON playlist_tracks(track_id);
 
         CREATE TABLE IF NOT EXISTS track_vectors (
             track_id    INTEGER PRIMARY KEY REFERENCES tracks(id),
@@ -277,8 +297,89 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
     )?;
 
     cascade_play_history(conn)?;
+    snapshots_to_playlists(conn)?;
 
     Ok(())
+}
+
+/// Turn saved queues into playlists, then drop the table they lived in.
+///
+/// Snapshots were playlists with a resume position — a whole second feature to
+/// maintain for one number, and one the server had no idea about. The track
+/// lists are real work someone did, so they come across; only the position is
+/// lost. The Subsonic API already served snapshots as playlists, so its clients
+/// see the same names either side of this.
+fn snapshots_to_playlists(conn: &Connection) -> rusqlite::Result<()> {
+    if !table_exists(conn, "queue_snapshots")? {
+        return Ok(());
+    }
+
+    let mut saved: Vec<(String, String, String)> = Vec::new();
+    {
+        let mut stmt = conn.prepare("SELECT name, queue_json, created_at FROM queue_snapshots")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+            ))
+        })?;
+        for row in rows {
+            saved.push(row?);
+        }
+    }
+
+    for (name, json, created_at) in saved {
+        let paths: Vec<String> = serde_json::from_str::<Vec<serde_json::Value>>(&json)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|item| {
+                item.get("path")
+                    .and_then(|p| p.as_str())
+                    .map(|p| p.to_string())
+            })
+            .collect();
+
+        conn.execute(
+            "INSERT INTO playlists (name, created_at, changed_at)
+             VALUES (?1, COALESCE(NULLIF(?2, ''), datetime('now')), datetime('now'))",
+            rusqlite::params![name, created_at],
+        )?;
+        let playlist_id = conn.last_insert_rowid();
+
+        let mut position = 0i64;
+        for path in paths {
+            let track_id: Option<i64> = conn
+                .query_row("SELECT id FROM tracks WHERE path = ?1", [&path], |r| {
+                    r.get(0)
+                })
+                .ok();
+            // A snapshot held enough metadata to play a file that was never
+            // indexed. A playlist points at library rows, so anything with no
+            // row behind it cannot come across.
+            if let Some(track_id) = track_id {
+                conn.execute(
+                    "INSERT INTO playlist_tracks (playlist_id, position, track_id)
+                     VALUES (?1, ?2, ?3)",
+                    rusqlite::params![playlist_id, position, track_id],
+                )?;
+                position += 1;
+            }
+        }
+    }
+
+    conn.execute("DROP TABLE queue_snapshots", [])?;
+    Ok(())
+}
+
+/// Whether `table` exists.
+fn table_exists(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
+    let found: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+        [table],
+        |r| r.get(0),
+    )?;
+    Ok(found > 0)
 }
 
 /// Give `play_history.track_id` its `ON DELETE CASCADE`.
@@ -384,6 +485,60 @@ mod tests {
             "the server's own date is left alone"
         );
         assert_eq!(added(3), None);
+    }
+
+    #[test]
+    fn saved_queues_become_playlists() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        // The table as it stood before playlists existed.
+        conn.execute_batch(
+            "CREATE TABLE queue_snapshots (
+                 id          INTEGER PRIMARY KEY,
+                 name        TEXT NOT NULL UNIQUE,
+                 queue_json  TEXT NOT NULL DEFAULT '[]',
+                 cursor_path TEXT,
+                 position_ms INTEGER NOT NULL DEFAULT 0,
+                 created_at  TEXT DEFAULT (datetime('now'))
+             );
+             INSERT INTO artists (id, name) VALUES (1, 'Klaxons');
+             INSERT INTO albums (id, title, artist_id) VALUES (1, 'Myths', 1);
+             INSERT INTO tracks (id, album_id, artist_id, title, path)
+               VALUES (1, 1, 1, 'Atlantis', '/music/atlantis.flac'),
+                      (2, 1, 1, 'Golden Skans', '/music/golden.flac');
+             INSERT INTO queue_snapshots (name, queue_json, created_at) VALUES
+               ('techno',
+                '[{\"path\":\"/music/golden.flac\"},{\"path\":\"/music/nowhere.flac\"},{\"path\":\"/music/atlantis.flac\"}]',
+                '2026-01-01 10:00:00');",
+        )
+        .unwrap();
+
+        create_tables(&conn).unwrap();
+
+        assert!(!table_exists(&conn, "queue_snapshots").unwrap());
+        let (id, name, created): (i64, String, String) = conn
+            .query_row("SELECT id, name, created_at FROM playlists", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap();
+        assert_eq!(name, "techno");
+        assert_eq!(created, "2026-01-01 10:00:00", "when it was saved is kept");
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT track_id FROM playlist_tracks WHERE playlist_id = ?1 ORDER BY position",
+            )
+            .unwrap();
+        let members: Vec<i64> = stmt
+            .query_map([id], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(
+            members,
+            vec![2, 1],
+            "order is kept, and a file with no library row cannot come across"
+        );
     }
 
     #[test]

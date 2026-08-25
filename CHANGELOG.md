@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Playlists.** Named, ordered lists of tracks that outlive the session — the thing the queue could never be, and the thing saved queues were standing in for. They live in the sidebar under their own heading, with a 2×2 mosaic of the first four records in them for a face.
+
+  Almost everything the queue does applies: album headings over contiguous runs, multi-select, drag to reorder, ⌫ to remove, drop to add. A playlist opens ungrouped rather than grouped, because a playlist is a sequence someone chose rather than a shelf of records — and that choice is remembered per playlist, on this machine, since no server has anywhere to put it.
+
+  Anything playable goes in one: a track, a record, an artist, a selection, the whole queue. Drag onto a playlist's row to append; drag onto the *heading* to be asked for a name and get a new playlist of what you dropped. Double-click one, or press Play in its header, and it replaces the queue. Playback state is mirrored back onto it the way it is on an album page. There is a **Shuffle** that reorders the queue and a **Shuffle Playlist** that reorders the playlist; they are different verbs and they are both there.
+
+  They can be exported as extended M3U8. Only tracks with a file on this machine go in — a Subsonic stream URL carries the credentials that authorise it, and a playlist file is something people mail to each other — so the export says how many it had to leave out.
+
+- **Playlists sync with Navidrome, both ways.** A playlist made here appears on the server; one made there appears here, contents and order included. Every edit pushes in the background, so nothing waits on the network; a push that never got out leaves the local copy newer, and the next sync notices and sends it. Deleting on either side deletes on the other, because a playlist that comes back after you delete it cannot be deleted at all.
+
+  Only what Subsonic itself carries is stored — name, comment, owner, public, and the ordered song list — so the two sides are the same object rather than koan's idea of one. Where a playlist sits in your sidebar, and how you like to look at it, are the exceptions: those are facts about this machine.
+
+- **Subsonic playlist endpoints serve real playlists.** `getPlaylists`, `getPlaylist`, `createPlaylist` and `deletePlaylist` used to fake playlists out of saved queues; they now read and write the real thing, and `updatePlaylist` — add and remove members by index — works at last.
+
+### Removed
+
+- **Snapshots.** They were playlists with a resume position: a whole second feature, a second table, a second sidebar row and a second set of API calls, all to remember one number the server had no idea about. Existing snapshots become playlists on first launch, keeping their names, their track order and the date they were saved; only the position is lost. The Subsonic API already served them as playlists, so its clients see the same names either side of this.
+
+  ⌘6 is gone with them, and **Save as Snapshot…** in the queue menu is now **Save as Playlist…**.
+
+### Changed
+
+- **The database schema is now version 2, and older koan builds will refuse to open it.** That is the point of the version: a build that does not know about `playlists` must not write to a library that has them. Upgrade rather than downgrading.
+
 ## v0.30.2 (2026-08-25)
 
 ### Added

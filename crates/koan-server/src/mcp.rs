@@ -72,7 +72,7 @@ use rmcp::tool;
 ///
 /// The transport carries no credential, so anything reachable here is reachable
 /// by whoever can talk to the MCP process. `User` covers everything the tool
-/// advertises — browsing, playback, queue, favourites, snapshots, radio — and
+/// advertises — browsing, playback, queue, favourites, playlists, radio — and
 /// leaves out the admin mutations that move files on disk (`organize*`), rewrite
 /// config, or change the output device. `KOAN_MCP_ADMIN=1` opts back in.
 fn mcp_role() -> koan_core::auth::Role {
@@ -89,7 +89,7 @@ impl KoanMcpServer {
         description = "Get the full GraphQL schema in SDL format. CALL THIS FIRST to learn all \
         available queries, mutations, types, and filter parameters. The schema is the complete \
         reference for everything koan can do — library discovery, playback control, queue \
-        management, favourites, snapshots, radio mode, device switching, and more."
+        management, favourites, playlists, radio mode, device switching, and more."
     )]
     fn schema_sdl(&self) -> Json<GraphqlResponse> {
         let sdl = self.graphql_schema.sdl();
@@ -101,7 +101,7 @@ impl KoanMcpServer {
     #[tool(
         description = "Execute a GraphQL query or mutation against the koan music player. \
         This is the primary interface for ALL operations — library browsing, playback control, \
-        queue management, favourites, snapshots, radio, devices.\n\n\
+        queue management, favourites, playlists, radio, devices.\n\n\
         Call schema_sdl first to learn the full schema.\n\n\
         Quick examples:\n\
         - Search: { tracks(search: \"aphex\") { edges { node { id title artist album } } } }\n\
@@ -109,7 +109,7 @@ impl KoanMcpServer {
         - Now playing: { nowPlaying { state positionMs track { title artist codec sampleRate } } }\n\
         - Queue tracks: mutation { addToQueue(trackIds: [42, 43]) { ok addedCount } }\n\
         - Play/pause: mutation { pause { ok } } / mutation { resume { ok } }\n\
-        - Snapshot: mutation { saveSnapshot(name: \"techno\") { ok } }\n\
+        - Playlist: mutation { saveQueueAsPlaylist(name: \"techno\") { id name } }\n\
         - Radio: mutation { enableRadio { ok } }\n\n\
         Track IDs are integers from the library. Queue item IDs are UUIDs from the queue.\n\
         All string filters are case-insensitive substrings."
@@ -152,8 +152,9 @@ impl ServerHandler for KoanMcpServer {
                `clearQueue`, `undo`, `redo`\n\
              - **Favourites**: `favourite`, `unfavourite`, `toggleFavourite` (auto-syncs to \
                Subsonic/Navidrome). Filter any query with `favouritesOnly: true`\n\
-             - **Snapshots**: `saveSnapshot`, `restoreSnapshot`, `deleteSnapshot` — bank curated \
-               mixes and switch between them\n\
+             - **Playlists**: query `playlists`/`playlistTracks`; `createPlaylist`, \
+               `saveQueueAsPlaylist`, `addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, \
+               `deletePlaylist`, `playPlaylist`. Synced to Subsonic/Navidrome\n\
              - **Radio**: `enableRadio`, `disableRadio` — auto-queues similar tracks\n\
              - **Devices**: query `devices`; `setDevice`/`clearDevice` need `KOAN_MCP_ADMIN=1`\n\
              - **History**: query `playHistory`, `similarArtists`\n\n\

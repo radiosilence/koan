@@ -355,139 +355,190 @@ impl MutationRoot {
         .await
     }
 
-    // -- Snapshots --
+    // -- Playlists --
+    //
+    // The same objects the Subsonic endpoints serve and the app edits. Every
+    // mutation writes locally and pushes to the upstream server in the
+    // background; nothing here waits on the network.
 
-    async fn save_snapshot(
+    async fn create_playlist(
         &self,
         ctx: &Context<'_>,
         name: String,
-    ) -> async_graphql::Result<GqlStatus> {
+        track_ids: Option<Vec<i64>>,
+    ) -> async_graphql::Result<GqlPlaylist> {
         require_role(ctx, Role::User)?;
-        let state = ctx.data::<Arc<SharedPlayerState>>()?;
-        let (items, cursor) = state.snapshot_playlist();
-        let position_ms = state.position_ms();
-
-        let persisted: Vec<PersistedQueueItem> = items
-            .iter()
-            .map(PersistedQueueItem::from_playlist_item)
-            .collect();
-        let cursor_path = cursor.and_then(|cid| {
-            items
-                .iter()
-                .find(|i| i.id == cid)
-                .map(|i| i.path.to_string_lossy().into_owned())
-        });
-
         with_db(ctx, move |db| {
-            queries::save_snapshot(
-                &db.conn,
-                &name,
-                &persisted,
-                cursor_path.as_deref(),
-                position_ms,
-            )
-            .map_err(|e| super::internal_error("db", e))?;
-            Ok(GqlStatus::success(format!("saved snapshot '{}'", name)))
+            let id = queries::create_playlist(&db.conn, &name, None)
+                .map_err(|e| super::internal_error("db", e))?;
+            if let Some(track_ids) = &track_ids {
+                queries::add_tracks(&db.conn, id, track_ids)
+                    .map_err(|e| super::internal_error("db", e))?;
+            }
+            koan_core::playlists::push_to_remote(id);
+            queries::get_playlist(&db.conn, id)
+                .map_err(|e| super::internal_error("db", e))?
+                .map(GqlPlaylist::from)
+                .ok_or_else(|| async_graphql::Error::new("playlist vanished as it was created"))
         })
         .await
     }
 
-    async fn restore_snapshot(
+    /// Keep the current queue under a name.
+    async fn save_queue_as_playlist(
         &self,
         ctx: &Context<'_>,
         name: String,
+    ) -> async_graphql::Result<GqlPlaylist> {
+        require_role(ctx, Role::User)?;
+        let state = ctx.data::<Arc<SharedPlayerState>>()?;
+        // A queue item with no library row behind it cannot come across: a
+        // playlist points at rows, not at paths.
+        let track_ids: Vec<i64> = state
+            .snapshot_playlist()
+            .0
+            .iter()
+            .filter_map(|item| item.db_id)
+            .collect();
+        self.create_playlist(ctx, name, Some(track_ids)).await
+    }
+
+    async fn rename_playlist(
+        &self,
+        ctx: &Context<'_>,
+        id: i64,
+        name: String,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-
-        // Resolve each snapshot item through the same path resolution as
-        // addToQueue — ensures correct cache paths and triggers downloads.
-        let label = name.clone();
-        let (resolved, cursor_path, position_ms) = with_db(ctx, move |db| {
-            let snap = queries::load_snapshot(&db.conn, &name)
+        with_db(ctx, move |db| {
+            if !queries::rename_playlist(&db.conn, id, &name)
                 .map_err(|e| super::internal_error("db", e))?
-                .ok_or_else(|| {
-                    async_graphql::Error::new(format!("snapshot '{}' not found", name))
-                })?;
+            {
+                return Err(async_graphql::Error::new(format!(
+                    "playlist {id} not found"
+                )));
+            }
+            koan_core::playlists::push_to_remote(id);
+            Ok(GqlStatus::success(format!("renamed playlist to '{name}'")))
+        })
+        .await
+    }
+
+    async fn delete_playlist(
+        &self,
+        ctx: &Context<'_>,
+        id: i64,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        with_db(ctx, move |db| {
+            // Read before deleting: the delete has to reach the server too, or
+            // the next sync brings the playlist back.
+            let remote_id = queries::get_playlist(&db.conn, id)
+                .ok()
+                .flatten()
+                .and_then(|p| p.remote_id);
+            if !queries::delete_playlist(&db.conn, id)
+                .map_err(|e| super::internal_error("db", e))?
+            {
+                return Err(async_graphql::Error::new(format!(
+                    "playlist {id} not found"
+                )));
+            }
+            if let Some(remote_id) = remote_id {
+                koan_core::playlists::delete_on_remote(remote_id);
+            }
+            Ok(GqlStatus::success(format!("deleted playlist {id}")))
+        })
+        .await
+    }
+
+    async fn add_to_playlist(
+        &self,
+        ctx: &Context<'_>,
+        id: i64,
+        track_ids: Vec<i64>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        with_db(ctx, move |db| {
+            let added = queries::add_tracks(&db.conn, id, &track_ids)
+                .map_err(|e| super::internal_error("db", e))?;
+            koan_core::playlists::push_to_remote(id);
+            Ok(GqlStatus::success(format!("added {added} track(s)")))
+        })
+        .await
+    }
+
+    /// Replace the contents wholesale — a reorder, a removal and a shuffle are
+    /// all this once the caller has worked out the list it wants.
+    async fn set_playlist_tracks(
+        &self,
+        ctx: &Context<'_>,
+        id: i64,
+        track_ids: Vec<i64>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        with_db(ctx, move |db| {
+            queries::set_playlist_tracks(&db.conn, id, &track_ids)
+                .map_err(|e| super::internal_error("db", e))?;
+            koan_core::playlists::push_to_remote(id);
+            Ok(GqlStatus::success(format!(
+                "playlist {id} now holds {} track(s)",
+                track_ids.len()
+            )))
+        })
+        .await
+    }
+
+    /// Replace the queue with a playlist and play it.
+    async fn play_playlist(
+        &self,
+        ctx: &Context<'_>,
+        id: i64,
+        #[graphql(default = false)] shuffled: bool,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let resolved = with_db(ctx, move |db| {
+            let mut track_ids = queries::playlist_track_ids(&db.conn, id)
+                .map_err(|e| super::internal_error("db", e))?;
+            if shuffled {
+                koan_core::helpers::shuffle(&mut track_ids);
+            }
+            let rows = queries::tracks_by_ids(&db.conn, &track_ids)
+                .map_err(|e| super::internal_error("db", e))?;
 
             let mut items = Vec::new();
             let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
-            for snap_item in &snap.items {
-                if let Ok(Some(tid)) = queries::track_id_by_path(&db.conn, &snap_item.path)
-                    && let Ok(Some(track)) = queries::get_track_row(&db.conn, tid)
-                {
-                    let item = track_to_playlist_item(&track, db);
-                    if matches!(
-                        item.load_state,
-                        koan_core::player::state::LoadState::Pending
-                    ) {
-                        pending_downloads.push((tid, item.id));
-                    }
-                    items.push(item);
-                } else {
-                    // Track not in DB — use snapshot's stored data.
-                    items.push(snap_item.to_playlist_item());
+            for track in &rows {
+                let item = track_to_playlist_item(track, db);
+                if matches!(
+                    item.load_state,
+                    koan_core::player::state::LoadState::Pending
+                ) {
+                    pending_downloads.push((track.id, item.id));
                 }
+                items.push(item);
             }
-
-            Ok((
-                ResolvedQueue {
-                    items,
-                    pending_downloads,
-                },
-                snap.cursor_path,
-                snap.position_ms,
-            ))
+            Ok(ResolvedQueue {
+                items,
+                pending_downloads,
+            })
         })
         .await?;
 
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
-        let cursor_item_id = cursor_path.as_ref().and_then(|cp| {
-            resolved
-                .items
-                .iter()
-                .find(|i| i.path.to_string_lossy() == cp.as_str())
-                .map(|i| i.id)
-        });
-
         send_cmd_via(tx, PlayerCommand::ClearPlaylist)?;
-
+        let count = resolved.items.len();
         if !resolved.items.is_empty() {
-            let first_id = cursor_item_id.unwrap_or(resolved.items[0].id);
+            let first_id = resolved.items[0].id;
             send_cmd_via(tx, PlayerCommand::AddToPlaylist(resolved.items))?;
             send_cmd_via(tx, PlayerCommand::Play(first_id))?;
-            if position_ms > 0 {
-                send_cmd_via(tx, PlayerCommand::Seek(position_ms))?;
-            }
-
             if !resolved.pending_downloads.is_empty() {
                 spawn_downloads(resolved.pending_downloads, tx.clone(), state.clone());
             }
         }
-
-        Ok(GqlStatus::success(format!("restored snapshot '{}'", label)))
-    }
-
-    async fn delete_snapshot(
-        &self,
-        ctx: &Context<'_>,
-        name: String,
-    ) -> async_graphql::Result<GqlStatus> {
-        require_role(ctx, Role::User)?;
-        with_db(ctx, move |db| {
-            let deleted = queries::delete_snapshot(&db.conn, &name)
-                .map_err(|e| super::internal_error("db", e))?;
-            if deleted {
-                Ok(GqlStatus::success(format!("deleted snapshot '{}'", name)))
-            } else {
-                Err(async_graphql::Error::new(format!(
-                    "snapshot '{}' not found",
-                    name
-                )))
-            }
-        })
-        .await
+        Ok(GqlStatus::success(format!("playing {count} track(s)")))
     }
 
     // -- Radio --

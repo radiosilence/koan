@@ -345,8 +345,8 @@ private struct StageView: View {
             )
         case .section(.playHistory):
             HistoryView()
-        case .section(.snapshots):
-            SnapshotsView()
+        case .section(.playlist(let id)):
+            PlaylistView(playlistId: id)
         case .album(let id):
             AlbumDetailView(albumId: id)
         case .artist(let id):

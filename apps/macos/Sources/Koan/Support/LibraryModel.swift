@@ -76,7 +76,6 @@ final class LibraryModel {
     func isFavourite(album id: Int64) -> Bool { favouriteAlbumIds.contains(id) }
     func isFavourite(artist id: Int64) -> Bool { favouriteArtistIds.contains(id) }
     private(set) var playHistory: [PlayHistoryEntry] = [] { didSet { refilter() } }
-    private(set) var snapshots: [Snapshot] = []
     private(set) var stats: Stats?
     private(set) var isLoading = false
 
@@ -245,8 +244,8 @@ final class LibraryModel {
             case .playHistory:
                 // Always refetched: it changes underneath you as you listen.
                 playHistory = (try? await engine.playHistory(limit: historyPageSize, offset: 0)) ?? []
-            case .snapshots:
-                snapshots = (try? await engine.snapshots()) ?? []
+            case .playlist:
+                break  // owned by PlaylistsModel
             }
             isLoading = false
         }
@@ -346,22 +345,6 @@ final class LibraryModel {
         let engine = self.engine
         Task {
             favourites = (try? await engine.favourites()) ?? []
-        }
-    }
-
-    func saveSnapshot(name: String) {
-        let engine = self.engine
-        Task {
-            try? await engine.saveSnapshot(name: name)
-            load()
-        }
-    }
-
-    func deleteSnapshot(name: String) {
-        let engine = self.engine
-        Task {
-            _ = try? await engine.deleteSnapshot(name: name)
-            load()
         }
     }
 

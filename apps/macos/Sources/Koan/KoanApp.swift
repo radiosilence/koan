@@ -15,6 +15,7 @@ final class AppState {
     let search: SearchModel
     let art: CoverArtCache
     let organize: OrganizeModel
+    let playlists: PlaylistsModel
     let activity: ActivityModel
     let textFocus = TextFocus()
     let ui = UIState()
@@ -34,11 +35,17 @@ final class AppState {
         let art = CoverArtCache(engine: engine)
         self.art = art
         self.organize = OrganizeModel(engine: engine)
+        let playlists = PlaylistsModel(engine: engine)
+        self.playlists = playlists
         let activity = ActivityModel()
         self.activity = activity
         library.activity = activity
         player.activity = activity
         organize.activity = activity
+        playlists.activity = activity
+        // Playlist failures go where every other engine failure goes rather
+        // than into a modal of their own.
+        playlists.report = { [weak player] message in player?.lastError = message }
 
         // The engine syncs and scans on its own — on startup, on a timer, and
         // when the library folders change. Those are the slow things a user is
@@ -101,6 +108,7 @@ struct KoanApp: App {
                         .environment(state.search)
                         .environment(state.art)
                         .environment(state.organize)
+                        .environment(state.playlists)
                         .environment(state.activity)
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
@@ -119,6 +127,7 @@ struct KoanApp: App {
                     await created.player.start()
                     created.player.restoreSession()
                     created.library.loadInitial()
+                    created.playlists.load()
                     state = created
                 } catch {
                     startupError = String(describing: error)
@@ -330,7 +339,6 @@ private struct NavigationCommand {
         .init(title: "Artists", key: "3", section: .artists),
         .init(title: "Favourites", key: "4", section: .favourites),
         .init(title: "History", key: "5", section: .playHistory),
-        .init(title: "Snapshots", key: "6", section: .snapshots),
     ]
 }
 

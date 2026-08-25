@@ -419,22 +419,48 @@ impl From<koan_core::lyrics::Lyrics> for Lyrics {
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
-pub struct Snapshot {
+pub struct Playlist {
+    pub id: i64,
     pub name: String,
+    pub comment: Option<String>,
+    /// Set once the playlist exists on the server. Its absence is what tells a
+    /// client the playlist is local-only.
+    pub remote_id: Option<String>,
+    pub public: bool,
+    pub owner: Option<String>,
     pub track_count: u32,
-    pub position_ms: u64,
+    pub duration_ms: i64,
     pub created_at: String,
+    pub changed_at: String,
+    /// How this machine likes to look at it. `None` follows the app default.
+    pub grouped: Option<bool>,
 }
 
-impl From<queries::QueueSnapshotSummary> for Snapshot {
-    fn from(s: queries::QueueSnapshotSummary) -> Self {
+impl From<queries::PlaylistRow> for Playlist {
+    fn from(p: queries::PlaylistRow) -> Self {
         Self {
-            name: s.name,
-            track_count: s.track_count as u32,
-            position_ms: s.position_ms,
-            created_at: s.created_at,
+            id: p.id,
+            name: p.name,
+            comment: p.comment,
+            remote_id: p.remote_id,
+            public: p.public,
+            owner: p.owner,
+            track_count: p.track_count as u32,
+            duration_ms: p.duration_ms,
+            created_at: p.created_at,
+            changed_at: p.changed_at,
+            grouped: p.grouped,
         }
     }
+}
+
+/// What writing a playlist out to a file managed.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct PlaylistExport {
+    pub written: u32,
+    /// Tracks with no file on this machine — a playlist file is a list of
+    /// paths, and an undownloaded remote track has none.
+    pub skipped: u32,
 }
 
 #[derive(uniffi::Record, Debug, Clone)]
@@ -456,6 +482,8 @@ pub struct SyncSummary {
     pub albums_failed: u32,
     pub favourites_pushed: u32,
     pub favourites_imported: u32,
+    pub playlists_pulled: u32,
+    pub playlists_pushed: u32,
 }
 
 /// A named pattern from `[organize.patterns]`.
