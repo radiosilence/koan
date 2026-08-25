@@ -319,6 +319,14 @@ impl SharedPlayerState {
             .store(u64::from(rate), Ordering::Release);
     }
 
+    /// Back to "not known yet", for the window where the device is between
+    /// rates. A switch takes as long as the hardware needs to reclock — the
+    /// better part of a second on USB — and the previous track's rate is not
+    /// an answer for this one.
+    pub fn clear_output_sample_rate(&self) {
+        self.output_sample_rate.store(0, Ordering::Release);
+    }
+
     // --- Playlist version ---
 
     pub fn playlist_version(&self) -> u64 {
