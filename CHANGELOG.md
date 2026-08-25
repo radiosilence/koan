@@ -12,6 +12,8 @@
 
   The session — category, activation, interruptions, route changes — is the app's, because it needs a run loop and a lifecycle. A phone call pauses playback; unplugging headphones pauses rather than announcing the record to the room.
 
+  The shell is a tab bar, not a drawer: a burger menu hides the thing koan is mostly about behind a tap. `.sidebarAdaptable` makes it one piece of code — an iPhone gets the tab bar with the overflow in More, an iPad gets the sidebar the Mac has, and the navigator stays authoritative either way. The transport is a mini player above the tab bar that opens the record full screen, rather than the Mac's bar squeezed onto a phone: at 400 points there is room for the sleeve, what is playing and one button.
+
   Verified on the simulator by playing a file through the real `Player`: position only advances when the render callback drains the ring buffer, so a track that reaches its end has exercised decode, timeline and output together. Stopping mid-track survives too — that teardown is the one that used to double-free CoreAudio's buffer list, and it is shared with macOS rather than rewritten. `just ios-smoke <file>` runs both.
 
   Not yet: no Xcode project, so this is a simulator build only — a device needs a provisioning profile and the Apple Developer Program. No iPhone-shaped transport yet either; the Mac's is doing the job and it is cramped.

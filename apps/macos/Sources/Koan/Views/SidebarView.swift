@@ -311,26 +311,3 @@ struct SidebarView: View {
 
 
 /// One playlist in the sidebar: its mosaic, its name, and how much is in it.
-private struct PlaylistRow: View {
-    let playlist: Playlist
-    let covers: [AlbumArtwork.Source]
-
-    var body: some View {
-        HStack(spacing: 8) {
-            PlaylistArtwork(sources: covers, cornerRadius: 3)
-                .frame(width: 24, height: 24)
-
-            VStack(alignment: .leading, spacing: 0) {
-                Text(playlist.name)
-                    .lineLimit(1)
-                Text(Format.count(Int64(playlist.trackCount), "track"))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        // Full width, so the drop target is the row rather than the text — the
-        // same reason the Queue row does it.
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-    }
-}

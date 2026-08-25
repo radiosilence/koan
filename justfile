@@ -381,6 +381,8 @@ ios-bundle: macos-ffi ios-ffi
     set -euo pipefail
     app=target/ios-app/koan.app
     rm -rf "$app" && mkdir -p "$app"
+    icon_plist=$(mktemp -t koan-icons.XXXXXX)
+    trap 'rm -f "$icon_plist"' EXIT
     ffi={{app_dir}}/Sources/koan_ffiFFI
     target=arm64-apple-ios{{ios_deployment_target}}-simulator
     mod=target/ios-app/modules
@@ -410,12 +412,18 @@ ios-bundle: macos-ffi ios-ffi
     # `Color("AccentColor")` finds nothing without it and every tinted control
     # renders in nothing.
     if /usr/bin/actool --version >/dev/null 2>&1; then
+        # `--app-icon` is not optional: without it actool compiles the colour
+        # sets and silently leaves the icon out of the catalog entirely. Nor is
+        # keeping the partial plist — it carries the CFBundleIcons that tell
+        # SpringBoard which rendition to draw, and an icon in the catalog that
+        # nothing names shows as an empty tile.
         /usr/bin/actool {{app_dir}}/Resources/Assets.xcassets \
             --compile "$app" --platform iphonesimulator \
             --minimum-deployment-target {{ios_deployment_target}} \
-            --output-partial-info-plist /dev/null >/dev/null
+            --app-icon AppIcon --include-all-app-icons \
+            --output-partial-info-plist "$icon_plist" >/dev/null
     else
-        echo "note: actool unavailable (needs full Xcode) — building with the system accent"
+        echo "note: actool unavailable (needs full Xcode) — building without an icon or accent"
     fi
     # iOS bundles are flat — no Contents/MacOS.
     cat > "$app/Info.plist" <<PLIST
@@ -426,6 +434,9 @@ ios-bundle: macos-ffi ios-ffi
         <key>CFBundleExecutable</key><string>koan</string>
         <key>CFBundleIdentifier</key><string>{{bundle_id}}</string>
         <key>CFBundleName</key><string>koan</string>
+        <!-- The catalog holds the icon; this is what names it. Without it the
+             home screen shows an empty tile and no error anywhere. -->
+        <key>CFBundleIconName</key><string>AppIcon</string>
         <key>CFBundlePackageType</key><string>APPL</string>
         <key>CFBundleShortVersionString</key><string>0.0.0</string>
         <key>CFBundleVersion</key><string>1</string>
@@ -439,6 +450,10 @@ ios-bundle: macos-ffi ios-ffi
     </dict>
     </plist>
     PLIST
+    # actool's keys, folded into the plist written above.
+    if [ -s "$icon_plist" ]; then
+        /usr/libexec/PlistBuddy -c "Merge $icon_plist" "$app/Info.plist" >/dev/null
+    fi
     echo "built $app"
 
 # Install and launch koan on a booted simulator.
