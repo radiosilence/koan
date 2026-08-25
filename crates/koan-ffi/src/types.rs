@@ -687,3 +687,22 @@ pub struct CacheCleared {
     pub files: u64,
     pub bytes: u64,
 }
+
+/// The spectrum reduced to three numbers, for indicators that move with the
+/// music without drawing it.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq)]
+pub struct VizLevels {
+    pub low: f32,
+    pub mid: f32,
+    pub high: f32,
+}
+
+impl From<koan_core::audio::viz::VizLevels> for VizLevels {
+    fn from(l: koan_core::audio::viz::VizLevels) -> Self {
+        Self {
+            low: l.low,
+            mid: l.mid,
+            high: l.high,
+        }
+    }
+}

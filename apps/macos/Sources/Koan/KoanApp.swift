@@ -16,6 +16,7 @@ final class AppState {
     let art: CoverArtCache
     let organize: OrganizeModel
     let activity: ActivityModel
+    let levels: PlayingLevels
     let textFocus = TextFocus()
     let ui = UIState()
     let hotkeys: Hotkeys
@@ -36,6 +37,7 @@ final class AppState {
         self.organize = OrganizeModel(engine: engine)
         let activity = ActivityModel()
         self.activity = activity
+        self.levels = PlayingLevels(engine: engine)
         library.activity = activity
         player.activity = activity
         organize.activity = activity
@@ -102,6 +104,7 @@ struct KoanApp: App {
                         .environment(state.art)
                         .environment(state.organize)
                         .environment(state.activity)
+                        .environment(state.levels)
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)
