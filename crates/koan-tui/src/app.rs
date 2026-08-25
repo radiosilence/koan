@@ -24,6 +24,9 @@ use super::theme::Theme;
 use super::transport::TransportBar;
 use super::visualizer::VisualizerState;
 
+/// Characters per second the transport ticker scrolls when the title overflows.
+const TICKER_FPS: u8 = 8;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Mode {
     Normal,
@@ -263,7 +266,7 @@ pub struct App {
     pub ticker_offset: usize,
     /// Counter for ticker animation speed (increments each tick).
     pub ticker_tick: u8,
-    /// Tick interval divisor for ticker speed (derived from config ticker_fps).
+    /// Tick interval divisor for the ticker's fixed 8 chars-per-second scroll.
     ticker_divisor: u8,
     /// Track path used to detect track changes for ticker reset.
     ticker_last_path: Option<PathBuf>,
@@ -320,10 +323,7 @@ impl App {
         download_queue: DownloadQueue,
     ) -> Self {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
-        let ticker_divisor = {
-            let fps = cfg.playback.ticker_fps.max(1);
-            (ticks_per_sec / fps).max(1)
-        };
+        let ticker_divisor = (ticks_per_sec / TICKER_FPS).max(1);
         let visualizer = VisualizerState::from_config(&cfg.visualizer);
         let viz_config = cfg.visualizer;
 
@@ -836,9 +836,8 @@ impl App {
                     },
                     std::time::Instant::now(),
                 ));
-                // Persist to config.toml (not the merged config — avoids leaking secrets).
                 let viz_enabled = self.viz_config.enabled;
-                let _ = koan_core::config::Config::update_base(|cfg| {
+                let _ = koan_core::config::Config::persist(|cfg| {
                     cfg.visualizer.enabled = viz_enabled;
                 });
             }
@@ -864,7 +863,7 @@ impl App {
                     std::time::Instant::now(),
                 ));
                 let overlay = self.visualizer.matrix_overlay;
-                let _ = koan_core::config::Config::update_base(|cfg| {
+                let _ = koan_core::config::Config::persist(|cfg| {
                     cfg.visualizer.matrix_overlay = overlay;
                 });
             }
@@ -879,7 +878,7 @@ impl App {
                     std::time::Instant::now(),
                 ));
                 let shake = self.visualizer.bass_shake;
-                let _ = koan_core::config::Config::update_base(|cfg| {
+                let _ = koan_core::config::Config::persist(|cfg| {
                     cfg.visualizer.bass_shake = shake;
                 });
             }
@@ -1113,7 +1112,7 @@ impl App {
             std::time::Instant::now(),
         ));
         let mode_str = mode.as_str().to_string();
-        let _ = koan_core::config::Config::update_base(|cfg| {
+        let _ = koan_core::config::Config::persist(|cfg| {
             cfg.visualizer.mode = mode_str.clone();
         });
     }
@@ -1456,6 +1455,11 @@ impl App {
         let config = koan_core::config::Config::load().unwrap_or_default();
         let mut patterns: Vec<(String, String)> = config.organize.patterns.into_iter().collect();
         patterns.sort_by(|a, b| a.0.cmp(&b.0));
+        let default_pattern = config
+            .organize
+            .default
+            .and_then(|name| patterns.iter().position(|(n, _)| *n == name))
+            .unwrap_or(0);
 
         // Collect selected queue entries' paths.
         let visible = self.visible_queue();
@@ -1472,7 +1476,12 @@ impl App {
             .map(|e| (e.id, e.path.clone()))
             .collect();
 
-        let org = super::organize::OrganizeModalState::new(patterns, selected_paths, selected_ids);
+        let org = super::organize::OrganizeModalState::new(
+            patterns,
+            default_pattern,
+            selected_paths,
+            selected_ids,
+        );
         self.organize = Some(org);
         self.push_mode(Mode::Organize);
     }
@@ -1603,7 +1612,7 @@ impl App {
             MouseEventKind::Up(MouseButton::Left) if self.transport_drag.is_some() => {
                 // Persist the new size.
                 let size = self.art_size;
-                let _ = koan_core::config::Config::update_base(|cfg| {
+                let _ = koan_core::config::Config::persist(|cfg| {
                     cfg.playback.art_size = size;
                 });
                 self.transport_drag = None;

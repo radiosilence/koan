@@ -152,7 +152,7 @@ pub fn cmd_scan(path: Option<&Path>, force: bool, force_remove: bool) {
     }
 
     // Run acoustic analysis if configured.
-    if cfg.discovery.analysis_on_scan {
+    if cfg.library.analyze_on_scan {
         let missing = koan_core::db::queries::tracks_missing_vectors(&db.conn).unwrap_or_default();
         if !missing.is_empty() {
             eprintln!();

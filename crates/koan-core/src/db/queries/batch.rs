@@ -276,6 +276,29 @@ pub fn favourite_paths(conn: &Connection, paths: &[String]) -> Result<HashSet<St
     rows.collect::<Result<HashSet<_>, _>>().map_err(Into::into)
 }
 
+/// The album each of the given tracks belongs to, keyed by track ID.
+///
+/// Tracks with no album are absent from the map rather than present with a
+/// `None`; a caller asking which album to draw has the same answer either way.
+pub fn album_ids_for_tracks(
+    conn: &Connection,
+    track_ids: &[i64],
+) -> Result<HashMap<i64, i64>, DbError> {
+    if track_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let sql = format!(
+        "SELECT id, album_id FROM tracks WHERE id IN {} AND album_id IS NOT NULL",
+        placeholders(track_ids.len())
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(track_ids), |row| {
+        Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    rows.collect::<Result<HashMap<_, _>, _>>()
+        .map_err(Into::into)
+}
+
 // ---------------------------------------------------------------------------
 // SQL-side track filtering
 // ---------------------------------------------------------------------------

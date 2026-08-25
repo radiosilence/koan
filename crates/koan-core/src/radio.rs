@@ -244,7 +244,7 @@ pub fn pick_tracks(
     gather_same_artist_candidates(conn, ctx, &mut candidates);
 
     // --- Signal 6: Acoustic similarity (vector KNN) ---
-    gather_acoustic_candidates(conn, ctx, &mut candidates);
+    gather_acoustic_candidates(conn, ctx, config.seed_window, &mut candidates);
 
     // --- Signal 7: Random library tracks ---
     gather_random_candidates(conn, ctx, &mut candidates);
@@ -757,10 +757,11 @@ fn gather_same_artist_candidates(
 fn gather_acoustic_candidates(
     conn: &Connection,
     _ctx: &RadioContext,
+    seed_window: usize,
     candidates: &mut Vec<Candidate>,
 ) {
-    // Collect vectors for recent seed tracks (same ones driving seed_artists).
-    let seed_ids = queries::recent_track_ids(conn, 5).unwrap_or_default();
+    // The same seeds that drive seed_artists — one window, one answer.
+    let seed_ids = queries::recent_track_ids(conn, seed_window).unwrap_or_default();
     let mut seed_embeddings = Vec::new();
     for tid in &seed_ids {
         if let Ok(Some(emb)) = queries::get_vector(conn, *tid) {

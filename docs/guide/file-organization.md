@@ -56,7 +56,7 @@ Or define them in your config directly:
 
 ```toml
 [organize]
-default = "standard"       # pattern selected by default in the modal
+default = "standard"       # preselected in the TUI modal and the macOS sheet
 move_ancillary = true      # cover art, .cue and .log travel with the music
 
 [organize.patterns]
@@ -102,7 +102,7 @@ Music files are irreplaceable, so organize refuses anything it can't do without 
 - **Preview matches execute.** Both read metadata through the same resolver, so the paths you confirm are the paths that get used.
 - **A pattern that produces an empty path component is refused.** An unknown function (`$nun` for `$num`) is a parse error rather than a silently empty result, and `..` or `.` components are errors, not something to strip.
 - **Long titles are shortened, not rejected.** A destination name is capped below the filesystem's limit, extension included.
-- **The database moves with the file.** Track paths, the scan cache, favourites, queue snapshots and saved playback state are all rewritten in the same transaction as the move. A constraint violation aborts before the file is touched.
+- **The database moves with the file.** Track paths, the scan cache, favourites and saved playback state are all rewritten in the same transaction as the move. A constraint violation aborts before the file is touched. Playlists are untouched, because they name library rows rather than paths.
 - **Undo.** Every move -- including files the library has no row for -- is written to `organize_log`, newest batch first. Undo restores a file only if its original path is still free and the moved file is still the one that was logged; anything else is reported and left alone, with its log entry intact.
 - **Cross-filesystem moves are copied, flushed and verified before the original is deleted.** A run that won't fit is refused before it starts.
 - **Empty directories are cleaned up, but never a configured library root** or anything above one.

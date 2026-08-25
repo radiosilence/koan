@@ -10,11 +10,34 @@ Defaults -> config.toml -> config.local.toml -> KOAN_* env vars
 | Layer | Path | Purpose |
 |-------|------|---------|
 | Defaults | (built-in) | Hardcoded sane defaults for every field |
-| `config.toml` | `~/.config/koan/config.toml` | Shareable base config -- safe to commit to dotfiles |
-| `config.local.toml` | `~/.config/koan/config.local.toml` | Machine-specific paths, credentials (gitignored) |
+| `config.toml` | `~/.config/koan/config.toml` | Shared settings -- safe to commit to dotfiles |
+| `config.local.toml` | `~/.config/koan/config.local.toml` | This machine only, gitignored, `0600` |
 | Environment | `KOAN_*` vars | 12-factor overrides -- highest priority, ideal for CI/headless |
 
 Run `koan config` to see all layers and the fully resolved result (including which `KOAN_*` env vars are active).
+
+## Which file a setting goes in
+
+You can put any setting in either file by hand -- the merge does not care. What
+the split decides is where *koan* writes when it changes a setting itself, and
+that matters because `config.toml` is meant to be committed.
+
+Three kinds of setting are machine-scoped and always land in
+`config.local.toml`:
+
+| Kind | Settings |
+|------|----------|
+| Secrets | `remote.password`, `subsonic.password` |
+| This machine's paths, disk, hardware and account | `library.folders`, `remote.enabled/url/username`, `remote.cache_dir`, `remote.cache_limit`, `playback.output_device`, `subsonic.enabled/port/username` |
+| Volatile UI state -- flipped by a keypress or a mouse drag | `playback.art_size`, `visualizer.enabled`, `visualizer.mode`, `visualizer.matrix_overlay`, `visualizer.bass_shake` |
+
+Everything else is taste, travels between machines, and goes in `config.toml`.
+
+Writing a setting also clears any copy of it from the other file. That is not
+tidiness: `config.local.toml` wins the merge, so a shared write left shadowed by
+a local copy would silently do nothing. In the other direction it drains
+machine-scoped keys out of the file you commit, which is how a `config.toml`
+polluted by an older koan cleans itself up as you use the app.
 
 ## Environment variable overrides
 
@@ -48,7 +71,7 @@ export KOAN_PLAYBACK__REPLAYGAIN=track
 
 Field names match the TOML key in SCREAMING_SNAKE_CASE. Nested sections use `__`:
 - `[remote] password` -> `KOAN_REMOTE__PASSWORD`
-- `[graphql] subsonic_port` -> `KOAN_GRAPHQL__SUBSONIC_PORT`
+- `[subsonic] port` -> `KOAN_SUBSONIC__PORT`
 - `[playback] pre_amp_db` -> `KOAN_PLAYBACK__PRE_AMP_DB`
 
 ## CI usage
@@ -82,7 +105,11 @@ What it creates:
 
 Running `koan config init` on an existing setup is safe -- it merges new defaults without touching values you've changed, and skips `config.local.toml` if it exists.
 
-`[library]` and `[remote]` sections are excluded from `config.toml` -- they contain machine-specific paths and credentials that belong in `config.local.toml`. This means you can commit `~/.config/koan/` to your dotfiles repo and share playback/visualizer/organize settings across machines while keeping library paths and secrets local.
+Machine-scoped settings are left out of the `config.toml` template entirely --
+listing them, even commented out, invites them into a dotfiles repo. That means
+you can commit `~/.config/koan/` and share playback, visualizer, organize and
+radio settings across machines while library paths, credentials and window sizes
+stay local.
 
 ---
 
@@ -93,8 +120,9 @@ Running `koan config init` on an existing setup is safe -- it merges new default
 replaygain = "off"          # off | track | album
 pre_amp_db = 0.0            # dB gain on top of ReplayGain (default: 0.0)
 target_fps = 60             # TUI render rate in Hz (default: 60)
-ticker_fps = 8              # title scroll speed in Hz (default: 8)
 show_fps = false            # FPS counter overlay in top-right corner (default: false)
+
+# config.local.toml -- this machine's hardware and window
 art_size = 24               # album art width in terminal columns (default: 24)
 output_device = "My DAC"    # audio output device name (default: system default)
 ```
@@ -115,17 +143,13 @@ ReplayGain normalizes volume levels across tracks so you don't reach for the vol
 
 `target_fps` controls how often the TUI redraws. 30, 60, or 120 are typical values. Higher values give smoother visualizer and seek bar updates but use more CPU. Most terminals cap at 60 anyway.
 
-### Ticker
-
-When the artist/title text overflows the available transport bar width, it scrolls horizontally like a ticker. `ticker_fps` controls the scroll speed -- one character per frame. Higher values scroll faster.
-
 ### Album art size
 
-`art_size` sets the width in terminal columns. Height is always `art_size / 2` (square via halfblock rendering, where each cell is 2 pixels tall). The default of 24 columns = 24x12 cells = a 24x24 pixel-equivalent square.
+`art_size` sets the width in terminal columns. Height is always `art_size / 2` (square via halfblock rendering, where each cell is 2 pixels tall). The default of 24 columns = 24x12 cells = a 24x24 pixel-equivalent square. Drag the divider under the transport bar to change it; the new size is saved to `config.local.toml`, since it is a property of the terminal you are sitting at.
 
 ### Output device
 
-`output_device` selects an audio output by name. Press `Shift+D` in the TUI to browse available devices and switch live. The choice is persisted to config. If the named device isn't available at startup, koan falls back to the system default.
+`output_device` selects an audio output by name. Press `Shift+D` in the TUI to browse available devices and switch live. The choice is saved to `config.local.toml` -- your DAC is not the next machine's. If the named device isn't available at startup, koan falls back to the system default.
 
 Run `koan devices` to list available audio outputs.
 
@@ -134,12 +158,20 @@ Run `koan devices` to list available audio outputs.
 ## `[library]`
 
 ```toml
-# config.local.toml (machine-specific)
+# config.local.toml (this machine's paths)
 [library]
 folders = ["/Volumes/Music/library", "/Users/me/Music"]
+
+# config.toml
+[library]
+analyze_on_scan = false     # run acoustic analysis on every scan (default: false)
 ```
 
 One or more directories to scan for music. Subdirectories are scanned recursively.
+
+`analyze_on_scan` computes acoustic features during every `koan scan`, which
+roughly doubles it. Off by default -- run `koan scan --analyze` when you want the
+features refreshed. Radio mode uses them for "sounds like" matching.
 
 ---
 
@@ -169,8 +201,6 @@ See [Remote Servers](../guide/remote-servers.md) for the full setup guide.
 
 ```toml
 [visualizer]
-enabled = true                # show visualizer in transport area (default: true)
-mode = "bars"                 # visualizer mode (default: bars). Press `v` in TUI to pick.
 fps = 60                      # analysis thread update rate in Hz (default: 60)
 scale = "bark"                # frequency scale (default: bark)
 amplitude_scale = "aweight"   # amplitude scale (default: aweight)
@@ -178,12 +208,20 @@ bar_decay_ms = 50             # bar drop half-life in ms (default: 50)
 peak_decay_ms = 180           # peak marker linger half-life in ms (default: 180)
 palette = "spectrum"          # color palette: spectrum, mono, fire, neon (default: spectrum)
 reactivity = 1.0              # animation reactivity 0.0..2.0 (default: 1.0)
-bass_shake = false            # camera jitter on bass hits for braille modes (default: false)
-matrix_overlay = false        # replace characters with matrix glyphs (default: false)
 reactive_bg = false           # beat-reactive background on braille modes (default: false)
+
+# config.local.toml -- the keybind toggles, saved as you press them
+enabled = true                # show visualizer in transport area (default: true)
+mode = "bars"                 # visualizer mode (default: bars). Press `v` to pick.
+bass_shake = true             # camera jitter on bass hits for braille modes (default: true)
+matrix_overlay = false        # replace characters with matrix glyphs (default: false)
 ```
 
 Also accepts `[visualiser]` spelling.
+
+`enabled`, `mode`, `bass_shake` and `matrix_overlay` have keybinds (`V`, `v`/`M`,
+`S`, `M`) and are written back the moment you press one, so they live in
+`config.local.toml`. The rest are hand-edited taste and travel with `config.toml`.
 
 22 modes available: bars, oscilloscope, radial, particles, lissajous, spectrogram, stereo waveform, VU meter, flame, plasma, tunnel, wireframe, metaballs, starfield, terrain, moire, kaleidoscope, julia, spiral, interference, wormhole, matrix. Press `v` in the TUI to open the picker with live preview.
 
@@ -242,8 +280,7 @@ See [File Organization](../guide/file-organization.md) for a walkthrough.
 enabled = true                # run API alongside TUI (default: true, false = --no-api)
 port = 4000                   # API port (default: 4000)
 bind = "127.0.0.1"            # bind address (default: 127.0.0.1)
-playground = false             # enable GraphiQL IDE at GET /graphql (default: false)
-subsonic_port = 4040           # optional Subsonic REST API port (default: disabled)
+playground = false            # enable GraphiQL IDE at GET /graphql (default: false)
 auth_enabled = true           # JWT authentication (default: true)
 access_token_ttl = "15m"      # access token lifetime (default: 15m)
 refresh_token_ttl = "30d"     # refresh token lifetime (default: 30d)
@@ -272,10 +309,15 @@ Auth is enabled by default. Run `koan auth setup` to create a keypair and admin 
 koan's own Subsonic-compatible REST API, served at `/rest/*`.
 
 ```toml
+# config.local.toml -- which machine serves Subsonic, and as whom
 [subsonic]
-enabled = false               # serve /rest/* (default: false)
+enabled = false               # serve /rest/* on the GraphQL port (default: false)
+port = 4040                   # also serve it on a dedicated port (default: none)
 username = "koan"             # username Subsonic clients authenticate as
 ```
+
+`enabled` mounts `/rest/*` on the GraphQL port. `port` adds a second listener for
+clients that insist on Subsonic having one of its own.
 
 Run `koan subsonic setup` to enable it. That generates a secret, stores it in the OS keychain (falling back to `config.local.toml`), and prints it once.
 
@@ -293,25 +335,12 @@ See [Authentication](../guide/authentication.md), [GraphQL API](../guide/graphql
 [radio]
 lookahead = 5                 # tracks to keep queued ahead (default: 5)
 batch_size = 5                # tracks added per refill (default: 5)
-use_subsonic = true           # use Subsonic similarity when available (default: true)
 history_window = 200          # don't repeat last N tracks (default: 200)
 seed_window = 5               # recent tracks used as seed for similarity (default: 5)
 discovery_weight = 0.3        # 0.0 = familiar only, 1.0 = maximize discovery (default: 0.3)
 ```
 
 See [Radio Mode](../guide/radio-mode.md) for a full guide.
-
----
-
-## `[discovery]`
-
-```toml
-[discovery]
-analysis_on_scan = false      # run acoustic analysis during library scan (default: false)
-acoustic_weight = 0.5         # weight of acoustic similarity in radio scoring 0.0..1.0 (default: 0.5)
-```
-
-Run `koan scan --analyze` to compute acoustic features for your library. Higher `acoustic_weight` gives radio mode more "sounds like" awareness vs. metadata-based matching.
 
 ---
 

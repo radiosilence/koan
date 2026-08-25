@@ -24,6 +24,12 @@ final class PlayerModel {
     /// what the queue knows about it — downloading, failed, already played —
     /// without scanning the queue once per row.
     private(set) var queuedByTrack: [Int64: QueueItem] = [:]
+    /// Queue entries indexed by the playlist row they came from.
+    ///
+    /// Keyed on the entry rather than the track, because a playlist may hold
+    /// the same track twice and `queuedByTrack` can only answer for one of
+    /// them. This is what lets a playlist row ask about *itself*.
+    private(set) var queuedByPlaylistEntry: [Int64: QueueItem] = [:]
     private(set) var devices: [Device] = []
     /// `nil` means system default. Read back from config, so it survives restarts.
     private(set) var currentDevice: String?
@@ -135,6 +141,10 @@ final class PlayerModel {
             // something over one still sitting idle.
             uniquingKeysWith: { a, b in b.status == .queued ? a : b }
         )
+        queuedByPlaylistEntry = Dictionary(
+            queue.compactMap { item in item.playlistEntryId.map { ($0, item) } },
+            uniquingKeysWith: { a, b in b.status == .queued ? a : b }
+        )
     }
 
     /// Queue items mid-transfer at the last report.
@@ -211,8 +221,14 @@ final class PlayerModel {
 
     private(set) var pendingMutations = 0
     var isBusy: Bool { pendingMutations > 0 }
-    /// What is playing, and in what format. Both change per track, not per tick.
+    /// What is playing, and in what format. Both change per track, not per
+    /// tick — except the output rate, which any other client of the device can
+    /// move mid-track.
     private(set) var currentEntry: QueueItem?
+    /// The playlist row that is playing, when what is playing came from one.
+    /// A playlist page lights this row and no other — including the other copy
+    /// of the same song, which is a different row.
+    var currentPlaylistEntryId: Int64? { currentEntry?.playlistEntryId }
     private(set) var currentFormat: StreamFormat?
 
     /// Where what is playing lives, so the transport bar can link to it.
@@ -223,13 +239,33 @@ final class PlayerModel {
     /// read.
     private(set) var currentAlbumId: Int64?
     private(set) var currentArtistId: Int64?
+    /// The track `currentAlbumId` has actually been resolved for, as opposed to
+    /// one still being looked up. Only `currentArtwork` cares, and it cares a
+    /// lot — see there.
+    private var placeResolvedFor: Int64?
+
+    /// The sleeve to draw for what is playing.
+    ///
+    /// The record wherever we know it, so every track off one album shares a
+    /// single fetch and a single cached bitmap. `nil` while the lookup is still
+    /// in flight rather than the track: falling back for those few hundred
+    /// milliseconds would fetch the sleeve keyed by track and then fetch the
+    /// identical image again keyed by album, which is the duplication this is
+    /// here to avoid. A beat of placeholder is cheaper.
+    var currentArtwork: AlbumArtwork.Source? {
+        if let currentAlbumId { return .album(currentAlbumId) }
+        guard placeResolvedFor == currentTrackId else { return nil }
+        return currentTrackId.map { .track($0) }
+    }
 
     private func resolveCurrentPlace(trackId: Int64?) {
         guard let trackId else {
             currentAlbumId = nil
             currentArtistId = nil
+            placeResolvedFor = nil
             return
         }
+        placeResolvedFor = nil
         let engine = self.engine
         Task { @MainActor in
             let track = (try? await engine.track(trackId: trackId)) ?? nil
@@ -238,6 +274,7 @@ final class PlayerModel {
             guard trackId == self.currentTrackId else { return }
             self.currentAlbumId = track?.albumId
             self.currentArtistId = track?.artistId
+            self.placeResolvedFor = trackId
         }
     }
 
@@ -260,6 +297,7 @@ final class PlayerModel {
         if now.format?.codec != currentFormat?.codec
             || now.format?.sampleRate != currentFormat?.sampleRate
             || now.format?.bitDepth != currentFormat?.bitDepth
+            || now.format?.outputSampleRate != currentFormat?.outputSampleRate
         {
             currentFormat = now.format
         }
@@ -406,14 +444,6 @@ final class PlayerModel {
     //
     // Wired to the standard Edit menu, so ⌘A/⌘C/⌘X/⌘V/Delete mean what they
     // mean everywhere else rather than being decorative.
-
-    /// Menus can't write the view's selection directly — the List binds to
-    /// local state, and observing the model from the body is what made clicking
-    /// unreliable. So this bumps a token the view watches, which only changes
-    /// when the command is actually invoked.
-    private(set) var selectAllToken = 0
-
-    func selectAllQueue() { selectAllToken += 1 }
 
     func removeSelected() {
         remove(itemIds: Array(queueSelection))

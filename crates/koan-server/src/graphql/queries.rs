@@ -426,19 +426,26 @@ impl QueryRoot {
         ))
     }
 
-    async fn snapshots(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlSnapshot>> {
+    /// Every playlist, in the order the owner arranged them.
+    async fn playlists(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlPlaylist>> {
         with_db(ctx, |db| {
             let list =
-                queries::list_snapshots(&db.conn).map_err(|e| super::internal_error("db", e))?;
-            Ok(list
-                .into_iter()
-                .map(|s| GqlSnapshot {
-                    name: s.name,
-                    track_count: s.track_count as i32,
-                    position_ms: s.position_ms,
-                    created_at: s.created_at,
-                })
-                .collect())
+                queries::list_playlists(&db.conn).map_err(|e| super::internal_error("db", e))?;
+            Ok(list.into_iter().map(GqlPlaylist::from).collect())
+        })
+        .await
+    }
+
+    /// One playlist's tracks, in playlist order. Duplicates are kept.
+    async fn playlist_tracks(
+        &self,
+        ctx: &Context<'_>,
+        id: i64,
+    ) -> async_graphql::Result<Vec<GqlTrack>> {
+        with_db(ctx, move |db| {
+            let rows = queries::playlist_tracks(&db.conn, id)
+                .map_err(|e| super::internal_error("db", e))?;
+            Ok(rows.into_iter().map(|row| GqlTrack { row }).collect())
         })
         .await
     }
@@ -753,7 +760,6 @@ impl QueryRoot {
                 remote_enabled: cfg.remote.enabled,
                 remote_url: cfg.remote.url.clone(),
                 remote_username: cfg.remote.username.clone(),
-                transcode_quality: cfg.remote.transcode_quality.clone(),
                 cache_limit: cfg.remote.cache_limit.clone(),
                 visualizer_fps: cfg.visualizer.fps as i32,
                 radio_enabled,

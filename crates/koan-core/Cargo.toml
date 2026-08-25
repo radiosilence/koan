@@ -53,6 +53,7 @@ symphonia = { version = "0.6", default-features = false, features = [
 thiserror = "2"
 uuid = { version = "1", features = ["v7"] }
 toml = "1.1"
+toml_edit = "0.25"
 walkdir = { workspace = true }
 # Watches the library folders so files added while koan is open are indexed
 # without being asked. Default features so each platform gets its own backend
