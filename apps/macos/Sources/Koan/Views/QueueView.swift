@@ -570,13 +570,14 @@ private struct QueueRow: View {
                 if artwork, let trackId = item.trackId {
                     AlbumArtwork(source: .track(trackId), cornerRadius: 3)
                         .frame(width: 28, height: 28)
+                        .opacity(played ? 0.5 : 1)
                 } else {
                     // Always occupies its column, number or not: a missing track
                     // number would otherwise shift the title left and break the
                     // alignment down the list.
                     Text(item.trackNumber.map(String.init) ?? "")
                         .font(.caption.monospacedDigit())
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(played ? .quaternary : .tertiary)
                         .frame(width: artwork ? 28 : 20, alignment: .trailing)
                 }
             }
@@ -584,13 +585,7 @@ private struct QueueRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(item.title)
                     .lineLimit(1)
-                    // Tinted to mark the playing track — but not when the row
-                    // is selected, where accent-on-accent is unreadable.
-                    .foregroundStyle(
-                        isCurrent && !isSelected
-                            ? AnyShapeStyle(.tint)
-                            : AnyShapeStyle(.primary)
-                    )
+                    .foregroundStyle(titleStyle)
                 // Only worth a second line when it differs from the album
                 // artist — compilations and features, not every track.
                 if showArtist && !item.artist.isEmpty {
@@ -598,7 +593,7 @@ private struct QueueRow: View {
                         ? "\(item.artist) — \(item.album)"
                         : item.artist)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(played ? .tertiary : .secondary)
                         .lineLimit(1)
                 }
             }
@@ -623,13 +618,13 @@ private struct QueueRow: View {
             if let codec = item.codec {
                 Text(codec.uppercased())
                     .font(.caption2.monospaced())
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(played ? .quaternary : .tertiary)
             }
 
             if let ms = item.durationMs {
                 Text(Format.duration(ms))
                     .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(played ? .tertiary : .secondary)
                     .frame(width: 44, alignment: .trailing)
             }
         }
@@ -645,8 +640,26 @@ private struct QueueRow: View {
         // the Spacer between the title and the duration is a dead zone, and
         // clicks landing there select nothing.
         .contentShape(Rectangle())
-        .opacity(item.status == .played ? 0.45 : 1)
         .onHover { hovering = $0 }
+    }
+
+    /// A played row steps back rather than disappears — and it does it in
+    /// colour, not in alpha.
+    ///
+    /// This was `.opacity(0.45)` on the whole row. Any alpha below 1 makes
+    /// SwiftUI render the row into an offscreen layer and composite that,
+    /// because its children overlap and would otherwise show through each
+    /// other — so a queue with a long tail behind the cursor was a long list of
+    /// offscreen passes, every frame it drew. A dimmer foreground style costs
+    /// a colour lookup.
+    private var played: Bool { item.status == .played }
+
+    /// Tinted to mark the playing track — but not when the row is selected,
+    /// where accent-on-accent is unreadable. A played row is never the current
+    /// one, so the two never contend.
+    private var titleStyle: AnyShapeStyle {
+        if isCurrent && !isSelected { return AnyShapeStyle(.tint) }
+        return AnyShapeStyle(played ? HierarchicalShapeStyle.secondary : .primary)
     }
 
     @ViewBuilder
