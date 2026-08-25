@@ -69,36 +69,29 @@ macos-icon:
     echo "built {{app_dir}}/Resources/AppIcon.icns"
 
 # Build the FFI static library and regenerate the Swift bindings.
-macos-ffi *TARGETS:
+#
+# One slice, for the machine doing the building. The app used to ship as a
+# universal binary: two cross builds, lipo'd together, which was most of the
+# release job's fifteen minutes and most of the disk it needed. `macos-verify`
+# is what holds this honest — it fails if the assembled app is not the
+# architecture asked for.
+macos-ffi:
     #!/usr/bin/env bash
     set -euo pipefail
     # Match what SwiftPM links against. Without it cargo builds for the host's
     # OS and every link is a page of "built for newer macOS version" warnings.
     export MACOSX_DEPLOYMENT_TARGET=26.0
-    targets="{{TARGETS}}"
-    if [ -z "$targets" ]; then
-        cargo build --release -p koan-ffi
-        lib=target/release/libkoan_ffi.a
-        dylib=target/release/libkoan_ffi.dylib
-    else
-        for t in $targets; do
-            cargo build --release -p koan-ffi --target "$t"
-        done
-        mkdir -p target/universal/release
-        lipo -create $(for t in $targets; do echo "target/$t/release/libkoan_ffi.a"; done) \
-             -output target/universal/release/libkoan_ffi.a
-        lib=target/universal/release/libkoan_ffi.a
-        dylib=target/$(echo $targets | cut -d' ' -f1)/release/libkoan_ffi.dylib
-    fi
+    cargo build --release -p koan-ffi
+    lib=target/release/libkoan_ffi.a
+    dylib=target/release/libkoan_ffi.dylib
     # Stage the archive somewhere holding nothing else, and link against that.
     #
     # `-lkoan_ffi` over a directory containing both a .a and a .dylib picks the
     # .dylib, and cargo leaves one next to the archive. The release DMG shipped
     # an app that referenced
     # `/Users/runner/work/koan/koan/target/release/deps/libkoan_ffi.dylib` and
-    # could not launch anywhere, and it was arm64-only because the host dylib
-    # won over the universal archive. A directory with one file in it cannot
-    # produce either outcome.
+    # could not launch anywhere. A directory with one file in it cannot produce
+    # that outcome.
     rm -rf target/swift-link
     mkdir -p target/swift-link
     cp "$lib" target/swift-link/libkoan_ffi.a
@@ -138,16 +131,7 @@ macos-bundle: macos-build
     app="{{app_dir}}/.build/pkg/kōan.app"
     rm -rf "$app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-    # A multi-arch `swift build --arch a --arch b` puts its lipo'd product under
-    # .build/apple/Products, and leaves .build/release pointing at a single
-    # slice — so copying the latter shipped an arm64-only app from a build that
-    # had just compiled x86_64 as well.
-    universal={{app_dir}}/.build/apple/Products/Release/Koan
-    if [ -f "$universal" ]; then
-        cp "$universal" "$app/Contents/MacOS/koan-app"
-    else
-        cp {{app_dir}}/.build/release/Koan "$app/Contents/MacOS/koan-app"
-    fi
+    cp {{app_dir}}/.build/release/Koan "$app/Contents/MacOS/koan-app"
     echo "app binary: $(lipo -archs "$app/Contents/MacOS/koan-app")"
     [ -f {{app_dir}}/Resources/AppIcon.icns ] && cp {{app_dir}}/Resources/AppIcon.icns "$app/Contents/Resources/" || true
     # The accent colour. macOS paints list selection, focus rings and controls
