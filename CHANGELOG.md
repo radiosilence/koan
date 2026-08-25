@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Undoing a queue replace left the player on a track the queue no longer had.** The queue came back, which is the part you could see working, but the engine kept decoding whatever the replace had started — an item the restored queue does not contain. The transport then described a row nothing could select, and the decode lookahead finds the next track by locating the current one, so with the current one gone the queue ended at the end of that track rather than carrying on.
+
+  Playback is reconciled with the playlist after every undo and redo, not just this one: any undo that takes items away can strand the engine the same way — undoing an add while the added track is playing did it too. If something was playing, the restored cursor picks up where the queue says it was; if it was paused or stopped, the undo stays quiet, because an undo is not a reason to start the music. The position is not part of what a replace snapshots, so the track starts again rather than resuming mid-way.
+
 ## v0.30.2 (2026-08-25)
 
 ### Added
