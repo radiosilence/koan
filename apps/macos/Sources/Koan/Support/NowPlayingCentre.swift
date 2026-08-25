@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import KoanFFI
 import MediaPlayer
 
@@ -81,7 +85,7 @@ final class NowPlayingCentre {
     /// isolation whatever the captures are marked, and the runtime check then
     /// traps the first time a track with artwork starts. Building it here, out
     /// of the actor's reach, is what actually removes the isolation.
-    private nonisolated static func artwork(for image: NSImage) -> MPMediaItemArtwork {
+    private nonisolated static func artwork(for image: PlatformImage) -> MPMediaItemArtwork {
         MPMediaItemArtwork(boundsSize: image.size) { _ in image }
     }
 

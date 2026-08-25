@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 
 /// The cover, blurred out to a wash of the record's colour behind a header.
@@ -28,10 +32,10 @@ struct ArtworkBleed: View {
     /// while it loads. Over a five second dissolve that placeholder is a long
     /// grey wipe between two records, so the old cover stays up until the new
     /// one is actually in hand.
-    @State private var image: NSImage?
+    @State private var image: PlatformImage?
     /// Bumped when the cover changes, which is what the dissolve keys on. The
-    /// image itself cannot: `NSImage` is a reference and identity is not enough
-    /// to drive a transition.
+    /// image itself cannot: it is a reference, and identity is not enough to
+    /// drive a transition.
     @State private var generation = 0
     /// Both ends of the drift. Flipped once, then left alone — the animations
     /// below repeat forever off it, which is what keeps this off the main
@@ -60,7 +64,7 @@ struct ArtworkBleed: View {
             // arrived parked at the end of a motion that never restarted.
             ZStack {
                 if let image {
-                    Image(nsImage: image)
+                    Image(platform: image)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .id(generation)
@@ -130,7 +134,7 @@ struct ArtworkBleed: View {
         show(loaded)
     }
 
-    private func show(_ new: NSImage?) {
+    private func show(_ new: PlatformImage?) {
         guard new !== image else { return }
         image = new
         generation += 1

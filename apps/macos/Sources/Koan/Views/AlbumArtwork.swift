@@ -50,7 +50,7 @@ struct AlbumArtwork: View {
     /// every entry, so one cover arriving invalidated all of them — and the
     /// lookup also inserted into the in-flight set while rendering, which
     /// invalidated them again. Scrolling the album grid pinned ten cores.
-    @State private var image: NSImage?
+    @State private var image: PlatformImage?
     @State private var isLoading = false
 
     /// A square Color drives the layout and the image sits in an overlay, so a
@@ -70,7 +70,7 @@ struct AlbumArtwork: View {
         square
             .overlay {
                 if let image {
-                    Image(nsImage: image)
+                    Image(platform: image)
                         .resizable()
                         // The bitmap is already sized for where it is drawn, so
                         // there is little left to interpolate and `.high` was

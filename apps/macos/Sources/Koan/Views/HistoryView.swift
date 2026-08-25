@@ -58,7 +58,9 @@ struct HistoryView: View {
                     play(selection)
                     return .handled
                 }
+                #if os(macOS)
                 .onDeleteCommand { forgetSelected() }
+                #endif
             }
         }
         .alert("Clear History?", isPresented: $confirmingClear) {

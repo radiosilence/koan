@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import KoanFFI
 import SwiftUI
 import UniformTypeIdentifiers
@@ -214,7 +218,9 @@ struct SidebarView: View {
             renameTo = playlist.name
             renaming = playlist
         }
+        #if os(macOS)
         Button("Export as M3U8…") { export(playlist) }
+        #endif
         Divider()
         Button("Delete", role: .destructive) {
             playlists.delete(id: playlist.id)
@@ -224,9 +230,13 @@ struct SidebarView: View {
         }
     }
 
+    #if os(macOS)
     /// A save panel rather than SwiftUI's `fileExporter`: the exporter wants a
     /// document to write, and the file is written by the engine — only it knows
     /// which tracks have a file on this machine to point at.
+    ///
+    /// There is no save panel on iOS and no obvious place to put the file, so
+    /// the affordance is absent there rather than half-present.
     private func export(_ playlist: Playlist) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [UTType(filenameExtension: "m3u8") ?? .plainText]
@@ -235,6 +245,7 @@ struct SidebarView: View {
         guard panel.runModal() == .OK, let url = panel.url else { return }
         playlists.export(id: playlist.id, to: url)
     }
+    #endif
 
     /// Play it where you stand. Double-clicking a row selects it first, so you
     /// land on the playlist itself and watch it start — and playing something

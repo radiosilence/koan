@@ -340,35 +340,8 @@ private struct StageView: View {
     }
 
     @ViewBuilder private var page: some View {
-        switch nav.current {
-        case .section(.queue):
-            // Kept alive above, and this is only reached when it is not showing.
-            EmptyView()
-        case .section(.searchResults):
-            SearchResultsView()
-        case .section(.albums):
-            AlbumBrowser()
-        case .section(.artists):
-            ArtistBrowser()
-        case .section(.favourites):
-            FavouritesView()
-        case .section(.playHistory):
-            HistoryView()
-        case .section(.playlist(let id)):
-            PlaylistView(playlistId: id)
-        case .album(let id):
-            AlbumDetailView(albumId: id)
-        case .artist(let id):
-            ArtistDetailView(artistId: id)
-        }
+        PageView()
     }
-}
-
-extension EnvironmentValues {
-    /// Whether the page this view belongs to is the one on screen. False only
-    /// for the queue while you are somewhere else — see `StageView`. Anything
-    /// that animates or subscribes to keep itself current reads it.
-    @Entry var onStage = true
 }
 
 /// Engine errors are informational — a device disappearing shouldn't take a

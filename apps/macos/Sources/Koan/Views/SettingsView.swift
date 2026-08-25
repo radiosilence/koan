@@ -14,7 +14,11 @@ struct SettingsView: View {
     @Environment(ActivityModel.self) private var activity
 
     @State private var model: SettingsModel?
+    #if os(macOS)
     @Environment(\.controlActiveState) private var controlActive
+    #else
+    @Environment(\.scenePhase) private var scenePhase
+    #endif
 
     var body: some View {
         Group {
@@ -44,9 +48,15 @@ struct SettingsView: View {
         }
         // The CLI and TUI write the same file; coming back to this window is
         // the moment to notice they did.
+        #if os(macOS)
         .onChange(of: controlActive) { _, state in
             if state != .inactive { model?.reload() }
         }
+        #else
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model?.reload() }
+        }
+        #endif
     }
 }
 
