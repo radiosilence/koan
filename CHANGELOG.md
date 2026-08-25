@@ -20,6 +20,12 @@
 
 - **Subsonic playlist endpoints serve real playlists.** `getPlaylists`, `getPlaylist`, `createPlaylist` and `deletePlaylist` used to fake playlists out of saved queues; they now read and write the real thing, and `updatePlaylist` — add and remove members by index — works at last.
 
+- **The playing indicator moves to the music.** The three bars beside the current row rode a pair of sine waves, which said "playing" truthfully but said it the same way through a drum break and a held piano chord. They now follow the analyser: low, mid and high, one band per bar.
+
+  The audio modulates the waves rather than driving them. A band never reaches a height directly — only how far its bar is already travelling — so a chorus makes the bars swell and a quiet passage settles them low and slow, and no transient can make them spike. They never come fully to rest while the transport runs, because the first thing the indicator has to say is which row is playing. Each band is judged against its own recent loudest, so a track mastered quiet gets the same indicator as a loud one. A track still buffering, or the first frames after a start, run the plain carrier.
+
+  One poller feeds every indicator on screen and stops when there are none, or when nothing is playing. Reduce Motion keeps the still bars.
+
 - **`q` goes to the queue.** `g` and `G` already went to its ends; there was no key for simply going there.
 
 - **Escape clears the selection, wherever you are.** The queue also grew a Clear button beside Remove — a selection with no visible way out of it is a trap, and on a list you have scrolled away from you cannot even see what you are still holding.
@@ -72,6 +78,8 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 - **The menus have their icons back.** Every action in the app now carries the same symbol wherever it appears: Add to Queue is the same icon on an album page, in the row's context menu and in the menu bar, and the Edit menu — replaced wholesale so ⌘Z can reach koan's own undo stack rather than a text field's — draws its own icons again instead of arriving bare. The symbols are named in one place, which is what stops the three copies of a verb drifting apart.
 
 ### Fixed
+
+- **Most of the ways koan syncs never touched playlists, and koan's own auto-sync never touched favourites either.** Four callers each knew separately what a sync consists of — the app, the CLI, the GraphQL job and the background auto-sync — so a star or a playlist made on the server arrived only if you happened to press the right button. There is one `sync_remote` now and all four go through it.
 
 - **The queue quietly dropped repeats.** Adding a track already in the queue added nothing, and a playlist holding the same song twice played it once. The batch fetch behind every queue add took each row out of its map as it matched it, so an id asked for twice came back once.
 

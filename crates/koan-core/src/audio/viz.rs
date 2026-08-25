@@ -89,8 +89,9 @@ impl VizSnapshot {
         self.inner.read().clone()
     }
 
-    /// How many frames have been read. Only the analyser cares — a count that
-    /// stops moving means nothing is watching.
+    /// How many times the frame has been looked at, by either route. Only the
+    /// analyser cares — a count that stops moving means nothing is watching,
+    /// and there is nothing to analyse for.
     pub fn reads(&self) -> u64 {
         self.reads.load(Ordering::Relaxed)
     }
@@ -99,6 +100,49 @@ impl VizSnapshot {
     /// MUST only be called after all FFT computation is finished (never hold lock during FFT).
     pub fn write(&self, frame: VizFrame) {
         *self.inner.write() = frame;
+    }
+
+    /// Reduce the latest frame to three bands.
+    ///
+    /// Takes the same lock as `read()` but clones nothing — the waveform is the
+    /// expensive part of a frame by an order of magnitude, and a caller drawing
+    /// three bars would only average it away.
+    pub fn levels(&self) -> VizLevels {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        let frame = self.inner.read();
+        VizLevels::of(&frame.spectrum)
+    }
+}
+
+/// The spectrum reduced to low, mid and high energy.
+///
+/// A playing indicator wants a few numbers a few dozen times a second, not 48
+/// bands, peak holds and a 2048-frame waveform window. Both come off the same
+/// analyser; this is the one for callers that poll often and draw little.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct VizLevels {
+    /// Mean energy across the bottom third of the bars, 0.0..1.0.
+    pub low: f32,
+    /// Mean energy across the middle third.
+    pub mid: f32,
+    /// Mean energy across the top third.
+    pub high: f32,
+}
+
+impl VizLevels {
+    /// Split the bars into equal thirds and average each.
+    ///
+    /// Thirds of the bar range, not of the frequency range: the bars are laid
+    /// out on whatever perceptual scale the analyser is configured for, so
+    /// splitting them evenly already follows how the ear divides the spectrum.
+    fn of(spectrum: &[f32; NUM_BARS]) -> Self {
+        let band = NUM_BARS / 3;
+        let mean = |bars: &[f32]| bars.iter().sum::<f32>() / bars.len() as f32;
+        Self {
+            low: mean(&spectrum[..band]),
+            mid: mean(&spectrum[band..band * 2]),
+            high: mean(&spectrum[band * 2..]),
+        }
     }
 }
 
@@ -364,5 +408,21 @@ mod tests {
         let frame2 = snap.read();
         assert!((frame2.spectrum[5] - 0.9).abs() < 0.001);
         assert!((frame2.vu_levels[0] - 0.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn levels_average_each_third_of_the_bars() {
+        let mut spectrum = [0.0f32; NUM_BARS];
+        let band = NUM_BARS / 3;
+        spectrum[..band].fill(0.6);
+        spectrum[band..band * 2].fill(0.3);
+        spectrum[band * 2..].fill(0.0);
+        // One loud bar in the top third: the mean carries it, diluted.
+        spectrum[NUM_BARS - 1] = 1.0;
+
+        let levels = VizLevels::of(&spectrum);
+        assert!((levels.low - 0.6).abs() < 0.001);
+        assert!((levels.mid - 0.3).abs() < 0.001);
+        assert!((levels.high - 1.0 / band as f32).abs() < 0.001);
     }
 }
