@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **Every Opus track started 40 ms late.** The bridge between symphonia's demuxer and `opus-decoder` dropped its first two packets, on the reasoning that an Ogg stream opens with `OpusHead` and `OpusTags`. Symphonia consumes both into `extra_data` before we ever see a packet — it is where the bridge reads the channel count and pre-skip from — so the two it threw away were music, and Matroska and WebM never carry those headers as packets at all. Header packets are recognised by their magic now, which costs nothing to a reader that strips them and is correct for one that doesn't.
+
+- **A bad Opus packet could take the decode thread down with it.** `opus-decoder` 0.1.1 overflows a shift building CELT's collapse mask on the first packet of some stereo streams: a panic in a debug build, a wrong mask in a release one. It is the only Opus decoder on crates.io that isn't libopus over FFI, and it is unmaintained, so the decode call is contained — that packet is skipped and logged, and playback carries on, which is already how a malformed packet is handled.
+
+- **The README said Opus wasn't supported.** It was removed from the format list on the grounds that symphonia ships no Opus decoder. That much is true and always has been, which is why koan has bridged `opus-decoder` since v0.20.3.
+
+### Removed
+
+- **The download quality setting.** It offered Original, Opus 128 and MP3 320, wrote your choice to `config.toml`, carried it over GraphQL and FFI, and was read by nothing — no request has ever asked a server to transcode. Re-encoding a stream is the opposite of what koan is for, so the setting goes rather than gains an implementation. `remote.transcode_quality` in an existing config is ignored; the GraphQL `Config.transcodeQuality` field and its input are gone.
+
 ## v0.30.2 (2026-08-25)
 
 ### Added

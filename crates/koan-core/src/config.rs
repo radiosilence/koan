@@ -83,8 +83,6 @@ pub struct RemoteConfig {
     /// Password — stored in config.local.toml (gitignored), not config.toml.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub password: String,
-    /// original | opus-128 | mp3-320
-    pub transcode_quality: String,
     /// Defaults to config_dir()/cache if empty.
     pub cache_dir: Option<PathBuf>,
     /// Parallel download workers for remote tracks (default: 5).
@@ -188,7 +186,6 @@ impl Default for RemoteConfig {
             url: String::new(),
             username: String::new(),
             password: String::new(),
-            transcode_quality: "original".into(),
             cache_dir: None,
             download_workers: 5,
             cache_limit: None,
@@ -768,7 +765,6 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.playback.replaygain, ReplayGainMode::Off);
         assert!(!cfg.remote.enabled);
-        assert_eq!(cfg.remote.transcode_quality, "original");
     }
 
     #[test]
@@ -778,8 +774,8 @@ mod tests {
         let deserialized: Config = toml::from_str(&serialized).unwrap();
         assert_eq!(deserialized.playback.replaygain, cfg.playback.replaygain);
         assert_eq!(
-            deserialized.remote.transcode_quality,
-            cfg.remote.transcode_quality
+            deserialized.remote.download_workers,
+            cfg.remote.download_workers
         );
     }
 
