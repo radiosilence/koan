@@ -32,13 +32,6 @@ struct RootView: View {
 
     @AppStorage("showLyrics") private var showLyrics = false
     @State private var transportHeight: CGFloat = 0
-    /// The record the window is washed in.
-    ///
-    /// Held rather than derived from `currentTrackId` on every frame: artwork
-    /// is fetched per *track*, so re-deriving it would ask the server for a new
-    /// copy of the same sleeve at every track change within a record. It only
-    /// moves when the record does.
-    @State private var bleed: AlbumArtwork.Source?
     /// The colour of the record playing. The app's own accent is a neutral, so
     /// the only colour in the chrome is the one the music brought.
     @State private var recordTint: Color?
@@ -52,7 +45,7 @@ struct RootView: View {
     private var washSource: AlbumArtwork.Source? {
         switch nav.current {
         case .album(let id): .album(id)
-        case .section(.queue): bleed
+        case .section(.queue): player.currentArtwork
         default: nil
         }
     }
@@ -61,13 +54,7 @@ struct RootView: View {
     /// an album's own record — and what is playing everywhere else, so a
     /// favourites list is still coloured by the music rather than by nothing.
     private var tintSource: AlbumArtwork.Source? {
-        if case .album(let id) = nav.current { .album(id) } else { bleed }
-    }
-
-    /// Which record is playing — artist as well as title, because "Greatest
-    /// Hits" is not one record.
-    private var playingRecord: String? {
-        player.currentEntry.map { "\($0.albumArtist)\u{1}\($0.album)" }
+        if case .album(let id) = nav.current { .album(id) } else { player.currentArtwork }
     }
 
     var body: some View {
@@ -99,7 +86,7 @@ struct RootView: View {
                 // so a transparent page composites onto it — and onto the page
                 // before it, which is what left an album drawing itself across
                 // the grid you came back to.
-                .background { PageGround(source: washSource, drifts: player.isPlaying) }
+                .background { PageGround() }
         }
         .inspector(isPresented: $showLyrics) {
             LyricsPanel()
@@ -135,9 +122,6 @@ struct RootView: View {
                     .environment(artCache)
             }
         }
-        .onChange(of: playingRecord, initial: true) { _, _ in
-            bleed = player.currentTrackId.map { .track($0) }
-        }
         .task(id: tintSource) {
             // Animated at the point the colour changes rather than by an
             // `.animation(_:value:)` on the view. That modifier animates *every*
@@ -145,7 +129,10 @@ struct RootView: View {
             // value moves — and attached here that subtree is the whole split
             // view, so a navigation push that happened to coincide with a new
             // record was dragged out over two seconds along with it.
-            guard let tintSource, let cover = await art.image(for: tintSource) else {
+            // A thumbnail: the dominant colour of a sleeve is the same at 128
+            // pixels as at 512, and this is a size the grid already holds.
+            guard let tintSource, let cover = await art.image(for: tintSource, size: .thumb)
+            else {
                 withAnimation(.easeInOut(duration: 2)) { recordTint = nil }
                 return
             }
@@ -271,9 +258,9 @@ struct RootView: View {
         // `z`, from wherever you are: the cover in the transport bar opens the
         // same sheet on click, but a keystroke has no cover under the pointer.
         .sheet(isPresented: $ui.showingArtwork) {
-            if let trackId = player.currentTrackId {
+            if let sleeve = player.currentArtwork {
                 ArtworkViewer(
-                    source: .track(trackId),
+                    source: sleeve,
                     title: player.nowPlaying.entry?.title ?? "",
                     subtitle: player.nowPlaying.entry.map { "\($0.artist) — \($0.album)" }
                 )
@@ -350,26 +337,27 @@ private struct StageView: View {
 
 /// What a page sits on.
 ///
-/// Every page is opaque. A washed one — the queue, a record — draws its bleed
-/// over that ground rather than in place of it, so no page ever composites onto
-/// the window or onto the page before it.
+/// An unwashed page is opaque, so it never composites onto the window or onto
+/// the page before it — which is what left an album drawing itself across the
+/// grid you came back to.
+///
+/// A washed page draws nothing at all and lets the window's own wash through.
+/// There is only ever one bleed: two of them meant the page's copy sat on an
+/// opaque ground hiding the window's, and the window's kept animating behind it
+/// for no one. The window is the one that survives because it is the one
+/// `backgroundExtensionEffect` mirrors out under the sidebar and toolbar.
 private struct PageGround: View {
-    let source: AlbumArtwork.Source?
-    let drifts: Bool
-
     @Environment(Navigator.self) private var nav
 
     /// Whether this page is washed in a record's colour, or is its own ground.
+    /// Matches `RootView.washSource` — where that has a wash, this stands back.
     private var washed: Bool {
         if case .album = nav.current { true } else { nav.section == .queue }
     }
 
     var body: some View {
-        ZStack {
+        if !washed {
             Rectangle().fill(.background)
-            if washed {
-                ArtworkBleed(source: source, drifts: drifts)
-            }
         }
     }
 }
