@@ -33,6 +33,10 @@ struct PlayingIndicator: View {
 
     private static let minHeight = 3.0
     private static let maxHeight = 11.0
+    private static let barWidth = 2.0
+    private static let spacing = 2.0
+    private static let width =
+        Double(bars.count) * barWidth + Double(bars.count - 1) * spacing
 
     /// Whether there is anything to follow. Reduce Motion keeps the still bars,
     /// and still bars need no analyser.
@@ -41,14 +45,25 @@ struct PlayingIndicator: View {
     var body: some View {
         TimelineView(.animation(minimumInterval: 1 / 60, paused: !live)) { timeline in
             let now = timeline.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .bottom, spacing: 2) {
-                ForEach(Array(Self.bars.enumerated()), id: \.offset) { band, bar in
-                    Capsule(style: .continuous)
-                        .frame(width: 2, height: height(of: bar, band: band, at: now))
+            // Drawn rather than sized. Heights driven through `frame(height:)`
+            // invalidated layout on every frame, and AppKit answered each one
+            // with a full window Auto Layout pass — a third of a core to move
+            // nine points of bar, whether or not the window was on screen. The
+            // canvas is a fixed box; only its pixels change.
+            Canvas { context, size in
+                for (band, bar) in Self.bars.enumerated() {
+                    let height = height(of: bar, band: band, at: now)
+                    let rect = CGRect(
+                        x: Double(band) * (Self.barWidth + Self.spacing),
+                        y: size.height - height,
+                        width: Self.barWidth,
+                        height: height
+                    )
+                    context.fill(Capsule(style: .continuous).path(in: rect), with: .foreground)
                 }
             }
         }
-        .frame(height: Self.maxHeight, alignment: .bottom)
+        .frame(width: Self.width, height: Self.maxHeight)
         .foregroundStyle(.tint)
         .accessibilityLabel(isPlaying ? "Playing" : "Paused")
         .onAppear { watch(live) }
@@ -79,7 +94,10 @@ struct PlayingIndicator: View {
             + sin(phase * bar.speed * 1.618 + bar.phase * 2) * 0.4
         let carrier = (wave + 1) / 2
         // The band pulls the swing in toward rest rather than setting a height.
-        let level = bar.rest + (carrier - bar.rest) * levels.travel[band]
+        // Clamped because a bar is a drawn rectangle: the arithmetic keeps
+        // itself inside 0...1 today, but a level that ever stepped outside it
+        // would become a capsule with a negative height rather than a wrong one.
+        let level = (bar.rest + (carrier - bar.rest) * levels.travel[band]).clamped()
         return Self.minHeight + level * (Self.maxHeight - Self.minHeight)
     }
 }
