@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 
 /// koan's accent, read from the asset catalog.
@@ -19,7 +23,11 @@ import SwiftUI
 /// the colour — every borderless control and the playing row's title are drawn
 /// in `.tint`, and they become invisible rather than uncoloured.
 extension Color {
+    #if canImport(AppKit)
     static let koanAccent = NSColor(named: "AccentColor").map(Color.init) ?? .accentColor
+    #else
+    static let koanAccent = Color("AccentColor")
+    #endif
 }
 
 
@@ -35,11 +43,10 @@ extension Color {
     /// The result is forced into a band that stays legible as a tint on dark
     /// chrome. A navy sleeve would otherwise give an accent invisible against
     /// the window and a neon one would flare.
-    static func dominant(of image: NSImage) -> Color? {
+    static func dominant(of image: PlatformImage) -> Color? {
         let side = 12
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
-        var rect = NSRect(origin: .zero, size: image.size)
-        guard let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),
+        guard let cgImage = image.bitmap,
               let context = CGContext(
                   data: &pixels,
                   width: side,

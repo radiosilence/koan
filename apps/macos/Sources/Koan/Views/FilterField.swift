@@ -1,4 +1,6 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import SwiftUI
 
 /// Narrows what the current view is showing.
@@ -13,6 +15,11 @@ import SwiftUI
 /// look only through `.searchable`, which the sidebar has already claimed, and
 /// every hand-built substitute loses something — the magnifier, the clear
 /// button, the focus ring that fits the control instead of haloing it.
+///
+/// UIKit's `UISearchBar` is a chrome-heavy thing built to sit at the top of a
+/// screen, not inline above a list, so iOS gets a plain field instead. The
+/// focus token has nothing to drive there either: ⌘F is a keyboard affordance.
+#if os(macOS)
 struct FilterField: NSViewRepresentable {
     let placeholder: String
     @Binding var text: String
@@ -68,3 +75,17 @@ struct FilterField: NSViewRepresentable {
         }
     }
 }
+#else
+struct FilterField: View {
+    let placeholder: String
+    @Binding var text: String
+    var focusToken = 0
+
+    var body: some View {
+        TextField(placeholder, text: $text)
+            .textFieldStyle(.roundedBorder)
+            .autocorrectionDisabled()
+            .textInputAutocapitalization(.never)
+    }
+}
+#endif

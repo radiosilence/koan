@@ -8,6 +8,12 @@ import SwiftUI
 /// runs* rather than sorting: queue order is the user's, and collapsing two
 /// separate visits to the same record into one heading would misrepresent it.
 struct QueueView: View {
+    #if os(macOS)
+    private static let emptyDetail = "Press ⌘K to find something to play."
+    #else
+    private static let emptyDetail = "Find something to play from Albums or Artists."
+    #endif
+
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
@@ -51,7 +57,7 @@ struct QueueView: View {
                 EmptyState(
                     icon: "list.bullet",
                     title: "Queue is empty",
-                    detail: "Press ⌘K to find something to play."
+                    detail: Self.emptyDetail
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -83,7 +89,9 @@ struct QueueView: View {
                         playSelection()
                         return .handled
                     }
+                    #if os(macOS)
                     .onDeleteCommand { removeSelected() }
+                    #endif
                     // Mirror the *queue item* ids, not the row ids: an album
                     // heading's id is synthetic, and handing that to the engine
                     // gets it rejected as not being a queue item.

@@ -53,7 +53,9 @@ struct ArtworkViewer: View {
         // A click anywhere dismisses; there is no close button on a picture.
         .contentShape(.rect)
         .onTapGesture { dismiss() }
+        #if os(macOS)
         .onExitCommand { dismiss() }
+        #endif
     }
 }
 

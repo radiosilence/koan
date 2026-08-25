@@ -73,12 +73,15 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 ## Build & check
 
 ```bash
-just check      # cargo test + clippy -D warnings
-just fmt        # cargo fmt
-just cli        # cargo run --release -p koan-cli -- <args>
-just build      # cargo build --release
-just macos-run  # build + launch the macOS app
-just macos-dmg  # package the app for release
+just check          # cargo test + clippy -D warnings
+just fmt            # cargo fmt
+just cli            # cargo run --release -p koan-cli -- <args>
+just build          # cargo build --release
+just macos-run      # build + launch the macOS app
+just macos-dmg      # package the app for release
+just ios-typecheck  # the shared SwiftUI sources still build for iOS
+just ios-run        # build and launch on a booted simulator
+just ios-smoke FILE # play a file through the real Player on the simulator
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
@@ -97,8 +100,9 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 |--------|------|
 | `audio/backend.rs` | `AudioBackend` + `AudioEngineHandle` traits — platform-agnostic audio output |
 | `audio/coreaudio_backend.rs` | macOS `CoreAudioBackend` impl (wraps engine.rs + device.rs) |
+| `audio/ios_backend.rs` | iOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
 | `audio/cpal_backend.rs` | Linux `CpalBackend` impl (ALSA/PipeWire/PulseAudio via cpal) |
-| `audio/engine.rs` | CoreAudio AUHAL setup, render callback (macOS only) |
+| `audio/engine.rs` | CoreAudio output setup, render callback. AUHAL on macOS, RemoteIO on iOS — two properties apart |
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
 | `audio/device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
 | `audio/replaygain.rs` | EBU R128 loudness scanning, gain application via lofty |
@@ -156,7 +160,13 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 
 Swift bindings are generated, not checked in — `just macos-ffi` builds the lib and regenerates them.
 
-### apps/macos (`apps/macos/Sources/Koan/`)
+### apps/macos (`apps/macos/Sources/`)
+
+`Koan/` is the app: models, pages and rows, shared by both platforms. `KoanIOS/`
+is the iOS scene root and audio session — the phone's shell over the same state.
+The directory is still called `macos` because the macOS app is what it builds
+with SwiftPM; an Xcode project is what an iOS *device* build needs, and it does
+not exist yet.
 
 | Module | What |
 |--------|------|
@@ -168,6 +178,7 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale. Follows the navigator; never moves it |
 | `Support/CoverArtCache.swift` | Album-keyed art cache: bytes once per record on disk, bitmaps per record and draw size in a bounded `NSCache`. Each miss is an HTTP round trip on remote libraries |
 | `Support/PlayingLevels.swift` | One analyser poller for every playing indicator on screen. Runs only while something is playing and something is watching |
+| `Support/Platform.swift` | The few types AppKit and UIKit disagree about. `KoanApp`, `RootView`, `Hotkeys`, `TextFocus`, `EditCommands`, `MenuShortcuts` and `ShortcutsSheet` are the macOS shell and have no iOS counterpart; everything else builds for both |
 | `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select. Never torn down: `StageView` keeps it mounted behind other pages, because a macOS `List` cannot be scrolled back to where it was |
 | `Views/PickerSheet.swift` | ⇧⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |

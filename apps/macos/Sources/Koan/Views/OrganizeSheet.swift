@@ -110,7 +110,9 @@ struct OrganizeSheet: View {
 
             HStack(spacing: 6) {
                 Toggle("Move cover art and cue sheets", isOn: $organize.moveAncillary)
+                    #if os(macOS)
                     .toggleStyle(.checkbox)
+                    #endif
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .help("Artwork, .cue and .log files in the same folder travel with the music")

@@ -72,7 +72,9 @@ struct PlaylistView: View {
                     play(rowIds: selection)
                     return .handled
                 }
+                #if os(macOS)
                 .onDeleteCommand { removeSelected() }
+                #endif
                 .clearsSelection($selection)
                 .onChange(of: ui.selectAllToken) { _, _ in
                     selection = Set(rows.map(\.id))

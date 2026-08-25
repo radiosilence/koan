@@ -316,3 +316,177 @@ macos-dmg: macos-bundle
 # Run the macOS app's tests.
 macos-test: macos-ffi
     cd {{app_dir}} && swift test
+
+# --- iOS --------------------------------------------------------------------
+# There is no iOS app yet — this proves the shared sources still cross.
+
+ios_deployment_target := "26.0"
+
+# Type-check the shared SwiftUI sources against the iOS SDK.
+#
+# The bindings are target-independent, so this needs `macos-ffi` and nothing
+# else: no Rust iOS build, no simulator runtime, a few seconds in CI. It is what
+# keeps the port from rotting while there is no iOS app to notice.
+#
+# The excluded files are the macOS shell — the scene root, the split view, the
+# menu bar and the machinery that serves it. They have no iOS counterpart yet;
+# the list shrinks to nothing when one exists.
+ios-typecheck: macos-ffi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    shell=(KoanApp RootView Hotkeys TextFocus EditCommands MenuShortcuts ShortcutsSheet)
+    find_args=()
+    for f in "${shell[@]}"; do find_args+=(! -name "$f.swift"); done
+    mod=$(mktemp -d)
+    trap 'rm -rf "$mod"' EXIT
+    ffi={{app_dir}}/Sources/koan_ffiFFI
+    target=arm64-apple-ios{{ios_deployment_target}}-simulator
+    # KoanFFI is its own module in the package, so it has to be built as one
+    # before anything that imports it can be checked.
+    xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 \
+        -package-name koan \
+        -emit-module -module-name KoanFFI -emit-module-path "$mod/KoanFFI.swiftmodule" \
+        -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
+        {{app_dir}}/Sources/KoanFFI/koan_ffi.swift
+    xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 \
+        -package-name koan \
+        -typecheck -module-name Koan -I "$mod" \
+        -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
+        $(find {{app_dir}}/Sources/KoanIOS -name '*.swift') \
+        $(find {{app_dir}}/Sources/Koan -name '*.swift' "${find_args[@]}")
+    echo "the shared sources still build for iOS"
+
+
+# Build the Rust engine for the simulator and stage it for the Swift link.
+ios-ffi:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Without this rustc targets arm64-apple-ios10.0.0 while every C dependency
+    # compiled against the current SDK, and the link dies in a wall of "built
+    # for newer iOS version". `macos-ffi` exports the macOS equivalent.
+    export IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}}
+    cargo build --release -p koan-ffi --target aarch64-apple-ios-sim
+    rm -rf target/ios-link && mkdir -p target/ios-link
+    cp target/aarch64-apple-ios-sim/release/libkoan_ffi.a target/ios-link/
+    echo "koan-ffi ready for the simulator"
+
+# Assemble koan.app for the iOS simulator.
+#
+# By hand, exactly as `macos-bundle` does, and for the same reason: SwiftPM has
+# no app product. A simulator bundle is the one case where that is enough — it
+# needs no provisioning profile and no signature. A device build does, and that
+# is what an Xcode project is for.
+ios-bundle: macos-ffi ios-ffi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    app=target/ios-app/koan.app
+    rm -rf "$app" && mkdir -p "$app"
+    icon_plist=$(mktemp -t koan-icons.XXXXXX)
+    trap 'rm -f "$icon_plist"' EXIT
+    ffi={{app_dir}}/Sources/koan_ffiFFI
+    target=arm64-apple-ios{{ios_deployment_target}}-simulator
+    mod=target/ios-app/modules
+    rm -rf "$mod" && mkdir -p "$mod"
+    # KoanFFI is its own module in the package, so it is built as one here too —
+    # compiling its source alongside the app would leave `import KoanFFI`
+    # looking for a module that is being compiled into the same one.
+    xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 -O \
+        -package-name koan -module-name KoanFFI \
+        -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
+        -emit-module -emit-module-path "$mod/KoanFFI.swiftmodule" \
+        -emit-library -static -o "$mod/libKoanFFI.a" \
+        {{app_dir}}/Sources/KoanFFI/koan_ffi.swift
+    xcrun -sdk iphonesimulator swiftc -target "$target" -swift-version 6 -O \
+        -package-name koan \
+        -I "$mod" -L "$mod" -lKoanFFI \
+        -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
+        -L "$PWD/target/ios-link" -lkoan_ffi \
+        -framework AudioToolbox -framework AVFAudio -framework MediaPlayer \
+        -o "$app/koan" \
+        $(find {{app_dir}}/Sources/KoanIOS -name '*.swift') \
+        $(find {{app_dir}}/Sources/Koan -name '*.swift' \
+            ! -name 'KoanApp.swift' ! -name 'RootView.swift' ! -name 'Hotkeys.swift' \
+            ! -name 'TextFocus.swift' ! -name 'EditCommands.swift' \
+            ! -name 'MenuShortcuts.swift' ! -name 'ShortcutsSheet.swift')
+    # The accent colour comes from the compiled catalog, exactly as on macOS —
+    # `Color("AccentColor")` finds nothing without it and every tinted control
+    # renders in nothing.
+    if /usr/bin/actool --version >/dev/null 2>&1; then
+        # `--app-icon` is not optional: without it actool compiles the colour
+        # sets and silently leaves the icon out of the catalog entirely. Nor is
+        # keeping the partial plist — it carries the CFBundleIcons that tell
+        # SpringBoard which rendition to draw, and an icon in the catalog that
+        # nothing names shows as an empty tile.
+        /usr/bin/actool {{app_dir}}/Resources/Assets.xcassets \
+            --compile "$app" --platform iphonesimulator \
+            --minimum-deployment-target {{ios_deployment_target}} \
+            --app-icon AppIcon --include-all-app-icons \
+            --output-partial-info-plist "$icon_plist" >/dev/null
+    else
+        echo "note: actool unavailable (needs full Xcode) — building without an icon or accent"
+    fi
+    # iOS bundles are flat — no Contents/MacOS.
+    cat > "$app/Info.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>CFBundleExecutable</key><string>koan</string>
+        <key>CFBundleIdentifier</key><string>{{bundle_id}}</string>
+        <key>CFBundleName</key><string>koan</string>
+        <!-- The catalog holds the icon; this is what names it. Without it the
+             home screen shows an empty tile and no error anywhere. -->
+        <key>CFBundleIconName</key><string>AppIcon</string>
+        <key>CFBundlePackageType</key><string>APPL</string>
+        <key>CFBundleShortVersionString</key><string>0.0.0</string>
+        <key>CFBundleVersion</key><string>1</string>
+        <key>LSRequiresIPhoneOS</key><true/>
+        <key>MinimumOSVersion</key><string>{{ios_deployment_target}}</string>
+        <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
+        <key>UILaunchScreen</key><dict/>
+        <!-- Without this the process is suspended when the screen locks, and
+             the audio thread with it. -->
+        <key>UIBackgroundModes</key><array><string>audio</string></array>
+    </dict>
+    </plist>
+    PLIST
+    # actool's keys, folded into the plist written above.
+    if [ -s "$icon_plist" ]; then
+        /usr/libexec/PlistBuddy -c "Merge $icon_plist" "$app/Info.plist" >/dev/null
+    fi
+    echo "built $app"
+
+# Install and launch koan on a booted simulator.
+ios-run: ios-bundle
+    #!/usr/bin/env bash
+    set -euo pipefail
+    device=$(xcrun simctl list devices available -j \
+        | python3 -c 'import json,sys; ds=[d for v in json.load(sys.stdin)["devices"].values() for d in v if d["isAvailable"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"]))')
+    xcrun simctl boot "$device" 2>/dev/null || true
+    xcrun simctl bootstatus "$device" -b
+    xcrun simctl install "$device" target/ios-app/koan.app
+    xcrun simctl launch --console-pty "$device" {{bundle_id}}
+
+# Play a file through the real Player, on the simulator's real output.
+#
+# The check that matters for iOS: position only advances when RemoteIO's render
+# callback drains the ring buffer, so a track that reaches its end has exercised
+# decode, timeline and output together. `KOAN_STOP_AFTER_MS` forces the teardown
+# instead of waiting for the queue to run out — that is the path that used to
+# double-free CoreAudio's buffer list, and it is shared with macOS.
+#
+#     just ios-smoke ~/some/short.wav
+ios-smoke FILE:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}}
+    cargo build -q -p koan-core --example end_of_queue --target aarch64-apple-ios-sim
+    device=$(xcrun simctl list devices booted -j \
+        | python3 -c 'import json,sys; print([d["udid"] for v in json.load(sys.stdin)["devices"].values() for d in v][0])')
+    bin=$PWD/target/aarch64-apple-ios-sim/debug/examples/end_of_queue
+    # simctl only forwards environment prefixed for the child.
+    echo "--- playing to the end of the queue"
+    SIMCTL_CHILD_RUST_LOG=info xcrun simctl spawn "$device" "$bin" "{{FILE}}"
+    echo "--- stopping mid-track"
+    SIMCTL_CHILD_KOAN_STOP_AFTER_MS=1200 SIMCTL_CHILD_RUST_LOG=info \
+        xcrun simctl spawn "$device" "$bin" "{{FILE}}"
