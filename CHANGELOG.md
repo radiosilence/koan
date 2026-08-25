@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **koan grew to a gigabyte of artwork and never gave any of it back.** Every cover you scrolled past was decoded and held for the life of the process — nothing evicted, so an hour of browsing a remote library reached 978 MB of decoded bitmaps, most of it swapped out rather than released. Covers are now held in a bounded cache that hands memory back under pressure.
+
+  Bitmaps are also kept at the size they are drawn rather than the size they arrived. A queue row shows a sleeve at 28 points; it was holding the full 600-pixel image to do it, one per row. Rows and the transport keep a thumbnail, the grid and a record's own page keep a tile, and full size is decoded on demand for the artwork viewer and released with it — which is the only place the detail was ever visible.
+
+- **The queue raced to fetch the same sleeve once per track.** Queue rows asked for artwork by track, so a twelve-track album was twelve HTTP round trips, twelve files on disk and twelve identical bitmaps in memory for one image. `QueueItem` now carries the album it came off — resolved for the whole queue in one query — and every row on a record shares a single fetch.
+
+  This also closes a hole in the placeholder detection. Navidrome answers with a stock blue vinyl for anything with no artwork, and koan spots it by noticing the same image on three unrelated albums; lookups by track never took part in that vote, so the queue and the transport would draw the placeholder the grid had already learned to hide.
+
+- **The window wash cost a quarter of a core to sit still.** It was drawn twice — once on the window, once on the page on top of it — and the page's copy sat on an opaque ground hiding the window's, which kept animating behind it for no one. There is one now, on the window, which is the one that mirrors out under the sidebar and toolbar.
+
+  The one that remains no longer redraws on a timer. It moved its blur through scale, rotation and offset twenty times a second, and each tick invalidated layout: a full window Auto Layout pass, 20 Hz, whether or not anything had changed. The drift is handed to CoreAnimation instead, which runs it off the main thread and smoother for it. Stopping playback now settles the wash back to rest over a couple of seconds rather than freezing it mid-breath.
+
 - **Undoing a queue replace left the player on a track the queue no longer had.** The queue came back, which is the part you could see working, but the engine kept decoding whatever the replace had started — an item the restored queue does not contain. The transport then described a row nothing could select, and the decode lookahead finds the next track by locating the current one, so with the current one gone the queue ended at the end of that track rather than carrying on.
 
   Playback is reconciled with the playlist after every undo and redo, not just this one: any undo that takes items away can strand the engine the same way — undoing an add while the added track is playing did it too. If something was playing, the restored cursor picks up where the queue says it was; if it was paused or stopped, the undo stays quiet, because an undo is not a reason to start the music. The position is not part of what a replace snapshots, so the track starts again rather than resuming mid-way.

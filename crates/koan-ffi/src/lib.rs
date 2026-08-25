@@ -263,11 +263,22 @@ impl KoanEngine {
 
     pub async fn queue(self: Arc<Self>) -> Vec<QueueItem> {
         offload::offload(move || {
-            self.state
-                .derive_visible_queue()
-                .entries
+            let entries = self.state.derive_visible_queue().entries;
+            // One query for the whole queue. A client draws one sleeve per
+            // album, and without an ID to group by it asks for artwork per
+            // track — the same image fetched once for every track on the
+            // record. A queue with no database behind it simply has no album
+            // IDs; the art falls back to the per-track lookup as before.
+            let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
+            let album_ids = self
+                .db()
+                .ok()
+                .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
+                .unwrap_or_default();
+
+            entries
                 .iter()
-                .map(QueueItem::from)
+                .map(|e| QueueItem::from_entry(e, &album_ids))
                 .collect()
         })
         .await

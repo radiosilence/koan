@@ -11,6 +11,10 @@ import SwiftUI
 ///
 /// Fills whatever it is given — a `.background` on a header takes the header's
 /// height; anywhere else, say how far down the page the wash should reach.
+///
+/// There is one of these in the app, on the window. A second copy on the page
+/// bought nothing — it sat on the page's own opaque ground, hiding the window's
+/// and animating alongside it.
 struct ArtworkBleed: View {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
@@ -29,42 +33,59 @@ struct ArtworkBleed: View {
     /// image itself cannot: `NSImage` is a reference and identity is not enough
     /// to drive a transition.
     @State private var generation = 0
+    /// Both ends of the drift. Flipped once, then left alone — the animations
+    /// below repeat forever off it, which is what keeps this off the main
+    /// thread.
+    @State private var drifted = false
 
     /// The cover is blurred to mush, so it is rendered small and scaled up
     /// afterwards. Blurring a 360pt layer and magnifying the result costs a
-    /// fraction of blurring one the width of the window, which matters when it
-    /// is redrawn twenty times a second.
+    /// fraction of blurring one the width of the window.
     private static let side: CGFloat = 360
+
+    /// Three incommensurate periods, so the drift never arrives back where it
+    /// started and never reads as a loop. Settling is a plain ease: playback
+    /// stopping should let the room come to rest, not stop it mid-breath.
+    private func drift(_ period: Double) -> Animation {
+        drifts
+            ? .easeInOut(duration: period).repeatForever(autoreverses: true)
+            : .easeInOut(duration: 2)
+    }
 
     var body: some View {
         GeometryReader { geo in
-            // Paused rather than switched off, so stopping playback leaves the
-            // drift where it is instead of snapping it back.
-            TimelineView(.animation(minimumInterval: 1 / 20, paused: !drifts)) { context in
-                ZStack {
-                    if let image {
-                        // Three incommensurate periods, so the drift never
-                        // arrives back where it started and never reads as a
-                        // loop.
-                        let t = context.date.timeIntervalSinceReferenceDate
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(width: Self.side, height: Self.side)
-                            .blur(radius: 14)
-                            .scaleEffect(geo.size.width / Self.side * (1.25 + 0.06 * sin(t / 13)))
-                            .rotationEffect(.degrees(3 * sin(t / 19)))
-                            .offset(
-                                x: geo.size.width * 0.04 * sin(t / 23),
-                                y: geo.size.height * 0.06 * cos(t / 17)
-                            )
-                            .saturation(1.6)
-                            .id(generation)
-                            .transition(.opacity)
-                    }
+            // The transforms live on this container rather than on the image,
+            // so a record change swaps what is inside without interrupting the
+            // drift. On the image they went with it, and each new cover
+            // arrived parked at the end of a motion that never restarted.
+            ZStack {
+                if let image {
+                    Image(nsImage: image)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .id(generation)
+                        .transition(.opacity)
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
             }
+            .frame(width: Self.side, height: Self.side)
+            .blur(radius: 14)
+            .saturation(1.6)
+            // Driven by animation rather than by a `TimelineView` re-rendering
+            // at 20fps. Every tick of that invalidated layout through the
+            // geometry modifiers below, and a full window Auto Layout pass
+            // twenty times a second was a quarter of a core with nothing
+            // happening. These hand the interpolation to CoreAnimation, which
+            // runs them off the main thread and smoother for it.
+            .scaleEffect(geo.size.width / Self.side * (drifted ? 1.31 : 1.19))
+            .animation(drift(13), value: drifted)
+            .rotationEffect(.degrees(drifted ? 3 : -3))
+            .animation(drift(19), value: drifted)
+            .offset(
+                x: geo.size.width * (drifted ? 0.04 : -0.04),
+                y: geo.size.height * (drifted ? -0.06 : 0.06)
+            )
+            .animation(drift(23), value: drifted)
+            .frame(width: geo.size.width, height: geo.size.height)
         }
         .clipped()
         .opacity(0.5)
@@ -81,6 +102,8 @@ struct ArtworkBleed: View {
         // the room has changed colour without ever catching it changing.
         .animation(.easeInOut(duration: 2), value: generation)
         .task(id: source) { await load() }
+        .onAppear { drifted = drifts }
+        .onChange(of: drifts) { _, now in drifted = now }
     }
 
     private func load() async {
@@ -88,11 +111,11 @@ struct ArtworkBleed: View {
             show(nil)
             return
         }
-        if let cached = cache.cached(source) {
+        if let cached = cache.cached(source, size: .tile) {
             show(cached)
             return
         }
-        let loaded = await cache.image(for: source)
+        let loaded = await cache.image(for: source, size: .tile)
         // A cancelled load means the record moved on again; whatever came back
         // is for the wrong one.
         guard !Task.isCancelled else { return }

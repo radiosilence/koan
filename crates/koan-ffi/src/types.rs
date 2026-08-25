@@ -4,6 +4,8 @@
 //! `PathBuf`, no `Arc`. These conversions are the only place that translation
 //! happens; everything above and below speaks its own native vocabulary.
 
+use std::collections::HashMap;
+
 use koan_core::db::queries::{self, AlbumRow, ArtistRow, LibraryStats, TrackRow};
 use koan_core::player::state::{
     LoadState, PlaybackState, PlaylistItem, QueueEntry, QueueEntryStatus, TrackInfo,
@@ -227,6 +229,10 @@ pub struct NowPlaying {
 pub struct QueueItem {
     pub queue_item_id: String,
     pub track_id: Option<i64>,
+    /// The record this came off, where the library still knows. Carried so a
+    /// client can draw one sleeve per album rather than asking for artwork once
+    /// per track and fetching the same image a dozen times.
+    pub album_id: Option<i64>,
     pub title: String,
     pub artist: String,
     pub album_artist: String,
@@ -280,6 +286,9 @@ impl QueueItem {
         Self {
             queue_item_id: item.id.0.to_string(),
             track_id: item.db_id,
+            // The transport polls this and there is no connection here to ask.
+            // `PlayerModel` resolves the album for what is playing on its own.
+            album_id: None,
             title: item.title.clone(),
             artist: item.artist.clone(),
             album_artist: item.album_artist.clone(),
@@ -299,14 +308,18 @@ impl QueueItem {
     }
 }
 
-impl From<&QueueEntry> for QueueItem {
-    fn from(e: &QueueEntry) -> Self {
+impl QueueItem {
+    /// Build from a derived queue entry, taking album IDs from a map resolved
+    /// for the whole queue in one query — one statement per queue read rather
+    /// than one per row.
+    pub(crate) fn from_entry(e: &QueueEntry, album_ids: &HashMap<i64, i64>) -> Self {
         let download_progress = e.download_progress.and_then(|(done, total)| {
             (total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0))
         });
         Self {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,
+            album_id: e.db_id.and_then(|id| album_ids.get(&id).copied()),
             title: e.title.clone(),
             artist: e.artist.clone(),
             album_artist: e.album_artist.clone(),
