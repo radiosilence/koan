@@ -13,6 +13,7 @@ struct ArtistBrowser: View {
             ArtistRow(artist: artist)
         }
         .clearsSelection($selection)
+        .washedGround()
         .contextMenu(forSelectionType: Int64.self) { ids in
             if let id = ids.first,
                let artist = library.visibleArtists.first(where: { $0.id == id }) {
