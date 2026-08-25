@@ -110,11 +110,7 @@ struct TrackListView: View {
         if chosen.count == 1, let track = chosen.first {
             PlayableMenu(playable: .track(track))
         } else if !chosen.isEmpty {
-            Button("Play") {
-                player.playNow(trackIds: chosen.map(\.id))
-            }
-            Button("Play Next") { player.playNext(trackIds: chosen.map(\.id)) }
-            Button("Add to Queue") { player.enqueue(trackIds: chosen.map(\.id)) }
+            QueueActions(trackIds: chosen.map(\.id))
         }
     }
 

@@ -113,7 +113,7 @@ struct RootView: View {
                         Button {
                             showLyrics.toggle()
                         } label: {
-                            Label("Lyrics", systemImage: "quote.bubble")
+                            Label("Lyrics", systemImage: Icon.lyrics)
                         }
                         .help("Lyrics panel (⌥⌘L)")
                     }

@@ -109,14 +109,13 @@ struct HistoryView: View {
         if chosen.count == 1, let track = chosen.first {
             PlayableMenu(playable: .track(track))
         } else if !chosen.isEmpty {
-            let trackIds = chosen.map(\.id)
-            Button("Play") { player.playNow(trackIds: trackIds) }
-            Button("Play Next") { player.playNext(trackIds: trackIds) }
-            Button("Add to Queue") { player.enqueue(trackIds: trackIds) }
+            QueueActions(trackIds: chosen.map(\.id))
         }
         if !chosen.isEmpty {
             Divider()
-            Button("Remove from History") { library.forgetPlays(ids: ids) }
+            Button { library.forgetPlays(ids: ids) } label: {
+                Label("Remove from History", systemImage: Icon.remove)
+            }
         }
     }
 

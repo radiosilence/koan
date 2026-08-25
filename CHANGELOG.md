@@ -11,6 +11,8 @@
 
 ### Changed
 
+- **The menus have their icons back.** Every action in the app now carries the same symbol wherever it appears: Add to Queue is the same icon on an album page, in the row's context menu and in the menu bar, and the Edit menu — replaced wholesale so ⌘Z can reach koan's own undo stack rather than a text field's — draws its own icons again instead of arriving bare. The symbols are named in one place, which is what stops the three copies of a verb drifting apart.
+
 - **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
 - **The shortcuts sheet says what the menus say.** It listed the single-key shortcuts and then told you the rest were "in the menus", which is true and no help — nobody opens six menus to find out that Back is ⌘[. The ⌘ shortcuts are now a second table on the same sheet, and both halves are generated from the same declarations the menu bar is built from, so they cannot drift.
 - **Leaving the queue and coming back keeps your place.** The stage is one `switch`, so every move destroys the page it left and takes its scroll position with it. The queue remembers where it was.

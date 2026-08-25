@@ -53,7 +53,7 @@ struct SnapshotsView: View {
                 Button {
                     creating = true
                 } label: {
-                    Label("Save Queue", systemImage: "plus")
+                    Label("Save Queue", systemImage: Icon.add)
                 }
                 .disabled(player.queue.isEmpty)
             }
