@@ -451,3 +451,27 @@ ios-run: ios-bundle
     xcrun simctl bootstatus "$device" -b
     xcrun simctl install "$device" target/ios-app/koan.app
     xcrun simctl launch --console-pty "$device" {{bundle_id}}
+
+# Play a file through the real Player, on the simulator's real output.
+#
+# The check that matters for iOS: position only advances when RemoteIO's render
+# callback drains the ring buffer, so a track that reaches its end has exercised
+# decode, timeline and output together. `KOAN_STOP_AFTER_MS` forces the teardown
+# instead of waiting for the queue to run out — that is the path that used to
+# double-free CoreAudio's buffer list, and it is shared with macOS.
+#
+#     just ios-smoke ~/some/short.wav
+ios-smoke FILE:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}}
+    cargo build -q -p koan-core --example end_of_queue --target aarch64-apple-ios-sim
+    device=$(xcrun simctl list devices booted -j \
+        | python3 -c 'import json,sys; print([d["udid"] for v in json.load(sys.stdin)["devices"].values() for d in v][0])')
+    bin=$PWD/target/aarch64-apple-ios-sim/debug/examples/end_of_queue
+    # simctl only forwards environment prefixed for the child.
+    echo "--- playing to the end of the queue"
+    SIMCTL_CHILD_RUST_LOG=info xcrun simctl spawn "$device" "$bin" "{{FILE}}"
+    echo "--- stopping mid-track"
+    SIMCTL_CHILD_KOAN_STOP_AFTER_MS=1200 SIMCTL_CHILD_RUST_LOG=info \
+        xcrun simctl spawn "$device" "$bin" "{{FILE}}"

@@ -12,6 +12,8 @@
 
   The session — category, activation, interruptions, route changes — is the app's, because it needs a run loop and a lifecycle. A phone call pauses playback; unplugging headphones pauses rather than announcing the record to the room.
 
+  Verified on the simulator by playing a file through the real `Player`: position only advances when the render callback drains the ring buffer, so a track that reaches its end has exercised decode, timeline and output together. Stopping mid-track survives too — that teardown is the one that used to double-free CoreAudio's buffer list, and it is shared with macOS rather than rewritten. `just ios-smoke <file>` runs both.
+
   Not yet: no Xcode project, so this is a simulator build only — a device needs a provisioning profile and the Apple Developer Program. No iPhone-shaped transport yet either; the Mac's is doing the job and it is cramped.
 
 ### Internal
