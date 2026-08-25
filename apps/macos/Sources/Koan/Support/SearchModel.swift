@@ -18,7 +18,18 @@ final class SearchModel {
     private let library: LibraryModel
     private let nav: Navigator
 
-    var query: String = ""
+    /// Typing schedules the search itself.
+    ///
+    /// This used to be an `.onChange` in the macOS scene root, which meant a
+    /// second shell could bind a field to `query` and get a search that never
+    /// ran. Anything that can set the query is entitled to the debounce that
+    /// goes with it.
+    var query: String = "" {
+        didSet {
+            guard query != oldValue else { return }
+            schedule()
+        }
+    }
 
     private(set) var artists: [Artist] = []
     private(set) var albums: [Album] = []
@@ -144,4 +155,34 @@ final class SearchModel {
         clear()
         locationBeforeSearch = nil
     }
+    /// Return either picks a suggestion — in which case the field holds a token
+    /// naming exactly what was chosen — or it means "show me everything".
+    ///
+    /// On the model rather than in a scene root, for the same reason `schedule`
+    /// is: a shell that offers a search field should not also have to know what
+    /// submitting one means.
+    func submit() {
+        // Emptying the field submits it again. Acting on that sent you to the
+        // results page for a search you had not asked for — and since clearing
+        // the query then forgets that page, you landed on whatever list was
+        // behind it, one keystroke after picking an album.
+        let text = query.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return }
+
+        guard let selection = Selection(token: text) else {
+            nav.show(.searchResults)
+            return
+        }
+        switch selection {
+        case .track(let id, let albumId):
+            // A track lives on its album; that's where you'd play it from.
+            if let albumId { nav.open(album: albumId, highlighting: id) }
+        case .album(let id):
+            nav.open(album: id)
+        case .artist(let id):
+            nav.open(artist: id)
+        }
+        reset()
+    }
+
 }

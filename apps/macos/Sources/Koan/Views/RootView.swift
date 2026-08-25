@@ -7,6 +7,14 @@ import SwiftUI
 /// you build a queue in, and the TUI opens the same way. The library is
 /// somewhere you go to feed it.
 ///
+/// The wide layout: sidebar, stage, transport across the top.
+///
+/// Not "the macOS one" — it is the layout for anything with the room for it, and
+/// an iPad running full screen has the room. What decides is
+/// `horizontalSizeClass`, in `AdaptiveRootView`; a phone and an iPad in Slide
+/// Over get the tab bar instead, because they are the same width and the same
+/// answer suits both.
+///
 /// `NavigationSplitView` is the root and stays the root. Wrapping it in a stack
 /// or putting an `HSplitView` in its detail column breaks width propagation:
 /// `HSplitView` sizes children to their minimum, so the stage would sit at
@@ -20,7 +28,12 @@ import SwiftUI
 /// with a linear history — and a stack navigates a hierarchy that does not
 /// exist here.
 struct RootView: View {
+    /// Single-key shortcuts belong to a machine with a keyboard always attached
+    /// — the split view itself does not, which is why this is the only thing in
+    /// here the phone cannot have.
+    #if os(macOS)
     let hotkeys: Hotkeys
+    #endif
 
     @Environment(UIState.self) private var ui
     @Environment(LibraryModel.self) private var library
@@ -73,6 +86,18 @@ struct RootView: View {
         let wash = colourSource
         let washDrifts = player.isPlaying
         let artCache = art
+        // Bound here rather than built in the modifier below, because the
+        // container it goes in differs by platform and `#if` cannot straddle a
+        // closure's braces.
+        //
+        // Over an opaque ground: this *replaces* the container's own background
+        // rather than sitting on it, and a half-transparent wash on its own
+        // leaves you looking through the app at whatever is behind it.
+        let washLayer = ZStack {
+            Rectangle().fill(.background)
+            ArtworkBleed(source: wash, drifts: washDrifts)
+                .environment(artCache)
+        }
 
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
@@ -110,16 +135,13 @@ struct RootView: View {
         // inset, and a wash that stops in a line under the toolbar is worse
         // than none. An album page washes its own header, so the window stays
         // out of its way.
-        .containerBackground(for: .window) {
-            // Over an opaque ground, because this *replaces* the window's own
-            // background rather than sitting on it — a half-transparent wash on
-            // its own leaves you looking through the app at the desktop.
-            ZStack {
-                Rectangle().fill(.background)
-                ArtworkBleed(source: wash, drifts: washDrifts)
-                    .environment(artCache)
-            }
-        }
+        // A window on the Mac, the navigation container on iOS: the same
+        // intent, and neither platform has the other's container.
+        #if os(macOS)
+        .containerBackground(for: .window) { washLayer }
+        #else
+        .containerBackground(for: .navigation) { washLayer }
+        #endif
         .task(id: colourSource) {
             // Animated at the point the colour changes rather than by an
             // `.animation(_:value:)` on the view. That modifier animates *every*
@@ -147,9 +169,12 @@ struct RootView: View {
         // of the record. Hidden, the glass controls sit in that colour — which
         // is the whole point of them being glass — and the scroll edge effect
         // keeps rows legible as they pass under.
+        #if os(macOS)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
-        .onChange(of: search.query) { _, _ in search.schedule() }
-        .onSubmit(of: .search) { handleSubmit() }
+        #else
+        .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+        #endif
+        .onSubmit(of: .search) { search.submit() }
         // On the window rather than inside the detail column, padded clear of
         // the sidebar: glass floating on glass reads as neither. The page makes
         // its own room with `clearsTransport`.
@@ -267,9 +292,11 @@ struct RootView: View {
                 )
             }
         }
+        #if os(macOS)
         .sheet(isPresented: $ui.showingShortcuts) {
             ShortcutsSheet(hotkeys: hotkeys.all)
         }
+        #endif
         .overlay(alignment: .bottom) {
             if let error = player.lastError {
                 ErrorToast(message: error) { player.lastError = nil }
@@ -277,32 +304,6 @@ struct RootView: View {
                     .padding(.bottom, transportHeight + 10)
             }
         }
-    }
-
-    /// Return either picks a suggestion — in which case the field holds a token
-    /// naming exactly what was chosen — or it means "show me everything".
-    private func handleSubmit() {
-        // Emptying the field submits it again. Acting on that sent you to the
-        // results page for a search you had not asked for — and since clearing
-        // the query then forgets that page, you landed on whatever list was
-        // behind it, one keystroke after picking an album.
-        let query = search.query.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return }
-
-        guard let selection = SearchModel.Selection(token: query) else {
-            nav.show(.searchResults)
-            return
-        }
-        switch selection {
-        case .track(let id, let albumId):
-            // A track lives on its album; that's where you'd play it from.
-            if let albumId { nav.open(album: albumId, highlighting: id) }
-        case .album(let id):
-            nav.open(album: id)
-        case .artist(let id):
-            nav.open(artist: id)
-        }
-        search.reset()
     }
 }
 

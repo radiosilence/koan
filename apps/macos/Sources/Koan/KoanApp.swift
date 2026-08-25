@@ -45,17 +45,7 @@ struct KoanApp: App {
                 guard state == nil, startupError == nil else { return }
                 do {
                     let created = try await AppState()
-                    await created.player.start()
-                    created.player.restoreSession()
-                    created.library.loadInitial()
-                    created.playlists.load()
-                    created.playlists.refreshLock()
-                    // The queue changing is the other half of what makes a lock
-                    // — playing a playlist creates one, touching the queue ends
-                    // one, and neither goes through the playlist model.
-                    created.player.onQueueChanged = { [weak created] in
-                        created?.playlists.refreshLock()
-                    }
+                    await created.start()
                     state = created
                 } catch {
                     startupError = String(describing: error)

@@ -20,9 +20,27 @@ struct SettingsView: View {
     @Environment(\.scenePhase) private var scenePhase
     #endif
 
+    #if !os(macOS)
+    /// A settings section: a row that goes into the pane it names.
+    @ViewBuilder private func pane<Content: View>(
+        _ title: String,
+        _ symbol: String,
+        @ViewBuilder _ content: @escaping () -> Content
+    ) -> some View {
+        NavigationLink {
+            content().navigationTitle(title)
+        } label: {
+            Label(title, systemImage: symbol)
+        }
+    }
+    #endif
+
     var body: some View {
         Group {
             if let model {
+                #if os(macOS)
+                // Four panes side by side in a window sized to hold the largest
+                // of them, which is what a settings window is on macOS.
                 TabView {
                     LibrarySettings(model: model)
                         .tabItem { Label("Library", systemImage: "music.note.house") }
@@ -34,11 +52,27 @@ struct SettingsView: View {
                         .tabItem { Label("Radio", systemImage: "dot.radiowaves.left.and.right") }
                 }
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                #else
+                // A phone has no room for a second row of tabs — and it already
+                // has one at the bottom of the screen. Settings on iOS is a list
+                // you go into, so these become pages rather than panes.
+                List {
+                    pane("Library", "music.note.house") { LibrarySettings(model: model) }
+                    pane("Server", "server.rack") { RemoteSettings(model: model) }
+                    pane("Playback", "hifispeaker") { PlaybackSettings(model: model) }
+                    pane("Radio", "dot.radiowaves.left.and.right") { RadioSettings(model: model) }
+                }
+                .navigationTitle("Settings")
+                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                #endif
             } else {
                 ProgressView()
             }
         }
+        // The size of a settings window. A phone gets whatever it has.
+        #if os(macOS)
         .frame(width: 560, height: 460)
+        #endif
         .task {
             if model == nil {
                 let created = await SettingsModel(engine: library.engine, activity: activity)
@@ -139,6 +173,7 @@ private struct LibrarySettings: View {
                     Button("Rescan Everything") { model.scan(force: true) }
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
+                .rowButtons()
                 // One library task at a time: they all queue behind the same
                 // database writer, so starting a second only makes both slower.
                 .disabled(activity.isLibraryBusy)
@@ -242,18 +277,22 @@ private struct RemoteSettings: View {
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     }
+                    .rowButtons()
                 }
             } else {
                 Section {
                     // Label on the left, example inside the field. Passing the
                     // example as the title made the URL the label.
                     TextField("Server", text: $url, prompt: Text("https://music.example.com"))
+                        .verbatimEntry(.url)
                     TextField("Username", text: $username, prompt: Text("your account"))
+                        .verbatimEntry()
                     SecureField(
                         "Password",
                         text: Binding(get: { model.password }, set: { model.password = $0 }),
                         prompt: Text("hunter2")
                     )
+                    .verbatimEntry()
                     Button("Sign In") { model.signIn(url: url, username: username) }
                         .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                 } header: {
@@ -303,6 +342,7 @@ private struct RemoteSettings: View {
                     get: { model.settings.cacheLimit },
                     set: { v in model.edit { $0.cacheLimit = v } }
                 ))
+                .verbatimEntry()
                 LabeledContent("Using") {
                     HStack {
                         Text(Format.bytes(Int64(model.settings.cacheBytes)))

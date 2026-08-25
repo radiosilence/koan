@@ -334,7 +334,7 @@ ios_deployment_target := "26.0"
 ios-typecheck: macos-ffi
     #!/usr/bin/env bash
     set -euo pipefail
-    shell=(KoanApp RootView Hotkeys TextFocus EditCommands MenuShortcuts ShortcutsSheet)
+    shell=(KoanApp Hotkeys TextFocus EditCommands MenuShortcuts ShortcutsSheet)
     find_args=()
     for f in "${shell[@]}"; do find_args+=(! -name "$f.swift"); done
     mod=$(mktemp -d)
@@ -405,7 +405,7 @@ ios-bundle: macos-ffi ios-ffi
         -o "$app/koan" \
         $(find {{app_dir}}/Sources/KoanIOS -name '*.swift') \
         $(find {{app_dir}}/Sources/Koan -name '*.swift' \
-            ! -name 'KoanApp.swift' ! -name 'RootView.swift' ! -name 'Hotkeys.swift' \
+            ! -name 'KoanApp.swift' ! -name 'Hotkeys.swift' \
             ! -name 'TextFocus.swift' ! -name 'EditCommands.swift' \
             ! -name 'MenuShortcuts.swift' ! -name 'ShortcutsSheet.swift')
     # The accent colour comes from the compiled catalog, exactly as on macOS —

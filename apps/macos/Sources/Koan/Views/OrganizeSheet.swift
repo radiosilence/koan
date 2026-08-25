@@ -97,6 +97,7 @@ struct OrganizeSheet: View {
 
             if organize.editing {
                 TextField("Format string", text: $organize.draft)
+                    .verbatimEntry()
                     .textFieldStyle(.roundedBorder)
                     .font(.callout.monospaced())
             } else {

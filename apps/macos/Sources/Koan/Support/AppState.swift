@@ -87,4 +87,23 @@ final class AppState {
             }
         }
     }
+    /// Everything that has to happen once, after the engine is up.
+    ///
+    /// This used to live in the macOS scene root, which is why the phone had an
+    /// empty library and a search that matched nothing: none of it is about a
+    /// window, and the second shell had no way to know it was owed.
+    func start() async {
+        await player.start()
+        player.restoreSession()
+        library.loadInitial()
+        playlists.load()
+        playlists.refreshLock()
+        // The queue changing is the other half of what makes a lock — playing a
+        // playlist creates one, touching the queue ends one, and neither goes
+        // through the playlist model.
+        player.onQueueChanged = { [weak self] in
+            self?.playlists.refreshLock()
+        }
+    }
+
 }

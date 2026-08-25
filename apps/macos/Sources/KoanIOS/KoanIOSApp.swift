@@ -17,7 +17,7 @@ struct KoanIOSApp: App {
         WindowGroup {
             Group {
                 if let state {
-                    IOSRootView()
+                    AdaptiveRootView()
                         .environment(state)
                         .environment(state.player)
                         .environment(state.library)
@@ -44,6 +44,7 @@ struct KoanIOSApp: App {
                 guard state == nil, startupError == nil else { return }
                 do {
                     let built = try await AppState()
+                    await built.start()
                     // The session goes up before anything can be asked to play:
                     // a RemoteIO unit on an inactive session produces silence
                     // and reports success, which is the worst of both.

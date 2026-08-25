@@ -17,5 +17,6 @@ struct IOSSearchView: View {
                 get: { search.query },
                 set: { search.query = $0 }
             ))
+            .onSubmit(of: .search) { search.submit() }
     }
 }
