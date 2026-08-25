@@ -3,9 +3,11 @@
 //! codec implementation; this module fills that gap.
 //!
 //! Opus always decodes to 48 kHz, regardless of the internal sample rate.
-//! Channel count is read from the Opus identification header (first packet).
+//! Channel count and pre-skip come from the `OpusHead` identification header,
+//! which every demuxer we use hands over as `extra_data` rather than a packet.
 
 use opus_decoder::OpusDecoder;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use symphonia::core::codecs::audio::AudioCodecParameters;
 
 /// Errors from the Opus decode bridge.
@@ -17,6 +19,8 @@ pub enum OpusError {
     Decode(String),
     #[error("invalid opus header")]
     InvalidHeader,
+    #[error("opus decoder panicked")]
+    Panicked,
 }
 
 /// State for decoding an Opus stream via Symphonia packets.
@@ -29,8 +33,6 @@ pub struct OpusBridge {
     pre_skip: u32,
     /// Samples per channel already skipped.
     skipped: u32,
-    /// Number of Ogg packets seen — first two are header/comment.
-    packet_index: u64,
 }
 
 /// Opus identification header layout (first 19 bytes minimum):
@@ -42,7 +44,19 @@ pub struct OpusBridge {
 ///  16..18  output gain (little-endian i16)
 ///  18      channel mapping family
 const OPUS_HEAD_MAGIC: &[u8] = b"OpusHead";
+const OPUS_TAGS_MAGIC: &[u8] = b"OpusTags";
 const OPUS_HEAD_MIN_LEN: usize = 19;
+
+/// Whether a packet is an Opus header rather than audio.
+///
+/// Which packets reach us depends on the demuxer: Symphonia's Ogg reader
+/// consumes `OpusHead` and `OpusTags` into `extra_data` and hands over only
+/// audio, while Matroska carries them in CodecPrivate and never emits them at
+/// all. Recognising them by magic covers a reader that does pass them through
+/// without costing audio to one that doesn't.
+fn is_header_packet(data: &[u8]) -> bool {
+    data.len() >= 8 && (&data[..8] == OPUS_HEAD_MAGIC || &data[..8] == OPUS_TAGS_MAGIC)
+}
 
 /// Parse the Opus identification header to extract channel count and pre-skip.
 fn parse_opus_head(data: &[u8]) -> Result<(usize, u32), OpusError> {
@@ -91,7 +105,6 @@ impl OpusBridge {
             pcm_buf,
             pre_skip,
             skipped: 0,
-            packet_index: 0,
         })
     }
 
@@ -106,18 +119,24 @@ impl OpusBridge {
     /// Handles pre-skip trimming: the first N samples (per Opus spec) are
     /// silently discarded.
     pub fn decode_packet(&mut self, data: &[u8]) -> Result<&[f32], OpusError> {
-        let idx = self.packet_index;
-        self.packet_index += 1;
-
-        // First packet = OpusHead, second = OpusTags — skip both.
-        if idx < 2 {
+        if is_header_packet(data) {
             return Ok(&[]);
         }
 
-        let frames_per_channel = self
-            .decoder
-            .decode_float(data, &mut self.pcm_buf, false)
-            .map_err(|e| OpusError::Decode(format!("{e:?}")))?;
+        // `opus-decoder` 0.1.1 overflows a shift in CELT's collapse mask on
+        // the first packet of some stereo streams — a panic in debug, a wrong
+        // mask in release. It is the only Opus decoder on crates.io that isn't
+        // libopus over FFI, and it is unmaintained at 0.1.1, so contain it
+        // rather than let one bad packet take the decode thread with it.
+        let decoder = &mut self.decoder;
+        let pcm_buf = &mut self.pcm_buf;
+        let frames_per_channel = match catch_unwind(AssertUnwindSafe(|| {
+            decoder.decode_float(data, pcm_buf, false)
+        })) {
+            Ok(Ok(frames)) => frames,
+            Ok(Err(e)) => return Err(OpusError::Decode(format!("{e:?}"))),
+            Err(_) => return Err(OpusError::Panicked),
+        };
 
         let total_samples = frames_per_channel * self.channels;
 
@@ -138,8 +157,6 @@ impl OpusBridge {
     pub fn reset(&mut self) {
         self.decoder.reset();
         self.skipped = self.pre_skip; // After seek, pre-skip already applied.
-        // Don't reset packet_index — Symphonia handles seek by jumping to
-        // audio packets, not re-sending headers.
     }
 }
 
@@ -204,6 +221,28 @@ mod tests {
 
         let bridge = OpusBridge::new(&params).unwrap();
         assert_eq!(bridge.channels(), 2);
+    }
+
+    #[test]
+    fn test_header_packets_recognised_by_magic() {
+        let mut head = vec![0u8; 19];
+        head[..8].copy_from_slice(b"OpusHead");
+        assert!(is_header_packet(&head));
+
+        let mut tags = vec![0u8; 32];
+        tags[..8].copy_from_slice(b"OpusTags");
+        assert!(is_header_packet(&tags));
+    }
+
+    #[test]
+    fn test_audio_packets_are_not_treated_as_headers() {
+        // A TOC byte of 0x4F ('O') is legal, so the check must match the whole
+        // magic — matching the first byte alone would eat audio.
+        assert!(!is_header_packet(&[
+            0x4F, 0x70, 0x75, 0x11, 0x22, 0x33, 0x44, 0x55
+        ]));
+        assert!(!is_header_packet(&[0xFC, 0x01, 0x02, 0x03]));
+        assert!(!is_header_packet(&[]));
     }
 
     #[test]
