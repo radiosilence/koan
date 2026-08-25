@@ -740,7 +740,7 @@ impl MutationRoot {
             let cfg = Config::load().unwrap_or_default();
             let client = koan_core::helpers::subsonic_client(&cfg)
                 .ok_or_else(|| "remote not configured".to_string())?;
-            let result = koan_core::remote::sync::sync_library(
+            let synced = koan_core::helpers::sync_remote(
                 &db,
                 &client,
                 false,
@@ -748,12 +748,12 @@ impl MutationRoot {
                 &cfg.remote.username,
             )
             .map_err(|e| e.to_string())?;
-            if result.is_complete() {
+            if synced.library.is_complete() {
                 Ok("remote sync complete".to_string())
             } else {
                 Ok(format!(
                     "remote sync incomplete: {} album(s) failed and will be retried next sync",
-                    result.albums_failed
+                    synced.library.albums_failed
                 ))
             }
         })
