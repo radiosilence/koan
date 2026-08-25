@@ -47,10 +47,10 @@ If a local drive is disconnected, tracks with remote backing are demoted to remo
 
 ## Streaming playback
 
-Remote tracks start playing after just **256KB** is buffered instead of waiting for the full download. In the TUI:
+Remote tracks start playing after just **256KB** is buffered instead of waiting for the full download.
 
-- The seek bar dims the not-yet-downloaded portion
-- Seeking past the downloaded boundary is prevented
+- Both front ends draw the fetched extent on the seek bar, weaker than the played one. It is a fraction of bytes on an axis of time, so it is right for lossless and CBR and drifts with the bitrate on VBR -- read it as whether playback is about to run out of track, not as a position
+- The TUI also refuses a seek past the downloaded boundary
 - Duration always shows the full track length
 - When the download finishes, full metadata and cover art are re-read
 

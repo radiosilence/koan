@@ -1,3 +1,5 @@
+# Changelog
+
 ## Unreleased
 
 ### Added
@@ -18,6 +20,12 @@
 
 - **Subsonic playlist endpoints serve real playlists.** `getPlaylists`, `getPlaylist`, `createPlaylist` and `deletePlaylist` used to fake playlists out of saved queues; they now read and write the real thing, and `updatePlaylist` — add and remove members by index — works at last.
 
+- **The playing indicator moves to the music.** The three bars beside the current row rode a pair of sine waves, which said "playing" truthfully but said it the same way through a drum break and a held piano chord. They now follow the analyser: low, mid and high, one band per bar.
+
+  The audio modulates the waves rather than driving them. A band never reaches a height directly — only how far its bar is already travelling — so a chorus makes the bars swell and a quiet passage settles them low and slow, and no transient can make them spike. They never come fully to rest while the transport runs, because the first thing the indicator has to say is which row is playing. Each band is judged against its own recent loudest, so a track mastered quiet gets the same indicator as a loud one. A track still buffering, or the first frames after a start, run the plain carrier.
+
+  One poller feeds every indicator on screen and stops when there are none, or when nothing is playing. Reduce Motion keeps the still bars.
+
 - **`q` goes to the queue.** `g` and `G` already went to its ends; there was no key for simply going there.
 
 - **Escape clears the selection, wherever you are.** The queue also grew a Clear button beside Remove — a selection with no visible way out of it is a trap, and on a list you have scrolled away from you cannot even see what you are still holding.
@@ -25,6 +33,10 @@
 - **The TUI organize modal honours `[organize] default`.** The macOS sheet already preselected the pattern it names; the TUI took whichever sorted first.
 
 - **Favourites shows records and artists, not only tracks.** koan has always let you favourite an album or an artist — the heart is on both — and the Favourites page only ever listed tracks, so there was nowhere in the app those went. It is one page in three sections now, the way search results are: a section only appears when you have favourited something of that kind, so a tracks-only library reads exactly as it did. The filter narrows all three at once.
+
+- **The seek bar shows how much of a streaming track has arrived.** Playing something off a remote library while it is still downloading, the bar showed a position on a full-width track: whether the rest of it was on the machine, or the transfer was limping and playback was about to stall, was not visible anywhere near the thing that would stall. The fetched extent is now drawn behind the played one, and retires when the track lands.
+
+  It is a fraction of bytes on an axis of time — right for lossless and CBR, out by however far the bitrate wanders on VBR — so it is drawn as a distinctly weaker mark than the played extent and the tooltip says "roughly". The question it answers is whether the music is about to run out of track, not where in the track anything is; a hard-edged fill would be read as a promise it cannot keep. The TUI has drawn the same three-way bar all along.
 
 ### Removed
 
@@ -42,8 +54,6 @@ Unknown keys are ignored rather than rejected, so a stale config still loads. Tw
 renames change behaviour silently and are worth grepping your config for:
 `[graphql] subsonic_port` (now `[subsonic] port`) and `[discovery]
 analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
-
->>>>>>> origin/main
 
 ### Changed
 
@@ -70,6 +80,9 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 ### Fixed
 
 - **The queue got slower the more of it you had played.** A played row was the whole row at 45% alpha, and any alpha below 1 makes SwiftUI flatten that row into an offscreen layer before compositing it — its children overlap, so they cannot each be drawn at 45% and still look like one row. A long tail of played tracks behind the cursor was a long list of offscreen passes, on every frame the list drew. Played rows now step back in colour instead: a rung down the hierarchical styles, which costs a colour lookup. Only the sleeve still uses alpha, because no colour can dim an image — and one 34pt image is not a flattened row.
+
+- **Most of the ways koan syncs never touched playlists, and koan's own auto-sync never touched favourites either.** Four callers each knew separately what a sync consists of — the app, the CLI, the GraphQL job and the background auto-sync — so a star or a playlist made on the server arrived only if you happened to press the right button. There is one `sync_remote` now and all four go through it.
+
 - **The queue quietly dropped repeats.** Adding a track already in the queue added nothing, and a playlist holding the same song twice played it once. The batch fetch behind every queue add took each row out of its map as it matched it, so an id asked for twice came back once.
 
 - **koan wrote your whole configuration to the file you commit.** Every setting koan saved itself — a visualiser toggle, the output device, dragging the album art wider — reserialised the entire `Config` struct over `config.toml`. That erased the commented-out reference `koan config init` writes, and filled the file people are told to put in a dotfiles repo with all fifty-odd keys, including `[library] folders` set to koan's *default* music directory and a `[remote]` block belonging to one machine's account. Writes now go through `Config::persist`, which diffs the mutation and touches only the keys that actually changed.

@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crossbeam_channel::Sender;
+use koan_core::audio::viz::VizSnapshot;
 use koan_core::config::{self, Config};
 use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, PersistedQueueItem};
@@ -168,6 +169,9 @@ fn init_logging() {
 pub struct KoanEngine {
     state: Arc<SharedPlayerState>,
     tx: Sender<PlayerCommand>,
+    /// The analyser's latest frame. Only the three-band summary crosses the
+    /// boundary — see `viz_levels`.
+    viz: Arc<VizSnapshot>,
     db_path: PathBuf,
     events: tokio::sync::broadcast::Sender<PlayerEvent>,
     /// Set while the automatic sync is running, so a UI can say so rather than
@@ -259,6 +263,16 @@ impl KoanEngine {
     /// `queue()`, which allocates the whole list.
     pub fn playlist_version(&self) -> u64 {
         self.state.playlist_version()
+    }
+
+    /// What is coming out of the speakers right now, as three band energies.
+    ///
+    /// Sync, like `playlist_version`: an uncontended read lock and a reduce
+    /// over 48 floats, with nothing to allocate and nothing that can block. A
+    /// caller polling this at 30 Hz would spend more on the async hop than on
+    /// the read.
+    pub fn viz_levels(&self) -> VizLevels {
+        self.viz.levels().into()
     }
 
     pub async fn queue(self: Arc<Self>) -> Vec<QueueItem> {
@@ -1677,7 +1691,7 @@ impl KoanEngine {
                 }
             })?;
 
-            let result = koan_core::remote::sync::sync_library(
+            let synced = koan_core::helpers::sync_remote(
                 &db,
                 &client,
                 full,
@@ -1688,22 +1702,15 @@ impl KoanEngine {
                 message: e.to_string(),
             })?;
 
-            // Favourites are part of a sync, not a separate errand. Without this
-            // a star made on the server — or on another machine — never reaches
-            // the app, and one made here only leaves if you happen to run the CLI.
-            let favourites = koan_core::helpers::reconcile_favourites(&db, &client);
-            let playlists =
-                koan_core::playlists::reconcile_playlists(&db, &client, &cfg.remote.username);
-
             Ok(SyncSummary {
-                artists: result.artists_synced as u32,
-                albums: result.albums_synced as u32,
-                tracks: result.tracks_synced as u32,
-                albums_failed: result.albums_failed as u32,
-                favourites_pushed: favourites.pushed as u32,
-                favourites_imported: favourites.imported as u32,
-                playlists_pulled: playlists.pulled as u32,
-                playlists_pushed: playlists.pushed as u32,
+                artists: synced.library.artists_synced as u32,
+                albums: synced.library.albums_synced as u32,
+                tracks: synced.library.tracks_synced as u32,
+                albums_failed: synced.library.albums_failed as u32,
+                favourites_pushed: synced.favourites.pushed as u32,
+                favourites_imported: synced.favourites.imported as u32,
+                playlists_pulled: synced.playlists.pulled as u32,
+                playlists_pushed: synced.playlists.pushed as u32,
             })
         })
         .await
@@ -2203,7 +2210,7 @@ impl KoanEngine {
             message: e.to_string(),
         })?;
 
-        let (state, _timeline, _viz, tx) = Player::spawn();
+        let (state, _timeline, viz, tx) = Player::spawn();
         koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
 
         let auto_syncing = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -2231,6 +2238,7 @@ impl KoanEngine {
         let engine = Arc::new(Self {
             state,
             tx,
+            viz,
             db_path,
             events,
             auto_syncing,
