@@ -29,9 +29,12 @@ just fmt
 4. Keep commits focused. We squash-merge PRs, so don't stress about perfect history.
 5. Describe what your PR does and why in the PR description.
 
-A PR that touches only Markdown, `docs/`, `LICENSE` or `.gitignore` skips the
-build, test and lint jobs — they report as skipped, which counts as passing.
-Touch anything else and the full matrix runs.
+The build, test and lint jobs only run when a PR touches something that feeds
+a build — `crates/`, `apps/`, `Cargo.toml`, `Cargo.lock`, `.cargo/`, `justfile`,
+`mise.toml` or `.github/workflows/`. A documentation PR sees them reported as
+skipped, which counts as passing. Adding a new top-level source directory means
+adding it to the `changes` job in `.github/workflows/ci-cd.yml`, or CI will sit
+the PR out.
 
 ## Architecture
 

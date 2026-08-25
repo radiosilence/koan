@@ -24,29 +24,28 @@ jobs:
       - id: filter
         env:
           EVENT: ${{ github.event_name }}
-        # Documentation-only pull requests do not need three toolchains and two
-        # operating systems to tell them the prose compiles. Everything else --
-        # a push to main, a manual run, a PR that touches one line of Rust --
-        # builds the lot.
+        # Only a change to something that feeds a build is worth two operating
+        # systems and three toolchains. Prose, plans and the licence are not.
         #
-        # Written to fail open: any surprise here leaves code=true, because a
-        # skipped job satisfies a required status check and a gate that guesses
-        # wrong in the other direction would merge untested code.
+        # An allowlist, so the question is "did any source change?" rather than
+        # "was everything recognisably documentation?". The cost is that a new
+        # top-level directory of code is invisible here until it is added below.
         run: |
           code=true
           if [ "$EVENT" = "pull_request" ]; then
             # HEAD is the merge commit GitHub built for this PR and its first
-            # parent is the base branch, so this is exactly the PR's diff.
-            files=$(git diff --name-only HEAD^1 HEAD)
-            # Default-deny: a path has to be recognisably documentation to be
-            # ignored, so anything unfamiliar -- a new build script, a workflow
-            # -- counts as code until this list says otherwise.
-            docs='(^|/)[^/]*\.md$|^docs/|^\.claude/|^LICENSE$|^\.gitignore$'
-            if [ -n "$files" ] && ! printf '%s\n' "$files" | grep -qvE "$docs"; then
-              code=false
-              echo "documentation only -- skipping build, test and lint:"
+            # parent is the base branch, so this is exactly the PR's diff. If it
+            # cannot be worked out, code stays true and everything runs.
+            if files=$(git diff --name-only HEAD^1 HEAD); then
+              src='^crates/|^apps/|^Cargo\.(toml|lock)$|^\.cargo/|^\.github/workflows/|^justfile$|^mise\.toml$|^rust-toolchain'
+              # Markdown is documentation wherever it sits, including beside code.
+              hits=$(printf '%s\n' "$files" | grep -E "$src" | grep -vE '\.md$')
+              if [ -z "$hits" ]; then
+                code=false
+                echo "no source changes -- skipping build, test and lint:"
+              fi
+              printf '%s\n' "$files" | sed 's/^/  /'
             fi
-            printf '%s\n' "$files" | sed 's/^/  /'
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
 
