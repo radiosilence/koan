@@ -40,67 +40,55 @@ pub fn cmd_remote_sync(full: bool) {
     let db = open_db();
     let start = std::time::Instant::now();
 
-    match koan_core::remote::sync::sync_library(
+    let synced = match koan_core::helpers::sync_remote(
         &db,
         &client,
         full,
         &cfg.remote.url,
         &cfg.remote.username,
     ) {
-        Ok(result) => {
-            let elapsed = start.elapsed();
-            let headline = if result.is_complete() {
-                "sync complete".green().bold().to_string()
-            } else {
-                "sync incomplete".yellow().bold().to_string()
-            };
-            println!(
-                "{} {} {} artists, {} albums, {} tracks",
-                headline,
-                format!("({:.1}s)", elapsed.as_secs_f64()).dimmed(),
-                result.artists_synced.to_string().bold(),
-                result.albums_synced.to_string().bold(),
-                result.tracks_synced.to_string().bold(),
-            );
-            if !result.is_complete() {
-                eprintln!(
-                    "{} {} album(s) could not be fetched — the sync watermark was left \
-                     unchanged, so the next sync will retry them",
-                    "warning:".yellow().bold(),
-                    result.albums_failed.to_string().bold(),
-                );
-            }
-        }
+        Ok(synced) => synced,
         Err(e) => {
             eprintln!("{} {}", "sync failed:".red().bold(), e);
             std::process::exit(1);
         }
+    };
+
+    let library = &synced.library;
+    let elapsed = start.elapsed();
+    let headline = if library.is_complete() {
+        "sync complete".green().bold().to_string()
+    } else {
+        "sync incomplete".yellow().bold().to_string()
+    };
+    println!(
+        "{} {} {} artists, {} albums, {} tracks",
+        headline,
+        format!("({:.1}s)", elapsed.as_secs_f64()).dimmed(),
+        library.artists_synced.to_string().bold(),
+        library.albums_synced.to_string().bold(),
+        library.tracks_synced.to_string().bold(),
+    );
+    if !library.is_complete() {
+        eprintln!(
+            "{} {} album(s) could not be fetched — the sync watermark was left \
+             unchanged, so the next sync will retry them",
+            "warning:".yellow().bold(),
+            library.albums_failed.to_string().bold(),
+        );
     }
 
-    // Sync favourites: push local → remote, pull remote → local.
-    print!("{}", "syncing favourites...".dimmed());
-    use std::io::Write;
-    std::io::stdout().flush().ok();
-
-    let synced = koan_core::helpers::reconcile_favourites(&db, &client);
-
     println!(
-        "\r{} {} pushed, {} imported",
+        "{} {} pushed, {} imported",
         "favourites synced:".green().bold(),
-        synced.pushed.to_string().bold(),
-        synced.imported.to_string().bold(),
+        synced.favourites.pushed.to_string().bold(),
+        synced.favourites.imported.to_string().bold(),
     );
-
-    print!("{}", "syncing playlists...".dimmed());
-    std::io::stdout().flush().ok();
-
-    let playlists = koan_core::playlists::reconcile_playlists(&db, &client, &cfg.remote.username);
-
     println!(
-        "\r{} {} pulled, {} pushed",
+        "{} {} pulled, {} pushed",
         "playlists synced:".green().bold(),
-        playlists.pulled.to_string().bold(),
-        playlists.pushed.to_string().bold(),
+        synced.playlists.pulled.to_string().bold(),
+        synced.playlists.pushed.to_string().bold(),
     );
 }
 

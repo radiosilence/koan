@@ -180,19 +180,18 @@ pub fn spawn_auto_sync(
                     && let Ok(db) = Database::open(&db_path)
                 {
                     on_state(true);
-                    match crate::remote::sync::sync_library(
-                        &db,
-                        &client,
-                        false,
-                        &cfg.remote.url,
-                        &cfg.remote.username,
-                    ) {
-                        Ok(r) => log::info!(
-                            "auto sync: {} artists, {} albums, {} tracks ({} albums failed)",
-                            r.artists_synced,
-                            r.albums_synced,
-                            r.tracks_synced,
-                            r.albums_failed
+                    match sync_remote(&db, &client, false, &cfg.remote.url, &cfg.remote.username) {
+                        Ok(s) => log::info!(
+                            "auto sync: {} artists, {} albums, {} tracks ({} albums failed); \
+                             favourites {}↑ {}↓; playlists {}↓ {}↑",
+                            s.library.artists_synced,
+                            s.library.albums_synced,
+                            s.library.tracks_synced,
+                            s.library.albums_failed,
+                            s.favourites.pushed,
+                            s.favourites.imported,
+                            s.playlists.pulled,
+                            s.playlists.pushed,
                         ),
                         Err(e) => log::warn!("auto sync failed: {e}"),
                     }
@@ -475,6 +474,39 @@ pub fn sync_favourite_to_remote(db: &Database, path: &Path, star: bool) {
             }
         })
         .ok();
+}
+
+/// Everything a sync is.
+#[derive(Debug, Default)]
+pub struct FullSync {
+    pub library: crate::remote::sync::SyncResult,
+    pub favourites: FavouriteSync,
+    pub playlists: crate::playlists::PlaylistSync,
+}
+
+/// Pull the library, then reconcile favourites and playlists.
+///
+/// One function because there are four callers — the app, the CLI, the GraphQL
+/// job and koan's own auto-sync — and they had each been told separately what a
+/// sync consists of. Two of them never heard about playlists, and the auto-sync
+/// had never heard about favourites either, so a star made on the server only
+/// arrived if you happened to press the button yourself.
+///
+/// The library comes first: favourites and playlists both name tracks by the
+/// server's ids, and neither can find a track the library has not seen yet.
+pub fn sync_remote(
+    db: &Database,
+    client: &SubsonicClient,
+    full: bool,
+    url: &str,
+    username: &str,
+) -> Result<FullSync, crate::remote::sync::SyncError> {
+    let library = crate::remote::sync::sync_library(db, client, full, url, username)?;
+    Ok(FullSync {
+        library,
+        favourites: reconcile_favourites(db, client),
+        playlists: crate::playlists::reconcile_playlists(db, client, username),
+    })
 }
 
 /// What a favourites reconciliation did.

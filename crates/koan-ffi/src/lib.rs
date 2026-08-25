@@ -1677,7 +1677,7 @@ impl KoanEngine {
                 }
             })?;
 
-            let result = koan_core::remote::sync::sync_library(
+            let synced = koan_core::helpers::sync_remote(
                 &db,
                 &client,
                 full,
@@ -1688,22 +1688,15 @@ impl KoanEngine {
                 message: e.to_string(),
             })?;
 
-            // Favourites are part of a sync, not a separate errand. Without this
-            // a star made on the server — or on another machine — never reaches
-            // the app, and one made here only leaves if you happen to run the CLI.
-            let favourites = koan_core::helpers::reconcile_favourites(&db, &client);
-            let playlists =
-                koan_core::playlists::reconcile_playlists(&db, &client, &cfg.remote.username);
-
             Ok(SyncSummary {
-                artists: result.artists_synced as u32,
-                albums: result.albums_synced as u32,
-                tracks: result.tracks_synced as u32,
-                albums_failed: result.albums_failed as u32,
-                favourites_pushed: favourites.pushed as u32,
-                favourites_imported: favourites.imported as u32,
-                playlists_pulled: playlists.pulled as u32,
-                playlists_pushed: playlists.pushed as u32,
+                artists: synced.library.artists_synced as u32,
+                albums: synced.library.albums_synced as u32,
+                tracks: synced.library.tracks_synced as u32,
+                albums_failed: synced.library.albums_failed as u32,
+                favourites_pushed: synced.favourites.pushed as u32,
+                favourites_imported: synced.favourites.imported as u32,
+                playlists_pulled: synced.playlists.pulled as u32,
+                playlists_pushed: synced.playlists.pushed as u32,
             })
         })
         .await
