@@ -47,6 +47,7 @@ struct HistoryView: View {
                     }
                 }
                 .listStyle(.inset)
+                .clearsSelection($selection)
                 .contextMenu(forSelectionType: Int64.self) { ids in
                     menu(for: ids)
                 } primaryAction: { ids in

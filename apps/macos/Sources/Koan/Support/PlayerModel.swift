@@ -308,13 +308,6 @@ final class PlayerModel {
         seek(toMs: UInt64(min(target, Int64(clock.durationMs))))
     }
 
-    /// Favourite whatever is playing. No-op when the queue item has no library
-    /// row behind it.
-    func toggleFavouriteCurrent() {
-        guard let trackId = currentTrackId else { return }
-        toggleFavourite(trackId: trackId)
-    }
-
     /// Hold the requested position until the engine agrees with it.
     ///
     /// The seek is asynchronous — it goes down a channel to the player thread,
@@ -408,11 +401,6 @@ final class PlayerModel {
     /// Flips it without the caller having to read the current value — menus
     /// that read observable state rebuild themselves constantly.
     func toggleRadio() { setRadio(!radioEnabled) }
-
-    /// Toggles, and returns nothing — the library view refetches to pick it up.
-    func toggleFavourite(trackId: Int64) {
-        attempt { _ = try await self.engine.toggleFavourite(trackId: trackId) }
-    }
 
     // MARK: - Edit actions
     //
