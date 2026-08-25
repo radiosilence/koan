@@ -11,7 +11,6 @@
 
   Playback is reconciled with the playlist after every undo and redo, not just this one: any undo that takes items away can strand the engine the same way — undoing an add while the added track is playing did it too. If something was playing, the restored cursor picks up where the queue says it was; if it was paused or stopped, the undo stays quiet, because an undo is not a reason to start the music. The position is not part of what a replace snapshots, so the track starts again rather than resuming mid-way.
 
-- **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
 
 - **The format badge latched a rate the device was on its way off.** A 48 kHz track followed by a 44.1 kHz one publishes the new track's info before the device has finished reclocking, and a switch is not instant — the better part of a second on USB. A front end polling in that window paired 44.1 with the outgoing 48, and then never let go: the macOS app only republished the format when the codec, source rate or bit depth changed, and none of those move once the rate lands. "FLAC 16/44.1 → 48" could sit there, wrong, for half an hour. The output rate now reads as unknown while the device is between rates, rather than as the last track's.
 
@@ -25,7 +24,6 @@
 
 ### Changed
 
-- **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
 - **The shortcuts sheet says what the menus say.** It listed the single-key shortcuts and then told you the rest were "in the menus", which is true and no help — nobody opens six menus to find out that Back is ⌘[. The ⌘ shortcuts are now a second table on the same sheet, and both halves are generated from the same declarations the menu bar is built from, so they cannot drift.
 - **Leaving the queue and coming back keeps your place.** The stage is one `switch`, so every move destroys the page it left and takes its scroll position with it. The queue remembers where it was.
 - **Playing something no longer throws you at the queue.** Every play button replaced the queue and then moved you to it, which is backwards: the queue runs behind whatever you are doing and is somewhere you go, not somewhere you are sent. Play a track from a record, a row in favourites, a selection in history, an album from the picker — you stay where you were and the music changes.
