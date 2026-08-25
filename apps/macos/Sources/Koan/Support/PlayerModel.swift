@@ -135,6 +135,12 @@ final class PlayerModel {
 
     private func rebuildQueue() async {
         queue = await engine.queue()
+        // Here rather than at one of the callers: the queue is rebuilt from
+        // two places — a queue event, and a playback event carrying a version
+        // that moved — and only one of them used to say so. Which of the two
+        // arrived last decided whether anything watching the queue heard about
+        // it, so a playlist would light up as locked sometimes and not others.
+        defer { onQueueChanged?() }
         queuedByTrack = Dictionary(
             queue.compactMap { item in item.trackId.map { ($0, item) } },
             // A track queued twice: prefer the entry that is actually doing
@@ -193,7 +199,6 @@ final class PlayerModel {
     fileprivate func applyQueueChange() async {
         await rebuildQueue()
         await tick()
-        onQueueChanged?()
     }
 
     /// Position moved. The only genuinely periodic event, and the only thing

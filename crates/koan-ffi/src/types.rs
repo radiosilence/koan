@@ -473,6 +473,18 @@ impl From<queries::PlaylistRow> for Playlist {
     }
 }
 
+/// What the queue still is, when it is still something.
+///
+/// A queue that came from a playlist or a record and has not been touched since
+/// is still that thing, and saying so is what makes following legible — you can
+/// see why an edit to the playlist moved something in the queue, and you can
+/// see the moment it stops.
+#[derive(uniffi::Enum, Debug, Clone)]
+pub enum QueueLock {
+    Playlist { playlist: Playlist },
+    Album { album: Album },
+}
+
 /// One row of a playlist: the track, and the entry it sits in.
 ///
 /// The id is the entry's. It is what a queue item remembers, so a client can

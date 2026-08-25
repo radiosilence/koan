@@ -61,7 +61,9 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
   Locked is derived rather than tracked: queue items carry the playlist row they came from, so the queue is locked exactly when its entries are that playlist's, in that order. Nothing to keep in sync, nothing to persist, and it cannot get stuck — a queue that stops matching stops being locked, and one that matches again is locked again. Playing a playlist shuffled scrambles the order on purpose, so that queue is not locked, which is the right answer rather than a special case.
 
-  The queue says so: while it is locked it is headed **Playing *<playlist>***, with the playlist's mosaic beside it, and goes back to plain **Queue** the moment it is not. A rule this quiet has to be visible, or the first silent update reads as koan moving things on its own.
+  Records lock too, and need no provenance to do it: an album *is* an ordered set of tracks, so the queue being that album is a question about what the queue holds — which means it still answers for a queue restored from a previous session, where nothing remembers what was played. A record cannot be edited, so there is nothing to follow; it just says what you are listening to.
+
+  The queue says so: while it is locked it is headed **Playing *<name>***, with the playlist's mosaic or the record's sleeve beside it, and goes back to plain **Queue** the moment it is not. A rule this quiet has to be visible, or the first silent update reads as koan moving things on its own.
 
 
 - **The shortcuts sheet says what the menus say.** It listed the single-key shortcuts and then told you the rest were "in the menus", which is true and no help — nobody opens six menus to find out that Back is ⌘[. The ⌘ shortcuts are now a second table on the same sheet, and both halves are generated from the same declarations the menu bar is built from, so they cannot drift.

@@ -37,14 +37,17 @@ final class PlaylistsModel {
     /// had the first time it was drawn — for a new playlist, nothing at all.
     private var coverStamp: [Int64: String] = [:]
 
-    /// The playlist the queue is still exactly, if it is one.
+    /// What the queue is still exactly, if it is still something.
     ///
-    /// While this is set, the queue *follows* that playlist: an edit there is
-    /// an edit to what you are listening to. It clears the moment the queue is
-    /// rearranged, added to, or extended by radio — and the header says so
-    /// either way, because a rule this quiet has to be visible or the first
-    /// silent update reads as the app moving things on its own.
-    private(set) var lockedTo: Playlist?
+    /// While this names a playlist, the queue *follows* it: an edit there is an
+    /// edit to what you are listening to. A record cannot be edited, so locking
+    /// to one only says what you are listening to — which is worth saying.
+    ///
+    /// It clears the moment the queue is rearranged, added to, or extended by
+    /// radio, and the header says so either way: a rule this quiet has to be
+    /// visible, or the first silent update reads as the app moving things on
+    /// its own.
+    private(set) var lockedTo: QueueLock?
 
     /// Ask the engine what the queue is. Cheap — two indexed reads — and only
     /// worth doing when the queue or a playlist has actually moved.
