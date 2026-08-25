@@ -34,6 +34,9 @@ struct QueueView: View {
     /// change instead: written, never read, so it stays out of the render path.
     @State private var selection: Set<String> = []
 
+    /// Bound so the list can be put back where it was left.
+    @State private var scrollPosition = ScrollPosition()
+
     /// Album headings are rows in their own right, not decoration attached to
     /// the first track. That is what lets an album be selected and dragged as a
     /// unit — and stops selecting a track from lighting up the heading above it,
@@ -62,6 +65,19 @@ struct QueueView: View {
                         .onMove(perform: move)
                     }
                     .listStyle(.inset)
+                    // The stage is one `switch`, so leaving the queue destroys
+                    // this view and its scroll position with it. Coming back
+                    // should be coming back, not starting again.
+                    .scrollPosition($scrollPosition)
+                    .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                        geometry.contentOffset.y
+                    } action: { _, y in
+                        ui.queueScrollY = y
+                    }
+                    .onAppear {
+                        guard ui.queueScrollY > 0 else { return }
+                        scrollPosition.scrollTo(y: ui.queueScrollY)
+                    }
                     // Otherwise the List paints over the wash and it stops at
                     // the header in a hard line, rather than fading out across
                     // the first few rows.
@@ -95,6 +111,7 @@ struct QueueView: View {
                     .onChange(of: player.selectAllToken) { _, _ in
                         selection = Set(rows.map(\.id))
                     }
+                    .clearsSelection($selection)
                 }
             }
         }
@@ -135,6 +152,7 @@ struct QueueView: View {
                 Text("\(selectedItemIds.count) selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button("Clear") { selection = [] }
                 Button("Remove", role: .destructive) { removeSelected() }
             }
 

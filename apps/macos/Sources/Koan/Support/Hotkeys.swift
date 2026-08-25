@@ -9,12 +9,27 @@ struct Hotkey {
         case playback = "Playback"
         case navigation = "Navigation"
         case view = "View"
+        case edit = "Edit"
+        case library = "Library"
     }
 
     let keys: [String]
     let label: String
     let group: Group
     let action: () -> Void
+
+    /// What `charactersIgnoringModifiers` reports for escape, so it can be an
+    /// ordinary row in the table and document itself like everything else.
+    static let escape = "\u{1b}"
+
+    /// A key as the sheet should print it.
+    static func caption(_ key: String) -> String {
+        switch key {
+        case " ": "space"
+        case escape: "esc"
+        default: key
+        }
+    }
 }
 
 /// Bare-key shortcuts, live everywhere except where a key means something else.
@@ -104,6 +119,7 @@ extension Hotkeys {
     /// ⌘ shortcuts in the menu bar cover what the menus already say.
     static func standard(
         player: PlayerModel,
+        library: LibraryModel,
         nav: Navigator,
         ui: UIState
     ) -> Hotkeys {
@@ -123,8 +139,12 @@ extension Hotkeys {
             Hotkey(keys: ["."], label: "Forward 10 seconds", group: .playback) {
                 player.seek(bySeconds: 10)
             },
+            // Through the library, not the engine: the hearts read
+            // `favouriteTrackIds`, so toggling underneath it flipped the
+            // database and left every heart in the app showing the old answer.
             Hotkey(keys: ["f"], label: "Favourite this track", group: .playback) {
-                player.toggleFavouriteCurrent()
+                guard let trackId = player.currentTrackId else { return }
+                library.toggleFavourite(track: trackId)
             },
             Hotkey(keys: ["R"], label: "Radio mode", group: .playback) {
                 player.toggleRadio()
@@ -142,6 +162,9 @@ extension Hotkeys {
             Hotkey(keys: ["r"], label: "Artists", group: .navigation) {
                 nav.show(.artists)
             },
+            Hotkey(keys: ["q"], label: "Queue", group: .navigation) {
+                nav.show(.queue)
+            },
             Hotkey(keys: ["g"], label: "Top of the queue", group: .navigation) {
                 nav.show(.queue)
                 ui.jumpQueue(to: .top)
@@ -157,6 +180,9 @@ extension Hotkeys {
             Hotkey(keys: ["z"], label: "Zoom the cover", group: .view) {
                 guard player.currentTrackId != nil else { return }
                 ui.showingArtwork = true
+            },
+            Hotkey(keys: [Hotkey.escape], label: "Clear selection", group: .view) {
+                ui.clearSelection()
             },
             Hotkey(keys: ["?"], label: "This list", group: .view) {
                 ui.showingShortcuts = true

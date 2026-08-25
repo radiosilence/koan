@@ -52,6 +52,7 @@ struct TrackListView: View {
                         }
                     }
                     .listStyle(.inset)
+                    .clearsSelection($selection)
                     // Gives up its ground only where there is a wash to show:
                     // otherwise the List paints over it and the record's colour
                     // stops in a line under the header. Without a cover — a
