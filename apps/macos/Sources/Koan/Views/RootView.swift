@@ -333,7 +333,10 @@ private struct StageView: View {
             TrackListView(
                 title: "Favourites",
                 subtitle: Format.count(Int64(library.favourites.count), "track"),
-                tracks: library.favourites
+                tracks: library.favourites,
+                // Gathered from the whole library, so a row's cover and album
+                // are what tell it from the one above it.
+                mixedAlbums: true
             )
         case .section(.playHistory):
             HistoryView()
@@ -357,16 +360,21 @@ private struct PageGround: View {
 
     @Environment(Navigator.self) private var nav
 
+    /// Whether this page is washed in a record's colour, or is its own ground.
+    private var washed: Bool {
+        if case .album = nav.current { true } else { nav.section == .queue }
+    }
+
     var body: some View {
-        if case .album = nav.current {
-            ZStack {
-                Rectangle().fill(.background)
+        ZStack {
+            // Always opaque, never a hole onto the window. Letting the queue
+            // show the window's wash through itself meant that for one frame
+            // between two pages neither was painted, and the bare wash filled
+            // the window — the flash on the first keystroke of a search.
+            Rectangle().fill(.background)
+            if washed {
                 ArtworkBleed(source: source, drifts: drifts)
             }
-        } else if nav.section == .queue {
-            Color.clear
-        } else {
-            Rectangle().fill(.background)
         }
     }
 }
