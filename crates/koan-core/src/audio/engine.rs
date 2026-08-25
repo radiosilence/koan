@@ -7,14 +7,16 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use coreaudio_sys::*;
 use thiserror::Error;
 
+#[cfg(target_os = "macos")]
 use super::device;
 
 #[derive(Debug, Error)]
 pub enum EngineError {
     #[error("CoreAudio error: {0}")]
     OSStatus(i32),
-    #[error("failed to find HAL output component")]
-    NoHalOutput,
+    #[error("failed to find the output audio component")]
+    NoOutputComponent,
+    #[cfg(target_os = "macos")]
     #[error("device error: {0}")]
     Device(#[from] device::DeviceError),
 }
@@ -48,10 +50,16 @@ struct CallbackData {
 // Consumer accessed outside the callback), this impl must be revisited.
 unsafe impl Send for CallbackData {}
 
-/// CoreAudio AUHAL output engine.
+/// CoreAudio output engine — AUHAL on macOS, RemoteIO on iOS.
 ///
-/// Creates an AudioUnit targeting a specific device, sets the stream format
-/// to match the source, and installs a render callback that drains the ring buffer.
+/// Creates an AudioUnit, sets the stream format to match the source, and
+/// installs a render callback that drains the ring buffer.
+///
+/// The two platforms differ in exactly two properties: which output component
+/// to instantiate, and whether a device can be named at all. Everything below
+/// that — the format, the callback, and above all the teardown order that
+/// stopped it double-freeing CoreAudio's buffer list — is one implementation on
+/// purpose. iOS has no second set of those bugs to find.
 pub struct AudioEngine {
     audio_unit: AudioUnit,
     callback_data: *mut CallbackData,
@@ -69,8 +77,11 @@ unsafe impl Send for AudioEngine {}
 
 impl AudioEngine {
     /// Create an engine targeting the given device, expecting the given format.
+    ///
+    /// `device_id` is a CoreAudio `AudioDeviceID` on macOS. iOS has no such
+    /// thing — the route is the session's business, not ours — and ignores it.
     pub fn new(
-        device_id: AudioDeviceID,
+        device_id: u32,
         sample_rate: f64,
         channels: u32,
         consumer: rtrb::Consumer<f32>,
@@ -81,7 +92,12 @@ impl AudioEngine {
 
         let desc = AudioComponentDescription {
             componentType: kAudioUnitType_Output,
+            #[cfg(target_os = "macos")]
             componentSubType: kAudioUnitSubType_HALOutput,
+            // AUHAL is declared inside `#if !TARGET_OS_IPHONE`; RemoteIO is what
+            // the `#else` offers, and it is the only output unit iOS has.
+            #[cfg(target_os = "ios")]
+            componentSubType: kAudioUnitSubType_RemoteIO,
             componentManufacturer: kAudioUnitManufacturer_Apple,
             componentFlags: 0,
             componentFlagsMask: 0,
@@ -94,13 +110,15 @@ impl AudioEngine {
 
         let component = unsafe { AudioComponentFindNext(ptr::null_mut(), &desc) };
         if component.is_null() {
-            return Err(EngineError::NoHalOutput);
+            return Err(EngineError::NoOutputComponent);
         }
 
         let mut audio_unit: AudioUnit = ptr::null_mut();
         check(unsafe { AudioComponentInstanceNew(component, &mut audio_unit) })?;
 
-        // Set the output device.
+        // Set the output device. iOS has no device to set: the route is chosen
+        // by the audio session and can change under a running unit.
+        #[cfg(target_os = "macos")]
         check(unsafe {
             AudioUnitSetProperty(
                 audio_unit,
@@ -108,9 +126,11 @@ impl AudioEngine {
                 kAudioUnitScope_Global,
                 0,
                 &device_id as *const _ as *const c_void,
-                mem::size_of::<AudioDeviceID>() as u32,
+                mem::size_of::<u32>() as u32,
             )
         })?;
+        #[cfg(not(target_os = "macos"))]
+        let _ = device_id;
 
         // Set stream format on the input scope of the output element.
         // This tells the AudioUnit what format we'll provide in the render callback.
