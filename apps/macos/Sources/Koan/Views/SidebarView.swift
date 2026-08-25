@@ -14,15 +14,11 @@ struct SidebarView: View {
     /// Highlights the Queue row while something is held over it — without it a
     /// drop is a guess.
     @State private var queueDropTargeted = false
-    /// Lit while something is held over the Playlists heading, which is where a
-    /// drop makes a new playlist.
+    /// Lit while something is held over "New Playlist…", which is where a drop
+    /// makes one.
     @State private var newPlaylistDropTargeted = false
     /// The playlist a drop is hovering over, so only that row lights up.
     @State private var playlistDropTarget: Int64?
-    /// Tracks waiting for a name. Set by a drop on the heading; the sheet that
-    /// takes the name is what finally creates the playlist.
-    @State private var naming: [PlayableTransfer]?
-    @State private var newName = ""
     /// The playlist being renamed, and what it is being renamed to.
     @State private var renaming: Playlist?
     @State private var renameTo = ""
@@ -111,31 +107,6 @@ struct SidebarView: View {
             searchFocused = true
         }
         .safeAreaInset(edge: .bottom) { footer }
-        // A drop onto the heading has tracks but no name yet; this is where it
-        // gets one, and only then does the playlist exist.
-        .alert("New Playlist", isPresented: Binding(
-            get: { naming != nil },
-            set: { if !$0 { naming = nil } }
-        )) {
-            TextField("Name", text: $newName)
-            Button("Cancel", role: .cancel) {
-                naming = nil
-                newName = ""
-            }
-            Button("Create") {
-                let dropped = naming ?? []
-                let name = newName
-                naming = nil
-                newName = ""
-                Task {
-                    guard let created = await playlists.create(named: name, dropped: dropped)
-                    else { return }
-                    nav.open(playlist: created.id)
-                }
-            }
-        } message: {
-            Text(namingMessage)
-        }
         .alert("Rename Playlist", isPresented: Binding(
             get: { renaming != nil },
             set: { if !$0 { renaming = nil } }
@@ -153,11 +124,14 @@ struct SidebarView: View {
 
     // MARK: - Playlists
 
-    /// The playlists, in the order they were arranged.
+    /// The playlists, in the order they were arranged, and a standing row for
+    /// making another.
     ///
-    /// The heading is itself a drop target: dropping onto it asks for a name and
-    /// makes a new playlist, which is the shortest path from "these tracks" to
-    /// "a playlist of these tracks".
+    /// That row is the section's whole answer when there are none — a heading
+    /// with nothing under it says only that the feature exists somewhere — and
+    /// it is where a drop makes a new playlist out of what you dropped. The
+    /// heading takes a drop too, but a row is the target a `List` reliably
+    /// delivers to, and it is the one you can see.
     @ViewBuilder
     private var playlistSection: some View {
         Section {
@@ -184,22 +158,45 @@ struct SidebarView: View {
                 order.move(fromOffsets: source, toOffset: destination)
                 playlists.reorder(to: order)
             }
+
+            newPlaylistRow
         } header: {
             Text("Playlists")
                 // Full width so the whole heading takes a drop, not just the
-                // seven characters of the word.
+                // eight characters of the word.
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .contentShape(Rectangle())
                 .dropDestination(for: PlayableTransfer.self) { dropped, _ in
-                    naming = dropped
+                    playlists.beginNaming(dropped: dropped)
                     return true
-                } isTargeted: { newPlaylistDropTargeted = $0 }
-                .background(
-                    newPlaylistDropTargeted
-                        ? RoundedRectangle(cornerRadius: 4).fill(.tint.opacity(0.25))
-                        : nil
-                )
+                }
         }
+    }
+
+    /// Make one — by clicking, or by dropping something on it.
+    private var newPlaylistRow: some View {
+        // A Button, not a tap gesture on a row: this is a verb, and the list's
+        // own selection machinery is for places. A gesture here would also be
+        // competing with the one that selects rows, which is how clicks start
+        // landing about one in twenty.
+        Button { playlists.naming = [] } label: {
+            Label("New Playlist…", systemImage: "plus")
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+        }
+            .buttonStyle(.plain)
+            // Never somewhere the sidebar thinks you are.
+            .selectionDisabled()
+            .dropDestination(for: PlayableTransfer.self) { dropped, _ in
+                playlists.beginNaming(dropped: dropped)
+                return true
+            } isTargeted: { newPlaylistDropTargeted = $0 }
+            .listRowBackground(
+                newPlaylistDropTargeted
+                    ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25))
+                    : nil
+            )
     }
 
     @ViewBuilder
@@ -256,13 +253,6 @@ struct SidebarView: View {
         return ahead == 0
             ? "Radio — extending after this track"
             : "Radio — \(Format.count(Int64(ahead), "track")) ahead"
-    }
-
-    private var namingMessage: String {
-        let count = naming?.count ?? 0
-        return count == 1
-            ? "One thing dropped in. Give the playlist a name."
-            : "\(count) things dropped in. Give the playlist a name."
     }
 
     /// Library size and scan state. The counts are the quickest way to tell

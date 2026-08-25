@@ -16,9 +16,6 @@ struct QueueView: View {
     @Environment(UIState.self) private var ui
     @Environment(PlaylistsModel.self) private var playlists
 
-    @State private var savingPlaylist = false
-    @State private var playlistName = ""
-
 
     /// Grouped or one row per track. Persisted because it is a preference about
     /// how you listen rather than about the queue in front of you: an album
@@ -122,23 +119,6 @@ struct QueueView: View {
             player.importFiles(urls) { library.libraryChanged() }
             return true
         }
-        .alert("Save as Playlist", isPresented: $savingPlaylist) {
-            TextField("Name", text: $playlistName)
-            Button("Cancel", role: .cancel) { playlistName = "" }
-            Button("Save") {
-                let name = playlistName
-                playlistName = ""
-                Task {
-                    guard let created = await playlists.create(
-                        named: name,
-                        trackIds: player.queue.compactMap(\.trackId)
-                    ) else { return }
-                    nav.open(playlist: created.id)
-                }
-            }
-        } message: {
-            Text("Keeps what is in the queue, in this order. Playback position is not part of a playlist.")
-        }
     }
 
     // MARK: - Header
@@ -182,7 +162,9 @@ struct QueueView: View {
                 .help("Redo (⇧⌘Z)")
 
             Menu {
-                Button("Save as Playlist…") { savingPlaylist = true }
+                Button("Save as Playlist…") {
+                    playlists.naming = player.queue.compactMap(\.trackId)
+                }
                 Divider()
                 Button("Clear Queue", role: .destructive) { player.clearQueue() }
             } label: {

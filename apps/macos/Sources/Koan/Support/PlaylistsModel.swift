@@ -29,6 +29,16 @@ final class PlaylistsModel {
     /// per keystroke.
     private(set) var covers: [Int64: [AlbumArtwork.Source]] = [:]
 
+    /// Tracks waiting for a name, and the new playlist they will become.
+    ///
+    /// A request rather than a dialog, because the dialog cannot live where it
+    /// is asked for: a context menu is gone the instant you pick from it, and
+    /// takes any alert attached to it with it — which is why **Add to
+    /// Playlist → New Playlist…** did nothing at all. One host presents this,
+    /// somewhere that outlives the gesture. Empty is a real request: it means a
+    /// new playlist with nothing in it yet.
+    var naming: [Int64]?
+
     /// Set by `AppState`, so a slow reload shows up alongside everything else.
     weak var activity: ActivityModel?
     /// Somewhere to report a failure the user should see. Set by `AppState`.
@@ -102,10 +112,13 @@ final class PlaylistsModel {
         }
     }
 
-    /// Resolve dropped playables and put them in a new playlist. What dropping
-    /// onto the Playlists header means, once the name has been given.
-    func create(named name: String, dropped: [PlayableTransfer]) async -> Playlist? {
-        await create(named: name, trackIds: await resolve(dropped))
+    /// Ask for a name for a new playlist holding whatever was dropped.
+    ///
+    /// Resolving happens here rather than in the drop handler because a drop on
+    /// a sidebar row is over by the time the database answers, and an artist is
+    /// thousands of rows.
+    func beginNaming(dropped: [PlayableTransfer]) {
+        Task { naming = await resolve(dropped) }
     }
 
     func rename(id: Int64, to name: String) {

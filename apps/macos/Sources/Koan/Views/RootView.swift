@@ -265,6 +265,9 @@ struct RootView: View {
             }
 
         }
+        // Named here, not where it was asked for: most of the things that ask
+        // are context menus, and a menu takes its own alerts down with it.
+        .newPlaylistAlert()
         .sheet(isPresented: $ui.showingPicker) {
             PickerSheet(isPresented: $ui.showingPicker)
         }

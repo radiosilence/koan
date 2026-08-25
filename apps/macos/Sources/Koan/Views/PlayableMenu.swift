@@ -352,38 +352,24 @@ struct QueueButtons: View {
 /// drift. `resolve` defers working out the tracks until something is chosen —
 /// an artist is thousands of them, and resolving to *draw* a menu is what froze
 /// the window when the queue's context menus did it.
+///
+/// "New Playlist…" only records the request; the dialog belongs to the window.
+/// A context menu is gone the moment you pick from it, and an alert attached to
+/// its contents goes with it — which is why this used to do nothing at all.
 struct AddToPlaylistMenu: View {
     /// Hands the chosen action the track ids, off the main actor.
     let resolve: (@escaping @MainActor ([Int64]) -> Void) -> Void
 
     @Environment(PlaylistsModel.self) private var playlists
-    @Environment(Navigator.self) private var nav
-    @State private var naming = false
-    @State private var newName = ""
 
     var body: some View {
         Menu("Add to Playlist") {
-            Button("New Playlist…") { naming = true }
+            Button("New Playlist…") { resolve { playlists.naming = $0 } }
             if !playlists.playlists.isEmpty {
                 Divider()
                 ForEach(playlists.playlists, id: \.id) { playlist in
                     Button(playlist.name) {
                         resolve { playlists.add(trackIds: $0, to: playlist.id) }
-                    }
-                }
-            }
-        }
-        .alert("New Playlist", isPresented: $naming) {
-            TextField("Name", text: $newName)
-            Button("Cancel", role: .cancel) { newName = "" }
-            Button("Create") {
-                let name = newName
-                newName = ""
-                resolve { ids in
-                    Task {
-                        guard let created = await playlists.create(named: name, trackIds: ids)
-                        else { return }
-                        nav.open(playlist: created.id)
                     }
                 }
             }
