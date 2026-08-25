@@ -1262,63 +1262,41 @@ impl KoanEngine {
 
     /// Write the settings back.
     ///
-    /// Everything lands in `config.local.toml`, which is the machine-specific
-    /// layer — the same file the CLI writes and one the TUI will pick up. The
-    /// password is not here; it goes through `sign_in_remote`.
+    /// Each setting lands in the file that owns it — `Config::persist` routes
+    /// folders and the server account to `config.local.toml` and taste like
+    /// ReplayGain to `config.toml`. The password is not here; it goes through
+    /// `sign_in_remote`.
     pub async fn update_settings(self: Arc<Self>, s: Settings) -> Result<(), KoanError> {
         offload::offload(move || {
-            use toml::Value;
+            Config::persist(|cfg| {
+                cfg.library.folders = s
+                    .library_folders
+                    .iter()
+                    .map(|f| PathBuf::from(&f.path))
+                    .collect();
 
-            let cfg_err = |e: config::ConfigError| KoanError::BadArgument {
+                cfg.remote.enabled = s.remote_enabled;
+                cfg.remote.url = s.remote_url.clone();
+                cfg.remote.username = s.remote_username.clone();
+                cfg.remote.download_workers = s.download_workers.max(1) as usize;
+                cfg.remote.cache_limit = (!s.cache_limit.is_empty()).then(|| s.cache_limit.clone());
+                cfg.remote.auto_sync = s.auto_sync;
+                cfg.remote.auto_sync_interval_mins = s.auto_sync_interval_mins;
+
+                cfg.playback.replaygain = match s.replaygain.as_str() {
+                    "track" => config::ReplayGainMode::Track,
+                    "album" => config::ReplayGainMode::Album,
+                    _ => config::ReplayGainMode::Off,
+                };
+                cfg.playback.pre_amp_db = s.pre_amp_db;
+
+                cfg.radio.lookahead = s.radio_lookahead as usize;
+                cfg.radio.batch_size = (s.radio_batch_size.max(1)) as usize;
+                cfg.radio.discovery_weight = s.radio_discovery_weight.clamp(0.0, 1.0);
+            })
+            .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
-            };
-
-            let mut library = toml::map::Map::new();
-            library.insert(
-                "folders".into(),
-                Value::Array(
-                    s.library_folders
-                        .iter()
-                        .map(|f| Value::String(f.path.clone()))
-                        .collect(),
-                ),
-            );
-            Config::patch_local("library", &library).map_err(cfg_err)?;
-
-            let mut remote = toml::map::Map::new();
-            remote.insert("enabled".into(), Value::Boolean(s.remote_enabled));
-            remote.insert("url".into(), Value::String(s.remote_url.clone()));
-            remote.insert("username".into(), Value::String(s.remote_username.clone()));
-            remote.insert(
-                "download_workers".into(),
-                Value::Integer(s.download_workers.max(1) as i64),
-            );
-            remote.insert("cache_limit".into(), Value::String(s.cache_limit.clone()));
-            remote.insert("auto_sync".into(), Value::Boolean(s.auto_sync));
-            remote.insert(
-                "auto_sync_interval_mins".into(),
-                Value::Integer(s.auto_sync_interval_mins as i64),
-            );
-            Config::patch_local("remote", &remote).map_err(cfg_err)?;
-
-            let mut playback = toml::map::Map::new();
-            playback.insert("replaygain".into(), Value::String(s.replaygain.clone()));
-            playback.insert("pre_amp_db".into(), Value::Float(s.pre_amp_db));
-            Config::patch_local("playback", &playback).map_err(cfg_err)?;
-
-            let mut radio = toml::map::Map::new();
-            radio.insert("lookahead".into(), Value::Integer(s.radio_lookahead as i64));
-            radio.insert(
-                "batch_size".into(),
-                Value::Integer(s.radio_batch_size.max(1) as i64),
-            );
-            radio.insert(
-                "discovery_weight".into(),
-                Value::Float(s.radio_discovery_weight.clamp(0.0, 1.0)),
-            );
-            Config::patch_local("radio", &radio).map_err(cfg_err)?;
-
-            Ok(())
+            })
         })
         .await
     }
@@ -1370,10 +1348,11 @@ impl KoanEngine {
             let cfg = Config::load().unwrap_or_default();
             let _ = koan_core::credentials::delete_password(&cfg.remote.url);
 
-            let mut remote = toml::map::Map::new();
-            remote.insert("enabled".into(), toml::Value::Boolean(false));
-            remote.insert("password".into(), toml::Value::String(String::new()));
-            Config::patch_local("remote", &remote).map_err(|e| KoanError::BadArgument {
+            Config::persist(|cfg| {
+                cfg.remote.enabled = false;
+                cfg.remote.password = String::new();
+            })
+            .map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })
         })
@@ -1577,7 +1556,7 @@ impl KoanEngine {
             koan_core::format::parse(&pattern).map_err(|e| KoanError::BadArgument {
                 message: e.to_string(),
             })?;
-            Config::update_base(|cfg| {
+            Config::persist(|cfg| {
                 cfg.organize.patterns.insert(name, pattern);
             })
             .map_err(|e| KoanError::BadArgument {
@@ -1620,7 +1599,7 @@ impl KoanEngine {
         enabled: bool,
     ) -> Result<(), KoanError> {
         offload::offload(move || {
-            Config::update_base(|cfg| cfg.organize.move_ancillary = enabled).map_err(|e| {
+            Config::persist(|cfg| cfg.organize.move_ancillary = enabled).map_err(|e| {
                 KoanError::BadArgument {
                     message: e.to_string(),
                 }

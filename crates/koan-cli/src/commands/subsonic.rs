@@ -16,15 +16,14 @@ pub fn cmd_subsonic_setup(username: &str) {
         .inspect_err(|e| eprintln!("{} keychain unavailable: {}", "warning:".yellow(), e))
         .is_ok();
 
-    // config.local.toml, like [remote]: which machine serves Subsonic is
-    // machine-specific, and the secret must never reach a committed file.
-    let mut values = toml::map::Map::new();
-    values.insert("enabled".into(), toml::Value::Boolean(true));
-    values.insert("username".into(), toml::Value::String(username.to_string()));
-    if !stored_in_keychain {
-        values.insert("password".into(), toml::Value::String(secret.clone()));
-    }
-    if let Err(e) = Config::patch_local("subsonic", &values) {
+    let fallback_secret = (!stored_in_keychain).then(|| secret.clone());
+    if let Err(e) = Config::persist(|cfg| {
+        cfg.subsonic.enabled = true;
+        cfg.subsonic.username = username.to_string();
+        if let Some(secret) = fallback_secret {
+            cfg.subsonic.password = secret;
+        }
+    }) {
         eprintln!("{} {}", "config error:".red().bold(), e);
         std::process::exit(1);
     }
@@ -37,7 +36,7 @@ pub fn cmd_subsonic_setup(username: &str) {
         if stored_in_keychain {
             "OS keychain"
         } else {
-            "config.toml"
+            "config.local.toml"
         }
     );
     println!(
@@ -77,10 +76,10 @@ pub fn cmd_subsonic_status() {
 /// `koan subsonic disable` — stop serving `/rest/*` and drop the secret.
 pub fn cmd_subsonic_disable() {
     let _ = credentials::delete_password(SUBSONIC_CREDENTIAL_ACCOUNT);
-    let mut values = toml::map::Map::new();
-    values.insert("enabled".into(), toml::Value::Boolean(false));
-    values.insert("password".into(), toml::Value::String(String::new()));
-    if let Err(e) = Config::patch_local("subsonic", &values) {
+    if let Err(e) = Config::persist(|cfg| {
+        cfg.subsonic.enabled = false;
+        cfg.subsonic.password = String::new();
+    }) {
         eprintln!("{} {}", "config error:".red().bold(), e);
         std::process::exit(1);
     }
