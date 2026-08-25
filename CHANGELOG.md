@@ -14,6 +14,8 @@
 
 - **The favourite key flipped the database and nothing else.** `f` and ⌘D went straight to the engine, but every heart in the app reads `LibraryModel.favouriteTrackIds` — so the row changed underneath a UI that kept showing the old answer, and pressing the heart afterwards looked like it was undoing a favourite you had just added. Both routes go through the library now, which is what the hearts read.
 
+- **The format badge could claim bit-perfect while the HAL was resampling.** The output rate behind "FLAC 16/44.1 → 48" was read once, when the engine was built, and never again. But the device rate belongs to no one app: Audio MIDI Setup, Focusrite Control, anything else holding the device can move it a second later, and koan then resamples to reach it without noticing — or, the other way round, goes on asserting a match that no longer holds. Since koan does not take hog mode, losing the rate is expected; reporting it wrongly is not. The rate is now watched for as long as the engine lives, and both front ends follow it. The macOS app also had to be told that the output rate is a reason to redraw the badge — it only republished the format when the codec, source rate or bit depth changed, none of which move when another app steals the clock.
+
 ### Added
 
 - **`q` goes to the queue.** `g` and `G` already went to its ends; there was no key for simply going there.
