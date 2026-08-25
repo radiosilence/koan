@@ -49,6 +49,21 @@ pub trait AudioBackend: Send + Sync {
     /// On Linux/cpal this is a no-op — the rate is set at stream creation.
     fn set_device_sample_rate(&self, device: &DeviceInfo, rate: f64) -> Result<f64, BackendError>;
 
+    /// Subscribe to nominal sample rate changes on a device.
+    ///
+    /// The rate is device-wide and anyone can move it — another app, Audio MIDI
+    /// Setup, the vendor's control panel. Whatever koan settled on at engine
+    /// creation is only true until one of them does, so the front ends need to
+    /// hear about it rather than re-reading a snapshot. Dropping the returned
+    /// watch unsubscribes. `None` where the platform has no such notification.
+    fn watch_device_sample_rate(
+        &self,
+        _device: &DeviceInfo,
+        _on_change: Box<dyn Fn(f64) + Send + Sync>,
+    ) -> Option<Box<dyn SampleRateWatch>> {
+        None
+    }
+
     /// Create an audio engine targeting a device at a specific format.
     /// Takes ownership of the rtrb consumer.
     fn create_engine(
@@ -60,6 +75,9 @@ pub trait AudioBackend: Send + Sync {
         samples_played: Arc<AtomicU64>,
     ) -> Result<Box<dyn AudioEngineHandle>, BackendError>;
 }
+
+/// A live sample rate subscription. Unsubscribes on drop.
+pub trait SampleRateWatch: Send + Sync {}
 
 /// Handle to a running audio engine. Start/stop control.
 pub trait AudioEngineHandle: Send {

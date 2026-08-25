@@ -13,25 +13,14 @@ pub fn cmd_remote_login(url: &str, username: &str) {
         std::process::exit(1);
     });
 
-    let client = koan_core::remote::client::SubsonicClient::new(url, username, &password);
-    match client.ping() {
-        Ok(()) => println!("{} {}", "connected".green(), url),
-        Err(e) => {
-            eprintln!("{} {}", "connection failed:".red().bold(), e);
-            std::process::exit(1);
-        }
-    }
-
-    if let Err(e) = config::Config::persist(|cfg| {
-        cfg.remote.enabled = true;
-        cfg.remote.url = url.to_string();
-        cfg.remote.username = username.to_string();
-        cfg.remote.password = password;
-    }) {
-        eprintln!("{} {}", "config error:".red().bold(), e);
+    // Pings, stores the password in the platform credential store, and clears
+    // any plaintext copy an older koan left in config.local.toml.
+    if let Err(e) = koan_core::helpers::set_remote_credentials(url, username, &password) {
+        eprintln!("{} {}", "sign-in failed:".red().bold(), e);
         std::process::exit(1);
     }
-    println!("{}", "credentials saved to config.local.toml".green());
+    println!("{} {}", "connected".green(), url);
+    println!("{}", "password stored in the OS credential store".green());
 }
 
 pub fn cmd_remote_sync(full: bool) {

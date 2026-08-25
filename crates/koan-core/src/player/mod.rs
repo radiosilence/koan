@@ -12,7 +12,7 @@ use thiserror::Error;
 
 use crate::audio::{
     analyzer::VizAnalyzer,
-    backend::{self, AudioBackend, AudioEngineHandle, BackendError},
+    backend::{self, AudioBackend, AudioEngineHandle, BackendError, SampleRateWatch},
     buffer, streaming,
     viz::{VizBuffer, VizSnapshot},
 };
@@ -68,6 +68,9 @@ pub struct Player {
 struct ActivePlayback {
     engine: Box<dyn AudioEngineHandle>,
     decode_handle: buffer::DecodeHandle,
+    /// Keeps the device rate subscription alive for as long as this engine is
+    /// the one feeding the DAC. Dropped with it.
+    _rate_watch: Option<Box<dyn SampleRateWatch>>,
 }
 
 impl Default for Player {
@@ -142,14 +145,20 @@ impl Player {
     /// count — the format the decode thread writes into the ring buffer. A
     /// device that cannot take the requested rate (MPEG-2/2.5 MP3 rates are
     /// commonly refused) resamples instead of playing at the wrong speed.
+    #[allow(clippy::type_complexity)]
     fn create_engine_for(
         &self,
         info: &buffer::StreamInfo,
         consumer: rtrb::Consumer<f32>,
-    ) -> Result<Box<dyn AudioEngineHandle>, PlayerError> {
+    ) -> Result<(Box<dyn AudioEngineHandle>, Option<Box<dyn SampleRateWatch>>), PlayerError> {
         let device = self.resolve_device()?;
         let device_rate = self.backend.get_device_sample_rate(&device)?;
         let source_rate = info.sample_rate as f64;
+
+        // The track info is already published, so anything read between here
+        // and the switch landing would pair this track with the last one's
+        // output rate — and a rate switch is not instant. Say nothing instead.
+        self.shared_state.clear_output_sample_rate();
 
         let settled = if (device_rate - source_rate).abs() > 0.1 {
             log::info!(
@@ -181,13 +190,28 @@ impl Player {
         self.shared_state
             .set_output_sample_rate(settled.round() as u32);
 
-        Ok(self.backend.create_engine(
+        // koan is not the only client of this device. Subscribe so the front
+        // ends learn about a rate someone else moved instead of trusting the
+        // reading above until the next track happens to build an engine.
+        let watch_state = self.shared_state.clone();
+        let watch_name = device.name.clone();
+        let rate_watch = self.backend.watch_device_sample_rate(
+            &device,
+            Box::new(move |rate| {
+                log::info!("device sample rate changed externally: {rate}Hz on '{watch_name}'");
+                watch_state.set_output_sample_rate(rate.round() as u32);
+            }),
+        );
+
+        let engine = self.backend.create_engine(
             &device,
             source_rate,
             info.channels as u32,
             consumer,
             self.timeline.samples_played_counter(),
-        )?)
+        )?;
+
+        Ok((engine, rate_watch))
     }
 
     /// Resolve the output device: use configured device name if set,
@@ -400,7 +424,7 @@ impl Player {
             },
         )?;
 
-        let engine = self.create_engine_for(&info, consumer)?;
+        let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
         engine.start()?;
 
         self.shared_state.set_playback_state(PlaybackState::Playing);
@@ -408,6 +432,7 @@ impl Player {
         self.active_playback = Some(ActivePlayback {
             engine,
             decode_handle,
+            _rate_watch: rate_watch,
         });
 
         Ok(())
@@ -659,7 +684,7 @@ impl Player {
             },
         )?;
 
-        let engine = self.create_engine_for(&info, consumer)?;
+        let (engine, rate_watch) = self.create_engine_for(&info, consumer)?;
         engine.start()?;
 
         self.shared_state.set_playback_state(PlaybackState::Playing);
@@ -667,6 +692,7 @@ impl Player {
         self.active_playback = Some(ActivePlayback {
             engine,
             decode_handle,
+            _rate_watch: rate_watch,
         });
 
         Ok(())
@@ -786,6 +812,7 @@ impl Player {
         let ActivePlayback {
             engine,
             mut decode_handle,
+            _rate_watch,
         } = playback;
 
         // Stop audio output first, then get the decode thread gone *before* the
@@ -1294,6 +1321,39 @@ impl Player {
         }
     }
 
+    /// Put playback back in agreement with the playlist.
+    ///
+    /// The engine keeps decoding whatever it was on while the playlist changes
+    /// underneath it, which an undo can turn into a lie: undoing a replace
+    /// restores the queue but leaves the engine playing a track that queue does
+    /// not contain. The transport then describes an item nothing can select,
+    /// and the decode lookahead — which finds the next track by locating the
+    /// current one — has nothing to follow, so the queue ends at the end of the
+    /// track instead of carrying on.
+    ///
+    /// Done once, after the entry is applied, rather than inside each variant:
+    /// any undo that takes items away can orphan the engine, not only
+    /// `Replaced`.
+    fn reconcile_playback(&mut self) {
+        let Some(playing) = self.shared_state.track_info().map(|t| t.id) else {
+            return;
+        };
+        if self.shared_state.get_item(playing).is_some() {
+            return;
+        }
+        // Pick the restored queue back up where its cursor says it was, but
+        // only if something was already playing — an undo is not a reason to
+        // start the music, and the position is not part of what was snapshotted
+        // so the track begins again.
+        let resume = (self.shared_state.playback_state() == PlaybackState::Playing)
+            .then(|| self.shared_state.cursor())
+            .flatten();
+        self.stop_playback_and_clear_state();
+        if let Some(id) = resume {
+            self.play(id);
+        }
+    }
+
     /// Execute an undo operation, pushing the inverse onto the redo stack.
     fn execute_undo(&mut self) {
         let Some(entry) = self.undo_stack.pop_undo() else {
@@ -1302,6 +1362,7 @@ impl Player {
         if let Some(inverse) = self.apply_entry(entry) {
             self.undo_stack.push_redo(inverse);
         }
+        self.reconcile_playback();
     }
 
     /// Execute a redo operation, pushing the inverse onto the undo stack.
@@ -1312,6 +1373,7 @@ impl Player {
         if let Some(inverse) = self.apply_entry(entry) {
             self.undo_stack.push_undo_keep_redo(inverse);
         }
+        self.reconcile_playback();
     }
 
     /// Run the command loop. Blocks until the sender is dropped.
@@ -1394,6 +1456,33 @@ mod tests {
             load_state: LoadState::Pending,
             ..make_item(title)
         }
+    }
+
+    /// Stand in for an engine that is playing `id`. The test items have no
+    /// files behind them, so `start_playback` can never get far enough to leave
+    /// this state on its own.
+    fn pretend_playing(player: &mut Player, id: QueueItemId) {
+        let item = player
+            .shared_state
+            .get_item(id)
+            .expect("item is in the queue");
+        player.shared_state.set_track_info(Some(TrackInfo {
+            id,
+            path: item.path,
+            codec: String::new(),
+            sample_rate: 44_100,
+            bit_depth: None,
+            bitrate_kbps: None,
+            channels: 2,
+            duration_ms: 1_000,
+        }));
+        player
+            .shared_state
+            .set_playback_state(PlaybackState::Playing);
+    }
+
+    fn playing_id(player: &Player) -> Option<QueueItemId> {
+        player.shared_state.track_info().map(|t| t.id)
     }
 
     /// Build `n` ready items, add them, and return their IDs.
@@ -1927,6 +2016,77 @@ mod tests {
         assert_eq!(playlist_titles(&player), vec!["A", "B", "C"]);
     }
 
+    /// The bug: replacing the queue starts the new track, and undoing restored
+    /// the old queue while leaving the engine on a track that queue no longer
+    /// contains — a transport describing a row nobody can see, and a decode
+    /// lookahead with nothing to follow.
+    #[test]
+    fn undoing_a_replace_does_not_leave_the_engine_on_an_orphaned_track() {
+        let mut player = Player::new();
+        let original = seed(&mut player, 3);
+        player.shared_state.set_cursor(Some(original[0]));
+        pretend_playing(&mut player, original[0]);
+
+        let replacement = vec![make_item("something else")];
+        let orphan = replacement[0].id;
+        player.process_command(PlayerCommand::ReplacePlaylist {
+            items: replacement,
+            start: 0,
+        });
+        // What `play()` would have left behind if the file existed.
+        pretend_playing(&mut player, orphan);
+
+        player.process_command(PlayerCommand::Undo);
+
+        assert_eq!(playlist_ids(&player), original, "the queue comes back");
+        assert!(
+            player.shared_state.get_item(orphan).is_none(),
+            "and the replacement is gone from it"
+        );
+        assert!(
+            playing_id(&player).is_none_or(|id| player.shared_state.get_item(id).is_some()),
+            "so nothing may still be playing out of it"
+        );
+    }
+
+    /// The same orphaning, reached by undoing an add rather than a replace.
+    #[test]
+    fn undoing_an_add_does_not_leave_the_engine_on_a_removed_track() {
+        let mut player = Player::new();
+        seed(&mut player, 2);
+        let added = seed(&mut player, 1);
+        pretend_playing(&mut player, added[0]);
+
+        player.process_command(PlayerCommand::Undo);
+
+        assert!(player.shared_state.get_item(added[0]).is_none());
+        assert!(
+            playing_id(&player).is_none_or(|id| player.shared_state.get_item(id).is_some()),
+            "the engine cannot be left on the item the undo removed"
+        );
+    }
+
+    /// An undo that leaves the playing item where it is must not restart it.
+    #[test]
+    fn undoing_a_move_leaves_playback_alone() {
+        let mut player = Player::new();
+        let ids = seed(&mut player, 3);
+        player.shared_state.set_cursor(Some(ids[0]));
+        pretend_playing(&mut player, ids[0]);
+        let starts = player.playback_starts;
+
+        player.process_command(PlayerCommand::MoveInPlaylist {
+            id: ids[2],
+            target: ids[0],
+            after: false,
+        });
+        player.process_command(PlayerCommand::Undo);
+
+        assert_eq!(playlist_ids(&player), ids);
+        assert_eq!(playing_id(&player), Some(ids[0]), "still on the same track");
+        assert_eq!(player.playback_starts, starts, "and not restarted");
+    }
+
     #[test]
     fn redo_clear() {
         let mut player = Player::new();
@@ -2125,6 +2285,7 @@ mod tests {
                 dropped: dropped.clone(),
             }),
             decode_handle,
+            _rate_watch: None,
         });
 
         player.stop_engine();
@@ -2272,5 +2433,188 @@ mod tests {
         assert_eq!(settled_rate_for(22050, 48000.0), Some(48000));
         // No switch needed, so nothing resampled: the two rates agree.
         assert_eq!(settled_rate_for(44100, 44100.0), Some(44100));
+    }
+
+    /// A device that takes its time reclocking, as real hardware does.
+    struct SlowBackend {
+        observed: Arc<std::sync::Mutex<Vec<Option<u32>>>>,
+        state: Arc<SharedPlayerState>,
+    }
+
+    impl AudioBackend for SlowBackend {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            Ok(vec![self.default_device()?])
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            Ok(backend::DeviceInfo {
+                name: "Slow DAC".into(),
+                sample_rates: vec![44100.0, 48000.0],
+                platform_id: 0,
+            })
+        }
+        fn supported_sample_rates(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            Ok(vec![44100.0, 48000.0])
+        }
+        fn get_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            Ok(48000.0)
+        }
+        fn set_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            // What a front end polling mid-switch would see.
+            self.observed
+                .lock()
+                .unwrap()
+                .push(self.state.output_sample_rate());
+            Ok(rate)
+        }
+        fn create_engine(
+            &self,
+            _device: &backend::DeviceInfo,
+            _sample_rate: f64,
+            _channels: u32,
+            _consumer: rtrb::Consumer<f32>,
+            _samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            Ok(Box::new(NullEngine))
+        }
+    }
+
+    #[test]
+    fn the_previous_rate_is_not_published_while_the_device_reclocks() {
+        // A 48 kHz track followed by a 44.1 kHz one: for as long as the switch
+        // takes — the better part of a second on USB — the new track's info is
+        // published against the old track's output rate. A front end polling in
+        // that window used to latch "44.1 → 48" and, since nothing about the
+        // codec or the source rate changed afterwards, never let go of it.
+        let mut player = Player::new();
+        let state = player.shared_state.clone();
+        state.set_output_sample_rate(48000);
+
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        player.backend = Box::new(SlowBackend {
+            observed: observed.clone(),
+            state: state.clone(),
+        });
+
+        let info = buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate: 44100,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_producer, consumer) = rtrb::RingBuffer::new(16);
+        player
+            .create_engine_for(&info, consumer)
+            .expect("engine creation should succeed");
+
+        assert_eq!(
+            *observed.lock().unwrap(),
+            vec![None],
+            "mid-switch the output rate must read as unknown, not as the last track's"
+        );
+        assert_eq!(state.output_sample_rate(), Some(44100));
+    }
+
+    /// Backend that hands its rate-change callback back to the test.
+    struct WatchedBackend {
+        inner: StuckBackend,
+        #[allow(clippy::type_complexity)]
+        captured: Arc<std::sync::Mutex<Option<Box<dyn Fn(f64) + Send + Sync>>>>,
+    }
+
+    struct NullWatch;
+    impl backend::SampleRateWatch for NullWatch {}
+
+    impl AudioBackend for WatchedBackend {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            self.inner.list_devices()
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            self.inner.default_device()
+        }
+        fn supported_sample_rates(
+            &self,
+            device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            self.inner.supported_sample_rates(device)
+        }
+        fn get_device_sample_rate(
+            &self,
+            device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            self.inner.get_device_sample_rate(device)
+        }
+        fn set_device_sample_rate(
+            &self,
+            device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            self.inner.set_device_sample_rate(device, rate)
+        }
+        fn watch_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            on_change: Box<dyn Fn(f64) + Send + Sync>,
+        ) -> Option<Box<dyn backend::SampleRateWatch>> {
+            *self.captured.lock().unwrap() = Some(on_change);
+            Some(Box::new(NullWatch))
+        }
+        fn create_engine(
+            &self,
+            device: &backend::DeviceInfo,
+            sample_rate: f64,
+            channels: u32,
+            consumer: rtrb::Consumer<f32>,
+            samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            self.inner
+                .create_engine(device, sample_rate, channels, consumer, samples_played)
+        }
+    }
+
+    #[test]
+    fn external_rate_change_reaches_the_shared_state() {
+        // The device is shared. Another client moving the rate mid-track used
+        // to leave the front ends asserting bit-perfection while the HAL
+        // resampled underneath them.
+        let captured = Arc::new(std::sync::Mutex::new(None));
+        let mut player = Player::new();
+        player.backend = Box::new(WatchedBackend {
+            inner: StuckBackend {
+                rate: 44100.0,
+                asked: Arc::new(std::sync::Mutex::new(None)),
+            },
+            captured: captured.clone(),
+        });
+        let state = player.shared_state.clone();
+
+        let info = buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate: 44100,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_producer, consumer) = rtrb::RingBuffer::new(16);
+        player
+            .create_engine_for(&info, consumer)
+            .expect("engine creation should succeed");
+        assert_eq!(state.output_sample_rate(), Some(44100));
+
+        let on_change = captured.lock().unwrap().take().expect("watch registered");
+        on_change(48000.0);
+        assert_eq!(state.output_sample_rate(), Some(48000));
     }
 }

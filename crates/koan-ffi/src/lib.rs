@@ -1227,7 +1227,6 @@ impl KoanEngine {
                     .as_ref()
                     .map(koan_core::helpers::tracks_from_server)
                     .unwrap_or(0),
-                transcode_quality: cfg.remote.transcode_quality.clone(),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
                 cache_dir: cache_dir.to_string_lossy().into_owned(),
@@ -1268,7 +1267,6 @@ impl KoanEngine {
                 cfg.remote.enabled = s.remote_enabled;
                 cfg.remote.url = s.remote_url.clone();
                 cfg.remote.username = s.remote_username.clone();
-                cfg.remote.transcode_quality = s.transcode_quality.clone();
                 cfg.remote.download_workers = s.download_workers.max(1) as usize;
                 cfg.remote.cache_limit = (!s.cache_limit.is_empty()).then(|| s.cache_limit.clone());
                 cfg.remote.auto_sync = s.auto_sync;

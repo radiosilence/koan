@@ -67,8 +67,11 @@ struct LinkText: View {
     }
 }
 
-/// Album art that plays the record when clicked, with the affordance only
-/// showing on hover so a wall of covers stays a wall of covers.
+/// Album art that plays the record when clicked and opens it, with the
+/// affordance only showing on hover so a wall of covers stays a wall of covers.
+///
+/// The record is where the tracks are, so that is where a click on its cover
+/// leaves you — not the queue, which is behind everything and stays there.
 struct PlayableArtwork: View {
     let albumId: Int64
     var cornerRadius: CGFloat = 6
@@ -107,19 +110,20 @@ struct PlayableArtwork: View {
     }
 
     /// Resolving the tracks is the slow half, so it happens off the main actor
-    /// and the queue command follows once they're in hand.
+    /// and the queue command follows once they're in hand. The move to the
+    /// record doesn't wait on it — the click should land immediately.
     private func play() {
         guard !loading else { return }
         loading = true
         let engine = library.engine
         let albumId = self.albumId
+        nav.open(album: albumId)
         Task {
             let ids = ((try? await engine.tracks(
                 albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
             )) ?? []).map(\.id)
             loading = false
             player.playNow(trackIds: ids)
-            nav.showQueueWhenReady(watching: player)
         }
     }
 }
