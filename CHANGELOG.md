@@ -6,6 +6,8 @@
 
 - **koan wrote your whole configuration to the file you commit.** Every setting koan saved itself — a visualiser toggle, the output device, dragging the album art wider — reserialised the entire `Config` struct over `config.toml`. That erased the commented-out reference `koan config init` writes, and filled the file people are told to put in a dotfiles repo with all fifty-odd keys, including `[library] folders` set to koan's *default* music directory and a `[remote]` block belonging to one machine's account. Writes now go through `Config::persist`, which diffs the mutation and touches only the keys that actually changed.
 
+- **`koan config init` deleted the patterns you wrote by hand.** It is documented as safe to run on an existing setup, but it regenerated the template from koan's default serialisation — and `[organize] default` and `[organize.patterns]` are held back by `skip_serializing_if`, so they never appeared in it and were dropped. It also emitted `[organize]` twice when carrying values across, which is not valid TOML, and resurrected settings koan had retired. It now re-comments any value that matches the default too, so a `config.toml` an older koan filled with its own serialisation shrinks back to a template.
+
 - **`[radio] seed_window` was half honoured.** It picked the seed artists, while the acoustic seeder asked for the last five tracks regardless. One window, one answer.
 
 - **Documented settings that were not true.** `bass_shake` defaults to `true`, not `false`. `[organize] default` preselects a pattern in the organize UI, not "the TUI modal" it had no effect on. The format-string reference showed a `koan organize --pattern` command that has never existed — organize runs from the TUI and the macOS sheet.
