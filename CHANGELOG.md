@@ -20,6 +20,14 @@
 
   The setting lives in macOS defaults (`defaults write cc.blit.koan graphics -int 0`) rather than `config.toml`: how much this app draws is this machine's business, and the TUI has none of it to draw.
 
+### Fixed
+
+- **The wash's drift is far enough to see.** It has moved by the same amounts since it landed in #330, and those amounts were too small to register: blurred at 14 points and magnified about five times, the wash has no feature on screen narrower than eighty points, and the drift carried it about one and a half of those over twenty-three seconds. Slow movement that small does not read as movement -- it reads as a still image. The thing was running, and costing six to nine percent of a core to run, and there was nothing to see.
+
+  The excursions now reach about four of those instead: 12% of the window sideways against 4%, 10% down against 6%, and the scale swinging 1.38 to 1.58 rather than 1.19 to 1.31. The periods are untouched at 13, 19 and 23 seconds, so it is exactly as unhurried as it was -- it simply arrives somewhere.
+
+  The wider scale is not decoration. It is the floor that keeps the texture's own edge out of frame once the offset carries it 12% of the window sideways and the rotation eats another three and a half percent. The scale is also taken off the longer edge of the window now rather than its width: the texture is square, so on a window taller than it is wide the width alone never covered it.
+
 - **The wash honours Reduce Motion.** It never did. The playing indicators already went still when the system asked for less motion and the room behind them kept breathing.
 
 ## v0.31.2 (2026-08-25)
