@@ -1,10 +1,6 @@
 # Changelog
 
-## Unreleased
-
-### Fixed
-
-- **The playing mark crowded the sleeve beside it.** Six points pairs a status mark with a right-aligned track number, which carries slack of its own; a cover is a solid block flush to its frame and the same six points read as a squeeze. A list that draws sleeves gives the mark the same ten points the title gets on the other side.
+## v0.31.0 (2026-08-25)
 
 ### Added
 
@@ -42,23 +38,6 @@
 
   It is a fraction of bytes on an axis of time — right for lossless and CBR, out by however far the bitrate wanders on VBR — so it is drawn as a distinctly weaker mark than the played extent and the tooltip says "roughly". The question it answers is whether the music is about to run out of track, not where in the track anything is; a hard-edged fill would be read as a promise it cannot keep. The TUI has drawn the same three-way bar all along.
 
-### Removed
-
-- **Snapshots.** They were playlists with a resume position: a whole second feature, a second table, a second sidebar row and a second set of API calls, all to remember one number the server had no idea about. Existing snapshots become playlists on first launch, keeping their names, their track order and the date they were saved; only the position is lost. The Subsonic API already served them as playlists, so its clients see the same names either side of this.
-
-  ⌘6 is gone with them, and **Save as Snapshot…** in the queue menu is now **Save as Playlist…**.
-
-- **The download quality setting.** It offered Original, Opus 128 and MP3 320, wrote your choice to `config.toml`, carried it over GraphQL and FFI, and was read by nothing — no request has ever asked a server to transcode. Re-encoding a stream is the opposite of what koan is for, so the setting goes rather than gains an implementation. `remote.transcode_quality` in an existing config is ignored; the GraphQL `Config.transcodeQuality` field and its input are gone.
-
-- **`[radio] use_subsonic` and `[discovery] acoustic_weight` never did anything.** Both were documented as tuning knobs and neither was read: Subsonic similarity ran whenever a server was configured, and the acoustic signal's weight was a constant in the scoring function. Removed rather than wired up — the defaults are the behaviour everyone has been getting.
-
-- **`[playback] ticker_fps`.** The transport ticker scrolls at a fixed 8 characters per second.
-
-Unknown keys are ignored rather than rejected, so a stale config still loads. Two
-renames change behaviour silently and are worth grepping your config for:
-`[graphql] subsonic_port` (now `[subsonic] port`) and `[discovery]
-analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
-
 ### Changed
 
 - **The queue stays locked to the playlist that filled it.** Play a playlist and the queue *is* that playlist; reorder it, remove from it or add to it and the queue follows, quietly. Rearrange the queue yourself, add to it, or let radio extend it and the two part company — from then on the playlist is a document you are editing and the queue is what you are listening to.
@@ -90,7 +69,26 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 
 - **The menus have their icons back.** Every action in the app now carries the same symbol wherever it appears: Add to Queue is the same icon on an album page, in the row's context menu and in the menu bar, and the Edit menu — replaced wholesale so ⌘Z can reach koan's own undo stack rather than a text field's — draws its own icons again instead of arriving bare. The symbols are named in one place, which is what stops the three copies of a verb drifting apart.
 
+### Removed
+
+- **Snapshots.** They were playlists with a resume position: a whole second feature, a second table, a second sidebar row and a second set of API calls, all to remember one number the server had no idea about. Existing snapshots become playlists on first launch, keeping their names, their track order and the date they were saved; only the position is lost. The Subsonic API already served them as playlists, so its clients see the same names either side of this.
+
+  ⌘6 is gone with them, and **Save as Snapshot…** in the queue menu is now **Save as Playlist…**.
+
+- **The download quality setting.** It offered Original, Opus 128 and MP3 320, wrote your choice to `config.toml`, carried it over GraphQL and FFI, and was read by nothing — no request has ever asked a server to transcode. Re-encoding a stream is the opposite of what koan is for, so the setting goes rather than gains an implementation. `remote.transcode_quality` in an existing config is ignored; the GraphQL `Config.transcodeQuality` field and its input are gone.
+
+- **`[radio] use_subsonic` and `[discovery] acoustic_weight` never did anything.** Both were documented as tuning knobs and neither was read: the acoustic signal's weight was a constant in the scoring function, and nothing consulted `use_subsonic` before deciding whether to ask a server — see below for what radio actually does. Removed rather than wired up — the defaults are the behaviour everyone has been getting.
+
+- **`[playback] ticker_fps`.** The transport ticker scrolls at a fixed 8 characters per second.
+
+Unknown keys are ignored rather than rejected, so a stale config still loads. Two
+renames change behaviour silently and are worth grepping your config for:
+`[graphql] subsonic_port` (now `[subsonic] port`) and `[discovery]
+analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
+
 ### Fixed
+
+- **The playing mark crowded the sleeve beside it.** Six points pairs a status mark with a right-aligned track number, which carries slack of its own; a cover is a solid block flush to its frame and the same six points read as a squeeze. A list that draws sleeves gives the mark the same ten points the title gets on the other side.
 
 - **The queue got slower the more of it you had played.** A played row was the whole row at 45% alpha, and any alpha below 1 makes SwiftUI flatten that row into an offscreen layer before compositing it — its children overlap, so they cannot each be drawn at 45% and still look like one row. A long tail of played tracks behind the cursor was a long list of offscreen passes, on every frame the list drew. Played rows now step back in colour instead: a rung down the hierarchical styles, which costs a colour lookup. Only the sleeve still uses alpha, because no colour can dim an image — and one 34pt image is not a flattened row.
 
@@ -105,6 +103,14 @@ analysis_on_scan` (now `[library] analyze_on_scan`). The others were inert.
 - **`koan remote login` wrote your password to disk.** The macOS sign-in path already stored it in the platform credential store and explicitly cleared any plaintext copy; the CLI wrote it straight into `config.local.toml`. Both go through `helpers::set_remote_credentials` now. koan's own Subsonic secret also read the config field *before* the keychain, so a stale plaintext copy beat the real secret — the credential store wins in both, and the config field stays what it always was: the fallback for machines without one.
 
 - **`[radio] seed_window` was half honoured.** It picked the seed artists, while the acoustic seeder asked for the last five tracks regardless. One window, one answer.
+
+- **The radio documentation described a feature that does not run.** The README and the radio guide both led with Subsonic `getSimilarSongs2` and a cache of similar-artist relationships as radio's strongest signals. Neither is reached: the auto-queue loop turns the network signals off before it picks, because ListenBrainz and MusicBrainz rate-limit to one request a second per seed artist and all three are synchronous HTTP in front of a track that is needed before the current one ends. What radio actually scores is genre and era, same-artist, acoustic similarity over bliss-audio vectors, and a low-scored random tail — all database reads.
+
+  The code is unchanged; the docs now say what it does, and the guide says why the network signals are switched off and what would have to happen to switch them back on. Two things follow from the same gap and are now written down: nothing writes the `similar_artists` cache, so `similarArtists` over GraphQL and FFI and `getSimilarSongs2` on koan's own Subsonic API return empty; and radio behaving identically offline is not graceful degradation, because there is no online path to degrade from.
+
+  `koan scan --analyze` is the one thing that meaningfully improves radio, so the docs now say that instead of burying it fifth in a list.
+
+- **`remote.transcode_quality` was still documented after being removed.** It survived in the remote-servers guide — with a table of quality tiers and a note that "Navidrome and most Subsonic servers handle this natively" — and in the configuration reference. The setting was never wired to anything and is gone; so is the section describing it.
 
 - **Documented settings that were not true.** `bass_shake` defaults to `true`, not `false`. `[organize] default` preselects a pattern in the organize UI, not "the TUI modal" it had no effect on. The format-string reference showed a `koan organize --pattern` command that has never existed — organize runs from the TUI and the macOS sheet.
 

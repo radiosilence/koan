@@ -61,23 +61,6 @@ Downloads happen in the background with configurable parallelism:
 download_workers = 5    # parallel download threads (default: 5)
 ```
 
-## Transcoding
-
-By default, koan requests the original quality from the server. If bandwidth is a concern:
-
-```toml
-[remote]
-transcode_quality = "original"   # original | opus-128 | mp3-320
-```
-
-| Quality | Description |
-|---------|-------------|
-| `original` | **(default)** Bit-perfect, whatever the server has |
-| `opus-128` | Opus at 128kbps -- transparent quality, ~1/10th the bandwidth of FLAC |
-| `mp3-320` | MP3 at 320kbps -- maximum quality lossy, widest compatibility |
-
-Note: transcoding depends on the server supporting it. Navidrome and most Subsonic servers handle this natively.
-
 ## Cache management
 
 Downloaded remote tracks are cached locally so subsequent plays are instant. See [Cache Management](../recipes/cache-management.md) for size limits, eviction, and cleanup.
@@ -107,7 +90,6 @@ username = "admin"
 
 # config.toml or config.local.toml
 [remote]
-transcode_quality = "original"   # original | opus-128 | mp3-320
 download_workers = 5             # parallel download threads
 cache_limit = "50GB"             # max cache size (LRU eviction)
 cache_dir = "/custom/path"       # cache directory

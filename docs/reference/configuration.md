@@ -187,7 +187,6 @@ username = "admin"
 
 # config.toml or config.local.toml
 [remote]
-transcode_quality = "original"   # original | opus-128 | mp3-320 (default: original)
 download_workers = 5             # parallel download threads (default: 5)
 cache_limit = "50GB"             # max cache size, LRU eviction on startup (default: unlimited)
 cache_dir = "/custom/path"       # explicit cache dir (default: ~/.config/koan/cache)

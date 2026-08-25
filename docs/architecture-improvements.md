@@ -61,4 +61,4 @@ Config fields that exist but aren't wired into anything:
 | Field | Config Location | Library Code | Wired In? |
 |-------|----------------|-------------|-----------|
 | `playback.replaygain` | config.rs | replaygain.rs (full impl) | **Yes** -- wired into decode pipeline |
-| `remote.transcode_quality` | config.rs | N/A | **No** -- needs stream URL parameter |
+| `remote.transcode_quality` | -- | -- | Removed in v0.31.0 -- re-encoding a stream is the opposite of what koan is for |
