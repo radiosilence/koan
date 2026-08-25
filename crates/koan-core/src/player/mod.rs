@@ -1231,6 +1231,14 @@ impl Player {
                 self.shared_state.move_items(&ids, target, after);
                 self.push_undo(UndoEntry::MovedBatch { entries });
             }
+            PlayerCommand::ReorderPlaylist(order) => {
+                // Undoable like any other move: undoing it puts the queue back
+                // and, by doing so, ends the lock — which is the honest result
+                // of having rearranged the queue by hand.
+                let entries = self.shared_state.items_before(&order);
+                self.shared_state.reorder_to(&order);
+                self.push_undo(UndoEntry::MovedBatch { entries });
+            }
             PlayerCommand::TrackReady(id) => self.track_ready(id),
             PlayerCommand::DecodeFinished => self.on_decode_finished(),
             PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),

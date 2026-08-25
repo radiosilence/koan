@@ -180,6 +180,11 @@ final class PlayerModel {
         downloading = active
     }
 
+    /// The queue changed. Set by `AppState` — whether the queue is still
+    /// exactly some playlist is a question only the engine can answer, and this
+    /// is the moment the answer can have changed.
+    var onQueueChanged: (() -> Void)?
+
     /// A download finished. Set by `AppState` — the library's cached count is
     /// the only thing that knows it moved, and it has no other way to find out.
     var onDownloadsLanded: (() -> Void)?
@@ -188,6 +193,7 @@ final class PlayerModel {
     fileprivate func applyQueueChange() async {
         await rebuildQueue()
         await tick()
+        onQueueChanged?()
     }
 
     /// Position moved. The only genuinely periodic event, and the only thing

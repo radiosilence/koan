@@ -11,7 +11,37 @@ use crate::config::Config;
 use crate::db::connection::Database;
 use crate::db::queries;
 use crate::helpers::subsonic_client;
+use crate::player::state::SharedPlayerState;
 use crate::remote::client::SubsonicClient;
+
+/// The queue, and the playlist it is still exactly.
+///
+/// While the two match, the queue *follows* the playlist: an edit there is an
+/// edit here, quietly. The moment you rearrange the queue yourself, add to it,
+/// or let radio extend it, they stop matching and the playlist becomes a
+/// document you are editing rather than the thing you are listening to.
+///
+/// Derived rather than tracked, which is the whole reason it is simple. There
+/// is no flag to keep in sync, nothing to persist and nothing to migrate — and
+/// it cannot get stuck, because a queue that stops matching stops being locked
+/// and one that happens to match again is locked again. Playing a playlist
+/// shuffled scrambles the order on purpose, so that queue is not locked, which
+/// is the right answer rather than a special case.
+pub fn queue_lock(db: &Database, state: &SharedPlayerState) -> Option<i64> {
+    let (items, _) = state.snapshot_playlist();
+    if items.is_empty() {
+        return None;
+    }
+    // Every item has to have come from the same playlist. One that did not —
+    // played next, dropped in, found by radio — is the queue having diverged.
+    let entry_ids: Vec<i64> = items.iter().filter_map(|i| i.playlist_entry_id).collect();
+    if entry_ids.len() != items.len() {
+        return None;
+    }
+    let playlist_id = queries::playlist_of_entry(&db.conn, entry_ids[0]).ok()??;
+    let playlist = queries::playlist_entry_ids(&db.conn, playlist_id).ok()?;
+    (playlist == entry_ids).then_some(playlist_id)
+}
 
 /// What a reconciliation did.
 #[derive(Debug, Default, Clone, Copy)]
@@ -374,6 +404,107 @@ mod tests {
             mbid: None,
             album_added_at: None,
         }
+    }
+
+    /// The queue is locked while it is still exactly the playlist, and stops
+    /// being the moment it is not. Everything else about following follows from
+    /// this one answer.
+    #[test]
+    fn a_queue_is_locked_only_while_it_is_still_the_playlist() {
+        use crate::player::state::{LoadState, PlaylistItem, QueueItemId, SharedPlayerState};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let a = upsert_track(&db.conn, &meta("A", &dir.path().join("a.flac"))).unwrap();
+        let b = upsert_track(&db.conn, &meta("B", &dir.path().join("b.flac"))).unwrap();
+
+        let id = queries::create_playlist(&db.conn, "Evening", None).unwrap();
+        let entries = queries::add_tracks(&db.conn, id, &[a, b]).unwrap();
+
+        let state = SharedPlayerState::new();
+        let queued = |entry: Option<i64>| PlaylistItem {
+            id: QueueItemId::new(),
+            db_id: Some(a),
+            playlist_entry_id: entry,
+            path: dir.path().join("a.flac"),
+            title: "A".into(),
+            artist: "Artist".into(),
+            album_artist: "Artist".into(),
+            album: "Album".into(),
+            year: None,
+            codec: None,
+            track_number: None,
+            disc: None,
+            duration_ms: None,
+            load_state: LoadState::Ready,
+        };
+
+        assert_eq!(
+            queue_lock(&db, &state),
+            None,
+            "an empty queue is not locked"
+        );
+
+        state.add_items(vec![queued(Some(entries[0])), queued(Some(entries[1]))]);
+        assert_eq!(
+            queue_lock(&db, &state),
+            Some(id),
+            "the queue is the playlist"
+        );
+
+        // Something that never came from the playlist — played next, dropped
+        // in, found by radio.
+        state.add_items(vec![queued(None)]);
+        assert_eq!(queue_lock(&db, &state), None);
+    }
+
+    /// Reordering the queue by hand ends the lock, which is the whole point of
+    /// deriving it: there is no flag anyone has to remember to clear.
+    #[test]
+    fn rearranging_the_queue_ends_the_lock() {
+        use crate::player::state::{LoadState, PlaylistItem, QueueItemId, SharedPlayerState};
+
+        let dir = tempfile::tempdir().unwrap();
+        let db = Database::open(&dir.path().join("koan.db")).unwrap();
+        let a = upsert_track(&db.conn, &meta("A", &dir.path().join("a.flac"))).unwrap();
+        let b = upsert_track(&db.conn, &meta("B", &dir.path().join("b.flac"))).unwrap();
+        let id = queries::create_playlist(&db.conn, "Evening", None).unwrap();
+        let entries = queries::add_tracks(&db.conn, id, &[a, b]).unwrap();
+
+        let state = SharedPlayerState::new();
+        let items: Vec<PlaylistItem> = entries
+            .iter()
+            .map(|entry| PlaylistItem {
+                id: QueueItemId::new(),
+                db_id: Some(a),
+                playlist_entry_id: Some(*entry),
+                path: dir.path().join("a.flac"),
+                title: "A".into(),
+                artist: "Artist".into(),
+                album_artist: "Artist".into(),
+                album: "Album".into(),
+                year: None,
+                codec: None,
+                track_number: None,
+                disc: None,
+                duration_ms: None,
+                load_state: LoadState::Ready,
+            })
+            .collect();
+        let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
+        state.add_items(items);
+        assert_eq!(queue_lock(&db, &state), Some(id));
+
+        state.reorder_to(&[ids[1], ids[0]]);
+        assert_eq!(
+            queue_lock(&db, &state),
+            None,
+            "same tracks, different order — no longer the playlist"
+        );
+
+        // And the playlist catching up locks it again. Nothing had to be reset.
+        queries::reorder_entries(&db.conn, id, &[entries[1], entries[0]]).unwrap();
+        assert_eq!(queue_lock(&db, &state), Some(id));
     }
 
     #[test]

@@ -125,9 +125,29 @@ struct QueueView: View {
 
     private var header: some View {
         HStack(spacing: 12) {
+            // What the queue *is*, when it is still something. A queue that
+            // came from a playlist and has not been touched since follows that
+            // playlist, and saying so is what makes the following legible: you
+            // can see why an edit over there moved something here, and you can
+            // see the moment it stops.
+            if let locked = playlists.lockedTo {
+                PlaylistArtwork(
+                    sources: playlists.covers[locked.id] ?? [],
+                    cornerRadius: 4
+                )
+                .frame(width: 34, height: 34)
+                .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            }
+
             VStack(alignment: .leading, spacing: 1) {
-                Text("Queue")
-                    .font(.headline)
+                if let locked = playlists.lockedTo {
+                    Text("Playing \(locked.name)")
+                        .font(.headline)
+                        .lineLimit(1)
+                } else {
+                    Text("Queue")
+                        .font(.headline)
+                }
                 Text(summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)

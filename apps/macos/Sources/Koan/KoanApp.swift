@@ -131,6 +131,13 @@ struct KoanApp: App {
                     created.player.restoreSession()
                     created.library.loadInitial()
                     created.playlists.load()
+                    created.playlists.refreshLock()
+                    // The queue changing is the other half of what makes a lock
+                    // — playing a playlist creates one, touching the queue ends
+                    // one, and neither goes through the playlist model.
+                    created.player.onQueueChanged = { [weak created] in
+                        created?.playlists.refreshLock()
+                    }
                     state = created
                 } catch {
                     startupError = String(describing: error)

@@ -1032,6 +1032,24 @@ impl KoanEngine {
         .await
     }
 
+    /// The playlist the queue is still exactly, if it is one.
+    ///
+    /// While this answers, the queue follows that playlist: an edit there lands
+    /// here too. It stops answering the moment the queue is rearranged, added
+    /// to, or extended by radio — which is also when the following stops.
+    pub async fn queue_lock(self: Arc<Self>) -> Result<Option<Playlist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let Some(id) = koan_core::playlists::queue_lock(&db, &self.state) else {
+                return Ok(None);
+            };
+            Ok(queries::get_playlist(&db.conn, id)
+                .map_err(db_err)?
+                .map(Playlist::from))
+        })
+        .await
+    }
+
     /// Up to four tracks whose covers make the playlist's tile — one per album,
     /// in playlist order.
     pub async fn playlist_cover_track_ids(
@@ -1124,7 +1142,9 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            let locked = self.locked_to(&db, playlist_id);
             let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
+            self.follow_playlist(&db, playlist_id, locked);
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(added.len() as u32)
         })
@@ -1146,6 +1166,7 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            let locked = self.locked_to(&db, playlist_id);
             let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
             if !added.is_empty() {
                 let mut order: Vec<i64> = queries::playlist_entries(&db.conn, playlist_id)
@@ -1158,6 +1179,7 @@ impl KoanEngine {
                 order.splice(at..at, added.iter().copied());
                 queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
             }
+            self.follow_playlist(&db, playlist_id, locked);
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(added.len() as u32)
         })
@@ -1173,7 +1195,9 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            let locked = self.locked_to(&db, playlist_id);
             queries::reorder_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
+            self.follow_playlist(&db, playlist_id, locked);
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
@@ -1188,8 +1212,10 @@ impl KoanEngine {
     ) -> Result<u32, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
+            let locked = self.locked_to(&db, playlist_id);
             let removed =
                 queries::remove_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
+            self.follow_playlist(&db, playlist_id, locked);
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(removed as u32)
         })
@@ -1204,7 +1230,9 @@ impl KoanEngine {
             let mut entries = queries::playlist_entries(&db.conn, playlist_id).map_err(db_err)?;
             koan_core::helpers::shuffle(&mut entries);
             let order: Vec<i64> = entries.iter().map(|e| e.id).collect();
+            let locked = self.locked_to(&db, playlist_id);
             queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
+            self.follow_playlist(&db, playlist_id, locked);
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
@@ -2348,6 +2376,75 @@ impl KoanEngine {
                 log::info!("session restore: track never became ready, leaving position at 0");
             })
             .ok();
+    }
+
+    /// Whether the queue is still exactly this playlist.
+    fn locked_to(&self, db: &Database, playlist_id: i64) -> bool {
+        koan_core::playlists::queue_lock(db, &self.state) == Some(playlist_id)
+    }
+
+    /// Make the queue follow a playlist that has just been edited.
+    ///
+    /// Only when the queue was still exactly that playlist beforehand —
+    /// `was_locked` is read *before* the edit lands, because afterwards the two
+    /// no longer match and every queue would look diverged.
+    ///
+    /// The edit is applied to the queue rather than the queue being rebuilt
+    /// from the playlist: entries that survived keep their queue items, and
+    /// with them their ids, what has played, what is mid-download and what the
+    /// cursor is pointing at.
+    fn follow_playlist(&self, db: &Database, playlist_id: i64, was_locked: bool) {
+        if !was_locked {
+            return;
+        }
+        let Ok(entries) = queries::playlist_entries(&db.conn, playlist_id) else {
+            return;
+        };
+        let (items, _) = self.state.snapshot_playlist();
+
+        // Queue items whose entry has gone from the playlist.
+        let live: std::collections::HashSet<i64> = entries.iter().map(|e| e.id).collect();
+        let doomed: Vec<QueueItemId> = items
+            .iter()
+            .filter(|i| i.playlist_entry_id.is_none_or(|e| !live.contains(&e)))
+            .map(|i| i.id)
+            .collect();
+        if !doomed.is_empty() {
+            let _ = self.send(PlayerCommand::RemoveFromPlaylistBatch(doomed));
+        }
+
+        // Entries the queue has never seen.
+        let known: std::collections::HashMap<i64, QueueItemId> = items
+            .iter()
+            .filter_map(|i| i.playlist_entry_id.map(|e| (e, i.id)))
+            .collect();
+        let missing: Vec<&queries::PlaylistEntry> = entries
+            .iter()
+            .filter(|e| !known.contains_key(&e.id))
+            .collect();
+        let mut added = std::collections::HashMap::new();
+        if !missing.is_empty() {
+            let track_ids: Vec<i64> = missing.iter().map(|e| e.track.id).collect();
+            let (mut new_items, pending) = self.build_items(db, &track_ids);
+            for (item, entry) in new_items.iter_mut().zip(&missing) {
+                item.playlist_entry_id = Some(entry.id);
+                added.insert(entry.id, item.id);
+            }
+            if !new_items.is_empty() {
+                let _ = self.send(PlayerCommand::AddToPlaylist(new_items));
+                self.start_downloads(pending);
+            }
+        }
+
+        // Then the order, which is what puts the new arrivals in their places —
+        // they were appended, because that is the only thing an add can do.
+        let order: Vec<QueueItemId> = entries
+            .iter()
+            .filter_map(|e| known.get(&e.id).or_else(|| added.get(&e.id)).copied())
+            .collect();
+        if !order.is_empty() {
+            let _ = self.send(PlayerCommand::ReorderPlaylist(order));
+        }
     }
 
     fn start_downloads(&self, pending: Vec<(i64, QueueItemId)>) {

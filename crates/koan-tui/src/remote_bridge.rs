@@ -502,6 +502,7 @@ fn command_loop(
             | PlayerCommand::UpdatePaths(_)
             | PlayerCommand::MoveInPlaylist { .. }
             | PlayerCommand::MoveItemsInPlaylist { .. }
+            | PlayerCommand::ReorderPlaylist(_)
             | PlayerCommand::InsertInPlaylist { .. }
             | PlayerCommand::AddToPlaylist(_)
             | PlayerCommand::DecodeFinished => {
