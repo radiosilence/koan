@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use parking_lot::{Mutex, RwLock};
 
@@ -66,6 +67,11 @@ impl Default for VizFrame {
 ///   All decay/smoothing happens on the local clone with no lock held.
 pub struct VizSnapshot {
     inner: RwLock<VizFrame>,
+    /// Bumped by every read. The analyser watches it to tell whether anyone is
+    /// actually drawing the spectrum — a client can link the engine without
+    /// ever opening a visualiser, and an FFT sixty times a second for nobody
+    /// is a percent of a core.
+    reads: AtomicU64,
 }
 
 impl VizSnapshot {
@@ -73,12 +79,20 @@ impl VizSnapshot {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
             inner: RwLock::new(VizFrame::default()),
+            reads: AtomicU64::new(0),
         })
     }
 
     /// Read the latest frame. Acquires read lock, clones, releases — <1us.
     pub fn read(&self) -> VizFrame {
+        self.reads.fetch_add(1, Ordering::Relaxed);
         self.inner.read().clone()
+    }
+
+    /// How many frames have been read. Only the analyser cares — a count that
+    /// stops moving means nothing is watching.
+    pub fn reads(&self) -> u64 {
+        self.reads.load(Ordering::Relaxed)
     }
 
     /// Write a new frame. Acquires write lock, swaps, releases — <1us.

@@ -229,19 +229,27 @@ private struct SeekBar: View {
                 .frame(width: 40, alignment: .trailing)
 
             GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.quaternary)
-                        .frame(height: 4)
+                // Drawn rather than sized. A capsule whose `frame(width:)`
+                // followed the position invalidated layout ten times a second,
+                // and AppKit answered each one with a full window Auto Layout
+                // pass. The bar is the same bar; only the pixels change now.
+                Canvas { context, size in
+                    let track = CGRect(
+                        x: 0, y: (size.height - Self.thickness) / 2,
+                        width: size.width, height: Self.thickness
+                    )
+                    context.fill(Capsule().path(in: track), with: .style(.quaternary))
+                    let played = size.width * player.progress
+                    guard played >= Self.thickness else { return }
                     // Not the tint. The tint is the colour of the record now,
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a
                     // position off, not a thing that needs to say whose it is.
-                    Capsule()
-                        .fill(.primary)
-                        .frame(width: geo.size.width * player.progress, height: 4)
+                    context.fill(
+                        Capsule().path(in: CGRect(origin: track.origin, size: .init(width: played, height: Self.thickness))),
+                        with: .style(.primary)
+                    )
                 }
-                .frame(maxHeight: .infinity, alignment: .center)
                 .contentShape(.rect)
                 .gesture(
                     DragGesture(minimumDistance: 0)
@@ -262,6 +270,8 @@ private struct SeekBar: View {
         }
         .disabled(player.clock.durationMs == 0)
     }
+
+    private static let thickness = 4.0
 
     private var displayedPosition: UInt64 {
         UInt64(player.progress * Double(player.clock.durationMs))

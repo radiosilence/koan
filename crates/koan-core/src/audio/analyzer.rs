@@ -44,6 +44,13 @@ const DB_FLOOR: f32 = -80.0;
 /// dB ceiling: magnitudes at or above this map to 1.0.
 const DB_CEIL: f32 = 0.0;
 
+/// How long the analyser keeps working after the last frame anyone read.
+/// Generous enough that a reader drawing slower than we analyse never trips it.
+const IDLE_AFTER: Duration = Duration::from_secs(1);
+
+/// How often a stood-down analyser looks for a reader coming back.
+const IDLE_POLL: Duration = Duration::from_millis(250);
+
 // ── Frequency scale ──────────────────────────────────────────────────────────
 
 /// Frequency scale used to map FFT bins to spectrum bars.
@@ -621,9 +628,25 @@ fn analysis_loop(
 ) {
     let mut state = AnalysisState::new(scale, bar_half_life, peak_half_life, amplitude_scale);
     let mut snap = RawVizSnapshot::default();
+    let mut last_reads = u64::MAX;
+    let mut last_read_at = Instant::now();
 
     while running.load(Ordering::Relaxed) {
         let start = Instant::now();
+
+        // ── Phase 0: is anyone looking? ──────────────────────────────────────
+        // Nothing reading the snapshot means nothing to compute. The FFT, the
+        // per-frame waveform allocation and the delay-line copy all go away
+        // until a visualiser opens, which is the whole cost of this thread in
+        // a client that never opens one.
+        let reads = snapshot.reads();
+        if reads != last_reads {
+            last_reads = reads;
+            last_read_at = start;
+        } else if start.duration_since(last_read_at) > IDLE_AFTER {
+            thread::sleep(IDLE_POLL);
+            continue;
+        }
 
         // ── Phase 1: read the delay line at the play head (lock held briefly) ─
         let played = samples_played.load(Ordering::Relaxed);
