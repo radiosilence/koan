@@ -211,7 +211,9 @@ final class PlayerModel {
 
     private(set) var pendingMutations = 0
     var isBusy: Bool { pendingMutations > 0 }
-    /// What is playing, and in what format. Both change per track, not per tick.
+    /// What is playing, and in what format. Both change per track, not per
+    /// tick — except the output rate, which any other client of the device can
+    /// move mid-track.
     private(set) var currentEntry: QueueItem?
     private(set) var currentFormat: StreamFormat?
 
@@ -260,6 +262,7 @@ final class PlayerModel {
         if now.format?.codec != currentFormat?.codec
             || now.format?.sampleRate != currentFormat?.sampleRate
             || now.format?.bitDepth != currentFormat?.bitDepth
+            || now.format?.outputSampleRate != currentFormat?.outputSampleRate
         {
             currentFormat = now.format
         }
