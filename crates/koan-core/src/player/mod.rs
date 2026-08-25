@@ -155,6 +155,11 @@ impl Player {
         let device_rate = self.backend.get_device_sample_rate(&device)?;
         let source_rate = info.sample_rate as f64;
 
+        // The track info is already published, so anything read between here
+        // and the switch landing would pair this track with the last one's
+        // output rate — and a rate switch is not instant. Say nothing instead.
+        self.shared_state.clear_output_sample_rate();
+
         let settled = if (device_rate - source_rate).abs() > 0.1 {
             log::info!(
                 "switching device sample rate: {}Hz → {}Hz",
@@ -2296,6 +2301,97 @@ mod tests {
         assert_eq!(settled_rate_for(22050, 48000.0), Some(48000));
         // No switch needed, so nothing resampled: the two rates agree.
         assert_eq!(settled_rate_for(44100, 44100.0), Some(44100));
+    }
+
+    /// A device that takes its time reclocking, as real hardware does.
+    struct SlowBackend {
+        observed: Arc<std::sync::Mutex<Vec<Option<u32>>>>,
+        state: Arc<SharedPlayerState>,
+    }
+
+    impl AudioBackend for SlowBackend {
+        fn list_devices(&self) -> Result<Vec<backend::DeviceInfo>, BackendError> {
+            Ok(vec![self.default_device()?])
+        }
+        fn default_device(&self) -> Result<backend::DeviceInfo, BackendError> {
+            Ok(backend::DeviceInfo {
+                name: "Slow DAC".into(),
+                sample_rates: vec![44100.0, 48000.0],
+                platform_id: 0,
+            })
+        }
+        fn supported_sample_rates(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<Vec<f64>, BackendError> {
+            Ok(vec![44100.0, 48000.0])
+        }
+        fn get_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+        ) -> Result<f64, BackendError> {
+            Ok(48000.0)
+        }
+        fn set_device_sample_rate(
+            &self,
+            _device: &backend::DeviceInfo,
+            rate: f64,
+        ) -> Result<f64, BackendError> {
+            // What a front end polling mid-switch would see.
+            self.observed
+                .lock()
+                .unwrap()
+                .push(self.state.output_sample_rate());
+            Ok(rate)
+        }
+        fn create_engine(
+            &self,
+            _device: &backend::DeviceInfo,
+            _sample_rate: f64,
+            _channels: u32,
+            _consumer: rtrb::Consumer<f32>,
+            _samples_played: Arc<AtomicU64>,
+        ) -> Result<Box<dyn AudioEngineHandle>, BackendError> {
+            Ok(Box::new(NullEngine))
+        }
+    }
+
+    #[test]
+    fn the_previous_rate_is_not_published_while_the_device_reclocks() {
+        // A 48 kHz track followed by a 44.1 kHz one: for as long as the switch
+        // takes — the better part of a second on USB — the new track's info is
+        // published against the old track's output rate. A front end polling in
+        // that window used to latch "44.1 → 48" and, since nothing about the
+        // codec or the source rate changed afterwards, never let go of it.
+        let mut player = Player::new();
+        let state = player.shared_state.clone();
+        state.set_output_sample_rate(48000);
+
+        let observed = Arc::new(std::sync::Mutex::new(Vec::new()));
+        player.backend = Box::new(SlowBackend {
+            observed: observed.clone(),
+            state: state.clone(),
+        });
+
+        let info = buffer::StreamInfo {
+            codec: "FLAC".into(),
+            sample_rate: 44100,
+            channels: 2,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            duration_ms: 1000,
+        };
+        let (_producer, consumer) = rtrb::RingBuffer::new(16);
+        player
+            .create_engine_for(&info, consumer)
+            .expect("engine creation should succeed");
+
+        assert_eq!(
+            *observed.lock().unwrap(),
+            vec![None],
+            "mid-switch the output rate must read as unknown, not as the last track's"
+        );
+        assert_eq!(state.output_sample_rate(), Some(44100));
     }
 
     /// Backend that hands its rate-change callback back to the test.
