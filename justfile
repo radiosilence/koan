@@ -9,18 +9,8 @@ cli *ARGS:
     cargo run --release -p koan-cli -- {{ARGS}}
 
 # Run tests + clippy
-#
-# KOAN_NO_KEYCHAIN: a test binary is unsigned and rebuilt under a new hash every
-# compile, so a keychain ACL can never match it — every run would prompt for the
-# login password, and "Always Allow" would grant it to a binary that is about to
-# stop existing.
-#
-# Set per-recipe, not at the top of the file. A top-level `export` reaches every
-# recipe, so `just macos-run` launched the app with its credential store switched
-# off: the keychain is where the remote password lives, and without it koan has
-# no server — nothing plays, nothing downloads and no artwork loads.
 check:
-    KOAN_NO_KEYCHAIN=1 cargo test --all-targets
+    cargo test --all-targets
     cargo clippy --all-targets -- -D warnings
 
 # Format
@@ -325,4 +315,4 @@ macos-dmg: macos-bundle
 
 # Run the macOS app's tests.
 macos-test: macos-ffi
-    cd {{app_dir}} && KOAN_NO_KEYCHAIN=1 swift test
+    cd {{app_dir}} && swift test

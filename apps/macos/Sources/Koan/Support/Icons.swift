@@ -31,6 +31,8 @@ enum Icon {
     static let album = "square.stack"
     static let artist = "music.mic"
     static let queueSection = "list.bullet"
+    /// Put the queue back on the row that is playing.
+    static let jumpToPlaying = "scope"
     static let history = "clock.arrow.circlepath"
     static let playlist = "music.note.list"
     static let search = "magnifyingglass"

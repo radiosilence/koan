@@ -1,7 +1,6 @@
 pub mod audio;
 pub mod auth;
 pub mod config;
-pub mod credentials;
 pub mod db;
 pub mod format;
 pub mod graphql_client;

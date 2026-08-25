@@ -312,7 +312,7 @@ enum AuthCommands {
         #[arg(long)]
         username: String,
     },
-    /// Log out (revoke token and clear keychain)
+    /// Log out (revoke the token and forget it)
     Logout {
         /// Server URL
         #[arg(long, default_value = "http://127.0.0.1:4000")]

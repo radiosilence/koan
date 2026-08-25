@@ -362,7 +362,7 @@ mod tests {
     /// Deliberately not the per-test `TempDir`: enqueueing spawns downloads on
     /// a thread that outlives the test which started it, and that thread reads
     /// the configuration when it runs. Without this it reads the developer's
-    /// own — their library, their server, and a prompt for their keychain.
+    /// own — their library, their server, and their credentials.
     fn isolate_config() {
         static DIR: std::sync::OnceLock<TempDir> = std::sync::OnceLock::new();
         koan_core::config::set_config_dir(DIR.get_or_init(|| TempDir::new().unwrap()).path());

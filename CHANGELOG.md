@@ -1,6 +1,26 @@
 # Changelog
 
-## Unreleased
+## v0.31.2 (2026-08-25)
+
+### Changed
+
+- **Credentials moved out of the OS keychain and into `config.local.toml`. Anyone signed in to a remote server will have to sign in once more.**
+
+  A keychain item's ACL is keyed on the code signature of the binary reading it, and koan has no stable signing identity — ad-hoc signing derives that identity from the binary's own hash, so every release was a different application to macOS. No grant ever matched twice, "Always Allow" was a promise about a binary that was about to stop existing, and the login-password dialog came back on the first launch after every update. The apps that never ask are not doing anything clever: they are Developer ID signed, so their identity survives an update and the ACL keeps matching.
+
+  What the dialog was guarding does not justify it. Subsonic authenticates every request with the password or a salted MD5 of it, so a client has to keep something password-equivalent indefinitely — there is no token to exchange it for, and Navidrome offers no OAuth. The secret now sits in `config.local.toml`, gitignored and created `0600`, beside the URL and username it belongs to. That is the bargain `~/.netrc`, `~/.aws/credentials` and `gh`'s `hosts.yml` all make, and it costs a keychain that could never be made to hold.
+
+  The remote password, the Subsonic API secret and the refresh token from `koan auth login` all move. `koan auth login` writes a new `[auth]` section naming the server it signed in to. The `keyring` dependency and `KOAN_NO_KEYCHAIN` are gone, along with the test-suite opt-out that only existed because unsigned test binaries could never match an ACL either.
+
+### Added
+
+- **The app says so when it has a server configured and no password for it.** Nothing did. The queue filled with tracks that never loaded, every sleeve came back empty and no download started — which reads as a broken library rather than as being signed out, and sends you looking in the wrong place for it. A toast at launch now names the server and points at Settings, which is where the one thing that fixes it lives.
+
+- **A button that puts the queue back on the row that is playing.** Beside the layout picker, since both are about what you are looking at rather than what is in the queue. The row is centred rather than dropped at the top edge — what is playing is read against what comes after it. It runs the same path `g` and `G` do, and is disabled rather than hidden when nothing is playing.
+
+### Fixed
+
+- **The queue comes back to where you left it.** A trip to an album and back dropped you at the top of it again. The stage builds one page at a time, so leaving the queue destroyed it — and a macOS `List` cannot be put back: its scroll position belongs to AppKit's table, and every SwiftUI way of asking for one (`scrollPosition`, `scrollTo(y:)`, `scrollPosition(id:)`) is quietly inert on it. The queue is no longer torn down. It stays where it is, behind whatever you navigated to: invisible, untouchable, and off stage, which is also what stops the bars on the playing row dancing to an analyser nobody can see. The selection you left survives the trip too.
 
 ### Removed
 

@@ -312,10 +312,38 @@ private struct StageView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
 
+    private var onQueue: Bool { nav.current == .section(.queue) }
+
+    /// The queue is never torn down; every other page is built when you arrive
+    /// and thrown away when you leave.
+    ///
+    /// That asymmetry buys the one thing a `List` cannot be given back: where it
+    /// was scrolled to. On macOS a `List` is AppKit's table, and every SwiftUI
+    /// way of asking one to go to an offset — `scrollPosition`, `scrollTo(y:)`,
+    /// `scrollPosition(id:)` — is inert on it, so a queue rebuilt on the way
+    /// back always starts at the top. Keeping it mounted means it never left.
+    ///
+    /// Off stage it is invisible, untouchable, unfocusable and told so, which
+    /// is what stops the row that is playing animating behind a page you are
+    /// actually looking at.
     var body: some View {
+        ZStack {
+            QueueView()
+                .opacity(onQueue ? 1 : 0)
+                .allowsHitTesting(onQueue)
+                .disabled(!onQueue)
+                .accessibilityHidden(!onQueue)
+                .environment(\.onStage, onQueue)
+
+            if !onQueue { page }
+        }
+    }
+
+    @ViewBuilder private var page: some View {
         switch nav.current {
         case .section(.queue):
-            QueueView()
+            // Kept alive above, and this is only reached when it is not showing.
+            EmptyView()
         case .section(.searchResults):
             SearchResultsView()
         case .section(.albums):
@@ -334,6 +362,13 @@ private struct StageView: View {
             ArtistDetailView(artistId: id)
         }
     }
+}
+
+extension EnvironmentValues {
+    /// Whether the page this view belongs to is the one on screen. False only
+    /// for the queue while you are somewhere else — see `StageView`. Anything
+    /// that animates or subscribes to keep itself current reads it.
+    @Entry var onStage = true
 }
 
 /// Engine errors are informational — a device disappearing shouldn't take a

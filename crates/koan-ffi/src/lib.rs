@@ -1643,9 +1643,6 @@ impl KoanEngine {
     /// still real, they just cannot be fetched until you sign in again.
     pub async fn sign_out_remote(self: Arc<Self>) -> Result<(), KoanError> {
         offload::offload(move || {
-            let cfg = Config::load().unwrap_or_default();
-            let _ = koan_core::credentials::delete_password(&cfg.remote.url);
-
             Config::persist(|cfg| {
                 cfg.remote.enabled = false;
                 cfg.remote.password = String::new();

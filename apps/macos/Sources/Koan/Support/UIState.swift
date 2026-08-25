@@ -5,10 +5,10 @@ import SwiftUI
 
 /// The bits of presentation a keystroke has to reach.
 ///
-/// Sheets, the search field and the queue's scroll position belong to views,
-/// but a hotkey arrives from outside all of them — so the flags live here,
-/// where the key monitor can set them and the view that owns the thing can
-/// watch. The menu bar drives the same flags, so both routes agree.
+/// Sheets and the search field belong to views, but a hotkey arrives from
+/// outside all of them — so the flags live here, where the key monitor can set
+/// them and the view that owns the thing can watch. The menu bar drives the
+/// same flags, so both routes agree.
 @MainActor
 @Observable
 final class UIState {
@@ -27,14 +27,15 @@ final class UIState {
     /// where the sidebar ends in order not to sit on it.
     var sidebarWidth: CGFloat = 0
 
-    enum Edge { case top, bottom }
+    /// Where the queue can be sent. Two ends and the row the music is on.
+    enum Jump { case top, bottom, playing }
 
     /// Counters, not booleans: pressing `g` twice has to jump twice, and a flag
     /// that is already true is not a change anything can observe.
     private(set) var searchFocusToken = 0
     private(set) var filterFocusToken = 0
     private(set) var queueJumpToken = 0
-    private(set) var queueJumpEdge = Edge.top
+    private(set) var queueJumpTarget = Jump.top
     /// Escape drops the selection wherever you are, so every list that has one
     /// watches this rather than each binding its own key and disagreeing about
     /// which of them the keystroke belonged to.
@@ -44,11 +45,6 @@ final class UIState {
     /// reached the queue.
     private(set) var selectAllToken = 0
 
-    /// Where the queue was left, so coming back to it is coming back rather
-    /// than starting again. The page is a `switch` in one view, so leaving the
-    /// queue destroys it and takes its scroll position with it.
-    var queueScrollY: CGFloat = 0
-
     func focusSearch() { searchFocusToken += 1 }
 
     func focusFilter() { filterFocusToken += 1 }
@@ -57,8 +53,8 @@ final class UIState {
 
     func selectAll() { selectAllToken += 1 }
 
-    func jumpQueue(to edge: Edge) {
-        queueJumpEdge = edge
+    func jumpQueue(to target: Jump) {
+        queueJumpTarget = target
         queueJumpToken += 1
     }
 

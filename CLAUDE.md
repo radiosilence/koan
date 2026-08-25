@@ -83,9 +83,7 @@ just macos-dmg  # package the app for release
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
 
-Development builds are signed with a self-signed certificate — `just macos-signing-cert` creates it, once. Without it the app is ad-hoc signed, which derives its identity from the binary's own hash: every rebuild is a different application to macOS, so keychain grants and TCC permissions are forgotten each time and the keychain prompts on every launch. It buys nothing against Gatekeeper, which wants Developer ID and notarisation.
-
-`just check` exports `KOAN_NO_KEYCHAIN=1`. Test binaries are unsigned and rebuilt under a fresh hash, so no keychain ACL can ever match one and "Always Allow" grants access to a binary about to stop existing — the prompt would come back every run.
+Development builds are signed with a self-signed certificate — `just macos-signing-cert` creates it, once. Without it the app is ad-hoc signed, which derives its identity from the binary's own hash: every rebuild is a different application to macOS, so TCC permissions are forgotten each time. It buys nothing against Gatekeeper, which wants Developer ID and notarisation.
 
 Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy --workspace -- -D warnings` before any `git push`. If clippy fails, fix before pushing.
 
@@ -123,7 +121,6 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
 | `remote/sync.rs` | Parallel library sync: paginate → rayon fetch → batch DB write |
 | `config.rs` | Figment-based layered config: defaults → config.toml → config.local.toml → KOAN_* env vars |
-| `credentials.rs` | Cross-platform credential store via keyring (macOS Keychain, Linux secret-service). Answers are cached per process, and `KOAN_NO_KEYCHAIN` opts out entirely |
 | `helpers.rs` | Shared by every front end: sign-in, favourite reconciliation, sharing, auto-sync and folder watching, forget-folder/forget-remote, cache and index maintenance |
 | `playlists.rs` | Playlists beyond the database: two-way Subsonic reconciliation, background pushes, M3U8 export |
 | `organize.rs` | File rename using format strings. Preview/execute/undo — one `PlanEntry` per file carrying its destination and outcome. Moves ancillary files |
@@ -171,7 +168,7 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale. Follows the navigator; never moves it |
 | `Support/CoverArtCache.swift` | Album-keyed art cache: bytes once per record on disk, bitmaps per record and draw size in a bounded `NSCache`. Each miss is an HTTP round trip on remote libraries |
 | `Support/PlayingLevels.swift` | One analyser poller for every playing indicator on screen. Runs only while something is playing and something is watching |
-| `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select |
+| `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select. Never torn down: `StageView` keeps it mounted behind other pages, because a macOS `List` cannot be scrolled back to where it was |
 | `Views/PickerSheet.swift` | ⇧⌘K picker: multi-select, add / add-and-play / replace queue |
 | `Views/TransportBar.swift` | Transport, seek, format badge, output device |
 | `Views/LyricsPanel.swift` | Synced lyrics highlighted against position |
@@ -234,7 +231,6 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `rtrb` | Lock-free SPSC ring buffer for audio — the only bridge between decode and audio output |
 | `coreaudio-sys` | Raw CoreAudio AUHAL bindings for bit-perfect output (macOS) |
 | `cpal` | Cross-platform audio I/O — ALSA/PipeWire/PulseAudio (Linux) |
-| `keyring` | Cross-platform credential storage (macOS Keychain, Linux secret-service) |
 | `crossbeam-channel` | Bounded MPSC with timeout recv — command channel + one-shots |
 | `parking_lot` | Faster RwLock/Mutex, no poisoning |
 | `rusqlite` (bundled) | SQLite with FTS5 for full-text search |

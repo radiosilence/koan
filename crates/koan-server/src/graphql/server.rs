@@ -264,8 +264,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // dedicated `--subsonic <port>` listener, which broke `koan play
         // --server <url>` because the remote TUI bridge builds its stream
         // URL off the GraphQL base.
-        // Built once and cloned: each build re-read the config and, on macOS,
-        // prompted the keychain for the Subsonic secret.
+        // Built once and cloned: each build re-read the config from disk.
         let subsonic_merged = crate::subsonic::subsonic_router(db_path);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();

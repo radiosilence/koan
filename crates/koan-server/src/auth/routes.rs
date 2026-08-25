@@ -316,7 +316,7 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
     let resp = LoginResponse {
         access_token,
         // Also in the body: the CLI and other non-browser clients have no cookie
-        // jar and store this in the keychain.
+        // jar and store this in config.local.toml.
         refresh_token: refresh_token_id,
         token_type: "Bearer".into(),
         expires_in: state.access_ttl_secs,
