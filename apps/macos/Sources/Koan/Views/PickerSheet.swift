@@ -159,7 +159,7 @@ struct PickerSheet: View {
         .disabled(resolving || (picked.isEmpty && highlighted == nil))
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .glass(.regular, fallback: .regularMaterial, in: .rect(cornerRadius: 20))
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
     }

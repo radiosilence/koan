@@ -86,7 +86,7 @@ struct ShortcutsSheet: View {
                         .font(.caption.monospaced())
                         .padding(.horizontal, 6)
                         .padding(.vertical, 3)
-                        .glassEffect(.regular, in: .rect(cornerRadius: 6))
+                        .glass(.regular, fallback: .quaternary, in: .rect(cornerRadius: 6))
                 }
             }
             Text(label)

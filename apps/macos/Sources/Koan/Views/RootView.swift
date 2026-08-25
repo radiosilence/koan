@@ -394,7 +394,11 @@ private struct ErrorToast: View {
         .padding(.vertical, 11)
         // Tinted glass rather than a material and a border: the tint carries
         // the warning without a second colour, and glass already has an edge.
-        .glassEffect(.regular.tint(.orange.opacity(0.22)), in: .capsule)
+        .glass(
+            .regular.tint(.orange.opacity(0.22)),
+            fallback: .orange.opacity(0.22),
+            in: .capsule
+        )
         .task {
             try? await Task.sleep(for: .seconds(6))
             dismiss()

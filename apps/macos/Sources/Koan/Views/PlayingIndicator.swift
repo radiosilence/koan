@@ -17,6 +17,7 @@ struct PlayingIndicator: View {
     /// off screen without ever disappearing. Off stage it stops asking the
     /// analyser for levels and its timeline stops ticking.
     @Environment(\.onStage) private var onStage
+    @AppStorage("graphics") private var graphics = Graphics.full
     @State private var watching = false
 
     private struct Bar {
@@ -42,9 +43,13 @@ struct PlayingIndicator: View {
     private static let width =
         Double(bars.count) * barWidth + Double(bars.count - 1) * spacing
 
-    /// Whether there is anything to follow. Reduce Motion keeps the still bars,
-    /// and still bars need no analyser.
-    private var live: Bool { isPlaying && !reduceMotion && onStage }
+    /// Whether the bars hold their shape instead of dancing. Reduce Motion asks
+    /// for it, and so does the bottom of the graphics ladder.
+    private var still: Bool { reduceMotion || !graphics.animatesIndicators }
+
+    /// Whether there is anything to follow. Still bars need no analyser, so
+    /// this is also what decides whether anything polls it.
+    private var live: Bool { isPlaying && !still && onStage }
 
     var body: some View {
         // At the rate the levels arrive, not the rate the display can manage.
@@ -91,7 +96,7 @@ struct PlayingIndicator: View {
     }
 
     private func height(of bar: Bar, band: Int, at now: Double) -> Double {
-        guard !reduceMotion else {
+        guard !still else {
             return Self.minHeight + bar.rest * (Self.maxHeight - Self.minHeight)
         }
         // Two frequencies with an irrational ratio: the bars never fall back

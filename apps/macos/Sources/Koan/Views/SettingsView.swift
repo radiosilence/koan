@@ -28,6 +28,8 @@ struct SettingsView: View {
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
                     RadioSettings(model: model)
                         .tabItem { Label("Radio", systemImage: "dot.radiowaves.left.and.right") }
+                    AppearanceSettings()
+                        .tabItem { Label("Appearance", systemImage: "paintpalette") }
                 }
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
             } else {
@@ -375,6 +377,48 @@ private struct PlaybackSettings: View {
                 Text("Loudness")
             } footer: {
                 Text("Applies the gain written into the file's tags. Per album keeps the relative loudness within a record.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - Appearance
+
+/// Not part of `config.toml`. How much the app draws is this machine's
+/// business, and the TUI has none of it to draw, so it sits in defaults beside
+/// the other view state rather than in the file the CLI shares.
+private struct AppearanceSettings: View {
+    @AppStorage("graphics") private var graphics = Graphics.full
+
+    var body: some View {
+        Form {
+            Section {
+                Slider(
+                    value: Binding(
+                        get: { Double(graphics.rawValue) },
+                        set: { graphics = Graphics(rawValue: Int($0.rounded())) ?? .full }
+                    ),
+                    in: 0...Double(Graphics.allCases.count - 1),
+                    step: 1
+                ) {
+                    Text("Level")
+                } minimumValueLabel: {
+                    Text("Plain").font(.caption)
+                } maximumValueLabel: {
+                    Text("Full").font(.caption)
+                }
+                Text("**\(graphics.label)** — \(graphics.detail)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } header: {
+                Text("Graphics")
+            } footer: {
+                Text("How much koan spends on looking like itself. Every step down removes something that costs while the music plays — the colour drifting behind the window first, since on this machine it is the only one that shows up in a measurement.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

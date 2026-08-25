@@ -33,7 +33,7 @@ struct AlbumGridCell: View {
                             // Clear glass, not a black scrim: over artwork the
                             // point is to stay readable without hiding the
                             // corner of the cover it sits on.
-                            .glassEffect(.clear, in: .capsule)
+                            .glass(.clear, fallback: .ultraThinMaterial, in: .capsule)
                             .padding(6)
                     }
                 }
@@ -51,7 +51,7 @@ struct AlbumGridCell: View {
                             library.toggleFavourite(album: album.id)
                         }
                         .padding(7)
-                        .glassEffect(.clear.interactive(), in: .circle)
+                        .glass(.clear.interactive(), fallback: .ultraThinMaterial, in: .circle)
                         .glassEffectTransition(.materialize)
                         .padding(7)
                     }
