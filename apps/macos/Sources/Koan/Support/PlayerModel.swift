@@ -225,13 +225,33 @@ final class PlayerModel {
     /// read.
     private(set) var currentAlbumId: Int64?
     private(set) var currentArtistId: Int64?
+    /// The track `currentAlbumId` has actually been resolved for, as opposed to
+    /// one still being looked up. Only `currentArtwork` cares, and it cares a
+    /// lot — see there.
+    private var placeResolvedFor: Int64?
+
+    /// The sleeve to draw for what is playing.
+    ///
+    /// The record wherever we know it, so every track off one album shares a
+    /// single fetch and a single cached bitmap. `nil` while the lookup is still
+    /// in flight rather than the track: falling back for those few hundred
+    /// milliseconds would fetch the sleeve keyed by track and then fetch the
+    /// identical image again keyed by album, which is the duplication this is
+    /// here to avoid. A beat of placeholder is cheaper.
+    var currentArtwork: AlbumArtwork.Source? {
+        if let currentAlbumId { return .album(currentAlbumId) }
+        guard placeResolvedFor == currentTrackId else { return nil }
+        return currentTrackId.map { .track($0) }
+    }
 
     private func resolveCurrentPlace(trackId: Int64?) {
         guard let trackId else {
             currentAlbumId = nil
             currentArtistId = nil
+            placeResolvedFor = nil
             return
         }
+        placeResolvedFor = nil
         let engine = self.engine
         Task { @MainActor in
             let track = (try? await engine.track(trackId: trackId)) ?? nil
@@ -240,6 +260,7 @@ final class PlayerModel {
             guard trackId == self.currentTrackId else { return }
             self.currentAlbumId = track?.albumId
             self.currentArtistId = track?.artistId
+            self.placeResolvedFor = trackId
         }
     }
 

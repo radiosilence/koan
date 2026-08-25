@@ -3,12 +3,39 @@ import SwiftUI
 
 /// Square album art with a placeholder that doesn't look broken while loading.
 struct AlbumArtwork: View {
+    /// Which record's sleeve. An album wherever the caller knows one: art is
+    /// stored per record, so asking by track only to draw the same image is a
+    /// round trip and a cache entry per track on it.
     enum Source: Hashable {
         case album(Int64)
         case track(Int64)
     }
 
+    /// How large a bitmap to keep, not how large to draw it.
+    ///
+    /// Two cached sizes rather than one per call site: every entry is held
+    /// until evicted, and a bucket the whole app shares is one bitmap where a
+    /// per-frame size would be a dozen near-identical ones. Both are generous
+    /// enough for their callers at 2×.
+    enum Size: String, Hashable {
+        /// List rows, headers and the transport — nothing above 64pt.
+        case thumb
+        /// Grid tiles, a record's own page, the window wash.
+        case tile
+        /// The viewer, and only the viewer. Never cached.
+        case full
+
+        var pixels: Int? {
+            switch self {
+            case .thumb: 128
+            case .tile: 512
+            case .full: nil
+            }
+        }
+    }
+
     let source: Source
+    var size: Size = .tile
     var cornerRadius: CGFloat = 6
 
     @Environment(CoverArtCache.self) private var cache
@@ -33,7 +60,10 @@ struct AlbumArtwork: View {
                 if let image {
                     Image(nsImage: image)
                         .resizable()
-                        .interpolation(.high)
+                        // The bitmap is already sized for where it is drawn, so
+                        // there is little left to interpolate and `.high` was
+                        // paying for a better answer to an easier question.
+                        .interpolation(.medium)
                         .aspectRatio(contentMode: .fill)
                         .transition(.opacity)
                 } else {
@@ -58,8 +88,8 @@ struct AlbumArtwork: View {
             }
             // Keyed on the source, so a recycled cell in a scrolling grid
             // cancels the load it no longer needs and starts the one it does.
-            .task(id: source) {
-                image = cache.cached(source)
+            .task(id: Key(source: source, size: size)) {
+                image = cache.cached(source, size: size)
                 guard image == nil else { return }
 
                 // Settle first. `.task(id:)` is cancelled when the cell is
@@ -70,9 +100,14 @@ struct AlbumArtwork: View {
                 guard !Task.isCancelled else { return }
 
                 isLoading = true
-                image = await cache.image(for: source)
+                image = await cache.image(for: source, size: size)
                 isLoading = false
             }
+    }
+
+    private struct Key: Equatable {
+        let source: Source
+        let size: Size
     }
 }
 

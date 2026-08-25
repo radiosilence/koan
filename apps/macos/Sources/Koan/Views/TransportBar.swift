@@ -61,11 +61,11 @@ struct TransportBar: View {
     @ViewBuilder
     private var nowPlaying: some View {
         HStack(spacing: 11) {
-            if let trackId = player.currentTrackId {
-                AlbumArtwork(source: .track(trackId), cornerRadius: 8)
+            if let sleeve = player.currentArtwork {
+                AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 8)
                     .frame(width: 44, height: 44)
                     .showsArtworkFullSize(
-                        source: .track(trackId),
+                        source: sleeve,
                         title: player.nowPlaying.entry?.title ?? "",
                         subtitle: player.nowPlaying.entry.map {
                             "\($0.artist) — \($0.album)"

@@ -22,16 +22,16 @@ final class NowPlayingCentre {
     private var publishedTrack: Int64?
     private var publishedState: PlayState?
     private var publishedPosition: UInt64 = 0
-    /// Which track's artwork actually made it into the published info.
+    /// Which sleeve actually made it into the published info.
     ///
     /// Art arrives after the track does — on a remote library the fetch is an
     /// HTTP round trip — so the first publish for a track carries none, and
     /// without this nothing would ever publish it: the guard below sees an
     /// unchanged track, an unchanged state and no seek, and returns.
-    private var publishedArtwork: Int64?
-    /// The track a fetch has already been started for, so a record with no art
+    private var publishedArtwork: AlbumArtwork.Source?
+    /// The sleeve a fetch has already been started for, so a record with no art
     /// doesn't start one on every tick.
-    private var requestedArtwork: Int64?
+    private var requestedArtwork: AlbumArtwork.Source?
 
     init(player: PlayerModel, art: CoverArtCache) {
         self.player = player
@@ -105,9 +105,10 @@ final class NowPlayingCentre {
         // Republish on a track change, a state change, a jump the system
         // couldn't have extrapolated — a seek, in other words — or the artwork
         // finally arriving.
-        let artwork = entry.trackId.flatMap { art.cached(.track($0)) }
+        let source = player.currentArtwork
+        let artwork = source.flatMap { art.cached($0, size: .tile) }
         let drifted = abs(Int64(now.positionMs) - Int64(publishedPosition)) > 2000
-        let artworkArrived = artwork != nil && publishedArtwork != entry.trackId
+        let artworkArrived = artwork != nil && publishedArtwork != source
         guard entry.trackId != publishedTrack || now.state != publishedState || drifted
             || artworkArrived
         else {
@@ -138,10 +139,10 @@ final class NowPlayingCentre {
         publishedTrack = entry.trackId
         publishedState = now.state
         publishedPosition = now.positionMs
-        publishedArtwork = artwork == nil ? nil : entry.trackId
+        publishedArtwork = artwork == nil ? nil : source
 
-        if artwork == nil, let trackId = entry.trackId {
-            fetchArtwork(trackId)
+        if artwork == nil, let source {
+            fetchArtwork(source)
         }
     }
 
@@ -150,11 +151,11 @@ final class NowPlayingCentre {
     /// The transport bar asks for this same key, but relying on that makes Now
     /// Playing depend on a view being on screen. The cache shares one fetch per
     /// key, so asking twice costs nothing.
-    private func fetchArtwork(_ trackId: Int64) {
-        guard requestedArtwork != trackId else { return }
-        requestedArtwork = trackId
+    private func fetchArtwork(_ source: AlbumArtwork.Source) {
+        guard requestedArtwork != source else { return }
+        requestedArtwork = source
         Task {
-            _ = await art.image(for: .track(trackId))
+            _ = await art.image(for: source, size: .tile)
             refresh()
         }
     }

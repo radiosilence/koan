@@ -108,7 +108,7 @@ private struct SearchTrackRow: View {
             // list is exactly where you are trying to recognise something.
             Group {
                 if let albumId = track.albumId {
-                    AlbumArtwork(source: .album(albumId), cornerRadius: 3)
+                    AlbumArtwork(source: .album(albumId), size: .thumb, cornerRadius: 3)
                 } else {
                     Image(systemName: "music.note")
                         .font(.caption)

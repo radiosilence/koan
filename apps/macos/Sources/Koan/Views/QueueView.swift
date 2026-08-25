@@ -478,6 +478,18 @@ extension QueueView {
 
 // MARK: - Grouping
 
+extension QueueItem {
+    /// Which sleeve to draw for this row.
+    ///
+    /// The record wherever the library still knows it, so a queued album is one
+    /// fetch and one cached bitmap rather than one of each per track on it.
+    /// Anything the library has lost falls back to its own file.
+    var sleeve: AlbumArtwork.Source? {
+        if let albumId { return .album(albumId) }
+        return trackId.map { .track($0) }
+    }
+}
+
 struct QueueGroup: Identifiable {
     let id: String
     let albumArtist: String
@@ -520,8 +532,8 @@ private struct QueueAlbumHeader: View {
             // No tap-to-view here, unlike the album page: this cover sits in a
             // selectable, draggable row, and a tap gesture on it would eat the
             // click that selects the row.
-            if let trackId = group.items.first?.trackId {
-                AlbumArtwork(source: .track(trackId), cornerRadius: 5)
+            if let sleeve = group.items.first?.sleeve {
+                AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 5)
                     .frame(width: 52, height: 52)
                     .shadow(color: .black.opacity(0.28), radius: 4, y: 2)
             }
@@ -595,8 +607,8 @@ private struct QueueRow: View {
                     .font(.caption)
                     .frame(width: 16, alignment: .trailing)
 
-                if artwork, let trackId = item.trackId {
-                    AlbumArtwork(source: .track(trackId), cornerRadius: 3)
+                if artwork, let sleeve = item.sleeve {
+                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 3)
                         .frame(width: 28, height: 28)
                 } else {
                     // Always occupies its column, number or not: a missing track
