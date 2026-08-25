@@ -335,14 +335,7 @@ private struct StageView: View {
         case .section(.artists):
             ArtistBrowser()
         case .section(.favourites):
-            TrackListView(
-                title: "Favourites",
-                subtitle: Format.count(Int64(library.favourites.count), "track"),
-                tracks: library.favourites,
-                // Gathered from the whole library, so a row's cover and album
-                // are what tell it from the one above it.
-                mixedAlbums: true
-            )
+            FavouritesView()
         case .section(.playHistory):
             HistoryView()
         case .section(.snapshots):
