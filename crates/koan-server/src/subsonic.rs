@@ -770,7 +770,6 @@ fn codec_to_mime(codec: &str) -> (&str, &str) {
         "VORBIS" | "OGG" => ("ogg", "audio/ogg"),
         "WAV" => ("wav", "audio/wav"),
         "AIFF" => ("aiff", "audio/aiff"),
-        "WAVPACK" | "WV" => ("wv", "audio/x-wavpack"),
         "APE" => ("ape", "audio/x-ape"),
         _ => ("bin", "application/octet-stream"),
     }
@@ -785,7 +784,6 @@ fn extension_to_mime(ext: &str) -> &str {
         "ogg" => "audio/ogg",
         "wav" => "audio/wav",
         "aiff" | "aif" => "audio/aiff",
-        "wv" => "audio/x-wavpack",
         "ape" => "audio/x-ape",
         _ => "application/octet-stream",
     }

@@ -18,7 +18,6 @@ lofty writes all major tag formats koan encounters:
 - **ID3v2** (MP3, AIFF, WAV) — v2.3 or v2.4 via `use_id3v23` option
 - **Vorbis Comments** (FLAC, OGG Vorbis, Opus)
 - **MP4/iTunes ilst** (M4A, AAC, ALAC)
-- **APE tags** (APE, WavPack)
 - ID3v1 (legacy, but supported)
 
 ### Write workflow

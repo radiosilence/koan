@@ -20,8 +20,14 @@ pub enum MetadataError {
 }
 
 /// Audio file extensions we care about.
+///
+/// Only what koan can actually decode. WavPack and Monkey's Audio are absent
+/// on purpose: symphonia has no reader for either — there is no `wavpack`
+/// feature to turn on, and its `ape` feature is APE *tags*, not the codec — so
+/// indexing them produced library rows that scanned, listed, and refused to
+/// play. Better not to claim them.
 const AUDIO_EXTENSIONS: &[&str] = &[
-    "flac", "mp3", "m4a", "aac", "ogg", "opus", "wv", "wav", "aiff", "aif", "alac", "ape",
+    "flac", "mp3", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "alac",
 ];
 
 /// Check if a path has a supported audio extension.
@@ -365,7 +371,6 @@ fn symphonia_codec_name(codec: symphonia::core::codecs::audio::AudioCodecId) -> 
         ids::CODEC_ID_ALAC => "ALAC".to_string(),
         ids::CODEC_ID_VORBIS => "Vorbis".to_string(),
         ids::CODEC_ID_OPUS => "Opus".to_string(),
-        ids::CODEC_ID_WAVPACK => "WavPack".to_string(),
         ids::CODEC_ID_PCM_S16LE
         | ids::CODEC_ID_PCM_S24LE
         | ids::CODEC_ID_PCM_S32LE
@@ -485,10 +490,8 @@ pub fn codec_string(ft: lofty::file::FileType) -> &'static str {
         lofty::file::FileType::Mp4 => "AAC",
         lofty::file::FileType::Opus => "Opus",
         lofty::file::FileType::Vorbis => "Vorbis",
-        lofty::file::FileType::WavPack => "WavPack",
         lofty::file::FileType::Wav => "WAV",
         lofty::file::FileType::Aiff => "AIFF",
-        lofty::file::FileType::Ape => "APE",
         _ => "Unknown",
     }
 }
@@ -643,10 +646,13 @@ mod tests {
         assert!(is_audio_file(Path::new("track.m4a")));
         assert!(is_audio_file(Path::new("track.ogg")));
         assert!(is_audio_file(Path::new("track.opus")));
-        assert!(is_audio_file(Path::new("track.wv")));
         assert!(is_audio_file(Path::new("track.wav")));
         assert!(is_audio_file(Path::new("track.aiff")));
-        assert!(is_audio_file(Path::new("track.ape")));
+
+        // Nothing koan cannot decode. Both of these were indexed and neither
+        // could be opened, so a library held rows that refused to play.
+        assert!(!is_audio_file(Path::new("track.wv")));
+        assert!(!is_audio_file(Path::new("track.ape")));
 
         assert!(!is_audio_file(Path::new("cover.jpg")));
         assert!(!is_audio_file(Path::new("notes.txt")));

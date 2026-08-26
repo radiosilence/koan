@@ -6,7 +6,7 @@ use std::thread;
 
 use symphonia::core::codecs::audio::well_known::{
     CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MP3, CODEC_ID_OPUS, CODEC_ID_PCM_F32LE,
-    CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32LE, CODEC_ID_VORBIS, CODEC_ID_WAVPACK,
+    CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32LE, CODEC_ID_VORBIS,
 };
 use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::formats::probe::Hint;
@@ -1039,7 +1039,6 @@ pub fn codec_name(codec: AudioCodecId) -> String {
         CODEC_ID_VORBIS => "Vorbis",
         CODEC_ID_OPUS => "Opus",
         CODEC_ID_ALAC => "ALAC",
-        CODEC_ID_WAVPACK => "WavPack",
         CODEC_ID_PCM_S16LE => "PCM/16",
         CODEC_ID_PCM_S24LE => "PCM/24",
         CODEC_ID_PCM_S32LE => "PCM/32",
