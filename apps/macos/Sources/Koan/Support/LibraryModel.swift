@@ -104,15 +104,13 @@ final class LibraryModel {
     private(set) var stats: Stats?
     private(set) var isLoading = false
 
-    private(set) var detailTracks: [Track] = []
-    /// Which record `detailTracks` belongs to, so an answer for a record you
-    /// have already left cannot land on the one you are looking at.
-    private var detailAlbumId: Int64?
-
     /// Set while a scan runs so the UI can show progress and refuse a second
     /// one. Set by `AppState`. Long tasks register here so one place can say
     /// what is happening — see `ActivityModel`.
     weak var activity: ActivityModel?
+    /// Set by `AppState`, so a record's sleeve can be warmed as its rows are
+    /// read rather than after the page is already up.
+    var art: CoverArtCache?
 
     private(set) var isScanning = false
     var scanSummary: ScanSummary?
@@ -253,23 +251,58 @@ final class LibraryModel {
         }
     }
 
-    /// Tracks for the album detail pane.
-    func loadTracks(albumId: Int64) {
-        // Only when it is a different record. Asked again for the one already
-        // showing — which is what a library change does — blanking the list
-        // first would flash it empty for the length of a query.
-        if detailAlbumId != albumId {
-            detailTracks = []
+    /// The record a page is showing, and its tracks, as one value.
+    ///
+    /// Loaded *before* the page appears — see `Navigator.open(album:)`. A page
+    /// that fetches once it is already on screen has to draw itself empty
+    /// first, and the empty state of a record page is the word "Album" over
+    /// nothing. Both halves land together or not at all, so the header can
+    /// never arrive ahead of the rows either.
+    private(set) var detailRecord: AlbumRecord?
+
+    struct AlbumRecord: Sendable {
+        let albumId: Int64
+        var album: Album?
+        var tracks: [Track]
+    }
+
+    /// Read the record and its tracks, off the main actor and both at once.
+    ///
+    /// `.task` and every view callback are main-actor isolated, and isolation
+    /// is inherited by every suspension point — so awaiting the engine from one
+    /// means the *answer* waits for a main-actor slot to be delivered. It queued
+    /// behind the state mirror's batch, which lands every hundred milliseconds:
+    /// the engine answered in 300µs and the page saw it a tenth of a second
+    /// later, every time, whatever the record. Detached, it comes back in one.
+    func prepare(album id: Int64) async {
+        // Started alongside the queries rather than waited on. Coming from the
+        // grid it is already decoded and the page draws it in its first frame;
+        // arriving cold from search it is an HTTP round trip, and holding a
+        // click for that would be worse than the fade it saves.
+        // The sleeve and the colour it washes the room in, warmed alongside
+        // the rows rather than after the page is already up. Started, not
+        // waited on: from the grid both are already in hand, and arriving cold
+        // from search they are an HTTP round trip that a click should not hang
+        // for.
+        if let art {
+            Task.detached {
+                _ = await art.image(for: .album(id), size: .tile)
+                _ = await art.dominantColour(for: .album(id))
+            }
         }
-        detailAlbumId = albumId
         let engine = self.engine
-        Task {
-            let tracks = (try? await engine.tracks(
-                albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
-            )) ?? []
-            guard detailAlbumId == albumId else { return }
-            detailTracks = tracks
-        }
+        let loaded = await Task.detached(priority: .userInitiated) {
+            async let album = try? await engine.album(albumId: id)
+            async let tracks = try? await engine.tracks(
+                albumId: id, artistId: nil, sort: .album, limit: 500, offset: 0
+            )
+            return AlbumRecord(
+                albumId: id,
+                album: await album ?? nil,
+                tracks: await tracks ?? []
+            )
+        }.value
+        detailRecord = loaded
     }
 
     // MARK: - Mutations
@@ -314,14 +347,15 @@ final class LibraryModel {
     func refreshFavourites() {
         let engine = self.engine
         Task {
-            let sets = (
-                Set((try? await engine.favouriteTrackIds()) ?? []),
-                Set((try? await engine.favouriteAlbumIds()) ?? []),
-                Set((try? await engine.favouriteArtistIds()) ?? [])
-            )
-            favouriteTrackIds = sets.0
-            favouriteAlbumIds = sets.1
-            favouriteArtistIds = sets.2
+            // Three independent reads, so three at once. Written as a tuple of
+            // awaits they ran one after another, and the second waited on the
+            // first for no reason at all.
+            async let tracks = engine.favouriteTrackIds()
+            async let albums = engine.favouriteAlbumIds()
+            async let artists = engine.favouriteArtistIds()
+            favouriteTrackIds = Set((try? await tracks) ?? [])
+            favouriteAlbumIds = Set((try? await albums) ?? [])
+            favouriteArtistIds = Set((try? await artists) ?? [])
             reloadFavourites()
         }
     }

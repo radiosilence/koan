@@ -98,9 +98,19 @@ final class Navigator {
         go(to: .section(section))
     }
 
+    /// Load the record, *then* move to it.
+    ///
+    /// Nothing draws until there is something to draw. Arriving first and
+    /// fetching afterwards means a frame of the word "Album" over an empty
+    /// list, and then the real page flickering in underneath it — which is the
+    /// same partial render a web page does and reads exactly as badly. The read
+    /// is two indexed queries; there is no reason to show anybody the gap.
     func open(album id: Int64, highlighting trackId: Int64? = nil) {
-        highlightedTrackId = trackId
-        go(to: .album(id))
+        Task {
+            await library.prepare(album: id)
+            highlightedTrackId = trackId
+            go(to: .album(id))
+        }
     }
 
     func open(artist id: Int64) {
@@ -114,13 +124,23 @@ final class Navigator {
     func goBack() {
         guard canGoBack else { return }
         cursor -= 1
-        apply(history[cursor])
+        step(to: history[cursor])
     }
 
     func goForward() {
         guard canGoForward else { return }
         cursor += 1
-        apply(history[cursor])
+        step(to: history[cursor])
+    }
+
+    /// Back and forward land on record pages too, and they want what `open`
+    /// wants: the page ready before it is shown.
+    private func step(to page: Page) {
+        guard case .album(let id) = page else { return apply(page) }
+        Task {
+            await library.prepare(album: id)
+            apply(page)
+        }
     }
 
     /// Go to a page, recording it. The only way anything moves.

@@ -1172,6 +1172,37 @@ pub fn tracks_for_album(conn: &Connection, album_id: i64) -> Result<Vec<TrackRow
     Ok(rows)
 }
 
+/// One track off an album, for anything that only needs a representative.
+///
+/// Artwork is the case: every track on a record shares the record's cover, so a
+/// client wanting it needs any one of them. Asking for the album's tracks and
+/// picking an id out of the answer is a listing built and carried across a
+/// boundary to be thrown away — and on a grid of tiles, one of those per tile.
+///
+/// Prefers a track with a file, because art can then be read straight out of
+/// the tag without asking the server at all.
+pub fn cover_track_for_album(
+    conn: &Connection,
+    album_id: i64,
+) -> Result<Option<TrackRow>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         WHERE t.album_id = ?1
+         ORDER BY (t.path IS NULL AND t.cached_path IS NULL), t.disc, t.track_number
+         LIMIT 1",
+    )?;
+
+    let mut rows = stmt.query_map(params![album_id], row_to_track_row)?;
+    rows.next().transpose().map_err(Into::into)
+}
+
 /// Build a SQL `IN (?, ?, ...)` clause with the given number of placeholders.
 fn in_clause(n: usize) -> String {
     let mut s = String::with_capacity(2 + n * 2);

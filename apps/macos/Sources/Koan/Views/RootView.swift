@@ -38,6 +38,14 @@ struct RootView: View {
     /// The colour of the record playing. The app's own accent is a neutral, so
     /// the only colour in the chrome is the one the music brought.
     @State private var recordTint: Color?
+
+    /// Matched to the wash's own dissolve, because they are one change: the
+    /// room's colour arriving in two steps at two speeds is what reads as a
+    /// glitch. The one animation here the compositor cannot take — a tint is a
+    /// value every control reads, not a property of a layer — but it is only
+    /// colour resolution, and it measures at a few percent of the main thread
+    /// rather than the layout pass the drift used to cost.
+    private static let tintEase = Animation.easeInOut(duration: 2)
     /// Watched rather than inferred from the measured width: a collapsed
     /// sidebar still reports its last width, so the transport kept a gap where
     /// it used to be.
@@ -129,21 +137,27 @@ struct RootView: View {
             playlists.load()
         }
         .task(id: colourSource) {
-            // Animated at the point the colour changes rather than by an
-            // `.animation(_:value:)` on the view. That modifier animates *every*
-            // animatable change in the subtree it is attached to whenever its
-            // value moves — and attached here that subtree is the whole split
-            // view, so a navigation push that happened to coincide with a new
-            // record was dragged out over two seconds along with it.
-            // A thumbnail: the dominant colour of a sleeve is the same at 128
-            // pixels as at 512, and this is a size the grid already holds.
-            guard let colourSource, let cover = await art.image(for: colourSource, size: .thumb)
-            else {
-                withAnimation(.easeInOut(duration: 2)) { recordTint = nil }
+            guard let colourSource else {
+                withAnimation(Self.tintEase) { recordTint = nil }
                 return
             }
-            let colour = Color.dominant(of: cover)
-            withAnimation(.easeInOut(duration: 2)) { recordTint = colour }
+            // Already worked out, so it lands with the page rather than after
+            // it. Navigating warms this alongside the rows — see
+            // `LibraryModel.prepare(album:)` — so this is the usual path, and
+            // the room is the right colour in the frame the page appears in.
+            if let known = art.cachedColour(for: colourSource) {
+                withAnimation(Self.tintEase) { recordTint = known }
+                return
+            }
+            // Not yet known, so it has to be fetched — and the wash is a slow
+            // ease into the background that nobody is waiting on. It stands
+            // aside until the page in front of it has drawn rather than racing
+            // it for artwork, threads and a slot on the main actor.
+            try? await Task.sleep(for: .milliseconds(150))
+            let colour = await art.dominantColour(for: colourSource)
+            withAnimation(Self.tintEase) {
+                recordTint = colour
+            }
         }
         // Overrides the app-wide tint for everything below, which is every
         // control koan draws itself. What AppKit draws — list selection, focus

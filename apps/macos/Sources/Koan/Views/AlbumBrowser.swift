@@ -35,31 +35,34 @@ struct AlbumDetailView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
 
-    /// Fetched, not looked up: the browser holds the page it is showing, and
-    /// this record may well not be on it.
-    @State private var album: Album?
+    /// Whatever the navigator loaded before it brought us here, so the first
+    /// body evaluation already has the whole page. Guarded on the id because
+    /// history can move faster than a read.
+    private var record: LibraryModel.AlbumRecord? {
+        let held = library.detailRecord
+        return held?.albumId == albumId ? held : nil
+    }
 
     var body: some View {
         TrackListView(
-            title: album?.title ?? "Album",
+            title: record?.album?.title ?? "Album",
             subtitle: subtitle,
-            tracks: library.detailTracks,
+            tracks: record?.tracks ?? [],
             artwork: .album(albumId),
-            artistLink: album?.artistId,
-            playable: album.map { Playable.album($0) }
+            artistLink: record?.album?.artistId,
+            playable: record?.album.map { Playable.album($0) }
         )
-        .reloading(on: albumId) {
-            album = try? await library.engine.album(albumId: albumId)
-            library.loadTracks(albumId: albumId)
-        }
+        // Only for a library change — the record itself arrived before the page
+        // did. A download landing writes a cached path onto one of these rows.
+        .reloading(on: albumId) { await library.prepare(album: albumId) }
     }
 
     private var subtitle: String {
-        guard let album else { return "" }
+        guard let record, let album = record.album else { return "" }
         var parts = [album.artistName]
         if let year = album.year { parts.append(String(year)) }
         if let codec = album.codec { parts.append(codec.uppercased()) }
-        let total = library.detailTracks.compactMap(\.durationMs).reduce(0, +)
+        let total = record.tracks.compactMap(\.durationMs).reduce(0, +)
         if total > 0 {
             parts.append(Format.duration(total))
         }

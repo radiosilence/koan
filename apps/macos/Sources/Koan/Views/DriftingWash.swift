@@ -1,0 +1,256 @@
+import AppKit
+import SwiftUI
+
+/// The wash, handed to the render server.
+///
+/// SwiftUI cannot express this without paying for it on the main thread.
+/// `.offset` is a *layout* modifier, so animating one produces an
+/// `AnimatableFrame` that the attribute graph has to evaluate every display
+/// frame — and a `repeatForever` pair of those never stops. It cost about a
+/// tenth of a core with nothing happening, and while the two-second dissolve
+/// between records was running the whole app was unresponsive.
+///
+/// A `CABasicAnimation` on a layer's `transform` is committed once and then
+/// belongs to Core Animation, which runs it in the render server — a different
+/// process. The main thread does not see another frame of it, however long it
+/// runs. This is the distinction React Native draws with `useNativeDriver`, and
+/// it is the only way to have motion that costs nothing.
+///
+/// The blur and the saturation go the same way: `CALayer.filters` is applied by
+/// the compositor on the GPU, so the texture is never blurred on a CPU at all.
+struct DriftingWash: NSViewRepresentable {
+    /// Nothing playing, or a record with no art, means no wash rather than a
+    /// grey one.
+    let image: NSImage?
+    /// Whether the room is breathing. False settles it where it stands.
+    let drifts: Bool
+
+    func makeNSView(context: Context) -> WashView { WashView() }
+
+    func updateNSView(_ view: WashView, context: Context) {
+        view.show(image)
+        view.drift(drifts)
+    }
+}
+
+/// One layer holding the current cover, one holding the one before it, and a
+/// crossfade between them. All three animations live in the render server.
+final class WashView: NSView {
+    /// The cover is blurred to mush, so it is rendered small and magnified
+    /// afterwards — blurring a 360pt texture and scaling the result costs a
+    /// fraction of blurring one the width of the window.
+    private static let side: CGFloat = 360
+
+    /// How far the drift travels, and the overscan that lets it.
+    ///
+    /// What decides whether motion is visible is not its speed but how far it
+    /// goes against how soft the thing moving is. Blurred at 14 points and
+    /// magnified about five times, the wash has no feature narrower than eighty
+    /// points on screen, so travel has to be read in multiples of that. These
+    /// reach about four of them.
+    ///
+    /// `near` is a floor, not a taste: at full reach the offset carries the
+    /// texture 12% of the window sideways and the rotation eats another 3.5%,
+    /// and the scale has to keep the texture's own edge out of frame throughout.
+    private static let near: CGFloat = 1.38
+    private static let far: CGFloat = 1.58
+    private static let reach: CGFloat = 0.12
+    private static let rise: CGFloat = 0.10
+
+    /// Three incommensurate periods, so the drift never arrives back where it
+    /// started and never reads as a loop.
+    private static let periods = (scale: 13.0, rotation: 19.0, position: 23.0)
+
+    private let current = CALayer()
+    private let previous = CALayer()
+    private var shown: NSImage?
+    private var drifting = false
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.masksToBounds = true
+        for texture in [previous, current] {
+            texture.contentsGravity = .resizeAspectFill
+            texture.masksToBounds = false
+            // Applied by the compositor rather than by us: the texture is never
+            // blurred on a CPU, and re-magnifying it costs nothing per frame.
+            texture.filters = Self.filters()
+            layer?.addSublayer(texture)
+        }
+        previous.opacity = 0
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+    /// Laid out by hand rather than by autoresizing, so a window resize moves
+    /// the layers without disturbing the animations running on them.
+    override func layout() {
+        super.layout()
+        let side = Self.side
+        let box = CGRect(
+            x: (bounds.width - side) / 2,
+            y: (bounds.height - side) / 2,
+            width: side,
+            height: side
+        )
+        // Frame changes must not be animated — an implicit animation here would
+        // fight the drift and re-commit it on every resize.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        current.frame = box
+        previous.frame = box
+        CATransaction.commit()
+        if drifting { start() }
+    }
+
+    /// Swap in a new cover, dissolving from the old one over long enough that
+    /// you notice the room has changed colour without catching it changing.
+    ///
+    /// The *new* layer fades in, on top of the old one holding station
+    /// underneath. Fading the old one out instead does nothing visible: the new
+    /// one is above it and already opaque, so the change lands as a cut.
+    func show(_ image: NSImage?) {
+        guard image !== shown else { return }
+        shown = image
+
+        // The outgoing cover moves down a layer and sits there, opaque, for the
+        // new one to come up over.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        previous.contents = current.contents
+        previous.opacity = current.contents == nil ? 0 : 1
+        current.contents = image.flatMap { cgImage($0) }
+        CATransaction.commit()
+
+        let dissolve = CABasicAnimation(keyPath: "opacity")
+        dissolve.fromValue = 0
+        dissolve.toValue = 1
+        dissolve.duration = 2
+        dissolve.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        current.add(dissolve, forKey: "dissolve")
+    }
+
+    func drift(_ on: Bool) {
+        guard on != drifting else { return }
+        drifting = on
+        if on { start() } else { settle() }
+    }
+
+    /// Committed once. Everything after this happens in the render server.
+    private func start() {
+        guard bounds.width > 0 else { return }
+        let magnify = max(bounds.width, bounds.height) / Self.side
+
+        for texture in [current, previous] {
+            texture.removeAllAnimations()
+            texture.add(
+                Self.breathe(
+                    "transform.scale",
+                    from: magnify * Self.near,
+                    to: magnify * Self.far,
+                    period: Self.periods.scale
+                ),
+                forKey: "scale"
+            )
+            texture.add(
+                Self.breathe(
+                    "transform.rotation.z",
+                    from: -3 * Double.pi / 180,
+                    to: 3 * Double.pi / 180,
+                    period: Self.periods.rotation
+                ),
+                forKey: "rotation"
+            )
+            let centre = CGPoint(x: bounds.midX, y: bounds.midY)
+            texture.add(
+                Self.breathe(
+                    "position",
+                    from: NSValue(point: CGPoint(
+                        x: centre.x - bounds.width * Self.reach,
+                        y: centre.y - bounds.height * Self.rise
+                    )),
+                    to: NSValue(point: CGPoint(
+                        x: centre.x + bounds.width * Self.reach,
+                        y: centre.y + bounds.height * Self.rise
+                    )),
+                    period: Self.periods.position
+                ),
+                forKey: "position"
+            )
+        }
+    }
+
+    /// Playback stopping lets the room come to rest rather than stopping it
+    /// mid-breath: the layer keeps whatever the animation had reached and eases
+    /// back from there.
+    private func settle() {
+        let magnify = max(bounds.width, bounds.height) / Self.side
+        for texture in [current, previous] {
+            // Where the drift had actually reached, rather than where the model
+            // says it is — otherwise removing the animation snaps the layer back
+            // to its resting pose and the room stops dead instead of coming to
+            // rest.
+            let held = texture.presentation()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            if let held {
+                texture.transform = held.transform
+                texture.position = held.position
+            }
+            texture.removeAnimation(forKey: "scale")
+            texture.removeAnimation(forKey: "rotation")
+            texture.removeAnimation(forKey: "position")
+            CATransaction.commit()
+
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(2)
+            CATransaction.setAnimationTimingFunction(
+                CAMediaTimingFunction(name: .easeInEaseOut)
+            )
+            texture.transform = CATransform3DMakeScale(
+                magnify * Self.near, magnify * Self.near, 1
+            )
+            texture.position = CGPoint(x: bounds.midX, y: bounds.midY)
+            CATransaction.commit()
+        }
+    }
+
+    private static func breathe(
+        _ keyPath: String,
+        from: Any,
+        to: Any,
+        period: Double
+    ) -> CABasicAnimation {
+        let animation = CABasicAnimation(keyPath: keyPath)
+        animation.fromValue = from
+        animation.toValue = to
+        animation.duration = period
+        animation.autoreverses = true
+        animation.repeatCount = .infinity
+        animation.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        // Survives the window being occluded or the app being hidden, which
+        // otherwise removes the animation and leaves the wash parked.
+        animation.isRemovedOnCompletion = false
+        return animation
+    }
+
+    private static func filters() -> [CIFilter] {
+        var filters: [CIFilter] = []
+        if let blur = CIFilter(name: "CIGaussianBlur") {
+            blur.setValue(14, forKey: kCIInputRadiusKey)
+            filters.append(blur)
+        }
+        if let saturate = CIFilter(name: "CIColorControls") {
+            saturate.setValue(1.6, forKey: kCIInputSaturationKey)
+            filters.append(saturate)
+        }
+        return filters
+    }
+
+    private func cgImage(_ image: NSImage) -> CGImage? {
+        var rect = NSRect(origin: .zero, size: image.size)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+    }
+}

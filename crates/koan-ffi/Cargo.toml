@@ -31,7 +31,7 @@ nucleo = "0.5"
 parking_lot = "0.12"
 rusqlite = { workspace = true }
 thiserror = "2"
-tokio = { version = "1", features = ["rt", "sync"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "sync"] }
 uniffi = { version = "0.32", features = ["cli"] }
 uuid = { version = "1", features = ["v7"] }
 chrono = "0.4"

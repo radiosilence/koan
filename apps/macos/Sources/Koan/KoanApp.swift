@@ -49,6 +49,7 @@ final class AppState {
         self.activity = activity
         self.levels = PlayingLevels(engine: engine)
         library.activity = activity
+        library.art = art
         player.activity = activity
         organize.activity = activity
         playlists.activity = activity

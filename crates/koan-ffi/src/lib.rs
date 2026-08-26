@@ -629,55 +629,30 @@ impl KoanEngine {
     ) -> Result<Option<CoverArt>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let Some(row) = queries::get_track_row(&db.conn, track_id).map_err(db_err)? else {
-                return Ok(None);
-            };
+            let row = queries::get_track_row(&db.conn, track_id).map_err(db_err)?;
+            self.cover_art_of(row, size)
+        })
+        .await
+    }
 
-            if let Some(path) = row.path.as_ref().or(row.cached_path.as_ref())
-                && let Some(data) = koan_core::index::metadata::extract_cover_art(Path::new(path))
-            {
-                let mime = sniff_mime(&data).to_string();
-                return Ok(Some(CoverArt { data, mime }));
-            }
-
-            let Some(remote_id) = row.remote_id else {
-                return Ok(None);
-            };
-            let cfg = Config::cached();
-            // No server configured: this record simply has no art.
-            if !cfg.remote.enabled {
-                return Ok(None);
-            }
-            // Configured but unusable — signed out, or the password cannot be
-            // read. Reported rather than shrugged off: answering "no art" for
-            // every record makes a signed-out client look like a library that
-            // has no covers, which is a long way from where the problem is.
-            let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-                return Err(KoanError::Remote {
-                    message: koan_core::helpers::remote_unavailable(&cfg),
-                });
-            };
-            match client.get_cover_art(&remote_id, size) {
-                Ok(data) if !data.is_empty() => {
-                    let mime = sniff_mime(&data).to_string();
-                    Ok(Some(CoverArt { data, mime }))
-                }
-                // The server answered and it has nothing. Normal, and worth
-                // remembering: this record has no art and never will.
-                Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => {
-                    Ok(None)
-                }
-                // A timeout or a dropped connection says nothing about whether
-                // art exists. Reported rather than swallowed, so the caller can
-                // ask again instead of recording "this album has none" for the
-                // rest of the session — and so it appears in the log at all.
-                Err(e) => {
-                    log::warn!("cover art for track {track_id} failed: {e}");
-                    Err(KoanError::Remote {
-                        message: e.to_string(),
-                    })
-                }
-            }
+    /// The record's artwork, asked for by the record.
+    ///
+    /// Every track on an album shares its cover, so a client only needs one of
+    /// them — and it used to *fetch the album's tracks* to find one, which is a
+    /// listing built, carried across the boundary and thrown away for a single
+    /// id. A grid of tiles did that once per tile: twenty-two calls, twenty-two
+    /// queries, and the two the page actually wanted queued behind them.
+    ///
+    /// Resolved in SQL here instead, in the same call that returns the bytes.
+    pub async fn album_cover_art(
+        self: Arc<Self>,
+        album_id: i64,
+        size: Option<u32>,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let row = queries::cover_track_for_album(&db.conn, album_id).map_err(db_err)?;
+            self.cover_art_of(row, size)
         })
         .await
     }
@@ -2225,6 +2200,65 @@ impl KoanEngine {
                 }
             })
             .ok();
+    }
+
+    fn cover_art_of(
+        &self,
+        row: Option<queries::TrackRow>,
+        size: Option<u32>,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        {
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            let track_id = row.id;
+
+            if let Some(path) = row.path.as_ref().or(row.cached_path.as_ref())
+                && let Some(data) = koan_core::index::metadata::extract_cover_art(Path::new(path))
+            {
+                let mime = sniff_mime(&data).to_string();
+                return Ok(Some(CoverArt { data, mime }));
+            }
+
+            let Some(remote_id) = row.remote_id else {
+                return Ok(None);
+            };
+            let cfg = Config::cached();
+            // No server configured: this record simply has no art.
+            if !cfg.remote.enabled {
+                return Ok(None);
+            }
+            // Configured but unusable — signed out, or the password cannot be
+            // read. Reported rather than shrugged off: answering "no art" for
+            // every record makes a signed-out client look like a library that
+            // has no covers, which is a long way from where the problem is.
+            let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
+                return Err(KoanError::Remote {
+                    message: koan_core::helpers::remote_unavailable(&cfg),
+                });
+            };
+            match client.get_cover_art(&remote_id, size) {
+                Ok(data) if !data.is_empty() => {
+                    let mime = sniff_mime(&data).to_string();
+                    Ok(Some(CoverArt { data, mime }))
+                }
+                // The server answered and it has nothing. Normal, and worth
+                // remembering: this record has no art and never will.
+                Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => {
+                    Ok(None)
+                }
+                // A timeout or a dropped connection says nothing about whether
+                // art exists. Reported rather than swallowed, so the caller can
+                // ask again instead of recording "this album has none" for the
+                // rest of the session — and so it appears in the log at all.
+                Err(e) => {
+                    log::warn!("cover art for track {track_id} failed: {e}");
+                    Err(KoanError::Remote {
+                        message: e.to_string(),
+                    })
+                }
+            }
+        }
     }
 
     /// The queue as a client sees it: derived, then joined against the library
