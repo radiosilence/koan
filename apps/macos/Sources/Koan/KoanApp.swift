@@ -56,8 +56,10 @@ final class AppState {
         // when the library folders change. Those are the slow things a user is
         // most likely to notice and least likely to have asked for, so they get
         // a row like anything else.
-        activity.mirror("Syncing with server") { engine.isAutoSyncing() }
-        activity.mirror("Scanning library") { engine.isAutoScanning() }
+        activity.mirror("Syncing with server", uses: [.remoteTracks]) { engine.isAutoSyncing() }
+        activity.mirror("Scanning library", uses: .localLibrary, cancellable: true) {
+            engine.isAutoScanning()
+        }
         activity.cancelLibraryTask = { engine.cancelLibraryTask() }
 
         // A finished download changes the library's cached count and nothing
@@ -282,16 +284,19 @@ struct KoanApp: App {
             }
 
             CommandMenu("Library") {
-                // Disabled while one is running: they all queue behind the same
-                // database writer, so a second only makes both slower. Reads
-                // `isLibraryBusy` rather than the task list, which changes on
-                // every progress tick and would rebuild the menus with it.
+                // Each item is disabled only while something holding what it
+                // needs is running — a sync does not grey out a rescan. Reads
+                // `busy` rather than the task list, which changes on every
+                // progress tick and would rebuild the menus with it.
                 Group {
                     ShortcutButton(.rescan) { state?.library.scan() }
                     Button { state?.library.scan(force: true) } label: {
                         Label("Force Rescan", systemImage: Icon.rescanAll)
                     }
-                    Divider()
+                }
+                .disabled(state?.activity.conflicts(with: .localLibrary) ?? false)
+                Divider()
+                Group {
                     Button { state?.library.syncRemote() } label: {
                         Label("Sync Remote Library", systemImage: Icon.sync)
                     }
@@ -299,7 +304,7 @@ struct KoanApp: App {
                         Label("Full Remote Sync", systemImage: Icon.syncAll)
                     }
                 }
-                .disabled(state?.activity.isLibraryBusy ?? false)
+                .disabled(state?.activity.conflicts(with: [.remoteTracks]) ?? false)
                 Divider()
                 Button { state?.art.purge() } label: {
                     Label("Clear Artwork Cache", systemImage: Icon.clear)
@@ -307,7 +312,7 @@ struct KoanApp: App {
                 Button { state?.library.clearDownloads() } label: {
                     Label("Clear Downloaded Files", systemImage: Icon.clear)
                 }
-                .disabled(state?.activity.isLibraryBusy ?? false)
+                .disabled(state?.activity.conflicts(with: [.downloads]) ?? false)
             }
         }
 

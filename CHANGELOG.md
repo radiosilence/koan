@@ -54,6 +54,8 @@
 
 ### Changed
 
+- **A library task now only greys out the ones it would actually collide with.** Any of them running disabled all of them, on the grounds that they queue behind SQLite's single writer — so a twenty-minute sync of a large server locked out rescanning a folder, clearing downloads and the organize sheet along with it. Each task says what it holds instead: the files on disk, the rows for your local tracks, the rows mirrored from the server, the downloaded copies. A sync and a scan write different rows and now run together; a scan and a file move over the same files still do not. Clearing the index waits for everything, because it empties everything.
+
 - **Every query the library answers now goes through an index.** `EXPLAIN QUERY PLAN` was run over every statement koan issues, against a 47,944-track library, and each full table read was either fixed or established as a query that genuinely means all of them. The costs were invisible because nothing ever failed — they only grow with the size of somebody's library:
 
   - Listing an artist's tracks read the whole library. A track counts as theirs by its own credit or its album's, and SQLite cannot use an index for an `OR` spanning two tables; asking `albums` in a subquery instead makes both halves indexed lookups. 10 ms → 2 ms for one artist, and the same shape in the API's batched artist load and in radio's artist picker.

@@ -164,7 +164,7 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | Module | What |
 |--------|------|
 | `KoanApp.swift` | `@main`, `AppState`, menu commands, keyboard shortcuts |
-| `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Library tasks are exclusive — they queue behind SQLite's single writer — and each is cancellable |
+| `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Each task declares what it holds — files on disk, local rows, remote rows, downloads — and a new one is disabled only where those overlap |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
 | `Support/PlayerModel.swift` | Follows the engine's event stream; refetches the queue only when `playlistVersion` moves |
 | `Support/Navigator.swift` | Where the app is: one page, the linear history of pages visited, and a cursor. No `NavigationStack` — koan navigates like a browser, any page from any page |

@@ -221,12 +221,12 @@ struct OrganizeSheet: View {
     }
 
     /// Armed only when pressing it will actually move something: a plan with
-    /// moves in it, nothing already in flight, and no other library task
-    /// holding the database writer.
+    /// moves in it, nothing already in flight, and nothing else reading the
+    /// files this is about to move out from under it.
     private var canRun: Bool {
         !organize.running
             && !organize.previewing
-            && !activity.isLibraryBusy
+            && !activity.conflicts(with: .localLibrary)
             && (organize.plan?.movedCount ?? 0) > 0
     }
 }
