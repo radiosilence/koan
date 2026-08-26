@@ -401,7 +401,7 @@ impl App {
 
     /// Load favourites from the database.
     pub fn load_favourites(&mut self) {
-        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
+        if let Ok(db) = koan_core::db::pool::shared().get()
             && let Ok(favs) = koan_core::db::queries::load_favourites(&db.conn)
         {
             self.favourites = favs;
@@ -415,7 +415,7 @@ impl App {
     /// on the final path so the star survives.
     pub fn toggle_favourite(&mut self, path: &std::path::Path) -> bool {
         let path = &koan_core::remote::download::strip_part_suffix(path);
-        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
+        if let Ok(db) = koan_core::db::pool::shared().get()
             && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(&db.conn, path)
         {
             if is_fav {
@@ -617,7 +617,6 @@ impl App {
                     let title = entry.title.clone();
                     let album = entry.album.clone();
                     let duration_secs = entry.duration_ms.unwrap_or(0) / 1000;
-                    let db_path = self.db_path.clone();
                     let track_path = entry.path.clone();
 
                     let (tx, rx) = crossbeam_channel::bounded(1);
@@ -628,7 +627,7 @@ impl App {
                         .name("koan-lyrics".into())
                         .spawn(move || {
                             let result = (|| -> Option<koan_core::lyrics::Lyrics> {
-                                let db = match koan_core::db::connection::Database::open(&db_path) {
+                                let db = match koan_core::db::pool::shared().get() {
                                     Ok(db) => db,
                                     Err(e) => {
                                         if let Ok(mut logs) = log_clone.lock() {
@@ -1389,7 +1388,7 @@ impl App {
         let visible = self.visible_queue();
         let selected: Vec<_> = self.queue.selected_ids.iter().copied().collect();
 
-        let db = match koan_core::db::connection::Database::open(&self.db_path) {
+        let db = match koan_core::db::pool::shared().get() {
             Ok(db) => db,
             Err(_) => {
                 self.status_message = Some(("DB error".into(), std::time::Instant::now()));

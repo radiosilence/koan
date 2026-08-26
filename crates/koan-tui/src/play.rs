@@ -42,7 +42,7 @@ pub struct TuiCallbacks {
 fn save_playback_state_from_app(app: &app::App) {
     let (items, cursor) = app.state.snapshot_playlist();
     if items.is_empty() {
-        if let Ok(db) = koan_core::db::connection::Database::open(&app.db_path) {
+        if let Ok(db) = koan_core::db::pool::shared().get() {
             let _ = koan_core::db::queries::clear_playback_state(&db.conn);
         }
         return;
@@ -57,7 +57,7 @@ fn save_playback_state_from_app(app: &app::App) {
         .map(|i| i.path.to_string_lossy().into_owned());
     let position_ms = app.state.position_ms();
 
-    match koan_core::db::connection::Database::open(&app.db_path) {
+    match koan_core::db::pool::shared().get() {
         Ok(db) => {
             if let Err(e) = koan_core::db::queries::save_playback_state(
                 &db.conn,

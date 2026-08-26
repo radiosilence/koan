@@ -20,6 +20,7 @@
 
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use super::connection::{Database, DbError};
 
@@ -27,6 +28,10 @@ pub struct Pool {
     path: PathBuf,
     idle: parking_lot::Mutex<Vec<Database>>,
     keep: usize,
+    /// Whether the schema has been applied in this process.
+    schema: AtomicBool,
+    /// Held while applying it, so two threads arriving at once do it once.
+    applying: parking_lot::Mutex<()>,
 }
 
 /// How many idle connections to hold on to.
@@ -53,7 +58,30 @@ impl Pool {
             path,
             idle: parking_lot::Mutex::new(Vec::new()),
             keep: KEEP_IDLE,
+            schema: AtomicBool::new(false),
+            applying: parking_lot::Mutex::new(()),
         }
+    }
+
+    /// Apply the schema, once, before handing out the first connection.
+    ///
+    /// So the pool is safe as the only way anything reaches the database.
+    /// Pooled connections open with `open_existing`, which does no DDL — fine
+    /// for a running app that opened the library at startup, and wrong for a
+    /// one-shot command on a machine that has never run koan. Doing it here
+    /// rather than relying on a caller having done it first removes the
+    /// invariant instead of documenting it.
+    fn ensure_schema(&self) -> Result<(), DbError> {
+        if self.schema.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let _applying = self.applying.lock();
+        if self.schema.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        Database::open(&self.path)?;
+        self.schema.store(true, Ordering::Release);
+        Ok(())
     }
 
     /// Borrow a connection, opening one only if none are free.
@@ -61,6 +89,7 @@ impl Pool {
     /// `open_existing`, so this never re-runs the DDL or checkpoints: the
     /// schema is applied once at startup, before any pool exists.
     pub fn get(&self) -> Result<Handle<'_>, DbError> {
+        self.ensure_schema()?;
         let pooled = self.idle.lock().pop();
         let db = match pooled {
             Some(db) => db,
@@ -114,12 +143,25 @@ impl Drop for Handle<'_> {
 mod tests {
     use super::*;
 
+    /// A pool over an empty directory — nothing has opened this database, which
+    /// is the state a one-shot command starts from.
     fn pool() -> (tempfile::TempDir, Pool) {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("koan.db");
-        // What startup does, once.
-        Database::open(&path).unwrap();
         (dir, Pool::new(path))
+    }
+
+    #[test]
+    fn the_first_connection_applies_the_schema() {
+        // A one-shot command on a machine that has never run koan reaches the
+        // database through here and nowhere else.
+        let (_dir, pool) = pool();
+        let db = pool.get().unwrap();
+        let tracks: i64 = db
+            .conn
+            .query_row("SELECT count(*) FROM tracks", [], |r| r.get(0))
+            .expect("the schema should be there");
+        assert_eq!(tracks, 0);
     }
 
     #[test]
