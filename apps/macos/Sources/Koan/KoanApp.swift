@@ -68,7 +68,14 @@ final class AppState {
         // two very different rates — see `DownloadsModel`.
         player.onDownloadStoreChanged = { [weak downloads] in downloads?.reload() }
         player.onDownloadProgress = { [weak downloads] in downloads?.applyProgress($0) }
-        player.onLibraryChanged = { [weak library] in library?.libraryChanged() }
+        // Both, because a library change is a change to whatever rows are on
+        // screen — and a playlist's are the playlists model's, not the
+        // library's. A download landing writes a cached path onto a row, and
+        // the page showing it has to hear about it or its cloud stays empty.
+        player.onLibraryChanged = { [weak library, weak playlists] in
+            library?.libraryChanged()
+            playlists?.reloadTracks()
+        }
 
         // Control Center and the media keys ride the player's existing poll.
         let centre = NowPlayingCentre(player: player, art: art)
