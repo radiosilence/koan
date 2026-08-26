@@ -1298,11 +1298,17 @@ pub fn track_favourite_key(conn: &Connection, track_id: i64) -> Result<Option<St
 /// included — a remote track that has never been cached is favourited by its
 /// remote URL, and comparing only local paths misses every one of them.
 pub fn favourite_track_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbError> {
+    // Three indexed lookups rather than one join with an OR across three
+    // columns. SQLite cannot use an index for that OR, so it read every track
+    // in the library and probed favourites for each — fifty milliseconds to
+    // find a hundred rows, paid by every listing that shows a star. As a union
+    // each branch searches its own index instead.
     let mut stmt = conn.prepare(
-        "SELECT DISTINCT t.id FROM tracks t
-         JOIN favourites f ON (t.path = f.track_path
-                            OR t.cached_path = f.track_path
-                            OR t.remote_url = f.track_path)",
+        "SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites)
+         UNION
+         SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites)
+         UNION
+         SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites)",
     )?;
     let rows = stmt.query_map([], |row| row.get::<_, i64>(0))?;
     let mut ids = HashSet::new();

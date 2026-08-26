@@ -76,6 +76,16 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_tracks_remote_id ON tracks(remote_id);
         CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id);
         CREATE INDEX IF NOT EXISTS idx_tracks_album_order ON tracks(album_id, disc, track_number);
+        -- Favourites are keyed by path, and a track can be reached by three of
+        -- them. Without these, matching a favourite to its track means reading
+        -- every row in the library: the query planner said SCAN, and finding
+        -- a hundred favourites among fifty thousand tracks took fifty
+        -- milliseconds, on every listing that wanted to know what was starred.
+        -- Partial, because both columns are null for anything purely local.
+        CREATE INDEX IF NOT EXISTS idx_tracks_cached_path ON tracks(cached_path)
+            WHERE cached_path IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_tracks_remote_url ON tracks(remote_url)
+            WHERE remote_url IS NOT NULL;
 
         CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
             title,
