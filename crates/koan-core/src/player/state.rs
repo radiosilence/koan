@@ -715,6 +715,36 @@ impl SharedPlayerState {
             })
     }
 
+    /// Put back to `Pending` every queue item whose file has gone, and say
+    /// which they were so they can be fetched again.
+    ///
+    /// The queue holds paths, and clearing downloads deletes the files under
+    /// them. An item left claiming `Ready` opens nothing when it is played —
+    /// it is not broken, it is a remote track that has to be fetched a second
+    /// time. Only items with a database row behind them: one without has
+    /// nowhere to be fetched from, and parking the cursor on it would be worse
+    /// than letting it fail honestly.
+    pub fn reset_items_with_missing_files(&self) -> Vec<(i64, QueueItemId)> {
+        let mut pl = self.playlist.write();
+        let mut reset = Vec::new();
+        for item in pl.items.iter_mut() {
+            let Some(db_id) = item.db_id else { continue };
+            if !matches!(item.load_state, LoadState::Ready) {
+                continue;
+            }
+            if item.path.exists() {
+                continue;
+            }
+            item.load_state = LoadState::Pending;
+            reset.push((db_id, item.id));
+        }
+        drop(pl);
+        if !reset.is_empty() {
+            self.bump_version();
+        }
+        reset
+    }
+
     /// Get the path of an item if it's Ready (legacy convenience — use item_playback_source for streaming).
     pub fn item_path_if_ready(&self, id: QueueItemId) -> Option<PathBuf> {
         let pl = self.playlist.read();

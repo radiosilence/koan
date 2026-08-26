@@ -74,6 +74,11 @@ pub enum PlayerCommand {
     StreamProbed {
         id: QueueItemId,
         info: Box<crate::audio::buffer::StreamInfo>,
+        /// What the probe had to settle for. Decoding has to be opened the same
+        /// way — given a length, a container that went looking for its tail
+        /// once will do it again, on the decode thread, where the cost is
+        /// silence instead of a busy player.
+        mode: crate::audio::streaming::ProbeMode,
     },
     /// Download failed — a cursor parked on this item must stop waiting.
     ///

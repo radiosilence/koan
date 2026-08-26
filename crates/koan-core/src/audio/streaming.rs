@@ -83,15 +83,24 @@ pub enum ProbeMode {
 }
 
 impl PartialFileSource {
-    /// Open `path` for streaming. `bytes_written` is the download's own counter
-    /// and `total` its advertised length, 0 when it sent none.
+    /// Open `path` for playback: reads wait at the write head for the download
+    /// to catch up. `bytes_written` is the download's own counter and `total`
+    /// its advertised length, 0 when it sent none.
+    ///
+    /// `mode` must be whatever the probe settled on. A container opened without
+    /// a length to describe itself has to be decoded without one too — given a
+    /// length it goes looking for its tail all over again, and this time on the
+    /// decode thread, where the cost is silence rather than a busy player.
     pub fn open(
         path: &Path,
         bytes_written: Arc<AtomicU64>,
         total: u64,
         status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
+        mode: ProbeMode,
     ) -> io::Result<Self> {
-        Self::with_stall_limit(path, bytes_written, total, status, STALL_LIMIT)
+        let mut source = Self::with_stall_limit(path, bytes_written, total, status, STALL_LIMIT)?;
+        source.advertise_len = mode == ProbeMode::Full;
+        Ok(source)
     }
 
     /// Open for a probe: never waits at the write head, so a container that

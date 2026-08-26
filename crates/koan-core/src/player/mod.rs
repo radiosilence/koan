@@ -3,7 +3,7 @@ pub mod history;
 pub mod state;
 pub mod undo;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::thread;
@@ -37,6 +37,16 @@ pub enum PlayerError {
     Decode(#[from] buffer::DecodeError),
 }
 
+/// Everything needed to read a track that is still downloading: where it is,
+/// how far the transfer has got, and how the container has to be opened.
+#[derive(Clone)]
+struct StreamSource {
+    path: PathBuf,
+    bytes_written: Arc<AtomicU64>,
+    total: u64,
+    mode: streaming::ProbeMode,
+}
+
 /// Symphonia's format hint for a path — its extension, where it has one.
 fn hint_for(path: &Path) -> symphonia::core::formats::probe::Hint {
     let mut hint = symphonia::core::formats::probe::Hint::new();
@@ -66,6 +76,9 @@ pub struct Player {
     backend: Box<dyn AudioBackend>,
     /// Debounce: timestamp of last NextTrack/PrevTrack to suppress key repeat.
     last_skip: std::time::Instant,
+    /// How the file currently streaming had to be opened. A seek reopens it and
+    /// must not undo what the probe settled on.
+    stream_mode: streaming::ProbeMode,
     /// Writes plays away from this thread. None when there is no database to
     /// write to, and in tests, which must not touch the real library.
     history: Option<PlayRecorder>,
@@ -118,6 +131,7 @@ impl Player {
             output_device_name: cfg.playback.output_device.clone(),
             backend: crate::audio::platform_backend(),
             last_skip: std::time::Instant::now(),
+            stream_mode: streaming::ProbeMode::Full,
             history: None,
             in_flight: None,
             #[cfg(test)]
@@ -513,7 +527,7 @@ impl Player {
                 // the write head, so a container that needs bytes which have
                 // not arrived fails here rather than reading the transfer out.
                 let info = match attempt(streaming::ProbeMode::Full) {
-                    Ok(info) => Some(info),
+                    Ok(info) => Some((info, streaming::ProbeMode::Full)),
                     Err(e) => {
                         // Try again claiming no length. Ogg goes looking for its
                         // last page only when told there is one to find; without
@@ -525,15 +539,18 @@ impl Player {
                             path.display(),
                             e
                         );
-                        attempt(streaming::ProbeMode::Lengthless).ok()
+                        attempt(streaming::ProbeMode::Lengthless)
+                            .ok()
+                            .map(|info| (info, streaming::ProbeMode::Lengthless))
                     }
                 };
 
                 match info {
-                    Some(info) => {
+                    Some((info, mode)) => {
                         tx.send(PlayerCommand::StreamProbed {
                             id,
                             info: Box::new(info),
+                            mode,
                         })
                         .ok();
                     }
@@ -553,7 +570,12 @@ impl Player {
 
     /// A probe finished. Start the track if it is still the one wanted and
     /// nothing has started it in the meantime.
-    fn stream_probed(&mut self, id: QueueItemId, info: buffer::StreamInfo) {
+    fn stream_probed(
+        &mut self,
+        id: QueueItemId,
+        info: buffer::StreamInfo,
+        mode: streaming::ProbeMode,
+    ) {
         if !self.shared_state.is_cursor(id) {
             return; // Moved on.
         }
@@ -573,9 +595,13 @@ impl Player {
                 bytes_written,
                 total,
             }) => {
-                if let Err(e) =
-                    self.start_streaming_playback(id, &path, bytes_written, total, 0, info)
-                {
+                let source = StreamSource {
+                    path,
+                    bytes_written,
+                    total,
+                    mode,
+                };
+                if let Err(e) = self.start_streaming_playback(id, source, 0, info) {
                     log::error!("stream probe: streaming playback failed: {}", e);
                 }
             }
@@ -610,13 +636,11 @@ impl Player {
     fn start_streaming_playback(
         &mut self,
         id: QueueItemId,
-        path: &Path,
-        bytes_written: Arc<AtomicU64>,
-        total: u64,
+        source: StreamSource,
         seek_ms: u64,
         info: buffer::StreamInfo,
     ) -> Result<(), PlayerError> {
-        let result = self.open_streaming_playback(id, path, bytes_written, total, seek_ms, info);
+        let result = self.open_streaming_playback(id, source, seek_ms, info);
         if result.is_err() {
             self.stop_playback_and_clear_state();
         }
@@ -626,17 +650,23 @@ impl Player {
     fn open_streaming_playback(
         &mut self,
         id: QueueItemId,
-        path: &Path,
-        bytes_written: Arc<AtomicU64>,
-        total: u64,
+        source: StreamSource,
         seek_ms: u64,
         info: buffer::StreamInfo,
     ) -> Result<(), PlayerError> {
         self.stop_engine();
+        // Held so a seek can reopen the same way without probing again.
+        self.stream_mode = source.mode;
+        let path = source.path.as_path();
 
         let status = self.stream_status_fn(id);
         let open_source = {
-            let path = path.to_path_buf();
+            let StreamSource {
+                path,
+                bytes_written,
+                total,
+                mode,
+            } = source.clone();
             let status = status.clone();
             move || {
                 streaming::PartialFileSource::open(
@@ -644,6 +674,7 @@ impl Player {
                     bytes_written.clone(),
                     total,
                     status.clone(),
+                    mode,
                 )
             }
         };
@@ -799,14 +830,13 @@ impl Player {
                     bitrate_kbps: info.bitrate_kbps,
                     duration_ms: info.duration_ms,
                 };
-                self.start_streaming_playback(
-                    info.id,
-                    &path,
+                let source = StreamSource {
+                    path,
                     bytes_written,
                     total,
-                    position_ms,
-                    known,
-                )?;
+                    mode: self.stream_mode,
+                };
+                self.start_streaming_playback(info.id, source, position_ms, known)?;
             }
             Some(PlaybackSource::Ready(path)) => {
                 self.start_playback(info.id, &path, position_ms)?;
@@ -1331,7 +1361,7 @@ impl Player {
             PlayerCommand::TrackReady(id) => self.track_ready(id),
             PlayerCommand::DecodeFinished => self.on_decode_finished(),
             PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
-            PlayerCommand::StreamProbed { id, info } => self.stream_probed(id, *info),
+            PlayerCommand::StreamProbed { id, info, mode } => self.stream_probed(id, *info, mode),
             PlayerCommand::TrackFailed(id) => self.track_failed(id),
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),

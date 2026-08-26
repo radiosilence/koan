@@ -425,6 +425,27 @@ pub fn clear_downloads_for(db: &Database, track_ids: &[i64]) -> CacheCleared {
     cleared
 }
 
+/// Fetch again anything in the queue whose downloaded copy has just been
+/// removed.
+///
+/// Clearing downloads deletes files the queue is still pointing at, and an item
+/// that goes on claiming to be ready plays nothing at all. Call this after
+/// either clearing function, from anywhere with a player attached.
+pub fn requeue_cleared_downloads(
+    state: &Arc<SharedPlayerState>,
+    tx: &crossbeam_channel::Sender<PlayerCommand>,
+) {
+    let stale = state.reset_items_with_missing_files();
+    if stale.is_empty() {
+        return;
+    }
+    log::info!(
+        "{} queued tracks lost their copy — fetching again",
+        stale.len()
+    );
+    spawn_downloads(stale, tx.clone(), state.clone());
+}
+
 /// Push a favourite to the remote server, if this track came from one.
 ///
 /// Fire and forget on its own thread: starring is a courtesy to the server, and

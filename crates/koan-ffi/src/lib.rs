@@ -1701,6 +1701,7 @@ impl KoanEngine {
             let db = self.db()?;
             let cfg = Config::load().unwrap_or_default();
             let cleared = koan_core::helpers::clear_download_cache(&db, &cfg);
+            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
             Ok(CacheCleared {
                 files: cleared.files,
                 bytes: cleared.bytes,
@@ -1718,6 +1719,7 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let cleared = koan_core::helpers::clear_downloads_for(&db, &track_ids);
+            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
             Ok(CacheCleared {
                 files: cleared.files,
                 bytes: cleared.bytes,

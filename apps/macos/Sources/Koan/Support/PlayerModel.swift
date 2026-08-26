@@ -204,6 +204,18 @@ final class PlayerModel {
             }
         }
 
+        // The transport reads `currentEntry`, which is its own copy and not one
+        // of the rows above. Without this the seek bar's downloaded extent only
+        // moved when the state or the cursor did — so a track that spends its
+        // whole download unable to say what it is showed a figure frozen at
+        // whatever had arrived when it started, or nothing at all.
+        if let entry = currentEntry {
+            let progress = byItem[entry.queueItemId] ?? nil
+            if entry.downloadProgress != progress {
+                currentEntry?.downloadProgress = progress
+            }
+        }
+
         let active = Set(byItem.keys)
         if !downloading.subtracting(active).isEmpty {
             onDownloadsLanded?()
