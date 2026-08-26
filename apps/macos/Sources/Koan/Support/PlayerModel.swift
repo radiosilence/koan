@@ -765,8 +765,14 @@ final class PlayerModel {
 extension KoanEngine {
     func events() -> AsyncStream<PlayerEvent> {
         AsyncStream { continuation in
+            // Subscribed once, for the life of the stream. Asking the engine
+            // for each message separately meant a new subscription each time,
+            // and a broadcast receiver only sees what is published after it
+            // subscribes — so everything arriving between one message and the
+            // next request was dropped on the floor.
+            let subscription = self.subscribe()
             let pump = Task {
-                while let event = await self.nextEvent() {
+                while let event = await subscription.next() {
                     continuation.yield(event)
                 }
                 continuation.finish()

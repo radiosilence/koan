@@ -120,6 +120,46 @@ pub trait ProgressReporter: Send + Sync {
     fn advanced(&self, done: u64, detail: String);
 }
 
+/// One client's place in the event stream.
+///
+/// Held for as long as the client is listening, which is the whole point: a
+/// broadcast receiver only sees what is published after it subscribes, so
+/// subscribing per message loses everything that arrives between one message
+/// being handed over and the next call asking for another. That gap is small
+/// and the loss was invisible while playback position was the only thing being
+/// published — with transfers running and three times the traffic, position
+/// updates were being dropped and the transport appeared to stall.
+///
+/// Keeping the receiver means the channel's buffer does its job: messages
+/// queue while the client is busy and are delivered in order when it comes
+/// back.
+#[derive(uniffi::Object)]
+pub struct EventStream {
+    rx: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<PlayerEvent>>,
+}
+
+#[uniffi::export]
+impl EventStream {
+    /// The next thing to change. `None` once the engine is gone, which ends
+    /// the caller's loop.
+    ///
+    /// A client that falls far enough behind loses the messages it missed
+    /// rather than delaying the engine — every variant carries an absolute
+    /// value, so the one that does arrive is still correct.
+    pub async fn next(&self) -> Option<PlayerEvent> {
+        let mut rx = self.rx.lock().await;
+        loop {
+            match rx.recv().await {
+                Ok(event) => return Some(event),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    log::warn!("client missed {n} events");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
+}
+
 /// The player, the library, and the bridge between them.
 /// Send `log` output to `~/.config/koan/koan.log`, the same file the CLI
 /// writes.
@@ -262,18 +302,10 @@ impl KoanEngine {
     /// that falls behind loses the events it missed rather than delaying the
     /// engine — every variant carries an absolute value, so the one that does
     /// arrive is still correct.
-    pub async fn next_event(self: Arc<Self>) -> Option<PlayerEvent> {
-        let mut rx = self.events.subscribe();
-        loop {
-            match rx.recv().await {
-                Ok(event) => return Some(event),
-                // Fell behind. The next event supersedes whatever was dropped.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    log::debug!("client missed {n} events");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-            }
-        }
+    pub fn subscribe(&self) -> Arc<EventStream> {
+        Arc::new(EventStream {
+            rx: tokio::sync::Mutex::new(self.events.subscribe()),
+        })
     }
 
     /// Every transfer koan knows about: what it is fetching now, and what it
