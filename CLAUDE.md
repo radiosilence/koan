@@ -163,7 +163,7 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `KoanApp.swift` | `@main`, `AppState`, menu commands, keyboard shortcuts |
 | `Support/ActivityModel.swift` | The one place that knows what koan is busy with. Library tasks are exclusive — they queue behind SQLite's single writer — and each is cancellable |
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
-| `Support/PlayerModel.swift` | Polls `now_playing()` at 10 Hz; refetches the queue only when `playlistVersion` moves |
+| `Support/PlayerModel.swift` | Follows the engine's event stream; refetches the queue only when `playlistVersion` moves |
 | `Support/Navigator.swift` | Where the app is: one page, the linear history of pages visited, and a cursor. No `NavigationStack` — koan navigates like a browser, any page from any page |
 | `Support/LibraryModel.swift` | Browse state. Holds what the section on screen is showing and nothing else — narrowing and sorting happen in SQL, listings arrive whole. Follows the navigator; never moves it |
 | `Support/CoverArtCache.swift` | Album-keyed art cache: bytes once per record on disk, bitmaps per record and draw size in a bounded `NSCache`. Each miss is an HTTP round trip on remote libraries |

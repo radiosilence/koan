@@ -22,6 +22,10 @@
 
 ### Fixed
 
+- **A rate something else changed now reaches the macOS app.** koan has watched the device's nominal sample rate since #323 and the watch fires -- the log has been saying so all along. What never moved was the app. The FFI announces a playback change only when its snapshot differs from the last one, and that comparison was a signature of two things: playback state and cursor. The output rate is neither, so retuning the interface under a playing track left the badge claiming the rate the device held when the track started, until the next track happened to move the cursor.
+
+  The snapshot is compared whole now, with the position held out because it has an event of its own. The same omission was swallowing a stream's duration correction, which lands after playback starts and moves nothing else -- the seek bar for a track whose length is only known once the download does.
+
 - **The wash's drift is far enough to see.** It has moved by the same amounts since it landed in #330, and those amounts were too small to register: blurred at 14 points and magnified about five times, the wash has no feature on screen narrower than eighty points, and the drift carried it about one and a half of those over twenty-three seconds. Slow movement that small does not read as movement -- it reads as a still image. The thing was running, and costing six to nine percent of a core to run, and there was nothing to see.
 
   The excursions now reach about four of those instead: 12% of the window sideways against 4%, 10% down against 6%, and the scale swinging 1.38 to 1.58 rather than 1.19 to 1.31. The periods are untouched at 13, 19 and 23 seconds, so it is exactly as unhurried as it was -- it simply arrives somewhere.

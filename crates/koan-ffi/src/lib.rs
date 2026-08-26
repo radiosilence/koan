@@ -2155,7 +2155,7 @@ impl KoanEngine {
             .spawn(move || {
                 let mut last_version = u64::MAX;
                 let mut last_position = u64::MAX;
-                let mut last_signature: Option<(PlaybackState, Option<String>)> = None;
+                let mut last_playback: Option<NowPlaying> = None;
                 let mut last_downloads: Vec<DownloadProgress> = Vec::new();
                 // Starts where the engine starts, so a launch is not announced
                 // as a change to a library nobody has read yet.
@@ -2173,13 +2173,24 @@ impl KoanEngine {
                         let _ = engine.events.send(event);
                     };
 
+                    // Compared whole rather than on a signature of state and
+                    // cursor: the output sample rate moves when another client
+                    // retunes the device, and a stream's duration is corrected
+                    // once the download lands, both without the cursor going
+                    // anywhere. A signature has to be remembered to be widened;
+                    // this cannot go stale.
                     let state = engine.state.playback_state();
-                    let cursor = engine.state.cursor().map(|c| c.0.to_string());
-                    let signature = (state, cursor);
-                    if last_signature.as_ref() != Some(&signature) {
-                        last_signature = Some(signature);
+                    let snapshot = engine.now_playing_blocking();
+                    // Position has an event of its own, so it is held out here —
+                    // including it would make every tick a change.
+                    let settled = NowPlaying {
+                        position_ms: 0,
+                        ..snapshot.clone()
+                    };
+                    if last_playback.as_ref() != Some(&settled) {
+                        last_playback = Some(settled);
                         publish(PlayerEvent::PlaybackChanged {
-                            now_playing: engine.now_playing_blocking(),
+                            now_playing: snapshot,
                         });
                     }
 
