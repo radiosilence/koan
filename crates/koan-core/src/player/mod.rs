@@ -471,8 +471,23 @@ impl Player {
     ) {
         let path = path.to_path_buf();
         let tx = self.commands.tx.clone();
-        let status = self.stream_status_fn(id);
         let hint = hint_for(&path);
+
+        // Abandon the moment the track stops being the one wanted. A probe of
+        // a container that needs its tail otherwise reads to the end of a
+        // download nobody is waiting for any more, and skipping through a
+        // queue that is still caching would leave one doing so per skip.
+        let status = {
+            let downloading = self.stream_status_fn(id);
+            let state = self.shared_state.clone();
+            Arc::new(move || {
+                if state.is_cursor(id) {
+                    downloading()
+                } else {
+                    streaming::StreamStatus::Failed
+                }
+            }) as Arc<dyn Fn() -> streaming::StreamStatus + Send + Sync>
+        };
 
         let spawned = thread::Builder::new()
             .name("koan-stream-probe".into())
