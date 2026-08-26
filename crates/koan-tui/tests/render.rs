@@ -224,14 +224,18 @@ fn seek_bar_metrics_match_rendered_bar() {
         assert_eq!(&prefix[..1], " ", "width={width}");
         assert_eq!(bar_start, 4, "width={width}");
 
-        // Every cell inside the reported bar span is a bar glyph, filled or empty.
+        // Every cell inside the reported bar span is a bar glyph — filled,
+        // empty, or the one that marks the playhead.
+        let mut heads = 0;
         for x in bar_start..bar_start + bar_width {
             let sym = buf[(x, 0)].symbol();
+            heads += usize::from(sym == "\u{25CF}");
             assert!(
-                sym == "\u{2501}" || sym == "\u{2500}",
+                sym == "\u{2501}" || sym == "\u{2500}" || sym == "\u{25CF}",
                 "width={width} col={x} is {sym:?}, not a bar glyph"
             );
         }
+        assert_eq!(heads, 1, "width={width}");
         // The cell just past the bar is the separating space, not a bar glyph.
         if bar_start + bar_width < width {
             assert_eq!(
