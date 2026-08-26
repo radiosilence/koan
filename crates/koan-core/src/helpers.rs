@@ -1141,7 +1141,11 @@ pub fn download_track(
     cfg: &Config,
     client: &SubsonicClient,
 ) {
-    let db = match Database::open_default() {
+    // From the pool. This runs once per track fetched, and opening a
+    // connection here re-ran the schema DDL and attempted a WAL checkpoint —
+    // with several transfers going, several init cycles contending with each
+    // other and with whatever the library was trying to read.
+    let db = match crate::db::pool::shared().get() {
         Ok(db) => db,
         Err(e) => {
             fail_track(state, tx, queue_id, format!("db error: {}", e));

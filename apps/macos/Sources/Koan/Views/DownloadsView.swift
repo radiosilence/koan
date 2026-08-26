@@ -38,7 +38,9 @@ struct DownloadsView: View {
                 .help("Forget the transfers that have already settled")
             }
         }
-        .task { downloads.reload() }
+        // Only while this page is up. The figures move ten times a second and
+        // nothing else in the app needs them at that rate.
+        .task { await downloads.watch() }
     }
 }
 

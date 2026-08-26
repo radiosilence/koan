@@ -186,7 +186,6 @@ pub struct KoanEngine {
     /// The analyser's latest frame. Only the three-band summary crosses the
     /// boundary — see `viz_levels`.
     viz: Arc<VizSnapshot>,
-    db_path: PathBuf,
     events: tokio::sync::broadcast::Sender<PlayerEvent>,
     /// Set while the automatic sync is running, so a UI can say so rather than
     /// appearing to do nothing for the minute it takes.
@@ -564,8 +563,21 @@ impl KoanEngine {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<Track>, KoanError> {
-        offload::offload(move || self.tracks_blocking(album_id, artist_id, sort, limit, offset))
-            .await
+        offload::offload(move || {
+            // Temporary: says whether a slow album is slow in the database or
+            // slow to reach the screen. Anything over a frame is worth a line.
+            let began = std::time::Instant::now();
+            let out = self.tracks_blocking(album_id, artist_id, sort, limit, offset);
+            let took = began.elapsed();
+            if took > std::time::Duration::from_millis(16) {
+                log::info!(
+                    "tracks(album {album_id:?}) took {took:?} for {} rows",
+                    out.as_ref().map(|r| r.len()).unwrap_or(0)
+                );
+            }
+            out
+        })
+        .await
     }
 
     pub async fn track(self: Arc<Self>, track_id: i64) -> Result<Option<Track>, KoanError> {
@@ -1644,7 +1656,7 @@ impl KoanEngine {
                 remote_signed_in: koan_core::helpers::get_remote_password(&cfg).is_some(),
                 remote_tracks: db
                     .as_ref()
-                    .map(koan_core::helpers::tracks_from_server)
+                    .map(|db| koan_core::helpers::tracks_from_server(db))
                     .unwrap_or(0),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
@@ -2559,7 +2571,6 @@ impl KoanEngine {
             state,
             tx,
             viz,
-            db_path,
             events,
             auto_syncing,
             auto_scanning,
@@ -2593,8 +2604,14 @@ impl KoanEngine {
         }
     }
 
-    fn db(&self) -> Result<Database, KoanError> {
-        Database::open(&self.db_path).map_err(db_err)
+    /// A connection for one piece of work, borrowed from the pool.
+    ///
+    /// This used to open one: a connection, a permissions syscall, the whole
+    /// schema DDL and a WAL checkpoint, every time, before a row came back.
+    /// Clicking an album paid all of it, and while downloads were writing the
+    /// checkpoint contended with them and it took seconds.
+    fn db(&self) -> Result<koan_core::db::pool::Handle<'static>, KoanError> {
+        koan_core::db::pool::shared().get().map_err(db_err)
     }
 
     fn send(&self, cmd: PlayerCommand) -> Result<(), KoanError> {
