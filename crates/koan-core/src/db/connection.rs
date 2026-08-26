@@ -57,6 +57,13 @@ impl Database {
 
         schema::create_tables(&conn)?;
 
+        // The planner picks between indexes by guessing how many rows each one
+        // will yield, and with no statistics it guesses the same number for all
+        // of them. That is how a partial index on the column a query filters by
+        // loses to an index that merely happens to supply the ORDER BY. Cheap
+        // after the first run, and a no-op when nothing has moved.
+        let _ = conn.execute_batch("PRAGMA optimize");
+
         Ok(Self { conn })
     }
 
@@ -74,6 +81,18 @@ impl Database {
     /// Open the default database at the standard data directory.
     pub fn open_default() -> Result<Self, DbError> {
         Self::open(&config::db_path())
+    }
+
+    /// Refresh the planner's statistics.
+    ///
+    /// Worth calling wherever the library changes size in bulk — a scan, a
+    /// remote sync — because the statistics gathered when the process started
+    /// describe a library that no longer exists, and the planner will keep
+    /// choosing for it. A no-op when nothing has moved far enough to matter.
+    pub fn optimize(&self) {
+        if let Err(e) = self.conn.execute_batch("PRAGMA optimize") {
+            log::debug!("PRAGMA optimize failed: {e}");
+        }
     }
 }
 
@@ -99,6 +118,10 @@ fn configure(conn: &Connection) -> Result<(), DbError> {
     // Sorts and intermediate tables in memory. FTS and the ORDER BYs behind
     // every library listing make temporary tables constantly.
     conn.pragma_update(None, "temp_store", "memory")?;
+    // How many rows `PRAGMA optimize` samples per index. Bounded, so gathering
+    // statistics stays a fraction of a second on a library of any size; the
+    // planner needs the shape of the distribution, not an exact count.
+    conn.pragma_update(None, "analysis_limit", 400i64)?;
     // Here rather than with the schema: `open_existing` skips the DDL, and a
     // connection without this collation fails every ORDER BY that uses it.
     register_library_collation(conn)?;

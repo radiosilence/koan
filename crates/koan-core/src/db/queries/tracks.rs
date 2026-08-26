@@ -6,7 +6,7 @@ use rusqlite::{Connection, params};
 use crate::db::connection::DbError;
 
 use super::albums::get_or_create_album;
-use super::artists::{escape_like, get_or_create_artist};
+use super::artists::get_or_create_artist;
 use super::{PlaybackSource, TrackMeta, TrackRow};
 
 /// Map a rusqlite Row to a TrackRow. Expects the standard column order:
@@ -537,32 +537,25 @@ pub fn remove_stale_tracks(
     folder: &Path,
     force_remove: bool,
 ) -> Result<Vec<String>, DbError> {
-    // Match on the folder plus a separator: without it, scanning `/Volumes/Music`
-    // also sweeps `/Volumes/Music Backup`.
-    let folder_str = folder.to_string_lossy();
-    let with_sep = format!(
-        "{}{}",
-        folder_str.trim_end_matches(std::path::MAIN_SEPARATOR),
-        std::path::MAIN_SEPARATOR
-    );
-    let prefix = format!("{}%", escape_like(&with_sep));
+    let (lower, upper) = super::folder_prefix_range(folder);
 
     let total: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM tracks WHERE path LIKE ?1 ESCAPE '\\'",
-        params![prefix],
+        "SELECT COUNT(*) FROM tracks WHERE path >= ?1 AND path < ?2",
+        params![lower, upper],
         |row| row.get(0),
     )?;
 
     // Find tracks in this folder that no longer exist on disk.
-    // Use `path IS NOT NULL` instead of `source = 'local'` to catch all tracks
-    // with local paths regardless of source flag (e.g. merged local+remote rows).
+    // A path below the upper bound is a path in this folder, and NULL is below
+    // nothing — so this catches every track with a local path regardless of its
+    // `source` flag, which a merged local+remote row may still call 'remote'.
     let mut stmt = conn.prepare(
         "SELECT t.id, t.path, t.remote_id FROM tracks t
-         WHERE t.path LIKE ?1 ESCAPE '\\' AND t.path IS NOT NULL",
+         WHERE t.path >= ?1 AND t.path < ?2",
     )?;
 
     let stale: Vec<(i64, String, Option<String>)> = stmt
-        .query_map(params![prefix], |row| {
+        .query_map(params![lower, upper], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
@@ -629,6 +622,11 @@ pub fn remove_stale_tracks(
 }
 
 /// Get all tracks for an artist, ordered chronologically (album date, disc, track#).
+///
+/// The album-artist half is a subquery on `albums` rather than `al.artist_id =
+/// ?1` on the join: SQLite can only use an index for an `OR` when both sides
+/// name the same table, so the join form read every track in the library to
+/// find one artist's.
 pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackRow>, DbError> {
     let mut stmt = conn.prepare(
         "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
@@ -639,7 +637,8 @@ pub fn tracks_for_artist(conn: &Connection, artist_id: i64) -> Result<Vec<TrackR
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
          LEFT JOIN artists aa ON al.artist_id = aa.id
-         WHERE t.artist_id = ?1 OR al.artist_id = ?1
+         WHERE t.artist_id = ?1
+                OR t.album_id IN (SELECT id FROM albums WHERE artist_id = ?1)
          ORDER BY al.date, al.title COLLATE LIBRARY, t.disc, t.track_number",
     )?;
     let rows = stmt
@@ -773,7 +772,8 @@ pub fn random_tracks(
              LEFT JOIN artists a ON t.artist_id = a.id
              LEFT JOIN albums al ON t.album_id = al.id
              LEFT JOIN artists aa ON al.artist_id = aa.id
-             WHERE t.artist_id = ?1 OR al.artist_id = ?1
+             WHERE t.artist_id = ?1
+                OR t.album_id IN (SELECT id FROM albums WHERE artist_id = ?1)
              ORDER BY RANDOM()
              LIMIT ?2"
                     .into(),
@@ -1323,19 +1323,27 @@ pub fn favourite_track_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbEr
 ///
 /// One query rather than a favourite id list the caller resolves row by row —
 /// which is what the id set is for, and it is not for this.
+///
+/// Matched through the same union of three indexed lookups as
+/// [`favourite_track_ids_batch`], for the same reason: joining `favourites` on
+/// an `OR` across the three path columns cannot use an index, and read the
+/// whole library to find a hundred rows.
 pub fn favourite_tracks(conn: &Connection, search: Option<&str>) -> Result<Vec<TrackRow>, DbError> {
     let mut sql = String::from(
-        "SELECT DISTINCT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
                 t.disc, t.track_number, t.title, t.duration_ms, t.path,
                 t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
                 t.genre, t.source, t.remote_id, t.cached_path
          FROM tracks t
-         JOIN favourites f ON (t.path = f.track_path
-                            OR t.cached_path = f.track_path
-                            OR t.remote_url = f.track_path)
          LEFT JOIN artists a ON t.artist_id = a.id
          LEFT JOIN albums al ON t.album_id = al.id
-         LEFT JOIN artists aa ON al.artist_id = aa.id",
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         WHERE t.id IN (
+             SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites)
+             UNION
+             SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites)
+             UNION
+             SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites))",
     );
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
     if let Some(query) = search {
@@ -1344,9 +1352,9 @@ pub fn favourite_tracks(conn: &Connection, search: Option<&str>) -> Result<Vec<T
             params.push(Box::new(pattern.clone()));
         }
         sql.push_str(
-            " WHERE t.title LIKE ? COLLATE NOCASE ESCAPE '\\'
-                 OR a.name LIKE ? COLLATE NOCASE ESCAPE '\\'
-                 OR al.title LIKE ? COLLATE NOCASE ESCAPE '\\'",
+            " AND (t.title LIKE ? COLLATE NOCASE ESCAPE '\\'
+                OR a.name LIKE ? COLLATE NOCASE ESCAPE '\\'
+                OR al.title LIKE ? COLLATE NOCASE ESCAPE '\\')",
         );
     }
     sql.push_str(
@@ -1413,6 +1421,79 @@ mod tests {
             2,
             "matched on the artist name"
         );
+    }
+
+    /// A track is favourited by whichever of its three paths the user was
+    /// looking at, and all three have to find it.
+    #[test]
+    fn favourite_tracks_finds_a_track_by_any_of_its_paths() {
+        let db = test_db();
+        db.conn
+            .execute_batch(
+                "INSERT INTO artists (id, name) VALUES (1, 'Boards of Canada');
+                 INSERT INTO albums (id, title, artist_id) VALUES (1, 'Geogaddi', 1);
+                 INSERT INTO tracks (id, title, artist_id, album_id, source, path)
+                   VALUES (1, 'Music Is Math', 1, 1, 'local', '/music/math.flac');
+                 INSERT INTO tracks (id, title, artist_id, album_id, source, cached_path)
+                   VALUES (2, 'Sixtyten', 1, 1, 'cached', '/cache/sixtyten.flac');
+                 INSERT INTO tracks (id, title, artist_id, album_id, source, remote_url)
+                   VALUES (3, 'Dawn Chorus', 1, 1, 'remote', 'http://server/dawn');
+                 INSERT INTO tracks (id, title, artist_id, album_id, source, path)
+                   VALUES (4, 'Alpha and Omega', 1, 1, 'local', '/music/alpha.flac');
+                 INSERT INTO favourites (track_path) VALUES
+                   ('/music/math.flac'), ('/cache/sixtyten.flac'), ('http://server/dawn');",
+            )
+            .unwrap();
+
+        let mut ids = favourite_tracks(&db.conn, None)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(ids, [1, 2, 3], "the unfavourited fourth track stays out");
+
+        let narrowed = favourite_tracks(&db.conn, Some("dawn")).unwrap();
+        assert_eq!(
+            narrowed.len(),
+            1,
+            "search narrows the favourites, not all of them"
+        );
+        assert_eq!(narrowed[0].id, 3);
+    }
+
+    /// A track belongs to an artist by its own credit or its album's, and a
+    /// compilation is the case where only the second one holds.
+    #[test]
+    fn tracks_for_artist_counts_the_album_credit() {
+        let db = test_db();
+        db.conn
+            .execute_batch(
+                "INSERT INTO artists (id, name) VALUES (1, 'Aphex Twin'), (2, 'Various');
+                 INSERT INTO albums (id, title, artist_id) VALUES
+                   (1, 'Selected Ambient Works', 1), (2, 'Artificial Intelligence', 2);
+                 -- Own credit, on their own record.
+                 INSERT INTO tracks (id, title, artist_id, album_id, source, path)
+                   VALUES (1, 'Xtal', 1, 1, 'local', '/music/xtal.flac');
+                 -- Own credit, on somebody else's compilation.
+                 INSERT INTO tracks (id, title, artist_id, album_id, source, path)
+                   VALUES (2, 'Polygon Window', 1, 2, 'local', '/music/polygon.flac');
+                 -- Album credit only: uncredited track on their record.
+                 INSERT INTO tracks (id, title, album_id, source, path)
+                   VALUES (3, 'Untitled', 1, 'local', '/music/untitled.flac');
+                 -- Neither.
+                 INSERT INTO tracks (id, title, artist_id, album_id, source, path)
+                   VALUES (4, 'The Clan Call', 2, 2, 'local', '/music/clan.flac');",
+            )
+            .unwrap();
+
+        let mut ids = tracks_for_artist(&db.conn, 1)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect::<Vec<_>>();
+        ids.sort();
+        assert_eq!(ids, [1, 2, 3]);
     }
 
     #[test]
