@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.32.0 (2026-08-26)
 
 ### Removed
 
@@ -29,6 +29,8 @@
 - **A track still downloading can be played by asking for it.** Double-clicking one opened the path the transfer will be renamed to rather than the one it is writing, and found nothing there — so it waited for the whole download rather than starting. Where a transfer is writing is now part of what says a transfer is running, so there is no longer an order for two threads to get wrong.
 
 - **The seek bar's downloaded extent moves while the download does.** The transport keeps its own copy of what is playing, refreshed when the playback state or the cursor moves — and neither moves during a download, so the mark sat wherever it had been when playback started. It follows the progress it is drawing now.
+
+- **A finished download's bar does not read as an empty one.** The downloads page lit the part that had arrived, so a transfer completing took the highlight away and the bar dropped back to looking untouched. The quiet end is the part still missing, the same way round as the seek bar.
 
 - **The bar no longer darkens when a download finishes.** It lit the downloaded part rather than dimming the part that had not arrived, so completing a transfer took the highlight away and the whole bar dropped a shade. The quiet end is the one that is missing, and a track already on disk looks like the ordinary bar it is.
 
