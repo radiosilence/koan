@@ -274,6 +274,9 @@ pub struct DownloadEntry {
     pub progress: Option<f64>,
     pub bytes_written: u64,
     pub total_bytes: u64,
+    /// Smoothed. Zero for a transfer that has settled, and for one that has
+    /// stopped moving — which is the case worth seeing.
+    pub bytes_per_second: u64,
     pub state: DownloadEntryState,
     /// Why it stopped, when it failed.
     pub failure_reason: Option<String>,
@@ -298,6 +301,7 @@ impl From<&koan_core::remote::downloads::Download> for DownloadEntry {
             progress: d.fraction(),
             bytes_written: d.bytes_written(),
             total_bytes: d.total,
+            bytes_per_second: d.bytes_per_second,
             state: match &d.state {
                 DownloadState::Queued => DownloadEntryState::Queued,
                 DownloadState::Running => DownloadEntryState::Running,

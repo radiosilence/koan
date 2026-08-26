@@ -32,12 +32,15 @@ struct SourceBadges: View {
             if let downloading {
                 ring(downloading)
             } else if onServer {
+                // Visible enough to be read at a glance down a list. At
+                // `.quaternary` this was there and effectively invisible, which
+                // is the same as not drawing it.
                 Image(systemName: onDisk ? "cloud.fill" : "cloud")
-                    .foregroundStyle(onDisk ? AnyShapeStyle(.tertiary) : AnyShapeStyle(.quaternary))
+                    .foregroundStyle(onDisk ? AnyShapeStyle(.secondary) : AnyShapeStyle(.tertiary))
                     .help(onDisk ? "On your server, downloaded" : "On your server — downloads on play")
             } else if onDisk {
                 Image(systemName: "internaldrive")
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .help("Local file")
             }
         }

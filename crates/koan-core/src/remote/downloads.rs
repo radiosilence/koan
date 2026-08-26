@@ -11,9 +11,11 @@
 //! added, finishes or fails. A client polls the counter and watches the
 //! version, and neither costs the download anything.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use crate::player::state::QueueItemId;
 
@@ -55,6 +57,10 @@ pub struct Download {
     /// Live byte count, shared with the downloader. Read it, do not store it.
     pub written: Arc<AtomicU64>,
     pub state: DownloadState,
+    /// Bytes per second, smoothed. Zero until there are two samples to take a
+    /// rate from — and zero is the honest answer for a transfer that has
+    /// stopped moving, which is the one worth noticing.
+    pub bytes_per_second: u64,
 }
 
 impl Download {
@@ -75,6 +81,10 @@ impl Download {
 pub struct DownloadStore {
     entries: parking_lot::RwLock<Vec<Download>>,
     version: AtomicU64,
+    /// The last reading taken of each transfer, for working out a rate.
+    /// Separate from the entries so taking a sample does not touch the list
+    /// every client is reading.
+    samples: parking_lot::Mutex<HashMap<QueueItemId, Sample>>,
     /// How many settled entries to keep. This is a view of now, not an archive,
     /// and old rows would push the live ones off the end of it.
     settled_limit: usize,
@@ -85,6 +95,7 @@ impl DownloadStore {
         Arc::new(Self {
             entries: parking_lot::RwLock::new(Vec::new()),
             version: AtomicU64::new(0),
+            samples: parking_lot::Mutex::new(HashMap::new()),
             settled_limit: 50,
         })
     }
@@ -182,6 +193,79 @@ impl DownloadStore {
     }
 }
 
+/// The last reading of one transfer.
+#[derive(Debug)]
+struct Sample {
+    at: Instant,
+    bytes: u64,
+    /// Smoothed rate, so a figure on screen does not jump about between frames.
+    bps: f64,
+}
+
+/// How much of a new reading to believe against the running average. Low
+/// enough to be steady, high enough that a transfer stopping shows within a
+/// second or so.
+const RATE_SMOOTHING: f64 = 0.3;
+
+/// Ignore samples closer together than this — over a short enough interval the
+/// arithmetic is mostly noise.
+const MIN_SAMPLE_GAP: Duration = Duration::from_millis(250);
+
+impl DownloadStore {
+    /// Take a rate reading. Called on a timer by whoever is watching.
+    ///
+    /// Rates live here rather than in each front end because every one of them
+    /// would otherwise keep its own last-reading map and get a different
+    /// answer.
+    pub fn sample_rates(&self) {
+        self.sample_rates_at(Instant::now());
+    }
+
+    fn sample_rates_at(&self, now: Instant) {
+        let mut entries = self.entries.write();
+        let mut samples = self.samples.lock();
+
+        for entry in entries.iter_mut() {
+            if entry.state.is_settled() {
+                entry.bytes_per_second = 0;
+                samples.remove(&entry.id);
+                continue;
+            }
+            let bytes = entry.written.load(Ordering::Relaxed);
+            match samples.get_mut(&entry.id) {
+                Some(previous) => {
+                    let elapsed = now.saturating_duration_since(previous.at);
+                    if elapsed < MIN_SAMPLE_GAP {
+                        entry.bytes_per_second = previous.bps as u64;
+                        continue;
+                    }
+                    let moved = bytes.saturating_sub(previous.bytes) as f64;
+                    let instant = moved / elapsed.as_secs_f64();
+                    previous.bps = previous.bps * (1.0 - RATE_SMOOTHING) + instant * RATE_SMOOTHING;
+                    previous.at = now;
+                    previous.bytes = bytes;
+                    entry.bytes_per_second = previous.bps as u64;
+                }
+                None => {
+                    samples.insert(
+                        entry.id,
+                        Sample {
+                            at: now,
+                            bytes,
+                            bps: 0.0,
+                        },
+                    );
+                    entry.bytes_per_second = 0;
+                }
+            }
+        }
+
+        // A transfer that left the list leaves its reading behind with it.
+        let live: std::collections::HashSet<QueueItemId> = entries.iter().map(|e| e.id).collect();
+        samples.retain(|id, _| live.contains(id));
+    }
+}
+
 /// The process's download store.
 ///
 /// A singleton for the same reason the download queue is one: there is one set
@@ -207,6 +291,7 @@ mod tests {
             total: 0,
             written: Arc::new(AtomicU64::new(0)),
             state: DownloadState::Queued,
+            bytes_per_second: 0,
         }
     }
 
@@ -302,6 +387,53 @@ mod tests {
             store.all()[0].state,
             DownloadState::Failed("server returned 404".into())
         );
+    }
+
+    #[test]
+    fn a_rate_needs_two_readings_and_a_gap_between_them() {
+        let store = DownloadStore::new();
+        let entry = download("train");
+        let (id, written) = (entry.id, entry.written.clone());
+        store.queued(entry);
+        store.started(id, 1_000_000, written.clone());
+
+        let start = Instant::now();
+        store.sample_rates_at(start);
+        assert_eq!(
+            store.all()[0].bytes_per_second,
+            0,
+            "one reading is not a rate"
+        );
+
+        // A second too close to the first says nothing.
+        written.store(100_000, Ordering::Relaxed);
+        store.sample_rates_at(start + Duration::from_millis(50));
+        assert_eq!(store.all()[0].bytes_per_second, 0);
+
+        // A second far enough away does. Smoothed, so it reads low at first.
+        store.sample_rates_at(start + Duration::from_secs(1));
+        let bps = store.all()[0].bytes_per_second;
+        assert!(bps > 0, "a rate should have been worked out, got {bps}");
+        assert!(bps < 100_000, "and smoothed rather than taken whole: {bps}");
+    }
+
+    #[test]
+    fn a_settled_transfer_has_no_rate() {
+        // Zero, not the speed it happened to be going when it stopped.
+        let store = DownloadStore::new();
+        let entry = download("train");
+        let (id, written) = (entry.id, entry.written.clone());
+        store.queued(entry);
+        store.started(id, 1000, written.clone());
+        let start = Instant::now();
+        store.sample_rates_at(start);
+        written.store(500, Ordering::Relaxed);
+        store.sample_rates_at(start + Duration::from_secs(1));
+        assert!(store.all()[0].bytes_per_second > 0);
+
+        store.finished(id);
+        store.sample_rates_at(start + Duration::from_secs(2));
+        assert_eq!(store.all()[0].bytes_per_second, 0);
     }
 
     #[test]

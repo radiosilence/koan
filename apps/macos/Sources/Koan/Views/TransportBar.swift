@@ -234,33 +234,26 @@ private struct SeekBar: View {
                 // and AppKit answered each one with a full window Auto Layout
                 // pass. Same bar, same marks; only the pixels change now.
                 ZStack {
+                    // What has not arrived, drawn quieter than the rest.
+                    //
+                    // The dimming is on the tail rather than the head on
+                    // purpose: a track on disk is the ordinary case and should
+                    // look like the ordinary bar, so a download finishing
+                    // changes nothing about what is drawn. Lighting the
+                    // downloaded part instead meant the bar went *dark* the
+                    // moment a transfer completed, which is exactly backwards.
                     Canvas { context, size in
                         context.fill(Self.mark(in: size, fraction: 1), with: .style(.quaternary))
                     }
-                    // How much of a streaming track has arrived. Where the
-                    // track can also be seeked, the engine stops a scrub at
-                    // this same extent, so the bar never offers a position
-                    // playback would refuse. Where it cannot be seeked yet,
-                    // this is the whole message: the transfer is going, and
-                    // this is how far.
-                    //
-                    // Held well back, because it is context rather than the
-                    // reading. At full weight it was the brightest thing on the
-                    // bar and got taken for the playhead — which on a long
-                    // track is a sliver a fraction of a pixel wide, and so lost
-                    // under it entirely.
+                    .opacity(0.4)
+                    // What can be played: the whole bar for anything already
+                    // here, and as far as the bytes reach for anything still
+                    // arriving. Where the track can also be seeked, the engine
+                    // stops a scrub at this same extent, so the bar never
+                    // offers a position playback would refuse.
                     Canvas { context, size in
-                        context.fill(Self.mark(in: size, fraction: fetched ?? 0), with: .style(.secondary))
+                        context.fill(Self.mark(in: size, fraction: fetched ?? 1), with: .style(.quaternary))
                     }
-                    // On whether there is a mark at all, not on how long it is:
-                    // the fetched extent moves several times a second and a
-                    // quarter of a second of easing on every one of those would
-                    // leave both it and the playhead beside it perpetually
-                    // behind. Opacity rather than a transition, because this
-                    // layer is always present — and opacity is one of the few
-                    // things CoreAnimation can carry without touching layout.
-                    .opacity(fetched == nil ? 0 : 0.4)
-                    .animation(.easeOut(duration: 0.25), value: fetched == nil)
                     // Not the tint. The tint is the colour of the record now,
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a

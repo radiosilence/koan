@@ -37,20 +37,16 @@ final class DownloadsModel {
         items = engine.downloads()
     }
 
-    /// Byte counts moved. The rows are the same rows, so only the figures are
-    /// taken — replacing the array wholesale would animate every row on every
-    /// tick of a transfer.
+    /// Byte counts moved. Re-read them from the store.
+    ///
+    /// The event carries figures of its own, derived from the queue, but taking
+    /// them would mean two accounts of one transfer that have to agree — and
+    /// the store already holds a live counter the downloader writes. So the
+    /// event is used only as a tick, and the numbers come from the one place
+    /// that has them. Half a dozen rows of small strings; the copy is nothing.
     func applyProgress(_ downloads: [DownloadProgress]) {
-        guard !items.isEmpty else { return }
-        let byItem = Dictionary(
-            downloads.map { ($0.queueItemId, $0.progress) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        for index in items.indices {
-            guard let progress = byItem[items[index].queueItemId] else { continue }
-            guard items[index].progress != progress else { continue }
-            items[index].progress = progress
-        }
+        guard !items.isEmpty || !downloads.isEmpty else { return }
+        reload()
     }
 
     func clearSettled() {

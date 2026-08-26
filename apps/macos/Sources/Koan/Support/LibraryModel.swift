@@ -377,6 +377,16 @@ final class LibraryModel {
         }
     }
 
+    /// Fetch these tracks into the cache without queueing them.
+    ///
+    /// Tracks already downloaded are skipped, so asking for a record you have
+    /// most of costs only the rest of it.
+    func downloadToCache(trackIds: [Int64]) {
+        guard !trackIds.isEmpty else { return }
+        let engine = self.engine
+        Task { try? await engine.downloadToCache(trackIds: trackIds) }
+    }
+
     /// Full rescan of every configured folder. Minutes on a big library, so it
     /// runs detached and the UI stays live throughout.
     func scan(force: Bool = false) {

@@ -1846,6 +1846,41 @@ impl KoanEngine {
         .await
     }
 
+    /// Fetch these tracks into the cache now, without queueing them.
+    ///
+    /// Downloads are normally a side effect of wanting to play something; this
+    /// is for wanting the bytes on the machine and nothing else — before going
+    /// somewhere without a server, most obviously. Tracks already downloaded
+    /// are skipped, so asking twice costs nothing.
+    ///
+    /// The transfers get identities of their own rather than borrowing a queue
+    /// item's, because there is no queue item: they appear in the download
+    /// store and nowhere else.
+    pub async fn download_to_cache(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = track_ids
+                .into_iter()
+                .map(|id| (id, koan_core::player::state::QueueItemId::new()))
+                .collect();
+            koan_core::helpers::spawn_downloads(pending, self.tx.clone(), self.state.clone());
+            Ok(())
+        })
+        .await
+    }
+
+    /// Which of these tracks have a downloaded copy. What a menu asks before
+    /// deciding whether it is offering to fetch or to throw away.
+    pub async fn downloaded_track_ids(
+        self: Arc<Self>,
+        track_ids: Vec<i64>,
+    ) -> Result<Vec<i64>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            queries::downloaded_of(&db.conn, &track_ids).map_err(db_err)
+        })
+        .await
+    }
+
     /// Rescans every configured library folder. Minutes, on a large library.
     pub async fn scan(self: Arc<Self>, force: bool) -> Result<ScanSummary, KoanError> {
         offload::offload(move || self.scan_blocking(force, None)).await
@@ -2217,6 +2252,12 @@ impl KoanEngine {
                 let mut last_signature: Option<(PlaybackState, Option<String>, u64)> = None;
                 let mut last_downloads: Vec<DownloadProgress> = Vec::new();
                 let mut last_store = u64::MAX;
+                // Temporary: answers "is the watcher actually emitting?" from
+                // the log rather than from reasoning about it.
+                let mut emitted_progress: u64 = 0;
+                let mut emitted_store: u64 = 0;
+                let mut emitted_position: u64 = 0;
+                let mut ticks: u64 = 0;
                 // Starts where the engine starts, so a launch is not announced
                 // as a change to a library nobody has read yet.
                 let mut last_library = 0u64;
@@ -2286,15 +2327,37 @@ impl KoanEngine {
                             engine.bump_library();
                         }
                         last_downloads = downloads.clone();
+                        emitted_progress += 1;
                         publish(PlayerEvent::DownloadsChanged { downloads });
                     }
+
+                    // Ten a second, which is this loop's rate and fast enough
+                    // that a figure on screen reacts as a transfer changes pace.
+                    koan_core::remote::downloads::store().sample_rates();
 
                     let store_version = koan_core::remote::downloads::store().version();
                     if store_version != last_store {
                         last_store = store_version;
+                        emitted_store += 1;
                         publish(PlayerEvent::DownloadStoreChanged {
                             version: store_version,
                         });
+                    }
+
+                    // Once every five seconds, and only while something is
+                    // happening. Fifty ticks is the ceiling for each count.
+                    ticks += 1;
+                    if ticks.is_multiple_of(50)
+                        && (emitted_progress > 0 || emitted_position > 0 || emitted_store > 0)
+                    {
+                        log::info!(
+                            "watcher/5s: position {emitted_position}, downloads {emitted_progress}, \
+                             store {emitted_store}, in flight {}",
+                            koan_core::remote::downloads::store().active()
+                        );
+                        emitted_progress = 0;
+                        emitted_store = 0;
+                        emitted_position = 0;
                     }
 
                     let library = engine
@@ -2311,6 +2374,7 @@ impl KoanEngine {
                         let position = engine.state.position_ms();
                         if position != last_position {
                             last_position = position;
+                            emitted_position += 1;
                             publish(PlayerEvent::PositionChanged {
                                 position_ms: position,
                             });

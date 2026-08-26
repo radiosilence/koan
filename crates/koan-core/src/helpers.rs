@@ -1202,6 +1202,7 @@ pub fn download_track(
         total: 0,
         written: bytes_written.clone(),
         state: crate::remote::downloads::DownloadState::Queued,
+        bytes_per_second: 0,
     });
 
     let progress_state = state.clone();
