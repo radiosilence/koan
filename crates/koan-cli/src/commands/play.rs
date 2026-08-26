@@ -196,7 +196,6 @@ pub fn cmd_play(
         install_panic_hook: install_terminal_panic_hook,
         parse_dropped_paths: |text| parse_dropped_paths(text),
         playlist_items_from_paths: |paths, progress| playlist_items_from_paths(paths, progress),
-        open_db,
     };
 
     if let Err(e) = koan_tui::play::run_tui(
@@ -261,7 +260,6 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         install_panic_hook: install_terminal_panic_hook,
         parse_dropped_paths: |text| parse_dropped_paths(text),
         playlist_items_from_paths: |paths, progress| playlist_items_from_paths(paths, progress),
-        open_db,
     };
 
     if let Err(e) = koan_tui::play::run_tui(
