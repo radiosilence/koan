@@ -50,7 +50,13 @@ Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server`
 
 GraphQL earns its keep for clients that genuinely *cannot* link the core -- a browser, or a phone controlling playback on a different machine.
 
-When you add a capability, ask whether both doors need it. `koan-ffi` returns cover art as raw bytes where GraphQL has to base64 it, and hands out changes by awaiting `next_event` where GraphQL subscribes; otherwise the two mirror each other closely enough that a gap in one is usually a gap in both.
+**State goes out as whole slices, never as deltas.** The engine publishes what each corner of its state *is* — what is playing, where the playhead is, the queue, the transfers and their figures, whether the library moved — and a client reads a batch of whatever changed since it last asked. A snapshot cannot be applied wrongly, which a delta can: three bugs in one afternoon were all a client-side copy patched by a rule someone had to remember to write.
+
+Slices are cut by **rate of change, not by subject**. The playhead and the transfer figures move ten times a second; the queue and the set of transfers move when someone does something. A client subscribes per slice, so a fast field sitting next to a slow one wakes every reader of the slow one at the fast one's rate — which is why a transfer's byte count is not a field on a queue row, and the seekable extent is not a field beside a track's title. See `koan-ffi/src/state.rs`.
+
+Nothing is dropped. Each slice carries a sequence number and each client keeps a cursor, so falling behind costs the intermediate values of a slice and never the fact that it changed. A cursor that has seen nothing reads the whole state, which is how a client seeds itself — there is no separate call for that.
+
+When you add a capability, ask whether both doors need it. `koan-ffi` returns cover art as raw bytes where GraphQL has to base64 it, and hands out changes as state slices where GraphQL subscribes; otherwise the two mirror each other closely enough that a gap in one is usually a gap in both.
 
 ## Threading model
 

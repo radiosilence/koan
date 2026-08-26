@@ -54,6 +54,12 @@
 
 ### Changed
 
+- **The macOS app follows one state stream instead of six events.** Every model held its own copy of engine state and refreshed it by a rule someone had to remember to write, wired up by six closures deciding which model heard what. Three bugs in one afternoon were the same shape: an album page kept an empty cloud after a download landed, a playlist page heard nothing at all, and a playlist's progress rings never moved because progress was patched into one index of the queue and not the other. The engine was right every time.
+
+  The engine now publishes whole slices — what is playing, where the playhead is, the queue, what the queue still *is*, the transfers, their figures, and whether the library moved — and the app holds one mirror of them. Views read properties and are invalidated by SwiftUI as normal; a page showing something asked for on demand, like a record's tracks, reloads where it is drawn rather than waiting for a model to remember it exists. A snapshot cannot be applied wrongly, which is what a delta can do and did.
+
+  Slices are cut by rate of change rather than by subject, because replacing one invalidates everyone reading it. A transfer's byte count is no longer a field on a queue row and the seekable extent is no longer a field beside a track's title: both moved ten times a second while riding on something that changes when you press a button, so both dragged every reader along with them. Nothing is dropped either — each client keeps a cursor, so falling behind costs the intermediate values of a slice and never the fact that it changed, and a fresh cursor reads the whole state, which is how the app seeds itself with no separate call.
+
 - **Every query the library answers now goes through an index.** `EXPLAIN QUERY PLAN` was run over every statement koan issues, against a 47,944-track library, and each full table read was either fixed or established as a query that genuinely means all of them. The costs were invisible because nothing ever failed — they only grow with the size of somebody's library:
 
   - Listing an artist's tracks read the whole library. A track counts as theirs by its own credit or its album's, and SQLite cannot use an index for an `OR` spanning two tables; asking `albums` in a subquery instead makes both halves indexed lookups. 10 ms → 2 ms for one artist, and the same shape in the API's batched artist load and in radio's artist picker.
