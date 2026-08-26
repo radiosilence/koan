@@ -112,9 +112,9 @@ final class PlayerModel {
                 guard let self else { return }
                 switch event {
                 case .playbackChanged(let nowPlaying):
-                    await self.tick(nowPlaying)
+                    self.apply(nowPlaying)
                 case .queueChanged:
-                    await self.applyQueueChange()
+                    self.applyQueueChange()
                 case .positionChanged(let positionMs):
                     self.applyPosition(positionMs)
                 case .downloadsChanged(let downloads):
@@ -129,21 +129,56 @@ final class PlayerModel {
         }
     }
 
-    /// Apply a snapshot. Called on subscribe and whenever the engine says
-    /// something changed.
-    /// Apply a snapshot. `nil` fetches one — which only the initial seed needs,
-    /// since every event that reports a change carries the new state with it.
-    fileprivate func tick(_ snapshot: NowPlaying? = nil) async {
-        let now = if let snapshot { snapshot } else { await engine.nowPlaying() }
+    /// Seed from the engine. Only the initial subscribe needs this — every
+    /// event that reports a change carries the new state with it.
+    fileprivate func tick() async {
+        apply(await engine.nowPlaying())
+    }
+
+    /// Apply a snapshot the engine sent.
+    ///
+    /// Nothing here waits. This runs on the thread draining the event stream,
+    /// and that stream is sequential: an `await` on a database round trip here
+    /// held up every message behind it — position included — for as long as it
+    /// took. Which is why playback appeared to stall precisely when downloads
+    /// were busy bumping the queue version.
+    fileprivate func apply(_ now: NowPlaying) {
         nowPlaying = now
         updateDerived(now)
-        // The queue only gets rebuilt when the engine says it changed.
-        if nowPlaying.playlistVersion != knownQueueVersion {
-            knownQueueVersion = nowPlaying.playlistVersion
-            await rebuildQueue()
+        // The queue only gets rebuilt when the engine says it changed, and the
+        // rebuild happens somewhere this loop is not.
+        if now.playlistVersion != knownQueueVersion {
+            knownQueueVersion = now.playlistVersion
+            scheduleQueueRebuild()
         }
         settlePendingSeek()
         onTick?()
+    }
+
+    /// The rebuild in flight, if there is one.
+    @ObservationIgnored private var queueRebuild: Task<Void, Never>?
+    /// Whether the queue changed again while one was running.
+    @ObservationIgnored private var queueRebuildPending = false
+
+    /// Rebuild the queue off the event stream, and only once for any number of
+    /// changes that arrive while one is running.
+    ///
+    /// A download changing state bumps the queue version, so a handful of
+    /// transfers announce themselves several times a second. Rebuilding per
+    /// announcement meant a database round trip per announcement, in front of
+    /// every other event.
+    private func scheduleQueueRebuild() {
+        guard queueRebuild == nil else {
+            queueRebuildPending = true
+            return
+        }
+        queueRebuild = Task { @MainActor [weak self] in
+            defer { self?.queueRebuild = nil }
+            repeat {
+                self?.queueRebuildPending = false
+                await self?.rebuildQueue()
+            } while self?.queueRebuildPending == true
+        }
     }
 
     /// Where a seek asked to land, until the engine reports being near it.
@@ -248,9 +283,8 @@ final class PlayerModel {
     var onDownloadProgress: (([DownloadProgress]) -> Void)?
 
     /// The queue changed — rebuild it and refresh what depends on it.
-    fileprivate func applyQueueChange() async {
-        await rebuildQueue()
-        await tick()
+    fileprivate func applyQueueChange() {
+        scheduleQueueRebuild()
     }
 
     /// Position moved. The only genuinely periodic event, and the only thing
