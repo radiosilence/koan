@@ -101,7 +101,7 @@ struct QueueView: View {
         // On the whole stage, not the List: an empty queue is exactly when you
         // want to drop a folder on it, and it has no rows to land on.
         .dropDestination(for: URL.self) { urls, _ in
-            player.importFiles(urls) { library.libraryChanged() }
+            player.importFiles(urls)
             return true
         }
     }

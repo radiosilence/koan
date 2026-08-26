@@ -655,8 +655,8 @@ pub struct SimilarArtist {
     pub source: String,
 }
 
-/// Sort orders the library browser offers. Applied after the DB read, so it
-/// works uniformly across every listing regardless of which query produced it.
+/// Sort orders the library browser offers. Applied by the database, because a
+/// listing that is read a page at a time has to be ordered before it is cut.
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlbumSort {
     /// Newest first. What a library browser should open on — the thing you
@@ -665,8 +665,9 @@ pub enum AlbumSort {
     Title,
     Artist,
     Year,
-    /// Reshuffled on every call, so asking again gives a different order —
-    /// which is the point: it's for turning up records you'd forgotten.
+    /// Shuffled by the seed passed alongside it. The same seed is the same
+    /// order, page after page; a new seed is a new order — which is the point,
+    /// it's for turning up records you'd forgotten.
     Random,
 }
 

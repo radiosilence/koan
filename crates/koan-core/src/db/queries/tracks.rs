@@ -1299,6 +1299,48 @@ pub fn favourite_track_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbEr
     Ok(ids)
 }
 
+/// Every favourited track, narrowed by `search` and ordered as a library
+/// reads: artist, record, then running order.
+///
+/// One query rather than a favourite id list the caller resolves row by row —
+/// which is what the id set is for, and it is not for this.
+pub fn favourite_tracks(conn: &Connection, search: Option<&str>) -> Result<Vec<TrackRow>, DbError> {
+    let mut sql = String::from(
+        "SELECT DISTINCT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         JOIN favourites f ON (t.path = f.track_path
+                            OR t.cached_path = f.track_path
+                            OR t.remote_url = f.track_path)
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id",
+    );
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    if let Some(query) = search {
+        let pattern = format!("%{}%", super::artists::escape_like(query));
+        for _ in 0..3 {
+            params.push(Box::new(pattern.clone()));
+        }
+        sql.push_str(
+            " WHERE t.title LIKE ? COLLATE NOCASE ESCAPE '\\'
+                 OR a.name LIKE ? COLLATE NOCASE ESCAPE '\\'
+                 OR al.title LIKE ? COLLATE NOCASE ESCAPE '\\'",
+        );
+    }
+    sql.push_str(
+        " ORDER BY a.name COLLATE LIBRARY, al.title COLLATE LIBRARY, t.disc, t.track_number",
+    );
+
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(rusqlite::params_from_iter(params.iter()), row_to_track_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
+}
+
 /// Get all album IDs that have at least one favourited track, in a single query.
 pub fn favourite_album_ids_batch(conn: &Connection) -> Result<HashSet<i64>, DbError> {
     let mut stmt = conn.prepare(
@@ -1325,6 +1367,33 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    #[test]
+    fn favourite_tracks_come_back_as_rows_narrowed_by_search() {
+        use crate::db::queries::toggle_favourite;
+        let db = test_db();
+        upsert_track(&db.conn, &sample_meta("Amber", "Autechre", "Amber")).unwrap();
+        upsert_track(&db.conn, &sample_meta("Foil", "Autechre", "Amber")).unwrap();
+
+        let titles = |q| {
+            favourite_tracks(&db.conn, q)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.title)
+                .collect::<Vec<_>>()
+        };
+        assert!(titles(None).is_empty(), "nothing is favourite until it is");
+
+        toggle_favourite(&db.conn, Path::new("/music/Amber/Amber.flac")).unwrap();
+        toggle_favourite(&db.conn, Path::new("/music/Amber/Foil.flac")).unwrap();
+        assert_eq!(titles(None), ["Amber", "Foil"]);
+        assert_eq!(titles(Some("foil")), ["Foil"]);
+        assert_eq!(
+            titles(Some("autechre")).len(),
+            2,
+            "matched on the artist name"
+        );
     }
 
     #[test]

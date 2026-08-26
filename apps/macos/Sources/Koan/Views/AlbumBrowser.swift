@@ -35,7 +35,9 @@ struct AlbumDetailView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
 
-    private var album: Album? { library.album(id: albumId) }
+    /// Fetched, not looked up: the browser holds the page it is showing, and
+    /// this record may well not be on it.
+    @State private var album: Album?
 
     var body: some View {
         TrackListView(
@@ -47,6 +49,7 @@ struct AlbumDetailView: View {
             playable: album.map { Playable.album($0) }
         )
         .task(id: albumId) {
+            album = try? await library.engine.album(albumId: albumId)
             library.loadTracks(albumId: albumId)
         }
     }

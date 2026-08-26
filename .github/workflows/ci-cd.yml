@@ -181,8 +181,13 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        # One cache for both macOS app builds. rust-cache mixes the job name
+        # into the key unless `shared-key` is given, so `macos-app` and
+        # `create-macos-app` kept separate caches of the same
+        # `cargo build --release -p koan-ffi`. The release job only runs on a
+        # release commit, so its own cache was always cold.
         with:
-          key: macos-app
+          shared-key: macos-app
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       # Builds koan-ffi, regenerates the Swift bindings from it, then compiles
       # the app. The bindings are generated, so this catches drift between the
@@ -311,6 +316,7 @@ jobs:
   create-macos-app:
     name: Release (kōan.app)
     runs-on: macos-latest
+    timeout-minutes: 45
     needs: [check-version]
     if: needs.check-version.outputs.should_release == 'true'
     steps:
@@ -320,7 +326,7 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
         with:
-          key: macos-app
+          shared-key: macos-app
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       # Bundle, check, then package. `macos-verify` inspects the assembled
       # kōan.app, so it has to come after something that assembles one —

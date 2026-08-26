@@ -9,6 +9,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
     // connection without it fails them rather than sorting differently.
     super::connection::register_library_collation(conn)?;
+    super::connection::register_shuffle_function(conn)?;
     let found: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if found > SCHEMA_VERSION {
         return Err(rusqlite::Error::SqliteFailure(
