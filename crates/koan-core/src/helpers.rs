@@ -1130,7 +1130,7 @@ pub fn download_track(
     }
 
     // 3. Download from remote. The queue item points at the in-progress file so
-    // the streaming pump reads bytes as they land; it flips to `dest` on success.
+    // the decoder reads bytes as they land; it flips to `dest` on success.
     state.update_paths(&[(queue_id, crate::remote::download::part_path(&dest))]);
 
     let bytes_written: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));

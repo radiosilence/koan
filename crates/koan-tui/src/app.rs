@@ -768,15 +768,11 @@ impl App {
                 self.tx.send(PlayerCommand::PrevTrack).ok();
             }
             KeyCode::Char('.') | KeyCode::Right => {
-                let pos = self.state.position_ms();
-                let mut target = pos.saturating_add(10_000);
-                // Clamp to downloaded portion if streaming.
-                if let Some(dl_frac) = self.state.current_download_fraction()
-                    && let Some(info) = self.state.track_info()
-                {
-                    let max_ms = (dl_frac * info.duration_ms as f64) as u64;
-                    target = target.min(max_ms.saturating_sub(5_000));
-                }
+                let target = self
+                    .state
+                    .position_ms()
+                    .saturating_add(10_000)
+                    .min(self.state.seekable_ms());
                 self.tx.send(PlayerCommand::Seek(target)).ok();
             }
             KeyCode::Char(',') | KeyCode::Left => {
@@ -1837,14 +1833,14 @@ impl App {
                 {
                     let click_x = event.column;
                     let dur = info.duration_ms;
-                    let dl_frac = self.state.current_download_fraction();
+                    let seekable_ms = self.state.seek_ceiling_ms();
 
                     if let Some(pos) = TransportBar::seek_from_click(
                         self.layout.seek_bar_start,
                         self.layout.seek_bar_width,
                         click_x,
                         dur,
-                        dl_frac,
+                        seekable_ms,
                     ) {
                         self.tx.send(PlayerCommand::Seek(pos)).ok();
                     } else if click_x < self.layout.seek_bar_start {

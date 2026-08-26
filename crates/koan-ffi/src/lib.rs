@@ -2074,7 +2074,7 @@ impl KoanEngine {
             .spawn(move || {
                 let mut last_version = u64::MAX;
                 let mut last_position = u64::MAX;
-                let mut last_signature: Option<(PlaybackState, Option<String>)> = None;
+                let mut last_signature: Option<(PlaybackState, Option<String>, u64)> = None;
                 let mut last_downloads: Vec<DownloadProgress> = Vec::new();
 
                 loop {
@@ -2091,7 +2091,15 @@ impl KoanEngine {
 
                     let state = engine.state.playback_state();
                     let cursor = engine.state.cursor().map(|c| c.0.to_string());
-                    let signature = (state, cursor);
+                    // The seekable extent belongs in the signature: it moves
+                    // while a track downloads without the state or the cursor
+                    // moving, and a client draws a boundary from it. Rounded to
+                    // the second, because it is drawn as a bar a few hundred
+                    // pixels wide and nothing finer is visible. It stops moving
+                    // the moment the download lands, so this costs a snapshot
+                    // per tick only while one is in flight.
+                    let seekable = engine.state.seekable_ms() / 1000;
+                    let signature = (state, cursor, seekable);
                     if last_signature.as_ref() != Some(&signature) {
                         last_signature = Some(signature);
                         publish(PlayerEvent::PlaybackChanged {
@@ -2305,6 +2313,7 @@ impl KoanEngine {
             state: play_state.into(),
             position_ms: self.state.position_ms(),
             duration_ms: info.as_ref().map(|i| i.duration_ms).unwrap_or(0),
+            seekable_ms: self.state.seekable_ms(),
             queue_item_id: cursor.map(|c| c.0.to_string()),
             entry,
             format: info

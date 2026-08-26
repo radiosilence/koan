@@ -390,6 +390,24 @@ final class LibraryModel {
         }
     }
 
+    /// Throw away every file cached from the server.
+    ///
+    /// The library rows stay — they are what the server said exists — so the
+    /// tracks remain playable and simply download again on demand. Exclusive
+    /// like the other library tasks: it clears the cached paths off every row.
+    func clearDownloads() {
+        guard !isScanning else { return }
+        isScanning = true
+        let engine = self.engine
+        let job = activity?.begin("Clearing downloaded files", exclusive: true)
+        Task {
+            _ = try? await engine.clearDownloadCache()
+            if let job { activity?.end(job) }
+            isScanning = false
+            loadStats()
+        }
+    }
+
     /// Full rescan of every configured folder. Minutes on a big library, so it
     /// runs detached and the UI stays live throughout.
     func scan(force: Bool = false) {

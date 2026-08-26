@@ -237,14 +237,11 @@ private struct SeekBar: View {
                     Canvas { context, size in
                         context.fill(Self.mark(in: size, fraction: 1), with: .style(.quaternary))
                     }
-                    // How much of a streaming track has arrived. A fraction of
-                    // bytes drawn on an axis of time: right for lossless and
-                    // CBR, out by however far the bitrate wanders on VBR. Hence
-                    // the weaker mark and the word "roughly" — what it answers
-                    // is whether playback is about to run out of track, not
-                    // where in the track anything is. Its own layer so it sits
-                    // under the played extent: an approximation that lands
-                    // behind the playhead is covered rather than drawn wrong.
+                    // How much of a streaming track can be reached. The engine
+                    // clamps a seek to this same extent, so it is a boundary
+                    // rather than an illustration — the bar cannot offer a
+                    // position playback would then refuse. Its own layer so it
+                    // sits under the played extent and is covered by it.
                     Canvas { context, size in
                         context.fill(Self.mark(in: size, fraction: fetched ?? 0), with: .style(.secondary))
                     }
@@ -257,7 +254,7 @@ private struct SeekBar: View {
                     // things CoreAnimation can carry without touching layout.
                     .opacity(fetched == nil ? 0 : 1)
                     .animation(.easeOut(duration: 0.25), value: fetched == nil)
-                    .help(fetched.map { "Roughly \(Int($0 * 100))% downloaded" } ?? "")
+                    .help(fetched.map { "Downloaded as far as \(Int($0 * 100))% — seeking stops here" } ?? "")
                     // Not the tint. The tint is the colour of the record now,
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a
@@ -303,10 +300,13 @@ private struct SeekBar: View {
         UInt64(player.progress * Double(player.clock.durationMs))
     }
 
-    /// How much of what is playing has been fetched, while it is still being
-    /// fetched. `nil` for anything already on disk, and for a transfer the
-    /// server gave no length for — there is nothing to draw a fraction of.
-    private var fetched: Double? { player.currentEntry?.downloadProgress }
+    /// How much of what is playing can be seeked into, while that is less than
+    /// all of it. `nil` for anything on disk, which is every track most of the
+    /// time — there is no boundary worth drawing then.
+    private var fetched: Double? {
+        let seekable = player.seekable
+        return seekable < 1 ? seekable : nil
+    }
 }
 
 private struct DeviceMenu: View {

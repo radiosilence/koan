@@ -288,6 +288,10 @@ struct KoanApp: App {
                 Button { state?.art.purge() } label: {
                     Label("Clear Artwork Cache", systemImage: Icon.clear)
                 }
+                Button { state?.library.clearDownloads() } label: {
+                    Label("Clear Downloaded Files", systemImage: Icon.clear)
+                }
+                .disabled(state?.activity.isLibraryBusy ?? false)
             }
         }
 

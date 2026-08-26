@@ -19,6 +19,12 @@ final class PlayerModel {
 
     /// Position, on its own observable so only the transport sees the tick.
     let clock = PlaybackClock()
+    /// How far into the current track a seek can land. Equal to the duration
+    /// for anything on disk, and short of it while a download is still
+    /// arriving. Observed, unlike the snapshot it comes from, because the seek
+    /// bar draws it — and change-guarded, because it moves while a track caches
+    /// and then stops for the rest of the record.
+    private(set) var seekableMs: UInt64 = 0
     private(set) var queue: [QueueItem] = []
     /// Queue entries indexed by library track id, so a library row can show
     /// what the queue knows about it — downloading, failed, already played —
@@ -58,8 +64,9 @@ final class PlayerModel {
         // Reading the engine is a suspension now, so the first frame renders
         // against a stopped transport and `start()` fills it in.
         self.nowPlaying = NowPlaying(
-            state: .stopped, positionMs: 0, durationMs: 0, queueItemId: nil,
-            entry: nil, format: nil, playlistVersion: 0, radioEnabled: false
+            state: .stopped, positionMs: 0, durationMs: 0, seekableMs: 0,
+            queueItemId: nil, entry: nil, format: nil, playlistVersion: 0,
+            radioEnabled: false
         )
     }
 
@@ -327,11 +334,22 @@ final class PlayerModel {
         {
             currentFormat = now.format
         }
+        if now.seekableMs != seekableMs { seekableMs = now.seekableMs }
         clock.update(positionMs: now.positionMs, durationMs: now.durationMs)
     }
 
     /// 0–1 through the current track. Reflects the drag while scrubbing.
     var progress: Double { scrubbing ?? clock.progress }
+
+    /// How much of the track can be reached, as a fraction.
+    ///
+    /// 1 for anything on disk. Short of it while a download is still arriving —
+    /// the engine clamps a seek to the same extent, so a scrub past this would
+    /// land somewhere the thumb was never dragged to.
+    var seekable: Double {
+        guard clock.durationMs > 0, seekableMs < clock.durationMs else { return 1 }
+        return Double(seekableMs) / Double(clock.durationMs)
+    }
 
     var upNext: [QueueItem] {
         guard let cursor = nowPlaying.queueItemId,
@@ -351,9 +369,10 @@ final class PlayerModel {
 
     func play(itemId: String) { attempt { try await self.engine.play(queueItemId: itemId) } }
 
-    /// Commit a scrub. Position comes from the drag, not the engine.
+    /// Commit a scrub. Position comes from the drag, not the engine, and stops
+    /// at what has been downloaded.
     func seek(fraction: Double) {
-        seek(toMs: UInt64(max(0, min(1, fraction)) * Double(clock.durationMs)))
+        seek(toMs: UInt64(clamp(fraction) * Double(clock.durationMs)))
     }
 
     /// Called as the thumb is dragged. Cancels any seek still settling, since
@@ -361,7 +380,12 @@ final class PlayerModel {
     func beginScrub(fraction: Double) {
         pendingSeekMs = nil
         pendingSeekTicks = 0
-        scrubbing = min(1, max(0, fraction))
+        scrubbing = clamp(fraction)
+    }
+
+    /// A drag position held inside the track and inside what has arrived.
+    private func clamp(_ fraction: Double) -> Double {
+        min(seekable, min(1, max(0, fraction)))
     }
 
     /// Nudge by a number of seconds, clamped to the track. What the arrow-key
@@ -369,7 +393,7 @@ final class PlayerModel {
     func seek(bySeconds delta: Int) {
         let current = Int64(clock.positionMs)
         let target = max(0, current + Int64(delta) * 1000)
-        seek(toMs: UInt64(min(target, Int64(clock.durationMs))))
+        seek(toMs: UInt64(min(target, Int64(seekableMs))))
     }
 
     /// Hold the requested position until the engine agrees with it.

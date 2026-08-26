@@ -79,8 +79,9 @@ pub struct TransportBar<'a> {
     position_ms: u64,
     theme: &'a Theme,
     ticker_offset: usize,
-    /// Download fraction (0.0..1.0) for streaming tracks. None = fully downloaded.
-    download_fraction: Option<f64>,
+    /// How far into the track a seek can land. `None` once the whole track is
+    /// reachable, which is every track that is not mid-download.
+    seekable_ms: Option<u64>,
     /// What the output device settled at. None until a track has started.
     output_rate: Option<u32>,
 }
@@ -100,7 +101,7 @@ impl<'a> TransportBar<'a> {
             position_ms,
             theme,
             ticker_offset: 0,
-            download_fraction: None,
+            seekable_ms: None,
             output_rate: None,
         }
     }
@@ -110,8 +111,8 @@ impl<'a> TransportBar<'a> {
         self
     }
 
-    pub fn with_download_fraction(mut self, fraction: Option<f64>) -> Self {
-        self.download_fraction = fraction;
+    pub fn with_seekable_ms(mut self, seekable_ms: Option<u64>) -> Self {
+        self.seekable_ms = seekable_ms;
         self
     }
 
@@ -133,13 +134,14 @@ impl<'a> TransportBar<'a> {
 
     /// Seek from a click using the bar metrics stored from the last render.
     /// This guarantees the click handler uses the exact same bar layout as what's on screen.
-    /// When `download_fraction` is provided, clamps the seek to the downloaded portion.
+    /// `seekable_ms` is the engine's own ceiling, so a click past the downloaded
+    /// extent lands where playback will actually be rather than being refused.
     pub fn seek_from_click(
         bar_start: u16,
         bar_width: u16,
         click_x: u16,
         duration_ms: u64,
-        download_fraction: Option<f64>,
+        seekable_ms: Option<u64>,
     ) -> Option<u64> {
         let bar_end = bar_start + bar_width;
         if click_x < bar_start || click_x >= bar_end || bar_width == 0 {
@@ -147,13 +149,7 @@ impl<'a> TransportBar<'a> {
         }
         let frac = (click_x - bar_start) as f64 / bar_width as f64;
         let pos = (frac * duration_ms as f64) as u64;
-        // Clamp to downloaded portion minus a safety margin.
-        if let Some(dl_frac) = download_fraction {
-            let max_ms = (dl_frac * duration_ms as f64) as u64;
-            Some(pos.min(max_ms.saturating_sub(5_000)))
-        } else {
-            Some(pos)
-        }
+        Some(pos.min(seekable_ms.unwrap_or(u64::MAX)))
     }
 }
 
@@ -201,8 +197,13 @@ impl Widget for TransportBar<'_> {
         }
         .min(bar_width);
 
-        // How much of the bar represents downloaded data.
-        let downloaded = if let Some(dl_frac) = self.download_fraction {
+        // How much of the bar can be seeked into.
+        let downloaded = if let Some(seekable) = self.seekable_ms {
+            let dl_frac = if duration_ms > 0 {
+                seekable as f64 / duration_ms as f64
+            } else {
+                1.0
+            };
             ((dl_frac * bar_width as f64) as usize).min(bar_width)
         } else {
             bar_width // fully downloaded

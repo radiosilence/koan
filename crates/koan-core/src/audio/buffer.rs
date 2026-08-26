@@ -353,7 +353,13 @@ fn probe_mss(mss: MediaSourceStream<'_>, hint: &Hint) -> Result<StreamInfo, Deco
             FormatOptions::default(),
             MetadataOptions::default(),
         )
-        .map_err(|e| DecodeError::Decode(e.to_string()))?;
+        .map_err(|e| match e {
+            // Kept whole rather than flattened to a string: a probe against a
+            // partial file fails by running out of bytes, and the caller has to
+            // tell that apart from a file it cannot make sense of.
+            symphonia::core::errors::Error::IoError(io) => DecodeError::Io(io),
+            other => DecodeError::Decode(other.to_string()),
+        })?;
 
     let track = reader
         .default_track(TrackType::Audio)

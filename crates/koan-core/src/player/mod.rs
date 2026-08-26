@@ -5,7 +5,7 @@ pub mod undo;
 
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::thread;
 
 use thiserror::Error;
@@ -31,6 +31,15 @@ pub enum PlayerError {
     Backend(#[from] BackendError),
     #[error("decode error: {0}")]
     Decode(#[from] buffer::DecodeError),
+}
+
+/// Symphonia's format hint for a path — its extension, where it has one.
+fn hint_for(path: &Path) -> symphonia::core::formats::probe::Hint {
+    let mut hint = symphonia::core::formats::probe::Hint::new();
+    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+        hint.with_extension(ext);
+    }
+    hint
 }
 
 /// The player controller. Owns the audio pipeline and processes commands.
@@ -307,11 +316,12 @@ impl Player {
                 bytes_written,
                 total,
             }) => {
-                if let Err(e) = self.start_streaming_playback(id, &path, bytes_written, total) {
-                    // The cursor stays here, so TrackReady starts it once the
-                    // whole file has landed.
-                    log::error!("streaming play failed, waiting for full download: {}", e);
-                }
+                // Stop what is playing and park here. The probe answers on its
+                // own thread; if it cannot, TrackReady starts the track once
+                // the whole file has landed.
+                self.stop_engine();
+                self.shared_state.set_playback_state(PlaybackState::Stopped);
+                self.probe_stream_for_playback(id, &path, bytes_written, total);
             }
             None => {
                 // Item not ready — stop current playback, wait for TrackReady.
@@ -438,20 +448,136 @@ impl Player {
         Ok(())
     }
 
+    /// Probe a partially-downloaded file on its own thread, and start it when
+    /// the answer comes back.
+    ///
+    /// Nothing here waits. Probing reads as much of the container as it takes
+    /// to describe itself — for Ogg, its last page, which means the whole
+    /// remaining download — and this is the thread that answers play, pause and
+    /// seek. So the probe goes elsewhere and its result returns as a command.
+    ///
+    /// A format that describes itself up front (FLAC, MP3) comes back in
+    /// milliseconds and starts early, which is the point of streaming. One that
+    /// does not comes back whenever it comes back, by which time the download
+    /// has usually landed and `TrackReady` has started the track from disk —
+    /// and the late answer is simply dropped. Either way the player kept
+    /// answering commands throughout.
+    fn probe_stream_for_playback(
+        &self,
+        id: QueueItemId,
+        path: &Path,
+        bytes_written: Arc<AtomicU64>,
+        total: u64,
+    ) {
+        let path = path.to_path_buf();
+        let tx = self.commands.tx.clone();
+        let status = self.stream_status_fn(id);
+        let hint = hint_for(&path);
+
+        let spawned = thread::Builder::new()
+            .name("koan-stream-probe".into())
+            .spawn(move || {
+                let source =
+                    match streaming::PartialFileSource::open(&path, bytes_written, total, status) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            log::warn!("stream probe: cannot open {}: {}", path.display(), e);
+                            return;
+                        }
+                    };
+                let mss = symphonia::core::io::MediaSourceStream::new(
+                    Box::new(source),
+                    Default::default(),
+                );
+                match buffer::probe_source(mss, &hint) {
+                    Ok(info) => {
+                        tx.send(PlayerCommand::StreamProbed {
+                            id,
+                            info: Box::new(info),
+                        })
+                        .ok();
+                    }
+                    // Not a failure of the track: it plays from disk once the
+                    // download lands, and the cursor is still parked on it.
+                    Err(e) => log::info!(
+                        "stream probe: {} cannot start early ({}), waiting for the download",
+                        path.display(),
+                        e
+                    ),
+                }
+            });
+
+        if let Err(e) = spawned {
+            log::warn!("stream probe: could not spawn for {:?}: {}", id, e);
+        }
+    }
+
+    /// A probe finished. Start the track if it is still the one wanted and
+    /// nothing has started it in the meantime.
+    fn stream_probed(&mut self, id: QueueItemId, info: buffer::StreamInfo) {
+        if !self.shared_state.is_cursor(id) {
+            return; // Moved on.
+        }
+        if self.shared_state.playback_state() != PlaybackState::Stopped {
+            return; // Already playing — the download landed first, or the user did.
+        }
+
+        match self.shared_state.item_playback_source(id) {
+            // The download landed while probing: play it as an ordinary file.
+            Some(PlaybackSource::Ready(path)) => {
+                if let Err(e) = self.start_playback(id, &path, 0) {
+                    log::error!("stream probe: playback failed: {}", e);
+                }
+            }
+            Some(PlaybackSource::Streaming {
+                path,
+                bytes_written,
+                total,
+            }) => {
+                if let Err(e) =
+                    self.start_streaming_playback(id, &path, bytes_written, total, 0, info)
+                {
+                    log::error!("stream probe: streaming playback failed: {}", e);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// What the streaming source asks per read to know whether the download is
+    /// still going. Asked each time rather than passed once: a transfer can
+    /// land, or die, at any point during playback.
+    fn stream_status_fn(
+        &self,
+        id: QueueItemId,
+    ) -> Arc<dyn Fn() -> streaming::StreamStatus + Send + Sync> {
+        let state = self.shared_state.clone();
+        Arc::new(move || match state.item_load_state(id) {
+            Some(LoadState::Ready) => streaming::StreamStatus::Complete,
+            Some(LoadState::Failed(_)) => streaming::StreamStatus::Failed,
+            _ => streaming::StreamStatus::Downloading,
+        })
+    }
+
     /// Internal: start streaming playback from a partially-downloaded file.
     ///
-    /// Creates a StreamBuffer and a pump thread that reads from the on-disk partial
-    /// file as bytes become available (tracked via `bytes_written`). The decode thread
-    /// reads from a StreamingSource backed by that buffer, blocking briefly when it
-    /// catches up to the write head.
+    /// The decoder reads the `.part` file straight off disk through a
+    /// `PartialFileSource`, which blocks when it reaches the write head. The
+    /// download's final rename does not disturb an already-open descriptor, so
+    /// a transfer landing mid-track needs no handover.
+    ///
+    /// `info` is already known — from the off-thread probe when starting, or
+    /// from what is playing when seeking. Nothing here probes.
     fn start_streaming_playback(
         &mut self,
         id: QueueItemId,
         path: &Path,
         bytes_written: Arc<AtomicU64>,
         total: u64,
+        seek_ms: u64,
+        info: buffer::StreamInfo,
     ) -> Result<(), PlayerError> {
-        let result = self.open_streaming_playback(id, path, bytes_written, total);
+        let result = self.open_streaming_playback(id, path, bytes_written, total, seek_ms, info);
         if result.is_err() {
             self.stop_playback_and_clear_state();
         }
@@ -464,136 +590,24 @@ impl Player {
         path: &Path,
         bytes_written: Arc<AtomicU64>,
         total: u64,
+        seek_ms: u64,
+        info: buffer::StreamInfo,
     ) -> Result<(), PlayerError> {
         self.stop_engine();
 
-        // Create a StreamBuffer with known total length.
-        let stream_buf = streaming::StreamBuffer::new(if total > 0 { Some(total) } else { None });
-
-        // Spawn a pump thread: reads bytes from the on-disk partial file as they
-        // become available (per bytes_written) and pushes them into StreamBuffer.
-        // This bridges the disk-based download with StreamingSource's in-memory design.
-        // The playlist item's path points to the .part file during download, so the
-        // pump opens the correct file. After download completes, the .part is renamed
-        // to the final path and the item path is updated — but the pump's open FD
-        // remains valid (Unix rename semantics).
-        let pump_path = path.to_path_buf();
-        let pump_buf = stream_buf.clone();
-        let pump_written = bytes_written.clone();
-        let pump_state = self.shared_state.clone();
-        thread::Builder::new()
-            .name("koan-stream-pump".into())
-            .spawn(move || {
-                use std::fs::File;
-                use std::io::Read;
-                use std::time::{Duration, Instant};
-
-                /// No new bytes for this long and the download is treated as dead.
-                /// `bytes_written` simply stops advancing when one dies, so without
-                /// a deadline the pump spins and the decode thread parks forever.
-                const STALL_LIMIT: Duration = Duration::from_secs(30);
-
-                let mut file = match File::open(&pump_path) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        log::error!("stream pump: failed to open {}: {}", pump_path.display(), e);
-                        pump_buf.fail();
-                        return;
-                    }
-                };
-                let mut buf = vec![0u8; 65536];
-                let mut offset: u64 = 0;
-                let mut last_progress = Instant::now();
-                loop {
-                    // Nothing left to read the bytes, so nothing left to write them for.
-                    if pump_buf.is_abandoned() {
-                        return;
-                    }
-                    match pump_state.item_load_state(id) {
-                        Some(LoadState::Failed(e)) => {
-                            log::warn!("stream pump: download of {:?} failed: {}", id, e);
-                            pump_buf.fail();
-                            return;
-                        }
-                        // The download landed: drain to EOF rather than trusting
-                        // `total`, which is 0 for a chunked transfer.
-                        Some(LoadState::Ready) => match file.read(&mut buf) {
-                            Ok(0) => break,
-                            Ok(n) => {
-                                pump_buf.push(&buf[..n]);
-                                offset += n as u64;
-                                continue;
-                            }
-                            Err(e) => {
-                                log::warn!("stream pump read error: {}", e);
-                                pump_buf.fail();
-                                return;
-                            }
-                        },
-                        _ => {}
-                    }
-
-                    let available = pump_written.load(Ordering::Acquire);
-                    if offset >= available {
-                        if total > 0 && available >= total {
-                            break; // Download complete.
-                        }
-                        if last_progress.elapsed() >= STALL_LIMIT {
-                            log::warn!(
-                                "stream pump: no data for {}s, abandoning {}",
-                                STALL_LIMIT.as_secs(),
-                                pump_path.display()
-                            );
-                            pump_buf.fail();
-                            return;
-                        }
-                        thread::sleep(Duration::from_millis(10));
-                        continue;
-                    }
-                    let to_read = ((available - offset) as usize).min(buf.len());
-                    match file.read(&mut buf[..to_read]) {
-                        Ok(0) => {
-                            // File data may lag behind bytes_written (OS buffer flush timing).
-                            // Only treat as true EOF if we've pumped all expected data.
-                            if total > 0 && offset >= total {
-                                break;
-                            }
-                            let latest = pump_written.load(Ordering::Acquire);
-                            if total > 0 && latest >= total && offset >= latest {
-                                break;
-                            }
-                            // Data not yet visible on disk — back off and retry.
-                            thread::sleep(Duration::from_millis(1));
-                            continue;
-                        }
-                        Ok(n) => {
-                            pump_buf.push(&buf[..n]);
-                            offset += n as u64;
-                            last_progress = Instant::now();
-                        }
-                        Err(e) => {
-                            log::warn!("stream pump read error: {}", e);
-                            pump_buf.fail();
-                            return;
-                        }
-                    }
-                }
-                pump_buf.finish();
-            })
-            .map_err(|e| PlayerError::Decode(buffer::DecodeError::Io(e)))?;
-
-        // Probe via a streaming reader — blocks (via condvar) until enough header data arrives.
-        let probe_reader = stream_buf.reader();
-        let probe_hint = {
-            let mut h = symphonia::core::formats::probe::Hint::new();
-            if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                h.with_extension(ext);
+        let status = self.stream_status_fn(id);
+        let open_source = {
+            let path = path.to_path_buf();
+            let status = status.clone();
+            move || {
+                streaming::PartialFileSource::open(
+                    &path,
+                    bytes_written.clone(),
+                    total,
+                    status.clone(),
+                )
             }
-            h
         };
-        let probe_mss =
-            symphonia::core::io::MediaSourceStream::new(Box::new(probe_reader), Default::default());
-        let info = buffer::probe_source(probe_mss, &probe_hint)?;
 
         self.shared_state.set_track_info(Some(TrackInfo {
             id,
@@ -605,16 +619,21 @@ impl Player {
             channels: info.channels,
             duration_ms: info.duration_ms,
         }));
-        self.shared_state.set_position_ms(0);
+        self.shared_state.set_position_ms(seek_ms);
         self.on_track_changed(id);
         log::info!(
-            "streaming: {} ({:?}) — {} {}Hz/{}ch, {}ms",
+            "streaming: {} ({:?}) — {} {}Hz/{}ch, {}ms{}",
             path.display(),
             id,
             info.codec,
             info.sample_rate,
             info.channels,
             info.duration_ms,
+            if seek_ms > 0 {
+                format!(" @{}ms", seek_ms)
+            } else {
+                String::new()
+            },
         );
 
         let (producer, consumer) = rtrb::RingBuffer::new(RING_BUFFER_SIZE);
@@ -634,28 +653,13 @@ impl Player {
             next
         };
 
-        // Decode using a fresh StreamingSource reader — reads from the StreamBuffer
-        // that the pump thread feeds. The decode thread blocks when it catches up to
-        // the write head, resuming as more data arrives.
-        // Build a SourceEntry using a fresh StreamingSource reader for the decode thread.
-        let decode_reader = stream_buf.reader();
-        let path_buf = path.to_path_buf();
-        let ext = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("")
-            .to_string();
-        let mut decode_hint = symphonia::core::formats::probe::Hint::new();
-        if !ext.is_empty() {
-            decode_hint.with_extension(&ext);
-        }
         let first = buffer::SourceEntry {
             id,
-            path: path_buf,
-            hint: decode_hint,
+            path: path.to_path_buf(),
+            hint: hint_for(path),
             make_mss: Box::new(move || {
                 Ok(symphonia::core::io::MediaSourceStream::new(
-                    Box::new(decode_reader),
+                    Box::new(open_source()?),
                     Default::default(),
                 ))
             }),
@@ -670,7 +674,7 @@ impl Player {
         let (_stream_info, decode_handle) = buffer::start_decode(
             first,
             producer,
-            0,
+            seek_ms,
             move || {
                 let (next_id, next_path) = next_track()?;
                 Some(buffer::SourceEntry::from_file(next_id, next_path))
@@ -698,36 +702,54 @@ impl Player {
         Ok(())
     }
 
-    /// Seek within the current track. Clamps to just before the end to avoid
-    /// accidentally skipping. Preserves pause state.
+    /// Seek within the current track, preserving pause state.
+    ///
+    /// A track still downloading is seekable only as far as its bytes reach, so
+    /// the target is clamped to `seekable_ms` and the restart goes back through
+    /// the streaming path — reopening a partial file as a plain file would
+    /// decode whatever happens to be on disk and end the track early.
     pub fn seek(&mut self, position_ms: u64) {
-        let info = match self.shared_state.track_info() {
-            Some(info) => info,
-            None => return,
+        let Some(info) = self.shared_state.track_info() else {
+            return;
         };
         let id = info.id;
-        let path = info.path.clone();
-        let duration = info.duration_ms;
 
-        // Clamp to just before the end so we don't skip to the next track.
-        let mut clamped = if duration > 0 {
-            position_ms.min(duration.saturating_sub(500))
-        } else {
-            position_ms
-        };
-
-        // Clamp to downloaded portion if streaming to prevent seeking into
-        // data that hasn't arrived yet.
-        if let Some(dl_frac) = self.shared_state.current_download_fraction() {
-            let max_ms = (dl_frac * duration as f64) as u64;
-            if max_ms > 5_000 {
-                clamped = clamped.min(max_ms - 5_000);
-            }
-        }
+        // Stop just short of the end rather than falling into the next track.
+        let ceiling = self
+            .shared_state
+            .seekable_ms()
+            .min(info.duration_ms.saturating_sub(500));
+        let clamped = position_ms.min(ceiling);
 
         let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
 
-        if let Err(e) = self.start_playback(id, &path, clamped) {
+        // The source is resolved now rather than from `info.path`, which names
+        // the `.part` file for a track that was still downloading when it
+        // started and is not renamed when the download lands.
+        let result = match self.shared_state.item_playback_source(id) {
+            Some(PlaybackSource::Streaming {
+                path,
+                bytes_written,
+                total,
+            }) => {
+                // No probe: what is playing already said what this is, and
+                // re-reading an Ogg's last page to learn it again would be the
+                // whole remaining download.
+                let known = buffer::StreamInfo {
+                    codec: info.codec.clone(),
+                    sample_rate: info.sample_rate,
+                    channels: info.channels,
+                    bit_depth: info.bit_depth,
+                    bitrate_kbps: info.bitrate_kbps,
+                    duration_ms: info.duration_ms,
+                };
+                self.start_streaming_playback(id, &path, bytes_written, total, clamped, known)
+            }
+            Some(PlaybackSource::Ready(path)) => self.start_playback(id, &path, clamped),
+            None => return,
+        };
+
+        if let Err(e) = result {
             log::error!("seek failed: {}", e);
             return;
         }
@@ -909,13 +931,8 @@ impl Player {
                 bytes_written,
                 total,
             }) => {
-                log::info!(
-                    "track_stream_ready: starting streaming playback for {:?}",
-                    id
-                );
-                if let Err(e) = self.start_streaming_playback(id, &path, bytes_written, total) {
-                    log::error!("track_stream_ready streaming failed: {}", e);
-                }
+                log::info!("track_stream_ready: probing partial file for {:?}", id);
+                self.probe_stream_for_playback(id, &path, bytes_written, total);
             }
             Some(PlaybackSource::Ready(path)) => {
                 // Download finished between threshold and now — just play normally.
@@ -958,18 +975,29 @@ impl Player {
                 // The initial probe was done on partial streaming data and may have
                 // underestimated duration, causing premature seek clamping or wrong
                 // progress bar display.
-                if let Ok(stream_info) = buffer::probe_file(&path)
-                    && let Some(current) = self.shared_state.track_info()
+                //
+                // The path is taken over at the same time. Playback started
+                // against the `.part` file and the download's last act is to
+                // rename it, so what `track_info` holds now names nothing.
+                if let Some(current) = self.shared_state.track_info()
                     && current.id == id
-                    && stream_info.duration_ms > current.duration_ms
                 {
-                    log::info!(
-                        "track_ready: duration corrected {}ms → {}ms",
-                        current.duration_ms,
-                        stream_info.duration_ms
-                    );
+                    let probed = buffer::probe_file(&path).ok();
+                    let duration_ms = probed
+                        .as_ref()
+                        .map(|s| s.duration_ms)
+                        .filter(|d| *d > current.duration_ms)
+                        .unwrap_or(current.duration_ms);
+                    if duration_ms != current.duration_ms {
+                        log::info!(
+                            "track_ready: duration corrected {}ms → {}ms",
+                            current.duration_ms,
+                            duration_ms
+                        );
+                    }
                     self.shared_state.set_track_info(Some(TrackInfo {
-                        duration_ms: stream_info.duration_ms,
+                        duration_ms,
+                        path: path.clone(),
                         ..current
                     }));
                 }
@@ -1242,6 +1270,7 @@ impl Player {
             PlayerCommand::TrackReady(id) => self.track_ready(id),
             PlayerCommand::DecodeFinished => self.on_decode_finished(),
             PlayerCommand::TrackStreamReady(id) => self.track_stream_ready(id),
+            PlayerCommand::StreamProbed { id, info } => self.stream_probed(id, *info),
             PlayerCommand::TrackFailed(id) => self.track_failed(id),
             PlayerCommand::Undo => self.execute_undo(),
             PlayerCommand::Redo => self.execute_redo(),
@@ -2261,7 +2290,7 @@ mod tests {
     /// freed while AudioUnitUninitialize is still tearing it down → crash.
     #[test]
     fn stop_engine_drops_engine_synchronously() {
-        use std::sync::atomic::AtomicBool;
+        use std::sync::atomic::{AtomicBool, Ordering};
 
         struct MockEngine {
             dropped: Arc<AtomicBool>,

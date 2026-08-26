@@ -2,7 +2,23 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Long tracks streamed from a server no longer break when the download lands.** Playback of a track that started mid-download held on to the name of the temporary file it started from. Finishing a download renames that file, so from then on the track named nothing: the next seek failed to open it and stopped playback outright. A nine-hour recording made it easy to hit, because there was a lot of track left to seek in.
+
+- **Seeking a track that is still downloading stays in the stream.** It used to reopen the partial file as an ordinary file, decoding whatever bytes happened to be on disk and ending the track early. Seeking now stays inside the download and lands anywhere already fetched, forwards or back.
+
+- **The seek bar shows how far a track can actually be reached, and stops there.** The limit was derived from the download's own byte count and quietly did nothing when a server sent no `Content-Length`, or when under five seconds had arrived — so a scrub could land somewhere the track had not got to. koan works it out once now, from bytes where a length is known and from the measured bitrate where it is not, and the bar draws the same figure the engine enforces.
+
+- **A large track no longer holds the player deaf while it opens.** Reading a container to find out what it is happened on the thread that answers play, pause and seek. Ogg states its duration in its last page, so opening one mid-download read the entire remaining transfer first — twenty-two seconds of an unresponsive player, on a fast connection. That reading now happens on its own thread and comes back as a message like anything else.
+
+### Changed
+
+- **A download in progress is played from disk rather than copied into memory.** The decoder used to read from a growing in-memory copy that a second thread filled from the file: a 451 MB recording cost 451 MB of RAM for as long as it played. It reads the file directly now, which costs nothing, seeks backwards for free, and carries on across the rename that ends a download.
+
 ### Added
+
+- **Library → Clear Downloaded Files.** Throws away everything cached from the server. The tracks stay in the library and fetch again on demand.
 
 - **A graphics level, in Settings -> Appearance.** One slider from `Plain` to `Full`, so koan can be told how much of the machine it may spend on looking like itself. `Full` is what it has always done and stays the default.
 

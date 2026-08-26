@@ -216,6 +216,10 @@ pub struct NowPlaying {
     pub state: PlayState,
     pub position_ms: u64,
     pub duration_ms: u64,
+    /// How far into the track a seek can land. Equal to `duration_ms` for
+    /// anything on disk; short of it while the bytes are still arriving, which
+    /// is the extent a client draws as downloaded and refuses to scrub past.
+    pub seekable_ms: u64,
     /// Queue item currently under the cursor, if any.
     pub queue_item_id: Option<String>,
     pub entry: Option<QueueItem>,

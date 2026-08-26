@@ -258,7 +258,7 @@ fn transport_survives_every_size_and_title() {
                 render_widget(
                     TransportBar::new(Some(&info), Some(&e), state, 107_500, &theme)
                         .with_ticker_offset(7)
-                        .with_download_fraction(Some(0.4)),
+                        .with_seekable_ms(Some(86_000)),
                     w,
                     h,
                 );

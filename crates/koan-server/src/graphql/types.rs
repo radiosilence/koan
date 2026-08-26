@@ -359,6 +359,10 @@ pub(super) struct GqlNowPlaying {
     pub state: PlaybackStateEnum,
     pub position_ms: u64,
     pub duration_ms: Option<u64>,
+    /// How far into the track a seek can land. Equal to `durationMs` for
+    /// anything on disk, and short of it while a download is still arriving —
+    /// the extent a client draws as downloaded and refuses to scrub past.
+    pub seekable_ms: Option<u64>,
     pub track: Option<GqlNowPlayingTrack>,
     pub queue_item_id: Option<String>,
 }
@@ -401,6 +405,7 @@ impl GqlNowPlaying {
                 state: playback_state,
                 position_ms,
                 duration_ms: None,
+                seekable_ms: None,
                 track: None,
                 queue_item_id: None,
             };
@@ -412,6 +417,7 @@ impl GqlNowPlaying {
             state: playback_state,
             position_ms,
             duration_ms: Some(info.duration_ms),
+            seekable_ms: Some(state.seekable_ms()),
             track: Some(GqlNowPlayingTrack {
                 track_id: playlist_item.and_then(|i| i.db_id),
                 title: playlist_item.map(|i| i.title.clone()).unwrap_or_default(),

@@ -183,8 +183,8 @@ fn download_and_play(
         return;
     }
 
-    // Point the queue item at the in-progress file so the streaming pump reads
-    // bytes as they land; it flips to `dest` once the rename has happened.
+    // Point the queue item at the in-progress file so the decoder reads bytes
+    // as they land; it flips to `dest` once the rename has happened.
     state.update_paths(&[(queue_id, download::part_path(dest))]);
 
     let bytes_written = Arc::new(AtomicU64::new(0));
@@ -496,6 +496,7 @@ fn command_loop(
             // catches new variants.
             PlayerCommand::TrackReady(_)
             | PlayerCommand::TrackStreamReady(_)
+            | PlayerCommand::StreamProbed { .. }
             | PlayerCommand::TrackFailed(_)
             | PlayerCommand::BeginUndoBatch
             | PlayerCommand::EndUndoBatch
