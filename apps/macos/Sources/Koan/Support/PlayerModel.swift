@@ -254,8 +254,15 @@ final class PlayerModel {
             let progress = byItem[id] ?? nil
             guard queue[index].downloadProgress != progress else { continue }
             queue[index].downloadProgress = progress
+            // Both indexes. A playlist row finds its queue item by entry, not
+            // by track — two copies of one song are two rows — so patching
+            // only the track index left every playlist row holding a figure
+            // from whenever the queue was last rebuilt.
             if let trackId = queue[index].trackId {
                 queuedByTrack[trackId] = queue[index]
+            }
+            if let entryId = queue[index].playlistEntryId {
+                queuedByPlaylistEntry[entryId] = queue[index]
             }
         }
 

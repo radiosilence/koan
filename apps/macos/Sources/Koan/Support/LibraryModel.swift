@@ -105,6 +105,14 @@ final class LibraryModel {
     private(set) var isLoading = false
 
     private(set) var detailTracks: [Track] = []
+    /// Which record `detailTracks` belongs to.
+    ///
+    /// Two jobs. A library change knows what to ask for again — a download
+    /// landing writes a cached path onto a row, and the page showing that row
+    /// has to hear about it or its cloud stays hollow until you navigate away
+    /// and back. And an answer for a record you have already left cannot land
+    /// on the one you are looking at.
+    private var detailAlbumId: Int64?
 
     /// Set while a scan runs so the UI can show progress and refuse a second
     /// one. Set by `AppState`. Long tasks register here so one place can say
@@ -257,12 +265,20 @@ final class LibraryModel {
 
     /// Tracks for the album detail pane.
     func loadTracks(albumId: Int64) {
+        // Only when it is a different record. Asked again for the one already
+        // showing — which is what a library change does — blanking the list
+        // first would flash it empty for the length of a query.
+        if detailAlbumId != albumId {
+            detailTracks = []
+        }
+        detailAlbumId = albumId
         let engine = self.engine
-        detailTracks = []
         Task {
-            detailTracks = (try? await engine.tracks(
+            let tracks = (try? await engine.tracks(
                 albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
             )) ?? []
+            guard detailAlbumId == albumId else { return }
+            detailTracks = tracks
         }
     }
 
@@ -420,5 +436,11 @@ final class LibraryModel {
         loadStats()
         refreshFavourites()
         reload()
+        // `reload` refreshes the section's own rows, which is not what an album
+        // page is showing. Without this a track downloaded while you watch it
+        // keeps its empty cloud until you leave the record and come back.
+        if let detailAlbumId {
+            loadTracks(albumId: detailAlbumId)
+        }
     }
 }

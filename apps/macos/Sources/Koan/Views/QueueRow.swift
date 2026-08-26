@@ -150,6 +150,17 @@ struct QueueRow: View {
 
             Spacer(minLength: 8)
 
+            // Where the bytes are, in the same mark and the same order as a
+            // record's own track list: the cloud, then the heart. Its own slot
+            // rather than the status column's — a track can be playing and
+            // still arriving at once, and one slot could only ever show
+            // whichever of the two it was told to.
+            SourceBadges(
+                onServer: item.onServer,
+                onDisk: item.onDisk,
+                downloading: downloading
+            )
+
             if let trackId = item.trackId {
                 FavouriteButton(
                     isOn: library.isFavourite(track: trackId),
@@ -164,16 +175,6 @@ struct QueueRow: View {
                 // the durations stay in line down the queue.
                 Color.clear.frame(width: 16, height: 1)
             }
-
-            // Where the bytes are, in the same mark and the same column the
-            // album view uses. Its own slot rather than the status column's:
-            // a track can be playing and still arriving at once, and one slot
-            // could only ever show whichever of the two it was told to.
-            SourceBadges(
-                onServer: item.onServer,
-                onDisk: item.onDisk,
-                downloading: downloading
-            )
 
             if let codec = item.codec {
                 Text(codec.uppercased())
