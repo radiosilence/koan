@@ -124,6 +124,23 @@ pub fn sync_library(
     server_url: &str,
     username: &str,
 ) -> Result<SyncResult, SyncError> {
+    sync_library_reporting(db, client, full, server_url, username, None)
+}
+
+/// `sync_library`, calling `on_progress` with (albums, tracks) as it goes.
+///
+/// A full sync of a real library is a minute or more of work behind a spinner
+/// that says nothing. The counts already exist — they were only ever written to
+/// the log. Called once per page, from the thread driving the pagination, so an
+/// implementation may be modest but need not be free.
+pub fn sync_library_reporting(
+    db: &Database,
+    client: &SubsonicClient,
+    full: bool,
+    server_url: &str,
+    username: &str,
+    on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<SyncResult, SyncError> {
     let mut result = SyncResult::default();
 
     let artists = client.get_artists()?;
@@ -200,6 +217,9 @@ pub fn sync_library(
             result.albums_synced,
             result.tracks_synced
         );
+        if let Some(on_progress) = on_progress {
+            on_progress(result.albums_synced as u64, result.tracks_synced as u64);
+        }
 
         if (page_count as u32) < page_size {
             break;

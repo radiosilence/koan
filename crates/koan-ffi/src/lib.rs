@@ -1726,6 +1726,21 @@ impl KoanEngine {
     /// Pull the remote library into the local database. Long and network-bound.
     /// `full` ignores the incremental cursor and re-walks every album.
     pub async fn sync_remote(self: Arc<Self>, full: bool) -> Result<SyncSummary, KoanError> {
+        self.sync_remote_reporting(full, None).await
+    }
+
+    /// `sync_remote`, pushing progress to `reporter` as the albums land.
+    ///
+    /// The same shape as `scan_reporting`, and for the same reason: a minute of
+    /// work behind a spinner that cannot say how far it has got is
+    /// indistinguishable from a minute of nothing happening. The counts are the
+    /// albums seen so far — the total is unknowable until the last page, so
+    /// `started` is told zero.
+    pub async fn sync_remote_reporting(
+        self: Arc<Self>,
+        full: bool,
+        reporter: Option<Arc<dyn ProgressReporter>>,
+    ) -> Result<SyncSummary, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
             let cfg = Config::load().unwrap_or_default();
@@ -1735,12 +1750,25 @@ impl KoanEngine {
                 }
             })?;
 
-            let synced = koan_core::helpers::sync_remote(
+            if let Some(reporter) = &reporter {
+                reporter.started(0);
+            }
+            let on_progress = reporter.as_ref().map(|reporter| {
+                let reporter = reporter.clone();
+                move |albums: u64, tracks: u64| {
+                    reporter.advanced(albums, format!("{albums} albums, {tracks} tracks"));
+                }
+            });
+
+            let synced = koan_core::helpers::sync_remote_reporting(
                 &db,
                 &client,
                 full,
                 &cfg.remote.url,
                 &cfg.remote.username,
+                on_progress
+                    .as_ref()
+                    .map(|f| f as &(dyn Fn(u64, u64) + Send + Sync)),
             )
             .map_err(|e| KoanError::Database {
                 message: e.to_string(),

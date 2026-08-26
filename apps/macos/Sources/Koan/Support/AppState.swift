@@ -57,8 +57,13 @@ final class AppState {
         // when the library folders change. Those are the slow things a user is
         // most likely to notice and least likely to have asked for, so they get
         // a row like anything else.
-        activity.mirror("Syncing with server") { engine.isAutoSyncing() }
-        activity.mirror("Scanning library") { engine.isAutoScanning() }
+        activity.mirror("Syncing with server", onFinish: { [weak library, weak playlists] in
+            library?.loadInitial()
+            playlists?.load()
+        }) { engine.isAutoSyncing() }
+        activity.mirror("Scanning library", onFinish: { [weak library] in
+            library?.loadInitial()
+        }) { engine.isAutoScanning() }
         activity.cancelLibraryTask = { engine.cancelLibraryTask() }
 
         // A finished download changes the library's cached count and nothing

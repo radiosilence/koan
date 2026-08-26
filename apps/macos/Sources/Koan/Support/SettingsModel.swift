@@ -165,14 +165,22 @@ final class SettingsModel {
     func syncNow(full: Bool) {
         let engine = self.engine
         Task {
-            let result = await activity.run(full ? "Full sync with server" : "Syncing with server") {
-                try await engine.syncRemote(full: full)
+            // `runReporting` rather than `run`: the counts exist while the sync
+            // is running and used to be visible only in the log, so the row said
+            // "Syncing with server" for a minute and nothing more.
+            let result = await activity.runReporting(
+                full ? "Full sync with server" : "Syncing with server"
+            ) { progress in
+                try await engine.syncRemoteReporting(full: full, reporter: progress)
             }
             switch result {
             case .success(let s):
                 // A sync reconciles favourites too, so the hearts on screen are
                 // out of date the moment it finishes.
                 library?.refreshFavourites()
+                // And the library itself: a sync that wrote thousands of rows
+                // has changed what there is to show.
+                library?.loadInitial()
                 // Zero is the normal answer for an incremental sync with nothing
                 // new, and "0 tracks across 0 albums" reads as a failure.
                 lastResult = s.tracks == 0 && s.favouritesImported == 0

@@ -457,7 +457,24 @@ pub fn sync_remote(
     url: &str,
     username: &str,
 ) -> Result<FullSync, crate::remote::sync::SyncError> {
-    let library = crate::remote::sync::sync_library(db, client, full, url, username)?;
+    sync_remote_reporting(db, client, full, url, username, None)
+}
+
+/// `sync_remote`, reporting how far the library half has got.
+///
+/// Favourites and playlists are quick and follow after; the albums are the
+/// minute of silence worth narrating.
+pub fn sync_remote_reporting(
+    db: &Database,
+    client: &SubsonicClient,
+    full: bool,
+    url: &str,
+    username: &str,
+    on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
+) -> Result<FullSync, crate::remote::sync::SyncError> {
+    let library = crate::remote::sync::sync_library_reporting(
+        db, client, full, url, username, on_progress,
+    )?;
     Ok(FullSync {
         library,
         favourites: reconcile_favourites(db, client),

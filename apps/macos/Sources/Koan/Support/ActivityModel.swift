@@ -141,6 +141,7 @@ final class ActivityModel {
         _ label: String,
         exclusive: Bool = true,
         cancellable: Bool = true,
+        onFinish: (@MainActor () -> Void)? = nil,
         while running: @escaping @Sendable () -> Bool
     ) {
         _Concurrency.Task { [weak self] in
@@ -153,6 +154,10 @@ final class ActivityModel {
                 case (false, let some?):
                     self?.end(some)
                     id = nil
+                    // A sync that has just written thousands of rows has
+                    // changed what the library is. Whoever is showing it needs
+                    // to hear so, or it goes on showing what it read at launch.
+                    onFinish?()
                 default:
                     break
                 }
