@@ -86,6 +86,21 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             WHERE cached_path IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_tracks_remote_url ON tracks(remote_url)
             WHERE remote_url IS NOT NULL;
+        -- A remote sync enriches every album and every artist it paged through,
+        -- matched on the server's id. Without these that is one full table read
+        -- per record, so a library twice the size costs four times as much to
+        -- sync. Partial, because a locally-scanned record has no remote id.
+        CREATE INDEX IF NOT EXISTS idx_albums_remote_id ON albums(remote_id)
+            WHERE remote_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_artists_remote_id ON artists(remote_id)
+            WHERE remote_id IS NOT NULL;
+        -- Radio resolves the artists a recommender names back to local rows,
+        -- by MusicBrainz id and then by name. `UNIQUE(name)` is a binary index
+        -- and the name lookup is case-insensitive, so it could not use it.
+        CREATE INDEX IF NOT EXISTS idx_artists_mbid ON artists(mbid)
+            WHERE mbid IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_artists_name_nocase
+            ON artists(name COLLATE NOCASE);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
             title,
@@ -107,6 +122,10 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             track_id  INTEGER REFERENCES tracks(id)
         );
 
+        -- Forgetting a track deletes its scan cache entry by track id, and the
+        -- primary key is the path.
+        CREATE INDEX IF NOT EXISTS idx_scan_cache_track ON scan_cache(track_id);
+
         CREATE TABLE IF NOT EXISTS remote_servers (
             id        INTEGER PRIMARY KEY,
             url       TEXT NOT NULL UNIQUE,
@@ -124,6 +143,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             mtime      INTEGER,
             created_at TEXT DEFAULT (datetime('now'))
         );
+
+        -- Undo reads back one batch at a time.
+        CREATE INDEX IF NOT EXISTS idx_organize_log_batch ON organize_log(batch_id);
 
         CREATE TABLE IF NOT EXISTS lyrics_cache (
             id          INTEGER PRIMARY KEY,
@@ -242,7 +264,11 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
-        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
+        -- Expiry was indexed and never used: the only query that reads it is the
+        -- cleanup sweep, whose `revoked = 1 OR expires_at <= ?` spans two columns
+        -- and reads the table either way. An index nothing reads is a cost paid
+        -- on every sign-in.
+        DROP INDEX IF EXISTS idx_refresh_tokens_expires;
         ",
     )?;
     apply_migrations(conn)?;
@@ -472,6 +498,87 @@ mod tests {
     use super::*;
     use crate::db::connection::Database;
 
+    /// Queries that answer a question about a handful of rows, and must not
+    /// read the library to do it.
+    ///
+    /// The planner will happily fall back to a full scan when a query is
+    /// written in a shape no index can serve — an `OR` spanning two columns, a
+    /// `LIKE` pattern, a collation the index does not use — and nothing about
+    /// the result says it happened. It costs, it does not fail, and it gets
+    /// worse with the size of somebody's library. So the plans are asserted.
+    #[test]
+    fn hot_queries_do_not_scan() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let plan = |sql: &str| -> Vec<String> {
+            let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let nulls = vec![rusqlite::types::Null; stmt.parameter_count()];
+            stmt.query_map(rusqlite::params_from_iter(nulls), |r| r.get::<_, String>(3))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+
+        let cases: &[(&str, &str)] = &[
+            (
+                "a track by any of its three paths",
+                "SELECT id FROM tracks WHERE path = ?1 OR cached_path = ?1 OR remote_url = ?1",
+            ),
+            (
+                "an artist's tracks, own or album credit",
+                "SELECT t.id FROM tracks t LEFT JOIN albums al ON t.album_id = al.id
+                  WHERE t.artist_id = ?1
+                     OR t.album_id IN (SELECT id FROM albums WHERE artist_id = ?1)",
+            ),
+            (
+                "every favourited track",
+                "SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites)
+                 UNION
+                 SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites)
+                 UNION
+                 SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites)",
+            ),
+            (
+                "tracks under a folder",
+                "SELECT id FROM tracks WHERE path >= ?1 AND path < ?2",
+            ),
+            (
+                "an album by the server's id",
+                "SELECT id FROM albums WHERE remote_id = ?1",
+            ),
+            (
+                "an artist by the server's id",
+                "SELECT id FROM artists WHERE remote_id = ?1",
+            ),
+            (
+                "an artist by MusicBrainz id",
+                "SELECT id FROM artists WHERE mbid = ?1",
+            ),
+            (
+                "an artist by name, however it is capitalised",
+                "SELECT id FROM artists WHERE name = ?1 COLLATE NOCASE",
+            ),
+            (
+                "a scan cache entry by track",
+                "SELECT path FROM scan_cache WHERE track_id = ?1",
+            ),
+            (
+                "one organize batch",
+                "SELECT id FROM organize_log WHERE batch_id = ?1",
+            ),
+        ];
+
+        for (what, sql) in cases {
+            let steps = plan(sql);
+            assert!(
+                !steps.iter().any(|s| s.starts_with("SCAN")),
+                "{what}: reads the whole table\n  {}",
+                steps.join("\n  ")
+            );
+        }
+    }
+
     #[test]
     fn clears_scan_time_added_at_but_keeps_the_servers() {
         let conn = Connection::open_in_memory().unwrap();
@@ -561,7 +668,13 @@ mod tests {
     fn migrates_similar_artists_relationship_column() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE artists (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            "CREATE TABLE artists (
+                 id        INTEGER PRIMARY KEY,
+                 name      TEXT NOT NULL UNIQUE,
+                 sort_name TEXT,
+                 mbid      TEXT,
+                 remote_id TEXT
+             );
              CREATE TABLE similar_artists (
                  artist_id  INTEGER NOT NULL REFERENCES artists(id),
                  similar_id INTEGER NOT NULL REFERENCES artists(id),

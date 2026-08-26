@@ -32,6 +32,30 @@ pub use stats::*;
 pub use tracks::*;
 pub use vectors::*;
 
+/// The half-open range of paths under a folder, for `path >= .0 AND path < .1`.
+///
+/// A prefix match on an indexed column, rather than `LIKE 'folder/%'` — which
+/// SQLite answers by reading every row, because a pattern is opaque to an
+/// index until it has been evaluated. It also takes the pattern out of the
+/// path: `LIKE` reads `_` as "any character" and folds ASCII case, so
+/// `/Volumes/My_Music` matched `/Volumes/My Music` and `/volumes/my_music`
+/// alike.
+///
+/// The trailing separator is what keeps `/Volumes/Music` out of
+/// `/Volumes/Music Backup`; the upper bound is the highest code point, so
+/// every path under the folder sorts below it.
+pub fn folder_prefix_range(folder: &std::path::Path) -> (String, String) {
+    let prefix = format!(
+        "{}{}",
+        folder
+            .to_string_lossy()
+            .trim_end_matches(std::path::MAIN_SEPARATOR),
+        std::path::MAIN_SEPARATOR
+    );
+    let upper = format!("{prefix}\u{10FFFF}");
+    (prefix, upper)
+}
+
 // --- Row types ---
 
 #[derive(Debug, Clone)]

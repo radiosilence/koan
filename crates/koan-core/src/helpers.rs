@@ -229,17 +229,11 @@ pub fn cache_size_bytes(cfg: &Config) -> u64 {
 /// The trailing separator matters: without it `/Volumes/Music` also counts
 /// `/Volumes/Music Backup`.
 pub fn tracks_under(db: &Database, folder: &Path) -> u64 {
-    let prefix = format!(
-        "{}{}%",
-        folder
-            .to_string_lossy()
-            .trim_end_matches(std::path::MAIN_SEPARATOR),
-        std::path::MAIN_SEPARATOR
-    );
+    let (lower, upper) = queries::folder_prefix_range(folder);
     db.conn
         .query_row(
-            "SELECT COUNT(*) FROM tracks WHERE path LIKE ?1",
-            [&prefix],
+            "SELECT COUNT(*) FROM tracks WHERE path >= ?1 AND path < ?2",
+            [&lower, &upper],
             |r| r.get::<_, i64>(0),
         )
         .unwrap_or(0) as u64
@@ -269,26 +263,19 @@ pub fn tracks_from_server(db: &Database) -> u64 {
 /// Albums and artists left holding nothing go too, or the browser fills with
 /// empty shelves.
 pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::connection::DbError> {
-    // Trailing separator, or `/Volumes/Music` also matches `/Volumes/Music Backup`.
-    let prefix = format!(
-        "{}{}%",
-        folder
-            .to_string_lossy()
-            .trim_end_matches(std::path::MAIN_SEPARATOR),
-        std::path::MAIN_SEPARATOR
-    );
+    let (lower, upper) = queries::folder_prefix_range(folder);
 
     let tx = db.conn.unchecked_transaction()?;
     // Still on the server: keep the row, drop the local file.
     tx.execute(
         "UPDATE tracks SET path = NULL, source = 'remote'
-          WHERE path LIKE ?1 AND remote_id IS NOT NULL",
-        [&prefix],
+          WHERE path >= ?1 AND path < ?2 AND remote_id IS NOT NULL",
+        [&lower, &upper],
     )?;
 
     let ids: Vec<i64> = {
-        let mut stmt = tx.prepare("SELECT id FROM tracks WHERE path LIKE ?1")?;
-        let rows = stmt.query_map([&prefix], |r| r.get(0))?;
+        let mut stmt = tx.prepare("SELECT id FROM tracks WHERE path >= ?1 AND path < ?2")?;
+        let rows = stmt.query_map([&lower, &upper], |r| r.get(0))?;
         rows.filter_map(Result::ok).collect()
     };
     for id in &ids {
