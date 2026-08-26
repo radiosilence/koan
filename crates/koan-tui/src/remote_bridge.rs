@@ -17,10 +17,10 @@ use koan_core::graphql_client::GraphQLClient;
 use koan_core::helpers::sanitise_filename;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{
-    LoadState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
+    ItemState, PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState, TrackInfo,
 };
 use koan_core::remote::client::SubsonicClient;
-use koan_core::remote::download;
+use koan_core::remote::{download, downloads};
 
 /// Disk budget for streamed-from-server tracks. These files belong to no local
 /// track row, so DB-driven cache eviction cannot see them — the bridge prunes
@@ -178,7 +178,7 @@ fn download_and_play(
 ) {
     // A file at `dest` is always complete — downloads land there by rename only.
     if dest.exists() {
-        state.update_load_state(queue_id, LoadState::Ready);
+        state.update_item_state(queue_id, ItemState::Ready);
         local_tx.send(PlayerCommand::TrackReady(queue_id)).ok();
         return;
     }
@@ -190,21 +190,33 @@ fn download_and_play(
     let bytes_written = Arc::new(AtomicU64::new(0));
     let stream_ready_sent = std::sync::atomic::AtomicBool::new(false);
 
-    // Once per attempt, not per chunk — see `helpers::download_track`. The
-    // counter carries progress; the load state only carries the fact.
+    // Told to the download store like any other transfer. It used not to be,
+    // so anything the remote bridge fetched was invisible to the downloads
+    // page and to everything else reading the store — two ways of fetching a
+    // track and only one of them accounted for.
+    let store = downloads::store();
+    store.queued(downloads::Download {
+        id: queue_id,
+        track_id,
+        title: dest
+            .file_stem()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        artist: String::new(),
+        source: download::part_path(dest),
+        dest: dest.to_path_buf(),
+        total: 0,
+        written: bytes_written.clone(),
+        state: downloads::DownloadState::Queued,
+        bytes_per_second: 0,
+    });
+
+    // Once per attempt, not per chunk — see `helpers::download_track`.
     let announced_total = AtomicU64::new(u64::MAX);
-    let in_progress = download::part_path(dest);
     let result = streamer.stream_to_file(&track_id.to_string(), dest, |downloaded, total| {
         bytes_written.store(downloaded, Ordering::Release);
         if announced_total.swap(total, Ordering::Relaxed) != total {
-            state.update_load_state(
-                queue_id,
-                LoadState::Downloading {
-                    path: in_progress.clone(),
-                    total,
-                    bytes_written: bytes_written.clone(),
-                },
-            );
+            store.started(queue_id, total, bytes_written.clone());
         }
         if !stream_ready_sent.load(Ordering::Relaxed)
             && downloaded >= koan_core::player::state::STREAM_THRESHOLD
@@ -218,12 +230,14 @@ fn download_and_play(
 
     if let Err(e) = result {
         log::warn!("failed to stream {} from server: {}", dest.display(), e);
-        state.update_load_state(queue_id, LoadState::Failed(e.to_string()));
+        store.failed(queue_id, e.to_string());
+        state.update_item_state(queue_id, ItemState::Failed(e.to_string()));
         return;
     }
 
+    store.finished(queue_id);
     state.update_paths(&[(queue_id, dest.to_path_buf())]);
-    state.update_load_state(queue_id, LoadState::Ready);
+    state.update_item_state(queue_id, ItemState::Ready);
     local_tx.send(PlayerCommand::TrackReady(queue_id)).ok();
 }
 
@@ -294,7 +308,7 @@ fn poll_and_stream_loop(
                                 track_number: None,
                                 disc: None,
                                 duration_ms: Some(track.duration_ms),
-                                load_state: LoadState::Pending,
+                                state: ItemState::Pending,
                             };
 
                             local_tx.send(PlayerCommand::ClearPlaylist).ok();
@@ -323,19 +337,19 @@ fn poll_and_stream_loop(
                                         })
                                     {
                                         log::error!("failed to spawn stream download: {}", e);
-                                        state.update_load_state(
+                                        state.update_item_state(
                                             queue_id,
-                                            LoadState::Failed(e.to_string()),
+                                            ItemState::Failed(e.to_string()),
                                         );
                                     }
                                 }
-                                (None, _) => state.update_load_state(
+                                (None, _) => state.update_item_state(
                                     queue_id,
-                                    LoadState::Failed("no [subsonic] credentials".into()),
+                                    ItemState::Failed("no [subsonic] credentials".into()),
                                 ),
-                                (_, None) => state.update_load_state(
+                                (_, None) => state.update_item_state(
                                     queue_id,
-                                    LoadState::Failed("server track has no library id".into()),
+                                    ItemState::Failed("server track has no library id".into()),
                                 ),
                             }
                         }
@@ -387,7 +401,7 @@ fn poll_and_stream_loop(
                             track_number: e.track_number,
                             disc: e.disc,
                             duration_ms: e.duration_ms,
-                            load_state: LoadState::Ready,
+                            state: ItemState::Ready,
                         }
                     })
                     .collect();

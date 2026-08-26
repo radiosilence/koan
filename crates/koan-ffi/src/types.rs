@@ -332,14 +332,16 @@ impl QueueItem {
     /// The transport bar polls several times a second and only ever wants the
     /// item under the cursor — deriving the whole queue for that is waste.
     pub(crate) fn from_cursor_item(item: &PlaylistItem, state: PlaybackState) -> Self {
-        let status = match (&item.load_state, state) {
+        // The item's own state and any transfer against it, as one answer.
+        let load = LoadState::of(item);
+        let status = match (&load, state) {
             (LoadState::Failed(_), _) => EntryStatus::Failed,
             (LoadState::Downloading { .. }, _) => EntryStatus::Downloading,
             (_, PlaybackState::Playing) => EntryStatus::Playing,
             (_, PlaybackState::Paused) => EntryStatus::Playing,
             (_, PlaybackState::Stopped) => EntryStatus::Queued,
         };
-        let download_progress = match &item.load_state {
+        let download_progress = match &load {
             LoadState::Downloading {
                 total,
                 bytes_written,
@@ -368,7 +370,7 @@ impl QueueItem {
             duration_ms: item.duration_ms,
             status,
             download_progress,
-            failure_reason: match &item.load_state {
+            failure_reason: match &load {
                 LoadState::Failed(reason) => Some(reason.clone()),
                 _ => None,
             },

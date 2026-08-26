@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
-use koan_core::player::state::{LoadState, PlaylistItem, QueueItemId};
+use koan_core::player::state::{ItemState, PlaylistItem, QueueItemId};
 use owo_colors::OwoColorize;
 
 pub(crate) fn open_db() -> Database {
@@ -277,7 +277,7 @@ fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> Playl
         track_number: track.track_number.map(|n| n as i64),
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
-        load_state: LoadState::Ready,
+        state: ItemState::Ready,
     }
 }
 
@@ -303,7 +303,7 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
             track_number: meta.track_number.map(|n| n as i64),
             disc: meta.disc.map(|n| n as i64),
             duration_ms: meta.duration_ms.map(|d| d as u64),
-            load_state: LoadState::Ready,
+            state: ItemState::Ready,
         },
         Err(_) => {
             let title = p
@@ -325,7 +325,7 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
                 track_number: None,
                 disc: None,
                 duration_ms: None,
-                load_state: LoadState::Ready,
+                state: ItemState::Ready,
             }
         }
     }

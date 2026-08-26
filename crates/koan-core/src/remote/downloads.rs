@@ -76,6 +76,28 @@ impl Download {
     }
 }
 
+/// What a transfer is doing, in a form cheap enough to ask about per row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Phase {
+    pub state: PhaseKind,
+    pub written: u64,
+    pub total: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PhaseKind {
+    Queued,
+    Running,
+    Done,
+    Failed,
+}
+
+impl Phase {
+    pub fn is_running(&self) -> bool {
+        matches!(self.state, PhaseKind::Queued | PhaseKind::Running)
+    }
+}
+
 /// Every transfer koan knows about.
 #[derive(Debug, Default)]
 pub struct DownloadStore {
@@ -110,6 +132,36 @@ impl DownloadStore {
     /// Everything, running first, then whatever settled most recently.
     pub fn all(&self) -> Vec<Download> {
         self.entries.read().clone()
+    }
+
+    /// The transfer for one queue item, if there is one.
+    ///
+    /// A scan, deliberately: entries are bounded by the number of download
+    /// workers plus the settled tail, because a transfer only appears here
+    /// when a worker picks it up. Indexing tens of rows would cost more to
+    /// maintain than it saves.
+    pub fn get(&self, id: QueueItemId) -> Option<Download> {
+        self.entries.read().iter().find(|d| d.id == id).cloned()
+    }
+
+    /// Whether a transfer exists for this item and what it is doing, without
+    /// cloning its paths and titles — what deriving a queue row needs, per row
+    /// per frame.
+    pub fn phase_of(&self, id: QueueItemId) -> Option<Phase> {
+        self.entries
+            .read()
+            .iter()
+            .find(|d| d.id == id)
+            .map(|d| Phase {
+                state: match &d.state {
+                    DownloadState::Queued => PhaseKind::Queued,
+                    DownloadState::Running => PhaseKind::Running,
+                    DownloadState::Done => PhaseKind::Done,
+                    DownloadState::Failed(_) => PhaseKind::Failed,
+                },
+                written: d.bytes_written(),
+                total: d.total,
+            })
     }
 
     /// How many transfers are actually moving.
@@ -434,6 +486,27 @@ mod tests {
         store.finished(id);
         store.sample_rates_at(start + Duration::from_secs(2));
         assert_eq!(store.all()[0].bytes_per_second, 0);
+    }
+
+    #[test]
+    fn a_transfer_can_be_found_by_its_queue_item() {
+        let store = DownloadStore::new();
+        let entry = download("train");
+        let (id, written) = (entry.id, entry.written.clone());
+        store.queued(entry);
+        store.started(id, 400, written.clone());
+        written.store(100, Ordering::Relaxed);
+
+        let phase = store.phase_of(id).expect("the transfer is there");
+        assert_eq!(phase.state, PhaseKind::Running);
+        assert_eq!(phase.written, 100);
+        assert_eq!(phase.total, 400);
+        assert!(phase.is_running());
+
+        assert!(
+            store.phase_of(QueueItemId::new()).is_none(),
+            "and only that one"
+        );
     }
 
     #[test]

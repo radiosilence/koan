@@ -6,7 +6,7 @@ use koan_core::config;
 use koan_core::db::queries;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::LoadState;
+use koan_core::player::state::ItemState;
 use owo_colors::OwoColorize;
 
 use koan_tui::app::PickerAction;
@@ -163,7 +163,7 @@ pub fn cmd_play(
         if !items.is_empty() {
             let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = items
                 .iter()
-                .filter(|i| matches!(i.load_state, LoadState::Pending))
+                .filter(|i| matches!(i.state, ItemState::Pending))
                 .filter_map(|i| i.db_id.map(|db_id| (db_id, i.id)))
                 .collect();
 

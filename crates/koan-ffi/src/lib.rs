@@ -2629,7 +2629,7 @@ impl KoanEngine {
         let items = koan_core::helpers::playlist_items_for_tracks(db, &rows);
         let pending = items
             .iter()
-            .filter(|item| matches!(item.load_state, LoadState::Pending))
+            .filter(|item| matches!(item.state, koan_core::player::state::ItemState::Pending))
             .filter_map(|item| item.db_id.map(|id| (id, item.id)))
             .collect();
         (items, pending)
@@ -2801,7 +2801,7 @@ fn restore_items(
     for (saved_item, id) in saved.iter().zip(ids) {
         match id.and_then(|_| resolved.next()) {
             Some(item) => {
-                if matches!(item.load_state, LoadState::Pending)
+                if matches!(item.state, koan_core::player::state::ItemState::Pending)
                     && let Some(db_id) = item.db_id
                 {
                     pending.push((db_id, item.id));

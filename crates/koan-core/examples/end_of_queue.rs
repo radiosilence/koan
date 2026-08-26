@@ -7,7 +7,7 @@ fn main() {
 
     use koan_core::player::Player;
     use koan_core::player::commands::PlayerCommand;
-    use koan_core::player::state::{LoadState, PlaybackState, PlaylistItem, QueueItemId};
+    use koan_core::player::state::{ItemState, PlaybackState, PlaylistItem, QueueItemId};
 
     let path = std::path::PathBuf::from(
         std::env::args()
@@ -31,7 +31,7 @@ fn main() {
         track_number: Some(1),
         disc: Some(1),
         duration_ms: None,
-        load_state: LoadState::Ready,
+        state: ItemState::Ready,
     };
     let id = item.id;
     tx.send(PlayerCommand::AddToPlaylist(vec![item])).unwrap();

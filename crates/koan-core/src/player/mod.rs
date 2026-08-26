@@ -19,7 +19,9 @@ use crate::audio::{
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
 use history::{InFlight, PlayEvent, PlayRecorder};
-use state::{LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo};
+use state::{
+    ItemState, LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo,
+};
 use undo::{UndoEntry, UndoStack};
 
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
@@ -975,7 +977,7 @@ impl Player {
     /// If already streaming this item, trigger progressive metadata enhancement.
     pub fn track_ready(&mut self, id: QueueItemId) {
         // Mark as Ready (download thread already did this, but be safe).
-        self.shared_state.update_load_state(id, LoadState::Ready);
+        self.shared_state.update_item_state(id, ItemState::Ready);
 
         if !self.shared_state.is_cursor(id) {
             return;
@@ -1566,7 +1568,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
-            load_state: LoadState::Ready,
+            state: ItemState::Ready,
         }
     }
 
@@ -1583,7 +1585,7 @@ mod tests {
     fn pending_item(title: &str) -> PlaylistItem {
         PlaylistItem {
             playlist_entry_id: None,
-            load_state: LoadState::Pending,
+            state: ItemState::Pending,
             ..make_item(title)
         }
     }
@@ -1789,7 +1791,7 @@ mod tests {
         // TrackReady actually reaches the player and the queue resumes.
         player
             .shared_state
-            .update_load_state(waiting_id, LoadState::Ready);
+            .update_item_state(waiting_id, ItemState::Ready);
         player.process_command(PlayerCommand::TrackReady(waiting_id));
 
         assert_eq!(player.playback_starts, 1);
@@ -1810,7 +1812,7 @@ mod tests {
         // The download gives up. Ready will never come.
         player
             .shared_state
-            .update_load_state(waiting_id, LoadState::Failed("remote unavailable".into()));
+            .update_item_state(waiting_id, ItemState::Failed("remote unavailable".into()));
         player.process_command(PlayerCommand::TrackFailed(waiting_id));
 
         assert_eq!(
@@ -1833,7 +1835,7 @@ mod tests {
         for id in [first_id, second_id] {
             player
                 .shared_state
-                .update_load_state(id, LoadState::Failed("remote unavailable".into()));
+                .update_item_state(id, ItemState::Failed("remote unavailable".into()));
             player.process_command(PlayerCommand::TrackFailed(id));
         }
 
@@ -1856,7 +1858,7 @@ mod tests {
 
         player
             .shared_state
-            .update_load_state(other_id, LoadState::Failed("remote unavailable".into()));
+            .update_item_state(other_id, ItemState::Failed("remote unavailable".into()));
         player.process_command(PlayerCommand::TrackFailed(other_id));
 
         assert_eq!(
