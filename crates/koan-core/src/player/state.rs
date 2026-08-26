@@ -287,6 +287,14 @@ impl SharedPlayerState {
             return info.duration_ms;
         };
 
+        // A container that could not describe itself from the bytes downloaded
+        // states no duration, and cannot be seeked at all until the rest of it
+        // lands — there is no index to seek against and no end to seek within.
+        // Ogg is the one that does this; it keeps its duration in its last page.
+        if info.duration_ms == 0 {
+            return 0;
+        }
+
         let written = bytes_written.load(Ordering::Acquire);
         let reached = if *total > 0 && info.duration_ms > 0 {
             ((written as f64 / *total as f64) * info.duration_ms as f64) as u64
@@ -304,11 +312,38 @@ impl SharedPlayerState {
         reached.saturating_sub(SEEK_SAFETY_MS).min(info.duration_ms)
     }
 
+    /// The duration to show for what is playing.
+    ///
+    /// The container's own answer wherever it gave one. A partial file that
+    /// could not be read far enough to state a duration has none, and the
+    /// library's figure stands in — it came from the server, it is right, and
+    /// a transport that reads 0:00 for nine hours of music is worse than one
+    /// reading a figure the container has not caught up with yet.
+    pub fn duration_ms(&self) -> u64 {
+        let Some(info) = self.track_info.read().clone() else {
+            return 0;
+        };
+        if info.duration_ms > 0 {
+            return info.duration_ms;
+        }
+        // Released before the playlist lock, as everywhere else here.
+        self.playlist
+            .read()
+            .items
+            .iter()
+            .find(|item| item.id == info.id)
+            .and_then(|item| item.duration_ms)
+            .unwrap_or(0)
+    }
+
     /// `seekable_ms`, but `None` when the whole track is reachable — which is
     /// every track that is not mid-download. What a front end draws a boundary
     /// from: no boundary is the normal case and should cost no mark.
     pub fn seek_ceiling_ms(&self) -> Option<u64> {
-        let duration = self.track_info.read().as_ref()?.duration_ms;
+        let duration = self.duration_ms();
+        if duration == 0 {
+            return None;
+        }
         let seekable = self.seekable_ms();
         (seekable < duration).then_some(seekable)
     }
@@ -1066,6 +1101,8 @@ mod tests {
         make_item(title, LoadState::Failed("nope".into()))
     }
 
+    const DURATION_MS: u64 = 32_523_787;
+
     /// A nine-hour track under the cursor, `downloaded` bytes of `total` in.
     /// `total` of 0 stands for a server that sent no Content-Length.
     fn streaming_state(
@@ -1073,7 +1110,17 @@ mod tests {
         total: u64,
         bitrate_kbps: Option<u32>,
     ) -> Arc<SharedPlayerState> {
-        const DURATION_MS: u64 = 32_523_787;
+        streaming_state_with_duration(downloaded, total, bitrate_kbps, DURATION_MS)
+    }
+
+    /// The same, but saying what the container managed to state about itself.
+    /// A partial Ogg states nothing, which is zero here.
+    fn streaming_state_with_duration(
+        downloaded: u64,
+        total: u64,
+        bitrate_kbps: Option<u32>,
+        container_duration_ms: u64,
+    ) -> Arc<SharedPlayerState> {
         let written = Arc::new(AtomicU64::new(downloaded));
         let item = make_item(
             "train",
@@ -1096,7 +1143,7 @@ mod tests {
             bit_depth: None,
             bitrate_kbps,
             channels: 2,
-            duration_ms: DURATION_MS,
+            duration_ms: container_duration_ms,
         }));
         state
     }
@@ -1168,6 +1215,52 @@ mod tests {
     fn nothing_playing_is_seekable_nowhere() {
         assert_eq!(SharedPlayerState::new().seekable_ms(), 0);
         assert_eq!(SharedPlayerState::new().seek_ceiling_ms(), None);
+    }
+
+    #[test]
+    fn a_container_that_cannot_state_its_duration_cannot_be_seeked() {
+        // A partial Ogg keeps its duration in a last page that has not arrived,
+        // so it opens and plays but has nothing to seek against. Half the bytes
+        // being present does not change that.
+        let state = streaming_state_with_duration(200, 400, Some(128), 0);
+        assert_eq!(state.seekable_ms(), 0);
+    }
+
+    #[test]
+    fn the_library_duration_stands_in_for_a_silent_container() {
+        // What is shown on the transport, so nine hours of music does not read
+        // as 0:00 while it caches.
+        let state = streaming_state_with_duration(200, 400, Some(128), 0);
+        assert_eq!(state.duration_ms(), 200_000, "the item's own figure");
+        // And it is a display figure only — it grants no seeking.
+        assert_eq!(state.seekable_ms(), 0);
+        assert_eq!(state.seek_ceiling_ms(), Some(0));
+    }
+
+    #[test]
+    fn the_container_duration_wins_where_there_is_one() {
+        let state = streaming_state(200, 400, None);
+        assert_eq!(state.duration_ms(), DURATION_MS);
+    }
+
+    #[test]
+    fn the_download_landing_restores_seeking() {
+        // The sequence the whole design turns on: a track that opened without a
+        // duration gets one when the finished file is re-read, and is seekable
+        // end to end from that moment — no restart, no handover.
+        let state = streaming_state_with_duration(400, 400, Some(128), 0);
+        assert_eq!(state.seekable_ms(), 0);
+
+        let id = state.cursor().expect("cursor");
+        state.update_load_state(id, LoadState::Ready);
+        let info = state.track_info().expect("track info");
+        state.set_track_info(Some(TrackInfo {
+            duration_ms: DURATION_MS,
+            ..info
+        }));
+
+        assert_eq!(state.seekable_ms(), DURATION_MS);
+        assert_eq!(state.seek_ceiling_ms(), None, "no boundary left to draw");
     }
 
     // --- advance_cursor_loadable ---

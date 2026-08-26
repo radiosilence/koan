@@ -237,11 +237,13 @@ private struct SeekBar: View {
                     Canvas { context, size in
                         context.fill(Self.mark(in: size, fraction: 1), with: .style(.quaternary))
                     }
-                    // How much of a streaming track can be reached. The engine
-                    // clamps a seek to this same extent, so it is a boundary
-                    // rather than an illustration — the bar cannot offer a
-                    // position playback would then refuse. Its own layer so it
-                    // sits under the played extent and is covered by it.
+                    // How much of a streaming track has arrived. Where the
+                    // track can also be seeked, the engine stops a scrub at
+                    // this same extent, so the bar never offers a position
+                    // playback would refuse. Where it cannot be seeked yet,
+                    // this is the whole message: the transfer is going, and
+                    // this is how far. Its own layer so it sits under the
+                    // played extent and is covered by it.
                     Canvas { context, size in
                         context.fill(Self.mark(in: size, fraction: fetched ?? 0), with: .style(.secondary))
                     }
@@ -254,7 +256,6 @@ private struct SeekBar: View {
                     // things CoreAnimation can carry without touching layout.
                     .opacity(fetched == nil ? 0 : 1)
                     .animation(.easeOut(duration: 0.25), value: fetched == nil)
-                    .help(fetched.map { "Downloaded as far as \(Int($0 * 100))% — seeking stops here" } ?? "")
                     // Not the tint. The tint is the colour of the record now,
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a
@@ -264,15 +265,23 @@ private struct SeekBar: View {
                     }
                 }
                 .contentShape(.rect)
+                // Always attached, even where there is nowhere to drag to. The
+                // thumb does not follow the pointer then — a head that moves
+                // and springs back is a worse answer than one that stays put —
+                // but the attempt is still worth answering, so releasing says
+                // why nothing happened.
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
+                            guard player.canSeek else { return }
                             player.beginScrub(fraction: (value.location.x / geo.size.width).clamped())
                         }
                         .onEnded { value in
+                            guard player.canSeek else { return player.explainUnseekable() }
                             player.seek(fraction: (value.location.x / geo.size.width).clamped())
                         }
                 )
+                .help(help)
             }
             .frame(height: 14)
 
@@ -300,12 +309,18 @@ private struct SeekBar: View {
         UInt64(player.progress * Double(player.clock.durationMs))
     }
 
-    /// How much of what is playing can be seeked into, while that is less than
-    /// all of it. `nil` for anything on disk, which is every track most of the
-    /// time — there is no boundary worth drawing then.
-    private var fetched: Double? {
-        let seekable = player.seekable
-        return seekable < 1 ? seekable : nil
+    /// How much of what is playing has arrived, while it is still arriving.
+    /// `nil` for anything on disk, which is every track most of the time.
+    private var fetched: Double? { player.fetched }
+
+    /// Says which of the three states the bar is in, because a bar that stops
+    /// short or stops responding without saying why reads as broken.
+    private var help: String {
+        guard let fetched else { return "" }
+        let percent = Int(fetched * 100)
+        return player.canSeek
+            ? "Downloaded to \(percent)% — seeking stops there until the rest arrives"
+            : "Downloading, \(percent)% — seeking becomes available when it finishes"
     }
 }
 

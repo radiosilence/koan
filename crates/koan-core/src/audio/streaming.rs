@@ -52,6 +52,34 @@ pub struct PartialFileSource {
     total: u64,
     status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
     stall_limit: Duration,
+    /// Whether a read may wait at the write head for more of the download.
+    ///
+    /// Playback waits; probing does not. A container asked to describe itself
+    /// reads whatever it needs to, and Ogg needs its last page — so a probe
+    /// that waits waits for the whole transfer. Refusing instead turns that
+    /// into an immediate answer of "not from what has arrived", which is
+    /// something the caller can act on.
+    wait_for_bytes: bool,
+    /// Whether to state the advertised length.
+    ///
+    /// Saying nothing is what stops a container going looking for its tail:
+    /// Ogg reads its final page only when the source claims both a length and
+    /// seekability. The cost is that it then cannot seek at all, so this is for
+    /// the second attempt at opening a partial file, once the first has shown
+    /// the container will not describe itself from the front.
+    advertise_len: bool,
+}
+
+/// How much a probe may claim, and how far it may read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeMode {
+    /// State the length. A container that can describe itself from the bytes
+    /// already downloaded does, and the result is fully seekable.
+    Full,
+    /// State no length, so a container that would go looking for its tail
+    /// settles for what it can read from the front. Opens immediately at the
+    /// cost of seeking, and of any duration only the tail could give.
+    Lengthless,
 }
 
 impl PartialFileSource {
@@ -64,6 +92,21 @@ impl PartialFileSource {
         status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
     ) -> io::Result<Self> {
         Self::with_stall_limit(path, bytes_written, total, status, STALL_LIMIT)
+    }
+
+    /// Open for a probe: never waits at the write head, so a container that
+    /// cannot describe itself from what has arrived says so at once.
+    pub fn open_for_probe(
+        path: &Path,
+        bytes_written: Arc<AtomicU64>,
+        total: u64,
+        status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
+        mode: ProbeMode,
+    ) -> io::Result<Self> {
+        let mut source = Self::with_stall_limit(path, bytes_written, total, status, STALL_LIMIT)?;
+        source.wait_for_bytes = false;
+        source.advertise_len = mode == ProbeMode::Full;
+        Ok(source)
     }
 
     fn with_stall_limit(
@@ -80,6 +123,8 @@ impl PartialFileSource {
             total,
             status,
             stall_limit,
+            wait_for_bytes: true,
+            advertise_len: true,
         })
     }
 
@@ -140,6 +185,12 @@ impl Read for PartialFileSource {
                 }
             }
 
+            if !self.wait_for_bytes {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "past what the download has delivered",
+                ));
+            }
             if Instant::now() >= deadline {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
@@ -191,7 +242,7 @@ impl symphonia::core::io::MediaSource for PartialFileSource {
     }
 
     fn byte_len(&self) -> Option<u64> {
-        (self.total > 0).then_some(self.total)
+        (self.advertise_len && self.total > 0).then_some(self.total)
     }
 }
 

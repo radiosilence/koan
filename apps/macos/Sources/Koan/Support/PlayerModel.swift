@@ -50,6 +50,9 @@ final class PlayerModel {
     /// thumb back to the engine's position mid-gesture.
     var scrubbing: Double?
     var lastError: String?
+    /// Something the app declined to do, and why. Not a failure — the state it
+    /// describes resolves on its own.
+    var lastNotice: String?
 
     private var knownQueueVersion: UInt64 = .max
     /// Run after every state read. Now Playing hangs off this rather than
@@ -341,6 +344,13 @@ final class PlayerModel {
     /// 0–1 through the current track. Reflects the drag while scrubbing.
     var progress: Double { scrubbing ?? clock.progress }
 
+    /// Whether the track can be seeked at all yet.
+    ///
+    /// False while a download is playing that could not say what it is until
+    /// the rest of it lands — there is nothing to seek against. It becomes true
+    /// on its own when the transfer finishes.
+    var canSeek: Bool { seekableMs > 0 }
+
     /// How much of the track can be reached, as a fraction.
     ///
     /// 1 for anything on disk. Short of it while a download is still arriving —
@@ -350,6 +360,13 @@ final class PlayerModel {
         guard clock.durationMs > 0, seekableMs < clock.durationMs else { return 1 }
         return Double(seekableMs) / Double(clock.durationMs)
     }
+
+    /// How much of what is playing has arrived, while it is still arriving.
+    ///
+    /// Bytes, not reachable time: the two differ for a track that is playing
+    /// but cannot be seeked, where the point of the mark is to say the transfer
+    /// is going and roughly how far — not to offer a position.
+    var fetched: Double? { currentEntry?.downloadProgress }
 
     var upNext: [QueueItem] {
         guard let cursor = nowPlaying.queueItemId,
@@ -388,9 +405,18 @@ final class PlayerModel {
         min(seekable, min(1, max(0, fraction)))
     }
 
+    /// Why the playhead did not move. Reaching for a position in a track that
+    /// has not arrived is a reasonable thing to try, and a bar that simply
+    /// ignores the attempt teaches nothing.
+    func explainUnseekable() {
+        let progress = fetched.map { " — \(Int($0 * 100))% so far" } ?? ""
+        lastNotice = "Still downloading\(progress). This track can be seeked once it has finished."
+    }
+
     /// Nudge by a number of seconds, clamped to the track. What the arrow-key
     /// shortcuts and the TUI's `,`/`.` do.
     func seek(bySeconds delta: Int) {
+        guard canSeek else { return explainUnseekable() }
         let current = Int64(clock.positionMs)
         let target = max(0, current + Int64(delta) * 1000)
         seek(toMs: UInt64(min(target, Int64(seekableMs))))

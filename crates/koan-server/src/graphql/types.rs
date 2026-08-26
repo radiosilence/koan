@@ -416,7 +416,7 @@ impl GqlNowPlaying {
         Self {
             state: playback_state,
             position_ms,
-            duration_ms: Some(info.duration_ms),
+            duration_ms: Some(state.duration_ms()),
             seekable_ms: Some(state.seekable_ms()),
             track: Some(GqlNowPlayingTrack {
                 track_id: playlist_item.and_then(|i| i.db_id),
@@ -428,7 +428,7 @@ impl GqlNowPlaying {
                 bit_depth: info.bit_depth,
                 bitrate_kbps: info.bitrate_kbps,
                 channels: info.channels,
-                duration_ms: info.duration_ms,
+                duration_ms: state.duration_ms(),
                 output_sample_rate: state.output_sample_rate(),
             }),
             queue_item_id: Some(info.id.0.to_string()),

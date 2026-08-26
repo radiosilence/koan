@@ -25,6 +25,10 @@ use undo::{UndoEntry, UndoStack};
 /// Ring buffer size in samples. ~1s at 192kHz stereo.
 pub(crate) const RING_BUFFER_SIZE: usize = 192_000 * 2;
 
+/// Kept back from the end of a track when seeking, so dragging the thumb all
+/// the way over lands in the last moment of it rather than in the next track.
+const SEEK_END_GUARD_MS: u64 = 500;
+
 #[derive(Debug, Error)]
 pub enum PlayerError {
     #[error("backend error: {0}")]
@@ -487,20 +491,46 @@ impl Player {
         let spawned = thread::Builder::new()
             .name("koan-stream-probe".into())
             .spawn(move || {
-                let source =
-                    match streaming::PartialFileSource::open(&path, bytes_written, total, status) {
-                        Ok(s) => s,
-                        Err(e) => {
-                            log::warn!("stream probe: cannot open {}: {}", path.display(), e);
-                            return;
-                        }
-                    };
-                let mss = symphonia::core::io::MediaSourceStream::new(
-                    Box::new(source),
-                    Default::default(),
-                );
-                match buffer::probe_source(mss, &hint) {
-                    Ok(info) => {
+                let attempt = |mode| {
+                    streaming::PartialFileSource::open_for_probe(
+                        &path,
+                        bytes_written.clone(),
+                        total,
+                        status.clone(),
+                        mode,
+                    )
+                    .map_err(buffer::DecodeError::Io)
+                    .and_then(|source| {
+                        let mss = symphonia::core::io::MediaSourceStream::new(
+                            Box::new(source),
+                            Default::default(),
+                        );
+                        buffer::probe_source(mss, &hint)
+                    })
+                };
+
+                // Ask for the whole description first. Neither attempt waits at
+                // the write head, so a container that needs bytes which have
+                // not arrived fails here rather than reading the transfer out.
+                let info = match attempt(streaming::ProbeMode::Full) {
+                    Ok(info) => Some(info),
+                    Err(e) => {
+                        // Try again claiming no length. Ogg goes looking for its
+                        // last page only when told there is one to find; without
+                        // it the track opens now and plays, at the price of
+                        // seeking and of the duration that page carries. Both
+                        // come back when the download lands.
+                        log::info!(
+                            "stream probe: {} needs more than has arrived ({}), opening without a length",
+                            path.display(),
+                            e
+                        );
+                        attempt(streaming::ProbeMode::Lengthless).ok()
+                    }
+                };
+
+                match info {
+                    Some(info) => {
                         tx.send(PlayerCommand::StreamProbed {
                             id,
                             info: Box::new(info),
@@ -509,10 +539,9 @@ impl Player {
                     }
                     // Not a failure of the track: it plays from disk once the
                     // download lands, and the cursor is still parked on it.
-                    Err(e) => log::info!(
-                        "stream probe: {} cannot start early ({}), waiting for the download",
-                        path.display(),
-                        e
+                    None => log::info!(
+                        "stream probe: {} cannot start early, waiting for the download",
+                        path.display()
                     ),
                 }
             });
@@ -723,10 +752,19 @@ impl Player {
             return;
         };
         // Stop just short of the end rather than falling into the next track.
-        let ceiling = self
-            .shared_state
-            .seekable_ms()
-            .min(info.duration_ms.saturating_sub(500));
+        let seekable = self.shared_state.seekable_ms();
+        if seekable == 0 {
+            // Nothing of this track can be reached yet — a partial container
+            // that has not said what it is. Restarting it at zero is not what
+            // anyone asked for, so the seek is simply declined.
+            log::debug!("seek declined: {:?} is not seekable yet", info.id);
+            return;
+        }
+        let ceiling = seekable.min(
+            self.shared_state
+                .duration_ms()
+                .saturating_sub(SEEK_END_GUARD_MS),
+        );
         let clamped = position_ms.min(ceiling);
 
         if let Err(e) = self.restart_current(&info, clamped) {

@@ -2312,7 +2312,7 @@ impl KoanEngine {
         NowPlaying {
             state: play_state.into(),
             position_ms: self.state.position_ms(),
-            duration_ms: info.as_ref().map(|i| i.duration_ms).unwrap_or(0),
+            duration_ms: self.state.duration_ms(),
             seekable_ms: self.state.seekable_ms(),
             queue_item_id: cursor.map(|c| c.0.to_string()),
             entry,
