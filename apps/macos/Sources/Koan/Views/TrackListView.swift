@@ -290,36 +290,27 @@ private struct TrackAvailability: View {
 
     var body: some View {
         Group {
-            if let queued = player.queuedByTrack[track.id], isLive(queued.status) {
+            // Only the states the badge cannot say itself. Downloading is one
+            // it can — the ring belongs in the same slot as the cloud it is
+            // filling, not in a column of its own.
+            if let queued = player.queuedByTrack[track.id], isBlocking(queued.status) {
                 queueState(queued)
             } else {
-                SourceBadges(track: track)
+                SourceBadges(track: track, queued: player.queuedByTrack[track.id])
             }
         }
         .font(.caption)
         .frame(width: 30, height: 16, alignment: .trailing)
     }
 
-    /// Only these say something the library row doesn't already know.
-    private func isLive(_ status: EntryStatus) -> Bool {
-        status == .downloading || status == .priorityPending || status == .failed
+    /// Only these say something neither the library row nor the badge can.
+    private func isBlocking(_ status: EntryStatus) -> Bool {
+        status == .priorityPending || status == .failed
     }
 
     @ViewBuilder
     private func queueState(_ item: QueueItem) -> some View {
         switch item.status {
-        case .downloading:
-            if let progress = item.downloadProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-                    .frame(width: 14, height: 14)
-                    .help("Downloading — \(Int(progress * 100))%")
-            } else {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-            }
         case .priorityPending:
             Image(systemName: "arrow.down.circle")
                 .foregroundStyle(.tint)

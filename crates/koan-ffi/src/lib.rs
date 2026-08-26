@@ -1780,6 +1780,7 @@ impl KoanEngine {
             let cfg = Config::load().unwrap_or_default();
             let cleared = koan_core::helpers::clear_download_cache(&db, &cfg);
             koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            self.bump_library();
             Ok(CacheCleared {
                 files: cleared.files,
                 bytes: cleared.bytes,
@@ -1798,6 +1799,7 @@ impl KoanEngine {
             let db = self.db()?;
             let cleared = koan_core::helpers::clear_downloads_for(&db, &track_ids);
             koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            self.bump_library();
             Ok(CacheCleared {
                 files: cleared.files,
                 bytes: cleared.bytes,
@@ -2230,6 +2232,20 @@ impl KoanEngine {
                         })
                         .collect();
                     if downloads != last_downloads {
+                        // A transfer leaving the set landed on disk, which wrote
+                        // a cached path onto a library row. Nothing else says
+                        // so — the download runs in koan-core, which has no
+                        // notion of this version — and without it a track goes
+                        // on reading as "on the server, not here" until
+                        // something unrelated reloads the row.
+                        let still_running: std::collections::HashSet<&str> =
+                            downloads.iter().map(|d| d.queue_item_id.as_str()).collect();
+                        if last_downloads
+                            .iter()
+                            .any(|d| !still_running.contains(d.queue_item_id.as_str()))
+                        {
+                            engine.bump_library();
+                        }
                         last_downloads = downloads.clone();
                         publish(PlayerEvent::DownloadsChanged { downloads });
                     }

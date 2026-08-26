@@ -242,8 +242,13 @@ private struct SeekBar: View {
                     // this same extent, so the bar never offers a position
                     // playback would refuse. Where it cannot be seeked yet,
                     // this is the whole message: the transfer is going, and
-                    // this is how far. Its own layer so it sits under the
-                    // played extent and is covered by it.
+                    // this is how far.
+                    //
+                    // Held well back, because it is context rather than the
+                    // reading. At full weight it was the brightest thing on the
+                    // bar and got taken for the playhead — which on a long
+                    // track is a sliver a fraction of a pixel wide, and so lost
+                    // under it entirely.
                     Canvas { context, size in
                         context.fill(Self.mark(in: size, fraction: fetched ?? 0), with: .style(.secondary))
                     }
@@ -254,7 +259,7 @@ private struct SeekBar: View {
                     // behind. Opacity rather than a transition, because this
                     // layer is always present — and opacity is one of the few
                     // things CoreAnimation can carry without touching layout.
-                    .opacity(fetched == nil ? 0 : 1)
+                    .opacity(fetched == nil ? 0 : 0.4)
                     .animation(.easeOut(duration: 0.25), value: fetched == nil)
                     // Not the tint. The tint is the colour of the record now,
                     // and a muted sleeve puts the played portion at the same
@@ -262,6 +267,15 @@ private struct SeekBar: View {
                     // position off, not a thing that needs to say whose it is.
                     Canvas { context, size in
                         context.fill(Self.mark(in: size, fraction: player.progress), with: .style(.primary))
+                    }
+                    // The head itself, which the played extent cannot show on
+                    // its own: a third of a minute into nine hours is a tenth
+                    // of a percent of the bar, narrower than the bar is thick,
+                    // and a capsule that short is not drawn at all. A mark that
+                    // does not shrink with the fraction is the only thing that
+                    // says where playback is on a track this long.
+                    Canvas { context, size in
+                        context.fill(Self.head(in: size, fraction: player.progress), with: .style(.primary))
                     }
                 }
                 .contentShape(.rect)
@@ -297,6 +311,23 @@ private struct SeekBar: View {
 
     /// A capsule covering `fraction` of the bar, centred vertically. Shorter
     /// than its own thickness it would draw as a squashed dot, so it doesn't.
+    /// A round head centred on `fraction`, kept inside the bar at both ends so
+    /// it never hangs off the track it is marking.
+    private static func head(in size: CGSize, fraction: Double) -> Path {
+        let diameter = thickness * 2
+        let travel = size.width - diameter
+        guard travel > 0 else { return Path() }
+        let x = travel * fraction.clamped()
+        return Path(
+            ellipseIn: CGRect(
+                x: x,
+                y: (size.height - diameter) / 2,
+                width: diameter,
+                height: diameter
+            )
+        )
+    }
+
     private static func mark(in size: CGSize, fraction: Double) -> Path {
         let width = size.width * fraction.clamped()
         guard width >= thickness else { return Path() }

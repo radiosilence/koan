@@ -193,6 +193,7 @@ struct QueueActions: View {
     let trackIds: [Int64]
 
     @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
 
     var body: some View {
         Button { player.playNow(trackIds: trackIds) } label: {
@@ -203,6 +204,10 @@ struct QueueActions: View {
         }
         Button { player.enqueue(trackIds: trackIds) } label: {
             Label("Add to Queue", systemImage: Icon.queue)
+        }
+        Divider()
+        Button { library.clearDownloads(trackIds: trackIds) } label: {
+            Label("Remove Downloaded Files", systemImage: Icon.clear)
         }
     }
 }

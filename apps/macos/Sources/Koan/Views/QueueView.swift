@@ -317,6 +317,9 @@ struct QueueView: View {
             Button { showInLibrary(trackId: trackId, highlight: true) } label: {
                 Label("Go to Album", systemImage: Icon.album)
             }
+            Button { library.clearDownloads(trackIds: [trackId]) } label: {
+                Label("Remove Downloaded File", systemImage: Icon.clear)
+            }
             Button {
                 Share.link(
                     trackIds: [trackId],
@@ -398,6 +401,9 @@ struct QueueView: View {
             AddToPlaylistMenu { $0(trackIds(in: ids)) }
             Divider()
             organizeButton(trackIds: trackIds(in: ids), title: nil)
+            Button { library.clearDownloads(trackIds: trackIds(in: ids)) } label: {
+                Label("Remove Downloaded Files", systemImage: Icon.clear)
+            }
         }
     }
 

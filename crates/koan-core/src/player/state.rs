@@ -77,6 +77,15 @@ pub const SEEK_SAFETY_MS: u64 = 2_000;
 pub enum LoadState {
     Pending,
     Downloading {
+        /// Where the bytes are going: the in-progress `.part` file, not the
+        /// destination it is renamed to at the end.
+        ///
+        /// Carried here rather than read off the item, whose path is written by
+        /// the download thread and read by the player, and which the two can
+        /// disagree about — a track whose copy was cleared mid-flight kept a
+        /// path pointing at the file that had just been deleted. A load state
+        /// that says a download is running should say where it is running to.
+        path: PathBuf,
         /// Total bytes expected, or 0 when the server sent no Content-Length.
         total: u64,
         /// How many bytes have landed. The download thread writes it per chunk
@@ -282,6 +291,7 @@ impl SharedPlayerState {
         let LoadState::Downloading {
             total,
             bytes_written,
+            ..
         } = &item.load_state
         else {
             return info.duration_ms;
@@ -696,14 +706,14 @@ impl SharedPlayerState {
             .and_then(|item| match &item.load_state {
                 LoadState::Ready => Some(PlaybackSource::Ready(item.path.clone())),
                 LoadState::Downloading {
+                    path,
                     total,
                     bytes_written,
-                    ..
                 } => {
                     let written = bytes_written.load(Ordering::Acquire);
                     if written >= STREAM_THRESHOLD {
                         Some(PlaybackSource::Streaming {
-                            path: item.path.clone(),
+                            path: path.clone(),
                             bytes_written: bytes_written.clone(),
                             total: *total,
                         })
@@ -805,6 +815,7 @@ impl SharedPlayerState {
                 LoadState::Downloading {
                     total,
                     bytes_written,
+                    ..
                 } => Some((item.id, bytes_written.load(Ordering::Relaxed), *total)),
                 _ => None,
             })
@@ -1155,6 +1166,7 @@ mod tests {
         let item = make_item(
             "train",
             LoadState::Downloading {
+                path: PathBuf::from("/cache/train.opus.part"),
                 total,
                 bytes_written: written,
             },
@@ -1496,6 +1508,7 @@ mod tests {
         let dl_cursor = make_item(
             "downloading-at-cursor",
             LoadState::Downloading {
+                path: PathBuf::from("/cache/cursor.flac.part"),
                 total: 1_000_000,
                 bytes_written: bytes_cursor.clone(),
             },
@@ -1503,6 +1516,7 @@ mod tests {
         let dl_queued = make_item(
             "downloading-queued",
             LoadState::Downloading {
+                path: PathBuf::from("/cache/queued.flac.part"),
                 total: 500_000,
                 bytes_written: bytes_queued.clone(),
             },
@@ -1528,6 +1542,7 @@ mod tests {
         let item = make_item(
             "downloading",
             LoadState::Downloading {
+                path: PathBuf::from("/cache/one.flac.part"),
                 total: 1_000,
                 bytes_written: bytes.clone(),
             },

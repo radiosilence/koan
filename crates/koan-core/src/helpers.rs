@@ -1203,12 +1203,14 @@ pub fn download_track(
     //
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
+    let in_progress = crate::remote::download::part_path(&dest);
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
         bytes_written_progress.store(downloaded, Ordering::Release);
         if announced_total.swap(total, Ordering::Relaxed) != total {
             progress_state.update_load_state(
                 progress_qid,
                 LoadState::Downloading {
+                    path: in_progress.clone(),
                     total,
                     bytes_written: bytes_written_progress.clone(),
                 },
