@@ -328,15 +328,21 @@ impl KoanEngine {
             // record. A queue with no database behind it simply has no album
             // IDs; the art falls back to the per-track lookup as before.
             let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
-            let album_ids = self
-                .db()
-                .ok()
+            // Two questions of the same rows, asked once each for the whole
+            // queue rather than once per row.
+            let db = self.db().ok();
+            let album_ids = db
+                .as_ref()
                 .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
+                .unwrap_or_default();
+            let sources = db
+                .as_ref()
+                .and_then(|db| queries::batch::sources_for_tracks(&db.conn, &track_ids).ok())
                 .unwrap_or_default();
 
             entries
                 .iter()
-                .map(|e| QueueItem::from_entry(e, &album_ids))
+                .map(|e| QueueItem::from_entry(e, &album_ids, &sources))
                 .collect()
         })
         .await

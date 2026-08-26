@@ -255,6 +255,11 @@ pub struct QueueItem {
     pub download_progress: Option<f64>,
     /// Why this item cannot play, when `status` is `Failed`.
     pub failure_reason: Option<String>,
+    /// The server knows about this track. False for a queue item with no
+    /// library row behind it, which has nowhere to have come from.
+    pub on_server: bool,
+    /// The bytes are on this machine — an indexed file or a finished download.
+    pub on_disk: bool,
 }
 
 /// One transfer, as the download store has it.
@@ -363,6 +368,11 @@ impl QueueItem {
                 LoadState::Failed(reason) => Some(reason.clone()),
                 _ => None,
             },
+            // The transport polls this and there is no connection here to ask.
+            // Nothing it draws needs them; the queue's own rows carry the real
+            // reading.
+            on_server: false,
+            on_disk: false,
         }
     }
 }
@@ -371,7 +381,16 @@ impl QueueItem {
     /// Build from a derived queue entry, taking album IDs from a map resolved
     /// for the whole queue in one query — one statement per queue read rather
     /// than one per row.
-    pub(crate) fn from_entry(e: &QueueEntry, album_ids: &HashMap<i64, i64>) -> Self {
+    pub(crate) fn from_entry(
+        e: &QueueEntry,
+        album_ids: &HashMap<i64, i64>,
+        sources: &HashMap<i64, (bool, bool)>,
+    ) -> Self {
+        let (on_server, on_disk) = e
+            .db_id
+            .and_then(|id| sources.get(&id))
+            .copied()
+            .unwrap_or((false, false));
         let download_progress = e.download_progress.and_then(|(done, total)| {
             (total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0))
         });
@@ -392,6 +411,8 @@ impl QueueItem {
             status: e.status.into(),
             download_progress,
             failure_reason: e.error.clone(),
+            on_server,
+            on_disk,
         }
     }
 }

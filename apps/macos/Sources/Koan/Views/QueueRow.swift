@@ -30,6 +30,10 @@ struct QueueRowContent {
     var status: EntryStatus?
     var downloadProgress: Double?
     var failureReason: String?
+    /// Where this track's bytes are. Both false for an item with no library
+    /// row behind it, which draws no mark rather than a guessed one.
+    var onServer = false
+    var onDisk = false
     init(item: QueueItem) {
         trackId = item.trackId
         title = item.title
@@ -42,6 +46,8 @@ struct QueueRowContent {
         status = item.status
         downloadProgress = item.downloadProgress
         failureReason = item.failureReason
+        onServer = item.onServer
+        onDisk = item.onDisk
     }
 
     /// A playlist row, wearing whatever the queue currently thinks of it.
@@ -67,6 +73,8 @@ struct QueueRowContent {
         sleeve = track.albumId.map { .album($0) } ?? .track(track.id)
         downloadProgress = queued?.downloadProgress
         failureReason = queued?.failureReason
+        onServer = track.onServer
+        onDisk = track.onDisk
         status =
             if isCurrent { .playing }
             else if let live = queued?.status, live == .downloading || live == .priorityPending
@@ -161,10 +169,11 @@ struct QueueRow: View {
             // album view uses. Its own slot rather than the status column's:
             // a track can be playing and still arriving at once, and one slot
             // could only ever show whichever of the two it was told to.
-            // Only the ring, for now: a queue item does not carry where its
-            // bytes live the way a library row does, and a cloud guessed from
-            // the load state would be wrong for a local file.
-            SourceBadges(onServer: false, onDisk: false, downloading: downloading)
+            SourceBadges(
+                onServer: item.onServer,
+                onDisk: item.onDisk,
+                downloading: downloading
+            )
 
             if let codec = item.codec {
                 Text(codec.uppercased())
