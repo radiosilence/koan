@@ -87,11 +87,15 @@ private struct DownloadRow: View {
             // Drawn rather than a `ProgressView`: the stock linear style
             // rendered the same full-width track whatever it was given, which
             // made six transfers at six different percentages look identical.
+            //
+            // A named colour rather than `.tint`, which a `Canvas` resolves
+            // against its own environment and not the view's — hierarchical
+            // styles come through, that one comes out invisible.
             Canvas { context, size in
                 context.fill(Self.bar(in: size, fraction: 1), with: .style(.quaternary))
-                context.fill(Self.bar(in: size, fraction: fraction), with: .style(.tint))
+                context.fill(Self.bar(in: size, fraction: fraction), with: .color(.koanAccent))
             }
-            .frame(height: 3)
+            .frame(height: 4)
             .opacity(isRunning ? 1 : 0.35)
 
             HStack(spacing: 6) {
