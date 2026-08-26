@@ -85,6 +85,11 @@ final class WashView: NSView {
         previous.opacity = 0
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if !drifting { rest() }
+    }
+
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not from a nib") }
 
@@ -106,7 +111,28 @@ final class WashView: NSView {
         current.frame = box
         previous.frame = box
         CATransaction.commit()
-        if drifting { start() }
+        if drifting { start() } else { rest() }
+    }
+
+    /// The pose the wash holds when it is not breathing.
+    ///
+    /// Set here rather than only by the animations, because the magnification
+    /// *is* one of them: a view that has never drifted — the graphics setting
+    /// turned down, motion reduced, nothing playing — had no transform at all
+    /// and drew the sleeve at its own 360 points, a small blurred square in the
+    /// middle of the window.
+    private func rest() {
+        guard bounds.width > 0 else { return }
+        let magnify = max(bounds.width, bounds.height) / Self.side
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for texture in [current, previous] {
+            texture.transform = CATransform3DMakeScale(
+                magnify * Self.near, magnify * Self.near, 1
+            )
+            texture.position = CGPoint(x: bounds.midX, y: bounds.midY)
+        }
+        CATransaction.commit()
     }
 
     /// Swap in a new cover, dissolving from the old one over long enough that
