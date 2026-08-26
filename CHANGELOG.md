@@ -34,9 +34,17 @@
 
 - **The playhead is visible on a very long track.** A third of a minute into nine hours is a tenth of a percent of the bar — narrower than the bar is thick, and so drawn as nothing at all. It has a head that does not shrink with the fraction.
 
+- **Playing a track twice before it arrives fetches it once.** Downloads were deduplicated by queue entry rather than by track, and playing something again makes a new entry — so nothing matched and a second transfer started over the first. Both wrote the same file, and whichever finished renamed it out from under the other, which is where the failed downloads in the log came from. One transfer now, with every entry waiting on it told when it lands.
+
+- **FLACs start before their whole file has arrived.** A FLAC keeps a padding block after its tags — space reserved so tags can be edited without rewriting the file, and often several hundred kilobytes of it — which puts the first audio frame further in than the point streaming begins looking. koan gave up rather than reading on, so a FLAC played only once fully downloaded while an MP3 started at once.
+
+- **Finding what is favourited no longer reads the whole library.** Matching favourites to tracks joined on three columns at once, which no index can serve, so it read every track to find the hundred that were starred — fifty milliseconds, on every listing that shows a heart, which is all of them. One millisecond now, on a library of forty-eight thousand.
+
 - **Half-finished downloads are cleaned up.** koan writes a download straight through and renames it at the end, so a `.part` file still on disk is from a run that did not finish — bytes nothing knows about, since only finished downloads are tracked for eviction. An interrupted nine-hour recording was half a gigabyte that never came back. They are swept at startup, which is the run after the one that left them.
 
 ### Changed
+
+- **What koan is downloading is kept in one place.** Whether a track was arriving was recorded twice — once against the queue entry and once by the downloader — and the two had to be told separately, so they could and did disagree: a queue entry pointed at the file a transfer had just been renamed away from, and anything the TUI fetched was invisible to everything else. A queue entry now says only whether its own file can be played, and whether bytes are arriving is asked of the downloader.
 
 - **A download in progress is played from disk rather than copied into memory.** The decoder used to read from a growing in-memory copy that a second thread filled from the file: a 451 MB recording cost 451 MB of RAM for as long as it played. It reads the file directly now, which costs nothing, seeks backwards for free, and carries on across the rename that ends a download.
 

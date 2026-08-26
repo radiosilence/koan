@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::panic::AssertUnwindSafe;
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -47,7 +47,15 @@ struct Inner {
 #[derive(Default)]
 struct Queue {
     pending: VecDeque<(i64, QueueItemId)>,
-    in_flight: HashSet<QueueItemId>,
+    /// Tracks being fetched, and every queue entry waiting on each.
+    ///
+    /// Keyed by track, because the track decides which file the download
+    /// writes. Keyed by queue entry it did not dedupe anything that mattered:
+    /// playing something a second time before it had arrived made a new entry
+    /// with a new id, so nothing matched and a second transfer started over
+    /// the first — two threads truncating and writing one `.part`, and
+    /// whichever finished first renaming it out from under the other.
+    in_flight: HashMap<i64, HashSet<QueueItemId>>,
     priority_active: usize,
 }
 
@@ -66,9 +74,13 @@ enum Dispatch {
 /// every permit is taken. On `Spawn` the caller owns the claim and must release
 /// it via `release_priority` when the download ends.
 fn claim_priority(q: &mut Queue, item: (i64, QueueItemId)) -> Dispatch {
-    q.pending.retain(|(_, qid)| *qid != item.1);
+    let (db_id, queue_id) = item;
+    q.pending.retain(|(_, qid)| *qid != queue_id);
 
-    if q.in_flight.contains(&item.1) {
+    // Already being fetched: wait on it rather than fetch it again. The entry
+    // is remembered so it gets the answer when the one transfer lands.
+    if let Some(waiting) = q.in_flight.get_mut(&db_id) {
+        waiting.insert(queue_id);
         return Dispatch::AlreadyRunning;
     }
     if q.priority_active >= PRIORITY_PERMITS {
@@ -76,19 +88,19 @@ fn claim_priority(q: &mut Queue, item: (i64, QueueItemId)) -> Dispatch {
         return Dispatch::Requeued;
     }
     q.priority_active += 1;
-    q.in_flight.insert(item.1);
+    q.in_flight.insert(db_id, HashSet::from([queue_id]));
     Dispatch::Spawn
 }
 
-fn release_priority(q: &mut Queue, id: QueueItemId) {
-    q.in_flight.remove(&id);
+fn release_priority(q: &mut Queue, db_id: i64) {
+    q.in_flight.remove(&db_id);
     q.priority_active = q.priority_active.saturating_sub(1);
 }
 
 /// Releases an in-flight claim however the download ends — including a panic.
 struct Claim {
     inner: Arc<Inner>,
-    id: QueueItemId,
+    db_id: i64,
     priority: bool,
 }
 
@@ -96,9 +108,9 @@ impl Drop for Claim {
     fn drop(&mut self) {
         let mut q = self.inner.queue.lock();
         if self.priority {
-            release_priority(&mut q, self.id);
+            release_priority(&mut q, self.db_id);
         } else {
-            q.in_flight.remove(&self.id);
+            q.in_flight.remove(&self.db_id);
         }
     }
 }
@@ -194,7 +206,7 @@ fn dispatch_priority(inner: &Arc<Inner>, item: (i64, QueueItemId)) {
                 .spawn(move || {
                     let _claim = Claim {
                         inner: spawn_inner.clone(),
-                        id: item.1,
+                        db_id: item.0,
                         priority: true,
                     };
                     run_download(&spawn_inner, item);
@@ -202,11 +214,41 @@ fn dispatch_priority(inner: &Arc<Inner>, item: (i64, QueueItemId)) {
             if let Err(e) = spawned {
                 log::error!("failed to spawn priority download: {}", e);
                 let mut q = inner.queue.lock();
-                release_priority(&mut q, item.1);
+                release_priority(&mut q, item.0);
                 q.pending.push_front(item);
                 drop(q);
                 inner.has_work.notify_one();
             }
+        }
+    }
+}
+
+/// Hand every other entry waiting on this track the answer the transfer got.
+///
+/// Two entries for one track are one download and two things to tell. Without
+/// this the second sits `Pending` forever, waiting for a transfer that already
+/// finished and will not run again.
+fn settle_waiters(inner: &Arc<Inner>, db_id: i64, downloaded: QueueItemId) {
+    let waiting: Vec<QueueItemId> = {
+        let q = inner.queue.lock();
+        q.in_flight
+            .get(&db_id)
+            .map(|ids| ids.iter().copied().filter(|id| *id != downloaded).collect())
+            .unwrap_or_default()
+    };
+    if waiting.is_empty() {
+        return;
+    }
+    let Some(item) = inner.state.get_item(downloaded) else {
+        return;
+    };
+    for id in waiting {
+        inner.state.update_paths(&[(id, item.path.clone())]);
+        inner.state.update_item_state(id, item.state.clone());
+        // The player only wakes for this, so an entry the cursor is sitting on
+        // would otherwise wait on a download that has already happened.
+        if inner.state.is_cursor(id) {
+            inner.cmd_tx.send(PlayerCommand::TrackReady(id)).ok();
         }
     }
 }
@@ -246,6 +288,10 @@ fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
             "download panicked".into(),
         );
     }
+
+    // Before the claim is released, while the waiting entries are still
+    // recorded against this track.
+    settle_waiters(inner, db_id, queue_id);
 }
 
 /// Worker loop: wait for work, download, repeat.
@@ -256,9 +302,16 @@ fn worker_loop(inner: Arc<Inner>) {
             loop {
                 match q.pending.pop_front() {
                     Some(item) => {
-                        // A duplicate entry for a track already downloading is dropped.
-                        if q.in_flight.insert(item.1) {
-                            break item;
+                        // Already being fetched: this entry waits on the one
+                        // transfer rather than starting a second over it.
+                        match q.in_flight.get_mut(&item.0) {
+                            Some(waiting) => {
+                                waiting.insert(item.1);
+                            }
+                            None => {
+                                q.in_flight.insert(item.0, HashSet::from([item.1]));
+                                break item;
+                            }
                         }
                     }
                     None => inner.has_work.wait(&mut q),
@@ -267,7 +320,7 @@ fn worker_loop(inner: Arc<Inner>) {
         };
         let _claim = Claim {
             inner: inner.clone(),
-            id: item.1,
+            db_id: item.0,
             priority: false,
         };
         run_download(&inner, item);
@@ -388,12 +441,11 @@ mod tests {
     #[test]
     fn released_permits_are_reusable() {
         let mut q = Queue::default();
-        let a = qid();
-        assert_eq!(claim_priority(&mut q, (1, a)), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, (1, qid())), Dispatch::Spawn);
         assert_eq!(claim_priority(&mut q, (2, qid())), Dispatch::Spawn);
         assert_eq!(claim_priority(&mut q, (3, qid())), Dispatch::Requeued);
 
-        release_priority(&mut q, a);
+        release_priority(&mut q, 1);
         assert_eq!(claim_priority(&mut q, (4, qid())), Dispatch::Spawn);
         assert!(q.priority_active <= PRIORITY_PERMITS);
     }
@@ -409,6 +461,58 @@ mod tests {
             q.pending.is_empty(),
             "a duplicate request must not re-queue the track"
         );
+    }
+
+    #[test]
+    fn playing_a_track_again_joins_the_transfer_already_running() {
+        // Playing something twice before it has arrived makes a second queue
+        // entry with an id of its own. The track is the same, and so is the
+        // file a download would write — two of them would truncate and write
+        // over one another, and whichever finished first would rename it away
+        // from the other.
+        let mut q = Queue::default();
+        let (first, again) = (qid(), qid());
+        assert_eq!(claim_priority(&mut q, (7, first)), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, (7, again)), Dispatch::AlreadyRunning);
+
+        assert_eq!(q.priority_active, 1, "one transfer, not two");
+        assert!(q.pending.is_empty());
+        assert_eq!(
+            q.in_flight.get(&7),
+            Some(&HashSet::from([first, again])),
+            "both entries wait on the one transfer"
+        );
+    }
+
+    #[test]
+    fn a_worker_picking_up_a_duplicate_waits_on_the_running_one() {
+        // The same, arriving through the queue rather than the priority lane.
+        let mut q = Queue::default();
+        let (running, queued) = (qid(), qid());
+        assert_eq!(claim_priority(&mut q, (7, running)), Dispatch::Spawn);
+
+        // What `worker_loop` does with the next pending item.
+        match q.in_flight.get_mut(&7) {
+            Some(waiting) => {
+                waiting.insert(queued);
+            }
+            None => panic!("the track should already be claimed"),
+        }
+
+        assert_eq!(
+            q.in_flight.get(&7),
+            Some(&HashSet::from([running, queued])),
+            "the queued entry waits rather than starting a second transfer"
+        );
+    }
+
+    #[test]
+    fn different_tracks_still_run_side_by_side() {
+        // Keying on the track must not serialise unrelated downloads.
+        let mut q = Queue::default();
+        assert_eq!(claim_priority(&mut q, (1, qid())), Dispatch::Spawn);
+        assert_eq!(claim_priority(&mut q, (2, qid())), Dispatch::Spawn);
+        assert_eq!(q.priority_active, 2);
     }
 
     #[test]
