@@ -441,7 +441,7 @@ mod tests {
     /// this one answer.
     #[test]
     fn a_queue_is_locked_only_while_it_is_still_the_playlist() {
-        use crate::player::state::{LoadState, PlaylistItem, QueueItemId, SharedPlayerState};
+        use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
 
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
@@ -466,7 +466,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
-            load_state: LoadState::Ready,
+            state: ItemState::Ready,
         };
 
         assert_eq!(
@@ -492,7 +492,7 @@ mod tests {
     /// deriving it: there is no flag anyone has to remember to clear.
     #[test]
     fn rearranging_the_queue_ends_the_lock() {
-        use crate::player::state::{LoadState, PlaylistItem, QueueItemId, SharedPlayerState};
+        use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
 
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
@@ -518,7 +518,7 @@ mod tests {
                 track_number: None,
                 disc: None,
                 duration_ms: None,
-                load_state: LoadState::Ready,
+                state: ItemState::Ready,
             })
             .collect();
         let ids: Vec<QueueItemId> = items.iter().map(|i| i.id).collect();
@@ -542,7 +542,7 @@ mod tests {
     /// is why it survives a relaunch, where nothing remembers what was played.
     #[test]
     fn a_queue_holding_exactly_one_record_is_locked_to_it() {
-        use crate::player::state::{LoadState, PlaylistItem, QueueItemId, SharedPlayerState};
+        use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
 
         let dir = tempfile::tempdir().unwrap();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
@@ -569,7 +569,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
-            load_state: LoadState::Ready,
+            state: ItemState::Ready,
         };
 
         state.add_items(vec![queued(a)]);

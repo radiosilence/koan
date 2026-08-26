@@ -821,7 +821,7 @@ mod tests {
     /// playlist points at rows, not at paths.
     #[tokio::test]
     async fn saving_the_queue_keeps_only_what_the_library_knows() {
-        use koan_core::player::state::{LoadState, PlaylistItem};
+        use koan_core::player::state::{ItemState, PlaylistItem};
 
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("test.db");
@@ -848,7 +848,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
-            load_state: LoadState::Ready,
+            state: ItemState::Ready,
         };
         state.add_items(vec![
             item("Known", "/music/known.flac", Some(known)),
@@ -885,7 +885,7 @@ mod tests {
 
     #[tokio::test]
     async fn queue_entries_have_status_and_download_progress() {
-        use koan_core::player::state::{LoadState, PlaylistItem};
+        use koan_core::player::state::{ItemState, PlaylistItem};
 
         // Build schema with a shared state we can manipulate directly.
         let tmp = TempDir::new().unwrap();
@@ -912,7 +912,7 @@ mod tests {
             track_number: Some(1),
             disc: Some(1),
             duration_ms: Some(240000),
-            load_state: LoadState::Ready,
+            state: ItemState::Ready,
         };
         state.add_items(vec![item]);
 

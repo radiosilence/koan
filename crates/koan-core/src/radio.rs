@@ -1012,7 +1012,7 @@ pub fn spawn_autoqueue(
     db_path: std::path::PathBuf,
 ) {
     use crate::player::commands::PlayerCommand;
-    use crate::player::state::{LoadState, QueueEntryStatus, QueueItemId};
+    use crate::player::state::{QueueEntryStatus, QueueItemId};
 
     std::thread::Builder::new()
         .name("koan-radio".into())
@@ -1143,7 +1143,7 @@ pub fn spawn_autoqueue(
                 let new_items = crate::helpers::playlist_items_for_tracks(&db, &rows);
                 let pending: Vec<(i64, QueueItemId)> = new_items
                     .iter()
-                    .filter(|i| matches!(i.load_state, LoadState::Pending))
+                    .filter(|i| matches!(i.state, crate::player::state::ItemState::Pending))
                     .filter_map(|i| i.db_id.map(|id| (id, i.id)))
                     .collect();
 

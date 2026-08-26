@@ -45,10 +45,7 @@ async fn resolve_tracks(
         for tid in track_ids {
             if let Ok(Some(track)) = queries::get_track_row(&db.conn, tid) {
                 let item = track_to_playlist_item(&track, db);
-                if matches!(
-                    item.load_state,
-                    koan_core::player::state::LoadState::Pending
-                ) {
+                if matches!(item.state, koan_core::player::state::ItemState::Pending) {
                     pending_downloads.push((tid, item.id));
                 }
                 items.push(item);
@@ -513,10 +510,7 @@ impl MutationRoot {
             let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
             for track in &rows {
                 let item = track_to_playlist_item(track, db);
-                if matches!(
-                    item.load_state,
-                    koan_core::player::state::LoadState::Pending
-                ) {
+                if matches!(item.state, koan_core::player::state::ItemState::Pending) {
                     pending_downloads.push((track.id, item.id));
                 }
                 items.push(item);

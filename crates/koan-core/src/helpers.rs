@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::db::connection::Database;
 use crate::db::queries;
 use crate::player::commands::PlayerCommand;
-use crate::player::state::{LoadState, PlaylistItem, QueueItemId, SharedPlayerState};
+use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
 use crate::remote::client::{SubsonicAuth, SubsonicClient};
 
 // ---------------------------------------------------------------------------
@@ -966,40 +966,41 @@ pub fn cache_path_for_track(
 // ---------------------------------------------------------------------------
 
 /// Resolve a track to its path + load state (without downloading).
-/// Returns (path, LoadState::Ready) for local/cached, (cache_path, LoadState::Pending) for remote.
+/// Returns (path, `ItemState::Ready`) for local/cached, (cache path, `ItemState::Pending`)
+/// for remote — a track with no copy here yet has to be fetched before it plays.
 pub fn resolve_item_path(
     db: &Database,
     cfg: &Config,
     id: i64,
     track: &queries::TrackRow,
     album_date: Option<&str>,
-) -> (PathBuf, LoadState) {
+) -> (PathBuf, ItemState) {
     match queries::resolve_playback_path(&db.conn, id) {
-        Ok(Some(queries::PlaybackSource::Local(p))) => (p, LoadState::Ready),
+        Ok(Some(queries::PlaybackSource::Local(p))) => (p, ItemState::Ready),
         // A cache entry is only as good as its contents. Older builds could
         // store a Subsonic error body here, which reports Ready and then fails
         // to decode forever; treating it as Pending sends it back through the
         // download path, which discards it and re-fetches.
         Ok(Some(queries::PlaybackSource::Cached(p))) => {
             let state = if is_cached_audio(&p) {
-                LoadState::Ready
+                ItemState::Ready
             } else {
-                LoadState::Pending
+                ItemState::Pending
             };
             (p, state)
         }
         Ok(Some(queries::PlaybackSource::Remote(_))) => {
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
             if dest.exists() && is_cached_audio(&dest) {
-                (dest, LoadState::Ready)
+                (dest, ItemState::Ready)
             } else {
-                (dest, LoadState::Pending)
+                (dest, ItemState::Pending)
             }
         }
         _ => {
             // Fallback: construct a cache path and mark pending.
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
-            (dest, LoadState::Pending)
+            (dest, ItemState::Pending)
         }
     }
 }
@@ -1009,7 +1010,7 @@ pub fn playlist_item_from_track(
     track: &queries::TrackRow,
     album_date: Option<&str>,
     dest: PathBuf,
-    load_state: LoadState,
+    state: ItemState,
 ) -> PlaylistItem {
     let year = album_date.and_then(|d| {
         if d.len() >= 4 {
@@ -1032,7 +1033,7 @@ pub fn playlist_item_from_track(
         track_number: track.track_number.map(|n| n as i64),
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
-        load_state,
+        state,
     }
 }
 
@@ -1058,9 +1059,8 @@ pub fn playlist_items_for_tracks(db: &Database, tracks: &[queries::TrackRow]) ->
                     .clone(),
                 None => None,
             };
-            let (path, load_state) =
-                resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
-            playlist_item_from_track(track, album_date.as_deref(), path, load_state)
+            let (path, state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
+            playlist_item_from_track(track, album_date.as_deref(), path, state)
         })
         .collect()
 }
@@ -1072,7 +1072,7 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
         .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten());
 
     let cfg = Config::load().unwrap_or_default();
-    let (path, load_state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
+    let (path, state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
 
     let year = album_date.as_deref().and_then(|d| {
         if d.len() >= 4 {
@@ -1096,7 +1096,7 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
         track_number: track.track_number.map(|n| n as i64),
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
-        load_state,
+        state,
     }
 }
 
@@ -1168,7 +1168,7 @@ pub fn download_track(
                 let p = std::path::PathBuf::from(path);
                 if p.exists() {
                     state.update_paths(&[(queue_id, p)]);
-                    state.update_load_state(queue_id, LoadState::Ready);
+                    state.update_item_state(queue_id, ItemState::Ready);
                     if state.is_cursor(queue_id) {
                         tx.send(PlayerCommand::TrackReady(queue_id)).ok();
                     }
@@ -1191,7 +1191,7 @@ pub fn download_track(
         if p.exists() {
             log::info!("download_track: local file exists, using {}", p.display());
             state.update_paths(&[(queue_id, p)]);
-            state.update_load_state(queue_id, LoadState::Ready);
+            state.update_item_state(queue_id, ItemState::Ready);
             if state.is_cursor(queue_id) {
                 tx.send(PlayerCommand::TrackReady(queue_id)).ok();
             }
@@ -1219,7 +1219,7 @@ pub fn download_track(
     }
     if dest.exists() {
         state.update_paths(&[(queue_id, dest)]);
-        state.update_load_state(queue_id, LoadState::Ready);
+        state.update_item_state(queue_id, ItemState::Ready);
         if state.is_cursor(queue_id) {
             tx.send(PlayerCommand::TrackReady(queue_id)).ok();
         }
@@ -1248,33 +1248,19 @@ pub fn download_track(
         bytes_per_second: 0,
     });
 
-    let progress_state = state.clone();
     let progress_qid = queue_id;
     let bytes_written_progress = bytes_written.clone();
     let progress_tx = tx.clone();
     let stream_ready_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stream_ready_flag = stream_ready_sent.clone();
-    // Announced once, not per chunk. The load state says *that* a download is
-    // running and hands out the counter; the counter itself is where progress
-    // lives. Rewriting the state every 64KB took the playlist write lock and
-    // bumped the queue version a thousand times a transfer, and every front end
-    // reads that version as "the queue changed" and rebuilds it.
-    //
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
-    let in_progress = crate::remote::download::part_path(&dest);
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
         bytes_written_progress.store(downloaded, Ordering::Release);
         if announced_total.swap(total, Ordering::Relaxed) != total {
+            // The store, and only the store. The item's state says whether its
+            // file can be played, which a transfer in flight has not changed.
             store.started(progress_qid, total, bytes_written_progress.clone());
-            progress_state.update_load_state(
-                progress_qid,
-                LoadState::Downloading {
-                    path: in_progress.clone(),
-                    total,
-                    bytes_written: bytes_written_progress.clone(),
-                },
-            );
         }
         if !stream_ready_flag.load(Ordering::Relaxed)
             && downloaded >= crate::player::state::STREAM_THRESHOLD
@@ -1296,7 +1282,7 @@ pub fn download_track(
 
     // Download succeeded.
     state.update_paths(&[(queue_id, dest.clone())]);
-    state.update_load_state(queue_id, LoadState::Ready);
+    state.update_item_state(queue_id, ItemState::Ready);
     // Without this row the file is invisible to cache eviction and never reclaimed.
     if let Err(e) = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy()) {
         log::warn!(
@@ -1318,7 +1304,7 @@ pub fn download_track(
 
 /// Mark a queue item unplayable and tell the player, if it is waiting on it.
 ///
-/// Setting `LoadState::Failed` alone is not enough: the player only wakes for
+/// Setting `ItemState::Failed` alone is not enough: the player only wakes for
 /// `TrackReady`, so a cursor parked on the item would wait for a download that
 /// has already given up.
 pub(crate) fn fail_track(
@@ -1327,7 +1313,7 @@ pub(crate) fn fail_track(
     queue_id: QueueItemId,
     reason: String,
 ) {
-    state.update_load_state(queue_id, LoadState::Failed(reason));
+    state.update_item_state(queue_id, ItemState::Failed(reason));
     if state.is_cursor(queue_id) {
         tx.send(PlayerCommand::TrackFailed(queue_id)).ok();
     }
@@ -1362,7 +1348,7 @@ pub fn remote_unavailable(cfg: &Config) -> String {
     "the remote server could not be reached".into()
 }
 
-/// Spawn background downloads for remote tracks with LoadState::Pending.
+/// Spawn background downloads for remote tracks with ItemState::Pending.
 /// Submit tracks for download.
 ///
 /// Everything that is not the TUI reaches downloads through here — the FFI, the

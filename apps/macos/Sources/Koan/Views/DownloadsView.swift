@@ -90,12 +90,13 @@ private struct DownloadRow: View {
             // rendered the same full-width track whatever it was given, which
             // made six transfers at six different percentages look identical.
             //
-            // A named colour rather than `.tint`, which a `Canvas` resolves
-            // against its own environment and not the view's — hierarchical
-            // styles come through, that one comes out invisible.
+            // Hierarchical styles, which a `Canvas` resolves against its own
+            // environment — `.tint` does not come through it and drew nothing.
+            // What has arrived reads as present rather than as coloured: this
+            // is a quantity, not a state, and the accent said neither.
             Canvas { context, size in
                 context.fill(Self.bar(in: size, fraction: 1), with: .style(.quaternary))
-                context.fill(Self.bar(in: size, fraction: fraction), with: .color(.koanAccent))
+                context.fill(Self.bar(in: size, fraction: fraction), with: .style(.primary))
             }
             .frame(height: 4)
             .opacity(isRunning ? 1 : 0.35)
