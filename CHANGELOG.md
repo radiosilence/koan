@@ -54,6 +54,10 @@
 
 ### Changed
 
+- **Opening a record takes seven milliseconds.** Measured end to end in Instruments, from the click to the finished page: the two database reads are 7.4ms, switching the page is 19µs, and the first frame carries the whole record. It was about half a second.
+
+  Most of that half-second was the page loading itself *twice*. The navigator reads a record before it moves to it, and the page then asked again the moment it appeared — the same two queries, but landing while the artwork they had kicked off was still in flight, so the second one took twenty times what the first did and re-rendered a page that was already correct. A record now carries the library version it was read at, which makes asking for what is already on screen free and asking for it after the rows moved a real read.
+
 - **Opening a record is instant, and nothing draws before it has something to draw.** A page used to arrive empty, fetch, and fill in: the word "Album" over an empty list, then a header, then rows, then artwork fading in over a placeholder. Each step was a frame you could see. The record and its tracks are now read *before* the page is shown, in parallel and as one value, so the first frame is the finished page.
 
   What made that possible was finding where the time actually went. The engine answers in about 300µs — but every `await` in a view or a view's `.task` inherits main-actor isolation, so the *answer* had to queue for a slot on the main actor before it could be delivered. Behind the state mirror's batch, which lands ten times a second, that was a hundred milliseconds and change, on every read, whatever the record. Off the main actor it comes back in one. The artwork cache was the same mistake at greater scale: it was main-actor bound with eight awaits in its fetch path, so a grid of twenty tiles queued a hundred and sixty jobs there. It is neither main-actor bound nor observable any more, which also lets a view read a cover it already holds during `body` — a record opened from the grid it was showing draws its sleeve in the same frame instead of dissolving one in from a placeholder.

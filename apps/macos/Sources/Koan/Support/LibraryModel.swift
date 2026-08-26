@@ -262,9 +262,16 @@ final class LibraryModel {
 
     struct AlbumRecord: Sendable {
         let albumId: Int64
+        /// The library version it was read at. What makes asking for the record
+        /// already on screen free, and asking for it after the rows moved a
+        /// real read.
+        let stamp: UInt64
         var album: Album?
         var tracks: [Track]
     }
+
+    /// Set by `AppState`. Read for the library version a record was loaded at.
+    weak var mirror: EngineMirror?
 
     /// Read the record and its tracks, off the main actor and both at once.
     ///
@@ -275,6 +282,15 @@ final class LibraryModel {
     /// the engine answered in 300µs and the page saw it a tenth of a second
     /// later, every time, whatever the record. Detached, it comes back in one.
     func prepare(album id: Int64) async {
+        let stamp = mirror?.libraryVersion ?? 0
+        // Already in hand, and nothing has changed under it. The navigator loads
+        // a record before it moves to it, so the page's own `.reloading` asks
+        // again the moment it appears — and that second read is identical, lands
+        // while the artwork it kicked off is still competing, and takes twenty
+        // times what the first one did. A fast page followed by a slow redraw of
+        // the same page reads worse than a slow page.
+        if let held = detailRecord, held.albumId == id, held.stamp == stamp { return }
+
         // Started alongside the queries rather than waited on. Coming from the
         // grid it is already decoded and the page draws it in its first frame;
         // arriving cold from search it is an HTTP round trip, and holding a
@@ -291,17 +307,20 @@ final class LibraryModel {
             }
         }
         let engine = self.engine
-        let loaded = await Task.detached(priority: .userInitiated) {
+        let loaded = await Trace.region("engine-reads") {
+            await Task.detached(priority: .userInitiated) {
             async let album = try? await engine.album(albumId: id)
             async let tracks = try? await engine.tracks(
                 albumId: id, artistId: nil, sort: .album, limit: 500, offset: 0
             )
             return AlbumRecord(
                 albumId: id,
+                stamp: stamp,
                 album: await album ?? nil,
                 tracks: await tracks ?? []
             )
         }.value
+        }
         detailRecord = loaded
     }
 

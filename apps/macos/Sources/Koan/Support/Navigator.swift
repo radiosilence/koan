@@ -107,9 +107,11 @@ final class Navigator {
     /// is two indexed queries; there is no reason to show anybody the gap.
     func open(album id: Int64, highlighting trackId: Int64? = nil) {
         Task {
-            await library.prepare(album: id)
-            highlightedTrackId = trackId
-            go(to: .album(id))
+            await Trace.region("click-to-album") {
+                await Trace.region("prepare") { await library.prepare(album: id) }
+                highlightedTrackId = trackId
+                Trace.region("apply") { go(to: .album(id)) }
+            }
         }
     }
 
