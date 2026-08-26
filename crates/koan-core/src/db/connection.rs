@@ -88,6 +88,17 @@ fn configure(conn: &Connection) -> Result<(), DbError> {
     conn.pragma_update(None, "busy_timeout", 30000)?;
     // Slightly faster at the cost of durability on power loss (acceptable for a media DB).
     conn.pragma_update(None, "synchronous", "normal")?;
+    // Map the whole library. A library this size fits well inside this, so
+    // reads become dereferences into a mapped region rather than syscalls —
+    // which is the useful sense in which a database can be "in memory". The
+    // page cache was already holding it; this stops copying it out per read.
+    conn.pragma_update(None, "mmap_size", 268_435_456i64)?;
+    // 32 MiB of pages, per connection. Negative means KiB rather than pages,
+    // so the figure does not change meaning with the page size.
+    conn.pragma_update(None, "cache_size", -32_000i64)?;
+    // Sorts and intermediate tables in memory. FTS and the ORDER BYs behind
+    // every library listing make temporary tables constantly.
+    conn.pragma_update(None, "temp_store", "memory")?;
     // Here rather than with the schema: `open_existing` skips the DDL, and a
     // connection without this collation fails every ORDER BY that uses it.
     register_library_collation(conn)?;
