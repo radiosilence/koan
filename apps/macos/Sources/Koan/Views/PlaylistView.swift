@@ -16,6 +16,7 @@ struct PlaylistView: View {
     let playlistId: Int64
 
     @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
@@ -85,10 +86,10 @@ struct PlaylistView: View {
             playlists.add(dropped: dropped, to: playlistId)
             return true
         }
-        .task(id: playlistId) {
-            selection = []
+        .reloading(on: playlistId) {
             playlists.open(id: playlistId)
         }
+        .onChange(of: playlistId) { selection = [] }
         .alert("Rename Playlist", isPresented: $renaming) {
             TextField("Name", text: $renameTo)
             Button("Cancel", role: .cancel) {}
@@ -229,7 +230,7 @@ struct PlaylistView: View {
                     position: position + 1,
                     // Found by entry, not by track: two copies of one song are
                     // two rows, and each wears its own queue item's state.
-                    queued: player.queuedByPlaylistEntry[entry.id],
+                    queued: mirror.queuedByPlaylistEntry[entry.id],
                     isCurrent: player.currentPlaylistEntryId == entry.id
                 ),
                 isCurrent: player.currentPlaylistEntryId == entry.id,

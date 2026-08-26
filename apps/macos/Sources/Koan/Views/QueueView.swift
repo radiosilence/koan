@@ -9,6 +9,7 @@ import SwiftUI
 /// separate visits to the same record into one heading would misrepresent it.
 struct QueueView: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(OrganizeModel.self) private var organize
@@ -115,7 +116,7 @@ struct QueueView: View {
             // playlist, and saying so is what makes the following legible: you
             // can see why an edit over there moved something here, and you can
             // see the moment it stops.
-            switch playlists.lockedTo {
+            switch mirror.lock {
             case .playlist(let playlist):
                 PlaylistArtwork(
                     sources: playlists.covers[playlist.id] ?? [],
@@ -207,7 +208,7 @@ struct QueueView: View {
 
     /// What the queue is, when it is still something someone chose.
     private var lockedName: String? {
-        switch playlists.lockedTo {
+        switch mirror.lock {
         case .playlist(let playlist): playlist.name
         case .album(let album): album.title
         case nil: nil

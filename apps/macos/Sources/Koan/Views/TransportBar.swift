@@ -66,8 +66,8 @@ struct TransportBar: View {
                     .frame(width: 44, height: 44)
                     .showsArtworkFullSize(
                         source: sleeve,
-                        title: player.nowPlaying.entry?.title ?? "",
-                        subtitle: player.nowPlaying.entry.map {
+                        title: player.currentEntry?.title ?? "",
+                        subtitle: player.currentEntry.map {
                             "\($0.artist) — \($0.album)"
                         }
                     )
@@ -292,12 +292,12 @@ private struct SeekBar: View {
             }
             .frame(height: 14)
 
-            Text(Format.duration(player.clock.durationMs))
+            Text(Format.duration(player.durationMs))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 40, alignment: .leading)
         }
-        .disabled(player.clock.durationMs == 0)
+        .disabled(player.durationMs == 0)
     }
 
     private static let thickness = 4.0
@@ -330,7 +330,7 @@ private struct SeekBar: View {
     }
 
     private var displayedPosition: UInt64 {
-        UInt64(player.progress * Double(player.clock.durationMs))
+        UInt64(player.progress * Double(player.durationMs))
     }
 
     /// How much of what is playing has arrived, while it is still arriving.

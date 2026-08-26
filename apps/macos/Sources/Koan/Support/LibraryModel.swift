@@ -105,13 +105,8 @@ final class LibraryModel {
     private(set) var isLoading = false
 
     private(set) var detailTracks: [Track] = []
-    /// Which record `detailTracks` belongs to.
-    ///
-    /// Two jobs. A library change knows what to ask for again — a download
-    /// landing writes a cached path onto a row, and the page showing that row
-    /// has to hear about it or its cloud stays hollow until you navigate away
-    /// and back. And an answer for a record you have already left cannot land
-    /// on the one you are looking at.
+    /// Which record `detailTracks` belongs to, so an answer for a record you
+    /// have already left cannot land on the one you are looking at.
     private var detailAlbumId: Int64?
 
     /// Set while a scan runs so the UI can show progress and refuse a second
@@ -132,11 +127,6 @@ final class LibraryModel {
     }
 
     // MARK: - Loading
-
-    func loadInitial() {
-        loadStats()
-        reload()
-    }
 
     private var loading: Task<Void, Never>?
 
@@ -425,22 +415,20 @@ final class LibraryModel {
         }
     }
 
-    /// Rows appeared or vanished underneath us — a scan, a sync, an import, or
-    /// a folder being forgotten. Whether this app asked for it or the engine
-    /// did it on its own makes no difference here: nothing to merge, nothing to
-    /// invalidate, just ask again.
+    /// Rows appeared or vanished underneath us — a scan, a sync, an import, a
+    /// playlist edit, a download landing, a folder being forgotten. Whether
+    /// this app asked for it or the engine did it on its own makes no
+    /// difference here: nothing to merge, nothing to invalidate, just ask
+    /// again.
     ///
     /// Favourites too, because a sync reconciles them with the server and the
     /// hearts on screen are stale the moment it lands.
+    ///
+    /// The section's rows only. What a *page* is showing reloads where it is
+    /// drawn — see `View.reloading(on:)`.
     func libraryChanged() {
         loadStats()
         refreshFavourites()
         reload()
-        // `reload` refreshes the section's own rows, which is not what an album
-        // page is showing. Without this a track downloaded while you watch it
-        // keeps its empty cloud until you leave the record and come back.
-        if let detailAlbumId {
-            loadTracks(albumId: detailAlbumId)
-        }
     }
 }

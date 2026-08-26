@@ -161,7 +161,7 @@ struct ArtistDetailView: View {
             }
             .padding(22)
         }
-        .task(id: artistId) { await load() }
+        .reloading(on: artistId) { await load() }
     }
 
     private func load() async {

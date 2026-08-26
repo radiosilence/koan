@@ -120,6 +120,14 @@ struct RootView: View {
                     .environment(artCache)
             }
         }
+        // The one place a library change reaches the app's own lists. Every
+        // page showing something asked for on demand reloads where it is
+        // drawn — see `View.reloading(on:)` — so nothing here decides which
+        // model hears what.
+        .reloading(on: 0) {
+            library.libraryChanged()
+            playlists.load()
+        }
         .task(id: colourSource) {
             // Animated at the point the colour changes rather than by an
             // `.animation(_:value:)` on the view. That modifier animates *every*
@@ -262,8 +270,8 @@ struct RootView: View {
             if let sleeve = player.currentArtwork {
                 ArtworkViewer(
                     source: sleeve,
-                    title: player.nowPlaying.entry?.title ?? "",
-                    subtitle: player.nowPlaying.entry.map { "\($0.artist) — \($0.album)" }
+                    title: player.currentEntry?.title ?? "",
+                    subtitle: player.currentEntry.map { "\($0.artist) — \($0.album)" }
                 )
             }
         }

@@ -18,6 +18,7 @@ struct TrackListView: View {
     var mixedAlbums = false
 
     @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @State private var selection: Set<Int64> = []
@@ -286,17 +287,17 @@ struct TrackRow: View {
 private struct TrackAvailability: View {
     let track: Track
 
-    @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
         Group {
             // Only the states the badge cannot say itself. Downloading is one
             // it can — the ring belongs in the same slot as the cloud it is
             // filling, not in a column of its own.
-            if let queued = player.queuedByTrack[track.id], isBlocking(queued.status) {
+            if let queued = mirror.queuedByTrack[track.id], isBlocking(queued.status) {
                 queueState(queued)
             } else {
-                SourceBadges(track: track, queued: player.queuedByTrack[track.id])
+                SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
             }
         }
         .font(.caption)

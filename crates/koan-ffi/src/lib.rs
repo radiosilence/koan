@@ -35,7 +35,9 @@ use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
 mod offload;
+mod state;
 mod types;
+pub use state::*;
 pub use types::*;
 
 uniffi::setup_scaffolding!();
@@ -56,54 +58,6 @@ pub struct FuzzyMatch {
     pub kind: SearchKind,
 }
 
-/// Something the engine changed, delivered by awaiting `next_event`.
-///
-/// A pull surface rather than a callback interface: a client writes a loop
-/// instead of an object, and the loop's lifetime is the subscription's, so
-/// there is nothing to unregister and nothing to leak across a reload.
-///
-/// Every variant carries an absolute value, never a delta, which is what makes
-/// it safe to drop the older ones when a client falls behind — the next one
-/// tells the whole truth on its own.
-// One variant carries a snapshot and two carry a u64. Boxing is what clippy
-// wants and is not on offer across the FFI, and the saving would be nothing:
-// these are built a handful of times a second, not held in a collection.
-#[allow(clippy::large_enum_variant)]
-#[derive(uniffi::Enum, Debug, Clone)]
-pub enum PlayerEvent {
-    /// State, track, or format changed — anything a transport bar displays
-    /// other than the position.
-    PlaybackChanged { now_playing: NowPlaying },
-    /// The queue was mutated. Carries the version so a client can skip a
-    /// refetch it has already done.
-    QueueChanged { version: u64 },
-    /// Playback position, while playing.
-    PositionChanged { position_ms: u64 },
-    /// What is downloading, and how far each has got.
-    ///
-    /// Separate from `QueueChanged` because progress moves several times a
-    /// second while the queue itself does not — announcing it as a queue change
-    /// makes every client refetch the whole list for a byte counter, which is
-    /// the thing the version guard exists to avoid. An empty list means nothing
-    /// is in flight any more, which is also how a client learns a download
-    /// finished.
-    DownloadsChanged { downloads: Vec<DownloadProgress> },
-    /// The set of transfers changed — one appeared, settled or was forgotten.
-    ///
-    /// Separate from `DownloadsChanged`, which carries byte counts and fires
-    /// several times a second. This one fires when the *list* changes, which is
-    /// what a client rebuilds a list on.
-    DownloadStoreChanged { version: u64 },
-    /// The library's rows changed — a scan, a sync, an import, an organize or
-    /// a folder being forgotten. Carries a version so a client can tell one
-    /// change from a repeat of the one it already handled.
-    ///
-    /// Says nothing about what changed. A client that holds no copy of the
-    /// library only needs to know to ask again, and one that does is holding
-    /// the thing this event exists to warn it about.
-    LibraryChanged { version: u64 },
-}
-
 /// Reports how far a long task has got.
 ///
 /// Scans and syncs take anywhere up to a minute, and a spinner that cannot say
@@ -118,46 +72,6 @@ pub trait ProgressReporter: Send + Sync {
     fn started(&self, total: u64);
     /// How many are done, and what is being worked on now.
     fn advanced(&self, done: u64, detail: String);
-}
-
-/// One client's place in the event stream.
-///
-/// Held for as long as the client is listening, which is the whole point: a
-/// broadcast receiver only sees what is published after it subscribes, so
-/// subscribing per message loses everything that arrives between one message
-/// being handed over and the next call asking for another. That gap is small
-/// and the loss was invisible while playback position was the only thing being
-/// published — with transfers running and three times the traffic, position
-/// updates were being dropped and the transport appeared to stall.
-///
-/// Keeping the receiver means the channel's buffer does its job: messages
-/// queue while the client is busy and are delivered in order when it comes
-/// back.
-#[derive(uniffi::Object)]
-pub struct EventStream {
-    rx: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<PlayerEvent>>,
-}
-
-#[uniffi::export]
-impl EventStream {
-    /// The next thing to change. `None` once the engine is gone, which ends
-    /// the caller's loop.
-    ///
-    /// A client that falls far enough behind loses the messages it missed
-    /// rather than delaying the engine — every variant carries an absolute
-    /// value, so the one that does arrive is still correct.
-    pub async fn next(&self) -> Option<PlayerEvent> {
-        let mut rx = self.rx.lock().await;
-        loop {
-            match rx.recv().await {
-                Ok(event) => return Some(event),
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    log::warn!("client missed {n} events");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-            }
-        }
-    }
 }
 
 /// The player, the library, and the bridge between them.
@@ -226,7 +140,8 @@ pub struct KoanEngine {
     /// The analyser's latest frame. Only the three-band summary crosses the
     /// boundary — see `viz_levels`.
     viz: Arc<VizSnapshot>,
-    events: tokio::sync::broadcast::Sender<PlayerEvent>,
+    /// What the engine publishes and clients read. See `state`.
+    out: Arc<state::EngineState>,
     /// Set while the automatic sync is running, so a UI can say so rather than
     /// appearing to do nothing for the minute it takes.
     auto_syncing: Arc<std::sync::atomic::AtomicBool>,
@@ -237,8 +152,8 @@ pub struct KoanEngine {
     /// same single database writer.
     cancel_library_task: Arc<std::sync::atomic::AtomicBool>,
     /// Bumped by anything that writes library rows. The watcher turns a change
-    /// here into a `LibraryChanged` event, so a background scan finishing looks
-    /// the same to a client as one it asked for itself.
+    /// here into a `Library` slice, so a background scan finishing looks the
+    /// same to a client as one it asked for itself.
     library_version: Arc<std::sync::atomic::AtomicU64>,
 }
 
@@ -291,41 +206,14 @@ impl KoanEngine {
 
     // --- Observable state --------------------------------------------------
 
-    /// One consistent read of everything the transport bar needs. The UI polls
-    /// this; `playlist_version` tells it whether the queue also needs refetching.
-    pub async fn now_playing(self: Arc<Self>) -> NowPlaying {
-        offload::offload(move || self.now_playing_blocking()).await
-    }
-    /// Wait for the next thing to change.
+    /// Follow the engine's state.
     ///
-    /// `None` once the engine is gone, which ends the caller's loop. A client
-    /// that falls behind loses the events it missed rather than delaying the
-    /// engine — every variant carries an absolute value, so the one that does
-    /// arrive is still correct.
-    pub fn subscribe(&self) -> Arc<EventStream> {
-        Arc::new(EventStream {
-            rx: tokio::sync::Mutex::new(self.events.subscribe()),
-        })
-    }
-
-    /// Every transfer koan knows about: what it is fetching now, and what it
-    /// fetched a moment ago.
-    ///
-    /// Running first, then whatever settled most recently. Read it on
-    /// `DownloadStoreChanged` for the list and on `DownloadsChanged` for the
-    /// figures — the byte counts here are a snapshot taken as this was called.
-    pub fn downloads(&self) -> Vec<DownloadEntry> {
-        koan_core::remote::downloads::store()
-            .all()
-            .iter()
-            .map(DownloadEntry::from)
-            .collect()
-    }
-
-    /// How many transfers are actually moving. Cheap enough for a sidebar to
-    /// read on every redraw.
-    pub fn active_download_count(&self) -> u32 {
-        koan_core::remote::downloads::store().active() as u32
+    /// The one way a client learns anything changed. Each answer is a batch of
+    /// whole slices — see `state` for why they are snapshots and why the
+    /// cursor cannot lose one. A fresh stream's first answer is the entire
+    /// state, so there is nothing to seed from separately.
+    pub fn observe(&self) -> Arc<state::StateStream> {
+        state::StateStream::new(&self.out)
     }
 
     /// Forget the transfers that have already settled. Running ones are left
@@ -348,35 +236,6 @@ impl KoanEngine {
     /// the read.
     pub fn viz_levels(&self) -> VizLevels {
         self.viz.levels().into()
-    }
-
-    pub async fn queue(self: Arc<Self>) -> Vec<QueueItem> {
-        offload::offload(move || {
-            let entries = self.state.derive_visible_queue().entries;
-            // One query for the whole queue. A client draws one sleeve per
-            // album, and without an ID to group by it asks for artwork per
-            // track — the same image fetched once for every track on the
-            // record. A queue with no database behind it simply has no album
-            // IDs; the art falls back to the per-track lookup as before.
-            let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
-            // Two questions of the same rows, asked once each for the whole
-            // queue rather than once per row.
-            let db = self.db().ok();
-            let album_ids = db
-                .as_ref()
-                .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
-                .unwrap_or_default();
-            let sources = db
-                .as_ref()
-                .and_then(|db| queries::batch::sources_for_tracks(&db.conn, &track_ids).ok())
-                .unwrap_or_default();
-
-            entries
-                .iter()
-                .map(|e| QueueItem::from_entry(e, &album_ids, &sources))
-                .collect()
-        })
-        .await
     }
 
     // --- Queue mutation ----------------------------------------------------
@@ -1173,35 +1032,6 @@ impl KoanEngine {
         .await
     }
 
-    /// The playlist the queue is still exactly, if it is one.
-    ///
-    /// While this answers, the queue follows that playlist: an edit there lands
-    /// here too. It stops answering the moment the queue is rearranged, added
-    /// to, or extended by radio — which is also when the following stops.
-    pub async fn queue_lock(self: Arc<Self>) -> Result<Option<QueueLock>, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            Ok(match koan_core::playlists::queue_lock(&db, &self.state) {
-                Some(koan_core::playlists::QueueLock::Playlist(id)) => {
-                    queries::get_playlist(&db.conn, id)
-                        .map_err(db_err)?
-                        .map(|p| QueueLock::Playlist {
-                            playlist: Playlist::from(p),
-                        })
-                }
-                Some(koan_core::playlists::QueueLock::Album(id)) => {
-                    queries::get_album(&db.conn, id)
-                        .map_err(db_err)?
-                        .map(|a| QueueLock::Album {
-                            album: Album::from(a),
-                        })
-                }
-                None => None,
-            })
-        })
-        .await
-    }
-
     /// Up to four albums whose covers make the playlist's tile, in playlist
     /// order.
     pub async fn playlist_cover_album_ids(
@@ -1226,6 +1056,7 @@ impl KoanEngine {
             if !track_ids.is_empty() {
                 queries::add_tracks(&db.conn, id, &track_ids).map_err(db_err)?;
             }
+            self.bump_library();
             koan_core::playlists::push_to_remote(id);
             queries::get_playlist(&db.conn, id)
                 .map_err(db_err)?
@@ -1262,6 +1093,7 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             queries::rename_playlist(&db.conn, playlist_id, &name).map_err(db_err)?;
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
@@ -1279,6 +1111,7 @@ impl KoanEngine {
                 .and_then(|p| p.remote_id);
             let deleted = queries::delete_playlist(&db.conn, playlist_id).map_err(db_err)?;
             if deleted && let Some(remote_id) = remote_id {
+                self.bump_library();
                 koan_core::playlists::delete_on_remote(remote_id);
             }
             Ok(deleted)
@@ -1297,6 +1130,7 @@ impl KoanEngine {
             let locked = self.locked_to(&db, playlist_id);
             let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(added.len() as u32)
         })
@@ -1332,6 +1166,7 @@ impl KoanEngine {
                 queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
             }
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(added.len() as u32)
         })
@@ -1350,6 +1185,7 @@ impl KoanEngine {
             let locked = self.locked_to(&db, playlist_id);
             queries::reorder_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
@@ -1368,6 +1204,7 @@ impl KoanEngine {
             let removed =
                 queries::remove_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(removed as u32)
         })
@@ -1385,6 +1222,7 @@ impl KoanEngine {
             let locked = self.locked_to(&db, playlist_id);
             queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
@@ -1396,7 +1234,9 @@ impl KoanEngine {
     pub async fn reorder_playlists(self: Arc<Self>, ids: Vec<i64>) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            queries::reorder_playlists(&db.conn, &ids).map_err(db_err)
+            queries::reorder_playlists(&db.conn, &ids).map_err(db_err)?;
+            self.bump_library();
+            Ok(())
         })
         .await
     }
@@ -1411,7 +1251,9 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            queries::set_playlist_grouped(&db.conn, playlist_id, grouped).map_err(db_err)
+            queries::set_playlist_grouped(&db.conn, playlist_id, grouped).map_err(db_err)?;
+            self.bump_library();
+            Ok(())
         })
         .await
     }
@@ -2268,132 +2110,171 @@ impl OrganizeSelection {
 // --- Internals -------------------------------------------------------------
 
 impl KoanEngine {
-    /// Watch shared state and publish what changes.
+    /// Watch shared state and publish what changed.
     ///
     /// Polls, but in Rust and over atomics, which is nothing — and the client
-    /// sees events. The alternative, notifying from the player's own mutation
-    /// points, would put foreign calls on the decode thread.
+    /// sees changes rather than asking for them. The alternative, notifying
+    /// from the player's own mutation points, would put foreign calls on the
+    /// decode thread.
+    ///
+    /// The loop's period is the batch window: whatever moved inside one tick
+    /// leaves as at most one message per slice, so a client's cost is set by
+    /// how many slices changed and never by how many times they changed. The
+    /// expensive snapshots are built only when the version behind them moved —
+    /// deriving the whole queue ten times a second to find it unchanged is the
+    /// waste this guard exists to avoid.
     fn spawn_watcher(self: &Arc<Self>) {
         let engine = Arc::downgrade(self);
         std::thread::Builder::new()
-            .name("koan-events".into())
+            .name("koan-state".into())
             .spawn(move || {
-                let mut last_version = u64::MAX;
-                let mut last_position = u64::MAX;
-                let mut last_playback: Option<NowPlaying> = None;
-                let mut last_downloads: Vec<DownloadProgress> = Vec::new();
+                let mut last_queue = u64::MAX;
                 let mut last_store = u64::MAX;
-                // Starts where the engine starts, so a launch is not announced
-                // as a change to a library nobody has read yet.
-                let mut last_library = 0u64;
+                let mut last_library = u64::MAX;
+                // Which transfers were running last tick. A transfer leaving
+                // this set has landed on disk, which wrote a cached path onto a
+                // library row — and nothing else says so, because the download
+                // ran in koan-core, which has no notion of that version.
+                let mut running: HashSet<String> = HashSet::new();
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     let Some(engine) = engine.upgrade() else {
                         return; // Engine dropped; so is the app.
                     };
-                    // Nobody listening is not a reason to stop watching: a
-                    // client can start a loop at any point and expects the
-                    // next change, not the next change after it re-subscribes.
-                    let publish = |event| {
-                        let _ = engine.events.send(event);
-                    };
+                    let out = &engine.out;
 
-                    // Compared whole rather than on a signature of a few
-                    // named fields: the output sample rate moves when another
-                    // client retunes the device, a stream's duration is
-                    // corrected once the download lands, and the seekable
-                    // extent grows for as long as the bytes are arriving —
-                    // none of them moving the state or the cursor. A signature
-                    // has to be remembered to be widened, and had already been
-                    // widened twice; this cannot go stale.
-                    let state = engine.state.playback_state();
+                    // Compared whole rather than on a signature of a few named
+                    // fields: the output sample rate moves when another client
+                    // retunes the device, a stream's duration is corrected once
+                    // the download lands, and the seekable extent grows for as
+                    // long as the bytes are arriving — none of them moving the
+                    // state or the cursor. A signature has to be remembered to
+                    // be widened, and had already been widened twice.
                     let snapshot = engine.now_playing_blocking();
-                    // Position has an event of its own, so it is held out here —
-                    // including it would make every tick a change.
-                    let settled = NowPlaying {
-                        position_ms: 0,
-                        ..snapshot.clone()
-                    };
-                    if last_playback.as_ref() != Some(&settled) {
-                        last_playback = Some(settled);
-                        publish(PlayerEvent::PlaybackChanged {
-                            now_playing: snapshot,
-                        });
-                    }
-
-                    let version = engine.state.playlist_version();
-                    if version != last_version {
-                        last_version = version;
-                        publish(PlayerEvent::QueueChanged { version });
-                    }
-
-                    // Progress moves without the version moving, so it gets its
-                    // own event — one per tick while bytes are landing, and one
-                    // empty list when the last transfer ends.
-                    let downloads: Vec<DownloadProgress> = engine
-                        .state
-                        .downloads_in_flight()
-                        .into_iter()
-                        .map(|(id, done, total)| DownloadProgress {
-                            queue_item_id: id.0.to_string(),
-                            progress: (total > 0)
-                                .then(|| (done as f64 / total as f64).clamp(0.0, 1.0)),
-                        })
-                        .collect();
-                    if downloads != last_downloads {
-                        // A transfer leaving the set landed on disk, which wrote
-                        // a cached path onto a library row. Nothing else says
-                        // so — the download runs in koan-core, which has no
-                        // notion of this version — and without it a track goes
-                        // on reading as "on the server, not here" until
-                        // something unrelated reloads the row.
-                        let still_running: std::collections::HashSet<&str> =
-                            downloads.iter().map(|d| d.queue_item_id.as_str()).collect();
-                        if last_downloads
-                            .iter()
-                            .any(|d| !still_running.contains(d.queue_item_id.as_str()))
-                        {
-                            engine.bump_library();
-                        }
-                        last_downloads = downloads.clone();
-                        publish(PlayerEvent::DownloadsChanged { downloads });
-                    }
+                    out.publish(StateSlice::Playback {
+                        now_playing: NowPlaying {
+                            // Position has a slice of its own; leaving it here
+                            // would make every tick a change to this one.
+                            position_ms: 0,
+                            ..snapshot.clone()
+                        },
+                    });
+                    // Unguarded: a paused position does not move, so publishing
+                    // it says nothing and costs nothing. The seekable extent
+                    // does move while paused, which is the case a "only while
+                    // playing" guard would have got wrong.
+                    out.publish(StateSlice::Playhead {
+                        position_ms: snapshot.position_ms,
+                        seekable_ms: engine.state.seekable_ms(),
+                    });
 
                     // Ten a second, which is this loop's rate and fast enough
                     // that a figure on screen reacts as a transfer changes pace.
                     koan_core::remote::downloads::store().sample_rates();
-
                     let store_version = koan_core::remote::downloads::store().version();
+                    let transfers = koan_core::remote::downloads::store().all();
+                    // Structural and volatile from one reading of one list, so
+                    // a row and its figure can never describe different moments.
+                    out.publish(StateSlice::Figures {
+                        figures: transfers.iter().map(TransferFigure::from).collect(),
+                    });
                     if store_version != last_store {
                         last_store = store_version;
-                        publish(PlayerEvent::DownloadStoreChanged {
-                            version: store_version,
+                        out.publish(StateSlice::Transfers {
+                            transfers: transfers.iter().map(Transfer::from).collect(),
                         });
                     }
+                    let now_running: HashSet<String> = transfers
+                        .iter()
+                        .filter(|d| !d.state.is_settled())
+                        .map(|d| d.id.0.to_string())
+                        .collect();
+                    if running.difference(&now_running).next().is_some() {
+                        engine.bump_library();
+                    }
+                    running = now_running;
 
                     let library = engine
                         .library_version
                         .load(std::sync::atomic::Ordering::Relaxed);
-                    if library != last_library {
-                        last_library = library;
-                        publish(PlayerEvent::LibraryChanged { version: library });
-                    }
+                    out.publish(StateSlice::Library { version: library });
 
-                    // Only while playing: a paused position doesn't move, and
-                    // re-sending it would keep a transport bar redrawing.
-                    if state == PlaybackState::Playing {
-                        let position = engine.state.position_ms();
-                        if position != last_position {
-                            last_position = position;
-                            publish(PlayerEvent::PositionChanged {
-                                position_ms: position,
-                            });
-                        }
+                    // Both of the heavy reads, and both guarded. The queue is
+                    // derived and joined against the library; the lock is two
+                    // indexed reads. Neither can change without one of these
+                    // two versions moving.
+                    let queue_version = engine.state.playlist_version();
+                    let queue_moved = queue_version != last_queue;
+                    let library_moved = library != last_library;
+                    last_queue = queue_version;
+                    last_library = library;
+                    if queue_moved {
+                        out.publish(StateSlice::Queue {
+                            items: engine.queue_blocking(),
+                        });
+                    }
+                    // A playlist edit moves the library version, and following
+                    // means an edit there is an edit to what is playing — so
+                    // the lock has to be re-asked on either.
+                    if queue_moved || library_moved {
+                        out.publish(StateSlice::Lock {
+                            lock: engine.queue_lock_blocking(),
+                        });
                     }
                 }
             })
             .ok();
+    }
+
+    /// The queue as a client sees it: derived, then joined against the library
+    /// in two statements rather than one per row.
+    ///
+    /// A client draws one sleeve per album, and without an ID to group by it
+    /// asks for artwork per track — the same image fetched once for every track
+    /// on the record. A queue with no database behind it simply has no album
+    /// IDs; the art falls back to the per-track lookup.
+    fn queue_blocking(&self) -> Vec<QueueItem> {
+        let entries = self.state.derive_visible_queue().entries;
+        let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
+        let db = self.db().ok();
+        let album_ids = db
+            .as_ref()
+            .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
+            .unwrap_or_default();
+        let sources = db
+            .as_ref()
+            .and_then(|db| queries::batch::sources_for_tracks(&db.conn, &track_ids).ok())
+            .unwrap_or_default();
+
+        entries
+            .iter()
+            .map(|e| QueueItem::from_entry(e, &album_ids, &sources))
+            .collect()
+    }
+
+    /// What the queue still is, if it is still something.
+    ///
+    /// While this answers, the queue follows that playlist or record: an edit
+    /// there lands here too. It stops answering the moment the queue is
+    /// rearranged, added to, or extended by radio — which is also when the
+    /// following stops.
+    fn queue_lock_blocking(&self) -> Option<QueueLock> {
+        let db = self.db().ok()?;
+        match koan_core::playlists::queue_lock(&db, &self.state)? {
+            koan_core::playlists::QueueLock::Playlist(id) => queries::get_playlist(&db.conn, id)
+                .ok()
+                .flatten()
+                .map(|p| QueueLock::Playlist {
+                    playlist: Playlist::from(p),
+                }),
+            koan_core::playlists::QueueLock::Album(id) => queries::get_album(&db.conn, id)
+                .ok()
+                .flatten()
+                .map(|a| QueueLock::Album {
+                    album: Album::from(a),
+                }),
+        }
     }
 
     /// Rewrite the queue to point at where organize put the files.
@@ -2444,7 +2325,11 @@ impl KoanEngine {
     }
 
     /// Say that the library's rows changed. The watcher turns this into a
-    /// `LibraryChanged` event on its next tick.
+    /// `Library` slice on its next tick.
+    ///
+    /// Playlists count. They are rows in the same database and a page showing
+    /// one has the same problem a page showing a record has — a second signal
+    /// for them would be a second thing to remember to send.
     fn bump_library(&self) {
         self.library_version
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2563,14 +2448,11 @@ impl KoanEngine {
             });
         }
 
-        // Capacity, not a queue to drain: a client that falls behind drops the
-        // events it missed, and the next one it does get is a complete answer.
-        let (events, _) = tokio::sync::broadcast::channel(64);
         let engine = Arc::new(Self {
             state,
             tx,
             viz,
-            events,
+            out: state::EngineState::new(),
             auto_syncing,
             auto_scanning,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -2592,7 +2474,6 @@ impl KoanEngine {
             state: play_state.into(),
             position_ms: self.state.position_ms(),
             duration_ms: self.state.duration_ms(),
-            seekable_ms: self.state.seekable_ms(),
             queue_item_id: cursor.map(|c| c.0.to_string()),
             entry,
             format: info

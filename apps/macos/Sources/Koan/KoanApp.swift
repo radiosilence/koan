@@ -9,6 +9,8 @@ import SwiftUI
 @Observable
 final class AppState {
     let engine: KoanEngine
+    /// The engine's state, mirrored. Everything that reads it reads this.
+    let mirror: EngineMirror
     let player: PlayerModel
     let library: LibraryModel
     let nav: Navigator
@@ -18,7 +20,6 @@ final class AppState {
     let playlists: PlaylistsModel
     let activity: ActivityModel
     let levels: PlayingLevels
-    let downloads: DownloadsModel
     let textFocus = TextFocus()
     let ui = UIState()
     let hotkeys: Hotkeys
@@ -27,7 +28,12 @@ final class AppState {
     init() async throws {
         let engine = try await KoanEngine()
         self.engine = engine
-        let player = PlayerModel(engine: engine)
+        let mirror = EngineMirror()
+        self.mirror = mirror
+        // Before anything else asks the engine a question: the first batch is
+        // the whole state, so the first frame draws against something real.
+        mirror.start(engine: engine)
+        let player = PlayerModel(engine: engine, mirror: mirror)
         self.player = player
         let library = LibraryModel(engine: engine)
         self.library = library
@@ -42,8 +48,6 @@ final class AppState {
         let activity = ActivityModel()
         self.activity = activity
         self.levels = PlayingLevels(engine: engine)
-        let downloads = DownloadsModel(engine: engine)
-        self.downloads = downloads
         library.activity = activity
         player.activity = activity
         organize.activity = activity
@@ -60,27 +64,14 @@ final class AppState {
         activity.mirror("Scanning library") { engine.isAutoScanning() }
         activity.cancelLibraryTask = { engine.cancelLibraryTask() }
 
-        // A finished download changes the library's cached count and nothing
-        // else would say so — the count is a database read, and the download
-        // ran in the engine.
-        player.onDownloadsLanded = { [weak library] in library?.loadStats() }
-        // The list, and the figures on it, arrive on two different events at
-        // two very different rates — see `DownloadsModel`.
-        player.onDownloadStoreChanged = { [weak downloads] in downloads?.reload() }
-        player.onDownloadProgress = { [weak downloads] in downloads?.applyProgress($0) }
-        // Both, because a library change is a change to whatever rows are on
-        // screen — and a playlist's are the playlists model's, not the
-        // library's. A download landing writes a cached path onto a row, and
-        // the page showing it has to hear about it or its cloud stays empty.
-        player.onLibraryChanged = { [weak library, weak playlists] in
-            library?.libraryChanged()
-            playlists?.reloadTracks()
-        }
-
-        // Control Center and the media keys ride the player's existing poll.
-        let centre = NowPlayingCentre(player: player, art: art)
+        // Nothing wires an event to a model here any more. The engine
+        // publishes state, `EngineMirror` holds it and views read it; what is
+        // asked for on demand — a record's tracks, a playlist's rows, the
+        // library's counts — reloads off `mirror.libraryVersion` where it is
+        // drawn. Six closures deciding which model heard what is what let a
+        // page be forgotten, three times.
+        let centre = NowPlayingCentre(player: player, mirror: mirror, art: art)
         self.nowPlaying = centre
-        player.onTick = { [weak centre] in centre?.refresh() }
 
         // Single-key shortcuts, caught before the focused list eats them.
         self.hotkeys = Hotkeys.standard(player: player, library: library, nav: nav, ui: ui)
@@ -128,7 +119,7 @@ struct KoanApp: App {
                         .environment(state.playlists)
                         .environment(state.activity)
                         .environment(state.levels)
-                        .environment(state.downloads)
+                        .environment(state.mirror)
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)
@@ -145,15 +136,6 @@ struct KoanApp: App {
                     let created = try await AppState()
                     await created.player.start()
                     created.player.restoreSession()
-                    created.library.loadInitial()
-                    created.playlists.load()
-                    created.playlists.refreshLock()
-                    // The queue changing is the other half of what makes a lock
-                    // — playing a playlist creates one, touching the queue ends
-                    // one, and neither goes through the playlist model.
-                    created.player.onQueueChanged = { [weak created] in
-                        created?.playlists.refreshLock()
-                    }
                     state = created
                 } catch {
                     startupError = String(describing: error)

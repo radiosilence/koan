@@ -18,19 +18,20 @@ import SwiftUI
 struct SourceBadges: View {
     let onServer: Bool
     let onDisk: Bool
-    /// 0–1 while this track is being fetched, `nil` when it is not. A transfer
-    /// whose length the server never gave has no fraction to show and spins.
-    var downloading: Download?
+    /// The transfer this row is waiting on, when it is waiting on one.
+    ///
+    /// An id rather than a figure, deliberately. Reading the figure is what
+    /// subscribes a view to a number that moves ten times a second while
+    /// anything is downloading — so only the handful of rows actually drawing a
+    /// ring do it, and the rest of the list sits still.
+    var transferring: String?
 
-    enum Download {
-        case indeterminate
-        case fraction(Double)
-    }
+    @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
         Group {
-            if let downloading {
-                ring(downloading)
+            if let transferring {
+                ring(mirror.progress(for: transferring))
             } else if onServer {
                 // Visible enough to be read at a glance down a list. At
                 // `.quaternary` this was there and effectively invisible, which
@@ -51,15 +52,16 @@ struct SourceBadges: View {
         .frame(width: 14, height: 14)
     }
 
+    /// A transfer whose length the server never gave has no fraction to show
+    /// and spins.
     @ViewBuilder
-    private func ring(_ download: Download) -> some View {
-        switch download {
-        case .fraction(let value):
-            ProgressView(value: value)
+    private func ring(_ fraction: Double?) -> some View {
+        if let fraction {
+            ProgressView(value: fraction)
                 .progressViewStyle(.circular)
                 .controlSize(.mini)
-                .help("Downloading — \(Int(value * 100))%")
-        case .indeterminate:
+                .help("Downloading — \(Int(fraction * 100))%")
+        } else {
             ProgressView()
                 .progressViewStyle(.circular)
                 .controlSize(.mini)
@@ -76,21 +78,13 @@ extension SourceBadges {
         self.init(
             onServer: track.onServer,
             onDisk: track.onDisk,
-            downloading: SourceBadges.download(of: queued)
+            transferring: SourceBadges.transfer(of: queued)
         )
     }
 
-    /// A queue row, which knows where its bytes came from by its own status.
-    init(queued: QueueItem, onServer: Bool, onDisk: Bool) {
-        self.init(
-            onServer: onServer,
-            onDisk: onDisk,
-            downloading: SourceBadges.download(of: queued)
-        )
-    }
-
-    static func download(of item: QueueItem?) -> Download? {
+    /// The transfer a queue item is waiting on, if its status says it is.
+    nonisolated static func transfer(of item: QueueItem?) -> String? {
         guard let item, item.status == .downloading else { return nil }
-        return item.downloadProgress.map { .fraction($0) } ?? .indeterminate
+        return item.queueItemId
     }
 }

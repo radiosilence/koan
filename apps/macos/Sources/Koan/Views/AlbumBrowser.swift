@@ -48,7 +48,7 @@ struct AlbumDetailView: View {
             artistLink: album?.artistId,
             playable: album.map { Playable.album($0) }
         )
-        .task(id: albumId) {
+        .reloading(on: albumId) {
             album = try? await library.engine.album(albumId: albumId)
             library.loadTracks(albumId: albumId)
         }
