@@ -81,7 +81,10 @@ final class SettingsModel {
         guard forgetTracks else { return }
         let engine = self.engine
         Task {
-            let result = await activity.run("Forgetting \(URL(fileURLWithPath: path).lastPathComponent)", exclusive: true) {
+            let result = await activity.run(
+                "Forgetting \(URL(fileURLWithPath: path).lastPathComponent)",
+                uses: [.localTracks]
+            ) {
                 try await engine.forgetFolder(path: path)
             }
             switch result {
@@ -98,7 +101,8 @@ final class SettingsModel {
         let engine = self.engine
         Task {
             let result = await activity.runReporting(
-                force ? "Rescanning every file" : "Scanning library"
+                force ? "Rescanning every file" : "Scanning library",
+                uses: .localLibrary
             ) { progress in
                 try await engine.scanReporting(force: force, reporter: progress)
             }
@@ -146,7 +150,12 @@ final class SettingsModel {
                 reload()
                 return
             }
-            let result = await activity.run("Forgetting the server's tracks", exclusive: true) {
+            // Local rows too: it takes the server off the ones that were on
+            // both, so a scan writing them would be writing the same rows.
+            let result = await activity.run(
+                "Forgetting the server's tracks",
+                uses: [.remoteTracks, .localTracks]
+            ) {
                 try await self.engine.forgetRemote()
             }
             switch result {
@@ -160,7 +169,10 @@ final class SettingsModel {
     func syncNow(full: Bool) {
         let engine = self.engine
         Task {
-            let result = await activity.run(full ? "Full sync with server" : "Syncing with server") {
+            let result = await activity.run(
+                full ? "Full sync with server" : "Syncing with server",
+                uses: [.remoteTracks]
+            ) {
                 try await engine.syncRemote(full: full)
             }
             switch result {
@@ -180,7 +192,7 @@ final class SettingsModel {
     func clearCache() {
         let engine = self.engine
         Task {
-            let result = await activity.run("Clearing downloads") {
+            let result = await activity.run("Clearing downloads", uses: [.downloads]) {
                 try await engine.clearDownloadCache()
             }
             switch result {
@@ -196,7 +208,7 @@ final class SettingsModel {
     func rebuildIndex() {
         let engine = self.engine
         Task {
-            let result = await activity.run("Clearing the library index") {
+            let result = await activity.run("Clearing the library index", uses: .wholeLibrary) {
                 try await engine.rebuildIndex()
             }
             switch result {

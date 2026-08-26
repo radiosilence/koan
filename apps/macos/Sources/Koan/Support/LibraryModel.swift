@@ -104,15 +104,14 @@ final class LibraryModel {
     private(set) var stats: Stats?
     private(set) var isLoading = false
 
-    /// Set while a scan runs so the UI can show progress and refuse a second
-    /// one. Set by `AppState`. Long tasks register here so one place can say
-    /// what is happening — see `ActivityModel`.
+    /// Where long tasks register, so one place can say what is happening and
+    /// refuse a second task that would collide with a running one. Set by
+    /// `AppState` — see `ActivityModel`.
     weak var activity: ActivityModel?
     /// Set by `AppState`, so a record's sleeve can be warmed as its rows are
     /// read rather than after the page is already up.
     var art: CoverArtCache?
 
-    private(set) var isScanning = false
     var scanSummary: ScanSummary?
 
     init(engine: KoanEngine) {
@@ -386,41 +385,38 @@ final class LibraryModel {
     /// Nothing here refreshes anything: the engine announces the rows it wrote,
     /// and `libraryChanged()` runs off that.
     func syncRemote(full: Bool = false) {
-        guard !isScanning else { return }
-        isScanning = true
+        guard activity?.conflicts(with: [.remoteTracks]) != true else { return }
         let engine = self.engine
         let job = activity?.begin(
             full ? "Full sync with server" : "Syncing with server",
-            exclusive: true
+            uses: [.remoteTracks]
         )
         Task {
             _ = try? await engine.syncRemote(full: full)
             if let job { activity?.end(job) }
-            isScanning = false
         }
     }
 
     /// Throw away every file cached from the server.
     ///
     /// The library rows stay — they are what the server said exists — so the
-    /// tracks remain playable and simply download again on demand. Exclusive
-    /// like the other library tasks: it clears the cached paths off every row.
+    /// tracks remain playable and simply download again on demand. It holds the
+    /// cached copies and nothing else, so a scan or a sync can carry on beside
+    /// it: neither has an opinion about what is on disk in the cache directory.
     func clearDownloads() {
-        guard !isScanning else { return }
-        isScanning = true
+        guard activity?.conflicts(with: [.downloads]) != true else { return }
         let engine = self.engine
-        let job = activity?.begin("Clearing downloaded files", exclusive: true)
+        let job = activity?.begin("Clearing downloaded files", uses: [.downloads])
         Task {
             _ = try? await engine.clearDownloadCache()
             if let job { activity?.end(job) }
-            isScanning = false
             loadStats()
         }
     }
 
     /// Throw away the downloaded copies of these tracks.
     ///
-    /// Not exclusive like the library-wide tasks: it touches only the rows
+    /// Claims nothing, unlike the library-wide tasks: it touches only the rows
     /// named, and someone clearing one record should not have to wait behind a
     /// scan. Anything playing from a copy being removed keeps playing — the
     /// decoder has the file open, and unlinking it only takes the name away.
@@ -446,14 +442,13 @@ final class LibraryModel {
     /// Full rescan of every configured folder. Minutes on a big library, so it
     /// runs detached and the UI stays live throughout.
     func scan(force: Bool = false) {
-        guard !isScanning else { return }
-        isScanning = true
+        guard activity?.conflicts(with: .localLibrary) != true else { return }
         scanSummary = nil
 
         let engine = self.engine
         let job = activity?.begin(
             force ? "Rescanning every file" : "Scanning library",
-            exclusive: true,
+            uses: .localLibrary,
             cancellable: true
         )
         let progress = job.flatMap { activity?.reporter(for: $0) }
@@ -461,7 +456,6 @@ final class LibraryModel {
             let result = try? await engine.scanReporting(force: force, reporter: progress)
             if let job { activity?.end(job) }
             scanSummary = result
-            isScanning = false
         }
     }
 

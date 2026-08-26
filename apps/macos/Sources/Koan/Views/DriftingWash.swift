@@ -46,7 +46,7 @@ final class WashView: NSView {
     /// The cover is blurred to mush, so it is rendered small and magnified
     /// afterwards — blurring a 360pt texture and scaling the result costs a
     /// fraction of blurring one the width of the window.
-    private static let side: CGFloat = 360
+    nonisolated private static let side: CGFloat = 360
 
     /// How far the drift travels, and the overscan that lets it.
     ///
@@ -174,7 +174,7 @@ final class WashView: NSView {
 
     /// One context for the app. Building one per blur is where the expense of
     /// Core Image actually is.
-    private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+    nonisolated private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
 
     /// Which cover is wanted, so a blur that finishes after the record moved on
     /// is dropped rather than drawn.
