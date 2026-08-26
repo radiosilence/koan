@@ -46,9 +46,15 @@
 
 - **Finding what is favourited no longer reads the whole library.** Matching favourites to tracks joined on three columns at once, which no index can serve, so it read every track to find the hundred that were starred — fifty milliseconds, on every listing that shows a heart, which is all of them. One millisecond now, on a library of forty-eight thousand.
 
+- **Reaching for a position in a track that has not arrived says so.** A track whose container cannot state a duration until the last of its bytes lands — Ogg — is reachable nowhere at all while it downloads, and every seek into one was sent unclamped and taken as a seek to zero, so the arrow keys threw playback back to the start. The TUI now says how far the transfer has got instead of moving.
+
+- **Clicking the TUI's seek bar lands where it was aimed on a track still downloading.** The click was mapped against the duration the container reported, which on a partial file reads short, while the bar was drawn against the one the library knows. Both use the library's now.
+
 - **Half-finished downloads are cleaned up.** koan writes a download straight through and renames it at the end, so a `.part` file still on disk is from a run that did not finish — bytes nothing knows about, since only finished downloads are tracked for eviction. An interrupted nine-hour recording was half a gigabyte that never came back. They are swept at startup, which is the run after the one that left them.
 
 ### Changed
+
+- **The TUI opens the database once rather than per query.** Every read opened its own connection: a `create_dir_all`, a permissions syscall, the whole schema DDL and a WAL checkpoint before a single row came back — and while downloads were writing, that checkpoint contended with them. The TUI's reads are user-triggered rather than per-frame so it never cost what it cost the macOS app, but autosave ran one on a timer. It shares the pool the app uses, which now applies the schema itself so a first run on a fresh machine works the same way.
 
 - **What koan is downloading is kept in one place.** Whether a track was arriving was recorded twice — once against the queue entry and once by the downloader — and the two had to be told separately, so they could and did disagree: a queue entry pointed at the file a transfer had just been renamed away from, and anything the TUI fetched was invisible to everything else. A queue entry now says only whether its own file can be played, and whether bytes are arriving is asked of the downloader.
 
