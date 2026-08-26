@@ -113,8 +113,9 @@ private struct LibrarySettings: View {
                         .help("Stop scanning this folder")
                     }
                 }
+                // Adding a folder starts a scan, so it waits for the one running.
                 Button("Add Folder…") { choosingFolder = true }
-                    .disabled(activity.isLibraryBusy)
+                    .disabled(activity.conflicts(with: .localLibrary))
             } header: {
                 Text("Folders")
             } footer: {
@@ -129,24 +130,26 @@ private struct LibrarySettings: View {
                     Button("Rescan Everything") { model.scan(force: true) }
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
-                // One library task at a time: they all queue behind the same
-                // database writer, so starting a second only makes both slower.
-                .disabled(activity.isLibraryBusy)
+                // One pass over your files at a time. A sync or a download
+                // clear is welcome to run alongside; another scan, a drop or a
+                // file move would be reading and writing the same things.
+                .disabled(activity.conflicts(with: .localLibrary))
             } header: {
                 Text("Scan")
             } footer: {
-                if activity.isLibraryBusy {
-                    Text("Waiting for the running task to finish.")
+                if activity.conflicts(with: .localLibrary) {
+                    Text("Waiting for the task that is reading your files to finish.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
             }
 
             Section {
+                // Empties every table, so it waits for everything.
                 Button("Clear Library Index…", role: .destructive) {
                     confirmingRebuild = true
                 }
-                .disabled(activity.isLibraryBusy)
+                .disabled(activity.conflicts(with: .wholeLibrary))
             } header: {
                 Text("Rebuild")
             } footer: {
@@ -228,7 +231,7 @@ private struct RemoteSettings: View {
                             Button("Full Sync") { model.syncNow(full: true) }
                                 .help("Walk the whole library rather than only what changed")
                         }
-                        .disabled(activity.isLibraryBusy)
+                        .disabled(activity.conflicts(with: [.remoteTracks]))
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     }
@@ -298,6 +301,7 @@ private struct RemoteSettings: View {
                         Text(Format.bytes(Int64(model.settings.cacheBytes)))
                         Button("Clear") { model.clearCache() }
                             .buttonStyle(.borderless)
+                            .disabled(activity.conflicts(with: [.downloads]))
                     }
                 }
             }

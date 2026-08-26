@@ -54,6 +54,8 @@
 
 ### Changed
 
+- **A library task now only greys out the ones it would actually collide with.** Any of them running disabled all of them, on the grounds that they queue behind SQLite's single writer — so a twenty-minute sync of a large server locked out rescanning a folder, clearing downloads and the organize sheet along with it. Each task says what it holds instead: the files on disk, the rows for your local tracks, the rows mirrored from the server, the downloaded copies. A sync and a scan write different rows and now run together; a scan and a file move over the same files still do not. Clearing the index waits for everything, because it empties everything.
+
 - **The TUI opens the database once rather than per query.** Every read opened its own connection: a `create_dir_all`, a permissions syscall, the whole schema DDL and a WAL checkpoint before a single row came back — and while downloads were writing, that checkpoint contended with them. The TUI's reads are user-triggered rather than per-frame so it never cost what it cost the macOS app, but autosave ran one on a timer. It shares the pool the app uses, which now applies the schema itself so a first run on a fresh machine works the same way.
 
 - **What koan is downloading is kept in one place.** Whether a track was arriving was recorded twice — once against the queue entry and once by the downloader — and the two had to be told separately, so they could and did disagree: a queue entry pointed at the file a transfer had just been renamed away from, and anything the TUI fetched was invisible to everything else. A queue entry now says only whether its own file can be played, and whether bytes are arriving is asked of the downloader.

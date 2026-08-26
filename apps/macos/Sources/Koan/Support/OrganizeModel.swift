@@ -233,9 +233,10 @@ final class OrganizeModel {
         running = true
         error = nil
         Task {
-            // Exclusive: the moves and the row rewrites share a transaction, so
-            // this contends for the writer the way a scan does.
-            let result = await activity?.run("Moving files", exclusive: true) {
+            // Holds the local library: the files move and their rows are
+            // rewritten in one transaction, which is exactly what a scan reads
+            // and writes.
+            let result = await activity?.run("Moving files", uses: .localLibrary) {
                 try await engine.organizeExecute(pattern: pattern, trackIds: ids, baseDir: base)
             } ?? .failure(OrganizeFailure.noEngine)
             guard requested == generation else { return }

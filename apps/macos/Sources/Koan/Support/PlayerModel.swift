@@ -656,11 +656,11 @@ final class PlayerModel {
         guard !paths.isEmpty else { return }
         let engine = self.engine
         Task {
-            // Exclusive: it reads tags and writes rows, so it queues behind the
-            // same SQLite writer a scan does. A folder of a few hundred files
-            // takes long enough that a drop with no sign of life reads as a
-            // drop that missed.
-            let summary = try? await activity?.run("Adding dropped files", exclusive: true) {
+            // Holds the local library: it reads tags and writes rows, the same
+            // ones a scan would. A folder of a few hundred files takes long
+            // enough that a drop with no sign of life reads as a drop that
+            // missed.
+            let summary = try? await activity?.run("Adding dropped files", uses: .localLibrary) {
                 try await engine.importFiles(paths: paths)
             }.get()
             guard let summary, !summary.trackIds.isEmpty else {
