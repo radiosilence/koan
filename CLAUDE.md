@@ -165,7 +165,7 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Support/SettingsModel.swift` | Settings state over `config.toml`. Commits on edit, re-reads on focus |
 | `Support/PlayerModel.swift` | Polls `now_playing()` at 10 Hz; refetches the queue only when `playlistVersion` moves |
 | `Support/Navigator.swift` | Where the app is: one page, the linear history of pages visited, and a cursor. No `NavigationStack` — koan navigates like a browser, any page from any page |
-| `Support/LibraryModel.swift` | Browse state. Albums/artists loaded once and filtered in memory; tracks never loaded wholesale. Follows the navigator; never moves it |
+| `Support/LibraryModel.swift` | Browse state. Holds the page a section is showing, nothing more — narrowing, sorting and paging all happen in SQL. Follows the navigator; never moves it |
 | `Support/CoverArtCache.swift` | Album-keyed art cache: bytes once per record on disk, bitmaps per record and draw size in a bounded `NSCache`. Each miss is an HTTP round trip on remote libraries |
 | `Support/PlayingLevels.swift` | One analyser poller for every playing indicator on screen. Runs only while something is playing and something is watching |
 | `Views/QueueView.swift` | The main stage — album-grouped queue, drag reorder, multi-select. Never torn down: `StageView` keeps it mounted behind other pages, because a macOS `List` cannot be scrolled back to where it was |

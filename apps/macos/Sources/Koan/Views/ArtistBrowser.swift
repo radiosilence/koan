@@ -11,6 +11,12 @@ struct ArtistBrowser: View {
     var body: some View {
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             ArtistRow(artist: artist)
+                // The list holds a page, not the library. The last row
+                // reaching the screen is the only signal that there is more
+                // to ask for.
+                .onAppear {
+                    if artist.id == library.visibleArtists.last?.id { library.loadMore() }
+                }
         }
         .clearsSelection($selection)
         .washedGround()
@@ -96,12 +102,13 @@ struct ArtistDetailView: View {
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
 
+    /// Fetched, not looked up: the browser holds the page it is showing, and
+    /// this artist may well not be on it.
+    @State private var artist: Artist?
     @State private var albums: [Album] = []
     @State private var similar: [SimilarArtist] = []
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
-
-    private var artist: Artist? { library.artist(id: artistId) }
 
     var body: some View {
         ScrollView {
@@ -166,7 +173,11 @@ struct ArtistDetailView: View {
     private func load() async {
         let engine = library.engine
         let id = artistId
-        albums = (try? await engine.albums(artistId: id, sort: .year, search: nil)) ?? []
+        artist = try? await engine.artist(artistId: id)
+        // A discography is bounded by one artist, so it is asked for whole.
+        albums = (try? await engine.albums(
+            artistId: id, sort: .year, seed: 0, search: nil, limit: nil, offset: 0
+        )) ?? []
         similar = (try? await engine.similarArtists(artistId: id)) ?? []
     }
 

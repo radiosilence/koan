@@ -22,6 +22,16 @@
 
 - **The wash honours Reduce Motion.** It never did. The playing indicators already went still when the system asked for less motion and the room behind them kept breathing.
 
+### Changed
+
+- **The macOS app queries the library instead of copying it.** It used to load every album and every artist at launch, narrow those copies in Swift and index them so search could resolve ids against them -- three shapes of the same five thousand rows, held to serve views that read none of them directly. Now each section holds only the page it is showing and asks for the next one as you scroll. Narrowing, sorting and paging all happen in SQL.
+
+  The bugs this closes are the ones that came from the copy existing: a section showing a library the database no longer has, and a cold launch showing an empty one because the load lived somewhere the second window never reached. There is no load to have forgotten to do.
+
+  `AlbumSort::Random` now takes a seed. A shuffled listing read a page at a time has to agree with itself across pages, or scrolling repeats records and drops others; the seed fixes one shuffle, and the reshuffle button asks for a new one.
+
+- **`koan-core` narrows, orders and pages albums and artists itself.** `list_albums` and `list_artists` take a search term, an order, a favourites-only flag and a limit/offset, replacing the several near-identical queries that answered one shape of the question each. Play history and favourite tracks take a search term too, and fuzzy album and artist search hands back rows rather than ids for a caller to resolve.
+
 ## v0.31.2 (2026-08-25)
 
 ### Changed

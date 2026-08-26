@@ -4,6 +4,7 @@ use std::path::Path;
 use std::rc::Rc;
 
 use rusqlite::Connection;
+use rusqlite::functions::FunctionFlags;
 use thiserror::Error;
 
 use super::schema;
@@ -90,7 +91,40 @@ fn configure(conn: &Connection) -> Result<(), DbError> {
     // Here rather than with the schema: `open_existing` skips the DDL, and a
     // connection without this collation fails every ORDER BY that uses it.
     register_library_collation(conn)?;
+    register_shuffle_function(conn)?;
     Ok(())
+}
+
+/// `koan_shuffle(id, seed)` — a stable pseudo-random ordering key.
+///
+/// A shuffled listing that is read a page at a time cannot shuffle in the
+/// client: page two would be drawn from a different shuffle than page one, and
+/// records would repeat or vanish as you scrolled. Ordering by a hash of the
+/// row id and a seed gives one order that every page of the same seed agrees
+/// on, and a new seed gives a different one.
+///
+/// Registered next to the collation, and for the same reason: a connection
+/// without it fails the query outright rather than sorting some other way.
+pub(crate) fn register_shuffle_function(conn: &Connection) -> rusqlite::Result<()> {
+    conn.create_scalar_function(
+        "koan_shuffle",
+        2,
+        FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC,
+        |ctx| {
+            let id = ctx.get::<i64>(0)? as u64;
+            let seed = ctx.get::<i64>(1)? as u64;
+            Ok(splitmix64(id ^ splitmix64(seed)) as i64)
+        },
+    )
+}
+
+/// SplitMix64. Cheap, and it scatters consecutive ids — which matters, because
+/// a library's ids are consecutive in the order it was scanned.
+fn splitmix64(x: u64) -> u64 {
+    let mut z = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// A collation for names the way a person reads them.

@@ -32,7 +32,7 @@ final class AppState {
         self.library = library
         let nav = Navigator(library: library)
         self.nav = nav
-        self.search = SearchModel(engine: engine, library: library, nav: nav)
+        self.search = SearchModel(engine: engine, nav: nav)
         let art = CoverArtCache(engine: engine)
         self.art = art
         self.organize = OrganizeModel(engine: engine)

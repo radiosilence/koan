@@ -42,6 +42,11 @@ struct HistoryView: View {
                             ForEach(day.entries, id: \.id) { entry in
                                 HistoryRow(entry: entry)
                                     .tag(entry.id)
+                                    // Held a page at a time; the last row on
+                                    // screen asks for the one behind it.
+                                    .onAppear {
+                                        if entry.id == entries.last?.id { library.loadMore() }
+                                    }
                             }
                         }
                     }
@@ -78,7 +83,7 @@ struct HistoryView: View {
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
             Button("Clear…") { confirmingClear = true }
-                .disabled(library.playHistory.isEmpty)
+                .disabled(library.visiblePlayHistory.isEmpty)
         }
     }
 

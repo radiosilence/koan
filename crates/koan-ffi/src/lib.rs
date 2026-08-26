@@ -424,63 +424,78 @@ impl KoanEngine {
 
     // --- Library -----------------------------------------------------------
 
+    /// The library's artists, narrowed by `search` and paged by `limit`/`offset`.
+    ///
+    /// `limit` of `None` is the whole listing — for a caller that genuinely
+    /// wants all of it, not for one that is about to show the first screenful.
     pub async fn artists(
         self: Arc<Self>,
         search: Option<String>,
+        limit: Option<u32>,
+        offset: u32,
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = match search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                Some(q) => queries::find_artists(&db.conn, q),
-                None => queries::all_artists(&db.conn),
-            }
+            let rows = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    search: trimmed(&search),
+                    limit,
+                    offset,
+                    ..Default::default()
+                },
+            )
             .map_err(db_err)?;
             Ok(rows.into_iter().map(Artist::from).collect())
         })
         .await
     }
 
-    /// The library's albums, narrowed by `search` if given.
+    pub async fn artist(self: Arc<Self>, artist_id: i64) -> Result<Option<Artist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(queries::get_artist(&db.conn, artist_id)
+                .map_err(db_err)?
+                .map(Artist::from))
+        })
+        .await
+    }
+
+    /// The library's albums, narrowed by `search`, ordered by `sort` and paged
+    /// by `limit`/`offset`.
     ///
-    /// The search runs in SQL rather than over the returned list: a client that
-    /// filters what it has already been handed still pays to read and marshal
-    /// every album in the library on each keystroke.
+    /// All three run in SQL. A client that narrows or sorts what it has already
+    /// been handed still pays to read and marshal every album in the library on
+    /// each keystroke, and one that pages a listing it sorted itself gets a
+    /// page of the wrong order.
+    ///
+    /// `seed` fixes the shuffle under [`AlbumSort::Random`] and is ignored by
+    /// every other sort. Pages of one seed belong to one shuffle; a new seed is
+    /// a new shuffle, which is what a reshuffle button asks for.
     pub async fn albums(
         self: Arc<Self>,
         artist_id: Option<i64>,
         sort: AlbumSort,
+        seed: i64,
         search: Option<String>,
+        limit: Option<u32>,
+        offset: u32,
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let query = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
-            let rows = match (artist_id, query) {
-                (Some(id), _) => queries::albums_for_artist(&db.conn, id),
-                (None, Some(q)) => queries::find_albums(&db.conn, q),
-                (None, None) => queries::all_albums(&db.conn),
-            }
+            let rows = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    artist_id,
+                    search: trimmed(&search),
+                    order: album_order(sort, seed),
+                    limit,
+                    offset,
+                    ..Default::default()
+                },
+            )
             .map_err(db_err)?;
-
-            let mut albums: Vec<Album> = rows.into_iter().map(Album::from).collect();
-            match sort {
-                // Albums predating the added_at column sort last rather than first,
-                // which is what an empty string would do.
-                AlbumSort::RecentlyAdded => albums.sort_by(|a, b| {
-                    b.added_at
-                        .as_deref()
-                        .unwrap_or("")
-                        .cmp(a.added_at.as_deref().unwrap_or(""))
-                }),
-                // Cached: `sort_by_key` recomputes the key on every
-                // comparison, so a plain sort lowercases each title a couple of
-                // dozen times over.
-                AlbumSort::Title => albums.sort_by_cached_key(|a| a.title.to_lowercase()),
-                AlbumSort::Artist => albums
-                    .sort_by_cached_key(|a| (a.artist_name.to_lowercase(), a.year.unwrap_or(0))),
-                AlbumSort::Year => albums.sort_by_key(|a| std::cmp::Reverse(a.year.unwrap_or(0))),
-                AlbumSort::Random => koan_core::helpers::shuffle(&mut albums),
-            }
-            Ok(albums)
+            Ok(rows.into_iter().map(Album::from).collect())
         })
         .await
     }
@@ -542,9 +557,6 @@ impl KoanEngine {
         limit: u32,
     ) -> Result<Vec<FuzzyMatch>, KoanError> {
         offload::offload(move || {
-            use nucleo::pattern::{CaseMatching, Normalization};
-            use nucleo::{Config as NucleoConfig, Nucleo};
-
             let db = self.db()?;
             let items: Vec<(i64, String)> = match kind {
                 SearchKind::Track => queries::all_tracks(&db.conn)
@@ -569,38 +581,59 @@ impl KoanEngine {
                     .collect(),
             };
 
-            let mut nucleo: Nucleo<u32> =
-                Nucleo::new(NucleoConfig::DEFAULT, Arc::new(|| {}), None, 1);
-            let injector = nucleo.injector();
-            for (i, (_, text)) in items.iter().enumerate() {
-                let text = text.clone();
-                injector.push(i as u32, |_val, cols| {
-                    cols[0] = text.into();
-                });
-            }
+            let texts: Vec<&str> = items.iter().map(|(_, t)| t.as_str()).collect();
+            Ok(fuzzy_rank(&texts, &query, limit)
+                .into_iter()
+                .map(|i| FuzzyMatch {
+                    id: items[i].0,
+                    name: items[i].1.clone(),
+                    kind,
+                })
+                .collect())
+        })
+        .await
+    }
 
-            nucleo
-                .pattern
-                .reparse(0, &query, CaseMatching::Smart, Normalization::Smart, false);
-            for _ in 0..20 {
-                nucleo.tick(10);
-            }
+    /// Fuzzy-matched albums, as rows.
+    ///
+    /// Rows rather than ids: the match already read them to build its corpus,
+    /// and a caller handed ids can only resolve them against a catalogue of its
+    /// own — which is the copy this exists to make unnecessary.
+    pub async fn fuzzy_albums(
+        self: Arc<Self>,
+        query: String,
+        limit: u32,
+    ) -> Result<Vec<Album>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::all_albums(&db.conn).map_err(db_err)?;
+            let texts: Vec<String> = rows
+                .iter()
+                .map(|a| format!("{} — {}", a.artist_name, a.title))
+                .collect();
+            let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+            Ok(fuzzy_rank(&texts, &query, limit)
+                .into_iter()
+                .map(|i| Album::from(rows[i].clone()))
+                .collect())
+        })
+        .await
+    }
 
-            let snap = nucleo.snapshot();
-            let count = (snap.matched_item_count() as usize).min(limit as usize);
-            let mut out = Vec::with_capacity(count);
-            for i in 0..count as u32 {
-                if let Some(item) = snap.get_matched_item(i)
-                    && let Some((id, name)) = items.get(*item.data as usize)
-                {
-                    out.push(FuzzyMatch {
-                        id: *id,
-                        name: name.clone(),
-                        kind,
-                    });
-                }
-            }
-            Ok(out)
+    /// Fuzzy-matched artists, as rows. See [`Self::fuzzy_albums`].
+    pub async fn fuzzy_artists(
+        self: Arc<Self>,
+        query: String,
+        limit: u32,
+    ) -> Result<Vec<Artist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::all_artists(&db.conn).map_err(db_err)?;
+            let texts: Vec<&str> = rows.iter().map(|a| a.name.as_str()).collect();
+            Ok(fuzzy_rank(&texts, &query, limit)
+                .into_iter()
+                .map(|i| Artist::from(rows[i].clone()))
+                .collect())
         })
         .await
     }
@@ -797,13 +830,14 @@ impl KoanEngine {
     /// entries. Entries whose track has left the library are already gone.
     pub async fn play_history(
         self: Arc<Self>,
+        search: Option<String>,
         limit: u32,
         offset: u32,
     ) -> Result<Vec<PlayHistoryEntry>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows =
-                queries::play_history_with_tracks(&db.conn, limit, offset).map_err(db_err)?;
+            let rows = queries::play_history_with_tracks(&db.conn, trimmed(&search), limit, offset)
+                .map_err(db_err)?;
             let (plays, tracks): (Vec<_>, Vec<_>) = rows
                 .into_iter()
                 .map(|r| ((r.id, r.played_at, r.listened_ms, r.source), r.track))
@@ -857,25 +891,57 @@ impl KoanEngine {
 
     // --- Favourites --------------------------------------------------------
 
-    pub async fn favourites(self: Arc<Self>) -> Result<Vec<Track>, KoanError> {
+    /// Favourited tracks, narrowed by `search`.
+    pub async fn favourites(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<Vec<Track>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let ids = queries::favourite_track_ids_batch(&db.conn).map_err(db_err)?;
-            let mut rows = Vec::new();
-            for id in ids {
-                if let Ok(Some(row)) = queries::get_track_row(&db.conn, id) {
-                    rows.push(row);
-                }
-            }
-            rows.sort_by(|a, b| {
-                (&a.artist_name, &a.album_title, a.disc, a.track_number).cmp(&(
-                    &b.artist_name,
-                    &b.album_title,
-                    b.disc,
-                    b.track_number,
-                ))
-            });
+            let rows = queries::favourite_tracks(&db.conn, trimmed(&search)).map_err(db_err)?;
             Ok(self.decorate(&db, rows))
+        })
+        .await
+    }
+
+    /// Favourited records, as rows, narrowed by `search`.
+    pub async fn favourite_albums(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<Vec<Album>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    search: trimmed(&search),
+                    favourites_only: true,
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(rows.into_iter().map(Album::from).collect())
+        })
+        .await
+    }
+
+    /// Favourited artists, as rows, narrowed by `search`.
+    pub async fn favourite_artists(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<Vec<Artist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    search: trimmed(&search),
+                    favourites_only: true,
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(rows.into_iter().map(Artist::from).collect())
         })
         .await
     }
@@ -2562,6 +2628,52 @@ fn parse_qid(s: &str) -> Result<QueueItemId, KoanError> {
 
 fn parse_qids(ids: &[String]) -> Result<Vec<QueueItemId>, KoanError> {
     ids.iter().map(|s| parse_qid(s)).collect()
+}
+
+/// A search term the user actually typed, or nothing. Whitespace is not a
+/// filter, and neither is an empty box.
+fn trimmed(search: &Option<String>) -> Option<&str> {
+    search.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// The browser's sort as an order the database can apply.
+fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
+    match sort {
+        AlbumSort::RecentlyAdded => queries::AlbumOrder::RecentlyAdded,
+        AlbumSort::Title => queries::AlbumOrder::Title,
+        AlbumSort::Artist => queries::AlbumOrder::ArtistThenDate,
+        AlbumSort::Year => queries::AlbumOrder::YearDesc,
+        AlbumSort::Random => queries::AlbumOrder::Random(seed),
+    }
+}
+
+/// Rank `texts` against `query`, best first, and return the indices of the top
+/// `limit`. Shared by every fuzzy listing so they rank identically.
+fn fuzzy_rank(texts: &[&str], query: &str, limit: u32) -> Vec<usize> {
+    use nucleo::pattern::{CaseMatching, Normalization};
+    use nucleo::{Config as NucleoConfig, Nucleo};
+
+    let mut nucleo: Nucleo<u32> = Nucleo::new(NucleoConfig::DEFAULT, Arc::new(|| {}), None, 1);
+    let injector = nucleo.injector();
+    for (i, text) in texts.iter().enumerate() {
+        let text = text.to_string();
+        injector.push(i as u32, |_val, cols| {
+            cols[0] = text.into();
+        });
+    }
+
+    nucleo
+        .pattern
+        .reparse(0, query, CaseMatching::Smart, Normalization::Smart, false);
+    for _ in 0..20 {
+        nucleo.tick(10);
+    }
+
+    let snap = nucleo.snapshot();
+    let count = (snap.matched_item_count() as usize).min(limit as usize);
+    (0..count as u32)
+        .filter_map(|i| snap.get_matched_item(i).map(|item| *item.data as usize))
+        .collect()
 }
 
 fn db_err(e: impl std::fmt::Display) -> KoanError {
