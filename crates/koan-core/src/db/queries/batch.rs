@@ -299,6 +299,35 @@ pub fn album_ids_for_tracks(
         .map_err(Into::into)
 }
 
+/// Where each track's bytes are: on the server, on this machine, or both.
+///
+/// One query for a whole queue. The same reading `Track` gives, so a row in the
+/// queue and the same row in an album agree about what they are — asked here
+/// per queue rather than per row, which is what a list of a thousand would
+/// otherwise cost.
+pub fn sources_for_tracks(
+    conn: &Connection,
+    track_ids: &[i64],
+) -> Result<HashMap<i64, (bool, bool)>, DbError> {
+    if track_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let sql = format!(
+        "SELECT id, remote_id IS NOT NULL, COALESCE(cached_path, path) IS NOT NULL \
+         FROM tracks WHERE id IN {}",
+        placeholders(track_ids.len())
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(track_ids), |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            (row.get::<_, bool>(1)?, row.get::<_, bool>(2)?),
+        ))
+    })?;
+    rows.collect::<Result<HashMap<_, _>, _>>()
+        .map_err(Into::into)
+}
+
 // ---------------------------------------------------------------------------
 // SQL-side track filtering
 // ---------------------------------------------------------------------------

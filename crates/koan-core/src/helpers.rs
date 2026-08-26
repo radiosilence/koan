@@ -392,6 +392,99 @@ pub fn clear_download_cache(db: &Database, cfg: &Config) -> CacheCleared {
     cleared
 }
 
+/// Delete the downloaded copies of just these tracks.
+///
+/// The per-track counterpart of `clear_download_cache`, for throwing away one
+/// record rather than the lot. A track playing from a copy being removed keeps
+/// playing — the decoder holds the file open, and unlinking it only takes the
+/// name away — but the next play fetches it again.
+pub fn clear_downloads_for(db: &Database, track_ids: &[i64]) -> CacheCleared {
+    let mut cleared = CacheCleared::default();
+    let paths = match queries::cached_paths_for(&db.conn, track_ids) {
+        Ok(paths) => paths,
+        Err(e) => {
+            log::warn!("could not read cached paths: {e}");
+            return cleared;
+        }
+    };
+    for path in &paths {
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        match std::fs::remove_file(path) {
+            Ok(()) => {
+                cleared.files += 1;
+                cleared.bytes += size;
+            }
+            // Already gone is the outcome asked for, so it is not a failure.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("could not remove {path}: {e}"),
+        }
+    }
+    if let Err(e) = queries::clear_cached_paths_for(&db.conn, track_ids) {
+        log::warn!("removed downloads but failed to forget them ({e})");
+    }
+    cleared
+}
+
+/// Throw away half-finished downloads left behind by a previous run.
+///
+/// A `.part` file only means something to the transfer writing it. koan does
+/// not resume — the file is written straight through and renamed at the end —
+/// so one still on disk at startup is from a run that did not finish, and it
+/// will be truncated and rewritten the next time that track is wanted anyway.
+/// Until then it is bytes nothing knows about: cache eviction only tracks what
+/// finished, so an interrupted download of a nine-hour recording is half a
+/// gigabyte that never gets reclaimed.
+///
+/// At startup rather than at exit, because a run that ends without getting to
+/// its own cleanup is exactly the run that leaves these behind.
+pub fn sweep_partial_downloads(cfg: &Config) -> CacheCleared {
+    let mut swept = CacheCleared::default();
+    for entry in walkdir::WalkDir::new(cfg.cache_dir())
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "part"))
+    {
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => {
+                swept.files += 1;
+                swept.bytes += size;
+            }
+            Err(e) => log::warn!("could not remove {}: {e}", entry.path().display()),
+        }
+    }
+    if swept.files > 0 {
+        log::info!(
+            "swept {} unfinished download(s), {} bytes",
+            swept.files,
+            swept.bytes
+        );
+    }
+    swept
+}
+
+/// Fetch again anything in the queue whose downloaded copy has just been
+/// removed.
+///
+/// Clearing downloads deletes files the queue is still pointing at, and an item
+/// that goes on claiming to be ready plays nothing at all. Call this after
+/// either clearing function, from anywhere with a player attached.
+pub fn requeue_cleared_downloads(
+    state: &Arc<SharedPlayerState>,
+    tx: &crossbeam_channel::Sender<PlayerCommand>,
+) {
+    let stale = state.reset_items_with_missing_files();
+    if stale.is_empty() {
+        return;
+    }
+    log::info!(
+        "{} queued tracks lost their copy — fetching again",
+        stale.len()
+    );
+    spawn_downloads(stale, tx.clone(), state.clone());
+}
+
 /// Push a favourite to the remote server, if this track came from one.
 ///
 /// Fire and forget on its own thread: starring is a courtesy to the server, and
@@ -1048,7 +1141,11 @@ pub fn download_track(
     cfg: &Config,
     client: &SubsonicClient,
 ) {
-    let db = match Database::open_default() {
+    // From the pool. This runs once per track fetched, and opening a
+    // connection here re-ran the schema DDL and attempted a WAL checkpoint —
+    // with several transfers going, several init cycles contending with each
+    // other and with whatever the library was trying to read.
+    let db = match crate::db::pool::shared().get() {
         Ok(db) => db,
         Err(e) => {
             fail_track(state, tx, queue_id, format!("db error: {}", e));
@@ -1130,10 +1227,26 @@ pub fn download_track(
     }
 
     // 3. Download from remote. The queue item points at the in-progress file so
-    // the streaming pump reads bytes as they land; it flips to `dest` on success.
+    // the decoder reads bytes as they land; it flips to `dest` on success.
     state.update_paths(&[(queue_id, crate::remote::download::part_path(&dest))]);
 
     let bytes_written: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+
+    // Announce it before a byte moves, so a queue of six shows six rows rather
+    // than one row and five tracks that look like nothing is happening to them.
+    let store = crate::remote::downloads::store();
+    store.queued(crate::remote::downloads::Download {
+        id: queue_id,
+        track_id: db_id,
+        title: track.title.clone(),
+        artist: track.artist_name.clone(),
+        source: crate::remote::download::part_path(&dest),
+        dest: dest.clone(),
+        total: 0,
+        written: bytes_written.clone(),
+        state: crate::remote::downloads::DownloadState::Queued,
+        bytes_per_second: 0,
+    });
 
     let progress_state = state.clone();
     let progress_qid = queue_id;
@@ -1149,12 +1262,15 @@ pub fn download_track(
     //
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
+    let in_progress = crate::remote::download::part_path(&dest);
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
         bytes_written_progress.store(downloaded, Ordering::Release);
         if announced_total.swap(total, Ordering::Relaxed) != total {
+            store.started(progress_qid, total, bytes_written_progress.clone());
             progress_state.update_load_state(
                 progress_qid,
                 LoadState::Downloading {
+                    path: in_progress.clone(),
                     total,
                     bytes_written: bytes_written_progress.clone(),
                 },
@@ -1171,10 +1287,12 @@ pub fn download_track(
     });
 
     if let Err(e) = result {
+        store.failed(queue_id, e.to_string());
         fail_track(state, tx, queue_id, e.to_string());
         push_log(log_buf, format!("x {} — {}", track.title, e));
         return;
     }
+    store.finished(queue_id);
 
     // Download succeeded.
     state.update_paths(&[(queue_id, dest.clone())]);
@@ -1274,6 +1392,106 @@ mod rebuild_tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    #[test]
+    fn clearing_one_download_leaves_the_others_and_the_library_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+
+        let mut cached = Vec::new();
+        for name in ["one", "two"] {
+            let mut meta = sample_meta(name, "Artist", "Album");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(name.into());
+            let id = queries::upsert_track(&db.conn, &meta).unwrap();
+            let file = dir.path().join(format!("{name}.opus"));
+            std::fs::write(&file, vec![0u8; 2048]).unwrap();
+            queries::set_cached_path(&db.conn, id, &file.to_string_lossy()).unwrap();
+            cached.push((id, file));
+        }
+
+        let cleared = clear_downloads_for(&db, &[cached[0].0]);
+        assert_eq!(cleared.files, 1);
+        assert_eq!(cleared.bytes, 2048);
+        assert!(!cached[0].1.exists(), "the copy asked for is gone");
+        assert!(cached[1].1.exists(), "the other one is untouched");
+
+        // The row survives — a remote track is still in the library, it just
+        // has to be fetched again.
+        assert_eq!(queries::library_stats(&db.conn).unwrap().remote_tracks, 2);
+        assert_eq!(queries::library_stats(&db.conn).unwrap().cached_tracks, 1);
+        assert!(
+            queries::cached_paths_for(&db.conn, &[cached[0].0])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn clearing_a_download_that_is_already_gone_is_not_a_failure() {
+        let db = test_db();
+        let mut meta = sample_meta("ghost", "Artist", "Album");
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("ghost".into());
+        let id = queries::upsert_track(&db.conn, &meta).unwrap();
+        queries::set_cached_path(&db.conn, id, "/nowhere/at/all.opus").unwrap();
+
+        let cleared = clear_downloads_for(&db, &[id]);
+        assert_eq!(cleared.files, 0, "nothing was there to remove");
+        // Forgotten regardless: the row claimed a copy that does not exist.
+        assert!(
+            queries::cached_paths_for(&db.conn, &[id])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn sweeping_removes_half_finished_downloads_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(cache.join("Artist")).unwrap();
+
+        let finished = cache.join("Artist/whole.opus");
+        let half = cache.join("Artist/half.opus.part");
+        std::fs::write(&finished, vec![0u8; 1024]).unwrap();
+        std::fs::write(&half, vec![0u8; 4096]).unwrap();
+
+        let cfg = Config {
+            remote: crate::config::RemoteConfig {
+                cache_dir: Some(cache.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let swept = sweep_partial_downloads(&cfg);
+        assert_eq!(swept.files, 1);
+        assert_eq!(swept.bytes, 4096);
+        assert!(!half.exists(), "the unfinished one is gone");
+        assert!(finished.exists(), "a downloaded track is not touched");
+    }
+
+    #[test]
+    fn sweeping_an_empty_cache_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = Config {
+            remote: crate::config::RemoteConfig {
+                cache_dir: Some(dir.path().join("nothing-here")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(sweep_partial_downloads(&cfg).files, 0);
+    }
+
+    #[test]
+    fn clearing_no_tracks_does_nothing() {
+        let db = test_db();
+        assert_eq!(clear_downloads_for(&db, &[]).files, 0);
     }
 
     #[test]

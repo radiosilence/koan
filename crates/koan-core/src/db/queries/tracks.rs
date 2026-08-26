@@ -917,6 +917,50 @@ pub fn clear_cached_paths(conn: &Connection) -> Result<(), DbError> {
     Ok(())
 }
 
+/// Where the named tracks were downloaded to, for the ones that were.
+pub fn cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<Vec<String>, DbError> {
+    if track_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; track_ids.len()].join(",");
+    let sql = format!(
+        "SELECT cached_path FROM tracks WHERE id IN ({placeholders}) AND cached_path IS NOT NULL"
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(track_ids), |row| row.get(0))?;
+    Ok(rows.filter_map(Result::ok).collect())
+}
+
+/// Which of the named tracks have a downloaded copy.
+pub fn downloaded_of(conn: &Connection, track_ids: &[i64]) -> Result<Vec<i64>, DbError> {
+    if track_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; track_ids.len()].join(",");
+    let sql =
+        format!("SELECT id FROM tracks WHERE id IN ({placeholders}) AND cached_path IS NOT NULL");
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(rusqlite::params_from_iter(track_ids), |row| row.get(0))?;
+    Ok(rows.filter_map(Result::ok).collect())
+}
+
+/// Forget where the named tracks were downloaded to. The rows stay: a remote
+/// track is still in the library, it just has to be fetched again to play.
+pub fn clear_cached_paths_for(conn: &Connection, track_ids: &[i64]) -> Result<(), DbError> {
+    if track_ids.is_empty() {
+        return Ok(());
+    }
+    let placeholders = vec!["?"; track_ids.len()].join(",");
+    conn.execute(
+        &format!(
+            "UPDATE tracks SET cached_path = NULL, cache_size_bytes = NULL, \
+             cache_download_date = NULL WHERE id IN ({placeholders})"
+        ),
+        rusqlite::params_from_iter(track_ids),
+    )?;
+    Ok(())
+}
+
 /// Update the cached_path for a track after downloading, recording size and timestamp.
 pub fn set_cached_path(conn: &Connection, track_id: i64, path: &str) -> Result<(), DbError> {
     let size_bytes: Option<i64> = std::fs::metadata(path).ok().map(|m| m.len() as i64);

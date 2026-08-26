@@ -18,6 +18,7 @@ final class AppState {
     let playlists: PlaylistsModel
     let activity: ActivityModel
     let levels: PlayingLevels
+    let downloads: DownloadsModel
     let textFocus = TextFocus()
     let ui = UIState()
     let hotkeys: Hotkeys
@@ -41,6 +42,8 @@ final class AppState {
         let activity = ActivityModel()
         self.activity = activity
         self.levels = PlayingLevels(engine: engine)
+        let downloads = DownloadsModel(engine: engine)
+        self.downloads = downloads
         library.activity = activity
         player.activity = activity
         organize.activity = activity
@@ -61,6 +64,10 @@ final class AppState {
         // else would say so — the count is a database read, and the download
         // ran in the engine.
         player.onDownloadsLanded = { [weak library] in library?.loadStats() }
+        // The list, and the figures on it, arrive on two different events at
+        // two very different rates — see `DownloadsModel`.
+        player.onDownloadStoreChanged = { [weak downloads] in downloads?.reload() }
+        player.onDownloadProgress = { [weak downloads] in downloads?.applyProgress($0) }
         player.onLibraryChanged = { [weak library] in library?.libraryChanged() }
 
         // Control Center and the media keys ride the player's existing poll.
@@ -114,6 +121,7 @@ struct KoanApp: App {
                         .environment(state.playlists)
                         .environment(state.activity)
                         .environment(state.levels)
+                        .environment(state.downloads)
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)
@@ -289,6 +297,10 @@ struct KoanApp: App {
                 Button { state?.art.purge() } label: {
                     Label("Clear Artwork Cache", systemImage: Icon.clear)
                 }
+                Button { state?.library.clearDownloads() } label: {
+                    Label("Clear Downloaded Files", systemImage: Icon.clear)
+                }
+                .disabled(state?.activity.isLibraryBusy ?? false)
             }
         }
 

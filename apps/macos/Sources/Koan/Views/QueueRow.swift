@@ -30,7 +30,10 @@ struct QueueRowContent {
     var status: EntryStatus?
     var downloadProgress: Double?
     var failureReason: String?
-
+    /// Where this track's bytes are. Both false for an item with no library
+    /// row behind it, which draws no mark rather than a guessed one.
+    var onServer = false
+    var onDisk = false
     init(item: QueueItem) {
         trackId = item.trackId
         title = item.title
@@ -43,6 +46,8 @@ struct QueueRowContent {
         status = item.status
         downloadProgress = item.downloadProgress
         failureReason = item.failureReason
+        onServer = item.onServer
+        onDisk = item.onDisk
     }
 
     /// A playlist row, wearing whatever the queue currently thinks of it.
@@ -68,6 +73,8 @@ struct QueueRowContent {
         sleeve = track.albumId.map { .album($0) } ?? .track(track.id)
         downloadProgress = queued?.downloadProgress
         failureReason = queued?.failureReason
+        onServer = track.onServer
+        onDisk = track.onDisk
         status =
             if isCurrent { .playing }
             else if let live = queued?.status, live == .downloading || live == .priorityPending
@@ -158,6 +165,16 @@ struct QueueRow: View {
                 Color.clear.frame(width: 16, height: 1)
             }
 
+            // Where the bytes are, in the same mark and the same column the
+            // album view uses. Its own slot rather than the status column's:
+            // a track can be playing and still arriving at once, and one slot
+            // could only ever show whichever of the two it was told to.
+            SourceBadges(
+                onServer: item.onServer,
+                onDisk: item.onDisk,
+                downloading: downloading
+            )
+
             if let codec = item.codec {
                 Text(codec.uppercased())
                     .font(.caption2.monospaced())
@@ -187,6 +204,13 @@ struct QueueRow: View {
         // clicks landing there select nothing.
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+    }
+
+    /// The ring, when this row is fetching. Read off the row's own status so a
+    /// playlist row and a queue row answer the same way.
+    private var downloading: SourceBadges.Download? {
+        guard item.status == .downloading else { return nil }
+        return item.downloadProgress.map { .fraction($0) } ?? .indeterminate
     }
 
     /// A played row steps back rather than disappears — and it does it in
@@ -221,21 +245,9 @@ struct QueueRow: View {
         case .playing:
             PlayingIndicator(isPlaying: player.isPlaying)
         case .downloading:
-            // The ring is the whole indicator — a static arrow beside a
-            // separate bar said the same thing twice, in two places, and the
-            // column the eye already reads for state was the mute one.
-            if let progress = item.downloadProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-                    .frame(width: 14, height: 14)
-                    .help("Downloading — \(Int(progress * 100))%")
-            } else {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-                    .help("Downloading")
-            }
+            // Said by the badge in its own column, which can show it at the
+            // same time as this column shows the track playing.
+            Color.clear
         case .priorityPending:
             Image(systemName: "arrow.down.circle")
                 .foregroundStyle(.tint)

@@ -169,8 +169,9 @@ final class LibraryModel {
         /// Everything this section is showing.
         func rows() async -> Rows {
             switch section {
-            case .queue, .searchResults, .playlist:
-                // Owned by the player, search and playlist models respectively.
+            case .queue, .searchResults, .playlist, .downloads:
+                // Owned by the player, search, playlist and downloads models
+                // respectively.
                 return .none
             case .albums:
                 return .albums(
@@ -341,6 +342,49 @@ final class LibraryModel {
             if let job { activity?.end(job) }
             isScanning = false
         }
+    }
+
+    /// Throw away every file cached from the server.
+    ///
+    /// The library rows stay — they are what the server said exists — so the
+    /// tracks remain playable and simply download again on demand. Exclusive
+    /// like the other library tasks: it clears the cached paths off every row.
+    func clearDownloads() {
+        guard !isScanning else { return }
+        isScanning = true
+        let engine = self.engine
+        let job = activity?.begin("Clearing downloaded files", exclusive: true)
+        Task {
+            _ = try? await engine.clearDownloadCache()
+            if let job { activity?.end(job) }
+            isScanning = false
+            loadStats()
+        }
+    }
+
+    /// Throw away the downloaded copies of these tracks.
+    ///
+    /// Not exclusive like the library-wide tasks: it touches only the rows
+    /// named, and someone clearing one record should not have to wait behind a
+    /// scan. Anything playing from a copy being removed keeps playing — the
+    /// decoder has the file open, and unlinking it only takes the name away.
+    func clearDownloads(trackIds: [Int64]) {
+        guard !trackIds.isEmpty else { return }
+        let engine = self.engine
+        Task {
+            _ = try? await engine.clearDownloads(trackIds: trackIds)
+            loadStats()
+        }
+    }
+
+    /// Fetch these tracks into the cache without queueing them.
+    ///
+    /// Tracks already downloaded are skipped, so asking for a record you have
+    /// most of costs only the rest of it.
+    func downloadToCache(trackIds: [Int64]) {
+        guard !trackIds.isEmpty else { return }
+        let engine = self.engine
+        Task { try? await engine.downloadToCache(trackIds: trackIds) }
     }
 
     /// Full rescan of every configured folder. Minutes on a big library, so it

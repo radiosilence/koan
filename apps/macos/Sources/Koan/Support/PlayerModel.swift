@@ -19,6 +19,12 @@ final class PlayerModel {
 
     /// Position, on its own observable so only the transport sees the tick.
     let clock = PlaybackClock()
+    /// How far into the current track a seek can land. Equal to the duration
+    /// for anything on disk, and short of it while a download is still
+    /// arriving. Observed, unlike the snapshot it comes from, because the seek
+    /// bar draws it — and change-guarded, because it moves while a track caches
+    /// and then stops for the rest of the record.
+    private(set) var seekableMs: UInt64 = 0
     private(set) var queue: [QueueItem] = []
     /// Queue entries indexed by library track id, so a library row can show
     /// what the queue knows about it — downloading, failed, already played —
@@ -44,6 +50,9 @@ final class PlayerModel {
     /// thumb back to the engine's position mid-gesture.
     var scrubbing: Double?
     var lastError: String?
+    /// Something the app declined to do, and why. Not a failure — the state it
+    /// describes resolves on its own.
+    var lastNotice: String?
 
     private var knownQueueVersion: UInt64 = .max
     /// Run after every state read. Now Playing hangs off this rather than
@@ -58,8 +67,9 @@ final class PlayerModel {
         // Reading the engine is a suspension now, so the first frame renders
         // against a stopped transport and `start()` fills it in.
         self.nowPlaying = NowPlaying(
-            state: .stopped, positionMs: 0, durationMs: 0, queueItemId: nil,
-            entry: nil, format: nil, playlistVersion: 0, radioEnabled: false
+            state: .stopped, positionMs: 0, durationMs: 0, seekableMs: 0,
+            queueItemId: nil, entry: nil, format: nil, playlistVersion: 0,
+            radioEnabled: false
         )
     }
 
@@ -102,13 +112,16 @@ final class PlayerModel {
                 guard let self else { return }
                 switch event {
                 case .playbackChanged(let nowPlaying):
-                    await self.tick(nowPlaying)
+                    self.apply(nowPlaying)
                 case .queueChanged:
-                    await self.applyQueueChange()
+                    self.applyQueueChange()
                 case .positionChanged(let positionMs):
                     self.applyPosition(positionMs)
                 case .downloadsChanged(let downloads):
                     self.applyDownloads(downloads)
+                    self.onDownloadProgress?(downloads)
+                case .downloadStoreChanged:
+                    self.onDownloadStoreChanged?()
                 case .libraryChanged:
                     self.onLibraryChanged?()
                 }
@@ -116,21 +129,56 @@ final class PlayerModel {
         }
     }
 
-    /// Apply a snapshot. Called on subscribe and whenever the engine says
-    /// something changed.
-    /// Apply a snapshot. `nil` fetches one — which only the initial seed needs,
-    /// since every event that reports a change carries the new state with it.
-    fileprivate func tick(_ snapshot: NowPlaying? = nil) async {
-        let now = if let snapshot { snapshot } else { await engine.nowPlaying() }
+    /// Seed from the engine. Only the initial subscribe needs this — every
+    /// event that reports a change carries the new state with it.
+    fileprivate func tick() async {
+        apply(await engine.nowPlaying())
+    }
+
+    /// Apply a snapshot the engine sent.
+    ///
+    /// Nothing here waits. This runs on the thread draining the event stream,
+    /// and that stream is sequential: an `await` on a database round trip here
+    /// held up every message behind it — position included — for as long as it
+    /// took. Which is why playback appeared to stall precisely when downloads
+    /// were busy bumping the queue version.
+    fileprivate func apply(_ now: NowPlaying) {
         nowPlaying = now
         updateDerived(now)
-        // The queue only gets rebuilt when the engine says it changed.
-        if nowPlaying.playlistVersion != knownQueueVersion {
-            knownQueueVersion = nowPlaying.playlistVersion
-            await rebuildQueue()
+        // The queue only gets rebuilt when the engine says it changed, and the
+        // rebuild happens somewhere this loop is not.
+        if now.playlistVersion != knownQueueVersion {
+            knownQueueVersion = now.playlistVersion
+            scheduleQueueRebuild()
         }
         settlePendingSeek()
         onTick?()
+    }
+
+    /// The rebuild in flight, if there is one.
+    @ObservationIgnored private var queueRebuild: Task<Void, Never>?
+    /// Whether the queue changed again while one was running.
+    @ObservationIgnored private var queueRebuildPending = false
+
+    /// Rebuild the queue off the event stream, and only once for any number of
+    /// changes that arrive while one is running.
+    ///
+    /// A download changing state bumps the queue version, so a handful of
+    /// transfers announce themselves several times a second. Rebuilding per
+    /// announcement meant a database round trip per announcement, in front of
+    /// every other event.
+    private func scheduleQueueRebuild() {
+        guard queueRebuild == nil else {
+            queueRebuildPending = true
+            return
+        }
+        queueRebuild = Task { @MainActor [weak self] in
+            defer { self?.queueRebuild = nil }
+            repeat {
+                self?.queueRebuildPending = false
+                await self?.rebuildQueue()
+            } while self?.queueRebuildPending == true
+        }
     }
 
     /// Where a seek asked to land, until the engine reports being near it.
@@ -150,8 +198,17 @@ final class PlayerModel {
         }
     }
 
+    /// Where each queue item sits, so a progress event can reach its row
+    /// without walking the queue to find it. Rebuilt with the queue, which is
+    /// the only thing that moves rows.
+    @ObservationIgnored private var queueIndex: [String: Int] = [:]
+
     private func rebuildQueue() async {
         queue = await engine.queue()
+        queueIndex = Dictionary(
+            queue.enumerated().map { ($0.element.queueItemId, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
+        )
         // Here rather than at one of the callers: the queue is rebuilt from
         // two places — a queue event, and a playback event carrying a version
         // that moved — and only one of them used to say so. Which of the two
@@ -187,12 +244,30 @@ final class PlayerModel {
             downloads.map { ($0.queueItemId, $0.progress) },
             uniquingKeysWith: { first, _ in first }
         )
-        for index in queue.indices {
-            let progress = byItem[queue[index].queueItemId] ?? nil
+        // Only the rows that are fetching, and the ones that just stopped —
+        // not the whole queue. This runs ten times a second for as long as
+        // anything is downloading, and a queue is thousands of rows long: the
+        // walk cost more than everything else on this loop put together, to
+        // touch the handful of rows that had actually moved.
+        for id in downloading.union(byItem.keys) {
+            guard let index = queueIndex[id], queue.indices.contains(index) else { continue }
+            let progress = byItem[id] ?? nil
             guard queue[index].downloadProgress != progress else { continue }
             queue[index].downloadProgress = progress
             if let trackId = queue[index].trackId {
                 queuedByTrack[trackId] = queue[index]
+            }
+        }
+
+        // The transport reads `currentEntry`, which is its own copy and not one
+        // of the rows above. Without this the seek bar's downloaded extent only
+        // moved when the state or the cursor did — so a track that spends its
+        // whole download unable to say what it is showed a figure frozen at
+        // whatever had arrived when it started, or nothing at all.
+        if let entry = currentEntry {
+            let progress = byItem[entry.queueItemId] ?? nil
+            if entry.downloadProgress != progress {
+                currentEntry?.downloadProgress = progress
             }
         }
 
@@ -216,11 +291,15 @@ final class PlayerModel {
     /// sync nobody asked for reaches the browser — the engine says so rather
     /// than the app having to guess from whatever it happened to start itself.
     var onLibraryChanged: (() -> Void)?
+    /// The set of transfers changed shape — one appeared or settled.
+    var onDownloadStoreChanged: (() -> Void)?
+    /// Byte counts moved. Fires several times a second while anything is
+    /// downloading, and not at all the rest of the time.
+    var onDownloadProgress: (([DownloadProgress]) -> Void)?
 
     /// The queue changed — rebuild it and refresh what depends on it.
-    fileprivate func applyQueueChange() async {
-        await rebuildQueue()
-        await tick()
+    fileprivate func applyQueueChange() {
+        scheduleQueueRebuild()
     }
 
     /// Position moved. The only genuinely periodic event, and the only thing
@@ -334,11 +413,36 @@ final class PlayerModel {
         {
             currentFormat = now.format
         }
+        if now.seekableMs != seekableMs { seekableMs = now.seekableMs }
         clock.update(positionMs: now.positionMs, durationMs: now.durationMs)
     }
 
     /// 0–1 through the current track. Reflects the drag while scrubbing.
     var progress: Double { scrubbing ?? clock.progress }
+
+    /// Whether the track can be seeked at all yet.
+    ///
+    /// False while a download is playing that could not say what it is until
+    /// the rest of it lands — there is nothing to seek against. It becomes true
+    /// on its own when the transfer finishes.
+    var canSeek: Bool { seekableMs > 0 }
+
+    /// How much of the track can be reached, as a fraction.
+    ///
+    /// 1 for anything on disk. Short of it while a download is still arriving —
+    /// the engine clamps a seek to the same extent, so a scrub past this would
+    /// land somewhere the thumb was never dragged to.
+    var seekable: Double {
+        guard clock.durationMs > 0, seekableMs < clock.durationMs else { return 1 }
+        return Double(seekableMs) / Double(clock.durationMs)
+    }
+
+    /// How much of what is playing has arrived, while it is still arriving.
+    ///
+    /// Bytes, not reachable time: the two differ for a track that is playing
+    /// but cannot be seeked, where the point of the mark is to say the transfer
+    /// is going and roughly how far — not to offer a position.
+    var fetched: Double? { currentEntry?.downloadProgress }
 
     var upNext: [QueueItem] {
         guard let cursor = nowPlaying.queueItemId,
@@ -358,9 +462,10 @@ final class PlayerModel {
 
     func play(itemId: String) { attempt { try await self.engine.play(queueItemId: itemId) } }
 
-    /// Commit a scrub. Position comes from the drag, not the engine.
+    /// Commit a scrub. Position comes from the drag, not the engine, and stops
+    /// at what has been downloaded.
     func seek(fraction: Double) {
-        seek(toMs: UInt64(max(0, min(1, fraction)) * Double(clock.durationMs)))
+        seek(toMs: UInt64(clamp(fraction) * Double(clock.durationMs)))
     }
 
     /// Called as the thumb is dragged. Cancels any seek still settling, since
@@ -368,15 +473,29 @@ final class PlayerModel {
     func beginScrub(fraction: Double) {
         pendingSeekMs = nil
         pendingSeekTicks = 0
-        scrubbing = min(1, max(0, fraction))
+        scrubbing = clamp(fraction)
+    }
+
+    /// A drag position held inside the track and inside what has arrived.
+    private func clamp(_ fraction: Double) -> Double {
+        min(seekable, min(1, max(0, fraction)))
+    }
+
+    /// Why the playhead did not move. Reaching for a position in a track that
+    /// has not arrived is a reasonable thing to try, and a bar that simply
+    /// ignores the attempt teaches nothing.
+    func explainUnseekable() {
+        let progress = fetched.map { " — \(Int($0 * 100))% so far" } ?? ""
+        lastNotice = "Still downloading\(progress). This track can be seeked once it has finished."
     }
 
     /// Nudge by a number of seconds, clamped to the track. What the arrow-key
     /// shortcuts and the TUI's `,`/`.` do.
     func seek(bySeconds delta: Int) {
+        guard canSeek else { return explainUnseekable() }
         let current = Int64(clock.positionMs)
         let target = max(0, current + Int64(delta) * 1000)
-        seek(toMs: UInt64(min(target, Int64(clock.durationMs))))
+        seek(toMs: UInt64(min(target, Int64(seekableMs))))
     }
 
     /// Hold the requested position until the engine agrees with it.
@@ -646,8 +765,14 @@ final class PlayerModel {
 extension KoanEngine {
     func events() -> AsyncStream<PlayerEvent> {
         AsyncStream { continuation in
+            // Subscribed once, for the life of the stream. Asking the engine
+            // for each message separately meant a new subscription each time,
+            // and a broadcast receiver only sees what is published after it
+            // subscribes — so everything arriving between one message and the
+            // next request was dropped on the floor.
+            let subscription = self.subscribe()
             let pump = Task {
-                while let event = await self.nextEvent() {
+                while let event = await subscription.next() {
                     continuation.yield(event)
                 }
                 continuation.finish()

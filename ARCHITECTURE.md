@@ -210,7 +210,7 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
 | `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread), `VizLevels` (spectrum reduced to low/mid/high, cloning no waveform) |
 | `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold, beat detection (low-band transient). Configurable fps. Writes to `VizSnapshot`. |
-| `streaming.rs` | Progressive download with `Condvar`-based ready signaling for streaming playback |
+| `streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
 
 ### `player/`
 

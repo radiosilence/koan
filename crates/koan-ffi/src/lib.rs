@@ -88,6 +88,12 @@ pub enum PlayerEvent {
     /// is in flight any more, which is also how a client learns a download
     /// finished.
     DownloadsChanged { downloads: Vec<DownloadProgress> },
+    /// The set of transfers changed — one appeared, settled or was forgotten.
+    ///
+    /// Separate from `DownloadsChanged`, which carries byte counts and fires
+    /// several times a second. This one fires when the *list* changes, which is
+    /// what a client rebuilds a list on.
+    DownloadStoreChanged { version: u64 },
     /// The library's rows changed — a scan, a sync, an import, an organize or
     /// a folder being forgotten. Carries a version so a client can tell one
     /// change from a repeat of the one it already handled.
@@ -112,6 +118,46 @@ pub trait ProgressReporter: Send + Sync {
     fn started(&self, total: u64);
     /// How many are done, and what is being worked on now.
     fn advanced(&self, done: u64, detail: String);
+}
+
+/// One client's place in the event stream.
+///
+/// Held for as long as the client is listening, which is the whole point: a
+/// broadcast receiver only sees what is published after it subscribes, so
+/// subscribing per message loses everything that arrives between one message
+/// being handed over and the next call asking for another. That gap is small
+/// and the loss was invisible while playback position was the only thing being
+/// published — with transfers running and three times the traffic, position
+/// updates were being dropped and the transport appeared to stall.
+///
+/// Keeping the receiver means the channel's buffer does its job: messages
+/// queue while the client is busy and are delivered in order when it comes
+/// back.
+#[derive(uniffi::Object)]
+pub struct EventStream {
+    rx: tokio::sync::Mutex<tokio::sync::broadcast::Receiver<PlayerEvent>>,
+}
+
+#[uniffi::export]
+impl EventStream {
+    /// The next thing to change. `None` once the engine is gone, which ends
+    /// the caller's loop.
+    ///
+    /// A client that falls far enough behind loses the messages it missed
+    /// rather than delaying the engine — every variant carries an absolute
+    /// value, so the one that does arrive is still correct.
+    pub async fn next(&self) -> Option<PlayerEvent> {
+        let mut rx = self.rx.lock().await;
+        loop {
+            match rx.recv().await {
+                Ok(event) => return Some(event),
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    log::warn!("client missed {n} events");
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
+            }
+        }
+    }
 }
 
 /// The player, the library, and the bridge between them.
@@ -180,7 +226,6 @@ pub struct KoanEngine {
     /// The analyser's latest frame. Only the three-band summary crosses the
     /// boundary — see `viz_levels`.
     viz: Arc<VizSnapshot>,
-    db_path: PathBuf,
     events: tokio::sync::broadcast::Sender<PlayerEvent>,
     /// Set while the automatic sync is running, so a UI can say so rather than
     /// appearing to do nothing for the minute it takes.
@@ -257,18 +302,36 @@ impl KoanEngine {
     /// that falls behind loses the events it missed rather than delaying the
     /// engine — every variant carries an absolute value, so the one that does
     /// arrive is still correct.
-    pub async fn next_event(self: Arc<Self>) -> Option<PlayerEvent> {
-        let mut rx = self.events.subscribe();
-        loop {
-            match rx.recv().await {
-                Ok(event) => return Some(event),
-                // Fell behind. The next event supersedes whatever was dropped.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    log::debug!("client missed {n} events");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-            }
-        }
+    pub fn subscribe(&self) -> Arc<EventStream> {
+        Arc::new(EventStream {
+            rx: tokio::sync::Mutex::new(self.events.subscribe()),
+        })
+    }
+
+    /// Every transfer koan knows about: what it is fetching now, and what it
+    /// fetched a moment ago.
+    ///
+    /// Running first, then whatever settled most recently. Read it on
+    /// `DownloadStoreChanged` for the list and on `DownloadsChanged` for the
+    /// figures — the byte counts here are a snapshot taken as this was called.
+    pub fn downloads(&self) -> Vec<DownloadEntry> {
+        koan_core::remote::downloads::store()
+            .all()
+            .iter()
+            .map(DownloadEntry::from)
+            .collect()
+    }
+
+    /// How many transfers are actually moving. Cheap enough for a sidebar to
+    /// read on every redraw.
+    pub fn active_download_count(&self) -> u32 {
+        koan_core::remote::downloads::store().active() as u32
+    }
+
+    /// Forget the transfers that have already settled. Running ones are left
+    /// alone — stopping one is a different verb.
+    pub fn clear_settled_downloads(&self) {
+        koan_core::remote::downloads::store().clear_settled();
     }
 
     /// Cheap enough to poll every frame — use it to decide whether to call
@@ -296,15 +359,21 @@ impl KoanEngine {
             // record. A queue with no database behind it simply has no album
             // IDs; the art falls back to the per-track lookup as before.
             let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
-            let album_ids = self
-                .db()
-                .ok()
+            // Two questions of the same rows, asked once each for the whole
+            // queue rather than once per row.
+            let db = self.db().ok();
+            let album_ids = db
+                .as_ref()
                 .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
+                .unwrap_or_default();
+            let sources = db
+                .as_ref()
+                .and_then(|db| queries::batch::sources_for_tracks(&db.conn, &track_ids).ok())
                 .unwrap_or_default();
 
             entries
                 .iter()
-                .map(|e| QueueItem::from_entry(e, &album_ids))
+                .map(|e| QueueItem::from_entry(e, &album_ids, &sources))
                 .collect()
         })
         .await
@@ -1606,7 +1675,7 @@ impl KoanEngine {
                 remote_signed_in: koan_core::helpers::get_remote_password(&cfg).is_some(),
                 remote_tracks: db
                     .as_ref()
-                    .map(koan_core::helpers::tracks_from_server)
+                    .map(|db| koan_core::helpers::tracks_from_server(db))
                     .unwrap_or(0),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
@@ -1779,10 +1848,66 @@ impl KoanEngine {
             let db = self.db()?;
             let cfg = Config::load().unwrap_or_default();
             let cleared = koan_core::helpers::clear_download_cache(&db, &cfg);
+            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            self.bump_library();
             Ok(CacheCleared {
                 files: cleared.files,
                 bytes: cleared.bytes,
             })
+        })
+        .await
+    }
+
+    /// Delete the downloaded copies of just these tracks. The library rows
+    /// stay, and they fetch again on demand.
+    pub async fn clear_downloads(
+        self: Arc<Self>,
+        track_ids: Vec<i64>,
+    ) -> Result<CacheCleared, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let cleared = koan_core::helpers::clear_downloads_for(&db, &track_ids);
+            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            self.bump_library();
+            Ok(CacheCleared {
+                files: cleared.files,
+                bytes: cleared.bytes,
+            })
+        })
+        .await
+    }
+
+    /// Fetch these tracks into the cache now, without queueing them.
+    ///
+    /// Downloads are normally a side effect of wanting to play something; this
+    /// is for wanting the bytes on the machine and nothing else — before going
+    /// somewhere without a server, most obviously. Tracks already downloaded
+    /// are skipped, so asking twice costs nothing.
+    ///
+    /// The transfers get identities of their own rather than borrowing a queue
+    /// item's, because there is no queue item: they appear in the download
+    /// store and nowhere else.
+    pub async fn download_to_cache(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = track_ids
+                .into_iter()
+                .map(|id| (id, koan_core::player::state::QueueItemId::new()))
+                .collect();
+            koan_core::helpers::spawn_downloads(pending, self.tx.clone(), self.state.clone());
+            Ok(())
+        })
+        .await
+    }
+
+    /// Which of these tracks have a downloaded copy. What a menu asks before
+    /// deciding whether it is offering to fetch or to throw away.
+    pub async fn downloaded_track_ids(
+        self: Arc<Self>,
+        track_ids: Vec<i64>,
+    ) -> Result<Vec<i64>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            queries::downloaded_of(&db.conn, &track_ids).map_err(db_err)
         })
         .await
     }
@@ -2155,8 +2280,9 @@ impl KoanEngine {
             .spawn(move || {
                 let mut last_version = u64::MAX;
                 let mut last_position = u64::MAX;
-                let mut last_signature: Option<(PlaybackState, Option<String>)> = None;
+                let mut last_signature: Option<(PlaybackState, Option<String>, u64)> = None;
                 let mut last_downloads: Vec<DownloadProgress> = Vec::new();
+                let mut last_store = u64::MAX;
                 // Starts where the engine starts, so a launch is not announced
                 // as a change to a library nobody has read yet.
                 let mut last_library = 0u64;
@@ -2175,7 +2301,15 @@ impl KoanEngine {
 
                     let state = engine.state.playback_state();
                     let cursor = engine.state.cursor().map(|c| c.0.to_string());
-                    let signature = (state, cursor);
+                    // The seekable extent belongs in the signature: it moves
+                    // while a track downloads without the state or the cursor
+                    // moving, and a client draws a boundary from it. Rounded to
+                    // the second, because it is drawn as a bar a few hundred
+                    // pixels wide and nothing finer is visible. It stops moving
+                    // the moment the download lands, so this costs a snapshot
+                    // per tick only while one is in flight.
+                    let seekable = engine.state.seekable_ms() / 1000;
+                    let signature = (state, cursor, seekable);
                     if last_signature.as_ref() != Some(&signature) {
                         last_signature = Some(signature);
                         publish(PlayerEvent::PlaybackChanged {
@@ -2203,8 +2337,34 @@ impl KoanEngine {
                         })
                         .collect();
                     if downloads != last_downloads {
+                        // A transfer leaving the set landed on disk, which wrote
+                        // a cached path onto a library row. Nothing else says
+                        // so — the download runs in koan-core, which has no
+                        // notion of this version — and without it a track goes
+                        // on reading as "on the server, not here" until
+                        // something unrelated reloads the row.
+                        let still_running: std::collections::HashSet<&str> =
+                            downloads.iter().map(|d| d.queue_item_id.as_str()).collect();
+                        if last_downloads
+                            .iter()
+                            .any(|d| !still_running.contains(d.queue_item_id.as_str()))
+                        {
+                            engine.bump_library();
+                        }
                         last_downloads = downloads.clone();
                         publish(PlayerEvent::DownloadsChanged { downloads });
+                    }
+
+                    // Ten a second, which is this loop's rate and fast enough
+                    // that a figure on screen reacts as a transfer changes pace.
+                    koan_core::remote::downloads::store().sample_rates();
+
+                    let store_version = koan_core::remote::downloads::store().version();
+                    if store_version != last_store {
+                        last_store = store_version;
+                        publish(PlayerEvent::DownloadStoreChanged {
+                            version: store_version,
+                        });
                     }
 
                     let library = engine
@@ -2354,6 +2514,10 @@ impl KoanEngine {
             message: e.to_string(),
         })?;
 
+        // Before anything can start a download of its own, so this only ever
+        // sees files left by a previous run.
+        koan_core::helpers::sweep_partial_downloads(&Config::load().unwrap_or_default());
+
         let (state, _timeline, viz, tx) = Player::spawn();
         koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
 
@@ -2401,7 +2565,6 @@ impl KoanEngine {
             state,
             tx,
             viz,
-            db_path,
             events,
             auto_syncing,
             auto_scanning,
@@ -2423,7 +2586,8 @@ impl KoanEngine {
         NowPlaying {
             state: play_state.into(),
             position_ms: self.state.position_ms(),
-            duration_ms: info.as_ref().map(|i| i.duration_ms).unwrap_or(0),
+            duration_ms: self.state.duration_ms(),
+            seekable_ms: self.state.seekable_ms(),
             queue_item_id: cursor.map(|c| c.0.to_string()),
             entry,
             format: info
@@ -2434,8 +2598,14 @@ impl KoanEngine {
         }
     }
 
-    fn db(&self) -> Result<Database, KoanError> {
-        Database::open(&self.db_path).map_err(db_err)
+    /// A connection for one piece of work, borrowed from the pool.
+    ///
+    /// This used to open one: a connection, a permissions syscall, the whole
+    /// schema DDL and a WAL checkpoint, every time, before a row came back.
+    /// Clicking an album paid all of it, and while downloads were writing the
+    /// checkpoint contended with them and it took seconds.
+    fn db(&self) -> Result<koan_core::db::pool::Handle<'static>, KoanError> {
+        koan_core::db::pool::shared().get().map_err(db_err)
     }
 
     fn send(&self, cmd: PlayerCommand) -> Result<(), KoanError> {

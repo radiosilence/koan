@@ -112,10 +112,17 @@ The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0
 
 ```graphql
 # What's playing?
+#
+# `seekableMs` is how far in a seek can land. It equals `durationMs` for
+# anything on disk and falls short of it while a track is still downloading,
+# so a client draws its seek bar against it rather than letting someone scrub
+# into audio that has not arrived.
 {
   nowPlaying {
     state
     positionMs
+    durationMs
+    seekableMs
     track { title, artist, codec, sampleRate, bitDepth }
   }
 }
