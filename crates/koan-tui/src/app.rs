@@ -401,7 +401,7 @@ impl App {
 
     /// Load favourites from the database.
     pub fn load_favourites(&mut self) {
-        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
+        if let Ok(db) = koan_core::db::pool::shared().get()
             && let Ok(favs) = koan_core::db::queries::load_favourites(&db.conn)
         {
             self.favourites = favs;
@@ -415,7 +415,7 @@ impl App {
     /// on the final path so the star survives.
     pub fn toggle_favourite(&mut self, path: &std::path::Path) -> bool {
         let path = &koan_core::remote::download::strip_part_suffix(path);
-        if let Ok(db) = koan_core::db::connection::Database::open(&self.db_path)
+        if let Ok(db) = koan_core::db::pool::shared().get()
             && let Ok(is_fav) = koan_core::db::queries::toggle_favourite(&db.conn, path)
         {
             if is_fav {
@@ -617,7 +617,6 @@ impl App {
                     let title = entry.title.clone();
                     let album = entry.album.clone();
                     let duration_secs = entry.duration_ms.unwrap_or(0) / 1000;
-                    let db_path = self.db_path.clone();
                     let track_path = entry.path.clone();
 
                     let (tx, rx) = crossbeam_channel::bounded(1);
@@ -628,7 +627,7 @@ impl App {
                         .name("koan-lyrics".into())
                         .spawn(move || {
                             let result = (|| -> Option<koan_core::lyrics::Lyrics> {
-                                let db = match koan_core::db::connection::Database::open(&db_path) {
+                                let db = match koan_core::db::pool::shared().get() {
                                     Ok(db) => db,
                                     Err(e) => {
                                         if let Ok(mut logs) = log_clone.lock() {
@@ -768,18 +767,10 @@ impl App {
                 self.tx.send(PlayerCommand::PrevTrack).ok();
             }
             KeyCode::Char('.') | KeyCode::Right => {
-                let target = self
-                    .state
-                    .position_ms()
-                    .saturating_add(10_000)
-                    .min(self.state.seekable_ms());
-                self.tx.send(PlayerCommand::Seek(target)).ok();
+                self.seek_to(self.state.position_ms().saturating_add(10_000));
             }
             KeyCode::Char(',') | KeyCode::Left => {
-                let pos = self.state.position_ms();
-                self.tx
-                    .send(PlayerCommand::Seek(pos.saturating_sub(10_000)))
-                    .ok();
+                self.seek_to(self.state.position_ms().saturating_sub(10_000));
             }
             KeyCode::Char('e') => {
                 self.mode = Mode::QueueEdit;
@@ -1389,7 +1380,7 @@ impl App {
         let visible = self.visible_queue();
         let selected: Vec<_> = self.queue.selected_ids.iter().copied().collect();
 
-        let db = match koan_core::db::connection::Database::open(&self.db_path) {
+        let db = match koan_core::db::pool::shared().get() {
             Ok(db) => db,
             Err(_) => {
                 self.status_message = Some(("DB error".into(), std::time::Instant::now()));
@@ -1829,20 +1820,22 @@ impl App {
                     && event.column >= self.layout.transport_text_area.x
                     && event.column
                         < self.layout.transport_text_area.x + self.layout.transport_text_area.width
-                    && let Some(info) = self.state.track_info()
+                    && self.state.track_info().is_some()
                 {
                     let click_x = event.column;
-                    let dur = info.duration_ms;
-                    let seekable_ms = self.state.seek_ceiling_ms();
+                    // The duration the bar was drawn against, not the probed
+                    // one: a partial file reports short, and a click would then
+                    // land somewhere other than where it was aimed.
+                    let dur = self.state.duration_ms();
 
                     if let Some(pos) = TransportBar::seek_from_click(
                         self.layout.seek_bar_start,
                         self.layout.seek_bar_width,
                         click_x,
                         dur,
-                        seekable_ms,
+                        self.state.seek_ceiling_ms(),
                     ) {
-                        self.tx.send(PlayerCommand::Seek(pos)).ok();
+                        self.seek_to(pos);
                     } else if click_x < self.layout.seek_bar_start {
                         // Clicked on the play/pause status icon — toggle.
                         if self.state.playback_state() == PlaybackState::Playing {
@@ -2912,6 +2905,34 @@ impl App {
         };
         self.status_message = Some((format!("can't play — {fresh}"), std::time::Instant::now()));
         self.noted_failures.insert(fresh);
+    }
+
+    /// Seek, clamped to what the player will accept.
+    ///
+    /// A track still arriving is reachable only as far as its bytes go, and one
+    /// whose container cannot state a duration until the last of them lands —
+    /// Ogg — is reachable nowhere at all. Sent unclamped, every seek into that
+    /// track is a seek to zero, so it says why nothing happened instead.
+    fn seek_to(&mut self, target_ms: u64) {
+        if self.state.track_info().is_none() {
+            return;
+        }
+        let seekable = self.state.seekable_ms();
+        if seekable == 0 {
+            let so_far = self
+                .state
+                .current_download_fraction()
+                .map(|f| format!(" — {}% so far", (f * 100.0) as u32))
+                .unwrap_or_default();
+            self.status_message = Some((
+                format!("still downloading{so_far} — seekable once it lands"),
+                std::time::Instant::now(),
+            ));
+            return;
+        }
+        self.tx
+            .send(PlayerCommand::Seek(target_ms.min(seekable)))
+            .ok();
     }
 
     /// The track info modal renders nothing once its track leaves the queue,

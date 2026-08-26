@@ -459,6 +459,7 @@ pub fn full_scan(
         total.removed_paths.extend(r.removed_paths);
         total.errors.extend(r.errors);
     }
+    db.optimize();
     total
 }
 

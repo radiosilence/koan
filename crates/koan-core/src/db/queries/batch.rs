@@ -129,6 +129,10 @@ pub fn tracks_for_albums(
 ///
 /// A track matches on either its own artist or its album artist, so one row can
 /// land under two keys — the map is built by re-checking each requested ID.
+///
+/// The album-artist half goes through a subquery on `albums` rather than
+/// `al.artist_id IN (...)` on the join: an `OR` spanning two tables cannot use
+/// an index, and the join form read the whole library for it.
 pub fn tracks_for_artists(
     conn: &Connection,
     artist_ids: &[i64],
@@ -138,8 +142,10 @@ pub fn tracks_for_artists(
     }
     let ph = placeholders(artist_ids.len());
     let sql = format!(
-        "SELECT {}, al.artist_id {} WHERE t.artist_id IN {} OR al.artist_id IN {}
-         ORDER BY al.date, al.title, t.disc, t.track_number",
+        "SELECT {}, al.artist_id {}
+          WHERE t.artist_id IN {}
+             OR t.album_id IN (SELECT id FROM albums WHERE artist_id IN {})
+          ORDER BY al.date, al.title, t.disc, t.track_number",
         TRACK_COLUMNS, TRACK_JOINS, ph, ph
     );
     let mut stmt = conn.prepare(&sql)?;

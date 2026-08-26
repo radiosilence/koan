@@ -275,11 +275,20 @@ pub fn album_remote_id_for_path(
 }
 
 /// Load all favourite track paths that have a remote_id, returning (path, remote_id) pairs.
+///
+/// A union of three indexed lookups rather than a join on an `OR` across the
+/// three path columns, which SQLite cannot index and answered by reading every
+/// track in the library.
 pub fn favourites_with_remote_id(conn: &Connection) -> rusqlite::Result<Vec<(PathBuf, String)>> {
     let mut stmt = conn.prepare(
-        "SELECT f.track_path, t.remote_id FROM favourites f
-         JOIN tracks t ON (t.path = f.track_path OR t.cached_path = f.track_path OR t.remote_url = f.track_path)
-         WHERE t.remote_id IS NOT NULL",
+        "SELECT path, remote_id FROM tracks
+          WHERE remote_id IS NOT NULL AND path IN (SELECT track_path FROM favourites)
+         UNION
+         SELECT cached_path, remote_id FROM tracks
+          WHERE remote_id IS NOT NULL AND cached_path IN (SELECT track_path FROM favourites)
+         UNION
+         SELECT remote_url, remote_id FROM tracks
+          WHERE remote_id IS NOT NULL AND remote_url IN (SELECT track_path FROM favourites)",
     )?;
     let rows = stmt.query_map([], |row| {
         let path: String = row.get(0)?;
@@ -362,6 +371,41 @@ mod tests {
             rusqlite::params![artist_id, album_id, path, remote_id],
         )
         .unwrap();
+    }
+
+    /// The union that replaced the `OR` join has to find a favourite by
+    /// whichever of the three paths it was starred under.
+    #[test]
+    fn favourites_with_remote_id_matches_all_three_paths() {
+        let conn = test_conn();
+        conn.execute_batch(
+            "INSERT INTO artists (id, name) VALUES (1, 'Artist');
+             INSERT INTO albums (id, title, artist_id) VALUES (1, 'Album', 1);
+             INSERT INTO tracks (id, title, artist_id, album_id, source, path, remote_id)
+               VALUES (1, 'By path', 1, 1, 'local', '/music/one.flac', 'r1');
+             INSERT INTO tracks (id, title, artist_id, album_id, source, cached_path, remote_id)
+               VALUES (2, 'By cache', 1, 1, 'cached', '/cache/two.flac', 'r2');
+             INSERT INTO tracks (id, title, artist_id, album_id, source, remote_url, remote_id)
+               VALUES (3, 'By url', 1, 1, 'remote', 'http://server/three', 'r3');
+             -- Starred but not on the server, so it must not come back.
+             INSERT INTO tracks (id, title, artist_id, album_id, source, path)
+               VALUES (4, 'Local only', 1, 1, 'local', '/music/four.flac');
+             INSERT INTO favourites (track_path) VALUES
+               ('/music/one.flac'), ('/cache/two.flac'),
+               ('http://server/three'), ('/music/four.flac');",
+        )
+        .unwrap();
+
+        let mut found = favourites_with_remote_id(&conn).unwrap();
+        found.sort();
+        assert_eq!(
+            found,
+            vec![
+                (PathBuf::from("/cache/two.flac"), "r2".to_string()),
+                (PathBuf::from("/music/one.flac"), "r1".to_string()),
+                (PathBuf::from("http://server/three"), "r3".to_string()),
+            ]
+        );
     }
 
     #[test]

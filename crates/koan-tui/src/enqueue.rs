@@ -24,7 +24,7 @@ pub fn enqueue_playlist(
     tx: crossbeam_channel::Sender<PlayerCommand>,
     download_queue: DownloadQueue,
 ) {
-    let db = match koan_core::db::connection::Database::open_default() {
+    let db = match koan_core::db::pool::shared().get() {
         Ok(db) => db,
         Err(e) => {
             log::error!("db error: {}", e);

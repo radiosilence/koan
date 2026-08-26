@@ -98,16 +98,19 @@ private struct DownloadRow: View {
             // rendered the same full-width track whatever it was given, which
             // made six transfers at six different percentages look identical.
             //
+            // The quiet end is the part that has not arrived, the same way
+            // round as the seek bar. Lighting what *had* arrived meant a
+            // transfer finishing took its highlight away and the bar dropped
+            // back to looking empty — a row that had just completed read as
+            // one that had not started.
+            //
             // Hierarchical styles, which a `Canvas` resolves against its own
             // environment — `.tint` does not come through it and drew nothing.
-            // What has arrived reads as present rather than as coloured: this
-            // is a quantity, not a state, and the accent said neither.
             Canvas { context, size in
                 context.fill(Self.bar(in: size, fraction: 1), with: .style(.quaternary))
                 context.fill(Self.bar(in: size, fraction: fraction), with: .style(.primary))
             }
             .frame(height: 4)
-            .opacity(isRunning ? 1 : 0.35)
 
             HStack(spacing: 6) {
                 Text(subtitle)
@@ -142,10 +145,13 @@ private struct DownloadRow: View {
 
     private var isRunning: Bool { transfer.state == .running || transfer.state == .queued }
 
-    /// What has arrived. A transfer with no stated length has no fraction, and
-    /// draws an empty bar rather than a full one — it is going, not finished.
+    /// What has arrived.
     private var fraction: Double {
+        // Whole once it has landed, whatever the last figure said — the bar
+        // never goes backwards on completion.
         if transfer.state == .done { return 1 }
+        // A transfer with no stated length has no fraction and draws an empty
+        // bar rather than a full one: it is going, not finished.
         return progress ?? 0
     }
 

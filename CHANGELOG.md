@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.32.0 (2026-08-26)
 
 ### Removed
 
@@ -18,7 +18,7 @@
 
 - **A large track no longer holds the player deaf while it opens.** Reading a container to find out what it is happened on the thread that answers play, pause and seek. Ogg states its duration in its last page, so opening one mid-download waited for the entire remaining transfer first — twenty-two seconds of an unresponsive player, on a fast connection. That reading now happens on its own thread and comes back as a message like anything else.
 
-- **A long Opus starts playing straight away rather than waiting for the whole download.** It used to wait because of that last page. koan now asks the container to describe itself from the bytes that have arrived, and where it cannot — which in practice means Ogg, and so Opus — opens it without a length instead. The track starts in milliseconds and plays; what it gives up is seeking, until the download finishes. Formats that describe themselves from the front, which is everything else, are unaffected and stay seekable throughout.
+- **A long Opus starts playing straight away rather than waiting for the whole download.** It used to wait because of that last page. koan now opens a partial file without stating a length, which is what stops a container going looking for its tail — and is how every format opens mid-download, not only Ogg, because stating a length also sends the reader looking for metadata at the end of a file that is not all there. The track starts in milliseconds and plays. What each format gives up is whatever only its tail could tell it: for Ogg that is the duration, and with it seeking, until the transfer lands. Ones that describe their frames from the front — FLAC, MP3, MP4 — stay seekable throughout, as far into the track as the bytes reach.
 
   The transport says which of the two it is rather than leaving you to find out: the bar fills as the file arrives, the playhead moves against the duration the library knows, and reaching for a position it cannot reach yet gets an answer instead of silence.
 
@@ -30,9 +30,15 @@
 
 - **The seek bar's downloaded extent moves while the download does.** The transport keeps its own copy of what is playing, refreshed when the playback state or the cursor moves — and neither moves during a download, so the mark sat wherever it had been when playback started. It follows the progress it is drawing now.
 
+- **A finished download's bar does not read as an empty one.** The downloads page lit the part that had arrived, so a transfer completing took the highlight away and the bar dropped back to looking untouched. The quiet end is the part still missing, the same way round as the seek bar.
+
 - **The bar no longer darkens when a download finishes.** It lit the downloaded part rather than dimming the part that had not arrived, so completing a transfer took the highlight away and the whole bar dropped a shade. The quiet end is the one that is missing, and a track already on disk looks like the ordinary bar it is.
 
 - **The playhead is visible on a very long track.** A third of a minute into nine hours is a tenth of a percent of the bar — narrower than the bar is thick, and so drawn as nothing at all. It has a head that does not shrink with the fraction.
+
+- **A download landing shows up on the page you are looking at.** A track fetched while its record was on screen kept an empty cloud until you navigated away and back — the page showing the row was not among the things a library change refreshed. A playlist had it twice over: nothing told it a library change had happened at all, and its progress rings never moved, because progress was patched into the queue index keyed by track and not the one keyed by playlist entry, which is the one a playlist row reads.
+
+- **The cloud and the heart sit in the same order everywhere.** The queue and a playlist had them the other way round from a record's own track list.
 
 - **Playing a track twice before it arrives fetches it once.** Downloads were deduplicated by queue entry rather than by track, and playing something again makes a new entry — so nothing matched and a second transfer started over the first. Both wrote the same file, and whichever finished renamed it out from under the other, which is where the failed downloads in the log came from. One transfer now, with every entry waiting on it told when it lands.
 
@@ -40,9 +46,33 @@
 
 - **Finding what is favourited no longer reads the whole library.** Matching favourites to tracks joined on three columns at once, which no index can serve, so it read every track to find the hundred that were starred — fifty milliseconds, on every listing that shows a heart, which is all of them. One millisecond now, on a library of forty-eight thousand.
 
+- **Reaching for a position in a track that has not arrived says so.** A track whose container cannot state a duration until the last of its bytes lands — Ogg — is reachable nowhere at all while it downloads, and every seek into one was sent unclamped and taken as a seek to zero, so the arrow keys threw playback back to the start. The TUI now says how far the transfer has got instead of moving.
+
+- **Clicking the TUI's seek bar lands where it was aimed on a track still downloading.** The click was mapped against the duration the container reported, which on a partial file reads short, while the bar was drawn against the one the library knows. Both use the library's now.
+
 - **Half-finished downloads are cleaned up.** koan writes a download straight through and renames it at the end, so a `.part` file still on disk is from a run that did not finish — bytes nothing knows about, since only finished downloads are tracked for eviction. An interrupted nine-hour recording was half a gigabyte that never came back. They are swept at startup, which is the run after the one that left them.
 
 ### Changed
+
+- **Every query the library answers now goes through an index.** `EXPLAIN QUERY PLAN` was run over every statement koan issues, against a 47,944-track library, and each full table read was either fixed or established as a query that genuinely means all of them. The costs were invisible because nothing ever failed — they only grow with the size of somebody's library:
+
+  - Listing an artist's tracks read the whole library. A track counts as theirs by its own credit or its album's, and SQLite cannot use an index for an `OR` spanning two tables; asking `albums` in a subquery instead makes both halves indexed lookups. 10 ms → 2 ms for one artist, and the same shape in the API's batched artist load and in radio's artist picker.
+
+  - Listing favourites read the whole library, in the one place koan#363 did not reach — a track is favourited by any of its three paths, and joining on an `OR` across the three cannot use an index. Written as a union, as the id lookup next to it already was: 27 ms → 0.7 ms.
+
+  - A remote sync read every album and every artist once per record it enriched, matching on the server's id, which was not indexed. That is quadratic in the size of the library: 1.6 s of pure scanning for 5,510 albums, 44 ms once indexed. Starring albums and artists from the server was the same lookup and got the same fix.
+
+  - Radio resolves the artists a recommender names back to local rows, by MusicBrainz id and then by name. Neither could use an index — nothing indexed `mbid`, and `UNIQUE(name)` is case-sensitive while the lookup is not — so every candidate read all 7,138 artists.
+
+  - Forgetting a folder, and the stale-file check every scan runs, matched paths with `LIKE 'folder/%'`, which no index can serve. Now a range over the indexed path column. It also takes the pattern out of the path: `LIKE` reads `_` as "any character" and folds ASCII case, so a folder named `My_Music` matched `My Music` too.
+
+  - Deleting a track's scan-cache entry, and reading one back during organize, searched by track id where the key is the path. Undo read the whole organize log to find one batch.
+
+  - The download cache's eviction pass read all 47,944 tracks to find the ten that were downloaded, despite an index on exactly that. koan never ran `ANALYZE`, so the planner had no statistics and picked an index that merely supplied the `ORDER BY`. It now runs `PRAGMA optimize` on open and after a scan or a sync: 5.3 ms → 0.1 ms, with no query change at all.
+
+  One index went the other way: `refresh_tokens(expires_at)` was read by nothing and cost every sign-in, so it is dropped.
+  
+- **The TUI opens the database once rather than per query.** Every read opened its own connection: a `create_dir_all`, a permissions syscall, the whole schema DDL and a WAL checkpoint before a single row came back — and while downloads were writing, that checkpoint contended with them. The TUI's reads are user-triggered rather than per-frame so it never cost what it cost the macOS app, but autosave ran one on a timer. It shares the pool the app uses, which now applies the schema itself so a first run on a fresh machine works the same way.
 
 - **What koan is downloading is kept in one place.** Whether a track was arriving was recorded twice — once against the queue entry and once by the downloader — and the two had to be told separately, so they could and did disagree: a queue entry pointed at the file a transfer had just been renamed away from, and anything the TUI fetched was invisible to everything else. A queue entry now says only whether its own file can be played, and whether bytes are arriving is asked of the downloader.
 
