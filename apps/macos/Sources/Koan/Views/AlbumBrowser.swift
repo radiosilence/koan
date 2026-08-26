@@ -21,14 +21,6 @@ struct AlbumBrowser: View {
                     LazyVGrid(columns: columns, spacing: 22) {
                         ForEach(library.visibleAlbums, id: \.id) { album in
                             AlbumGridCell(album: album)
-                                // The grid holds a page, not the library. The
-                                // last cell reaching the screen is the only
-                                // signal that there is more to ask for.
-                                .onAppear {
-                                    if album.id == library.visibleAlbums.last?.id {
-                                        library.loadMore()
-                                    }
-                                }
                         }
                     }
                     .padding(20)

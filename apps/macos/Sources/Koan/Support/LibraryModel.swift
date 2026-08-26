@@ -2,20 +2,16 @@ import Foundation
 import KoanFFI
 import SwiftUI
 
-/// How much of a section to hold at once.
-///
-/// Enough that the first screenful is never short and scrolling always has
-/// somewhere to go; small enough that opening the browser costs the same on a
-/// library of five thousand records as on one of fifty.
-private let pageSize: UInt32 = 200
-
 /// Library browsing state.
 ///
-/// Nothing here is a copy of the library. Each section holds the page it is
-/// showing and asks for the next one when the scroll reaches the end;
-/// narrowing, sorting and paging all happen in SQL. koan-core owns the library,
-/// so the only questions this can answer without asking are the ones about
-/// where the user is.
+/// Nothing here is derived, indexed or narrowed. A section asks koan-core what
+/// it should be showing and shows exactly that; narrowing and sorting happen in
+/// SQL, because the database is the only thing that knows the answer and asking
+/// it is cheaper than keeping one.
+///
+/// Nothing is paged either. This is an in-process call, not a wire: a listing
+/// arrives whole, so the scrollbar tells the truth about how long the library
+/// is and one flick reaches the end of it.
 ///
 /// The consequence worth knowing: there is no load to have forgotten to do. A
 /// section that has never been visited shows the library the first time it is,
@@ -66,9 +62,9 @@ final class LibraryModel {
         }
     }
 
-    /// Which shuffle Random means right now. Fixed for the whole listing, so
-    /// page two belongs to the same shuffle as page one rather than reshuffling
-    /// underneath the scroll.
+    /// Which shuffle Random means right now. Held rather than dealt afresh on
+    /// every read, so typing in the filter narrows the shuffle you are looking
+    /// at instead of dealing a new one on each keystroke.
     private var shuffleSeed = Int64.random(in: .min ... .max)
 
     /// Deal again. Only visibly different under Random, which is what the
@@ -80,10 +76,10 @@ final class LibraryModel {
 
     // MARK: - What each section is showing
 
-    /// A page of rows, not a filtered copy of a catalogue. Stored rather than
-    /// computed because a `List` reads its collection far more than once per
-    /// update, and anything derived on read is derived a few hundred times a
-    /// frame.
+    /// What the section on screen is showing, as the database handed it over.
+    /// Stored rather than computed because a `List` reads its collection far
+    /// more than once per update, and anything derived on read is derived a few
+    /// hundred times a frame.
     private(set) var visibleAlbums: [Album] = []
     private(set) var visibleArtists: [Artist] = []
     private(set) var visibleFavourites: [Track] = []
@@ -135,23 +131,15 @@ final class LibraryModel {
     }
 
     private var loading: Task<Void, Never>?
-    private var paging: Task<Void, Never>?
-    /// Set once a page comes back short: there is no more to ask for, and
-    /// scrolling should stop trying.
-    private var exhausted = false
-    private var isPaging = false
 
-    /// Ask for the first page of whatever is on screen.
+    /// Ask for whatever is on screen.
     ///
     /// Cancellable, so an answer to a filter you have already typed past never
     /// lands, and debounced when a keystroke caused it, so holding a key down
     /// is one query rather than one per character.
     func reload(debounced: Bool = false) {
-        loading?.cancel()
-        paging?.cancel()
-        exhausted = false
-        isPaging = false
         isLoading = true
+        loading?.cancel()
 
         let request = self.request
         loading = Task {
@@ -159,27 +147,10 @@ final class LibraryModel {
                 try? await Task.sleep(for: Self.filterDebounce)
                 guard !Task.isCancelled else { return }
             }
-            let rows = await request.page(offset: 0)
+            let rows = await request.rows()
             guard !Task.isCancelled else { return }
-            show(rows, appending: false)
+            show(rows)
             isLoading = false
-        }
-    }
-
-    /// The scroll reached the end of what we hold. Called by the last row on
-    /// screen, which is the only thing that knows.
-    func loadMore() {
-        guard !exhausted, !isPaging, !isLoading else { return }
-        let request = self.request
-        let offset = loadedCount
-        guard offset > 0 else { return }
-        isPaging = true
-
-        paging = Task {
-            let rows = await request.page(offset: UInt32(offset))
-            guard !Task.isCancelled else { return }
-            show(rows, appending: true)
-            isPaging = false
         }
     }
 
@@ -195,8 +166,8 @@ final class LibraryModel {
 
         var search: String? { filter.isEmpty ? nil : filter }
 
-        /// One page of this section, or everything it has if it does not page.
-        func page(offset: UInt32) async -> Rows {
+        /// Everything this section is showing.
+        func rows() async -> Rows {
             switch section {
             case .queue, .searchResults, .playlist:
                 // Owned by the player, search and playlist models respectively.
@@ -204,19 +175,14 @@ final class LibraryModel {
             case .albums:
                 return .albums(
                     (try? await engine.albums(
-                        artistId: nil, sort: sort, seed: seed, search: search,
-                        limit: pageSize, offset: offset
+                        artistId: nil, sort: sort, seed: seed, search: search
                     )) ?? []
                 )
             case .artists:
-                return .artists(
-                    (try? await engine.artists(search: search, limit: pageSize, offset: offset))
-                        ?? []
-                )
+                return .artists((try? await engine.artists(search: search)) ?? [])
             case .favourites:
-                // Unpaged: a favourites list is bounded by what someone
-                // troubled themselves to press a heart on.
-                guard offset == 0 else { return .none }
+                // Three questions, asked at once — they are answers to the same
+                // one and the page shows them together.
                 async let tracks = engine.favourites(search: search)
                 async let albums = engine.favouriteAlbums(search: search)
                 async let artists = engine.favouriteArtists(search: search)
@@ -226,23 +192,8 @@ final class LibraryModel {
                     artists: (try? await artists) ?? []
                 )
             case .playHistory:
-                return .history(
-                    (try? await engine.playHistory(
-                        search: search, limit: pageSize, offset: offset
-                    )) ?? []
-                )
+                return .history((try? await engine.playHistory(search: search)) ?? [])
             }
-        }
-    }
-
-    /// How many rows the section on screen holds, which is where the next page
-    /// starts. Sections that do not page never ask.
-    private var loadedCount: Int {
-        switch section {
-        case .albums: visibleAlbums.count
-        case .artists: visibleArtists.count
-        case .playHistory: visiblePlayHistory.count
-        default: 0
         }
     }
 
@@ -260,24 +211,20 @@ final class LibraryModel {
         )
     }
 
-    private func show(_ rows: Rows, appending: Bool) {
+    private func show(_ rows: Rows) {
         switch rows {
         case .none:
-            exhausted = true
+            break
         case .albums(let rows):
-            visibleAlbums = appending ? visibleAlbums + rows : rows
-            exhausted = rows.count < pageSize
+            visibleAlbums = rows
         case .artists(let rows):
-            visibleArtists = appending ? visibleArtists + rows : rows
-            exhausted = rows.count < pageSize
+            visibleArtists = rows
         case .favourites(let tracks, let albums, let artists):
             visibleFavourites = tracks
             visibleFavouriteAlbums = albums
             visibleFavouriteArtists = artists
-            exhausted = true
         case .history(let rows):
-            visiblePlayHistory = appending ? visiblePlayHistory + rows : rows
-            exhausted = rows.count < pageSize
+            visiblePlayHistory = rows
         }
     }
 
@@ -378,8 +325,9 @@ final class LibraryModel {
         reload()
     }
 
-    /// Pull the remote library. Minutes on a large server, so it runs detached
-    /// and the page is asked for again afterwards rather than during.
+    /// Pull the remote library. Minutes on a large server, so it runs detached.
+    /// Nothing here refreshes anything: the engine announces the rows it wrote,
+    /// and `libraryChanged()` runs off that.
     func syncRemote(full: Bool = false) {
         guard !isScanning else { return }
         isScanning = true
@@ -392,7 +340,6 @@ final class LibraryModel {
             _ = try? await engine.syncRemote(full: full)
             if let job { activity?.end(job) }
             isScanning = false
-            libraryChanged()
         }
     }
 
@@ -415,14 +362,19 @@ final class LibraryModel {
             if let job { activity?.end(job) }
             scanSummary = result
             isScanning = false
-            libraryChanged()
         }
     }
 
-    /// Rows appeared or vanished underneath us. Nothing to merge or invalidate:
-    /// ask again.
+    /// Rows appeared or vanished underneath us — a scan, a sync, an import, or
+    /// a folder being forgotten. Whether this app asked for it or the engine
+    /// did it on its own makes no difference here: nothing to merge, nothing to
+    /// invalidate, just ask again.
+    ///
+    /// Favourites too, because a sync reconciles them with the server and the
+    /// hearts on screen are stale the moment it lands.
     func libraryChanged() {
         loadStats()
+        refreshFavourites()
         reload()
     }
 }

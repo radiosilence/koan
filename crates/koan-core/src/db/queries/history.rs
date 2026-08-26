@@ -158,7 +158,8 @@ pub struct PlayHistoryRow {
 pub fn play_history_with_tracks(
     conn: &Connection,
     search: Option<&str>,
-    limit: u32,
+    // `None` for every play ever recorded.
+    limit: Option<u32>,
     offset: u32,
 ) -> Result<Vec<PlayHistoryRow>, DbError> {
     let mut sql = String::from(
@@ -185,9 +186,12 @@ pub fn play_history_with_tracks(
                  OR al.title LIKE ? COLLATE NOCASE ESCAPE '\\'",
         );
     }
-    sql.push_str(" ORDER BY h.played_at DESC, h.id DESC LIMIT ? OFFSET ?");
-    params.push(Box::new(limit as i64));
-    params.push(Box::new(offset as i64));
+    sql.push_str(" ORDER BY h.played_at DESC, h.id DESC");
+    if let Some(limit) = limit {
+        params.push(Box::new(limit as i64));
+        params.push(Box::new(offset as i64));
+        sql.push_str(" LIMIT ? OFFSET ?");
+    }
 
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
@@ -278,7 +282,7 @@ mod tests {
         record_play_at(&db.conn, b, 200, None, SOURCE_SUBSONIC).unwrap();
         record_play_at(&db.conn, a, 300, Some(2000), SOURCE_LOCAL).unwrap();
 
-        let rows = play_history_with_tracks(&db.conn, None, 10, 0).unwrap();
+        let rows = play_history_with_tracks(&db.conn, None, Some(10), 0).unwrap();
         assert_eq!(
             rows.iter()
                 .map(|r| r.track.title.as_str())
@@ -302,13 +306,20 @@ mod tests {
         record_play_at(&db.conn, b, 200, None, SOURCE_LOCAL).unwrap();
 
         let titles = |q| {
-            play_history_with_tracks(&db.conn, Some(q), 10, 0)
+            play_history_with_tracks(&db.conn, Some(q), None, 0)
                 .unwrap()
                 .into_iter()
                 .map(|r| r.track.title)
                 .collect::<Vec<_>>()
         };
         assert_eq!(titles("autumn"), ["Autumn"]);
+        assert_eq!(
+            play_history_with_tracks(&db.conn, None, None, 0)
+                .unwrap()
+                .len(),
+            2,
+            "no limit is every play ever recorded"
+        );
         assert_eq!(titles("Artist1").len(), 2, "matched on the artist name");
         assert!(titles("nothing here").is_empty());
     }
@@ -321,19 +332,19 @@ mod tests {
             record_play_at(&db.conn, id, at, None, SOURCE_LOCAL).unwrap();
         }
         assert_eq!(
-            play_history_with_tracks(&db.conn, None, 2, 0)
+            play_history_with_tracks(&db.conn, None, Some(2), 0)
                 .unwrap()
                 .len(),
             2
         );
         assert_eq!(
-            play_history_with_tracks(&db.conn, None, 2, 4)
+            play_history_with_tracks(&db.conn, None, Some(2), 4)
                 .unwrap()
                 .len(),
             1
         );
         assert_eq!(
-            play_history_with_tracks(&db.conn, None, 10, 5)
+            play_history_with_tracks(&db.conn, None, Some(10), 5)
                 .unwrap()
                 .len(),
             0
@@ -350,7 +361,7 @@ mod tests {
         record_play_at(&db.conn, a, 42, None, SOURCE_LOCAL).unwrap();
         record_play_at(&db.conn, b, 42, None, SOURCE_LOCAL).unwrap();
 
-        let rows = play_history_with_tracks(&db.conn, None, 10, 0).unwrap();
+        let rows = play_history_with_tracks(&db.conn, None, Some(10), 0).unwrap();
         assert_eq!(
             rows.iter()
                 .map(|r| r.track.title.as_str())
@@ -371,7 +382,7 @@ mod tests {
 
         assert_eq!(play_count(&db.conn, id).unwrap(), 0);
         assert!(
-            play_history_with_tracks(&db.conn, None, 10, 0)
+            play_history_with_tracks(&db.conn, None, Some(10), 0)
                 .unwrap()
                 .is_empty()
         );
@@ -391,7 +402,7 @@ mod tests {
         // whatever entry happens to be open.
         set_listened_ms(&db.conn, first, b, 9_999).unwrap();
 
-        let rows = play_history_with_tracks(&db.conn, None, 10, 0).unwrap();
+        let rows = play_history_with_tracks(&db.conn, None, Some(10), 0).unwrap();
         let by_id: Vec<_> = rows.iter().map(|r| (r.id, r.listened_ms)).collect();
         assert!(by_id.contains(&(second, Some(4_200))));
         assert!(
@@ -410,7 +421,7 @@ mod tests {
 
         assert_eq!(delete_plays(&db.conn, &[first, third]).unwrap(), 2);
 
-        let left = play_history_with_tracks(&db.conn, None, 10, 0).unwrap();
+        let left = play_history_with_tracks(&db.conn, None, Some(10), 0).unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].id, second);
         assert_eq!(

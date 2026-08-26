@@ -11,12 +11,6 @@ struct ArtistBrowser: View {
     var body: some View {
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             ArtistRow(artist: artist)
-                // The list holds a page, not the library. The last row
-                // reaching the screen is the only signal that there is more
-                // to ask for.
-                .onAppear {
-                    if artist.id == library.visibleArtists.last?.id { library.loadMore() }
-                }
         }
         .clearsSelection($selection)
         .washedGround()
@@ -174,10 +168,7 @@ struct ArtistDetailView: View {
         let engine = library.engine
         let id = artistId
         artist = try? await engine.artist(artistId: id)
-        // A discography is bounded by one artist, so it is asked for whole.
-        albums = (try? await engine.albums(
-            artistId: id, sort: .year, seed: 0, search: nil, limit: nil, offset: 0
-        )) ?? []
+        albums = (try? await engine.albums(artistId: id, sort: .year, seed: 0, search: nil)) ?? []
         similar = (try? await engine.similarArtists(artistId: id)) ?? []
     }
 

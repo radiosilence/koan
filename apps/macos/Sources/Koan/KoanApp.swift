@@ -61,6 +61,7 @@ final class AppState {
         // else would say so — the count is a database read, and the download
         // ran in the engine.
         player.onDownloadsLanded = { [weak library] in library?.loadStats() }
+        player.onLibraryChanged = { [weak library] in library?.libraryChanged() }
 
         // Control Center and the media keys ride the player's existing poll.
         let centre = NowPlayingCentre(player: player, art: art)

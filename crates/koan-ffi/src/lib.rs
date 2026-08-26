@@ -88,6 +88,14 @@ pub enum PlayerEvent {
     /// is in flight any more, which is also how a client learns a download
     /// finished.
     DownloadsChanged { downloads: Vec<DownloadProgress> },
+    /// The library's rows changed — a scan, a sync, an import, an organize or
+    /// a folder being forgotten. Carries a version so a client can tell one
+    /// change from a repeat of the one it already handled.
+    ///
+    /// Says nothing about what changed. A client that holds no copy of the
+    /// library only needs to know to ask again, and one that does is holding
+    /// the thing this event exists to warn it about.
+    LibraryChanged { version: u64 },
 }
 
 /// Reports how far a long task has got.
@@ -183,6 +191,10 @@ pub struct KoanEngine {
     /// one per task, because only one runs at a time — they all contend for the
     /// same single database writer.
     cancel_library_task: Arc<std::sync::atomic::AtomicBool>,
+    /// Bumped by anything that writes library rows. The watcher turns a change
+    /// here into a `LibraryChanged` event, so a background scan finishing looks
+    /// the same to a client as one it asked for itself.
+    library_version: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[uniffi::export]
@@ -424,15 +436,14 @@ impl KoanEngine {
 
     // --- Library -----------------------------------------------------------
 
-    /// The library's artists, narrowed by `search` and paged by `limit`/`offset`.
+    /// The library's artists, narrowed by `search`.
     ///
-    /// `limit` of `None` is the whole listing — for a caller that genuinely
-    /// wants all of it, not for one that is about to show the first screenful.
+    /// Whole, not paged. This is an in-process call, and a library's artists
+    /// are a bounded set — a few thousand records marshalled once beats a
+    /// client that has to know how far it has scrolled.
     pub async fn artists(
         self: Arc<Self>,
         search: Option<String>,
-        limit: Option<u32>,
-        offset: u32,
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -440,8 +451,6 @@ impl KoanEngine {
                 &db.conn,
                 &queries::ArtistQuery {
                     search: trimmed(&search),
-                    limit,
-                    offset,
                     ..Default::default()
                 },
             )
@@ -461,25 +470,24 @@ impl KoanEngine {
         .await
     }
 
-    /// The library's albums, narrowed by `search`, ordered by `sort` and paged
-    /// by `limit`/`offset`.
+    /// The library's albums, narrowed by `search` and ordered by `sort`.
     ///
-    /// All three run in SQL. A client that narrows or sorts what it has already
-    /// been handed still pays to read and marshal every album in the library on
-    /// each keystroke, and one that pages a listing it sorted itself gets a
-    /// page of the wrong order.
+    /// Both run in SQL. A client that narrows or sorts what it has already been
+    /// handed pays to read and marshal every album in the library on each
+    /// keystroke, and has to reimplement in its own language an answer the
+    /// database already knows.
+    ///
+    /// Whole, not paged, for the reason [`Self::artists`] gives.
     ///
     /// `seed` fixes the shuffle under [`AlbumSort::Random`] and is ignored by
-    /// every other sort. Pages of one seed belong to one shuffle; a new seed is
-    /// a new shuffle, which is what a reshuffle button asks for.
+    /// every other sort, so that narrowing a shuffled listing does not deal it
+    /// again. A new seed is a new shuffle, which is what a reshuffle asks for.
     pub async fn albums(
         self: Arc<Self>,
         artist_id: Option<i64>,
         sort: AlbumSort,
         seed: i64,
         search: Option<String>,
-        limit: Option<u32>,
-        offset: u32,
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
@@ -489,8 +497,6 @@ impl KoanEngine {
                     artist_id,
                     search: trimmed(&search),
                     order: album_order(sort, seed),
-                    limit,
-                    offset,
                     ..Default::default()
                 },
             )
@@ -824,19 +830,19 @@ impl KoanEngine {
 
     // --- Play history ------------------------------------------------------
 
-    /// Recent plays, most recent first.
+    /// Every play, most recent first, narrowed by `search`.
     ///
     /// A list of events, not of tracks: a track played three times is three
     /// entries. Entries whose track has left the library are already gone.
+    ///
+    /// Whole, not paged, for the reason [`Self::artists`] gives.
     pub async fn play_history(
         self: Arc<Self>,
         search: Option<String>,
-        limit: u32,
-        offset: u32,
     ) -> Result<Vec<PlayHistoryEntry>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = queries::play_history_with_tracks(&db.conn, trimmed(&search), limit, offset)
+            let rows = queries::play_history_with_tracks(&db.conn, trimmed(&search), None, 0)
                 .map_err(db_err)?;
             let (plays, tracks): (Vec<_>, Vec<_>) = rows
                 .into_iter()
@@ -1727,7 +1733,10 @@ impl KoanEngine {
     pub async fn forget_folder(self: Arc<Self>, path: String) -> Result<u64, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            koan_core::helpers::forget_folder(&db, Path::new(&path)).map_err(db_err)
+            let removed =
+                koan_core::helpers::forget_folder(&db, Path::new(&path)).map_err(db_err)?;
+            self.bump_library();
+            Ok(removed)
         })
         .await
     }
@@ -1738,7 +1747,9 @@ impl KoanEngine {
     pub async fn forget_remote(self: Arc<Self>) -> Result<u64, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            koan_core::helpers::forget_remote(&db).map_err(db_err)
+            let removed = koan_core::helpers::forget_remote(&db).map_err(db_err)?;
+            self.bump_library();
+            Ok(removed)
         })
         .await
     }
@@ -1752,6 +1763,7 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let summary = koan_core::helpers::rebuild_index(&db).map_err(db_err)?;
+            self.bump_library();
             Ok(RebuildSummary {
                 tracks: summary.tracks,
                 albums: summary.albums,
@@ -1812,6 +1824,7 @@ impl KoanEngine {
                 message: e.to_string(),
             })?;
 
+            self.bump_library();
             Ok(SyncSummary {
                 artists: synced.library.artists_synced as u32,
                 albums: synced.library.albums_synced as u32,
@@ -2021,6 +2034,7 @@ impl KoanEngine {
             }
             .map_err(organize_err)?;
             self.follow_moved_files(&result);
+            self.bump_library();
             Ok(OrganizePlan::build(
                 result,
                 track_ids.as_ref().map(Vec::len),
@@ -2044,6 +2058,7 @@ impl KoanEngine {
             let db = self.db()?;
             let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
             let result = koan_core::index::scanner::import_paths(&db, &paths);
+            self.bump_library();
             Ok(ImportSummary {
                 track_ids: result.track_ids,
                 added: result.added as u32,
@@ -2142,6 +2157,9 @@ impl KoanEngine {
                 let mut last_position = u64::MAX;
                 let mut last_signature: Option<(PlaybackState, Option<String>)> = None;
                 let mut last_downloads: Vec<DownloadProgress> = Vec::new();
+                // Starts where the engine starts, so a launch is not announced
+                // as a change to a library nobody has read yet.
+                let mut last_library = 0u64;
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -2187,6 +2205,14 @@ impl KoanEngine {
                     if downloads != last_downloads {
                         last_downloads = downloads.clone();
                         publish(PlayerEvent::DownloadsChanged { downloads });
+                    }
+
+                    let library = engine
+                        .library_version
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    if library != last_library {
+                        last_library = library;
+                        publish(PlayerEvent::LibraryChanged { version: library });
                     }
 
                     // Only while playing: a paused position doesn't move, and
@@ -2252,6 +2278,13 @@ impl KoanEngine {
         Ok(self.decorate(&db, sort_rows(rows, sort)))
     }
 
+    /// Say that the library's rows changed. The watcher turns this into a
+    /// `LibraryChanged` event on its next tick.
+    fn bump_library(&self) {
+        self.library_version
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     fn scan_blocking(
         &self,
         force: bool,
@@ -2309,6 +2342,7 @@ impl KoanEngine {
                     .map(|(p, e)| format!("{}: {e}", p.display())),
             );
         }
+        self.bump_library();
         Ok(summary)
     }
 
@@ -2323,11 +2357,29 @@ impl KoanEngine {
         let (state, _timeline, viz, tx) = Player::spawn();
         koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
 
+        // Bumped by the background tasks below as well as by everything the UI
+        // asks for, so a sync nobody asked for reaches a client the same way.
+        let library_version = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+        // Finishing is the interesting edge: rows landed while it ran, and the
+        // moment it stops is the moment they are all there.
+        let finished = {
+            let version = library_version.clone();
+            move |flag: &std::sync::atomic::AtomicBool, running: bool| {
+                if !running && flag.swap(running, std::sync::atomic::Ordering::Relaxed) {
+                    version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    flag.store(running, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        };
+
         let auto_syncing = Arc::new(std::sync::atomic::AtomicBool::new(false));
         {
             let flag = auto_syncing.clone();
+            let finished = finished.clone();
             koan_core::helpers::spawn_auto_sync(db_path.clone(), move |running| {
-                flag.store(running, std::sync::atomic::Ordering::Relaxed);
+                finished(&flag, running);
             });
         }
 
@@ -2338,7 +2390,7 @@ impl KoanEngine {
         {
             let flag = auto_scanning.clone();
             koan_core::helpers::spawn_library_watch(db_path.clone(), move |running| {
-                flag.store(running, std::sync::atomic::Ordering::Relaxed);
+                finished(&flag, running);
             });
         }
 
@@ -2354,6 +2406,7 @@ impl KoanEngine {
             auto_syncing,
             auto_scanning,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            library_version: library_version.clone(),
         });
         engine.spawn_watcher();
         Ok(engine)
