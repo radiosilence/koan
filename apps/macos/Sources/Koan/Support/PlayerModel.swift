@@ -198,8 +198,17 @@ final class PlayerModel {
         }
     }
 
+    /// Where each queue item sits, so a progress event can reach its row
+    /// without walking the queue to find it. Rebuilt with the queue, which is
+    /// the only thing that moves rows.
+    @ObservationIgnored private var queueIndex: [String: Int] = [:]
+
     private func rebuildQueue() async {
         queue = await engine.queue()
+        queueIndex = Dictionary(
+            queue.enumerated().map { ($0.element.queueItemId, $0.offset) },
+            uniquingKeysWith: { first, _ in first }
+        )
         // Here rather than at one of the callers: the queue is rebuilt from
         // two places — a queue event, and a playback event carrying a version
         // that moved — and only one of them used to say so. Which of the two
@@ -235,8 +244,14 @@ final class PlayerModel {
             downloads.map { ($0.queueItemId, $0.progress) },
             uniquingKeysWith: { first, _ in first }
         )
-        for index in queue.indices {
-            let progress = byItem[queue[index].queueItemId] ?? nil
+        // Only the rows that are fetching, and the ones that just stopped —
+        // not the whole queue. This runs ten times a second for as long as
+        // anything is downloading, and a queue is thousands of rows long: the
+        // walk cost more than everything else on this loop put together, to
+        // touch the handful of rows that had actually moved.
+        for id in downloading.union(byItem.keys) {
+            guard let index = queueIndex[id], queue.indices.contains(index) else { continue }
+            let progress = byItem[id] ?? nil
             guard queue[index].downloadProgress != progress else { continue }
             queue[index].downloadProgress = progress
             if let trackId = queue[index].trackId {
