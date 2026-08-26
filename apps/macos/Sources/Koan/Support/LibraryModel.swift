@@ -169,8 +169,9 @@ final class LibraryModel {
         /// Everything this section is showing.
         func rows() async -> Rows {
             switch section {
-            case .queue, .searchResults, .playlist:
-                // Owned by the player, search and playlist models respectively.
+            case .queue, .searchResults, .playlist, .downloads:
+                // Owned by the player, search, playlist and downloads models
+                // respectively.
                 return .none
             case .albums:
                 return .albums(

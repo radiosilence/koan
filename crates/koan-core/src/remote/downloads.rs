@@ -1,0 +1,321 @@
+//! The download store — what koan is fetching, and what it just fetched.
+//!
+//! One place every front end reads, rather than each deriving its own answer
+//! from the queue. The queue only knows about transfers for tracks that are in
+//! it, and it forgets a download the instant it lands — which is exactly when
+//! somebody wants to see that it did.
+//!
+//! Progress and structure are deliberately separate. The byte counter is an
+//! `Arc<AtomicU64>` the downloader writes without taking any lock, because it
+//! moves hundreds of times a second; `version` moves only when an entry is
+//! added, finishes or fails. A client polls the counter and watches the
+//! version, and neither costs the download anything.
+
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::player::state::QueueItemId;
+
+/// Where a transfer has got to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownloadState {
+    /// Accepted, not yet started. A queue of six shows five of these.
+    Queued,
+    /// Bytes are arriving.
+    Running,
+    /// Every byte landed and the file is at its final path.
+    Done,
+    /// Gave up. The reason is worth keeping — it is the only account of why a
+    /// track will not play.
+    Failed(String),
+}
+
+impl DownloadState {
+    pub fn is_settled(&self) -> bool {
+        matches!(self, Self::Done | Self::Failed(_))
+    }
+}
+
+/// One transfer.
+#[derive(Debug, Clone)]
+pub struct Download {
+    /// The queue item this is being fetched for. Also the identity of the
+    /// transfer, because a track wanted twice is wanted by two queue entries.
+    pub id: QueueItemId,
+    pub track_id: i64,
+    pub title: String,
+    pub artist: String,
+    /// Where the bytes are being written — the `.part` file.
+    pub source: PathBuf,
+    /// Where they end up.
+    pub dest: PathBuf,
+    /// Total expected, or 0 when the server sent no Content-Length.
+    pub total: u64,
+    /// Live byte count, shared with the downloader. Read it, do not store it.
+    pub written: Arc<AtomicU64>,
+    pub state: DownloadState,
+}
+
+impl Download {
+    /// 0–1, or `None` when the server never said how big this is.
+    pub fn fraction(&self) -> Option<f64> {
+        (self.total > 0)
+            .then(|| self.written.load(Ordering::Relaxed) as f64 / self.total as f64)
+            .map(|f| f.clamp(0.0, 1.0))
+    }
+
+    pub fn bytes_written(&self) -> u64 {
+        self.written.load(Ordering::Relaxed)
+    }
+}
+
+/// Every transfer koan knows about.
+#[derive(Debug, Default)]
+pub struct DownloadStore {
+    entries: parking_lot::RwLock<Vec<Download>>,
+    version: AtomicU64,
+    /// How many settled entries to keep. This is a view of now, not an archive,
+    /// and old rows would push the live ones off the end of it.
+    settled_limit: usize,
+}
+
+impl DownloadStore {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            entries: parking_lot::RwLock::new(Vec::new()),
+            version: AtomicU64::new(0),
+            settled_limit: 50,
+        })
+    }
+
+    /// Bumped when an entry appears, settles or is forgotten — not when its
+    /// byte count moves. A client redraws its list on this and reads the
+    /// counters every frame regardless.
+    pub fn version(&self) -> u64 {
+        self.version.load(Ordering::Acquire)
+    }
+
+    /// Everything, running first, then whatever settled most recently.
+    pub fn all(&self) -> Vec<Download> {
+        self.entries.read().clone()
+    }
+
+    /// How many transfers are actually moving.
+    pub fn active(&self) -> usize {
+        self.entries
+            .read()
+            .iter()
+            .filter(|d| !d.state.is_settled())
+            .count()
+    }
+
+    /// Note that a transfer is wanted. Replaces any earlier entry for the same
+    /// queue item — a track cleared and fetched again is the same row starting
+    /// over, not a second one.
+    pub fn queued(&self, download: Download) {
+        let mut entries = self.entries.write();
+        entries.retain(|d| d.id != download.id);
+        entries.insert(0, download);
+        drop(entries);
+        self.settle();
+    }
+
+    /// Bytes have started arriving, and this is how many there are in total.
+    pub fn started(&self, id: QueueItemId, total: u64, written: Arc<AtomicU64>) {
+        let mut entries = self.entries.write();
+        if let Some(entry) = entries.iter_mut().find(|d| d.id == id) {
+            entry.total = total;
+            entry.written = written;
+            entry.state = DownloadState::Running;
+        }
+        drop(entries);
+        self.bump();
+    }
+
+    /// It landed.
+    pub fn finished(&self, id: QueueItemId) {
+        self.settle_one(id, DownloadState::Done);
+    }
+
+    /// It did not.
+    pub fn failed(&self, id: QueueItemId, reason: String) {
+        self.settle_one(id, DownloadState::Failed(reason));
+    }
+
+    /// Drop everything that has already settled. The running ones are not this
+    /// call's business — stopping a transfer is a different verb.
+    pub fn clear_settled(&self) {
+        let mut entries = self.entries.write();
+        let before = entries.len();
+        entries.retain(|d| !d.state.is_settled());
+        let changed = entries.len() != before;
+        drop(entries);
+        if changed {
+            self.bump();
+        }
+    }
+
+    fn settle_one(&self, id: QueueItemId, state: DownloadState) {
+        let mut entries = self.entries.write();
+        if let Some(entry) = entries.iter_mut().find(|d| d.id == id) {
+            entry.state = state;
+        }
+        drop(entries);
+        self.settle();
+    }
+
+    /// Keep running transfers at the top and the settled tail bounded.
+    fn settle(&self) {
+        let mut entries = self.entries.write();
+        // Stable, so a list being watched does not shuffle under the pointer.
+        let (mut running, settled): (Vec<_>, Vec<_>) =
+            entries.drain(..).partition(|d| !d.state.is_settled());
+        running.extend(settled.into_iter().take(self.settled_limit));
+        *entries = running;
+        drop(entries);
+        self.bump();
+    }
+
+    fn bump(&self) {
+        self.version.fetch_add(1, Ordering::Release);
+    }
+}
+
+/// The process's download store.
+///
+/// A singleton for the same reason the download queue is one: there is one set
+/// of transfers happening, and everything that reports on them — the queue, the
+/// front ends, the downloader itself — has to be looking at the same set.
+pub fn store() -> &'static Arc<DownloadStore> {
+    static STORE: std::sync::OnceLock<Arc<DownloadStore>> = std::sync::OnceLock::new();
+    STORE.get_or_init(DownloadStore::new)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn download(title: &str) -> Download {
+        Download {
+            id: QueueItemId::new(),
+            track_id: 1,
+            title: title.into(),
+            artist: "Artist".into(),
+            source: PathBuf::from(format!("/cache/{title}.opus.part")),
+            dest: PathBuf::from(format!("/cache/{title}.opus")),
+            total: 0,
+            written: Arc::new(AtomicU64::new(0)),
+            state: DownloadState::Queued,
+        }
+    }
+
+    #[test]
+    fn a_transfer_runs_then_settles() {
+        let store = DownloadStore::new();
+        let entry = download("train");
+        let id = entry.id;
+        store.queued(entry);
+        assert_eq!(store.active(), 1);
+
+        let written = Arc::new(AtomicU64::new(0));
+        store.started(id, 400, written.clone());
+        written.store(100, Ordering::Relaxed);
+        assert_eq!(store.all()[0].fraction(), Some(0.25));
+
+        store.finished(id);
+        assert_eq!(store.active(), 0);
+        assert_eq!(store.all()[0].state, DownloadState::Done);
+    }
+
+    #[test]
+    fn progress_does_not_move_the_version() {
+        // The counter is read every frame and the list is rebuilt on the
+        // version; if bytes bumped it, every client would rebuild at the rate
+        // the download writes.
+        let store = DownloadStore::new();
+        let entry = download("train");
+        let id = entry.id;
+        store.queued(entry);
+        let written = Arc::new(AtomicU64::new(0));
+        store.started(id, 1000, written.clone());
+
+        let before = store.version();
+        written.store(500, Ordering::Relaxed);
+        assert_eq!(store.version(), before);
+        assert_eq!(store.all()[0].bytes_written(), 500);
+    }
+
+    #[test]
+    fn no_content_length_means_no_fraction() {
+        // A bar drawn at zero for a transfer that is going fine reads as stuck.
+        let store = DownloadStore::new();
+        let entry = download("chunked");
+        let id = entry.id;
+        store.queued(entry);
+        store.started(id, 0, Arc::new(AtomicU64::new(9000)));
+        assert_eq!(store.all()[0].fraction(), None);
+        assert_eq!(store.all()[0].bytes_written(), 9000);
+    }
+
+    #[test]
+    fn fetching_the_same_item_again_restarts_its_row() {
+        // Clearing a download and playing the track again is the same transfer
+        // starting over, not a second one to scroll past.
+        let store = DownloadStore::new();
+        let first = download("train");
+        let id = first.id;
+        store.queued(first);
+        store.finished(id);
+
+        let mut again = download("train");
+        again.id = id;
+        store.queued(again);
+
+        assert_eq!(store.all().len(), 1);
+        assert_eq!(store.all()[0].state, DownloadState::Queued);
+    }
+
+    #[test]
+    fn running_transfers_sort_above_settled_ones() {
+        let store = DownloadStore::new();
+        let done = download("done");
+        let done_id = done.id;
+        store.queued(done);
+        let running = download("running");
+        store.queued(running);
+        store.finished(done_id);
+
+        let all = store.all();
+        assert_eq!(all[0].title, "running");
+        assert_eq!(all[1].title, "done");
+    }
+
+    #[test]
+    fn a_failure_keeps_its_reason() {
+        let store = DownloadStore::new();
+        let entry = download("gone");
+        let id = entry.id;
+        store.queued(entry);
+        store.failed(id, "server returned 404".into());
+        assert_eq!(
+            store.all()[0].state,
+            DownloadState::Failed("server returned 404".into())
+        );
+    }
+
+    #[test]
+    fn clearing_settled_leaves_the_running_alone() {
+        let store = DownloadStore::new();
+        let done = download("done");
+        let done_id = done.id;
+        store.queued(done);
+        store.queued(download("running"));
+        store.finished(done_id);
+
+        store.clear_settled();
+        let all = store.all();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].title, "running");
+    }
+}

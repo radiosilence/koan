@@ -359,6 +359,8 @@ private struct StageView: View {
             FavouritesView()
         case .section(.playHistory):
             HistoryView()
+        case .section(.downloads):
+            DownloadsView()
         case .section(.playlist(let id)):
             PlaylistView(playlistId: id)
         case .album(let id):

@@ -119,6 +119,9 @@ final class PlayerModel {
                     self.applyPosition(positionMs)
                 case .downloadsChanged(let downloads):
                     self.applyDownloads(downloads)
+                    self.onDownloadProgress?(downloads)
+                case .downloadStoreChanged:
+                    self.onDownloadStoreChanged?()
                 case .libraryChanged:
                     self.onLibraryChanged?()
                 }
@@ -238,6 +241,11 @@ final class PlayerModel {
     /// sync nobody asked for reaches the browser — the engine says so rather
     /// than the app having to guess from whatever it happened to start itself.
     var onLibraryChanged: (() -> Void)?
+    /// The set of transfers changed shape — one appeared or settled.
+    var onDownloadStoreChanged: (() -> Void)?
+    /// Byte counts moved. Fires several times a second while anything is
+    /// downloading, and not at all the rest of the time.
+    var onDownloadProgress: (([DownloadProgress]) -> Void)?
 
     /// The queue changed — rebuild it and refresh what depends on it.
     fileprivate func applyQueueChange() async {

@@ -88,6 +88,12 @@ pub enum PlayerEvent {
     /// is in flight any more, which is also how a client learns a download
     /// finished.
     DownloadsChanged { downloads: Vec<DownloadProgress> },
+    /// The set of transfers changed — one appeared, settled or was forgotten.
+    ///
+    /// Separate from `DownloadsChanged`, which carries byte counts and fires
+    /// several times a second. This one fires when the *list* changes, which is
+    /// what a client rebuilds a list on.
+    DownloadStoreChanged { version: u64 },
     /// The library's rows changed — a scan, a sync, an import, an organize or
     /// a folder being forgotten. Carries a version so a client can tell one
     /// change from a repeat of the one it already handled.
@@ -269,6 +275,32 @@ impl KoanEngine {
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
             }
         }
+    }
+
+    /// Every transfer koan knows about: what it is fetching now, and what it
+    /// fetched a moment ago.
+    ///
+    /// Running first, then whatever settled most recently. Read it on
+    /// `DownloadStoreChanged` for the list and on `DownloadsChanged` for the
+    /// figures — the byte counts here are a snapshot taken as this was called.
+    pub fn downloads(&self) -> Vec<DownloadEntry> {
+        koan_core::remote::downloads::store()
+            .all()
+            .iter()
+            .map(DownloadEntry::from)
+            .collect()
+    }
+
+    /// How many transfers are actually moving. Cheap enough for a sidebar to
+    /// read on every redraw.
+    pub fn active_download_count(&self) -> u32 {
+        koan_core::remote::downloads::store().active() as u32
+    }
+
+    /// Forget the transfers that have already settled. Running ones are left
+    /// alone — stopping one is a different verb.
+    pub fn clear_settled_downloads(&self) {
+        koan_core::remote::downloads::store().clear_settled();
     }
 
     /// Cheap enough to poll every frame — use it to decide whether to call
@@ -2178,6 +2210,7 @@ impl KoanEngine {
                 let mut last_position = u64::MAX;
                 let mut last_signature: Option<(PlaybackState, Option<String>, u64)> = None;
                 let mut last_downloads: Vec<DownloadProgress> = Vec::new();
+                let mut last_store = u64::MAX;
                 // Starts where the engine starts, so a launch is not announced
                 // as a change to a library nobody has read yet.
                 let mut last_library = 0u64;
@@ -2248,6 +2281,14 @@ impl KoanEngine {
                         }
                         last_downloads = downloads.clone();
                         publish(PlayerEvent::DownloadsChanged { downloads });
+                    }
+
+                    let store_version = koan_core::remote::downloads::store().version();
+                    if store_version != last_store {
+                        last_store = store_version;
+                        publish(PlayerEvent::DownloadStoreChanged {
+                            version: store_version,
+                        });
                     }
 
                     let library = engine

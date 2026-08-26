@@ -3,114 +3,58 @@ import SwiftUI
 
 /// Everything koan is fetching, and what it fetched a moment ago.
 ///
-/// One store rather than a listener per track. The engine broadcasts the whole
-/// in-flight set several times a second, so there is nothing to register when a
-/// download starts and nothing to unregister when it ends — and skipping
-/// between three downloading tracks and back cannot lose one, because every
-/// message carries all of them.
+/// A mirror, not a store. The engine owns the list — it is the only thing that
+/// knows a transfer started, and it goes on knowing after one lands, which is
+/// exactly when somebody wants to see that it did. This holds the last snapshot
+/// so views have something to draw between events.
 ///
-/// It outlives the queue's own knowledge on purpose. A queue item stops saying
-/// it is downloading the moment it lands, which is exactly when someone wants
-/// to see that it did.
+/// Two events feed it, because two things move at different rates. The list
+/// changes when a transfer appears or settles, which is rare; the byte counts
+/// change hundreds of times a second. Rebuilding the list on the second would
+/// mean rebuilding it at the rate the download writes.
 @MainActor
 @Observable
 final class DownloadsModel {
-    struct Item: Identifiable {
-        let id: String
-        var trackId: Int64?
-        var title: String
-        var artist: String
-        /// 0–1, or `nil` for a transfer whose length the server never gave.
-        var progress: Double?
-        var state: State
+    private let engine: KoanEngine
 
-        var isActive: Bool { state == .running }
+    private(set) var items: [DownloadEntry] = []
+
+    /// What the sidebar counts. Zero most of the time.
+    var activeCount: Int {
+        items.lazy.filter { $0.state == .queued || $0.state == .running }.count
     }
 
-    enum State: Equatable {
-        case running
-        case finished
-        case failed(String)
+    var hasSettled: Bool {
+        items.contains { $0.state == .done || $0.state == .failed }
     }
 
-    /// Running first, then whatever has just settled, newest first.
-    private(set) var items: [Item] = []
+    init(engine: KoanEngine) {
+        self.engine = engine
+    }
 
-    /// How many transfers are going. What the sidebar counts.
-    var activeCount: Int { items.lazy.filter(\.isActive).count }
+    /// The list changed shape. Refetch it.
+    func reload() {
+        items = engine.downloads()
+    }
 
-    /// Kept small: this is a view of now, not an archive. Old entries are the
-    /// least interesting thing on the page and would push the live ones off it.
-    private static let settledLimit = 40
-
-    /// The whole in-flight set, as the engine last reported it, joined against
-    /// the queue for names.
-    ///
-    /// Anything previously running and now absent has settled — the queue is
-    /// asked which way, since a failure leaves a reason on the entry and a
-    /// success leaves nothing at all.
-    func apply(_ downloads: [DownloadProgress], queue: [QueueItem]) {
-        let named = Dictionary(queue.map { ($0.queueItemId, $0) }, uniquingKeysWith: { a, _ in a })
-        let running = Set(downloads.map(\.queueItemId))
-
-        for index in items.indices where items[index].state == .running {
-            guard !running.contains(items[index].id) else { continue }
-            items[index].state = settled(items[index].id, in: named)
-            items[index].progress = items[index].state == .finished ? 1 : items[index].progress
+    /// Byte counts moved. The rows are the same rows, so only the figures are
+    /// taken — replacing the array wholesale would animate every row on every
+    /// tick of a transfer.
+    func applyProgress(_ downloads: [DownloadProgress]) {
+        guard !items.isEmpty else { return }
+        let byItem = Dictionary(
+            downloads.map { ($0.queueItemId, $0.progress) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for index in items.indices {
+            guard let progress = byItem[items[index].queueItemId] else { continue }
+            guard items[index].progress != progress else { continue }
+            items[index].progress = progress
         }
-
-        for download in downloads {
-            let entry = named[download.queueItemId]
-            if let index = items.firstIndex(where: { $0.id == download.queueItemId }) {
-                items[index].progress = download.progress
-                items[index].state = .running
-                // A name can arrive after the transfer does — the queue is
-                // fetched on its own schedule.
-                if let entry {
-                    items[index].title = entry.title
-                    items[index].artist = entry.artist
-                    items[index].trackId = entry.trackId
-                }
-            } else {
-                items.insert(
-                    Item(
-                        id: download.queueItemId,
-                        trackId: entry?.trackId,
-                        title: entry?.title ?? "Unknown track",
-                        artist: entry?.artist ?? "",
-                        progress: download.progress,
-                        state: .running
-                    ),
-                    at: 0
-                )
-            }
-        }
-
-        sortAndTrim()
     }
 
-    /// Forget what has already settled. The running ones are not this button's
-    /// business — stopping a transfer is a different verb.
     func clearSettled() {
-        items.removeAll { $0.state != .running }
-    }
-
-    private func settled(_ id: String, in named: [String: QueueItem]) -> State {
-        guard let entry = named[id] else { return .finished }
-        if entry.status == .failed {
-            return .failed(entry.failureReason ?? "Couldn't be fetched")
-        }
-        return .finished
-    }
-
-    private func sortAndTrim() {
-        // A stable partition: running rises, and neither half is reordered, so
-        // a list being watched does not shuffle under the pointer.
-        let running = items.filter(\.isActive)
-        var settled = items.filter { !$0.isActive }
-        if settled.count > Self.settledLimit {
-            settled = Array(settled.prefix(Self.settledLimit))
-        }
-        items = running + settled
+        engine.clearSettledDownloads()
+        reload()
     }
 }

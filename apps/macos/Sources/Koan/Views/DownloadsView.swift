@@ -8,19 +8,20 @@ import SwiftUI
 /// rather than only flashing past on the row that caused it.
 struct DownloadsView: View {
     @Environment(DownloadsModel.self) private var downloads
-    @Environment(Navigator.self) private var nav
 
     var body: some View {
         Group {
             if downloads.items.isEmpty {
                 ContentUnavailableView(
                     "Nothing downloading",
-                    systemImage: "cloud",
-                    description: Text("Tracks fetched from your server appear here while they arrive.")
+                    systemImage: Icon.downloads,
+                    description: Text(
+                        "Tracks fetched from your server appear here while they arrive."
+                    )
                 )
             } else {
                 List {
-                    ForEach(downloads.items) { item in
+                    ForEach(downloads.items, id: \.queueItemId) { item in
                         DownloadRow(item: item)
                             .listRowSeparator(.hidden)
                     }
@@ -30,71 +31,72 @@ struct DownloadsView: View {
         }
         .navigationTitle("Downloads")
         .toolbar {
-            if downloads.items.contains(where: { !$0.isActive }) {
+            if downloads.hasSettled {
                 Button { downloads.clearSettled() } label: {
                     Label("Clear Finished", systemImage: Icon.clear)
                 }
                 .help("Forget the transfers that have already settled")
             }
         }
+        .task { downloads.reload() }
     }
 }
 
 private struct DownloadRow: View {
-    let item: DownloadsModel.Item
+    let item: DownloadEntry
 
     var body: some View {
         HStack(spacing: 12) {
-            SourceBadges(
-                onServer: true,
-                onDisk: item.state == .finished,
-                downloading: badge
-            )
+            SourceBadges(onServer: true, onDisk: item.state == .done, downloading: badge)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.title).lineLimit(1)
                 Text(subtitle)
                     .font(.caption)
-                    .foregroundStyle(item.state.isFailure ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .foregroundStyle(
+                        item.state == .failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+                    )
                     .lineLimit(1)
                 // Only while it is moving. A finished transfer's bar is a full
-                // one, which says nothing the filled cloud has not.
-                if item.isActive {
-                    ProgressView(value: item.progress ?? 0, total: 1)
+                // one, which says nothing the filled cloud has not — and a
+                // transfer with no stated length has no fraction to draw, where
+                // a bar sitting at zero would read as stalled.
+                if isRunning, let progress = item.progress {
+                    ProgressView(value: progress, total: 1)
                         .progressViewStyle(.linear)
-                        // An unknown length has no fraction to draw, and a bar
-                        // sitting at zero reads as stalled rather than unmeasured.
-                        .opacity(item.progress == nil ? 0 : 1)
                 }
             }
 
             Spacer(minLength: 8)
 
-            if let progress = item.progress, item.isActive {
-                Text("\(Int(progress * 100))%")
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
+            Text(figure)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
         }
         .padding(.vertical, 3)
     }
 
+    private var isRunning: Bool { item.state == .running || item.state == .queued }
+
     private var badge: SourceBadges.Download? {
-        guard item.isActive else { return nil }
+        guard isRunning else { return nil }
         return item.progress.map { .fraction($0) } ?? .indeterminate
     }
 
     private var subtitle: String {
         switch item.state {
+        case .failed: item.failureReason ?? "Couldn't be fetched"
+        case .queued: item.artist.isEmpty ? "Waiting" : "\(item.artist) — waiting"
+        case .done: item.artist.isEmpty ? "Downloaded" : "\(item.artist) — downloaded"
         case .running: item.artist
-        case .finished: item.artist.isEmpty ? "Downloaded" : "\(item.artist) — downloaded"
-        case .failed(let reason): reason
         }
     }
-}
 
-private extension DownloadsModel.State {
-    var isFailure: Bool {
-        if case .failed = self { true } else { false }
+    /// A percentage where there is one, and bytes where there is not — a
+    /// transfer the server gave no length for is still visibly moving.
+    private var figure: String {
+        guard isRunning else { return "" }
+        if let progress = item.progress { return "\(Int(progress * 100))%" }
+        return Format.bytes(Int64(item.bytesWritten))
     }
 }

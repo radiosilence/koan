@@ -257,6 +257,56 @@ pub struct QueueItem {
     pub failure_reason: Option<String>,
 }
 
+/// One transfer, as the download store has it.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DownloadEntry {
+    pub queue_item_id: String,
+    pub track_id: i64,
+    pub title: String,
+    pub artist: String,
+    /// 0.0–1.0, or `None` when the server sent no Content-Length — a bar drawn
+    /// at zero for a transfer that is going fine reads as stuck.
+    pub progress: Option<f64>,
+    pub bytes_written: u64,
+    pub total_bytes: u64,
+    pub state: DownloadEntryState,
+    /// Why it stopped, when it failed.
+    pub failure_reason: Option<String>,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadEntryState {
+    Queued,
+    Running,
+    Done,
+    Failed,
+}
+
+impl From<&koan_core::remote::downloads::Download> for DownloadEntry {
+    fn from(d: &koan_core::remote::downloads::Download) -> Self {
+        use koan_core::remote::downloads::DownloadState;
+        Self {
+            queue_item_id: d.id.0.to_string(),
+            track_id: d.track_id,
+            title: d.title.clone(),
+            artist: d.artist.clone(),
+            progress: d.fraction(),
+            bytes_written: d.bytes_written(),
+            total_bytes: d.total,
+            state: match &d.state {
+                DownloadState::Queued => DownloadEntryState::Queued,
+                DownloadState::Running => DownloadEntryState::Running,
+                DownloadState::Done => DownloadEntryState::Done,
+                DownloadState::Failed(_) => DownloadEntryState::Failed,
+            },
+            failure_reason: match &d.state {
+                DownloadState::Failed(reason) => Some(reason.clone()),
+                _ => None,
+            },
+        }
+    }
+}
+
 /// How far one in-flight download has got.
 ///
 /// Its own record rather than a queue refetch: progress moves several times a

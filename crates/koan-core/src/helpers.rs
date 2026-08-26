@@ -1189,6 +1189,21 @@ pub fn download_track(
 
     let bytes_written: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
 
+    // Announce it before a byte moves, so a queue of six shows six rows rather
+    // than one row and five tracks that look like nothing is happening to them.
+    let store = crate::remote::downloads::store();
+    store.queued(crate::remote::downloads::Download {
+        id: queue_id,
+        track_id: db_id,
+        title: track.title.clone(),
+        artist: track.artist_name.clone(),
+        source: crate::remote::download::part_path(&dest),
+        dest: dest.clone(),
+        total: 0,
+        written: bytes_written.clone(),
+        state: crate::remote::downloads::DownloadState::Queued,
+    });
+
     let progress_state = state.clone();
     let progress_qid = queue_id;
     let bytes_written_progress = bytes_written.clone();
@@ -1207,6 +1222,7 @@ pub fn download_track(
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
         bytes_written_progress.store(downloaded, Ordering::Release);
         if announced_total.swap(total, Ordering::Relaxed) != total {
+            store.started(progress_qid, total, bytes_written_progress.clone());
             progress_state.update_load_state(
                 progress_qid,
                 LoadState::Downloading {
@@ -1227,10 +1243,12 @@ pub fn download_track(
     });
 
     if let Err(e) = result {
+        store.failed(queue_id, e.to_string());
         fail_track(state, tx, queue_id, e.to_string());
         push_log(log_buf, format!("x {} — {}", track.title, e));
         return;
     }
+    store.finished(queue_id);
 
     // Download succeeded.
     state.update_paths(&[(queue_id, dest.clone())]);

@@ -10,6 +10,7 @@ struct SidebarView: View {
     @Environment(SearchModel.self) private var search
     @Environment(UIState.self) private var ui
     @Environment(PlaylistsModel.self) private var playlists
+    @Environment(DownloadsModel.self) private var downloads
     @FocusState private var searchFocused: Bool
     /// Highlights the Queue row while something is held over it — without it a
     /// drop is a guess.
@@ -71,6 +72,18 @@ struct SidebarView: View {
                     .tag(Navigator.Section.favourites)
                 Label("History", systemImage: Icon.history)
                     .tag(Navigator.Section.playHistory)
+                HStack {
+                    Label("Downloads", systemImage: Icon.downloads)
+                    // Only while something is happening. A zero sitting there
+                    // permanently is a number nobody reads.
+                    if downloads.activeCount > 0 {
+                        Spacer()
+                        Text("\(downloads.activeCount)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .tag(Navigator.Section.downloads)
             }
 
             playlistSection
