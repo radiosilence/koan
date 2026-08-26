@@ -306,6 +306,15 @@ mod tests {
             self.status.store(status, Ordering::Release);
         }
 
+        fn status_fn(&self) -> Arc<dyn Fn() -> StreamStatus + Send + Sync> {
+            let status = self.status.clone();
+            Arc::new(move || match status.load(Ordering::Acquire) {
+                COMPLETE => StreamStatus::Complete,
+                FAILED => StreamStatus::Failed,
+                _ => StreamStatus::Downloading,
+            })
+        }
+
         fn source(&self, total: u64) -> PartialFileSource {
             self.source_with_stall(total, STALL_LIMIT)
         }
@@ -444,6 +453,69 @@ mod tests {
             src.read(&mut out).unwrap_err().kind(),
             io::ErrorKind::BrokenPipe
         );
+    }
+
+    #[test]
+    fn a_probe_reads_only_what_has_arrived() {
+        // The first attempt must fail at the write head rather than wait: a
+        // container that would go looking for its tail has to be detected, not
+        // waited for.
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        let mut src = PartialFileSource::open_for_probe(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::Full,
+        )
+        .unwrap();
+
+        let mut out = [0u8; 10];
+        src.read_exact(&mut out).unwrap();
+        assert_eq!(
+            src.read(&mut out).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof,
+            "past the write head is an answer, not a wait"
+        );
+    }
+
+    #[test]
+    fn playback_reads_wait_for_what_has_not_arrived() {
+        // And the second attempt does wait, which is what lets a container
+        // whose audio starts further in than the streaming threshold — a FLAC
+        // with a large padding block, most of them — be opened at all.
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::Lengthless,
+        )
+        .unwrap();
+
+        let mut out = [0u8; 10];
+        src.read_exact(&mut out).unwrap();
+
+        std::thread::spawn({
+            let path = fx.path.clone();
+            let written = fx.written.clone();
+            move || {
+                std::thread::sleep(Duration::from_millis(20));
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .unwrap();
+                f.write_all(b"abcde").unwrap();
+                f.flush().unwrap();
+                written.fetch_add(5, Ordering::Release);
+            }
+        });
+
+        let n = src.read(&mut out).unwrap();
+        assert_eq!(&out[..n], b"abcde", "it waited rather than giving up");
     }
 
     #[test]

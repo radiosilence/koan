@@ -507,16 +507,31 @@ impl Player {
         let spawned = thread::Builder::new()
             .name("koan-stream-probe".into())
             .spawn(move || {
-                let attempt = |mode| {
-                    streaming::PartialFileSource::open_for_probe(
-                        &path,
-                        bytes_written.clone(),
-                        total,
-                        status.clone(),
-                        mode,
-                    )
-                    .map_err(buffer::DecodeError::Io)
-                    .and_then(|source| {
+                // `wait` says whether a read may sit at the write head for
+                // more of the download. The first attempt must not: a
+                // container that goes looking for its tail would wait for the
+                // whole transfer, and failing at once is how that is detected.
+                // The second has no length to go looking with, so whatever it
+                // still wants is in front of it and worth waiting for.
+                let attempt = |mode, wait: bool| {
+                    let open = if wait {
+                        streaming::PartialFileSource::open(
+                            &path,
+                            bytes_written.clone(),
+                            total,
+                            status.clone(),
+                            mode,
+                        )
+                    } else {
+                        streaming::PartialFileSource::open_for_probe(
+                            &path,
+                            bytes_written.clone(),
+                            total,
+                            status.clone(),
+                            mode,
+                        )
+                    };
+                    open.map_err(buffer::DecodeError::Io).and_then(|source| {
                         let mss = symphonia::core::io::MediaSourceStream::new(
                             Box::new(source),
                             Default::default(),
@@ -528,7 +543,7 @@ impl Player {
                 // Ask for the whole description first. Neither attempt waits at
                 // the write head, so a container that needs bytes which have
                 // not arrived fails here rather than reading the transfer out.
-                let info = match attempt(streaming::ProbeMode::Full) {
+                let info = match attempt(streaming::ProbeMode::Full, false) {
                     Ok(info) => Some((info, streaming::ProbeMode::Full)),
                     Err(e) => {
                         // Try again claiming no length. Ogg goes looking for its
@@ -541,7 +556,7 @@ impl Player {
                             path.display(),
                             e
                         );
-                        attempt(streaming::ProbeMode::Lengthless)
+                        attempt(streaming::ProbeMode::Lengthless, true)
                             .ok()
                             .map(|info| (info, streaming::ProbeMode::Lengthless))
                     }
