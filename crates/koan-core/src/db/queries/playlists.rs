@@ -403,12 +403,15 @@ pub fn set_playlist_tracks(conn: &Connection, id: i64, track_ids: &[i64]) -> Res
 
 /// Up to four covers for the playlist's tile, one per album.
 ///
-/// A track id rather than an album id, because that is what the cover art
-/// endpoint takes for either. Distinct albums, in playlist order: four copies
-/// of the same sleeve is not a mosaic.
-pub fn playlist_cover_track_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, DbError> {
+/// Album ids, because art is stored and cached per record: naming a track here
+/// asks for the same sleeve under a second key, which is a second round trip on
+/// a remote library and a second copy on disk — and it hides the record from
+/// whatever the caller knows about albums whose art is really the server's
+/// placeholder. Distinct albums, in playlist order: four copies of the same
+/// sleeve is not a mosaic.
+pub fn playlist_cover_album_ids(conn: &Connection, id: i64) -> Result<Vec<i64>, DbError> {
     let mut stmt = conn.prepare(
-        "SELECT MIN(pt.position), MIN(pt.track_id)
+        "SELECT MIN(pt.position), t.album_id
          FROM playlist_tracks pt
          JOIN tracks t ON t.id = pt.track_id
          WHERE pt.playlist_id = ?1 AND t.album_id IS NOT NULL
@@ -646,7 +649,18 @@ mod tests {
         let id = create_playlist(&conn, "Mix", None).unwrap();
         add_tracks(&conn, id, &[a1, a2, b1]).unwrap();
 
-        assert_eq!(playlist_cover_track_ids(&conn, id).unwrap(), vec![a1, b1]);
+        let album_of = |track_id: i64| {
+            conn.query_row(
+                "SELECT album_id FROM tracks WHERE id = ?1",
+                params![track_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            playlist_cover_album_ids(&conn, id).unwrap(),
+            vec![album_of(a1), album_of(b1)]
+        );
     }
 
     #[test]
