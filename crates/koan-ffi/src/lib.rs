@@ -1709,6 +1709,23 @@ impl KoanEngine {
         .await
     }
 
+    /// Delete the downloaded copies of just these tracks. The library rows
+    /// stay, and they fetch again on demand.
+    pub async fn clear_downloads(
+        self: Arc<Self>,
+        track_ids: Vec<i64>,
+    ) -> Result<CacheCleared, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let cleared = koan_core::helpers::clear_downloads_for(&db, &track_ids);
+            Ok(CacheCleared {
+                files: cleared.files,
+                bytes: cleared.bytes,
+            })
+        })
+        .await
+    }
+
     /// Rescans every configured library folder. Minutes, on a large library.
     pub async fn scan(self: Arc<Self>, force: bool) -> Result<ScanSummary, KoanError> {
         offload::offload(move || self.scan_blocking(force, None)).await

@@ -106,6 +106,12 @@ struct PlayableMenu: View {
             } label: {
                 Label("Organize Files…", systemImage: Icon.organize)
             }
+            // Acts on whatever of this is cached and says nothing when none of
+            // it is — resolving an artist to find out would be a query per
+            // menu drawn, for a line that is usually greyed out anyway.
+            Button { act { library.clearDownloads(trackIds: $0) } } label: {
+                Label("Remove Downloaded Files", systemImage: Icon.clear)
+            }
         }
 
         if case .track(let track) = playable, let albumId = track.albumId {

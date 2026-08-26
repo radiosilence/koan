@@ -24,7 +24,7 @@
 
 ### Added
 
-- **Library → Clear Downloaded Files.** Throws away everything cached from the server. The tracks stay in the library and fetch again on demand.
+- **Removing downloads, wholesale or one record at a time.** Library → Clear Downloaded Files throws away everything cached from the server; right-clicking a track, album or artist offers Remove Downloaded Files for just that. Either way the library rows stay and fetch again on demand.
 
 - **A graphics level, in Settings -> Appearance.** One slider from `Plain` to `Full`, so koan can be told how much of the machine it may spend on looking like itself. `Full` is what it has always done and stays the default.
 

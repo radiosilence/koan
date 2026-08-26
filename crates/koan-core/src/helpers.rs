@@ -392,6 +392,39 @@ pub fn clear_download_cache(db: &Database, cfg: &Config) -> CacheCleared {
     cleared
 }
 
+/// Delete the downloaded copies of just these tracks.
+///
+/// The per-track counterpart of `clear_download_cache`, for throwing away one
+/// record rather than the lot. A track playing from a copy being removed keeps
+/// playing — the decoder holds the file open, and unlinking it only takes the
+/// name away — but the next play fetches it again.
+pub fn clear_downloads_for(db: &Database, track_ids: &[i64]) -> CacheCleared {
+    let mut cleared = CacheCleared::default();
+    let paths = match queries::cached_paths_for(&db.conn, track_ids) {
+        Ok(paths) => paths,
+        Err(e) => {
+            log::warn!("could not read cached paths: {e}");
+            return cleared;
+        }
+    };
+    for path in &paths {
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        match std::fs::remove_file(path) {
+            Ok(()) => {
+                cleared.files += 1;
+                cleared.bytes += size;
+            }
+            // Already gone is the outcome asked for, so it is not a failure.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("could not remove {path}: {e}"),
+        }
+    }
+    if let Err(e) = queries::clear_cached_paths_for(&db.conn, track_ids) {
+        log::warn!("removed downloads but failed to forget them ({e})");
+    }
+    cleared
+}
+
 /// Push a favourite to the remote server, if this track came from one.
 ///
 /// Fire and forget on its own thread: starring is a courtesy to the server, and
@@ -1274,6 +1307,67 @@ mod rebuild_tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    #[test]
+    fn clearing_one_download_leaves_the_others_and_the_library_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+
+        let mut cached = Vec::new();
+        for name in ["one", "two"] {
+            let mut meta = sample_meta(name, "Artist", "Album");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(name.into());
+            let id = queries::upsert_track(&db.conn, &meta).unwrap();
+            let file = dir.path().join(format!("{name}.opus"));
+            std::fs::write(&file, vec![0u8; 2048]).unwrap();
+            queries::set_cached_path(&db.conn, id, &file.to_string_lossy()).unwrap();
+            cached.push((id, file));
+        }
+
+        let cleared = clear_downloads_for(&db, &[cached[0].0]);
+        assert_eq!(cleared.files, 1);
+        assert_eq!(cleared.bytes, 2048);
+        assert!(!cached[0].1.exists(), "the copy asked for is gone");
+        assert!(cached[1].1.exists(), "the other one is untouched");
+
+        // The row survives — a remote track is still in the library, it just
+        // has to be fetched again.
+        assert_eq!(queries::library_stats(&db.conn).unwrap().remote_tracks, 2);
+        assert_eq!(queries::library_stats(&db.conn).unwrap().cached_tracks, 1);
+        assert!(
+            queries::cached_paths_for(&db.conn, &[cached[0].0])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn clearing_a_download_that_is_already_gone_is_not_a_failure() {
+        let db = test_db();
+        let mut meta = sample_meta("ghost", "Artist", "Album");
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("ghost".into());
+        let id = queries::upsert_track(&db.conn, &meta).unwrap();
+        queries::set_cached_path(&db.conn, id, "/nowhere/at/all.opus").unwrap();
+
+        let cleared = clear_downloads_for(&db, &[id]);
+        assert_eq!(cleared.files, 0, "nothing was there to remove");
+        // Forgotten regardless: the row claimed a copy that does not exist.
+        assert!(
+            queries::cached_paths_for(&db.conn, &[id])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn clearing_no_tracks_does_nothing() {
+        let db = test_db();
+        assert_eq!(clear_downloads_for(&db, &[]).files, 0);
     }
 
     #[test]

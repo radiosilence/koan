@@ -408,6 +408,21 @@ final class LibraryModel {
         }
     }
 
+    /// Throw away the downloaded copies of these tracks.
+    ///
+    /// Not exclusive like the library-wide tasks: it touches only the rows
+    /// named, and someone clearing one record should not have to wait behind a
+    /// scan. Anything playing from a copy being removed keeps playing — the
+    /// decoder has the file open, and unlinking it only takes the name away.
+    func clearDownloads(trackIds: [Int64]) {
+        guard !trackIds.isEmpty else { return }
+        let engine = self.engine
+        Task {
+            _ = try? await engine.clearDownloads(trackIds: trackIds)
+            loadStats()
+        }
+    }
+
     /// Full rescan of every configured folder. Minutes on a big library, so it
     /// runs detached and the UI stays live throughout.
     func scan(force: Bool = false) {
