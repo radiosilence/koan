@@ -595,21 +595,8 @@ impl KoanEngine {
         limit: u32,
         offset: u32,
     ) -> Result<Vec<Track>, KoanError> {
-        offload::offload(move || {
-            // Temporary: says whether a slow album is slow in the database or
-            // slow to reach the screen. Anything over a frame is worth a line.
-            let began = std::time::Instant::now();
-            let out = self.tracks_blocking(album_id, artist_id, sort, limit, offset);
-            let took = began.elapsed();
-            if took > std::time::Duration::from_millis(16) {
-                log::info!(
-                    "tracks(album {album_id:?}) took {took:?} for {} rows",
-                    out.as_ref().map(|r| r.len()).unwrap_or(0)
-                );
-            }
-            out
-        })
-        .await
+        offload::offload(move || self.tracks_blocking(album_id, artist_id, sort, limit, offset))
+            .await
     }
 
     pub async fn track(self: Arc<Self>, track_id: i64) -> Result<Option<Track>, KoanError> {
@@ -2296,12 +2283,6 @@ impl KoanEngine {
                 let mut last_signature: Option<(PlaybackState, Option<String>, u64)> = None;
                 let mut last_downloads: Vec<DownloadProgress> = Vec::new();
                 let mut last_store = u64::MAX;
-                // Temporary: answers "is the watcher actually emitting?" from
-                // the log rather than from reasoning about it.
-                let mut emitted_progress: u64 = 0;
-                let mut emitted_store: u64 = 0;
-                let mut emitted_position: u64 = 0;
-                let mut ticks: u64 = 0;
                 // Starts where the engine starts, so a launch is not announced
                 // as a change to a library nobody has read yet.
                 let mut last_library = 0u64;
@@ -2371,7 +2352,6 @@ impl KoanEngine {
                             engine.bump_library();
                         }
                         last_downloads = downloads.clone();
-                        emitted_progress += 1;
                         publish(PlayerEvent::DownloadsChanged { downloads });
                     }
 
@@ -2382,26 +2362,9 @@ impl KoanEngine {
                     let store_version = koan_core::remote::downloads::store().version();
                     if store_version != last_store {
                         last_store = store_version;
-                        emitted_store += 1;
                         publish(PlayerEvent::DownloadStoreChanged {
                             version: store_version,
                         });
-                    }
-
-                    // Once every five seconds, and only while something is
-                    // happening. Fifty ticks is the ceiling for each count.
-                    ticks += 1;
-                    if ticks.is_multiple_of(50)
-                        && (emitted_progress > 0 || emitted_position > 0 || emitted_store > 0)
-                    {
-                        log::info!(
-                            "watcher/5s: position {emitted_position}, downloads {emitted_progress}, \
-                             store {emitted_store}, in flight {}",
-                            koan_core::remote::downloads::store().active()
-                        );
-                        emitted_progress = 0;
-                        emitted_store = 0;
-                        emitted_position = 0;
                     }
 
                     let library = engine
@@ -2418,7 +2381,6 @@ impl KoanEngine {
                         let position = engine.state.position_ms();
                         if position != last_position {
                             last_position = position;
-                            emitted_position += 1;
                             publish(PlayerEvent::PositionChanged {
                                 position_ms: position,
                             });
