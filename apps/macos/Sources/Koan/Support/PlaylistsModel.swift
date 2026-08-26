@@ -119,8 +119,8 @@ final class PlaylistsModel {
     }
 
     private func loadCovers(for id: Int64) async {
-        let ids = (try? await engine.playlistCoverTrackIds(playlistId: id)) ?? []
-        covers[id] = ids.map { .track($0) }
+        let ids = (try? await engine.playlistCoverAlbumIds(playlistId: id)) ?? []
+        covers[id] = ids.map { .album($0) }
     }
 
     // MARK: - Mutations
