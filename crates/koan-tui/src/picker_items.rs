@@ -10,7 +10,7 @@ fn format_time(ms: u64) -> String {
 }
 
 pub fn load_picker_items(kind: PickerKind) -> Vec<PickerItem> {
-    let db = koan_core::db::connection::Database::open_default().unwrap_or_else(|e| {
+    let db = koan_core::db::pool::shared().get().unwrap_or_else(|e| {
         log::error!("db error: {}", e);
         std::process::exit(1);
     });

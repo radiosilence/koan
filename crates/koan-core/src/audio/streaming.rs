@@ -64,9 +64,12 @@ pub struct PartialFileSource {
     ///
     /// Saying nothing is what stops a container going looking for its tail:
     /// Ogg reads its final page only when the source claims both a length and
-    /// seekability. The cost is that it then cannot seek at all, so this is for
-    /// the second attempt at opening a partial file, once the first has shown
-    /// the container will not describe itself from the front.
+    /// seekability, and Symphonia scans for trailing metadata on the same
+    /// terms — which no partial file can satisfy. So this is what every
+    /// container mid-download ends up opened with, not only Ogg.
+    ///
+    /// It governs the end of the stream as well as the length, because they
+    /// have to be the same end. See `Seek`.
     advertise_len: bool,
 }
 
@@ -77,8 +80,10 @@ pub enum ProbeMode {
     /// already downloaded does, and the result is fully seekable.
     Full,
     /// State no length, so a container that would go looking for its tail
-    /// settles for what it can read from the front. Opens immediately at the
-    /// cost of seeking, and of any duration only the tail could give.
+    /// settles for what it can read from the front. Opens immediately, and
+    /// stays seekable within what has arrived for anything that describes its
+    /// frames from the front. What it gives up is whatever only the tail could
+    /// give — for Ogg that is the duration, and with it seeking at all.
     Lengthless,
 }
 
@@ -216,10 +221,14 @@ impl Seek for PartialFileSource {
         let target: i64 = match pos {
             SeekFrom::Start(n) => n as i64,
             SeekFrom::Current(n) => self.pos as i64 + n,
-            // Seeking relative to an end the download has not reached yet is
-            // guesswork; the advertised length is the best answer there is.
+            // The end has to be the same end `byte_len` describes. A source
+            // that states a length is asked about the whole file and answers
+            // for it; one that states none has only what has arrived, and
+            // answering with the advertised total there sends a reader
+            // bisecting into bytes that are not on disk yet — which is the
+            // whole file's worth of waiting for a FLAC seeked mid-download.
             SeekFrom::End(n) => {
-                let len = if self.total > 0 {
+                let len = if self.advertise_len && self.total > 0 {
                     self.total
                 } else {
                     self.available()
@@ -247,6 +256,10 @@ impl symphonia::core::io::MediaSource for PartialFileSource {
         // on a file that is already there. A forward seek past it lands on a
         // read that blocks until the bytes arrive, which is the honest
         // behaviour — callers clamp to `seekable_ms` to avoid asking.
+        //
+        // Saying no would cost more than it saved: a reader told a stream is
+        // unseekable does not stop seeking, it walks the whole file to the
+        // target instead, and cannot go backwards at all.
         true
     }
 
@@ -409,6 +422,58 @@ mod tests {
         let mut out = [0u8; 3];
         src.read_exact(&mut out).unwrap();
         assert_eq!(&out, b"789");
+    }
+
+    #[test]
+    fn a_lengthless_source_ends_where_the_download_does() {
+        // The end has to agree with `byte_len`. FLAC seeks by bisecting
+        // between its first frame and `SeekFrom::End(0)`, so answering with the
+        // advertised total aims the search at bytes that are not on disk yet:
+        // every probe of the range waits at the write head, and a seek into a
+        // half-downloaded track spends the stall limit before failing.
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::Lengthless,
+        )
+        .unwrap();
+        assert_eq!(src.byte_len(), None);
+        assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 10);
+
+        // Stating a length means answering for the whole of it.
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::Full,
+        )
+        .unwrap();
+        assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 1_000);
+    }
+
+    #[test]
+    fn a_landed_download_ends_at_the_whole_file() {
+        // The bound moves with the transfer, so it stops bounding anything
+        // once every byte is there.
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        fx.set(COMPLETE);
+
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            10,
+            fx.status_fn(),
+            ProbeMode::Lengthless,
+        )
+        .unwrap();
+        assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 10);
     }
 
     #[test]

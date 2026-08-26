@@ -72,6 +72,60 @@ fn format_source(info: &TrackInfo) -> String {
     format!("{} {}{} {}", info.codec, rate_str, detail, ch_str)
 }
 
+/// The playhead. A cell of its own rather than the end of the played run:
+/// twenty seconds into nine hours is a tenth of a percent of the bar, which
+/// rounds to no cells at any width a terminal has, and a bar with no mark on
+/// it says nothing about where playback is.
+const HEAD: &str = "\u{25CF}";
+
+/// The seek bar as cell counts, either side of the playhead: what has played,
+/// what can still be reached, and what has not arrived yet. The three plus the
+/// head fill the bar exactly.
+struct BarRegions {
+    played: usize,
+    reachable: usize,
+    pending: usize,
+}
+
+impl BarRegions {
+    /// `seekable_ms` is where a seek stops short while a download is still
+    /// arriving, and `None` once the whole track is reachable.
+    ///
+    /// The dimming falls on what has not arrived rather than on what has, so
+    /// that a track already on disk — the ordinary case — draws as the
+    /// ordinary bar, and a download finishing changes nothing about it. Lit
+    /// the other way round, a bar goes dark the moment its transfer completes.
+    fn new(bar_width: usize, position_ms: u64, duration_ms: u64, seekable_ms: Option<u64>) -> Self {
+        if bar_width == 0 {
+            return Self {
+                played: 0,
+                reachable: 0,
+                pending: 0,
+            };
+        }
+        let cells = |ms: u64| {
+            let frac = if duration_ms > 0 {
+                ms as f64 / duration_ms as f64
+            } else {
+                0.0
+            };
+            ((frac * bar_width as f64) as usize).min(bar_width)
+        };
+
+        let tail = bar_width - 1; // everything but the head
+        let played = cells(position_ms).min(tail);
+        let reachable = seekable_ms
+            .map_or(bar_width, cells)
+            .saturating_sub(played + 1)
+            .min(tail - played);
+        Self {
+            played,
+            reachable,
+            pending: tail - played - reachable,
+        }
+    }
+}
+
 pub struct TransportBar<'a> {
     track_info: Option<&'a TrackInfo>,
     playing_entry: Option<&'a QueueEntry>,
@@ -190,42 +244,25 @@ impl Widget for TransportBar<'_> {
         let chrome_width = 1 + 2 + 1 + 1 + time_str.len() as u16;
         let bar_width = area.width.saturating_sub(chrome_width) as usize;
 
-        let progress = if duration_ms > 0 {
-            ((self.position_ms as f64 / duration_ms as f64) * bar_width as f64) as usize
-        } else {
-            0
-        }
-        .min(bar_width);
+        let bar = BarRegions::new(bar_width, self.position_ms, duration_ms, self.seekable_ms);
 
-        // How much of the bar can be seeked into.
-        let downloaded = if let Some(seekable) = self.seekable_ms {
-            let dl_frac = if duration_ms > 0 {
-                seekable as f64 / duration_ms as f64
-            } else {
-                1.0
-            };
-            ((dl_frac * bar_width as f64) as usize).min(bar_width)
-        } else {
-            bar_width // fully downloaded
-        };
-
-        let filled = "\u{2501}".repeat(progress);
-        let dl_remaining = "\u{2500}".repeat(downloaded.saturating_sub(progress));
-        // Not-yet-downloaded portion: same char but DIM so it fades out.
-        let not_downloaded = "\u{2500}".repeat(bar_width.saturating_sub(downloaded));
-
-        let mut spans = vec![
-            Span::raw(" "),
-            status_icon,
-            Span::raw(" "),
-            Span::styled(filled, self.theme.progress_filled),
-            Span::styled(dl_remaining, self.theme.progress_empty),
-        ];
-        if !not_downloaded.is_empty() {
+        let mut spans = vec![Span::raw(" "), status_icon, Span::raw(" ")];
+        if bar_width > 0 {
             spans.push(Span::styled(
-                not_downloaded,
-                self.theme.progress_empty.add_modifier(Modifier::DIM),
+                "\u{2501}".repeat(bar.played),
+                self.theme.progress_filled,
             ));
+            spans.push(Span::styled(HEAD, self.theme.progress_filled));
+            spans.push(Span::styled(
+                "\u{2500}".repeat(bar.reachable),
+                self.theme.progress_empty,
+            ));
+            if bar.pending > 0 {
+                spans.push(Span::styled(
+                    "\u{2500}".repeat(bar.pending),
+                    self.theme.progress_empty.add_modifier(Modifier::DIM),
+                ));
+            }
         }
         spans.push(Span::raw(" "));
         spans.push(Span::styled(time_str, self.theme.hint_desc));
@@ -374,5 +411,111 @@ pub fn format_time(ms: u64) -> String {
         format!("{}:{:02}:{:02}", hours, mins, secs)
     } else {
         format!("{}:{:02}", mins, secs)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const NINE_HOURS: u64 = 9 * 60 * 60 * 1000;
+
+    fn regions(position_ms: u64, duration_ms: u64, seekable_ms: Option<u64>) -> BarRegions {
+        BarRegions::new(60, position_ms, duration_ms, seekable_ms)
+    }
+
+    #[test]
+    fn the_regions_and_the_head_fill_the_bar() {
+        for pos in [0, 1, 30_000, NINE_HOURS / 2, NINE_HOURS] {
+            for seekable in [None, Some(0), Some(NINE_HOURS / 3), Some(NINE_HOURS)] {
+                let b = regions(pos, NINE_HOURS, seekable);
+                assert_eq!(
+                    b.played + 1 + b.reachable + b.pending,
+                    60,
+                    "{pos} {seekable:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_position_too_small_to_draw_still_has_a_head() {
+        // Twenty seconds into nine hours is a tenth of a percent of the bar.
+        let b = regions(20_000, NINE_HOURS, None);
+        assert_eq!(b.played, 0);
+        assert_eq!(b.reachable, 59);
+    }
+
+    #[test]
+    fn the_head_stays_on_the_bar_at_the_end_of_the_track() {
+        let b = regions(NINE_HOURS, NINE_HOURS, None);
+        assert_eq!(b.played, 59);
+        assert_eq!(b.reachable, 0);
+        assert_eq!(b.pending, 0);
+    }
+
+    #[test]
+    fn a_track_on_disk_has_nothing_dimmed() {
+        let b = regions(NINE_HOURS / 2, NINE_HOURS, None);
+        assert_eq!(b.pending, 0);
+    }
+
+    #[test]
+    fn what_has_not_arrived_is_what_is_dimmed() {
+        let b = regions(0, 100_000, Some(25_000));
+        assert_eq!(b.reachable, 14); // 15 cells reachable, one of them the head
+        assert_eq!(b.pending, 45);
+    }
+
+    #[test]
+    fn a_track_reachable_nowhere_is_dim_the_whole_way() {
+        let b = regions(0, 100_000, Some(0));
+        assert_eq!(b.played, 0);
+        assert_eq!(b.reachable, 0);
+        assert_eq!(b.pending, 59);
+    }
+
+    /// What the bar actually draws, as one string, for a track twenty seconds
+    /// into nine hours — the case a played run alone cannot show.
+    fn rendered(position_ms: u64, duration_ms: u64, seekable_ms: Option<u64>) -> String {
+        let theme = Theme::default();
+        let info = TrackInfo {
+            id: koan_core::player::state::QueueItemId::new(),
+            path: std::path::PathBuf::from("/x.flac"),
+            codec: "FLAC".into(),
+            sample_rate: 44100,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            channels: 2,
+            duration_ms,
+        };
+        let area = Rect::new(0, 0, 60, 2);
+        let mut buf = Buffer::empty(area);
+        TransportBar::new(
+            Some(&info),
+            None,
+            PlaybackState::Playing,
+            position_ms,
+            &theme,
+        )
+        .with_seekable_ms(seekable_ms)
+        .render(area, &mut buf);
+        (0..area.width)
+            .map(|x| buf[(x, 0)].symbol())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn the_head_is_drawn_where_a_played_run_would_show_nothing() {
+        let bar = rendered(20_000, NINE_HOURS, None);
+        assert!(bar.contains(HEAD), "{bar}");
+        // Four cells of chrome, then the head at the very start of the bar.
+        assert_eq!(bar.chars().nth(4).unwrap().to_string(), HEAD, "{bar}");
+    }
+
+    #[test]
+    fn a_bar_with_no_room_draws_nothing() {
+        let b = BarRegions::new(0, 30_000, 100_000, None);
+        assert_eq!((b.played, b.reachable, b.pending), (0, 0, 0));
     }
 }

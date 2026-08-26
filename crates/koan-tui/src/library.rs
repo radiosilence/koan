@@ -5,7 +5,6 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Widget};
 
-use koan_core::db::connection::Database;
 use koan_core::db::queries;
 
 use super::theme::Theme;
@@ -68,8 +67,8 @@ impl LibraryState {
         state
     }
 
-    fn open_db(&self) -> Option<Database> {
-        Database::open(&self.db_path).ok()
+    fn open_db(&self) -> Option<koan_core::db::pool::Handle<'static>> {
+        koan_core::db::pool::shared().get().ok()
     }
 
     fn load_artists(&mut self) {

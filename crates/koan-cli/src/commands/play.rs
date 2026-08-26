@@ -95,7 +95,7 @@ pub fn cmd_play(
             .expect("failed to spawn API server thread");
     }
 
-    if clear_queue && let Ok(db) = koan_core::db::connection::Database::open(&config::db_path()) {
+    if clear_queue && let Ok(db) = koan_core::db::pool::shared().get() {
         let _ = queries::clear_playback_state(&db.conn);
     }
 
@@ -152,7 +152,7 @@ pub fn cmd_play(
             })
             .expect("failed to spawn resolve thread");
     } else if !clear_queue
-        && let Ok(db) = koan_core::db::connection::Database::open(&config::db_path())
+        && let Ok(db) = koan_core::db::pool::shared().get()
         && let Ok(Some(persisted)) = queries::load_playback_state(&db.conn)
     {
         let items: Vec<_> = persisted
@@ -196,7 +196,6 @@ pub fn cmd_play(
         install_panic_hook: install_terminal_panic_hook,
         parse_dropped_paths: |text| parse_dropped_paths(text),
         playlist_items_from_paths: |paths, progress| playlist_items_from_paths(paths, progress),
-        open_db,
     };
 
     if let Err(e) = koan_tui::play::run_tui(
@@ -261,7 +260,6 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         install_panic_hook: install_terminal_panic_hook,
         parse_dropped_paths: |text| parse_dropped_paths(text),
         playlist_items_from_paths: |paths, progress| playlist_items_from_paths(paths, progress),
-        open_db,
     };
 
     if let Err(e) = koan_tui::play::run_tui(

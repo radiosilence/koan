@@ -34,15 +34,13 @@ pub struct TuiCallbacks {
         &[PathBuf],
         Option<&std::sync::atomic::AtomicUsize>,
     ) -> Vec<koan_core::player::state::PlaylistItem>,
-    /// Open the database (exits on failure).
-    pub open_db: fn() -> koan_core::db::connection::Database,
 }
 
 /// Save the current queue and playback position to DB.
 fn save_playback_state_from_app(app: &app::App) {
     let (items, cursor) = app.state.snapshot_playlist();
     if items.is_empty() {
-        if let Ok(db) = koan_core::db::connection::Database::open(&app.db_path) {
+        if let Ok(db) = koan_core::db::pool::shared().get() {
             let _ = koan_core::db::queries::clear_playback_state(&db.conn);
         }
         return;
@@ -57,7 +55,7 @@ fn save_playback_state_from_app(app: &app::App) {
         .map(|i| i.path.to_string_lossy().into_owned());
     let position_ms = app.state.position_ms();
 
-    match koan_core::db::connection::Database::open(&app.db_path) {
+    match koan_core::db::pool::shared().get() {
         Ok(db) => {
             if let Err(e) = koan_core::db::queries::save_playback_state(
                 &db.conn,
@@ -329,8 +327,9 @@ pub fn run_tui(
             app.picker = Some(PickerState::new(*kind, items, multi));
         }
 
-        if let Some(artist_id) = app.artist_drill_down.take() {
-            let db = (callbacks.open_db)();
+        if let Some(artist_id) = app.artist_drill_down.take()
+            && let Ok(db) = koan_core::db::pool::shared().get()
+        {
             let albums = queries::albums_for_artist(&db.conn, artist_id).unwrap_or_default();
             if albums.is_empty() {
                 let track_ids: Vec<i64> = queries::tracks_for_artist(&db.conn, artist_id)
@@ -359,7 +358,6 @@ pub fn run_tui(
         if let Some((kind, ids, action)) = app.picker_result.take() {
             let tx_bg = tx.clone();
             let dq_bg = download_queue.clone();
-            let open_db = callbacks.open_db;
 
             app.loading_message = Some("loading...".into());
 
@@ -368,7 +366,9 @@ pub fn run_tui(
                 .spawn(move || {
                     let track_ids = match kind {
                         PickerKind::Album => {
-                            let db = open_db();
+                            let Ok(db) = koan_core::db::pool::shared().get() else {
+                                return;
+                            };
                             let mut expanded = Vec::new();
                             for album_id in &ids {
                                 if is_all_tracks_sentinel(*album_id) {
