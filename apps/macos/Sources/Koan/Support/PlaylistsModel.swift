@@ -37,25 +37,6 @@ final class PlaylistsModel {
     /// had the first time it was drawn — for a new playlist, nothing at all.
     private var coverStamp: [Int64: String] = [:]
 
-    /// What the queue is still exactly, if it is still something.
-    ///
-    /// While this names a playlist, the queue *follows* it: an edit there is an
-    /// edit to what you are listening to. A record cannot be edited, so locking
-    /// to one only says what you are listening to — which is worth saying.
-    ///
-    /// It clears the moment the queue is rearranged, added to, or extended by
-    /// radio, and the header says so either way: a rule this quiet has to be
-    /// visible, or the first silent update reads as the app moving things on
-    /// its own.
-    private(set) var lockedTo: QueueLock?
-
-    /// Ask the engine what the queue is. Cheap — two indexed reads — and only
-    /// worth doing when the queue or a playlist has actually moved.
-    func refreshLock() {
-        let engine = self.engine
-        Task { lockedTo = (try? await engine.queueLock()) ?? nil }
-    }
-
     /// Tracks waiting for a name, and the new playlist they will become.
     ///
     /// A request rather than a dialog, because the dialog cannot live where it
@@ -97,11 +78,14 @@ final class PlaylistsModel {
         }
     }
 
-    /// Open a playlist and load its tracks.
+    /// Open a playlist and load its rows. Asking for the one already open is
+    /// how a library change reaches this page — the rows are re-read without
+    /// blanking first, so nothing flashes empty for the length of a query.
     func open(id: Int64) {
-        guard openId != id else { return }
-        openId = id
-        entries = []
+        if openId != id {
+            openId = id
+            entries = []
+        }
         reloadTracks()
     }
 
@@ -132,9 +116,7 @@ final class PlaylistsModel {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         do {
-            let created = try await engine.createPlaylist(name: trimmed, trackIds: trackIds)
-            load()
-            return created
+            return try await engine.createPlaylist(name: trimmed, trackIds: trackIds)
         } catch {
             report?("Couldn't create that playlist — \(error.localizedDescription)")
             return nil
@@ -166,7 +148,7 @@ final class PlaylistsModel {
 
     func add(trackIds: [Int64], to id: Int64) {
         guard !trackIds.isEmpty else { return }
-        act(reloadingTracks: id == openId) {
+        act {
             _ = try await $0.addToPlaylist(playlistId: id, trackIds: trackIds)
         }
     }
@@ -188,7 +170,7 @@ final class PlaylistsModel {
         Task {
             let ids = await resolve(dropped)
             guard !ids.isEmpty else { return }
-            act(reloadingTracks: id == openId) {
+            act {
                 _ = try await $0.insertIntoPlaylist(
                     playlistId: id, trackIds: ids, at: UInt32(position)
                 )
@@ -199,14 +181,14 @@ final class PlaylistsModel {
     /// Put the entries in this order. Ids survive, so the queue keeps knowing
     /// which row each of its items came from.
     func reorder(entryIds: [Int64], in id: Int64) {
-        act(reloadingTracks: id == openId) {
+        act {
             try await $0.reorderPlaylist(playlistId: id, entryIds: entryIds)
         }
     }
 
     func remove(entryIds: [Int64], from id: Int64) {
         guard !entryIds.isEmpty else { return }
-        act(reloadingTracks: id == openId) {
+        act {
             _ = try await $0.removeFromPlaylist(playlistId: id, entryIds: entryIds)
         }
     }
@@ -214,7 +196,7 @@ final class PlaylistsModel {
     /// Shuffle the playlist itself, permanently. Distinct from playing it
     /// shuffled, which leaves it alone.
     func shuffle(id: Int64) {
-        act(reloadingTracks: id == openId) { try await $0.shufflePlaylist(playlistId: id) }
+        act { try await $0.shufflePlaylist(playlistId: id) }
     }
 
     /// Put `moving` where `target` currently sits.
@@ -277,12 +259,13 @@ final class PlaylistsModel {
         return ids
     }
 
-    /// A mutation, with the reload every one of them wants. `reloadingTracks`
-    /// only matters when the playlist being changed is the one on screen.
-    private func act(
-        reloadingTracks: Bool = false,
-        _ body: @escaping (KoanEngine) async throws -> Void
-    ) {
+    /// A mutation, with the error reporting every one of them wants.
+    ///
+    /// Nothing reloads here. Writing playlist rows is a library change like any
+    /// other, so the engine says so and whatever is on screen asks again — the
+    /// same path a sync from the server takes. A reload written in per mutation
+    /// is one that only covers the mutations somebody remembered.
+    private func act(_ body: @escaping (KoanEngine) async throws -> Void) {
         let engine = self.engine
         Task {
             do {
@@ -290,9 +273,6 @@ final class PlaylistsModel {
             } catch {
                 report?(String(describing: error))
             }
-            load()
-            refreshLock()
-            if reloadingTracks { reloadTracks() }
         }
     }
 }

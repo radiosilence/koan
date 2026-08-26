@@ -58,6 +58,30 @@ fn hint_for(path: &Path) -> symphonia::core::formats::probe::Hint {
     hint
 }
 
+/// How to open a partial file once the whole description has failed.
+///
+/// Ogg is the odd one out: it takes the end it is handed as the end of the
+/// stream, so telling it the file stops at the write head makes it report a
+/// track that is already over. Everything else describes its frames from the
+/// front and needs the opposite — an end it can actually reach. See
+/// `ProbeMode`.
+fn lengthless_mode_for(path: &Path) -> streaming::ProbeMode {
+    let ogg = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "ogg" | "oga" | "opus" | "spx"
+            )
+        });
+    if ogg {
+        streaming::ProbeMode::LengthlessWholeEnd
+    } else {
+        streaming::ProbeMode::Lengthless
+    }
+}
+
 /// The player controller. Owns the audio pipeline and processes commands.
 pub struct Player {
     shared_state: Arc<SharedPlayerState>,
@@ -556,9 +580,10 @@ impl Player {
                             path.display(),
                             e
                         );
-                        attempt(streaming::ProbeMode::Lengthless, true)
+                        let lengthless = lengthless_mode_for(&path);
+                        attempt(lengthless, true)
                             .ok()
-                            .map(|info| (info, streaming::ProbeMode::Lengthless))
+                            .map(|info| (info, lengthless))
                     }
                 };
 

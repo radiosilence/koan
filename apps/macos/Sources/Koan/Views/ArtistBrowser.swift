@@ -161,15 +161,41 @@ struct ArtistDetailView: View {
             }
             .padding(22)
         }
-        .task(id: artistId) { await load() }
+        .reloading(on: artistId) { await load() }
     }
 
+    /// Three independent reads, all at once and off the main actor.
+    ///
+    /// One after another they each waited on the one before for no reason, and
+    /// awaiting from a view callback means the *answer* waits for a main-actor
+    /// slot to be delivered — behind the state mirror's batch, which lands every
+    /// hundred milliseconds. Landed as one value, so the name cannot appear
+    /// ahead of the records.
     private func load() async {
         let engine = library.engine
         let id = artistId
-        artist = try? await engine.artist(artistId: id)
-        albums = (try? await engine.albums(artistId: id, sort: .year, seed: 0, search: nil)) ?? []
-        similar = (try? await engine.similarArtists(artistId: id)) ?? []
+        let loaded = await Task.detached(priority: .userInitiated) {
+            async let artist = try? await engine.artist(artistId: id)
+            async let albums = try? await engine.albums(
+                artistId: id, sort: .year, seed: 0, search: nil
+            )
+            async let similar = try? await engine.similarArtists(artistId: id)
+            return Loaded(
+                artist: await artist ?? nil,
+                albums: await albums ?? [],
+                similar: await similar ?? []
+            )
+        }.value
+        guard !Task.isCancelled else { return }
+        artist = loaded.artist
+        albums = loaded.albums
+        similar = loaded.similar
+    }
+
+    private struct Loaded: Sendable {
+        var artist: Artist?
+        var albums: [Album]
+        var similar: [SimilarArtist]
     }
 
     private func shufflePlay() {

@@ -7,6 +7,7 @@ import SwiftUI
 /// current one and scroll to it.
 struct LyricsPanel: View {
     @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
     @Environment(LibraryModel.self) private var library
 
     @State private var lyrics: Lyrics?
@@ -93,13 +94,13 @@ struct LyricsPanel: View {
     /// apart, and depending on the millisecond value would re-render every line
     /// ten times a second for no visible gain.
     private func currentIndex(_ lyrics: Lyrics) -> Int? {
-        let position = Double(player.clock.positionSeconds)
+        let position = Double(mirror.positionSeconds)
         return lyrics.lines.lastIndex { $0.timeSecs <= position }
     }
 
     private func fraction(of line: LyricLine) -> Double {
-        guard player.clock.durationMs > 0 else { return 0 }
-        return (line.timeSecs * 1000 / Double(player.clock.durationMs)).clamped()
+        guard player.durationMs > 0 else { return 0 }
+        return (line.timeSecs * 1000 / Double(player.durationMs)).clamped()
     }
 
     /// Cache first so the panel fills instantly, then LRCLIB in the background

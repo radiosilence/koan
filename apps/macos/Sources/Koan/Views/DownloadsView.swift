@@ -8,11 +8,12 @@ import SwiftUI
 /// and a failure keeps its reason rather than only flashing past on the row
 /// that caused it.
 struct DownloadsView: View {
-    @Environment(DownloadsModel.self) private var downloads
+    @Environment(EngineMirror.self) private var mirror
+    @Environment(AppState.self) private var app
 
     var body: some View {
         Group {
-            if downloads.items.isEmpty {
+            if mirror.transfers.isEmpty {
                 ContentUnavailableView(
                     "Nothing downloading",
                     systemImage: Icon.downloads,
@@ -22,8 +23,8 @@ struct DownloadsView: View {
                 )
             } else {
                 List {
-                    ForEach(downloads.items, id: \.queueItemId) { item in
-                        DownloadRow(item: item)
+                    ForEach(mirror.transfers, id: \.queueItemId) { transfer in
+                        DownloadRow(transfer: transfer)
                     }
                 }
                 .listStyle(.inset)
@@ -31,31 +32,38 @@ struct DownloadsView: View {
         }
         .navigationTitle("Downloads")
         .toolbar {
-            if downloads.hasSettled {
-                Button { downloads.clearSettled() } label: {
+            if mirror.hasSettledTransfers {
+                Button { app.engine.clearSettledDownloads() } label: {
                     Label("Clear Finished", systemImage: Icon.clear)
                 }
                 .help("Forget the transfers that have already settled")
             }
         }
-        // Only while this page is up. The figures move ten times a second and
-        // nothing else in the app needs them at that rate.
-        .task { await downloads.watch() }
     }
 }
 
 private struct DownloadRow: View {
-    let item: DownloadEntry
+    let transfer: Transfer
 
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
+    @Environment(EngineMirror.self) private var mirror
     @State private var hovering = false
+
+    /// The numbers, read here rather than carried on the row. They move ten
+    /// times a second while this row is going and not at all once it has
+    /// settled — which is exactly what the two slices are for.
+    private var figures: TransferFigure? { mirror.figure(for: transfer.queueItemId) }
+    private var bytesWritten: UInt64 { figures?.bytesWritten ?? 0 }
+    private var totalBytes: UInt64 { figures?.totalBytes ?? 0 }
+    private var bytesPerSecond: UInt64 { figures?.bytesPerSecond ?? 0 }
+    private var progress: Double? { figures?.progress }
 
     var body: some View {
         HStack(spacing: 10) {
             // A record is what you recognise a download by, and this is a list
             // of things you are waiting for.
-            AlbumArtwork(source: .track(item.trackId), size: .thumb, cornerRadius: 3)
+            AlbumArtwork(source: .track(transfer.trackId), size: .thumb, cornerRadius: 3)
                 .frame(width: 34, height: 34)
 
             rows
@@ -67,8 +75,8 @@ private struct DownloadRow: View {
             Button { showInLibrary() } label: {
                 Label("Show in Library", systemImage: Icon.album)
             }
-            if item.state == .done {
-                Button { library.clearDownloads(trackIds: [item.trackId]) } label: {
+            if transfer.state == .done {
+                Button { library.clearDownloads(trackIds: [transfer.trackId]) } label: {
                     Label("Remove Downloaded File", systemImage: Icon.clear)
                 }
             }
@@ -78,7 +86,7 @@ private struct DownloadRow: View {
     private var rows: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(item.title)
+                Text(transfer.title)
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 Text(figure)
@@ -108,7 +116,7 @@ private struct DownloadRow: View {
                 Text(subtitle)
                     .lineLimit(1)
                     .foregroundStyle(
-                        item.state == .failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
+                        transfer.state == .failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
                     )
                 Spacer(minLength: 8)
                 if hovering {
@@ -126,7 +134,7 @@ private struct DownloadRow: View {
     /// library rows, and most rows are never clicked.
     private func showInLibrary() {
         let engine = library.engine
-        let trackId = item.trackId
+        let trackId = transfer.trackId
         Task {
             guard let albumId = (try? await engine.track(trackId: trackId))??.albumId else {
                 return
@@ -135,24 +143,23 @@ private struct DownloadRow: View {
         }
     }
 
-    private var isRunning: Bool { item.state == .running || item.state == .queued }
+    private var isRunning: Bool { transfer.state == .running || transfer.state == .queued }
 
-    /// What has arrived. A transfer with no stated length has no fraction, and
-    /// draws an empty bar rather than a full one — it is going, not finished.
+    /// What has arrived.
     private var fraction: Double {
         // Whole once it has landed, whatever the last figure said — the bar
         // never goes backwards on completion.
-        if item.state == .done { return 1 }
+        if transfer.state == .done { return 1 }
         // A transfer with no stated length has no fraction and draws an empty
         // bar rather than a full one: it is going, not finished.
-        return item.progress ?? 0
+        return progress ?? 0
     }
 
     private var subtitle: String {
-        switch item.state {
-        case .failed: item.failureReason ?? "Couldn't be fetched"
-        case .queued: item.artist.isEmpty ? "Waiting" : "\(item.artist) — waiting"
-        case .done: item.artist.isEmpty ? "Downloaded" : "\(item.artist) — downloaded"
+        switch transfer.state {
+        case .failed: transfer.failureReason ?? "Couldn't be fetched"
+        case .queued: transfer.artist.isEmpty ? "Waiting" : "\(transfer.artist) — waiting"
+        case .done: transfer.artist.isEmpty ? "Downloaded" : "\(transfer.artist) — downloaded"
         case .running: rateAndSize
         }
     }
@@ -161,28 +168,28 @@ private struct DownloadRow: View {
     /// A rate of nothing is a stall, and saying so is the point of the row.
     private var rateAndSize: String {
         var parts: [String] = []
-        if !item.artist.isEmpty { parts.append(item.artist) }
+        if !transfer.artist.isEmpty { parts.append(transfer.artist) }
         parts.append(
-            item.bytesPerSecond > 0
-                ? "\(Format.bytes(Int64(item.bytesPerSecond)))/s"
+            bytesPerSecond > 0
+                ? "\(Format.bytes(Int64(bytesPerSecond)))/s"
                 : "stalled"
         )
-        if item.totalBytes > 0 {
+        if totalBytes > 0 {
             parts.append(
-                "\(Format.bytes(Int64(item.bytesWritten))) of \(Format.bytes(Int64(item.totalBytes)))"
+                "\(Format.bytes(Int64(bytesWritten))) of \(Format.bytes(Int64(totalBytes)))"
             )
-        } else if item.bytesWritten > 0 {
-            parts.append(Format.bytes(Int64(item.bytesWritten)))
+        } else if bytesWritten > 0 {
+            parts.append(Format.bytes(Int64(bytesWritten)))
         }
         return parts.joined(separator: " · ")
     }
 
     private var figure: String {
-        switch item.state {
+        switch transfer.state {
         case .done: "Done"
         case .failed: "Failed"
         case .queued: "Queued"
-        case .running: item.progress.map { "\(Int($0 * 100))%" } ?? ""
+        case .running: progress.map { "\(Int($0 * 100))%" } ?? ""
         }
     }
 

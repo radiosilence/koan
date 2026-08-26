@@ -67,10 +67,39 @@ struct AlbumArtwork: View {
     }
 
     var body: some View {
-        square
+        // Read straight through on every pass. A cover the app already holds
+        // draws in the *same frame* as the view that asks for it — no
+        // placeholder, no fade, no waiting for `.task` to run after the first
+        // render. Opening a record from the grid it was already showing used to
+        // draw a grey square and then dissolve in a bitmap sitting in memory.
+        //
+        // Safe now in a way it was not: this used to subscribe every artwork on
+        // screen to every entry in the cache, because the cache was observable
+        // and the lookup touched its dictionaries. It is neither observable nor
+        // main-actor bound any more — this is a lock and a hash lookup.
+        let ready = image ?? cache.cached(source, size: size)
+        return square
+            // The ground stays put. Swapping it for the art meant a *cross*
+            // dissolve — the placeholder fading out under an image fading in —
+            // so for the length of the fade neither was opaque and the cover
+            // read as translucent before snapping solid. The art comes up over
+            // a ground that never moves, so the composite is opaque throughout.
             .overlay {
-                if let image {
-                    Image(nsImage: image)
+                Rectangle()
+                    .fill(.quaternary)
+                    .overlay {
+                        if ready == nil {
+                            if isLoading {
+                                ProgressView().controlSize(.small)
+                            } else {
+                                EnsoPlaceholder()
+                            }
+                        }
+                    }
+            }
+            .overlay {
+                if let ready {
+                    Image(nsImage: ready)
                         .resizable()
                         // The bitmap is already sized for where it is drawn, so
                         // there is little left to interpolate and `.high` was
@@ -78,21 +107,11 @@ struct AlbumArtwork: View {
                         .interpolation(.medium)
                         .aspectRatio(contentMode: .fill)
                         .transition(.opacity)
-                } else {
-                    Rectangle()
-                        .fill(.quaternary)
-                        .overlay {
-                            if isLoading {
-                                ProgressView().controlSize(.small)
-                            } else {
-                                EnsoPlaceholder()
-                            }
-                        }
                 }
             }
             // Covers in the grid land tens of milliseconds apart, and cutting
             // straight from placeholder to art reads as a stutter of pops.
-            .animation(.easeOut(duration: 0.2), value: image == nil)
+            .animation(.easeOut(duration: 0.2), value: ready == nil)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)

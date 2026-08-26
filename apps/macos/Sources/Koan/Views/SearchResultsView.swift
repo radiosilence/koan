@@ -100,6 +100,7 @@ private struct SearchTrackRow: View {
 
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
     @State private var hovering = false
 
@@ -124,7 +125,7 @@ private struct SearchTrackRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                SourceBadges(track: track, queued: player.queuedByTrack[track.id])
+                SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
             }
 
             Spacer(minLength: 8)

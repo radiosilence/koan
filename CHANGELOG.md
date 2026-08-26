@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.32.0 (2026-08-26)
+## v0.33.0 (2026-08-26)
 
 ### Removed
 
@@ -9,6 +9,10 @@
   Anything already indexed disappears on the next scan.
 
 ### Fixed
+
+- **A large Opus file plays while it downloads again.** koan#375 taught a partial file to answer "where does this end?" with what had arrived rather than with the length the server advertised, which is what FLAC needs — it bisects between its first frame and the end it is given, and an end it cannot reach sends every probe into bytes that are not on disk.
+
+  Ogg needs the opposite. It takes the end it is handed as the end of the *stream*, so told the file stops at the write head it reported a track that was already over: nought milliseconds, and the decode thread reached the end of it in a second and moved on to the next, over and over. A large Opus download never played at all. The answer now depends on the container — Ogg, Opus, Speex and Ogg-FLAC keep the whole file's end, everything else keeps what has arrived. Neither can seek mid-download; for Ogg this is the difference between playing and not.
 
 - **Long tracks streamed from a server no longer break when the download lands.** Playback of a track that started mid-download held on to the name of the temporary file it started from. Finishing a download renames that file, so from then on the track named nothing: the next seek failed to open it and stopped playback outright. A nine-hour recording made it easy to hit, because there was a lot of track left to seek in.
 
@@ -53,6 +57,26 @@
 - **Half-finished downloads are cleaned up.** koan writes a download straight through and renames it at the end, so a `.part` file still on disk is from a run that did not finish — bytes nothing knows about, since only finished downloads are tracked for eviction. An interrupted nine-hour recording was half a gigabyte that never came back. They are swept at startup, which is the run after the one that left them.
 
 ### Changed
+
+- **Opening a record takes seven milliseconds.** Measured end to end in Instruments, from the click to the finished page: the two database reads are 7.4ms, switching the page is 19µs, and the first frame carries the whole record. It was about half a second.
+
+  Most of that half-second was the page loading itself *twice*. The navigator reads a record before it moves to it, and the page then asked again the moment it appeared — the same two queries, but landing while the artwork they had kicked off was still in flight, so the second one took twenty times what the first did and re-rendered a page that was already correct. A record now carries the library version it was read at, which makes asking for what is already on screen free and asking for it after the rows moved a real read.
+
+- **Opening a record is instant, and nothing draws before it has something to draw.** A page used to arrive empty, fetch, and fill in: the word "Album" over an empty list, then a header, then rows, then artwork fading in over a placeholder. Each step was a frame you could see. The record and its tracks are now read *before* the page is shown, in parallel and as one value, so the first frame is the finished page.
+
+  What made that possible was finding where the time actually went. The engine answers in about 300µs — but every `await` in a view or a view's `.task` inherits main-actor isolation, so the *answer* had to queue for a slot on the main actor before it could be delivered. Behind the state mirror's batch, which lands ten times a second, that was a hundred milliseconds and change, on every read, whatever the record. Off the main actor it comes back in one. The artwork cache was the same mistake at greater scale: it was main-actor bound with eight awaits in its fetch path, so a grid of twenty tiles queued a hundred and sixty jobs there. It is neither main-actor bound nor observable any more, which also lets a view read a cover it already holds during `body` — a record opened from the grid it was showing draws its sleeve in the same frame instead of dissolving one in from a placeholder.
+
+- **The wash behind the window runs on the GPU.** Its drift was three `repeatForever` SwiftUI animations on `offset` and `scaleEffect` — and `.offset` is a *layout* modifier, so animating it meant the attribute graph re-evaluated a window-sized layout pass every display frame, forever. It cost about a tenth of the main thread with nothing happening, and the app was unresponsive for the whole two seconds a record change took to dissolve. The drift, the blur, the saturation and the dissolve are `CABasicAnimation` and `CALayer.filters` now: committed once, run by the compositor, never touching the main thread again.
+
+  Blocking file reads and image decoding also came off Swift's cooperative pool, which has one thread per core and was being emptied by a screenful of tiles — the same starvation, one layer down. Both now have lanes of their own, the CPU one bounded.
+
+- **Artwork is one call per record rather than a listing thrown away.** Asking for an album's cover fetched the album's *tracks* to find an id to ask with — a query built and carried across the boundary for one integer, once per tile. The engine resolves it in SQL now, in the same call that returns the bytes.
+
+- **The macOS app follows one state stream instead of six events.** Every model held its own copy of engine state and refreshed it by a rule someone had to remember to write, wired up by six closures deciding which model heard what. Three bugs in one afternoon were the same shape: an album page kept an empty cloud after a download landed, a playlist page heard nothing at all, and a playlist's progress rings never moved because progress was patched into one index of the queue and not the other. The engine was right every time.
+
+  The engine now publishes whole slices — what is playing, where the playhead is, the queue, what the queue still *is*, the transfers, their figures, and whether the library moved — and the app holds one mirror of them. Views read properties and are invalidated by SwiftUI as normal; a page showing something asked for on demand, like a record's tracks, reloads where it is drawn rather than waiting for a model to remember it exists. A snapshot cannot be applied wrongly, which is what a delta can do and did.
+
+  Slices are cut by rate of change rather than by subject, because replacing one invalidates everyone reading it. A transfer's byte count is no longer a field on a queue row and the seekable extent is no longer a field beside a track's title: both moved ten times a second while riding on something that changes when you press a button, so both dragged every reader along with them. Nothing is dropped either — each client keeps a cursor, so falling behind costs the intermediate values of a slice and never the fact that it changed, and a fresh cursor reads the whole state, which is how the app seeds itself with no separate call.
 
 - **A library task now only greys out the ones it would actually collide with.** Any of them running disabled all of them, on the grounds that they queue behind SQLite's single writer — so a twenty-minute sync of a large server locked out rescanning a folder, clearing downloads and the organize sheet along with it. Each task says what it holds instead: the files on disk, the rows for your local tracks, the rows mirrored from the server, the downloaded copies. A sync and a scan write different rows and now run together; a scan and a file move over the same files still do not. Clearing the index waits for everything, because it empties everything.
 

@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 
 /// koan's accent, read from the asset catalog.
@@ -26,6 +27,24 @@ extension Color {
 extension Color {
     /// The colour a record reads as, for tinting the app while it plays.
     ///
+    /// Takes the encoded bytes rather than an `NSImage`, which is a class and
+    /// not `Sendable` — so working from one meant working where the image
+    /// already was, and that was the main actor. `Data` travels, so this runs
+    /// wherever it is sent.
+    static func dominant(ofEncoded data: Data) -> Color? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let thumbnail = CGImageSourceCreateThumbnailAtIndex(
+                  source, 0,
+                  [
+                      kCGImageSourceCreateThumbnailFromImageAlways: true,
+                      kCGImageSourceShouldCacheImmediately: true,
+                      kCGImageSourceThumbnailMaxPixelSize: 32,
+                  ] as CFDictionary
+              )
+        else { return nil }
+        return dominant(of: thumbnail)
+    }
+
     /// Not the average of the sleeve: averaging every pixel of a busy cover
     /// gives the same brown-grey every time, because opposite hues cancel. This
     /// is a circular mean of *hue* weighted by how colourful each sample is, so
@@ -35,12 +54,10 @@ extension Color {
     /// The result is forced into a band that stays legible as a tint on dark
     /// chrome. A navy sleeve would otherwise give an accent invisible against
     /// the window and a neon one would flare.
-    static func dominant(of image: NSImage) -> Color? {
+    private static func dominant(of cgImage: CGImage) -> Color? {
         let side = 12
         var pixels = [UInt8](repeating: 0, count: side * side * 4)
-        var rect = NSRect(origin: .zero, size: image.size)
-        guard let cgImage = image.cgImage(forProposedRect: &rect, context: nil, hints: nil),
-              let context = CGContext(
+        guard let context = CGContext(
                   data: &pixels,
                   width: side,
                   height: side,

@@ -104,20 +104,13 @@ final class LibraryModel {
     private(set) var stats: Stats?
     private(set) var isLoading = false
 
-    private(set) var detailTracks: [Track] = []
-    /// Which record `detailTracks` belongs to.
-    ///
-    /// Two jobs. A library change knows what to ask for again — a download
-    /// landing writes a cached path onto a row, and the page showing that row
-    /// has to hear about it or its cloud stays hollow until you navigate away
-    /// and back. And an answer for a record you have already left cannot land
-    /// on the one you are looking at.
-    private var detailAlbumId: Int64?
-
     /// Where long tasks register, so one place can say what is happening and
     /// refuse a second task that would collide with a running one. Set by
     /// `AppState` — see `ActivityModel`.
     weak var activity: ActivityModel?
+    /// Set by `AppState`, so a record's sleeve can be warmed as its rows are
+    /// read rather than after the page is already up.
+    var art: CoverArtCache?
 
     var scanSummary: ScanSummary?
 
@@ -131,11 +124,6 @@ final class LibraryModel {
     }
 
     // MARK: - Loading
-
-    func loadInitial() {
-        loadStats()
-        reload()
-    }
 
     private var loading: Task<Void, Never>?
 
@@ -262,23 +250,74 @@ final class LibraryModel {
         }
     }
 
-    /// Tracks for the album detail pane.
-    func loadTracks(albumId: Int64) {
-        // Only when it is a different record. Asked again for the one already
-        // showing — which is what a library change does — blanking the list
-        // first would flash it empty for the length of a query.
-        if detailAlbumId != albumId {
-            detailTracks = []
+    /// The record a page is showing, and its tracks, as one value.
+    ///
+    /// Loaded *before* the page appears — see `Navigator.open(album:)`. A page
+    /// that fetches once it is already on screen has to draw itself empty
+    /// first, and the empty state of a record page is the word "Album" over
+    /// nothing. Both halves land together or not at all, so the header can
+    /// never arrive ahead of the rows either.
+    private(set) var detailRecord: AlbumRecord?
+
+    struct AlbumRecord: Sendable {
+        let albumId: Int64
+        /// The library version it was read at. What makes asking for the record
+        /// already on screen free, and asking for it after the rows moved a
+        /// real read.
+        let stamp: UInt64
+        var album: Album?
+        var tracks: [Track]
+    }
+
+    /// Set by `AppState`. Read for the library version a record was loaded at.
+    weak var mirror: EngineMirror?
+
+    /// Read the record and its tracks, off the main actor and both at once.
+    ///
+    /// `.task` and every view callback are main-actor isolated, and isolation
+    /// is inherited by every suspension point — so awaiting the engine from one
+    /// means the *answer* waits for a main-actor slot to be delivered. It queued
+    /// behind the state mirror's batch, which lands every hundred milliseconds:
+    /// the engine answered in 300µs and the page saw it a tenth of a second
+    /// later, every time, whatever the record. Detached, it comes back in one.
+    func prepare(album id: Int64) async {
+        let stamp = mirror?.libraryVersion ?? 0
+        // Already in hand, and nothing has changed under it. The navigator loads
+        // a record before it moves to it, so the page's own `.reloading` asks
+        // again the moment it appears — and that second read is identical, lands
+        // while the artwork it kicked off is still competing, and takes twenty
+        // times what the first one did. A fast page followed by a slow redraw of
+        // the same page reads worse than a slow page.
+        if let held = detailRecord, held.albumId == id, held.stamp == stamp { return }
+
+        // Started alongside the queries rather than waited on. Coming from the
+        // grid it is already decoded and the page draws it in its first frame;
+        // arriving cold from search it is an HTTP round trip, and holding a
+        // click for that would be worse than the fade it saves.
+        // The sleeve and the colour it washes the room in, warmed alongside
+        // the rows rather than after the page is already up. Started, not
+        // waited on: from the grid both are already in hand, and arriving cold
+        // from search they are an HTTP round trip that a click should not hang
+        // for.
+        if let art {
+            Task.detached {
+                _ = await art.image(for: .album(id), size: .tile)
+                _ = await art.dominantColour(for: .album(id))
+            }
         }
-        detailAlbumId = albumId
         let engine = self.engine
-        Task {
-            let tracks = (try? await engine.tracks(
-                albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
-            )) ?? []
-            guard detailAlbumId == albumId else { return }
-            detailTracks = tracks
+        let loaded = await Trace.region("engine-reads") {
+            await Task.detached(priority: .userInitiated) {
+                let page = try? await engine.albumPage(albumId: id)
+                return AlbumRecord(
+                    albumId: id,
+                    stamp: stamp,
+                    album: page?.album,
+                    tracks: page?.tracks ?? []
+                )
+            }.value
         }
+        detailRecord = loaded
     }
 
     // MARK: - Mutations
@@ -323,14 +362,15 @@ final class LibraryModel {
     func refreshFavourites() {
         let engine = self.engine
         Task {
-            let sets = (
-                Set((try? await engine.favouriteTrackIds()) ?? []),
-                Set((try? await engine.favouriteAlbumIds()) ?? []),
-                Set((try? await engine.favouriteArtistIds()) ?? [])
-            )
-            favouriteTrackIds = sets.0
-            favouriteAlbumIds = sets.1
-            favouriteArtistIds = sets.2
+            // Three independent reads, so three at once. Written as a tuple of
+            // awaits they ran one after another, and the second waited on the
+            // first for no reason at all.
+            async let tracks = engine.favouriteTrackIds()
+            async let albums = engine.favouriteAlbumIds()
+            async let artists = engine.favouriteArtistIds()
+            favouriteTrackIds = Set((try? await tracks) ?? [])
+            favouriteAlbumIds = Set((try? await albums) ?? [])
+            favouriteArtistIds = Set((try? await artists) ?? [])
             reloadFavourites()
         }
     }
@@ -419,22 +459,20 @@ final class LibraryModel {
         }
     }
 
-    /// Rows appeared or vanished underneath us — a scan, a sync, an import, or
-    /// a folder being forgotten. Whether this app asked for it or the engine
-    /// did it on its own makes no difference here: nothing to merge, nothing to
-    /// invalidate, just ask again.
+    /// Rows appeared or vanished underneath us — a scan, a sync, an import, a
+    /// playlist edit, a download landing, a folder being forgotten. Whether
+    /// this app asked for it or the engine did it on its own makes no
+    /// difference here: nothing to merge, nothing to invalidate, just ask
+    /// again.
     ///
     /// Favourites too, because a sync reconciles them with the server and the
     /// hearts on screen are stale the moment it lands.
+    ///
+    /// The section's rows only. What a *page* is showing reloads where it is
+    /// drawn — see `View.reloading(on:)`.
     func libraryChanged() {
         loadStats()
         refreshFavourites()
         reload()
-        // `reload` refreshes the section's own rows, which is not what an album
-        // page is showing. Without this a track downloaded while you watch it
-        // keeps its empty cloud until you leave the record and come back.
-        if let detailAlbumId {
-            loadTracks(albumId: detailAlbumId)
-        }
     }
 }

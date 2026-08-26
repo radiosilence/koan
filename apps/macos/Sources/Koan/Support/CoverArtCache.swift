@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import ImageIO
 import KoanFFI
+import SwiftUI
 
 /// Album art: bytes cached per record, bitmaps cached per record *and* size.
 ///
@@ -23,9 +24,20 @@ import KoanFFI
 /// decoding it from a warm disk cache is quick enough that holding a 1000px
 /// bitmap for every record you happened to click on is not worth the resident
 /// memory.
-@MainActor
-@Observable
-final class CoverArtCache {
+/// **Not on the main actor**, which is the load-bearing part.
+///
+/// It used to be, and the fetch path has eight awaits in it — so every tile
+/// hopped onto the main actor eight times to fetch one cover. A grid of twenty
+/// queued a hundred and sixty jobs there, and anything else waiting for an
+/// answer went to the back of that queue: the engine handed back an album's
+/// tracks in 300µs and the app saw them two hundred milliseconds later. None of
+/// this work needs the main actor. The bookkeeping is behind a lock and
+/// `NSCache` is thread-safe on its own.
+///
+/// `Observable` is conformed to by hand rather than synthesised, so views can
+/// still reach it through `@Environment`. Nothing on it is observed — a cache
+/// is not SwiftUI state — so there is no registrar and nothing to notify.
+final class CoverArtCache: Observable, @unchecked Sendable {
     /// What we ask the server for, and what lands on disk.
     ///
     /// One size serves the grid, the rows and the viewer, because there is one
@@ -51,6 +63,11 @@ final class CoverArtCache {
     /// server's placeholder invalidates every size of it at once without having
     /// to enumerate them.
     private var absent: Set<String> = []
+
+    /// Guards everything below that is not `NSCache`. Held only across
+    /// dictionary reads and writes — never across an await, which is what makes
+    /// a plain lock the right primitive rather than an actor.
+    private let bookkeeping = NSLock()
 
     /// One byte fetch per record, shared by every size that wants it.
     private var loads: [String: Task<Fetched, Never>] = [:]
@@ -90,8 +107,14 @@ final class CoverArtCache {
     /// frame rather than after an await, which is what made a scrolled-back grid
     /// flash grey.
     func cached(_ source: AlbumArtwork.Source, size: AlbumArtwork.Size) -> NSImage? {
-        guard !absent.contains(Self.key(source)) else { return nil }
+        guard !locked({ absent.contains(Self.key(source)) }) else { return nil }
         return memory.object(forKey: Self.key(source, size) as NSString)
+    }
+
+    private func locked<T>(_ body: () -> T) -> T {
+        bookkeeping.lock()
+        defer { bookkeeping.unlock() }
+        return body()
     }
 
     /// Fetch the art at a given size, awaiting the disk cache or the network as
@@ -108,17 +131,15 @@ final class CoverArtCache {
     func image(for source: AlbumArtwork.Source, size: AlbumArtwork.Size) async -> NSImage? {
         if let ready = cached(source, size: size) { return ready }
         let key = Self.key(source, size)
-        if let running = decodes[key] { return await running.value }
+        if let running = locked({ decodes[key] }) { return await running.value }
 
         let task = Task<NSImage?, Never> { [weak self] in
             guard let self else { return nil }
             let data = await self.bytes(for: source)
-            self.decodes[key] = nil
+            self.locked { self.decodes[key] = nil }
             guard let data else { return nil }
 
-            let image = await Task.detached(priority: .utility) {
-                Self.decode(data, to: size)
-            }.value
+            let image = await ImageWork.onCPU { Self.decode(data, to: size) }
             guard let image else { return nil }
             // Full size belongs to whichever sheet asked for it and goes when
             // that sheet does.
@@ -127,9 +148,35 @@ final class CoverArtCache {
             }
             return image
         }
-        decodes[key] = task
+        locked { decodes[key] = task }
         return await task.value
     }
+
+    /// The colour a record reads as.
+    ///
+    /// Shares the byte fetch with the artwork itself, so the wash costs no
+    /// extra round trip, and does its pixel work on `ImageWork` rather than
+    /// wherever it was asked from — which was the main actor.
+    func dominantColour(for source: AlbumArtwork.Source) async -> Color? {
+        let key = Self.key(source)
+        if let known = locked({ colours[key] }) { return known }
+        guard let data = await bytes(for: source) else { return nil }
+        let colour = await ImageWork.onCPU { Color.dominant(ofEncoded: data) }
+        locked { colours[key] = colour }
+        return colour
+    }
+
+    /// The colour if it has already been worked out.
+    ///
+    /// For a caller that has to answer in the frame it is asked — nothing is
+    /// fetched and nothing is decoded. `nil` means "not yet", never "no colour".
+    func cachedColour(for source: AlbumArtwork.Source) -> Color? {
+        locked { colours[Self.key(source)] } ?? nil
+    }
+
+    /// Remembered per record: the wash re-asks every time you navigate, and the
+    /// answer cannot change without the artwork changing.
+    @ObservationIgnored private var colours: [String: Color?] = [:]
 
     // MARK: - Bytes
 
@@ -137,39 +184,36 @@ final class CoverArtCache {
     /// record however many sizes are waiting on it.
     private func bytes(for source: AlbumArtwork.Source) async -> Data? {
         let key = Self.key(source)
-        guard !absent.contains(key) else { return nil }
+        guard !locked({ absent.contains(key) }) else { return nil }
 
         let payload: Fetched
-        if let running = loads[key] {
+        if let running = locked({ loads[key] }) {
             payload = await running.value
         } else {
             let engine = self.engine
             let file = directory?.appendingPathComponent(Self.filename(for: key))
             let task = Task<Fetched, Never> {
-                // Detached for the disk cache, not for the engine: reading and
-                // writing the file would otherwise happen on the main actor. The
-                // hash comes back with the bytes because it is a pass over the
-                // whole payload and the main actor has no business doing it.
-                await Task.detached(priority: .utility) { () -> Fetched in
-                    if let file, let cached = try? Data(contentsOf: file) {
-                        return .art(cached, hash: Self.digest(cached))
-                    }
-                    let fetched = await Self.fetch(source, engine)
-                    if case .art(let bytes, _) = fetched, let file {
-                        // Best effort: a cache that fails to write is still a cache.
-                        try? bytes.write(to: file, options: .atomic)
-                    }
-                    return fetched
-                }.value
+                // Every step off both the main actor and the cooperative pool —
+                // see `ImageWork`. The hash comes back with the bytes because it
+                // is a pass over the whole payload.
+                if let file, let cached = await ImageWork.onDisk({ try? Data(contentsOf: file) }) {
+                    return .art(cached, hash: await ImageWork.onCPU { Self.digest(cached) })
+                }
+                let fetched = await Self.fetch(source, engine)
+                if case .art(let bytes, _) = fetched, let file {
+                    // Best effort: a cache that fails to write is still a cache.
+                    await ImageWork.onDisk { try? bytes.write(to: file, options: .atomic) }
+                }
+                return fetched
             }
-            loads[key] = task
+            locked { loads[key] = task }
             payload = await task.value
-            loads[key] = nil
+            locked { loads[key] = nil }
         }
 
         // Nothing recorded: the next tile that asks tries again.
         guard case .art(let data, let hash) = payload else {
-            if case .none = payload { absent.insert(key) }
+            if case .none = payload { locked { _ = absent.insert(key) } }
             return nil
         }
         guard accept(hash: hash, for: key) else { return nil }
@@ -205,22 +249,18 @@ final class CoverArtCache {
         _ engine: KoanEngine
     ) async -> Fetched {
         do {
+            // One call either way. Asking for the record's tracks to find an id
+            // to ask for art with meant a listing built and carried across the
+            // boundary to be thrown away — once per tile, on a grid of them.
             let data: Data?
             switch source {
             case .album(let albumId):
-                // Any track off the record will do — they share the artwork.
-                let tracks = try await engine.tracks(
-                    albumId: albumId, artistId: nil, sort: .album, limit: 1, offset: 0
-                )
-                guard let first = tracks.first(where: { $0.path != nil }) ?? tracks.first else {
-                    return .none
-                }
-                data = try await engine.coverArt(trackId: first.id, size: sourcePixels)?.data
+                data = try await engine.albumCoverArt(albumId: albumId, size: sourcePixels)?.data
             case .track(let trackId):
                 data = try await engine.coverArt(trackId: trackId, size: sourcePixels)?.data
             }
             guard let data, !data.isEmpty else { return .none }
-            return .art(data, hash: digest(data))
+            return .art(data, hash: await ImageWork.onCPU { digest(data) })
         } catch {
             return .failed
         }
@@ -228,6 +268,10 @@ final class CoverArtCache {
 
     /// Whether this is real artwork, or the server's placeholder.
     private func accept(hash: String, for key: String) -> Bool {
+        locked { acceptLocked(hash: hash, for: key) }
+    }
+
+    private func acceptLocked(hash: String, for key: String) -> Bool {
         if placeholderHashes.contains(hash) {
             absent.insert(key)
             return false
@@ -336,9 +380,12 @@ final class CoverArtCache {
     /// directory on its own.
     func purge() {
         memory.removeAllObjects()
-        absent.removeAll()
-        hashOwners.removeAll()
-        placeholderHashes.removeAll()
+        locked {
+            absent.removeAll()
+            hashOwners.removeAll()
+            placeholderHashes.removeAll()
+            colours.removeAll()
+        }
         guard let directory else { return }
         try? FileManager.default.removeItem(at: directory)
         _ = Self.makeDirectory()

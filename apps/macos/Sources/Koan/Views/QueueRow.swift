@@ -28,7 +28,9 @@ struct QueueRowContent {
     /// What the queue is doing about this track, or `nil` when the queue has
     /// never heard of it — which is most of a playlist, most of the time.
     var status: EntryStatus?
-    var downloadProgress: Double?
+    /// The transfer this row is waiting on, when it is waiting on one. See
+    /// `SourceBadges` for why it is an id and not a figure.
+    var transferring: String?
     var failureReason: String?
     /// Where this track's bytes are. Both false for an item with no library
     /// row behind it, which draws no mark rather than a guessed one.
@@ -44,7 +46,7 @@ struct QueueRowContent {
         durationMs = item.durationMs.map(Int64.init)
         sleeve = item.sleeve
         status = item.status
-        downloadProgress = item.downloadProgress
+        transferring = SourceBadges.transfer(of: item)
         failureReason = item.failureReason
         onServer = item.onServer
         onDisk = item.onDisk
@@ -71,7 +73,7 @@ struct QueueRowContent {
         codec = track.codec
         durationMs = track.durationMs
         sleeve = track.albumId.map { .album($0) } ?? .track(track.id)
-        downloadProgress = queued?.downloadProgress
+        transferring = SourceBadges.transfer(of: queued)
         failureReason = queued?.failureReason
         onServer = track.onServer
         onDisk = track.onDisk
@@ -158,7 +160,7 @@ struct QueueRow: View {
             SourceBadges(
                 onServer: item.onServer,
                 onDisk: item.onDisk,
-                downloading: downloading
+                transferring: item.transferring
             )
 
             if let trackId = item.trackId {
@@ -205,13 +207,6 @@ struct QueueRow: View {
         // clicks landing there select nothing.
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-    }
-
-    /// The ring, when this row is fetching. Read off the row's own status so a
-    /// playlist row and a queue row answer the same way.
-    private var downloading: SourceBadges.Download? {
-        guard item.status == .downloading else { return nil }
-        return item.downloadProgress.map { .fraction($0) } ?? .indeterminate
     }
 
     /// A played row steps back rather than disappears — and it does it in

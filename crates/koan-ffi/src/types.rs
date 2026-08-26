@@ -72,7 +72,7 @@ impl From<ArtistRow> for Artist {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct Album {
     pub id: i64,
     pub title: String,
@@ -216,10 +216,6 @@ pub struct NowPlaying {
     pub state: PlayState,
     pub position_ms: u64,
     pub duration_ms: u64,
-    /// How far into the track a seek can land. Equal to `duration_ms` for
-    /// anything on disk; short of it while the bytes are still arriving, which
-    /// is the extent a client draws as downloaded and refuses to scrub past.
-    pub seekable_ms: u64,
     /// Queue item currently under the cursor, if any.
     pub queue_item_id: Option<String>,
     pub entry: Option<QueueItem>,
@@ -251,8 +247,6 @@ pub struct QueueItem {
     /// queue being shuffled or cut about — the queue is a view onto the
     /// playlist, not a copy of it.
     pub playlist_entry_id: Option<i64>,
-    /// 0.0–1.0 while downloading, `None` otherwise.
-    pub download_progress: Option<f64>,
     /// Why this item cannot play, when `status` is `Failed`.
     pub failure_reason: Option<String>,
     /// The server knows about this track. False for a queue item with no
@@ -262,13 +256,32 @@ pub struct QueueItem {
     pub on_disk: bool,
 }
 
-/// One transfer, as the download store has it.
+/// One transfer, as the download store has it — everything about it that does
+/// not move while the bytes land.
+///
+/// The numbers are in `TransferFigure`, deliberately. A transfer appears,
+/// changes state a handful of times and settles; its byte count moves ten times
+/// a second for as long as it runs. Carrying both in one value would mean a
+/// list rebuilding at the rate a download writes.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
-pub struct DownloadEntry {
+pub struct Transfer {
     pub queue_item_id: String,
     pub track_id: i64,
     pub title: String,
     pub artist: String,
+    pub state: TransferState,
+    /// Why it stopped, when it failed.
+    pub failure_reason: Option<String>,
+}
+
+/// What one transfer is doing right now.
+///
+/// The volatile half of a `Transfer`, split out so the two travel at their own
+/// rates. Serves both the figure on a queue row and the row on the downloads
+/// page — one reading of one fact, so they cannot disagree.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct TransferFigure {
+    pub queue_item_id: String,
     /// 0.0–1.0, or `None` when the server sent no Content-Length — a bar drawn
     /// at zero for a transfer that is going fine reads as stuck.
     pub progress: Option<f64>,
@@ -277,20 +290,23 @@ pub struct DownloadEntry {
     /// Smoothed. Zero for a transfer that has settled, and for one that has
     /// stopped moving — which is the case worth seeing.
     pub bytes_per_second: u64,
-    pub state: DownloadEntryState,
-    /// Why it stopped, when it failed.
-    pub failure_reason: Option<String>,
 }
 
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DownloadEntryState {
+pub enum TransferState {
     Queued,
     Running,
     Done,
     Failed,
 }
 
-impl From<&koan_core::remote::downloads::Download> for DownloadEntry {
+impl TransferState {
+    pub fn is_settled(self) -> bool {
+        matches!(self, Self::Done | Self::Failed)
+    }
+}
+
+impl From<&koan_core::remote::downloads::Download> for Transfer {
     fn from(d: &koan_core::remote::downloads::Download) -> Self {
         use koan_core::remote::downloads::DownloadState;
         Self {
@@ -298,15 +314,11 @@ impl From<&koan_core::remote::downloads::Download> for DownloadEntry {
             track_id: d.track_id,
             title: d.title.clone(),
             artist: d.artist.clone(),
-            progress: d.fraction(),
-            bytes_written: d.bytes_written(),
-            total_bytes: d.total,
-            bytes_per_second: d.bytes_per_second,
             state: match &d.state {
-                DownloadState::Queued => DownloadEntryState::Queued,
-                DownloadState::Running => DownloadEntryState::Running,
-                DownloadState::Done => DownloadEntryState::Done,
-                DownloadState::Failed(_) => DownloadEntryState::Failed,
+                DownloadState::Queued => TransferState::Queued,
+                DownloadState::Running => TransferState::Running,
+                DownloadState::Done => TransferState::Done,
+                DownloadState::Failed(_) => TransferState::Failed,
             },
             failure_reason: match &d.state {
                 DownloadState::Failed(reason) => Some(reason.clone()),
@@ -316,15 +328,16 @@ impl From<&koan_core::remote::downloads::Download> for DownloadEntry {
     }
 }
 
-/// How far one in-flight download has got.
-///
-/// Its own record rather than a queue refetch: progress moves several times a
-/// second and the queue does not, so the two travel separately.
-#[derive(uniffi::Record, Debug, Clone, PartialEq)]
-pub struct DownloadProgress {
-    pub queue_item_id: String,
-    /// 0.0–1.0, or `None` when the server sent no Content-Length.
-    pub progress: Option<f64>,
+impl From<&koan_core::remote::downloads::Download> for TransferFigure {
+    fn from(d: &koan_core::remote::downloads::Download) -> Self {
+        Self {
+            queue_item_id: d.id.0.to_string(),
+            progress: d.fraction(),
+            bytes_written: d.bytes_written(),
+            total_bytes: d.total,
+            bytes_per_second: d.bytes_per_second,
+        }
+    }
 }
 
 impl QueueItem {
@@ -340,17 +353,6 @@ impl QueueItem {
             (_, PlaybackState::Playing) => EntryStatus::Playing,
             (_, PlaybackState::Paused) => EntryStatus::Playing,
             (_, PlaybackState::Stopped) => EntryStatus::Queued,
-        };
-        let download_progress = match &load {
-            LoadState::Downloading {
-                total,
-                bytes_written,
-                ..
-            } if *total > 0 => {
-                let done = bytes_written.load(std::sync::atomic::Ordering::Relaxed);
-                Some((done as f64 / *total as f64).clamp(0.0, 1.0))
-            }
-            _ => None,
         };
         Self {
             queue_item_id: item.id.0.to_string(),
@@ -369,7 +371,6 @@ impl QueueItem {
             disc: item.disc,
             duration_ms: item.duration_ms,
             status,
-            download_progress,
             failure_reason: match &load {
                 LoadState::Failed(reason) => Some(reason.clone()),
                 _ => None,
@@ -397,9 +398,6 @@ impl QueueItem {
             .and_then(|id| sources.get(&id))
             .copied()
             .unwrap_or((false, false));
-        let download_progress = e.download_progress.and_then(|(done, total)| {
-            (total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0))
-        });
         Self {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,
@@ -415,12 +413,22 @@ impl QueueItem {
             disc: e.disc,
             duration_ms: e.duration_ms,
             status: e.status.into(),
-            download_progress,
             failure_reason: e.error.clone(),
             on_server,
             on_disk,
         }
     }
+}
+
+/// A record and its tracks, as one answer.
+///
+/// The page wants both and wants them together, so they are one call: one hop
+/// across the boundary, one connection out of the pool, one lock taken. As two
+/// they were two of each, racing on the same click.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct AlbumPage {
+    pub album: Option<Album>,
+    pub tracks: Vec<Track>,
 }
 
 /// A created share link, and how much of the request it actually covers.
@@ -518,7 +526,7 @@ impl From<koan_core::lyrics::Lyrics> for Lyrics {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct Playlist {
     pub id: i64,
     pub name: String,
@@ -560,7 +568,7 @@ impl From<queries::PlaylistRow> for Playlist {
 /// is still that thing, and saying so is what makes following legible — you can
 /// see why an edit to the playlist moved something in the queue, and you can
 /// see the moment it stops.
-#[derive(uniffi::Enum, Debug, Clone)]
+#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
 pub enum QueueLock {
     Playlist { playlist: Playlist },
     Album { album: Album },

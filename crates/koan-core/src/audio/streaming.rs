@@ -71,6 +71,10 @@ pub struct PartialFileSource {
     /// It governs the end of the stream as well as the length, because they
     /// have to be the same end. See `Seek`.
     advertise_len: bool,
+    /// Whether `SeekFrom::End` answers for the whole file or for what has
+    /// arrived. Separate from `advertise_len` because Ogg needs the first
+    /// without the second — see `ProbeMode`.
+    whole_file_end: bool,
 }
 
 /// How much a probe may claim, and how far it may read.
@@ -84,7 +88,20 @@ pub enum ProbeMode {
     /// stays seekable within what has arrived for anything that describes its
     /// frames from the front. What it gives up is whatever only the tail could
     /// give — for Ogg that is the duration, and with it seeking at all.
+    ///
+    /// The end is what has arrived. FLAC bisects between its first frame and
+    /// the end it is given, so an end it cannot reach sends every probe into
+    /// bytes that are not on disk.
     Lengthless,
+    /// The same, except that the end stays the whole file's.
+    ///
+    /// Ogg takes the end it is handed as the end of the *stream*. Handed the
+    /// write head it reports a track that is already over — nought
+    /// milliseconds — and the decode thread reaches the end of it in a second
+    /// and moves on to the next, over and over, so a large Opus file
+    /// downloading never plays at all. It cannot seek mid-download under either
+    /// answer; this is the difference between playing and not.
+    LengthlessWholeEnd,
 }
 
 impl PartialFileSource {
@@ -105,6 +122,7 @@ impl PartialFileSource {
     ) -> io::Result<Self> {
         let mut source = Self::with_stall_limit(path, bytes_written, total, status, STALL_LIMIT)?;
         source.advertise_len = mode == ProbeMode::Full;
+        source.whole_file_end = mode != ProbeMode::Lengthless;
         Ok(source)
     }
 
@@ -120,6 +138,7 @@ impl PartialFileSource {
         let mut source = Self::with_stall_limit(path, bytes_written, total, status, STALL_LIMIT)?;
         source.wait_for_bytes = false;
         source.advertise_len = mode == ProbeMode::Full;
+        source.whole_file_end = mode != ProbeMode::Lengthless;
         Ok(source)
     }
 
@@ -139,6 +158,7 @@ impl PartialFileSource {
             stall_limit,
             wait_for_bytes: true,
             advertise_len: true,
+            whole_file_end: true,
         })
     }
 
@@ -228,7 +248,7 @@ impl Seek for PartialFileSource {
             // bisecting into bytes that are not on disk yet — which is the
             // whole file's worth of waiting for a FLAC seeked mid-download.
             SeekFrom::End(n) => {
-                let len = if self.advertise_len && self.total > 0 {
+                let len = if self.whole_file_end && self.total > 0 {
                     self.total
                 } else {
                     self.available()
@@ -454,6 +474,31 @@ mod tests {
             ProbeMode::Full,
         )
         .unwrap();
+        assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 1_000);
+    }
+
+    /// Ogg's half of the same question, and the opposite answer.
+    ///
+    /// Handed the write head as the end, Ogg reports a stream that is already
+    /// over: a large Opus file downloading opened, said nought milliseconds,
+    /// and the decode thread finished it and moved on, over and over, so it
+    /// never played at all.
+    #[test]
+    fn an_ogg_source_still_ends_at_the_whole_file() {
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::LengthlessWholeEnd,
+        )
+        .unwrap();
+        // Still no length: the point of opening this way is that Ogg does not
+        // go looking for a tail that has not arrived.
+        assert_eq!(src.byte_len(), None);
+        // But the end it is told about is the file's, not the download's.
         assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 1_000);
     }
 

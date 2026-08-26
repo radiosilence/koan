@@ -15,9 +15,10 @@ import MediaPlayer
 @MainActor
 final class NowPlayingCentre {
     private weak var player: PlayerModel?
+    private let mirror: EngineMirror
     private let art: CoverArtCache
 
-    /// What was last published, so a 10 Hz poll doesn't republish unchanged
+    /// What was last published, so a position tick doesn't republish unchanged
     /// metadata to the system.
     private var publishedTrack: Int64?
     private var publishedState: PlayState?
@@ -33,10 +34,15 @@ final class NowPlayingCentre {
     /// doesn't start one on every tick.
     private var requestedArtwork: AlbumArtwork.Source?
 
-    init(player: PlayerModel, art: CoverArtCache) {
+    init(player: PlayerModel, mirror: EngineMirror, art: CoverArtCache) {
         self.player = player
+        self.mirror = mirror
         self.art = art
         registerCommands()
+        // Not a view, so nothing invalidates it — this is the one mechanism
+        // there is for that, and the guard below is what keeps a position tick
+        // from republishing unchanged metadata to the system.
+        mirror.follow { [weak self] in self?.refresh() }
     }
 
     // MARK: - Remote commands
@@ -87,10 +93,12 @@ final class NowPlayingCentre {
 
     // MARK: - Now Playing info
 
-    /// Called from the player's poll. Cheap when nothing has changed.
+    /// Cheap when nothing has changed, which at a position tick is most of the
+    /// time.
     func refresh() {
         guard let player else { return }
-        let now = player.nowPlaying
+        let now = mirror.playback
+        let positionMs = mirror.positionMs
 
         guard let entry = now.entry else {
             if publishedTrack != nil || publishedState != nil {
@@ -107,7 +115,7 @@ final class NowPlayingCentre {
         // finally arriving.
         let source = player.currentArtwork
         let artwork = source.flatMap { art.cached($0, size: .tile) }
-        let drifted = abs(Int64(now.positionMs) - Int64(publishedPosition)) > 2000
+        let drifted = abs(Int64(positionMs) - Int64(publishedPosition)) > 2000
         let artworkArrived = artwork != nil && publishedArtwork != source
         guard entry.trackId != publishedTrack || now.state != publishedState || drifted
             || artworkArrived
@@ -119,7 +127,7 @@ final class NowPlayingCentre {
             MPMediaItemPropertyTitle: entry.title,
             MPMediaItemPropertyArtist: entry.artist,
             MPMediaItemPropertyAlbumTitle: entry.album,
-            MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(now.positionMs) / 1000,
+            MPNowPlayingInfoPropertyElapsedPlaybackTime: Double(positionMs) / 1000,
             MPNowPlayingInfoPropertyPlaybackRate: now.state == .playing ? 1.0 : 0.0,
         ]
         if now.durationMs > 0 {
@@ -138,7 +146,7 @@ final class NowPlayingCentre {
 
         publishedTrack = entry.trackId
         publishedState = now.state
-        publishedPosition = now.positionMs
+        publishedPosition = positionMs
         publishedArtwork = artwork == nil ? nil : source
 
         if artwork == nil, let source {
