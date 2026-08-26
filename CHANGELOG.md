@@ -62,6 +62,10 @@
 
 ### Fixed
 
+- **A rate something else changed now reaches the macOS app.** koan has watched the device's nominal sample rate since #323 and the watch fires -- the log has been saying so all along. What never moved was the app. The FFI announces a playback change only when its snapshot differs from the last one, and that comparison was a signature of named fields: playback state, cursor, and, since #359, how far the download had got. The output rate is none of them, so retuning the interface under a playing track left the badge claiming the rate the device held when the track started, until the next track happened to move the cursor.
+
+  The snapshot is compared whole now, with the position held out because it has an event of its own. A signature has to be remembered to be widened, and had already been widened twice. The same omission was swallowing a stream's duration correction, which lands after playback starts and moves nothing else.
+
 - **A playlist's tile asked for its covers by track, so the placeholder never got caught.** Artwork is stored and cached per record, and the mosaic named a track off each album instead of the album. Every piece was a second fetch of a sleeve the grid already had, under a key of its own, held twice in memory and twice on disk -- and it sat outside the check that recognises Navidrome's stock blue vinyl, which only ever learns from album lookups. A playlist of records with no artwork drew four vinyls where the library drew four ensōs. It asks for albums now.
 
 - **The wash's drift is far enough to see.** It has moved by the same amounts since it landed in #330, and those amounts were too small to register: blurred at 14 points and magnified about five times, the wash has no feature on screen narrower than eighty points, and the drift carried it about one and a half of those over twenty-three seconds. Slow movement that small does not read as movement -- it reads as a still image. The thing was running, and costing six to nine percent of a core to run, and there was nothing to see.

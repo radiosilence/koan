@@ -2280,7 +2280,7 @@ impl KoanEngine {
             .spawn(move || {
                 let mut last_version = u64::MAX;
                 let mut last_position = u64::MAX;
-                let mut last_signature: Option<(PlaybackState, Option<String>, u64)> = None;
+                let mut last_playback: Option<NowPlaying> = None;
                 let mut last_downloads: Vec<DownloadProgress> = Vec::new();
                 let mut last_store = u64::MAX;
                 // Starts where the engine starts, so a launch is not announced
@@ -2299,21 +2299,26 @@ impl KoanEngine {
                         let _ = engine.events.send(event);
                     };
 
+                    // Compared whole rather than on a signature of a few
+                    // named fields: the output sample rate moves when another
+                    // client retunes the device, a stream's duration is
+                    // corrected once the download lands, and the seekable
+                    // extent grows for as long as the bytes are arriving —
+                    // none of them moving the state or the cursor. A signature
+                    // has to be remembered to be widened, and had already been
+                    // widened twice; this cannot go stale.
                     let state = engine.state.playback_state();
-                    let cursor = engine.state.cursor().map(|c| c.0.to_string());
-                    // The seekable extent belongs in the signature: it moves
-                    // while a track downloads without the state or the cursor
-                    // moving, and a client draws a boundary from it. Rounded to
-                    // the second, because it is drawn as a bar a few hundred
-                    // pixels wide and nothing finer is visible. It stops moving
-                    // the moment the download lands, so this costs a snapshot
-                    // per tick only while one is in flight.
-                    let seekable = engine.state.seekable_ms() / 1000;
-                    let signature = (state, cursor, seekable);
-                    if last_signature.as_ref() != Some(&signature) {
-                        last_signature = Some(signature);
+                    let snapshot = engine.now_playing_blocking();
+                    // Position has an event of its own, so it is held out here —
+                    // including it would make every tick a change.
+                    let settled = NowPlaying {
+                        position_ms: 0,
+                        ..snapshot.clone()
+                    };
+                    if last_playback.as_ref() != Some(&settled) {
+                        last_playback = Some(settled);
                         publish(PlayerEvent::PlaybackChanged {
-                            now_playing: engine.now_playing_blocking(),
+                            now_playing: snapshot,
                         });
                     }
 

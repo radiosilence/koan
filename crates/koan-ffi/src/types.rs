@@ -183,7 +183,7 @@ impl Track {
 
 /// Audio format of the track on the wire right now — what the DAC is actually
 /// being fed, as opposed to what the database claims.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct StreamFormat {
     pub codec: String,
     pub sample_rate: u32,
@@ -211,7 +211,7 @@ impl StreamFormat {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct NowPlaying {
     pub state: PlayState,
     pub position_ms: u64,
@@ -229,7 +229,7 @@ pub struct NowPlaying {
     pub radio_enabled: bool,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct QueueItem {
     pub queue_item_id: String,
     pub track_id: Option<i64>,
