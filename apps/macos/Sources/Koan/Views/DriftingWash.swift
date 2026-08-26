@@ -85,24 +85,28 @@ final class WashView: NSView {
         previous.opacity = 0
     }
 
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        if !drifting { rest() }
-    }
-
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not from a nib") }
 
-    /// Laid out by hand rather than by autoresizing, so a window resize moves
-    /// the layers without disturbing the animations running on them.
+    /// The layers fill the window, with room to move.
+    ///
+    /// Sized here rather than magnified by a transform, which is the whole
+    /// point: the magnification used to *be* one of the drift's animations, so
+    /// anything that skipped installing them — the graphics setting turned
+    /// down and back up, motion reduced, nothing playing — left the layer at
+    /// its natural size and drew a small blurred square in the middle of the
+    /// window. A wash that fills its view by construction cannot be made to
+    /// stop filling it by an animation that did not run.
+    ///
+    /// `near` is the overscan the drift travels inside: at full reach the
+    /// offset carries the texture 12% of the window sideways and the rotation
+    /// eats about another 3.5%, so the layer has to be wide enough that its own
+    /// edge stays out of frame throughout.
     override func layout() {
         super.layout()
-        let side = Self.side
-        let box = CGRect(
-            x: (bounds.width - side) / 2,
-            y: (bounds.height - side) / 2,
-            width: side,
-            height: side
+        let box = bounds.insetBy(
+            dx: -bounds.width * (Self.near - 1) / 2,
+            dy: -bounds.height * (Self.near - 1) / 2
         )
         // Frame changes must not be animated — an implicit animation here would
         // fight the drift and re-commit it on every resize.
@@ -111,28 +115,7 @@ final class WashView: NSView {
         current.frame = box
         previous.frame = box
         CATransaction.commit()
-        if drifting { start() } else { rest() }
-    }
-
-    /// The pose the wash holds when it is not breathing.
-    ///
-    /// Set here rather than only by the animations, because the magnification
-    /// *is* one of them: a view that has never drifted — the graphics setting
-    /// turned down, motion reduced, nothing playing — had no transform at all
-    /// and drew the sleeve at its own 360 points, a small blurred square in the
-    /// middle of the window.
-    private func rest() {
-        guard bounds.width > 0 else { return }
-        let magnify = max(bounds.width, bounds.height) / Self.side
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        for texture in [current, previous] {
-            texture.transform = CATransform3DMakeScale(
-                magnify * Self.near, magnify * Self.near, 1
-            )
-            texture.position = CGPoint(x: bounds.midX, y: bounds.midY)
-        }
-        CATransaction.commit()
+        if drifting { start() }
     }
 
     /// Swap in a new cover, dissolving from the old one over long enough that
@@ -213,17 +196,18 @@ final class WashView: NSView {
     }
 
     /// Committed once. Everything after this happens in the render server.
+    ///
+    /// Scales, turns and slides about the pose the layer already holds, so the
+    /// wash is right whether these are running or not.
     private func start() {
         guard bounds.width > 0 else { return }
-        let magnify = max(bounds.width, bounds.height) / Self.side
-
         for texture in [current, previous] {
             texture.removeAllAnimations()
             texture.add(
                 Self.breathe(
                     "transform.scale",
-                    from: magnify * Self.near,
-                    to: magnify * Self.far,
+                    from: 1,
+                    to: Self.far / Self.near,
                     period: Self.periods.scale
                 ),
                 forKey: "scale"
@@ -260,12 +244,10 @@ final class WashView: NSView {
     /// mid-breath: the layer keeps whatever the animation had reached and eases
     /// back from there.
     private func settle() {
-        let magnify = max(bounds.width, bounds.height) / Self.side
         for texture in [current, previous] {
             // Where the drift had actually reached, rather than where the model
             // says it is — otherwise removing the animation snaps the layer back
-            // to its resting pose and the room stops dead instead of coming to
-            // rest.
+            // and the room stops dead instead of coming to rest.
             let held = texture.presentation()
             CATransaction.begin()
             CATransaction.setDisableActions(true)
@@ -273,9 +255,7 @@ final class WashView: NSView {
                 texture.transform = held.transform
                 texture.position = held.position
             }
-            texture.removeAnimation(forKey: "scale")
-            texture.removeAnimation(forKey: "rotation")
-            texture.removeAnimation(forKey: "position")
+            texture.removeAllAnimations()
             CATransaction.commit()
 
             CATransaction.begin()
@@ -283,9 +263,7 @@ final class WashView: NSView {
             CATransaction.setAnimationTimingFunction(
                 CAMediaTimingFunction(name: .easeInEaseOut)
             )
-            texture.transform = CATransform3DMakeScale(
-                magnify * Self.near, magnify * Self.near, 1
-            )
+            texture.transform = CATransform3DIdentity
             texture.position = CGPoint(x: bounds.midX, y: bounds.midY)
             CATransaction.commit()
         }
