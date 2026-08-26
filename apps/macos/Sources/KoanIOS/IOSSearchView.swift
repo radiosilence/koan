@@ -18,5 +18,8 @@ struct IOSSearchView: View {
                 set: { search.query = $0 }
             ))
             .onSubmit(of: .search) { search.submit() }
+            // Tapping a result opens a record or an artist, neither of which is
+            // a section this tab draws.
+            .pushesDetailPages()
     }
 }

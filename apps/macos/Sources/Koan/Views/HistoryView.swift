@@ -41,6 +41,7 @@ struct HistoryView: View {
                         Section(day.key) {
                             ForEach(day.entries, id: \.id) { entry in
                                 HistoryRow(entry: entry)
+                                    .primaryTap { play([entry.id]) }
                                     .tag(entry.id)
                             }
                         }

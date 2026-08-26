@@ -7,6 +7,7 @@ import SwiftUI
 struct SearchResultsView: View {
     @Environment(SearchModel.self) private var search
     @Environment(LibraryModel.self) private var library
+    @Environment(Navigator.self) private var nav
 
     private let columns = [GridItem(.adaptive(minimum: 140, maximum: 190), spacing: 16)]
 
@@ -51,6 +52,8 @@ struct SearchResultsView: View {
             LazyVGrid(columns: columns, spacing: 18) {
                 ForEach(search.albums, id: \.id) { album in
                     AlbumGridCell(album: album)
+                        .contentShape(Rectangle())
+                        .onTapGesture { nav.open(album: album.id) }
                 }
             }
         }

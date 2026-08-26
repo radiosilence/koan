@@ -124,6 +124,7 @@ struct FavouritesView: View {
                     allTrackIds: tracks.map(\.id)
                 )
                 .rowBehaviour(playable: .track(track))
+                .primaryTap { play([track.id]) }
             }
         }
     }

@@ -242,6 +242,7 @@ struct PlaylistView: View {
                 artwork: !grouped
             )
             .rowBehaviour()
+            .primaryTap { play(rowIds: [row.id]) }
             // Carries where it came from, so dropping it back into this
             // playlist is a move of *this* row rather than of its track — and
             // dropping it anywhere else is just a track.
