@@ -186,10 +186,14 @@ struct QueueView: View {
             .fixedSize()
             .help("Group by album, or one row per track")
 
+            // Undo is a keyboard's idea of a control. The buttons exist to show
+            // ⌘Z is available, and there is no ⌘Z on a phone.
+            #if os(macOS)
             Button { player.undo() } label: { Image(systemName: Icon.undo) }
                 .help("Undo (⌘Z)")
             Button { player.redo() } label: { Image(systemName: Icon.redo) }
                 .help("Redo (⇧⌘Z)")
+            #endif
 
             Menu {
                 Button {
@@ -249,6 +253,7 @@ struct QueueView: View {
                 artwork: !grouped
             )
             .rowBehaviour()
+            .primaryTap { play(rowIds: [item.queueItemId]) }
         }
     }
 

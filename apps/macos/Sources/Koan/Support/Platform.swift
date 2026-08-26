@@ -103,3 +103,46 @@ extension View {
         #endif
     }
 }
+
+extension View {
+    /// A row's primary action: open the record, play the track.
+    ///
+    /// macOS puts this on the `List` itself, through
+    /// `contextMenu(forSelectionType:menu:primaryAction:)` — wired into the
+    /// selection machinery rather than the gesture system, which is what keeps
+    /// it from stealing the first click. That mechanism means *double*-click,
+    /// and it needs a selection to act on.
+    ///
+    /// A phone has neither. Touch has no double-click, and a `List` selection
+    /// on iOS only exists in edit mode — so every browse list in the app was
+    /// inert: tapping an artist, a track or a history row did nothing at all.
+    /// Here the row takes the tap itself.
+    func primaryTap(_ action: @escaping () -> Void) -> some View {
+        #if os(macOS)
+        self
+        #else
+        contentShape(Rectangle()).onTapGesture(perform: action)
+        #endif
+    }
+}
+
+/// Labels keep their words while there is room, and lose them when there is not.
+///
+/// A row of `Label` buttons is fine beside a sleeve in a window and impossible
+/// on a phone, where each one wraps a character at a time. The symbols are the
+/// same ones the context menus use, so nothing is lost but the words.
+private struct IconOnlyWhenTight: ViewModifier {
+    @Environment(\.horizontalSizeClass) private var width
+
+    func body(content: Content) -> some View {
+        if width == .compact {
+            content.labelStyle(.iconOnly)
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func iconOnlyWhenTight() -> some View { modifier(IconOnlyWhenTight()) }
+}

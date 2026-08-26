@@ -88,11 +88,8 @@ struct RootView: View {
         let artCache = art
         // Bound here rather than built in the modifier below, because the
         // container it goes in differs by platform and `#if` cannot straddle a
-        // closure's braces.
-        //
-        // Over an opaque ground: this *replaces* the container's own background
-        // rather than sitting on it, and a half-transparent wash on its own
-        // leaves you looking through the app at whatever is behind it.
+        // closure's braces. The scene evaluates it outside every environment
+        // this view was handed, so it is handed them back explicitly.
         let washLayer = ZStack {
             Rectangle().fill(.background)
             ArtworkBleed(source: wash, drifts: washDrifts)

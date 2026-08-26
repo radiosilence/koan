@@ -20,6 +20,7 @@ struct TrackListView: View {
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
+    @Environment(\.horizontalSizeClass) private var width
     @State private var selection: Set<Int64> = []
 
     var body: some View {
@@ -49,6 +50,7 @@ struct TrackListView: View {
                                 allTrackIds: tracks.map(\.id)
                             )
                             .rowBehaviour(playable: .track(track))
+                            .primaryTap { play([track.id]) }
                         }
                     }
                     .listStyle(.inset)
@@ -118,20 +120,45 @@ struct TrackListView: View {
         return parts.isEmpty ? "" : "· " + parts.joined(separator: " · ")
     }
 
-    private var header: some View {
-        HStack(alignment: .bottom, spacing: 18) {
-            if let artwork {
-                AlbumArtwork(source: artwork, cornerRadius: 8)
-                    .frame(width: 132, height: 132)
-                    .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
-                    .showsArtworkFullSize(
-                        source: artwork,
-                        title: title,
-                        subtitle: subtitle.isEmpty ? nil : subtitle
-                    )
+    /// Side by side where there is room, stacked where there is not.
+    ///
+    /// The sleeve is 132pt and the title is set at 26pt; on a phone that leaves
+    /// the text column about 230pt, which is not enough for a title and four
+    /// labelled buttons. They wrapped a character at a time.
+    @ViewBuilder private var header: some View {
+        if width == .compact {
+            VStack(alignment: .leading, spacing: 14) {
+                sleeve
+                titleBlock
             }
+            // Without this the stack is only as wide as its widest child and
+            // the parent centres the lot, which is not koan's alignment
+            // anywhere else in either app.
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(alignment: .bottom, spacing: 18) {
+                sleeve
+                titleBlock
+                Spacer(minLength: 0)
+            }
+        }
+    }
 
-            VStack(alignment: .leading, spacing: 6) {
+    @ViewBuilder private var sleeve: some View {
+        if let artwork {
+            AlbumArtwork(source: artwork, cornerRadius: 8)
+                .frame(width: 132, height: 132)
+                .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+                .showsArtworkFullSize(
+                    source: artwork,
+                    title: title,
+                    subtitle: subtitle.isEmpty ? nil : subtitle
+                )
+        }
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 12) {
                     if let playable {
                         PlayableHeaderButton(playable: playable)
@@ -155,17 +182,13 @@ struct TrackListView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                HStack(spacing: 10) {
-                    QueueButtons(playable: playable)
-                    if let playable {
-                        ShareButton(playable: playable)
-                        FavouriteHeaderButton(playable: playable)
-                    }
-                }
-                .padding(.top, 4)
+                actions
+                    .padding(.top, 4)
             }
-            Spacer(minLength: 0)
-        }
+    }
+
+    private var actions: some View {
+        HeaderActions(playable: playable)
     }
 }
 
@@ -181,6 +204,7 @@ struct TrackRow: View {
 
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
+    @Environment(\.horizontalSizeClass) private var width
     @State private var hovering = false
 
     var body: some View {
@@ -252,11 +276,19 @@ struct TrackRow: View {
 
             TrackAvailability(track: track)
 
-            FavouriteButton(isOn: library.isFavourite(track: track.id), showing: hovering) {
+            FavouriteButton(
+                isOn: library.isFavourite(track: track.id),
+                // There is no hover on a phone, so a heart that appears on it
+                // is a heart that never appears.
+                showing: hovering || width == .compact
+            ) {
                 library.toggleFavourite(track: track.id)
             }
 
-            if let quality = Format.quality(track) {
+            // 92pt of codec and sample rate is worth having on a window and
+            // not worth a truncated title on a phone. The format is on the
+            // record's header and in the transport either way.
+            if width != .compact, let quality = Format.quality(track) {
                 Text(quality)
                     .font(.caption2.monospaced())
                     .foregroundStyle(.tertiary)

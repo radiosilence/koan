@@ -18,54 +18,76 @@ struct TabShell: View {
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
     @State private var showingNowPlaying = false
+    /// Which tab is showing.
+    ///
+    /// Held rather than derived from the navigator. Opening a record moves the
+    /// navigator to a page that is not a section at all, and a binding reading
+    /// `nav.section` answers "none" — which read as Queue and threw you out of
+    /// the tab you were browsing the moment you tapped an album.
+    @State private var selection: TabID = .queue
 
     var body: some View {
-        TabView(selection: tab) {
-            Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
-                stage { QueueView() }
+        // The record's colour, behind everything. Not the window's container
+        // background the Mac uses — a phone has no window, and the tab bar and
+        // the transport float over this rather than sitting beside it.
+        ZStack {
+            WashLayer()
+                .ignoresSafeArea()
+
+            TabView(selection: tab) {
+                Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
+                    stage { QueueView() }
+                }
+                Tab("Library", systemImage: "music.note.house", value: TabID.library) {
+                    NavigationStack { LibraryTab() }
+                }
+                Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
+                    NavigationStack { SettingsView() }
+                }
+                Tab(value: TabID.search, role: .search) {
+                    NavigationStack { IOSSearchView() }
+                }
             }
-            Tab("Library", systemImage: "music.note.house", value: TabID.library) {
-                NavigationStack { LibraryTab() }
+            .tabViewStyle(.sidebarAdaptable)
+            // Above the tab bar rather than below it — `safeAreaInset` would put
+            // the transport where the tab bar goes, which is to say on top of it.
+            .tabViewBottomAccessory {
+                MiniPlayer(showingNowPlaying: $showingNowPlaying)
             }
-            Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
-                NavigationStack { SettingsView() }
+            // What the app is busy with. The Mac stacks these at the foot of the
+            // sidebar; with no sidebar they float above the transport, which is
+            // the one part of the screen that is the same wherever you are.
+            // Absent when idle, so this is not furniture.
+            .overlay(alignment: .bottom) {
+                ActivityList()
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.regularMaterial, in: .rect(cornerRadius: 16))
+                    .padding(.horizontal, 12)
+                    // Clear of the mini player and the tab bar under it.
+                    .padding(.bottom, 150)
             }
-            Tab(value: TabID.search, role: .search) {
-                NavigationStack { IOSSearchView() }
+            // Something other than the tab bar can move the navigator —
+            // submitting a search, or the queue being asked to show itself.
+            .onChange(of: nav.section) { _, section in
+                if let owner = Self.tab(for: section), owner != selection {
+                    selection = owner
+                }
             }
+            .sheet(isPresented: $showingNowPlaying) {
+                NowPlayingSheet()
+                    .presentationDetents([.large])
+            }
+            .alert(
+                "Something went wrong",
+                isPresented: Binding(
+                    get: { player.lastError != nil },
+                    set: { if !$0 { player.lastError = nil } }
+                ),
+                actions: { Button("OK") { player.lastError = nil } },
+                message: { Text(player.lastError ?? "") }
+            )
         }
-        .tabViewStyle(.sidebarAdaptable)
-        // Above the tab bar rather than below it — `safeAreaInset` would put the
-        // transport where the tab bar goes, which is to say on top of it.
-        .tabViewBottomAccessory {
-            MiniPlayer(showingNowPlaying: $showingNowPlaying)
-        }
-        // What the app is busy with. The Mac stacks these at the foot of the
-        // sidebar; with no sidebar they float above the transport, which is the
-        // one part of the screen that is the same wherever you are. Absent when
-        // idle, so this is not furniture.
-        .overlay(alignment: .bottom) {
-            ActivityList()
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.regularMaterial, in: .rect(cornerRadius: 16))
-                .padding(.horizontal, 12)
-                // Clear of the mini player and the tab bar under it.
-                .padding(.bottom, 150)
-        }
-        .sheet(isPresented: $showingNowPlaying) {
-            NowPlayingSheet()
-                .presentationDetents([.large])
-        }
-        .alert(
-            "Something went wrong",
-            isPresented: Binding(
-                get: { player.lastError != nil },
-                set: { if !$0 { player.lastError = nil } }
-            ),
-            actions: { Button("OK") { player.lastError = nil } },
-            message: { Text(player.lastError ?? "") }
-        )
     }
 
     /// A page, with the navigator's own history in front of the tab bar's.
@@ -75,6 +97,7 @@ struct TabShell: View {
         NavigationStack {
             content()
                 .environment(\.onStage, true)
+                .pushesDetailPages()
                 .toolbar {
                     if nav.canGoBack {
                         ToolbarItem(placement: .topBarLeading) {
@@ -99,15 +122,10 @@ struct TabShell: View {
     /// was because that is what the deeper page belongs to.
     private var tab: Binding<TabID> {
         Binding(
-            get: {
-                switch nav.section {
-                case .albums, .artists, .favourites, .playHistory, .playlist: .library
-                case .searchResults: .search
-                case .queue, .none: .queue
-                }
-            },
-            set: { selection in
-                switch selection {
+            get: { selection },
+            set: { chosen in
+                selection = chosen
+                switch chosen {
                 case .queue: nav.show(.queue)
                 case .search: nav.show(.searchResults)
                 // The library tab is a list of sections rather than one of
@@ -116,5 +134,17 @@ struct TabShell: View {
                 }
             }
         )
+    }
+
+    /// Which tab a section belongs to, or nil for a page that is not a section
+    /// — a record or an artist, which belong to whichever tab they were opened
+    /// from and must not move the selection.
+    private static func tab(for section: Navigator.Section?) -> TabID? {
+        switch section {
+        case .albums, .artists, .favourites, .playHistory, .playlist: .library
+        case .searchResults: .search
+        case .queue: .queue
+        case .none: nil
+        }
     }
 }

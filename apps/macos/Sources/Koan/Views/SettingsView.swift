@@ -57,7 +57,10 @@ struct SettingsView: View {
                 // has one at the bottom of the screen. Settings on iOS is a list
                 // you go into, so these become pages rather than panes.
                 List {
-                    pane("Library", "music.note.house") { LibrarySettings(model: model) }
+                    // No Library pane. It is folders to scan, a scan to run and
+                    // an index to clear — all of it about music sitting on a
+                    // disk koan can walk. Inside the iOS sandbox there is no
+                    // such disk, and koan is a Subsonic client and nothing else.
                     pane("Server", "server.rack") { RemoteSettings(model: model) }
                     pane("Playback", "hifispeaker") { PlaybackSettings(model: model) }
                     pane("Radio", "dot.radiowaves.left.and.right") { RadioSettings(model: model) }
