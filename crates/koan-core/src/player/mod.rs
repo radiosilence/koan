@@ -278,14 +278,9 @@ impl Player {
     /// current position (e.g. after switching output devices). Preserves pause state.
     fn restart_on_current_track(&mut self) {
         if let Some(info) = self.shared_state.track_info() {
-            let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
             let position_ms = self.shared_state.position_ms();
-            if let Err(e) = self.start_playback(info.id, &info.path, position_ms) {
+            if let Err(e) = self.restart_current(&info, position_ms) {
                 log::error!("failed to restart playback on device switch: {}", e);
-                return;
-            }
-            if was_paused {
-                self.pause();
             }
         }
     }
@@ -727,8 +722,6 @@ impl Player {
         let Some(info) = self.shared_state.track_info() else {
             return;
         };
-        let id = info.id;
-
         // Stop just short of the end rather than falling into the next track.
         let ceiling = self
             .shared_state
@@ -736,20 +729,30 @@ impl Player {
             .min(info.duration_ms.saturating_sub(500));
         let clamped = position_ms.min(ceiling);
 
+        if let Err(e) = self.restart_current(&info, clamped) {
+            log::error!("seek failed: {}", e);
+        }
+    }
+
+    /// Restart what is playing at `position_ms`, preserving pause state.
+    ///
+    /// What a seek does, and what switching output device does, and what going
+    /// back from the first track does. All three restart the same track, so all
+    /// three resolve the source the same way: from the queue item, never from
+    /// `info.path`, which names the `.part` file for a track that was still
+    /// downloading when it started and is not renamed when the download lands.
+    fn restart_current(&mut self, info: &TrackInfo, position_ms: u64) -> Result<(), PlayerError> {
         let was_paused = self.shared_state.playback_state() == PlaybackState::Paused;
 
-        // The source is resolved now rather than from `info.path`, which names
-        // the `.part` file for a track that was still downloading when it
-        // started and is not renamed when the download lands.
-        let result = match self.shared_state.item_playback_source(id) {
+        match self.shared_state.item_playback_source(info.id) {
             Some(PlaybackSource::Streaming {
                 path,
                 bytes_written,
                 total,
             }) => {
                 // No probe: what is playing already said what this is, and
-                // re-reading an Ogg's last page to learn it again would be the
-                // whole remaining download.
+                // reading an Ogg's last page to learn it again would mean
+                // waiting for the rest of the download.
                 let known = buffer::StreamInfo {
                     codec: info.codec.clone(),
                     sample_rate: info.sample_rate,
@@ -758,20 +761,25 @@ impl Player {
                     bitrate_kbps: info.bitrate_kbps,
                     duration_ms: info.duration_ms,
                 };
-                self.start_streaming_playback(id, &path, bytes_written, total, clamped, known)
+                self.start_streaming_playback(
+                    info.id,
+                    &path,
+                    bytes_written,
+                    total,
+                    position_ms,
+                    known,
+                )?;
             }
-            Some(PlaybackSource::Ready(path)) => self.start_playback(id, &path, clamped),
-            None => return,
-        };
-
-        if let Err(e) = result {
-            log::error!("seek failed: {}", e);
-            return;
+            Some(PlaybackSource::Ready(path)) => {
+                self.start_playback(info.id, &path, position_ms)?;
+            }
+            None => return Ok(()),
         }
 
         if was_paused {
             self.pause();
         }
+        Ok(())
     }
 
     /// Skip to next track in playlist.
@@ -800,7 +808,7 @@ impl Player {
             None => {
                 // No previous track — restart current from the beginning.
                 if let Some(info) = self.shared_state.track_info()
-                    && let Err(e) = self.start_playback(info.id, &info.path, 0)
+                    && let Err(e) = self.restart_current(&info, 0)
                 {
                     log::error!("restart failed: {}", e);
                 }
