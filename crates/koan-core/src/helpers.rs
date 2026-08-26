@@ -425,6 +425,45 @@ pub fn clear_downloads_for(db: &Database, track_ids: &[i64]) -> CacheCleared {
     cleared
 }
 
+/// Throw away half-finished downloads left behind by a previous run.
+///
+/// A `.part` file only means something to the transfer writing it. koan does
+/// not resume — the file is written straight through and renamed at the end —
+/// so one still on disk at startup is from a run that did not finish, and it
+/// will be truncated and rewritten the next time that track is wanted anyway.
+/// Until then it is bytes nothing knows about: cache eviction only tracks what
+/// finished, so an interrupted download of a nine-hour recording is half a
+/// gigabyte that never gets reclaimed.
+///
+/// At startup rather than at exit, because a run that ends without getting to
+/// its own cleanup is exactly the run that leaves these behind.
+pub fn sweep_partial_downloads(cfg: &Config) -> CacheCleared {
+    let mut swept = CacheCleared::default();
+    for entry in walkdir::WalkDir::new(cfg.cache_dir())
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "part"))
+    {
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => {
+                swept.files += 1;
+                swept.bytes += size;
+            }
+            Err(e) => log::warn!("could not remove {}: {e}", entry.path().display()),
+        }
+    }
+    if swept.files > 0 {
+        log::info!(
+            "swept {} unfinished download(s), {} bytes",
+            swept.files,
+            swept.bytes
+        );
+    }
+    swept
+}
+
 /// Fetch again anything in the queue whose downloaded copy has just been
 /// removed.
 ///
@@ -1404,6 +1443,45 @@ mod rebuild_tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn sweeping_removes_half_finished_downloads_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(cache.join("Artist")).unwrap();
+
+        let finished = cache.join("Artist/whole.opus");
+        let half = cache.join("Artist/half.opus.part");
+        std::fs::write(&finished, vec![0u8; 1024]).unwrap();
+        std::fs::write(&half, vec![0u8; 4096]).unwrap();
+
+        let cfg = Config {
+            remote: crate::config::RemoteConfig {
+                cache_dir: Some(cache.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let swept = sweep_partial_downloads(&cfg);
+        assert_eq!(swept.files, 1);
+        assert_eq!(swept.bytes, 4096);
+        assert!(!half.exists(), "the unfinished one is gone");
+        assert!(finished.exists(), "a downloaded track is not touched");
+    }
+
+    #[test]
+    fn sweeping_an_empty_cache_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = Config {
+            remote: crate::config::RemoteConfig {
+                cache_dir: Some(dir.path().join("nothing-here")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(sweep_partial_downloads(&cfg).files, 0);
     }
 
     #[test]

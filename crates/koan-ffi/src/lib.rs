@@ -2508,6 +2508,10 @@ impl KoanEngine {
             message: e.to_string(),
         })?;
 
+        // Before anything can start a download of its own, so this only ever
+        // sees files left by a previous run.
+        koan_core::helpers::sweep_partial_downloads(&Config::load().unwrap_or_default());
+
         let (state, _timeline, viz, tx) = Player::spawn();
         koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
 

@@ -18,13 +18,31 @@
 
   When the transfer lands, seeking comes back on its own. Playback is not interrupted to do it — the decoder is reading a file, and a file being renamed underneath an open descriptor is not something it notices. The finished file is picked up the next time the track is seeked, which is the first moment it matters.
 
+- **A track whose downloaded copy was thrown away plays again.** Clearing downloads deleted the files but left the queue pointing at them and still saying they were ready, so afterwards nothing in the queue would play at all. Anything whose copy has gone is put back to waiting and fetched again.
+
+- **A track still downloading can be played by asking for it.** Double-clicking one opened the path the transfer will be renamed to rather than the one it is writing, and found nothing there — so it waited for the whole download rather than starting. Where a transfer is writing is now part of what says a transfer is running, so there is no longer an order for two threads to get wrong.
+
+- **The seek bar's downloaded extent moves while the download does.** The transport keeps its own copy of what is playing, refreshed when the playback state or the cursor moves — and neither moves during a download, so the mark sat wherever it had been when playback started. It follows the progress it is drawing now.
+
+- **The bar no longer darkens when a download finishes.** It lit the downloaded part rather than dimming the part that had not arrived, so completing a transfer took the highlight away and the whole bar dropped a shade. The quiet end is the one that is missing, and a track already on disk looks like the ordinary bar it is.
+
+- **The playhead is visible on a very long track.** A third of a minute into nine hours is a tenth of a percent of the bar — narrower than the bar is thick, and so drawn as nothing at all. It has a head that does not shrink with the fraction.
+
+- **Half-finished downloads are cleaned up.** koan writes a download straight through and renames it at the end, so a `.part` file still on disk is from a run that did not finish — bytes nothing knows about, since only finished downloads are tracked for eviction. An interrupted nine-hour recording was half a gigabyte that never came back. They are swept at startup, which is the run after the one that left them.
+
 ### Changed
 
 - **A download in progress is played from disk rather than copied into memory.** The decoder used to read from a growing in-memory copy that a second thread filled from the file: a 451 MB recording cost 451 MB of RAM for as long as it played. It reads the file directly now, which costs nothing, seeks backwards for free, and carries on across the rename that ends a download.
 
 ### Added
 
-- **Removing downloads, wholesale or one record at a time.** Library → Clear Downloaded Files throws away everything cached from the server; right-clicking a track, album or artist offers Remove Downloaded Files for just that. Either way the library rows stay and fetch again on demand.
+- **A Downloads section, and a store behind it.** What koan is fetching had no home: it could only be inferred from the queue, which knows about transfers for tracks that are in it and forgets each one the moment it lands — which is when you want to see that it did. There is one account of it now, kept by the downloader itself, and every surface reads it.
+
+  The page lists what is arriving with its rate, how much of how much, and where each row came from. A transfer that has stopped moving says so rather than sitting at a figure that looks like progress, which is the first thing worth knowing when something will not play.
+
+- **Where a track's bytes are, wherever a track is listed.** One mark, in one column, meaning the same thing in the queue as in a record: an empty cloud for something on the server, a ring filling as it arrives, a solid cloud once it is here. The queue drew a ring while a track was fetching and nothing at all afterwards — the one list where you watch a download happen was the one that could not say it had.
+
+- **Fetching and removing downloads, wholesale or a track at a time.** Library → Clear Downloaded Files throws away everything cached from the server. Right-clicking offers whichever of the two applies: a track already downloaded can be removed, one that is not can be fetched without queueing it — for going somewhere without a server, mostly. Either way the library rows stay and fetch again on demand.
 
 - **A graphics level, in Settings -> Appearance.** One slider from `Plain` to `Full`, so koan can be told how much of the machine it may spend on looking like itself. `Full` is what it has always done and stays the default.
 

@@ -24,7 +24,6 @@ struct DownloadsView: View {
                 List {
                     ForEach(downloads.items, id: \.queueItemId) { item in
                         DownloadRow(item: item)
-                            .listRowSeparator(.hidden)
                     }
                 }
                 .listStyle(.inset)
@@ -51,6 +50,30 @@ private struct DownloadRow: View {
     @State private var hovering = false
 
     var body: some View {
+        HStack(spacing: 10) {
+            // A record is what you recognise a download by, and this is a list
+            // of things you are waiting for.
+            AlbumArtwork(source: .track(item.trackId), size: .thumb, cornerRadius: 3)
+                .frame(width: 34, height: 34)
+
+            rows
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .contextMenu {
+            Button { showInLibrary() } label: {
+                Label("Show in Library", systemImage: Icon.album)
+            }
+            if item.state == .done {
+                Button { library.clearDownloads(trackIds: [item.trackId]) } label: {
+                    Label("Remove Downloaded File", systemImage: Icon.clear)
+                }
+            }
+        }
+    }
+
+    private var rows: some View {
         VStack(alignment: .leading, spacing: 5) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(item.title)
@@ -85,19 +108,6 @@ private struct DownloadRow: View {
                 }
             }
             .font(.caption)
-        }
-        .padding(.vertical, 4)
-        .contentShape(Rectangle())
-        .onHover { hovering = $0 }
-        .contextMenu {
-            Button { showInLibrary() } label: {
-                Label("Show in Library", systemImage: Icon.album)
-            }
-            if item.state == .done {
-                Button { library.clearDownloads(trackIds: [item.trackId]) } label: {
-                    Label("Remove Downloaded File", systemImage: Icon.clear)
-                }
-            }
         }
     }
 
