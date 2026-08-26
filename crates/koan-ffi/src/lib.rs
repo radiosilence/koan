@@ -1133,15 +1133,15 @@ impl KoanEngine {
         .await
     }
 
-    /// Up to four tracks whose covers make the playlist's tile — one per album,
-    /// in playlist order.
-    pub async fn playlist_cover_track_ids(
+    /// Up to four albums whose covers make the playlist's tile, in playlist
+    /// order.
+    pub async fn playlist_cover_album_ids(
         self: Arc<Self>,
         playlist_id: i64,
     ) -> Result<Vec<i64>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            queries::playlist_cover_track_ids(&db.conn, playlist_id).map_err(db_err)
+            queries::playlist_cover_album_ids(&db.conn, playlist_id).map_err(db_err)
         })
         .await
     }
