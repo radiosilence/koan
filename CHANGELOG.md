@@ -2,7 +2,47 @@
 
 ## Unreleased
 
+### Fixed
+
+- **Long tracks streamed from a server no longer break when the download lands.** Playback of a track that started mid-download held on to the name of the temporary file it started from. Finishing a download renames that file, so from then on the track named nothing: the next seek failed to open it and stopped playback outright. A nine-hour recording made it easy to hit, because there was a lot of track left to seek in.
+
+- **Seeking a track that is still downloading stays in the stream.** It used to reopen the partial file as an ordinary file, decoding whatever bytes happened to be on disk and ending the track early. Seeking now stays inside the download and lands anywhere already fetched, forwards or back.
+
+- **The seek bar shows how far a track can actually be reached, and stops there.** The limit was derived from the download's own byte count and quietly did nothing when a server sent no `Content-Length`, or when under five seconds had arrived — so a scrub could land somewhere the track had not got to. koan works it out once now, from bytes where a length is known and from the measured bitrate where it is not, and the bar draws the same figure the engine enforces.
+
+- **A large track no longer holds the player deaf while it opens.** Reading a container to find out what it is happened on the thread that answers play, pause and seek. Ogg states its duration in its last page, so opening one mid-download waited for the entire remaining transfer first — twenty-two seconds of an unresponsive player, on a fast connection. That reading now happens on its own thread and comes back as a message like anything else.
+
+- **A long Opus starts playing straight away rather than waiting for the whole download.** It used to wait because of that last page. koan now asks the container to describe itself from the bytes that have arrived, and where it cannot — which in practice means Ogg, and so Opus — opens it without a length instead. The track starts in milliseconds and plays; what it gives up is seeking, until the download finishes. Formats that describe themselves from the front, which is everything else, are unaffected and stay seekable throughout.
+
+  The transport says which of the two it is rather than leaving you to find out: the bar fills as the file arrives, the playhead moves against the duration the library knows, and reaching for a position it cannot reach yet gets an answer instead of silence.
+
+  When the transfer lands, seeking comes back on its own. Playback is not interrupted to do it — the decoder is reading a file, and a file being renamed underneath an open descriptor is not something it notices. The finished file is picked up the next time the track is seeked, which is the first moment it matters.
+
+- **A track whose downloaded copy was thrown away plays again.** Clearing downloads deleted the files but left the queue pointing at them and still saying they were ready, so afterwards nothing in the queue would play at all. Anything whose copy has gone is put back to waiting and fetched again.
+
+- **A track still downloading can be played by asking for it.** Double-clicking one opened the path the transfer will be renamed to rather than the one it is writing, and found nothing there — so it waited for the whole download rather than starting. Where a transfer is writing is now part of what says a transfer is running, so there is no longer an order for two threads to get wrong.
+
+- **The seek bar's downloaded extent moves while the download does.** The transport keeps its own copy of what is playing, refreshed when the playback state or the cursor moves — and neither moves during a download, so the mark sat wherever it had been when playback started. It follows the progress it is drawing now.
+
+- **The bar no longer darkens when a download finishes.** It lit the downloaded part rather than dimming the part that had not arrived, so completing a transfer took the highlight away and the whole bar dropped a shade. The quiet end is the one that is missing, and a track already on disk looks like the ordinary bar it is.
+
+- **The playhead is visible on a very long track.** A third of a minute into nine hours is a tenth of a percent of the bar — narrower than the bar is thick, and so drawn as nothing at all. It has a head that does not shrink with the fraction.
+
+- **Half-finished downloads are cleaned up.** koan writes a download straight through and renames it at the end, so a `.part` file still on disk is from a run that did not finish — bytes nothing knows about, since only finished downloads are tracked for eviction. An interrupted nine-hour recording was half a gigabyte that never came back. They are swept at startup, which is the run after the one that left them.
+
+### Changed
+
+- **A download in progress is played from disk rather than copied into memory.** The decoder used to read from a growing in-memory copy that a second thread filled from the file: a 451 MB recording cost 451 MB of RAM for as long as it played. It reads the file directly now, which costs nothing, seeks backwards for free, and carries on across the rename that ends a download.
+
 ### Added
+
+- **A Downloads section, and a store behind it.** What koan is fetching had no home: it could only be inferred from the queue, which knows about transfers for tracks that are in it and forgets each one the moment it lands — which is when you want to see that it did. There is one account of it now, kept by the downloader itself, and every surface reads it.
+
+  The page lists what is arriving with its rate, how much of how much, and where each row came from. A transfer that has stopped moving says so rather than sitting at a figure that looks like progress, which is the first thing worth knowing when something will not play.
+
+- **Where a track's bytes are, wherever a track is listed.** One mark, in one column, meaning the same thing in the queue as in a record: an empty cloud for something on the server, a ring filling as it arrives, a solid cloud once it is here. The queue drew a ring while a track was fetching and nothing at all afterwards — the one list where you watch a download happen was the one that could not say it had.
+
+- **Fetching and removing downloads, wholesale or a track at a time.** Library → Clear Downloaded Files throws away everything cached from the server. Right-clicking offers whichever of the two applies: a track already downloaded can be removed, one that is not can be fetched without queueing it — for going somewhere without a server, mostly. Either way the library rows stay and fetch again on demand.
 
 - **A graphics level, in Settings -> Appearance.** One slider from `Plain` to `Full`, so koan can be told how much of the machine it may spend on looking like itself. `Full` is what it has always done and stays the default.
 
@@ -22,9 +62,11 @@
 
 ### Fixed
 
-- **A rate something else changed now reaches the macOS app.** koan has watched the device's nominal sample rate since #323 and the watch fires -- the log has been saying so all along. What never moved was the app. The FFI announces a playback change only when its snapshot differs from the last one, and that comparison was a signature of two things: playback state and cursor. The output rate is neither, so retuning the interface under a playing track left the badge claiming the rate the device held when the track started, until the next track happened to move the cursor.
+- **A rate something else changed now reaches the macOS app.** koan has watched the device's nominal sample rate since #323 and the watch fires -- the log has been saying so all along. What never moved was the app. The FFI announces a playback change only when its snapshot differs from the last one, and that comparison was a signature of named fields: playback state, cursor, and, since #359, how far the download had got. The output rate is none of them, so retuning the interface under a playing track left the badge claiming the rate the device held when the track started, until the next track happened to move the cursor.
 
-  The snapshot is compared whole now, with the position held out because it has an event of its own. The same omission was swallowing a stream's duration correction, which lands after playback starts and moves nothing else -- the seek bar for a track whose length is only known once the download does.
+  The snapshot is compared whole now, with the position held out because it has an event of its own. A signature has to be remembered to be widened, and had already been widened twice. The same omission was swallowing a stream's duration correction, which lands after playback starts and moves nothing else.
+
+- **A playlist's tile asked for its covers by track, so the placeholder never got caught.** Artwork is stored and cached per record, and the mosaic named a track off each album instead of the album. Every piece was a second fetch of a sleeve the grid already had, under a key of its own, held twice in memory and twice on disk -- and it sat outside the check that recognises Navidrome's stock blue vinyl, which only ever learns from album lookups. A playlist of records with no artwork drew four vinyls where the library drew four ensōs. It asks for albums now.
 
 - **The wash's drift is far enough to see.** It has moved by the same amounts since it landed in #330, and those amounts were too small to register: blurred at 14 points and magnified about five times, the wash has no feature on screen narrower than eighty points, and the drift carried it about one and a half of those over twenty-three seconds. Slow movement that small does not read as movement -- it reads as a still image. The thing was running, and costing six to nine percent of a core to run, and there was nothing to see.
 

@@ -34,6 +34,7 @@ enum Icon {
     /// Put the queue back on the row that is playing.
     static let jumpToPlaying = "scope"
     static let history = "clock.arrow.circlepath"
+    static let downloads = "arrow.down.circle"
     static let playlist = "music.note.list"
     static let search = "magnifyingglass"
     static let add = "plus"

@@ -65,11 +65,27 @@ pub struct TrackInfo {
 /// Minimum bytes written before streaming playback can begin.
 pub const STREAM_THRESHOLD: u64 = 256 * 1024; // 256 KB
 
+/// Held back from the seekable extent of a downloading track.
+///
+/// Bytes are converted to time at the average bitrate, so on VBR the estimate
+/// wanders either side of the truth; landing short of the write head costs a
+/// couple of seconds of reach and landing past it costs a stall.
+pub const SEEK_SAFETY_MS: u64 = 2_000;
+
 /// Load state of a playlist item — tracks download lifecycle.
 #[derive(Debug, Clone)]
 pub enum LoadState {
     Pending,
     Downloading {
+        /// Where the bytes are going: the in-progress `.part` file, not the
+        /// destination it is renamed to at the end.
+        ///
+        /// Carried here rather than read off the item, whose path is written by
+        /// the download thread and read by the player, and which the two can
+        /// disagree about — a track whose copy was cleared mid-flight kept a
+        /// path pointing at the file that had just been deleted. A load state
+        /// that says a download is running should say where it is running to.
+        path: PathBuf,
         /// Total bytes expected, or 0 when the server sent no Content-Length.
         total: u64,
         /// How many bytes have landed. The download thread writes it per chunk
@@ -248,6 +264,98 @@ impl SharedPlayerState {
 
     pub fn set_track_info(&self, info: Option<TrackInfo>) {
         *self.track_info.write() = info;
+    }
+
+    /// How far into the currently playing track a seek can land.
+    ///
+    /// A track on disk is seekable end to end. One still downloading is
+    /// seekable only as far as its bytes reach: bytes map to time by the
+    /// average bitrate, exact for lossless and CBR and drifting on VBR, which
+    /// is what `SEEK_SAFETY_MS` covers. Zero when nothing is playing.
+    ///
+    /// The one value both the clamp in `Player::seek` and the extent front ends
+    /// draw on the seek bar come from — a bar that shows a reachable position
+    /// the player then refuses is worse than no bar.
+    pub fn seekable_ms(&self) -> u64 {
+        let Some(info) = self.track_info.read().clone() else {
+            return 0;
+        };
+
+        // Released before the playlist lock is taken: derive_visible_queue takes
+        // these two in the opposite order, so holding both would close a cycle.
+        let pl = self.playlist.read();
+        let Some(item) = pl.items.iter().find(|item| item.id == info.id) else {
+            return info.duration_ms;
+        };
+
+        let LoadState::Downloading {
+            total,
+            bytes_written,
+            ..
+        } = &item.load_state
+        else {
+            return info.duration_ms;
+        };
+
+        // A container that could not describe itself from the bytes downloaded
+        // states no duration, and cannot be seeked at all until the rest of it
+        // lands — there is no index to seek against and no end to seek within.
+        // Ogg is the one that does this; it keeps its duration in its last page.
+        if info.duration_ms == 0 {
+            return 0;
+        }
+
+        let written = bytes_written.load(Ordering::Acquire);
+        let reached = if *total > 0 && info.duration_ms > 0 {
+            ((written as f64 / *total as f64) * info.duration_ms as f64) as u64
+        } else if let Some(kbps) = info.bitrate_kbps.filter(|k| *k > 0) {
+            // No Content-Length. Bytes still say how much audio has arrived,
+            // given what the probe measured the bitrate to be: 1 kbps is
+            // 1 bit per ms, so bits divided by kbps is milliseconds.
+            written.saturating_mul(8) / kbps as u64
+        } else {
+            // Nothing to derive a position from — forward seeking would be a
+            // guess, so allow only what has already been played.
+            return self.position_ms();
+        };
+
+        reached.saturating_sub(SEEK_SAFETY_MS).min(info.duration_ms)
+    }
+
+    /// The duration to show for what is playing.
+    ///
+    /// The container's own answer wherever it gave one. A partial file that
+    /// could not be read far enough to state a duration has none, and the
+    /// library's figure stands in — it came from the server, it is right, and
+    /// a transport that reads 0:00 for nine hours of music is worse than one
+    /// reading a figure the container has not caught up with yet.
+    pub fn duration_ms(&self) -> u64 {
+        let Some(info) = self.track_info.read().clone() else {
+            return 0;
+        };
+        if info.duration_ms > 0 {
+            return info.duration_ms;
+        }
+        // Released before the playlist lock, as everywhere else here.
+        self.playlist
+            .read()
+            .items
+            .iter()
+            .find(|item| item.id == info.id)
+            .and_then(|item| item.duration_ms)
+            .unwrap_or(0)
+    }
+
+    /// `seekable_ms`, but `None` when the whole track is reachable — which is
+    /// every track that is not mid-download. What a front end draws a boundary
+    /// from: no boundary is the normal case and should cost no mark.
+    pub fn seek_ceiling_ms(&self) -> Option<u64> {
+        let duration = self.duration_ms();
+        if duration == 0 {
+            return None;
+        }
+        let seekable = self.seekable_ms();
+        (seekable < duration).then_some(seekable)
     }
 
     /// Download fraction (0.0..1.0) for the currently playing track, if streaming.
@@ -598,14 +706,14 @@ impl SharedPlayerState {
             .and_then(|item| match &item.load_state {
                 LoadState::Ready => Some(PlaybackSource::Ready(item.path.clone())),
                 LoadState::Downloading {
+                    path,
                     total,
                     bytes_written,
-                    ..
                 } => {
                     let written = bytes_written.load(Ordering::Acquire);
                     if written >= STREAM_THRESHOLD {
                         Some(PlaybackSource::Streaming {
-                            path: item.path.clone(),
+                            path: path.clone(),
                             bytes_written: bytes_written.clone(),
                             total: *total,
                         })
@@ -615,6 +723,36 @@ impl SharedPlayerState {
                 }
                 _ => None,
             })
+    }
+
+    /// Put back to `Pending` every queue item whose file has gone, and say
+    /// which they were so they can be fetched again.
+    ///
+    /// The queue holds paths, and clearing downloads deletes the files under
+    /// them. An item left claiming `Ready` opens nothing when it is played —
+    /// it is not broken, it is a remote track that has to be fetched a second
+    /// time. Only items with a database row behind them: one without has
+    /// nowhere to be fetched from, and parking the cursor on it would be worse
+    /// than letting it fail honestly.
+    pub fn reset_items_with_missing_files(&self) -> Vec<(i64, QueueItemId)> {
+        let mut pl = self.playlist.write();
+        let mut reset = Vec::new();
+        for item in pl.items.iter_mut() {
+            let Some(db_id) = item.db_id else { continue };
+            if !matches!(item.load_state, LoadState::Ready) {
+                continue;
+            }
+            if item.path.exists() {
+                continue;
+            }
+            item.load_state = LoadState::Pending;
+            reset.push((db_id, item.id));
+        }
+        drop(pl);
+        if !reset.is_empty() {
+            self.bump_version();
+        }
+        reset
     }
 
     /// Get the path of an item if it's Ready (legacy convenience — use item_playback_source for streaming).
@@ -677,6 +815,7 @@ impl SharedPlayerState {
                 LoadState::Downloading {
                     total,
                     bytes_written,
+                    ..
                 } => Some((item.id, bytes_written.load(Ordering::Relaxed), *total)),
                 _ => None,
             })
@@ -1003,6 +1142,169 @@ mod tests {
         make_item(title, LoadState::Failed("nope".into()))
     }
 
+    const DURATION_MS: u64 = 32_523_787;
+
+    /// A nine-hour track under the cursor, `downloaded` bytes of `total` in.
+    /// `total` of 0 stands for a server that sent no Content-Length.
+    fn streaming_state(
+        downloaded: u64,
+        total: u64,
+        bitrate_kbps: Option<u32>,
+    ) -> Arc<SharedPlayerState> {
+        streaming_state_with_duration(downloaded, total, bitrate_kbps, DURATION_MS)
+    }
+
+    /// The same, but saying what the container managed to state about itself.
+    /// A partial Ogg states nothing, which is zero here.
+    fn streaming_state_with_duration(
+        downloaded: u64,
+        total: u64,
+        bitrate_kbps: Option<u32>,
+        container_duration_ms: u64,
+    ) -> Arc<SharedPlayerState> {
+        let written = Arc::new(AtomicU64::new(downloaded));
+        let item = make_item(
+            "train",
+            LoadState::Downloading {
+                path: PathBuf::from("/cache/train.opus.part"),
+                total,
+                bytes_written: written,
+            },
+        );
+        let id = item.id;
+        let path = item.path.clone();
+
+        let state = SharedPlayerState::new();
+        state.add_items(vec![item]);
+        state.set_cursor(Some(id));
+        state.set_track_info(Some(TrackInfo {
+            id,
+            path,
+            codec: "Opus".into(),
+            sample_rate: 48_000,
+            bit_depth: None,
+            bitrate_kbps,
+            channels: 2,
+            duration_ms: container_duration_ms,
+        }));
+        state
+    }
+
+    // --- seekable_ms ---
+
+    #[test]
+    fn a_track_on_disk_is_seekable_end_to_end() {
+        let item = ready_item("done");
+        let id = item.id;
+        let path = item.path.clone();
+        let state = SharedPlayerState::new();
+        state.add_items(vec![item]);
+        state.set_cursor(Some(id));
+        state.set_track_info(Some(TrackInfo {
+            id,
+            path,
+            codec: "FLAC".into(),
+            sample_rate: 44_100,
+            bit_depth: Some(16),
+            bitrate_kbps: None,
+            channels: 2,
+            duration_ms: 200_000,
+        }));
+
+        assert_eq!(state.seekable_ms(), 200_000);
+        // Nothing to draw a boundary for, so front ends are told there isn't one.
+        assert_eq!(state.seek_ceiling_ms(), None);
+    }
+
+    #[test]
+    fn a_downloading_track_is_seekable_as_far_as_its_bytes_reach() {
+        // A quarter of a nine-hour file in: a quarter of the way through it,
+        // less the margin the byte-to-time estimate is worth.
+        let state = streaming_state(100, 400, None);
+        assert_eq!(state.seekable_ms(), 32_523_787 / 4 - SEEK_SAFETY_MS);
+        assert_eq!(
+            state.seek_ceiling_ms(),
+            Some(32_523_787 / 4 - SEEK_SAFETY_MS)
+        );
+    }
+
+    #[test]
+    fn a_transfer_without_a_content_length_falls_back_to_bitrate() {
+        // No total to take a fraction of. 128 kbps is 128 bits per ms, so a
+        // megabyte is 8 388 608 bits and a little over 65 seconds.
+        let state = streaming_state(1024 * 1024, 0, Some(128));
+        assert_eq!(state.seekable_ms(), 1024 * 1024 * 8 / 128 - SEEK_SAFETY_MS);
+    }
+
+    #[test]
+    fn nothing_to_estimate_from_allows_no_forward_seek() {
+        // Neither a length nor a bitrate: anywhere past the playhead is a
+        // guess, and a guess that lands past the write head is a stall.
+        let state = streaming_state(1024 * 1024, 0, None);
+        state.set_position_ms(12_000);
+        assert_eq!(state.seekable_ms(), 12_000);
+    }
+
+    #[test]
+    fn the_seekable_extent_never_exceeds_the_track() {
+        // A download reporting more bytes than it advertised must not offer a
+        // seek past the end of the music.
+        let state = streaming_state(500, 400, None);
+        assert_eq!(state.seekable_ms(), 32_523_787);
+    }
+
+    #[test]
+    fn nothing_playing_is_seekable_nowhere() {
+        assert_eq!(SharedPlayerState::new().seekable_ms(), 0);
+        assert_eq!(SharedPlayerState::new().seek_ceiling_ms(), None);
+    }
+
+    #[test]
+    fn a_container_that_cannot_state_its_duration_cannot_be_seeked() {
+        // A partial Ogg keeps its duration in a last page that has not arrived,
+        // so it opens and plays but has nothing to seek against. Half the bytes
+        // being present does not change that.
+        let state = streaming_state_with_duration(200, 400, Some(128), 0);
+        assert_eq!(state.seekable_ms(), 0);
+    }
+
+    #[test]
+    fn the_library_duration_stands_in_for_a_silent_container() {
+        // What is shown on the transport, so nine hours of music does not read
+        // as 0:00 while it caches.
+        let state = streaming_state_with_duration(200, 400, Some(128), 0);
+        assert_eq!(state.duration_ms(), 200_000, "the item's own figure");
+        // And it is a display figure only — it grants no seeking.
+        assert_eq!(state.seekable_ms(), 0);
+        assert_eq!(state.seek_ceiling_ms(), Some(0));
+    }
+
+    #[test]
+    fn the_container_duration_wins_where_there_is_one() {
+        let state = streaming_state(200, 400, None);
+        assert_eq!(state.duration_ms(), DURATION_MS);
+    }
+
+    #[test]
+    fn the_download_landing_restores_seeking() {
+        // The sequence the whole design turns on: a track that opened without a
+        // duration gets one when the finished file is re-read, and is seekable
+        // end to end from that moment — no restart, no handover.
+        let state = streaming_state_with_duration(400, 400, Some(128), 0);
+        assert_eq!(state.seekable_ms(), 0);
+
+        let id = state.cursor().expect("cursor");
+        state.update_load_state(id, LoadState::Ready);
+        let info = state.track_info().expect("track info");
+        state.set_track_info(Some(TrackInfo {
+            duration_ms: DURATION_MS,
+            ..info
+        }));
+
+        assert_eq!(state.seekable_ms(), DURATION_MS);
+        assert_eq!(state.seek_ceiling_ms(), None, "no boundary left to draw");
+    }
+
     // --- advance_cursor_loadable ---
 
     #[test]
@@ -1206,6 +1508,7 @@ mod tests {
         let dl_cursor = make_item(
             "downloading-at-cursor",
             LoadState::Downloading {
+                path: PathBuf::from("/cache/cursor.flac.part"),
                 total: 1_000_000,
                 bytes_written: bytes_cursor.clone(),
             },
@@ -1213,6 +1516,7 @@ mod tests {
         let dl_queued = make_item(
             "downloading-queued",
             LoadState::Downloading {
+                path: PathBuf::from("/cache/queued.flac.part"),
                 total: 500_000,
                 bytes_written: bytes_queued.clone(),
             },
@@ -1238,6 +1542,7 @@ mod tests {
         let item = make_item(
             "downloading",
             LoadState::Downloading {
+                path: PathBuf::from("/cache/one.flac.part"),
                 total: 1_000,
                 bytes_written: bytes.clone(),
             },

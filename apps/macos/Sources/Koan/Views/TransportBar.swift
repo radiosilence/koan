@@ -234,30 +234,26 @@ private struct SeekBar: View {
                 // and AppKit answered each one with a full window Auto Layout
                 // pass. Same bar, same marks; only the pixels change now.
                 ZStack {
+                    // What has not arrived, drawn quieter than the rest.
+                    //
+                    // The dimming is on the tail rather than the head on
+                    // purpose: a track on disk is the ordinary case and should
+                    // look like the ordinary bar, so a download finishing
+                    // changes nothing about what is drawn. Lighting the
+                    // downloaded part instead meant the bar went *dark* the
+                    // moment a transfer completed, which is exactly backwards.
                     Canvas { context, size in
                         context.fill(Self.mark(in: size, fraction: 1), with: .style(.quaternary))
                     }
-                    // How much of a streaming track has arrived. A fraction of
-                    // bytes drawn on an axis of time: right for lossless and
-                    // CBR, out by however far the bitrate wanders on VBR. Hence
-                    // the weaker mark and the word "roughly" — what it answers
-                    // is whether playback is about to run out of track, not
-                    // where in the track anything is. Its own layer so it sits
-                    // under the played extent: an approximation that lands
-                    // behind the playhead is covered rather than drawn wrong.
+                    .opacity(0.4)
+                    // What can be played: the whole bar for anything already
+                    // here, and as far as the bytes reach for anything still
+                    // arriving. Where the track can also be seeked, the engine
+                    // stops a scrub at this same extent, so the bar never
+                    // offers a position playback would refuse.
                     Canvas { context, size in
-                        context.fill(Self.mark(in: size, fraction: fetched ?? 0), with: .style(.secondary))
+                        context.fill(Self.mark(in: size, fraction: fetched ?? 1), with: .style(.quaternary))
                     }
-                    // On whether there is a mark at all, not on how long it is:
-                    // the fetched extent moves several times a second and a
-                    // quarter of a second of easing on every one of those would
-                    // leave both it and the playhead beside it perpetually
-                    // behind. Opacity rather than a transition, because this
-                    // layer is always present — and opacity is one of the few
-                    // things CoreAnimation can carry without touching layout.
-                    .opacity(fetched == nil ? 0 : 1)
-                    .animation(.easeOut(duration: 0.25), value: fetched == nil)
-                    .help(fetched.map { "Roughly \(Int($0 * 100))% downloaded" } ?? "")
                     // Not the tint. The tint is the colour of the record now,
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a
@@ -265,17 +261,34 @@ private struct SeekBar: View {
                     Canvas { context, size in
                         context.fill(Self.mark(in: size, fraction: player.progress), with: .style(.primary))
                     }
+                    // The head itself, which the played extent cannot show on
+                    // its own: a third of a minute into nine hours is a tenth
+                    // of a percent of the bar, narrower than the bar is thick,
+                    // and a capsule that short is not drawn at all. A mark that
+                    // does not shrink with the fraction is the only thing that
+                    // says where playback is on a track this long.
+                    Canvas { context, size in
+                        context.fill(Self.head(in: size, fraction: player.progress), with: .style(.primary))
+                    }
                 }
                 .contentShape(.rect)
+                // Always attached, even where there is nowhere to drag to. The
+                // thumb does not follow the pointer then — a head that moves
+                // and springs back is a worse answer than one that stays put —
+                // but the attempt is still worth answering, so releasing says
+                // why nothing happened.
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { value in
+                            guard player.canSeek else { return }
                             player.beginScrub(fraction: (value.location.x / geo.size.width).clamped())
                         }
                         .onEnded { value in
+                            guard player.canSeek else { return player.explainUnseekable() }
                             player.seek(fraction: (value.location.x / geo.size.width).clamped())
                         }
                 )
+                .help(help)
             }
             .frame(height: 14)
 
@@ -291,6 +304,23 @@ private struct SeekBar: View {
 
     /// A capsule covering `fraction` of the bar, centred vertically. Shorter
     /// than its own thickness it would draw as a squashed dot, so it doesn't.
+    /// A round head centred on `fraction`, kept inside the bar at both ends so
+    /// it never hangs off the track it is marking.
+    private static func head(in size: CGSize, fraction: Double) -> Path {
+        let diameter = thickness * 2
+        let travel = size.width - diameter
+        guard travel > 0 else { return Path() }
+        let x = travel * fraction.clamped()
+        return Path(
+            ellipseIn: CGRect(
+                x: x,
+                y: (size.height - diameter) / 2,
+                width: diameter,
+                height: diameter
+            )
+        )
+    }
+
     private static func mark(in size: CGSize, fraction: Double) -> Path {
         let width = size.width * fraction.clamped()
         guard width >= thickness else { return Path() }
@@ -303,10 +333,19 @@ private struct SeekBar: View {
         UInt64(player.progress * Double(player.clock.durationMs))
     }
 
-    /// How much of what is playing has been fetched, while it is still being
-    /// fetched. `nil` for anything already on disk, and for a transfer the
-    /// server gave no length for — there is nothing to draw a fraction of.
-    private var fetched: Double? { player.currentEntry?.downloadProgress }
+    /// How much of what is playing has arrived, while it is still arriving.
+    /// `nil` for anything on disk, which is every track most of the time.
+    private var fetched: Double? { player.fetched }
+
+    /// Says which of the three states the bar is in, because a bar that stops
+    /// short or stops responding without saying why reads as broken.
+    private var help: String {
+        guard let fetched else { return "" }
+        let percent = Int(fetched * 100)
+        return player.canSeek
+            ? "Downloaded to \(percent)% — seeking stops there until the rest arrives"
+            : "Downloading, \(percent)% — seeking becomes available when it finishes"
+    }
 }
 
 private struct DeviceMenu: View {

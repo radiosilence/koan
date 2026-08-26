@@ -129,7 +129,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
     app.layout.seek_bar_start = bs;
     app.layout.seek_bar_width = bw;
 
-    let dl_fraction = app.state.current_download_fraction();
+    let seekable_ms = app.state.seek_ceiling_ms();
     let transport = TransportBar::new(
         track_info.as_ref(),
         playing_entry.as_ref(),
@@ -138,7 +138,7 @@ pub fn render(frame: &mut Frame, app: &mut App) {
         &app.theme,
     )
     .with_ticker_offset(app.ticker_offset)
-    .with_download_fraction(dl_fraction)
+    .with_seekable_ms(seekable_ms)
     .with_output_rate(app.state.output_sample_rate());
     frame.render_widget(transport, text_area);
 

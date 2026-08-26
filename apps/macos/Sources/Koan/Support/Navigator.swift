@@ -29,6 +29,7 @@ final class Navigator {
         case artists
         case favourites
         case playHistory
+        case downloads
         /// One playlist. A sidebar row like any other — which is what makes
         /// clicking it light it up, and what lets Back return to it.
         case playlist(Int64)
@@ -44,6 +45,8 @@ final class Navigator {
             case .artists: "Filter artists"
             case .favourites: "Filter favourites"
             case .playHistory: "Filter history"
+            // Short, and ordered by what is happening rather than by name.
+            case .downloads: nil
             // A playlist is a sequence someone chose, and narrowing it hides
             // part of that sequence rather than telling you anything.
             case .queue, .searchResults, .playlist: nil

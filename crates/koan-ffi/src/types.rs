@@ -216,6 +216,10 @@ pub struct NowPlaying {
     pub state: PlayState,
     pub position_ms: u64,
     pub duration_ms: u64,
+    /// How far into the track a seek can land. Equal to `duration_ms` for
+    /// anything on disk; short of it while the bytes are still arriving, which
+    /// is the extent a client draws as downloaded and refuses to scrub past.
+    pub seekable_ms: u64,
     /// Queue item currently under the cursor, if any.
     pub queue_item_id: Option<String>,
     pub entry: Option<QueueItem>,
@@ -251,6 +255,65 @@ pub struct QueueItem {
     pub download_progress: Option<f64>,
     /// Why this item cannot play, when `status` is `Failed`.
     pub failure_reason: Option<String>,
+    /// The server knows about this track. False for a queue item with no
+    /// library row behind it, which has nowhere to have come from.
+    pub on_server: bool,
+    /// The bytes are on this machine — an indexed file or a finished download.
+    pub on_disk: bool,
+}
+
+/// One transfer, as the download store has it.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct DownloadEntry {
+    pub queue_item_id: String,
+    pub track_id: i64,
+    pub title: String,
+    pub artist: String,
+    /// 0.0–1.0, or `None` when the server sent no Content-Length — a bar drawn
+    /// at zero for a transfer that is going fine reads as stuck.
+    pub progress: Option<f64>,
+    pub bytes_written: u64,
+    pub total_bytes: u64,
+    /// Smoothed. Zero for a transfer that has settled, and for one that has
+    /// stopped moving — which is the case worth seeing.
+    pub bytes_per_second: u64,
+    pub state: DownloadEntryState,
+    /// Why it stopped, when it failed.
+    pub failure_reason: Option<String>,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DownloadEntryState {
+    Queued,
+    Running,
+    Done,
+    Failed,
+}
+
+impl From<&koan_core::remote::downloads::Download> for DownloadEntry {
+    fn from(d: &koan_core::remote::downloads::Download) -> Self {
+        use koan_core::remote::downloads::DownloadState;
+        Self {
+            queue_item_id: d.id.0.to_string(),
+            track_id: d.track_id,
+            title: d.title.clone(),
+            artist: d.artist.clone(),
+            progress: d.fraction(),
+            bytes_written: d.bytes_written(),
+            total_bytes: d.total,
+            bytes_per_second: d.bytes_per_second,
+            state: match &d.state {
+                DownloadState::Queued => DownloadEntryState::Queued,
+                DownloadState::Running => DownloadEntryState::Running,
+                DownloadState::Done => DownloadEntryState::Done,
+                DownloadState::Failed(_) => DownloadEntryState::Failed,
+            },
+            failure_reason: match &d.state {
+                DownloadState::Failed(reason) => Some(reason.clone()),
+                _ => None,
+            },
+        }
+    }
 }
 
 /// How far one in-flight download has got.
@@ -309,6 +372,11 @@ impl QueueItem {
                 LoadState::Failed(reason) => Some(reason.clone()),
                 _ => None,
             },
+            // The transport polls this and there is no connection here to ask.
+            // Nothing it draws needs them; the queue's own rows carry the real
+            // reading.
+            on_server: false,
+            on_disk: false,
         }
     }
 }
@@ -317,7 +385,16 @@ impl QueueItem {
     /// Build from a derived queue entry, taking album IDs from a map resolved
     /// for the whole queue in one query — one statement per queue read rather
     /// than one per row.
-    pub(crate) fn from_entry(e: &QueueEntry, album_ids: &HashMap<i64, i64>) -> Self {
+    pub(crate) fn from_entry(
+        e: &QueueEntry,
+        album_ids: &HashMap<i64, i64>,
+        sources: &HashMap<i64, (bool, bool)>,
+    ) -> Self {
+        let (on_server, on_disk) = e
+            .db_id
+            .and_then(|id| sources.get(&id))
+            .copied()
+            .unwrap_or((false, false));
         let download_progress = e.download_progress.and_then(|(done, total)| {
             (total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0))
         });
@@ -338,6 +415,8 @@ impl QueueItem {
             status: e.status.into(),
             download_progress,
             failure_reason: e.error.clone(),
+            on_server,
+            on_disk,
         }
     }
 }

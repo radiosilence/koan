@@ -183,8 +183,8 @@ fn download_and_play(
         return;
     }
 
-    // Point the queue item at the in-progress file so the streaming pump reads
-    // bytes as they land; it flips to `dest` once the rename has happened.
+    // Point the queue item at the in-progress file so the decoder reads bytes
+    // as they land; it flips to `dest` once the rename has happened.
     state.update_paths(&[(queue_id, download::part_path(dest))]);
 
     let bytes_written = Arc::new(AtomicU64::new(0));
@@ -193,12 +193,14 @@ fn download_and_play(
     // Once per attempt, not per chunk — see `helpers::download_track`. The
     // counter carries progress; the load state only carries the fact.
     let announced_total = AtomicU64::new(u64::MAX);
+    let in_progress = download::part_path(dest);
     let result = streamer.stream_to_file(&track_id.to_string(), dest, |downloaded, total| {
         bytes_written.store(downloaded, Ordering::Release);
         if announced_total.swap(total, Ordering::Relaxed) != total {
             state.update_load_state(
                 queue_id,
                 LoadState::Downloading {
+                    path: in_progress.clone(),
                     total,
                     bytes_written: bytes_written.clone(),
                 },
@@ -496,6 +498,7 @@ fn command_loop(
             // catches new variants.
             PlayerCommand::TrackReady(_)
             | PlayerCommand::TrackStreamReady(_)
+            | PlayerCommand::StreamProbed { .. }
             | PlayerCommand::TrackFailed(_)
             | PlayerCommand::BeginUndoBatch
             | PlayerCommand::EndUndoBatch

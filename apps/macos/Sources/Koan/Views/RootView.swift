@@ -271,9 +271,14 @@ struct RootView: View {
             ShortcutsSheet(hotkeys: hotkeys.all)
         }
         .overlay(alignment: .bottom) {
+            // One slot, and a failure outranks a remark about something that
+            // has not finished yet.
             if let error = player.lastError {
                 ErrorToast(message: error) { player.lastError = nil }
                     // Above the transport, not behind it.
+                    .padding(.bottom, transportHeight + 10)
+            } else if let notice = player.lastNotice {
+                ErrorToast(message: notice, kind: .notice) { player.lastNotice = nil }
                     .padding(.bottom, transportHeight + 10)
             }
         }
@@ -354,6 +359,8 @@ private struct StageView: View {
             FavouritesView()
         case .section(.playHistory):
             HistoryView()
+        case .section(.downloads):
+            DownloadsView()
         case .section(.playlist(let id)):
             PlaylistView(playlistId: id)
         case .album(let id):
@@ -374,13 +381,36 @@ extension EnvironmentValues {
 /// Engine errors are informational — a device disappearing shouldn't take a
 /// modal to dismiss.
 private struct ErrorToast: View {
+    /// Whether something went wrong, or something is merely not available yet.
+    /// The second is not a warning and does not get the colour of one — a
+    /// track that is still downloading is working exactly as intended.
+    enum Kind {
+        case warning
+        case notice
+
+        var symbol: String {
+            switch self {
+            case .warning: "exclamationmark.circle.fill"
+            case .notice: "arrow.down.circle.fill"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .warning: .orange
+            case .notice: .secondary
+            }
+        }
+    }
+
     let message: String
+    var kind: Kind = .warning
     let dismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.orange)
+            Image(systemName: kind.symbol)
+                .foregroundStyle(kind.tint)
             Text(message)
                 .font(.callout)
                 .lineLimit(2)
@@ -395,8 +425,8 @@ private struct ErrorToast: View {
         // Tinted glass rather than a material and a border: the tint carries
         // the warning without a second colour, and glass already has an edge.
         .glass(
-            .regular.tint(.orange.opacity(0.22)),
-            fallback: .orange.opacity(0.22),
+            .regular.tint(kind.tint.opacity(0.22)),
+            fallback: kind.tint.opacity(0.22),
             in: .capsule
         )
         .task {
