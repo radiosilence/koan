@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.32.0 (2026-08-26)
 
 ### Removed
 
@@ -30,9 +30,15 @@
 
 - **The seek bar's downloaded extent moves while the download does.** The transport keeps its own copy of what is playing, refreshed when the playback state or the cursor moves — and neither moves during a download, so the mark sat wherever it had been when playback started. It follows the progress it is drawing now.
 
+- **A finished download's bar does not read as an empty one.** The downloads page lit the part that had arrived, so a transfer completing took the highlight away and the bar dropped back to looking untouched. The quiet end is the part still missing, the same way round as the seek bar.
+
 - **The bar no longer darkens when a download finishes.** It lit the downloaded part rather than dimming the part that had not arrived, so completing a transfer took the highlight away and the whole bar dropped a shade. The quiet end is the one that is missing, and a track already on disk looks like the ordinary bar it is.
 
 - **The playhead is visible on a very long track.** A third of a minute into nine hours is a tenth of a percent of the bar — narrower than the bar is thick, and so drawn as nothing at all. It has a head that does not shrink with the fraction.
+
+- **A download landing shows up on the page you are looking at.** A track fetched while its record was on screen kept an empty cloud until you navigated away and back — the page showing the row was not among the things a library change refreshed. A playlist had it twice over: nothing told it a library change had happened at all, and its progress rings never moved, because progress was patched into the queue index keyed by track and not the one keyed by playlist entry, which is the one a playlist row reads.
+
+- **The cloud and the heart sit in the same order everywhere.** The queue and a playlist had them the other way round from a record's own track list.
 
 - **Playing a track twice before it arrives fetches it once.** Downloads were deduplicated by queue entry rather than by track, and playing something again makes a new entry — so nothing matched and a second transfer started over the first. Both wrote the same file, and whichever finished renamed it out from under the other, which is where the failed downloads in the log came from. One transfer now, with every entry waiting on it told when it lands.
 
