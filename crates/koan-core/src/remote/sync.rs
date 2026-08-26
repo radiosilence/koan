@@ -229,6 +229,8 @@ pub fn sync_library(
         result.albums_failed,
     );
 
+    db.optimize();
+
     Ok(result)
 }
 
