@@ -109,6 +109,8 @@ final class PlayerModel {
                     self.applyPosition(positionMs)
                 case .downloadsChanged(let downloads):
                     self.applyDownloads(downloads)
+                case .libraryChanged:
+                    self.onLibraryChanged?()
                 }
             }
         }
@@ -209,6 +211,11 @@ final class PlayerModel {
     /// A download finished. Set by `AppState` — the library's cached count is
     /// the only thing that knows it moved, and it has no other way to find out.
     var onDownloadsLanded: (() -> Void)?
+
+    /// The library's rows changed. Set by `AppState`. This is how a scan or a
+    /// sync nobody asked for reaches the browser — the engine says so rather
+    /// than the app having to guess from whatever it happened to start itself.
+    var onLibraryChanged: (() -> Void)?
 
     /// The queue changed — rebuild it and refresh what depends on it.
     fileprivate func applyQueueChange() async {
@@ -518,7 +525,7 @@ final class PlayerModel {
     /// `indexed` fires once rows exist, so the library browser can pick up the
     /// artists and albums the drop just created. The player can't do that
     /// itself — it doesn't own the browse caches.
-    func importFiles(_ urls: [URL], indexed: @escaping @MainActor () -> Void) {
+    func importFiles(_ urls: [URL]) {
         let paths = urls.filter(\.isFileURL).map(\.path)
         guard !paths.isEmpty else { return }
         let engine = self.engine
@@ -538,7 +545,6 @@ final class PlayerModel {
                 lastError = first
             }
             enqueue(trackIds: summary.trackIds)
-            indexed()
         }
     }
 

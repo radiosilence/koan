@@ -78,7 +78,7 @@ struct HistoryView: View {
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
             Button("Clear…") { confirmingClear = true }
-                .disabled(library.playHistory.isEmpty)
+                .disabled(library.visiblePlayHistory.isEmpty)
         }
     }
 

@@ -88,6 +88,14 @@ pub enum PlayerEvent {
     /// is in flight any more, which is also how a client learns a download
     /// finished.
     DownloadsChanged { downloads: Vec<DownloadProgress> },
+    /// The library's rows changed — a scan, a sync, an import, an organize or
+    /// a folder being forgotten. Carries a version so a client can tell one
+    /// change from a repeat of the one it already handled.
+    ///
+    /// Says nothing about what changed. A client that holds no copy of the
+    /// library only needs to know to ask again, and one that does is holding
+    /// the thing this event exists to warn it about.
+    LibraryChanged { version: u64 },
 }
 
 /// Reports how far a long task has got.
@@ -183,6 +191,10 @@ pub struct KoanEngine {
     /// one per task, because only one runs at a time — they all contend for the
     /// same single database writer.
     cancel_library_task: Arc<std::sync::atomic::AtomicBool>,
+    /// Bumped by anything that writes library rows. The watcher turns a change
+    /// here into a `LibraryChanged` event, so a background scan finishing looks
+    /// the same to a client as one it asked for itself.
+    library_version: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[uniffi::export]
@@ -424,63 +436,72 @@ impl KoanEngine {
 
     // --- Library -----------------------------------------------------------
 
+    /// The library's artists, narrowed by `search`.
+    ///
+    /// Whole, not paged. This is an in-process call, and a library's artists
+    /// are a bounded set — a few thousand records marshalled once beats a
+    /// client that has to know how far it has scrolled.
     pub async fn artists(
         self: Arc<Self>,
         search: Option<String>,
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = match search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                Some(q) => queries::find_artists(&db.conn, q),
-                None => queries::all_artists(&db.conn),
-            }
+            let rows = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    search: trimmed(&search),
+                    ..Default::default()
+                },
+            )
             .map_err(db_err)?;
             Ok(rows.into_iter().map(Artist::from).collect())
         })
         .await
     }
 
-    /// The library's albums, narrowed by `search` if given.
+    pub async fn artist(self: Arc<Self>, artist_id: i64) -> Result<Option<Artist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(queries::get_artist(&db.conn, artist_id)
+                .map_err(db_err)?
+                .map(Artist::from))
+        })
+        .await
+    }
+
+    /// The library's albums, narrowed by `search` and ordered by `sort`.
     ///
-    /// The search runs in SQL rather than over the returned list: a client that
-    /// filters what it has already been handed still pays to read and marshal
-    /// every album in the library on each keystroke.
+    /// Both run in SQL. A client that narrows or sorts what it has already been
+    /// handed pays to read and marshal every album in the library on each
+    /// keystroke, and has to reimplement in its own language an answer the
+    /// database already knows.
+    ///
+    /// Whole, not paged, for the reason [`Self::artists`] gives.
+    ///
+    /// `seed` fixes the shuffle under [`AlbumSort::Random`] and is ignored by
+    /// every other sort, so that narrowing a shuffled listing does not deal it
+    /// again. A new seed is a new shuffle, which is what a reshuffle asks for.
     pub async fn albums(
         self: Arc<Self>,
         artist_id: Option<i64>,
         sort: AlbumSort,
+        seed: i64,
         search: Option<String>,
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let query = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
-            let rows = match (artist_id, query) {
-                (Some(id), _) => queries::albums_for_artist(&db.conn, id),
-                (None, Some(q)) => queries::find_albums(&db.conn, q),
-                (None, None) => queries::all_albums(&db.conn),
-            }
+            let rows = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    artist_id,
+                    search: trimmed(&search),
+                    order: album_order(sort, seed),
+                    ..Default::default()
+                },
+            )
             .map_err(db_err)?;
-
-            let mut albums: Vec<Album> = rows.into_iter().map(Album::from).collect();
-            match sort {
-                // Albums predating the added_at column sort last rather than first,
-                // which is what an empty string would do.
-                AlbumSort::RecentlyAdded => albums.sort_by(|a, b| {
-                    b.added_at
-                        .as_deref()
-                        .unwrap_or("")
-                        .cmp(a.added_at.as_deref().unwrap_or(""))
-                }),
-                // Cached: `sort_by_key` recomputes the key on every
-                // comparison, so a plain sort lowercases each title a couple of
-                // dozen times over.
-                AlbumSort::Title => albums.sort_by_cached_key(|a| a.title.to_lowercase()),
-                AlbumSort::Artist => albums
-                    .sort_by_cached_key(|a| (a.artist_name.to_lowercase(), a.year.unwrap_or(0))),
-                AlbumSort::Year => albums.sort_by_key(|a| std::cmp::Reverse(a.year.unwrap_or(0))),
-                AlbumSort::Random => koan_core::helpers::shuffle(&mut albums),
-            }
-            Ok(albums)
+            Ok(rows.into_iter().map(Album::from).collect())
         })
         .await
     }
@@ -542,9 +563,6 @@ impl KoanEngine {
         limit: u32,
     ) -> Result<Vec<FuzzyMatch>, KoanError> {
         offload::offload(move || {
-            use nucleo::pattern::{CaseMatching, Normalization};
-            use nucleo::{Config as NucleoConfig, Nucleo};
-
             let db = self.db()?;
             let items: Vec<(i64, String)> = match kind {
                 SearchKind::Track => queries::all_tracks(&db.conn)
@@ -569,38 +587,59 @@ impl KoanEngine {
                     .collect(),
             };
 
-            let mut nucleo: Nucleo<u32> =
-                Nucleo::new(NucleoConfig::DEFAULT, Arc::new(|| {}), None, 1);
-            let injector = nucleo.injector();
-            for (i, (_, text)) in items.iter().enumerate() {
-                let text = text.clone();
-                injector.push(i as u32, |_val, cols| {
-                    cols[0] = text.into();
-                });
-            }
+            let texts: Vec<&str> = items.iter().map(|(_, t)| t.as_str()).collect();
+            Ok(fuzzy_rank(&texts, &query, limit)
+                .into_iter()
+                .map(|i| FuzzyMatch {
+                    id: items[i].0,
+                    name: items[i].1.clone(),
+                    kind,
+                })
+                .collect())
+        })
+        .await
+    }
 
-            nucleo
-                .pattern
-                .reparse(0, &query, CaseMatching::Smart, Normalization::Smart, false);
-            for _ in 0..20 {
-                nucleo.tick(10);
-            }
+    /// Fuzzy-matched albums, as rows.
+    ///
+    /// Rows rather than ids: the match already read them to build its corpus,
+    /// and a caller handed ids can only resolve them against a catalogue of its
+    /// own — which is the copy this exists to make unnecessary.
+    pub async fn fuzzy_albums(
+        self: Arc<Self>,
+        query: String,
+        limit: u32,
+    ) -> Result<Vec<Album>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::all_albums(&db.conn).map_err(db_err)?;
+            let texts: Vec<String> = rows
+                .iter()
+                .map(|a| format!("{} — {}", a.artist_name, a.title))
+                .collect();
+            let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+            Ok(fuzzy_rank(&texts, &query, limit)
+                .into_iter()
+                .map(|i| Album::from(rows[i].clone()))
+                .collect())
+        })
+        .await
+    }
 
-            let snap = nucleo.snapshot();
-            let count = (snap.matched_item_count() as usize).min(limit as usize);
-            let mut out = Vec::with_capacity(count);
-            for i in 0..count as u32 {
-                if let Some(item) = snap.get_matched_item(i)
-                    && let Some((id, name)) = items.get(*item.data as usize)
-                {
-                    out.push(FuzzyMatch {
-                        id: *id,
-                        name: name.clone(),
-                        kind,
-                    });
-                }
-            }
-            Ok(out)
+    /// Fuzzy-matched artists, as rows. See [`Self::fuzzy_albums`].
+    pub async fn fuzzy_artists(
+        self: Arc<Self>,
+        query: String,
+        limit: u32,
+    ) -> Result<Vec<Artist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::all_artists(&db.conn).map_err(db_err)?;
+            let texts: Vec<&str> = rows.iter().map(|a| a.name.as_str()).collect();
+            Ok(fuzzy_rank(&texts, &query, limit)
+                .into_iter()
+                .map(|i| Artist::from(rows[i].clone()))
+                .collect())
         })
         .await
     }
@@ -791,19 +830,20 @@ impl KoanEngine {
 
     // --- Play history ------------------------------------------------------
 
-    /// Recent plays, most recent first.
+    /// Every play, most recent first, narrowed by `search`.
     ///
     /// A list of events, not of tracks: a track played three times is three
     /// entries. Entries whose track has left the library are already gone.
+    ///
+    /// Whole, not paged, for the reason [`Self::artists`] gives.
     pub async fn play_history(
         self: Arc<Self>,
-        limit: u32,
-        offset: u32,
+        search: Option<String>,
     ) -> Result<Vec<PlayHistoryEntry>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows =
-                queries::play_history_with_tracks(&db.conn, limit, offset).map_err(db_err)?;
+            let rows = queries::play_history_with_tracks(&db.conn, trimmed(&search), None, 0)
+                .map_err(db_err)?;
             let (plays, tracks): (Vec<_>, Vec<_>) = rows
                 .into_iter()
                 .map(|r| ((r.id, r.played_at, r.listened_ms, r.source), r.track))
@@ -857,25 +897,57 @@ impl KoanEngine {
 
     // --- Favourites --------------------------------------------------------
 
-    pub async fn favourites(self: Arc<Self>) -> Result<Vec<Track>, KoanError> {
+    /// Favourited tracks, narrowed by `search`.
+    pub async fn favourites(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<Vec<Track>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let ids = queries::favourite_track_ids_batch(&db.conn).map_err(db_err)?;
-            let mut rows = Vec::new();
-            for id in ids {
-                if let Ok(Some(row)) = queries::get_track_row(&db.conn, id) {
-                    rows.push(row);
-                }
-            }
-            rows.sort_by(|a, b| {
-                (&a.artist_name, &a.album_title, a.disc, a.track_number).cmp(&(
-                    &b.artist_name,
-                    &b.album_title,
-                    b.disc,
-                    b.track_number,
-                ))
-            });
+            let rows = queries::favourite_tracks(&db.conn, trimmed(&search)).map_err(db_err)?;
             Ok(self.decorate(&db, rows))
+        })
+        .await
+    }
+
+    /// Favourited records, as rows, narrowed by `search`.
+    pub async fn favourite_albums(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<Vec<Album>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    search: trimmed(&search),
+                    favourites_only: true,
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(rows.into_iter().map(Album::from).collect())
+        })
+        .await
+    }
+
+    /// Favourited artists, as rows, narrowed by `search`.
+    pub async fn favourite_artists(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<Vec<Artist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    search: trimmed(&search),
+                    favourites_only: true,
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(rows.into_iter().map(Artist::from).collect())
         })
         .await
     }
@@ -1661,7 +1733,10 @@ impl KoanEngine {
     pub async fn forget_folder(self: Arc<Self>, path: String) -> Result<u64, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            koan_core::helpers::forget_folder(&db, Path::new(&path)).map_err(db_err)
+            let removed =
+                koan_core::helpers::forget_folder(&db, Path::new(&path)).map_err(db_err)?;
+            self.bump_library();
+            Ok(removed)
         })
         .await
     }
@@ -1672,7 +1747,9 @@ impl KoanEngine {
     pub async fn forget_remote(self: Arc<Self>) -> Result<u64, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            koan_core::helpers::forget_remote(&db).map_err(db_err)
+            let removed = koan_core::helpers::forget_remote(&db).map_err(db_err)?;
+            self.bump_library();
+            Ok(removed)
         })
         .await
     }
@@ -1686,6 +1763,7 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let summary = koan_core::helpers::rebuild_index(&db).map_err(db_err)?;
+            self.bump_library();
             Ok(RebuildSummary {
                 tracks: summary.tracks,
                 albums: summary.albums,
@@ -1746,6 +1824,7 @@ impl KoanEngine {
                 message: e.to_string(),
             })?;
 
+            self.bump_library();
             Ok(SyncSummary {
                 artists: synced.library.artists_synced as u32,
                 albums: synced.library.albums_synced as u32,
@@ -1955,6 +2034,7 @@ impl KoanEngine {
             }
             .map_err(organize_err)?;
             self.follow_moved_files(&result);
+            self.bump_library();
             Ok(OrganizePlan::build(
                 result,
                 track_ids.as_ref().map(Vec::len),
@@ -1978,6 +2058,7 @@ impl KoanEngine {
             let db = self.db()?;
             let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
             let result = koan_core::index::scanner::import_paths(&db, &paths);
+            self.bump_library();
             Ok(ImportSummary {
                 track_ids: result.track_ids,
                 added: result.added as u32,
@@ -2076,6 +2157,9 @@ impl KoanEngine {
                 let mut last_position = u64::MAX;
                 let mut last_signature: Option<(PlaybackState, Option<String>)> = None;
                 let mut last_downloads: Vec<DownloadProgress> = Vec::new();
+                // Starts where the engine starts, so a launch is not announced
+                // as a change to a library nobody has read yet.
+                let mut last_library = 0u64;
 
                 loop {
                     std::thread::sleep(std::time::Duration::from_millis(100));
@@ -2121,6 +2205,14 @@ impl KoanEngine {
                     if downloads != last_downloads {
                         last_downloads = downloads.clone();
                         publish(PlayerEvent::DownloadsChanged { downloads });
+                    }
+
+                    let library = engine
+                        .library_version
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    if library != last_library {
+                        last_library = library;
+                        publish(PlayerEvent::LibraryChanged { version: library });
                     }
 
                     // Only while playing: a paused position doesn't move, and
@@ -2186,6 +2278,13 @@ impl KoanEngine {
         Ok(self.decorate(&db, sort_rows(rows, sort)))
     }
 
+    /// Say that the library's rows changed. The watcher turns this into a
+    /// `LibraryChanged` event on its next tick.
+    fn bump_library(&self) {
+        self.library_version
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
     fn scan_blocking(
         &self,
         force: bool,
@@ -2243,6 +2342,7 @@ impl KoanEngine {
                     .map(|(p, e)| format!("{}: {e}", p.display())),
             );
         }
+        self.bump_library();
         Ok(summary)
     }
 
@@ -2257,11 +2357,29 @@ impl KoanEngine {
         let (state, _timeline, viz, tx) = Player::spawn();
         koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
 
+        // Bumped by the background tasks below as well as by everything the UI
+        // asks for, so a sync nobody asked for reaches a client the same way.
+        let library_version = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+        // Finishing is the interesting edge: rows landed while it ran, and the
+        // moment it stops is the moment they are all there.
+        let finished = {
+            let version = library_version.clone();
+            move |flag: &std::sync::atomic::AtomicBool, running: bool| {
+                if !running && flag.swap(running, std::sync::atomic::Ordering::Relaxed) {
+                    version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    flag.store(running, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+        };
+
         let auto_syncing = Arc::new(std::sync::atomic::AtomicBool::new(false));
         {
             let flag = auto_syncing.clone();
+            let finished = finished.clone();
             koan_core::helpers::spawn_auto_sync(db_path.clone(), move |running| {
-                flag.store(running, std::sync::atomic::Ordering::Relaxed);
+                finished(&flag, running);
             });
         }
 
@@ -2272,7 +2390,7 @@ impl KoanEngine {
         {
             let flag = auto_scanning.clone();
             koan_core::helpers::spawn_library_watch(db_path.clone(), move |running| {
-                flag.store(running, std::sync::atomic::Ordering::Relaxed);
+                finished(&flag, running);
             });
         }
 
@@ -2288,6 +2406,7 @@ impl KoanEngine {
             auto_syncing,
             auto_scanning,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            library_version: library_version.clone(),
         });
         engine.spawn_watcher();
         Ok(engine)
@@ -2562,6 +2681,52 @@ fn parse_qid(s: &str) -> Result<QueueItemId, KoanError> {
 
 fn parse_qids(ids: &[String]) -> Result<Vec<QueueItemId>, KoanError> {
     ids.iter().map(|s| parse_qid(s)).collect()
+}
+
+/// A search term the user actually typed, or nothing. Whitespace is not a
+/// filter, and neither is an empty box.
+fn trimmed(search: &Option<String>) -> Option<&str> {
+    search.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// The browser's sort as an order the database can apply.
+fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
+    match sort {
+        AlbumSort::RecentlyAdded => queries::AlbumOrder::RecentlyAdded,
+        AlbumSort::Title => queries::AlbumOrder::Title,
+        AlbumSort::Artist => queries::AlbumOrder::ArtistThenDate,
+        AlbumSort::Year => queries::AlbumOrder::YearDesc,
+        AlbumSort::Random => queries::AlbumOrder::Random(seed),
+    }
+}
+
+/// Rank `texts` against `query`, best first, and return the indices of the top
+/// `limit`. Shared by every fuzzy listing so they rank identically.
+fn fuzzy_rank(texts: &[&str], query: &str, limit: u32) -> Vec<usize> {
+    use nucleo::pattern::{CaseMatching, Normalization};
+    use nucleo::{Config as NucleoConfig, Nucleo};
+
+    let mut nucleo: Nucleo<u32> = Nucleo::new(NucleoConfig::DEFAULT, Arc::new(|| {}), None, 1);
+    let injector = nucleo.injector();
+    for (i, text) in texts.iter().enumerate() {
+        let text = text.to_string();
+        injector.push(i as u32, |_val, cols| {
+            cols[0] = text.into();
+        });
+    }
+
+    nucleo
+        .pattern
+        .reparse(0, query, CaseMatching::Smart, Normalization::Smart, false);
+    for _ in 0..20 {
+        nucleo.tick(10);
+    }
+
+    let snap = nucleo.snapshot();
+    let count = (snap.matched_item_count() as usize).min(limit as usize);
+    (0..count as u32)
+        .filter_map(|i| snap.get_matched_item(i).map(|item| *item.data as usize))
+        .collect()
 }
 
 fn db_err(e: impl std::fmt::Display) -> KoanError {

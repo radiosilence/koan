@@ -15,7 +15,6 @@ import KoanFFI
 @Observable
 final class SearchModel {
     private let engine: KoanEngine
-    private let library: LibraryModel
     private let nav: Navigator
 
     var query: String = ""
@@ -30,9 +29,8 @@ final class SearchModel {
     /// location, so a detail view you searched from is still there afterwards.
     private var locationBeforeSearch: Navigator.Page?
 
-    init(engine: KoanEngine, library: LibraryModel, nav: Navigator) {
+    init(engine: KoanEngine, nav: Navigator) {
         self.engine = engine
-        self.library = library
         self.nav = nav
     }
 
@@ -110,18 +108,18 @@ final class SearchModel {
             try? await Task.sleep(for: .milliseconds(160))
             guard !Task.isCancelled else { return }
 
+            // Rows, not ids: the engine already read them to rank them, and
+            // resolving ids would mean holding a catalogue to resolve against.
             let found = (
                 (try? await engine.search(query: text, limit: 60)) ?? [],
-                (try? await engine.fuzzySearch(query: text, kind: .album, limit: 30)) ?? [],
-                (try? await engine.fuzzySearch(query: text, kind: .artist, limit: 30)) ?? []
+                (try? await engine.fuzzyAlbums(query: text, limit: 30)) ?? [],
+                (try? await engine.fuzzyArtists(query: text, limit: 30)) ?? []
             )
 
             guard !Task.isCancelled else { return }
             tracks = found.0
-            // Fuzzy matching answers with ids; the objects come from the
-            // library caches, which are loaded once at launch.
-            albums = found.1.compactMap { library.album(id: $0.id) }
-            artists = found.2.compactMap { library.artist(id: $0.id) }
+            albums = found.1
+            artists = found.2
             isSearching = false
         }
     }
