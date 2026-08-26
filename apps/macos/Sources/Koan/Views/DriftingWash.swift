@@ -1,4 +1,5 @@
 import AppKit
+import CoreImage
 import SwiftUI
 
 /// The wash, handed to the render server.
@@ -16,8 +17,14 @@ import SwiftUI
 /// runs. This is the distinction React Native draws with `useNativeDriver`, and
 /// it is the only way to have motion that costs nothing.
 ///
-/// The blur and the saturation go the same way: `CALayer.filters` is applied by
-/// the compositor on the GPU, so the texture is never blurred on a CPU at all.
+/// The blur is baked into the texture *once*, not left on the layer. A live
+/// `CALayer.filters` looks free — it is the compositor's work, not ours — but a
+/// filter on a layer that is animating and the size of the window is a Gaussian
+/// blur re-run over the whole window every frame. The main thread then blocks
+/// in `CABackingStoreSynchronize` waiting for the render server to finish with
+/// the backing store, which is how a tap took six hundred milliseconds to be
+/// noticed. Blurred once and magnified as a texture, the compositor only has a
+/// transform to apply.
 struct DriftingWash: NSViewRepresentable {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
@@ -73,9 +80,6 @@ final class WashView: NSView {
         for texture in [previous, current] {
             texture.contentsGravity = .resizeAspectFill
             texture.masksToBounds = false
-            // Applied by the compositor rather than by us: the texture is never
-            // blurred on a CPU, and re-magnifying it costs nothing per frame.
-            texture.filters = Self.filters()
             layer?.addSublayer(texture)
         }
         previous.opacity = 0
@@ -114,14 +118,30 @@ final class WashView: NSView {
     func show(_ image: NSImage?) {
         guard image !== shown else { return }
         shown = image
+        generation &+= 1
+        let mine = generation
+        guard let image else { return install(nil) }
+        Task { [weak self] in
+            // Off the main thread and off the cooperative pool: this is a
+            // Gaussian blur over a whole sleeve, once per record.
+            let baked = await ImageWork.onCPU { Self.bake(image) }
+            guard let self, self.generation == mine else { return }
+            self.install(baked)
+        }
+    }
 
-        // The outgoing cover moves down a layer and sits there, opaque, for the
-        // new one to come up over.
+    /// Swap in a new cover, dissolving from the old one over long enough that
+    /// you notice the room has changed colour without catching it changing.
+    ///
+    /// The *new* layer fades in, on top of the old one holding station
+    /// underneath. Fading the old one out instead does nothing visible: the new
+    /// one is above it and already opaque, so the change lands as a cut.
+    private func install(_ baked: CGImage?) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         previous.contents = current.contents
         previous.opacity = current.contents == nil ? 0 : 1
-        current.contents = image.flatMap { cgImage($0) }
+        current.contents = baked
         CATransaction.commit()
 
         let dissolve = CABasicAnimation(keyPath: "opacity")
@@ -131,6 +151,34 @@ final class WashView: NSView {
         dissolve.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
         current.add(dissolve, forKey: "dissolve")
     }
+
+    /// Blur and saturate, once, into a bitmap the compositor only has to move.
+    ///
+    /// The radius is in the texture's own pixels rather than the points it is
+    /// drawn at, and the image is clamped first — an unclamped blur samples
+    /// transparent black past the edge and leaves the sleeve with a soft dark
+    /// border all the way round.
+    private nonisolated static func bake(_ image: NSImage) -> CGImage? {
+        var rect = NSRect(origin: .zero, size: image.size)
+        guard let source = image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+        else { return nil }
+        let extent = CGRect(x: 0, y: 0, width: source.width, height: source.height)
+        let radius = 14 * Double(source.width) / Double(side)
+        let output = CIImage(cgImage: source)
+            .applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.6])
+            .clampedToExtent()
+            .applyingFilter("CIGaussianBlur", parameters: [kCIInputRadiusKey: radius])
+            .cropped(to: extent)
+        return ciContext.createCGImage(output, from: extent)
+    }
+
+    /// One context for the app. Building one per blur is where the expense of
+    /// Core Image actually is.
+    private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    /// Which cover is wanted, so a blur that finishes after the record moved on
+    /// is dropped rather than drawn.
+    private var generation = 0
 
     func drift(_ on: Bool) {
         guard on != drifting else { return }
@@ -236,21 +284,4 @@ final class WashView: NSView {
         return animation
     }
 
-    private static func filters() -> [CIFilter] {
-        var filters: [CIFilter] = []
-        if let blur = CIFilter(name: "CIGaussianBlur") {
-            blur.setValue(14, forKey: kCIInputRadiusKey)
-            filters.append(blur)
-        }
-        if let saturate = CIFilter(name: "CIColorControls") {
-            saturate.setValue(1.6, forKey: kCIInputSaturationKey)
-            filters.append(saturate)
-        }
-        return filters
-    }
-
-    private func cgImage(_ image: NSImage) -> CGImage? {
-        var rect = NSRect(origin: .zero, size: image.size)
-        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
-    }
 }

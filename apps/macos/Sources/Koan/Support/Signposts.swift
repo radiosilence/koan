@@ -29,6 +29,10 @@ enum Trace {
 
     /// `isolation:` so the region inherits the caller's actor rather than
     /// hopping — otherwise wrapping a call in one changes what it measures.
+    static func event(_ name: StaticString) {
+        signposter.emitEvent(name)
+    }
+
     static func region<T>(
         _ name: StaticString,
         isolation: isolated (any Actor)? = #isolation,

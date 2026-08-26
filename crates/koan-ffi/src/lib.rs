@@ -444,6 +444,39 @@ impl KoanEngine {
         .await
     }
 
+    /// Everything a record's page shows, in one call.
+    ///
+    /// The two halves were two exported calls made in parallel, which is two
+    /// round trips and two connections out of the pool for one click. Most of
+    /// the time that cost nothing — and about one click in six it cost three
+    /// hundred milliseconds, because the pool had to open a connection, and
+    /// opening one runs the schema and a WAL checkpoint.
+    pub async fn album_page(self: Arc<Self>, album_id: i64) -> Result<AlbumPage, KoanError> {
+        offload::offload(move || {
+            let waited = std::time::Instant::now();
+            let db = self.db()?;
+            let pool = waited.elapsed();
+
+            let queried = std::time::Instant::now();
+            let album = queries::get_album(&db.conn, album_id)
+                .map_err(db_err)?
+                .map(Album::from);
+            let rows = queries::tracks_for_album(&db.conn, album_id).map_err(db_err)?;
+            let tracks = self.decorate(&db, rows);
+            let query = queried.elapsed();
+
+            // A canary, not tracing. These are two indexed reads and they take
+            // well under a millisecond; anything near a frame means something
+            // else had the database, and which half stalled is the whole
+            // question when it happens.
+            if pool + query > std::time::Duration::from_millis(50) {
+                log::warn!("slow album page {album_id}: pool {pool:?}, query {query:?}");
+            }
+            Ok(AlbumPage { album, tracks })
+        })
+        .await
+    }
+
     /// Tracks for an album or artist, or a page of the whole library when
     /// neither is given.
     pub async fn tracks(

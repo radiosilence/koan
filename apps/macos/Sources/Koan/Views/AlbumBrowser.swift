@@ -44,7 +44,8 @@ struct AlbumDetailView: View {
     }
 
     var body: some View {
-        TrackListView(
+        let _ = Trace.event("album-body")
+        return TrackListView(
             title: record?.album?.title ?? "Album",
             subtitle: subtitle,
             tracks: record?.tracks ?? [],

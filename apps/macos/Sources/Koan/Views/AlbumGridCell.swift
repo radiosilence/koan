@@ -63,7 +63,7 @@ struct AlbumGridCell: View {
                 .lineLimit(1)
                 .contentShape(.rect)
                 .onHover { titleHovering = $0 }
-                .onTapGesture { nav.open(album: album.id) }
+                .onTapGesture { Trace.event("tap"); nav.open(album: album.id) }
 
             HStack(spacing: 4) {
                 if showArtist {

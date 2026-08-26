@@ -420,6 +420,17 @@ impl QueueItem {
     }
 }
 
+/// A record and its tracks, as one answer.
+///
+/// The page wants both and wants them together, so they are one call: one hop
+/// across the boundary, one connection out of the pool, one lock taken. As two
+/// they were two of each, racing on the same click.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct AlbumPage {
+    pub album: Option<Album>,
+    pub tracks: Vec<Track>,
+}
+
 /// A created share link, and how much of the request it actually covers.
 ///
 /// `skipped` is the point of this being a record rather than a bare string: a

@@ -309,17 +309,14 @@ final class LibraryModel {
         let engine = self.engine
         let loaded = await Trace.region("engine-reads") {
             await Task.detached(priority: .userInitiated) {
-            async let album = try? await engine.album(albumId: id)
-            async let tracks = try? await engine.tracks(
-                albumId: id, artistId: nil, sort: .album, limit: 500, offset: 0
-            )
-            return AlbumRecord(
-                albumId: id,
-                stamp: stamp,
-                album: await album ?? nil,
-                tracks: await tracks ?? []
-            )
-        }.value
+                let page = try? await engine.albumPage(albumId: id)
+                return AlbumRecord(
+                    albumId: id,
+                    stamp: stamp,
+                    album: page?.album,
+                    tracks: page?.tracks ?? []
+                )
+            }.value
         }
         detailRecord = loaded
     }
