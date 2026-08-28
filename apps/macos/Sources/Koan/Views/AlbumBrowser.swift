@@ -56,10 +56,7 @@ struct AlbumDetailView: View {
         )
         // Only for a library change — the record itself arrived before the page
         // did. A download landing writes a cached path onto one of these rows.
-        .reloading(on: albumId) {
-            FrameTimer.shared.note("reload")
-            await library.prepare(album: albumId)
-        }
+        .reloading(on: albumId) { await library.prepare(album: albumId) }
     }
 
     private var subtitle: String {

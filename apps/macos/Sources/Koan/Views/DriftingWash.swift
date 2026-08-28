@@ -29,13 +29,18 @@ struct DriftingWash: NSViewRepresentable {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
     let image: NSImage?
+    /// Whether nothing is an answer. A sleeve still being fetched is not a
+    /// record without one, and clearing the wash for it wipes the room grey and
+    /// then fades the new colour in over two seconds. While it is pending the
+    /// room keeps what it is wearing.
+    var pending = false
     /// Whether the room is breathing. False settles it where it stands.
     let drifts: Bool
 
     func makeNSView(context: Context) -> WashView { WashView() }
 
     func updateNSView(_ view: WashView, context: Context) {
-        view.show(image)
+        if !(pending && image == nil) { view.show(image) }
         view.drift(drifts)
     }
 }

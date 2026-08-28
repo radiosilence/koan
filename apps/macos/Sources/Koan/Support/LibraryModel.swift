@@ -283,46 +283,26 @@ final class LibraryModel {
         // the same page reads worse than a slow page.
         if let held = detailRecord, held.albumId == id, held.stamp == stamp { return }
 
-        // Started alongside the queries rather than waited on. Coming from the
-        // grid it is already decoded and the page draws it in its first frame;
-        // arriving cold from search it is an HTTP round trip, and holding a
-        // click for that would be worse than the fade it saves.
-        // The sleeve and the colour it washes the room in, warmed alongside
-        // the rows rather than after the page is already up. Started, not
-        // waited on: from the grid both are already in hand, and arriving cold
-        // from search they are an HTTP round trip that a click should not hang
-        // for.
-        if let art {
-            Task.detached {
-                _ = await art.image(for: .album(id), size: .tile)
-                _ = await art.dominantColour(for: .album(id))
-            }
-        }
+        // The sleeve and the colour the room takes from it, started alongside
+        // the rows and — briefly — waited for, so that all three land in the
+        // same change. They used to be started and abandoned, which made the
+        // wash and the tint a second and third commit after the page: the
+        // record appeared, then the room around it changed, and each of those
+        // is a synchronous round trip to the render server.
+        let warm = warming(album: id)
         let engine = self.engine
-        let (loaded, asked, answered) = await Trace.region("engine-reads") {
+        let loaded = await Trace.region("engine-reads") {
             await Task.detached(priority: .userInitiated) {
-                // Both taken off the main actor: the difference between them is
-                // the engine, and the difference between `answered` and the
-                // `record` mark is how long the answer waited for a main-actor
-                // slot to be delivered in.
-                let asked = ContinuousClock.now
                 let page = try? await engine.albumPage(albumId: id)
-                let answered = ContinuousClock.now
-                return (
-                    AlbumRecord(
-                        albumId: id,
-                        stamp: stamp,
-                        album: page?.album,
-                        tracks: page?.tracks ?? []
-                    ),
-                    asked,
-                    answered
+                return AlbumRecord(
+                    albumId: id,
+                    stamp: stamp,
+                    album: page?.album,
+                    tracks: page?.tracks ?? []
                 )
             }.value
         }
-        FrameTimer.shared.note("asked", at: asked)
-        FrameTimer.shared.note("answered", at: answered)
-        FrameTimer.shared.note("record")
+        await warm.value
         detailRecord = loaded
     }
 
@@ -367,6 +347,38 @@ final class LibraryModel {
             }.value
         }
     }
+
+    /// The cover and its colour, in hand before the page moves — or given up on.
+    ///
+    /// Bounded, because the two cases are nothing alike. Coming from the grid
+    /// the sleeve is already decoded and this returns immediately, which is the
+    /// whole point: the page, its cover and the room's colour arrive together.
+    /// Arriving cold it is an HTTP round trip, and a click cannot wait on one —
+    /// past the budget the page goes up without it and the wash keeps the record
+    /// before it until the sleeve lands, rather than wiping grey and fading the
+    /// new one in over two seconds.
+    ///
+    /// The fetch itself is detached and is never cancelled, so giving up
+    /// waiting does not throw the work away.
+    private func warming(album id: Int64) -> Task<Void, Never> {
+        guard let art else { return Task {} }
+        let fetch = Task.detached {
+            _ = await art.image(for: .album(id), size: .tile)
+            _ = await art.dominantColour(for: .album(id))
+        }
+        return Task {
+            await withTaskGroup(of: Void.self) { group in
+                group.addTask { await fetch.value }
+                group.addTask { try? await Task.sleep(for: Self.warmBudget) }
+                await group.next()
+                group.cancelAll()
+            }
+        }
+    }
+
+    /// Long enough for a sleeve already on this machine, short enough that a
+    /// click never visibly waits on one that is not.
+    private static let warmBudget = Duration.milliseconds(120)
 
     // MARK: - Mutations
 

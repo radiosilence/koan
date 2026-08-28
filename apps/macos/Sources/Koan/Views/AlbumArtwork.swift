@@ -132,7 +132,6 @@ struct AlbumArtwork: View {
 
                 isLoading = true
                 image = await cache.image(for: source, size: size)
-                FrameTimer.shared.note("art-\(size.rawValue)")
                 isLoading = false
             }
     }

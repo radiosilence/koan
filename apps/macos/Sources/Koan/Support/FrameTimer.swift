@@ -53,8 +53,6 @@ final class FrameTimer: NSObject {
         var evaluated: Duration?
         /// Every tick since the tap, as an offset from it.
         var ticks: [Duration] = []
-        /// TEMPORARY (#380): what landed when, to name the second commit.
-        var notes: [(String, Duration)] = []
     }
 
     /// A gesture that should end in a new page. Supersedes any move still in
@@ -82,22 +80,13 @@ final class FrameTimer: NSObject {
         self.move = move
     }
 
-    /// TEMPORARY (#380): mark a state change against the tap that caused it.
-    /// `at` for something that happened off the main actor, so the mark is when
-    /// it happened rather than when the main actor got round to saying so.
-    func note(_ name: String, at instant: ContinuousClock.Instant = .now) {
-        guard var move else { return }
-        move.notes.append((name, instant - move.started))
-        self.move = move
-    }
-
     @objc private func tick() {
         guard var move else { return discard() }
         move.ticks.append(.now - move.started)
         self.move = move
         guard let evaluated = move.evaluated, settled(move.ticks) else { return }
         Trace.signposter.endInterval("tap-to-frame", move.signpost)
-        report(evaluated: evaluated, ticks: move.ticks, notes: move.notes)
+        report(evaluated: evaluated, ticks: move.ticks)
         discard()
     }
 
@@ -109,27 +98,29 @@ final class FrameTimer: NSObject {
             .allSatisfy { $0 - $1 < Self.stall }
     }
 
-    private func report(evaluated: Duration, ticks: [Duration], notes: [(String, Duration)]) {
+    private func report(evaluated: Duration, ticks: [Duration]) {
         // The frame that could have carried the page, and every stall the run
         // loop took after it — a record arrives in more than one commit, and
         // the later ones are still time spent looking at the old page.
         let frame = ticks.first { $0 > evaluated } ?? evaluated
-        let stalls = zip(ticks.dropFirst(), ticks)
-            .filter { $0 > frame && $0 - $1 >= Self.stall }
-            .map { Self.ms($0 - $1) }
+        let gaps: [Duration] = zip(ticks.dropFirst(), ticks)
+            .filter { $0.0 > frame }
+            .map { $0.0 - $0.1 }
+        let late = gaps.filter { $0 >= Duration.milliseconds(20) }
+        let lost = late.reduce(Duration.zero, +)
+        let stalls = gaps
+            .filter { $0 >= Self.stall }
+            .map { Self.ms($0) }
         log.info(
             """
             tap-to-frame \(Self.ms(frame), privacy: .public)ms \
             (body \(Self.ms(evaluated), privacy: .public)ms, \
             draw \(Self.ms(frame - evaluated), privacy: .public)ms) \
-            then \(stalls.isEmpty ? "no stalls" : stalls.joined(separator: "ms, ") + "ms",
-                   privacy: .public)
+            then \(late.count, privacy: .public) late frames \
+            losing \(Self.ms(lost), privacy: .public)ms \
+            [\(stalls.isEmpty ? "-" : stalls.joined(separator: " "), privacy: .public)]
             """
         )
-        let landed = notes.map { "\($0.0)@\(Self.ms($0.1))" }.joined(separator: " ")
-        let series = ticks.map { Self.ms($0) }.joined(separator: " ")
-        log.info("  landed \(landed, privacy: .public)")
-        log.info("  ticks \(series, privacy: .public)")
     }
 
     /// The link only runs between a tap and the frame that answers it; leaving
