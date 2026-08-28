@@ -12,6 +12,10 @@
 
 ### Fixed
 
+- **Organize no longer offers to move files into nowhere.** With no library folder configured the macOS sheet took the empty string as its destination, so every path the pattern produced was relative — and a relative path resolves against whatever directory the process happens to be sitting in, which for an app bundle is `/`. The preview was flawless: nothing occupied those destinations, so every file came back as a clean move. Pressing the button then failed on the first `mkdir` of every single file, and because a failed move comes back as a failed *row* rather than a thrown error, and the sheet re-read the library afterwards instead of reading its own result, the table came back identical and the button re-armed. It could be pressed all afternoon.
+
+  An empty destination is now refused where it is resolved, so the CLI and TUI get the same answer. The sheet says there is no library folder instead of drawing a plan, a move that fails is written to the log with its reason, and a run that fails keeps its own report — every row that did not make it says why, where its destination used to be.
+
 - **A track no longer leaves its album when its download finishes.** A track that streams starts on the partial tags symphonia can read, so when the file lands koan re-reads it properly and fills the queue item in. It filled in tracks that needed nothing — ones that came out of the library and already carried the record's own title. Where a file's tags disagree with the server's, and on a rip they often do, the item quietly changed album halfway down the queue and its record split in two: ten tracks under one heading, the one that had played under another. The file's word now only counts for a queue item with no library row behind it. Its duration still counts for everything, because that is the file's to know.
 
 ## v0.33.0 (2026-08-26)

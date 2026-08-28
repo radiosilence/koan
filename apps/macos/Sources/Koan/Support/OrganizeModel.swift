@@ -92,8 +92,16 @@ final class OrganizeModel {
         patternName = patterns.first(where: \.isDefault)?.name ?? patterns.first?.name
         draft = stored(patternName) ?? ""
         configuring = false
+        // Without a library folder the pattern's relative paths hang off
+        // nothing, and a preview of them would look entirely convincing right
+        // up to the point where every move fails. Say so instead.
+        guard hasDestination else { return }
         resolveSelection(trackIds: trackIds)
     }
+
+    /// Whether there is anywhere to move files *to*. A library folder is the
+    /// only thing that makes a destination out of a pattern.
+    var hasDestination: Bool { !baseDir.isEmpty }
 
     func dismiss() {
         subject = nil
@@ -242,6 +250,15 @@ final class OrganizeModel {
             guard requested == generation else { return }
             running = false
             switch result {
+            case .success(let report) where report.errorCount > 0:
+                // A move that fails comes back as a failed *row*, not a thrown
+                // error, so a run where nothing moved otherwise looks exactly
+                // like a run that never happened — press the button, see the
+                // same table, press it again. Keep the run's own plan: every
+                // row that didn't make it says why, where the destination was.
+                previewing = false
+                error = nil
+                self.plan = report
             case .success:
                 // Re-*resolve*, not just re-generate. The selection was read
                 // when the sheet opened and still holds the paths the files had
