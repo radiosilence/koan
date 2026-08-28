@@ -107,7 +107,6 @@ struct KoanApp: App {
     private var isTyping: Bool { state?.textFocus.isEditing == true }
     @Environment(\.scenePhase) private var scenePhase
     @State private var startupError: String?
-    @AppStorage("showLyrics") private var showLyrics = false
 
     var body: some Scene {
         Window("koan", id: MainWindow.id) {
@@ -135,7 +134,23 @@ struct KoanApp: App {
                     ProgressView().controlSize(.small)
                 }
             }
-            .frame(minWidth: 940, minHeight: 620)
+            // Room for all three columns at the width each one draws itself
+            // at, whether or not the third is open.
+            //
+            // `NavigationSplitView` does not refuse to go below a column's
+            // declared minimum. It lays the column out at its *ideal* width and
+            // clips whatever does not fit, and with no slack left it stops
+            // animating and starts clamping — which is one cause behind two
+            // symptoms: the sidebar's rows hanging off the side of the window,
+            // and the lyrics panel arriving in a single frame instead of
+            // sliding. So the floor is the sum of what the columns draw at:
+            // the widest page's stage (the record and playlist headers, ~760)
+            // plus the sidebar's 215 and the inspector's 320.
+            //
+            // One number rather than one per column count: a floor that moved
+            // when the lyrics panel opened resized the window under you, and a
+            // window that jumps is worse than a window that is wide.
+            .frame(minWidth: 1320, minHeight: 620)
             .task {
                 guard state == nil, startupError == nil else { return }
                 do {
@@ -174,7 +189,7 @@ struct KoanApp: App {
                 ShortcutButton(.forward) { state?.nav.goForward() }
                     .disabled(isTyping)
                 Divider()
-                ShortcutButton(.lyrics) { showLyrics.toggle() }
+                ShortcutButton(.lyrics) { state?.ui.toggleLyrics() }
                 Divider()
             }
 
