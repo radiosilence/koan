@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **Opening a record says how long it took.** A signpost in a view says when SwiftUI worked out what to draw, which on this gesture is a few milliseconds and nowhere near when you see anything — layout, the CoreAnimation commit and the render server all come after the last line any view gets to run. `FrameTimer` times the tap against the display link instead, and reports the body, the frame that could carry it, and every stall after that. See CONTRIBUTING.
+
 ### Fixed
 
 - **A track no longer leaves its album when its download finishes.** A track that streams starts on the partial tags symphonia can read, so when the file lands koan re-reads it properly and fills the queue item in. It filled in tracks that needed nothing — ones that came out of the library and already carried the record's own title. Where a file's tags disagree with the server's, and on a rip they often do, the item quietly changed album halfway down the queue and its record split in two: ten tracks under one heading, the one that had played under another. The file's word now only counts for a queue item with no library row behind it. Its duration still counts for everything, because that is the file's to know.

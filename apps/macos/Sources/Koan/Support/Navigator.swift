@@ -106,6 +106,7 @@ final class Navigator {
     /// same partial render a web page does and reads exactly as badly. The read
     /// is two indexed queries; there is no reason to show anybody the gap.
     func open(album id: Int64, highlighting trackId: Int64? = nil) {
+        FrameTimer.shared.begin()
         Task {
             await Trace.region("click-to-album") {
                 await Trace.region("prepare") { await library.prepare(album: id) }

@@ -44,7 +44,8 @@ struct AlbumDetailView: View {
     }
 
     var body: some View {
-        let _ = Trace.event("album-body")
+        Trace.event("album-body")
+        FrameTimer.shared.evaluated()
         return TrackListView(
             title: record?.album?.title ?? "Album",
             subtitle: subtitle,
