@@ -299,17 +299,29 @@ final class LibraryModel {
             }
         }
         let engine = self.engine
-        let loaded = await Trace.region("engine-reads") {
+        let (loaded, asked, answered) = await Trace.region("engine-reads") {
             await Task.detached(priority: .userInitiated) {
+                // Both taken off the main actor: the difference between them is
+                // the engine, and the difference between `answered` and the
+                // `record` mark is how long the answer waited for a main-actor
+                // slot to be delivered in.
+                let asked = ContinuousClock.now
                 let page = try? await engine.albumPage(albumId: id)
-                return AlbumRecord(
-                    albumId: id,
-                    stamp: stamp,
-                    album: page?.album,
-                    tracks: page?.tracks ?? []
+                let answered = ContinuousClock.now
+                return (
+                    AlbumRecord(
+                        albumId: id,
+                        stamp: stamp,
+                        album: page?.album,
+                        tracks: page?.tracks ?? []
+                    ),
+                    asked,
+                    answered
                 )
             }.value
         }
+        FrameTimer.shared.note("asked", at: asked)
+        FrameTimer.shared.note("answered", at: answered)
         FrameTimer.shared.note("record")
         detailRecord = loaded
     }

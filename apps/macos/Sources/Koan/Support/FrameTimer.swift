@@ -83,9 +83,11 @@ final class FrameTimer: NSObject {
     }
 
     /// TEMPORARY (#380): mark a state change against the tap that caused it.
-    func note(_ name: String) {
+    /// `at` for something that happened off the main actor, so the mark is when
+    /// it happened rather than when the main actor got round to saying so.
+    func note(_ name: String, at instant: ContinuousClock.Instant = .now) {
         guard var move else { return }
-        move.notes.append((name, .now - move.started))
+        move.notes.append((name, instant - move.started))
         self.move = move
     }
 
