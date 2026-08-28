@@ -1082,8 +1082,8 @@ impl Player {
     }
 
     /// Re-read full lofty metadata for a track after its download completes.
-    /// Updates the playlist item's tags and track_info with complete metadata.
     /// Called from track_ready() when a streaming track finishes downloading.
+    /// What the item takes from it is `update_item_metadata`'s call.
     fn refresh_track_metadata(&mut self, id: QueueItemId) {
         use crate::index::metadata;
 
@@ -1094,7 +1094,6 @@ impl Player {
 
         match metadata::read_metadata(&path) {
             Ok(meta) => {
-                // Update playlist item with full lofty tags (title, artist, album, duration).
                 self.shared_state.update_item_metadata(
                     id,
                     meta.title,
