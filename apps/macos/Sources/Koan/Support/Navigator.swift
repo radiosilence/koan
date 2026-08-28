@@ -81,8 +81,13 @@ final class Navigator {
     /// levels of anything.
     private var history: [Page] = [.section(.queue)]
     private var cursor = 0
+    /// The move being loaded, if there is one.
+    private var moving: Task<Void, Never>?
 
     private let library: LibraryModel
+    /// Set by `AppState`. A playlist is a page like any other, and its rows are
+    /// read before the move like any other page's.
+    weak var playlists: PlaylistsModel?
 
     init(library: LibraryModel) {
         self.library = library
@@ -98,22 +103,12 @@ final class Navigator {
         go(to: .section(section))
     }
 
-    /// Load the record, *then* move to it.
-    ///
-    /// Nothing draws until there is something to draw. Arriving first and
-    /// fetching afterwards means a frame of the word "Album" over an empty
-    /// list, and then the real page flickering in underneath it — which is the
-    /// same partial render a web page does and reads exactly as badly. The read
-    /// is two indexed queries; there is no reason to show anybody the gap.
     func open(album id: Int64, highlighting trackId: Int64? = nil) {
         FrameTimer.shared.begin()
-        Task {
-            await Trace.region("click-to-album") {
-                await Trace.region("prepare") { await library.prepare(album: id) }
-                highlightedTrackId = trackId
-                Trace.region("apply") { go(to: .album(id)) }
-            }
-        }
+        // Set before the move rather than on arrival: the page that reads it is
+        // not on screen yet, and this is the same click.
+        highlightedTrackId = trackId
+        go(to: .album(id))
     }
 
     func open(artist id: Int64) {
@@ -127,34 +122,73 @@ final class Navigator {
     func goBack() {
         guard canGoBack else { return }
         cursor -= 1
-        step(to: history[cursor])
+        move(to: history[cursor], recording: false)
     }
 
     func goForward() {
         guard canGoForward else { return }
         cursor += 1
-        step(to: history[cursor])
-    }
-
-    /// Back and forward land on record pages too, and they want what `open`
-    /// wants: the page ready before it is shown.
-    private func step(to page: Page) {
-        guard case .album(let id) = page else { return apply(page) }
-        Task {
-            await library.prepare(album: id)
-            apply(page)
-        }
+        move(to: history[cursor], recording: false)
     }
 
     /// Go to a page, recording it. The only way anything moves.
     func go(to next: Page) {
         guard next != current else { return }
-        apply(next)
+        move(to: next, recording: true)
+    }
+
+    /// Load the page, *then* move to it.
+    ///
+    /// Nothing draws until there is something to draw. Arriving first and
+    /// fetching afterwards means a frame of the word "Album" over an empty
+    /// list, and then the real page flickering in underneath it — the same
+    /// partial render a web page does, and it reads exactly as badly. These are
+    /// indexed queries answered in-process; there is no reason to show anybody
+    /// the gap.
+    ///
+    /// One task at a time, so a second click while the first page is still
+    /// being read wins: the older move is cancelled before it can apply, rather
+    /// than landing on top of the newer one.
+    private func move(to next: Page, recording: Bool) {
+        moving?.cancel()
+        moving = Task {
+            await Trace.region("click-to-page") {
+                let listing = await Trace.region("prepare") { await prepared(for: next) }
+                guard !Task.isCancelled else { return }
+                Trace.region("apply") {
+                    apply(next, showing: listing)
+                    if recording { record(next) }
+                }
+            }
+        }
+    }
+
+    /// Everything the page draws, in hand before it is shown. A listing when
+    /// the page is a section that has rows of its own; the pages about one
+    /// thing hold theirs on the model that read them.
+    private func prepared(for page: Page) async -> LibraryModel.Listing? {
+        switch page {
+        case .album(let id):
+            await library.prepare(album: id)
+            return nil
+        case .artist(let id):
+            await library.prepare(artist: id)
+            return nil
+        case .section(.playlist(let id)):
+            await playlists?.prepare(id: id)
+            return await library.prepare(section: .playlist(id))
+        case .section(let section):
+            return await library.prepare(section: section)
+        }
+    }
+
+    /// Record where we just went, the way a browser does.
+    private func record(_ next: Page) {
         // The cursor can already point here: `forget` prunes history without
         // moving the screen, and what follows is usually a move back onto the
         // entry it left the cursor on.
         guard history[cursor] != next else { return }
-        // A new move discards anything ahead, the way a browser does.
+        // A new move discards anything ahead.
         if cursor < history.count - 1 {
             history.removeSubrange((cursor + 1)...)
         }
@@ -176,13 +210,14 @@ final class Navigator {
         cursor = min(surviving, history.count - 1)
     }
 
-    private func apply(_ next: Page) {
+    /// The move itself: the page and the rows it draws, in one change. Two
+    /// changes would be two renders, and the first of them would be the page
+    /// without its rows.
+    private func apply(_ next: Page, showing listing: LibraryModel.Listing?) {
         current = next
-        // Only a section decides what the library loads; arriving at a record
+        // Only a section decides what the library shows; arriving at a record
         // is not a reason to throw away the filter behind it.
-        if let section = next.section, section != library.section {
-            library.showing(section)
-        }
+        if let listing { library.show(listing) }
     }
 
     // MARK: - Bindings

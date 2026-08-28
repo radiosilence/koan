@@ -470,10 +470,18 @@ final class PlayerModel {
     }
 
     /// Restore the queue from the last session without starting playback.
-    func restoreSession() {
-        let engine = self.engine
-        Task {
-            _ = try? await engine.restoreSession()
+    ///
+    /// Waited on rather than fired off: the first frame of the queue should be
+    /// the queue you left, not an empty list that fills in behind the window.
+    /// The engine says how many rows it restored and the player thread applies
+    /// them, so this holds until the mirror shows them — and never for long,
+    /// because a restore slow enough to notice is not a reason to keep the
+    /// window shut.
+    func restoreSession() async {
+        guard let restored = try? await engine.restoreSession(), restored > 0 else { return }
+        let deadline = ContinuousClock.now + .milliseconds(500)
+        while mirror.queue.count < Int(restored), ContinuousClock.now < deadline {
+            try? await Task.sleep(for: .milliseconds(5))
         }
     }
 

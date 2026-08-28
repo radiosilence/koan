@@ -25,7 +25,11 @@ import SwiftUI
 /// glass down, and it does so on that reasoning rather than on evidence from
 /// here: held still, glass costs nothing measurable on an M1 Pro.
 enum Graphics: Int, CaseIterable, Identifiable {
-    /// No wash, still indicators, flat chrome. The cheapest koan gets.
+    /// Nothing the window pays for every frame. Declared first and stored last:
+    /// the raw values are what is on disk and cannot move, the order is what
+    /// the slider shows.
+    case bare = 3
+    /// No wash, still indicators, flat chrome.
     case plain = 0
     /// The record's colour behind the window, held still. Everything else as it
     /// is.
@@ -37,6 +41,7 @@ enum Graphics: Int, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
+        case .bare: "Bare"
         case .plain: "Plain"
         case .reduced: "Reduced"
         case .full: "Full"
@@ -46,6 +51,10 @@ enum Graphics: Int, CaseIterable, Identifiable {
     /// What the setting says about itself, under the slider.
     var detail: String {
         switch self {
+        case .bare:
+            """
+            Everything Plain stands down, and the window's own glass with it:             an opaque toolbar and no soft edge where content passes under the             transport. Those are the platform's, not koan's, and they are             redrawn whenever anything behind them moves.
+            """
         case .plain:
             "No colour behind the window, indicators held still, flat chrome instead of glass. For a machine that would rather spend nothing on this."
         case .reduced:
@@ -56,17 +65,28 @@ enum Graphics: Int, CaseIterable, Identifiable {
     }
 
     /// Whether the wash is drawn at all.
-    var showsWash: Bool { self != .plain }
+    var showsWash: Bool { self != .plain && self != .bare }
 
     /// Whether the wash drifts while something is playing.
     var drifts: Bool { self == .full }
 
     /// Whether the playing indicators dance. Off, they keep their shape and
     /// stop asking the analyser for levels.
-    var animatesIndicators: Bool { self != .plain }
+    var animatesIndicators: Bool { self != .plain && self != .bare }
 
     /// Whether the chrome is glass rather than a flat material.
-    var usesGlass: Bool { self != .plain }
+    var usesGlass: Bool { self != .plain && self != .bare }
+
+    /// Whether the *window* keeps its glass — the toolbar floating over live
+    /// content, and the soft edge that fades a row out as it passes under the
+    /// transport.
+    ///
+    /// Separate from `usesGlass`, which is koan's own chrome and the only thing
+    /// the setting used to reach. These two are the platform's, they are on at
+    /// every other step whatever the setting said, and they are re-rendered
+    /// whenever the content behind them changes — which a page switch does
+    /// wholesale.
+    var usesWindowGlass: Bool { self != .bare }
 }
 
 /// Glass where the machine can afford it, a flat material where it cannot.

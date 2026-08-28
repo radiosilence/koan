@@ -49,6 +49,9 @@ final class PlaylistsModel {
 
     /// Set by `AppState`, so a slow reload shows up alongside everything else.
     weak var activity: ActivityModel?
+    /// Set by `AppState`. Read for the library version a playlist's rows were
+    /// loaded at.
+    weak var mirror: EngineMirror?
     /// Somewhere to report a failure the user should see. Set by `AppState`.
     var report: ((String) -> Void)?
 
@@ -78,29 +81,36 @@ final class PlaylistsModel {
         }
     }
 
-    /// Open a playlist and load its rows. Asking for the one already open is
-    /// how a library change reaches this page — the rows are re-read without
-    /// blanking first, so nothing flashes empty for the length of a query.
-    func open(id: Int64) {
-        if openId != id {
-            openId = id
-            entries = []
-        }
-        reloadTracks()
+    /// Read a playlist's rows *before* the navigator moves to it.
+    ///
+    /// The record's shape — see `LibraryModel.prepare(album:)`. Rows and the
+    /// mosaic over them land as one value, so the page cannot draw its header
+    /// above an empty list. Asking again for the playlist already open is how a
+    /// library change reaches this page: free when nothing has moved under it,
+    /// and a re-read that replaces the rows in place rather than blanking them
+    /// when something has.
+    func prepare(id: Int64) async {
+        let stamp = mirror?.libraryVersion ?? 0
+        if openId == id, openStamp == stamp { return }
+
+        isLoading = true
+        let engine = self.engine
+        // Detached: awaiting the engine from the main actor means the answer
+        // waits for a main-actor slot behind whatever the mirror is applying.
+        let loaded = await Task.detached(priority: .userInitiated) {
+            async let rows = engine.playlistTracks(playlistId: id)
+            async let covers = engine.playlistCoverAlbumIds(playlistId: id)
+            return ((try? await rows) ?? [], (try? await covers) ?? [])
+        }.value
+        openId = id
+        openStamp = stamp
+        entries = loaded.0
+        covers[id] = loaded.1.map { .album($0) }
+        isLoading = false
     }
 
-    func reloadTracks() {
-        guard let id = openId else { return }
-        let engine = self.engine
-        isLoading = true
-        Task {
-            let rows = (try? await engine.playlistTracks(playlistId: id)) ?? []
-            // The page moved on while we were reading.
-            guard openId == id else { return }
-            entries = rows
-            isLoading = false
-        }
-    }
+    /// The library version the open playlist's rows were read at.
+    private var openStamp: UInt64?
 
     private func loadCovers(for id: Int64) async {
         let ids = (try? await engine.playlistCoverAlbumIds(playlistId: id)) ?? []
@@ -141,6 +151,7 @@ final class PlaylistsModel {
     func delete(id: Int64) {
         if openId == id {
             openId = nil
+            openStamp = nil
             entries = []
         }
         act { _ = try await $0.deletePlaylist(playlistId: id) }

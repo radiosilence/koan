@@ -34,6 +34,10 @@ struct RootView: View {
     @Environment(PlaylistsModel.self) private var playlists
 
     @AppStorage("showLyrics") private var showLyrics = false
+    /// Read for the window's own glass — the toolbar and the transport's soft
+    /// edge, which are the platform's rather than koan's and which no step of
+    /// this setting used to reach.
+    @AppStorage("graphics") private var graphics = Graphics.full
     @State private var transportHeight: CGFloat = 0
     /// The colour of the record playing. The app's own accent is a neutral, so
     /// the only colour in the chrome is the one the music brought.
@@ -87,7 +91,7 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
             StageView()
-                .clearsTransport(transportHeight)
+                .clearsTransport(transportHeight, glass: graphics.usesWindowGlass)
                 // A page fills the column whether or not it has anything in it
                 // to fill it with. Results while the query is still running
                 // measure nothing, and an unfilled page leaves the transport
@@ -171,7 +175,11 @@ struct RootView: View {
         // of the record. Hidden, the glass controls sit in that colour — which
         // is the whole point of them being glass — and the scroll edge effect
         // keeps rows legible as they pass under.
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        // Restored at `bare`: the ground it paints is opaque, so nothing behind
+        // it is sampled and a page switch does not redraw it.
+        .toolbarBackgroundVisibility(
+            graphics.usesWindowGlass ? .hidden : .automatic, for: .windowToolbar
+        )
         .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { handleSubmit() }
         // On the window rather than inside the detail column, padded clear of
@@ -477,11 +485,12 @@ private extension View {
     /// and a control size, so any number written here would be right until one
     /// of them changed and then be a gap, or a row clipped by a bar with
     /// nothing to say why.
-    func clearsTransport(_ height: CGFloat) -> some View {
+    func clearsTransport(_ height: CGFloat, glass: Bool) -> some View {
         // Content passing under the glass is what makes it glass. The soft edge
         // fades a row out as it goes, so one half under the bar reads as behind
-        // it rather than cut off.
+        // it rather than cut off — and it is a live blur of a window-wide strip,
+        // which is why `bare` does without it and takes the hard edge instead.
         safeAreaPadding(.bottom, height)
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
     }
 }
