@@ -6,8 +6,9 @@ import SwiftUI
 ///
 /// The dance is a pair of sine waves and the music modulates them rather than
 /// driving them: a chorus makes the bars swell, a quiet passage settles them
-/// low and slow. Heights come from the carrier, which cannot spike, so the
-/// indicator says *what* is playing without ever reading as jitter.
+/// low and slow, and silence stops them where they rest. Heights come from the
+/// carrier, which cannot spike, so the indicator says *what* is playing
+/// without ever reading as jitter.
 struct PlayingIndicator: View {
     let isPlaying: Bool
 
