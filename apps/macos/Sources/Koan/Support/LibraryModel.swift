@@ -283,13 +283,17 @@ final class LibraryModel {
         // the same page reads worse than a slow page.
         if let held = detailRecord, held.albumId == id, held.stamp == stamp { return }
 
-        // The sleeve and the colour the room takes from it, started alongside
-        // the rows and — briefly — waited for, so that all three land in the
-        // same change. They used to be started and abandoned, which made the
-        // wash and the tint a second and third commit after the page: the
-        // record appeared, then the room around it changed, and each of those
-        // is a synchronous round trip to the render server.
-        let warm = warming(album: id)
+        // The sleeve and the colour the room takes from it. Coming from the grid
+        // both are already decoded, and the page, its cover and the room's
+        // colour go up in one change — see `ArtworkBleed.answered`, which reads
+        // them straight through rather than waiting to be handed them.
+        //
+        // Never waited on. Arriving cold this is an HTTP round trip, and every
+        // millisecond spent here is a millisecond the click looks ignored: the
+        // navigator holds the page you are leaving on screen until this returns.
+        // The room catches up on its own a moment later, which costs a second
+        // commit and is the right trade — a page you are already reading.
+        warm(album: id)
         let engine = self.engine
         let loaded = await Trace.region("engine-reads") {
             await Task.detached(priority: .userInitiated) {
@@ -302,7 +306,6 @@ final class LibraryModel {
                 )
             }.value
         }
-        await warm.value
         detailRecord = loaded
     }
 
@@ -348,37 +351,15 @@ final class LibraryModel {
         }
     }
 
-    /// The cover and its colour, in hand before the page moves — or given up on.
-    ///
-    /// Bounded, because the two cases are nothing alike. Coming from the grid
-    /// the sleeve is already decoded and this returns immediately, which is the
-    /// whole point: the page, its cover and the room's colour arrive together.
-    /// Arriving cold it is an HTTP round trip, and a click cannot wait on one —
-    /// past the budget the page goes up without it and the wash keeps the record
-    /// before it until the sleeve lands, rather than wiping grey and fading the
-    /// new one in over two seconds.
-    ///
-    /// The fetch itself is detached and is never cancelled, so giving up
-    /// waiting does not throw the work away.
-    private func warming(album id: Int64) -> Task<Void, Never> {
-        guard let art else { return Task {} }
-        let fetch = Task.detached {
+    /// Put this record's sleeve and its colour in the cache, if they are not
+    /// there already. Detached and never waited on — see the call site.
+    private func warm(album id: Int64) {
+        guard let art, art.cached(.album(id), size: .tile) == nil else { return }
+        Task.detached {
             _ = await art.image(for: .album(id), size: .tile)
             _ = await art.dominantColour(for: .album(id))
         }
-        return Task {
-            await withTaskGroup(of: Void.self) { group in
-                group.addTask { await fetch.value }
-                group.addTask { try? await Task.sleep(for: Self.warmBudget) }
-                await group.next()
-                group.cancelAll()
-            }
-        }
     }
-
-    /// Long enough for a sleeve already on this machine, short enough that a
-    /// click never visibly waits on one that is not.
-    private static let warmBudget = Duration.milliseconds(120)
 
     // MARK: - Mutations
 
