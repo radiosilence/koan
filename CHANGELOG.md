@@ -4,6 +4,12 @@
 
 ### Changed
 
+- **The engine stops polling itself.** A thread woke ten times a second for as long as koan was open, rebuilt what is playing, sampled every transfer's byte count, compared three version counters and published whatever had moved. The interface was reactive — the app has read events rather than asking since v0.32 — but the events were manufactured by a clock.
+
+  The writers say so now. Every setter on the player's shared state, the download store and the library version bump a wake; the watcher waits on it and reads the versions when it comes round, so a burst is still one pass and one message per slice. A koan with nothing happening does not schedule that thread at all.
+
+  Transfer rates go the same way: a reading is taken as the bytes land, held to one every 250ms, rather than by whoever happened to be watching. A transfer that settles zeroes its own figure rather than waiting to be sampled again — a row that finished used to keep the rate it managed on its last chunk until something looked.
+
 - **The playhead is an anchor, not a reading.** Position was published ten times a second, which is a stream that can never go quiet while music plays and a seek bar redrawn ten times a second to move it a pixel. It is the one number in koan that changes without anything happening — and a playhead advancing at one second per second is exactly what a client can work out for itself. The engine now says where the playhead is when your own reckoning would go wrong: a seek, a pause, a track boundary, a stall. Nothing in between.
 
   What draws it derives it. The seek bar is handed to Core Animation once per anchor with the rest of the track as its duration, so it moves without this process being woken at all; the elapsed figure is a system-drawn timer for the same reason; the lyrics panel sleeps until the next line's timestamp rather than checking where the song is. Media Remote gets told exactly when the system's own extrapolation would drift, which is what its elapsed-and-rate pair was always asking for.
