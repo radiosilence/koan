@@ -173,11 +173,13 @@ struct RootView: View {
         .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { handleSubmit() }
         // On the window rather than inside the detail column, padded clear of
-        // the sidebar: glass floating on glass reads as neither. The page makes
-        // its own room with `clearsTransport`.
+        // both columns: glass floating on glass reads as neither, and over the
+        // lyrics it hides the last lines of the song. The page makes its own
+        // room with `clearsTransport`.
         .overlay(alignment: .bottom) {
             TransportBar()
                 .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
+                .padding(.trailing, showLyrics ? ui.lyricsWidth : 0)
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(
