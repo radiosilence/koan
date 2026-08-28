@@ -26,6 +26,10 @@ final class UIState {
     /// only place a `NavigationStack` push cannot drop it — so it needs to know
     /// where the sidebar ends in order not to sit on it.
     var sidebarWidth: CGFloat = 0
+    /// How far in from the trailing edge the lyrics panel starts, for the same
+    /// reason — zero while it is closed. Floating over it would cut off the
+    /// last lines of a song, which is the part you are usually reading.
+    var lyricsWidth: CGFloat = 0
 
     /// Where the queue can be sent. Two ends and the row the music is on.
     enum Jump { case top, bottom, playing }

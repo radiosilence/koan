@@ -9,6 +9,7 @@ struct LyricsPanel: View {
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
     @Environment(LibraryModel.self) private var library
+    @Environment(UIState.self) private var ui
 
     @State private var lyrics: Lyrics?
     @State private var loadedTrackId: Int64?
@@ -37,6 +38,8 @@ struct LyricsPanel: View {
         }
         .background(.background.secondary)
         .task(id: player.currentTrackId) { await load() }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { ui.lyricsWidth = $0 }
+        .onDisappear { ui.lyricsWidth = 0 }
     }
 
     @ViewBuilder
