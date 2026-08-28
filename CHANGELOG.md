@@ -1,8 +1,14 @@
 # Changelog
 
-## Unreleased
+## v0.33.1 (2026-08-28)
+
+### Added
+
+- **A graphics step below Plain.** The setting reached koan's own chrome and nothing else: the toolbar floated over live content and the transport kept its soft scroll edge at every step, including the one whose description says it is "the only step that stands the glass down". `Bare` stands both down — an opaque toolbar ground and a hard scroll edge. Measured no faster on an M1 Pro, and it is here because what the setting said and what it did disagreed, not as a speed-up.
 
 ### Changed
+
+- **A record opens in one commit rather than three.** The page was one; the wash was a second and the tint a third, both landing after it because both were held in view state written by a task, which cannot run until the body already has. The tint's was the worse of the two — it eased over two seconds, and a tint is a value every control reads rather than a property of a layer, so that is a hundred and twenty renders of the whole window for one colour. Both are read straight through the artwork cache now, the way a cover has been read since koan#284, so a colour and a sleeve the app already holds land in the same frame as the record that wanted them. Tap to first frame goes from 144–432ms to 101–208ms on a large library, and the spread goes with it — much of what looked like a slow database was the read's answer queued behind that animation.
 
 - **Opening a record says how long it took.** A signpost in a view says when SwiftUI worked out what to draw, which on this gesture is a few milliseconds and nowhere near when you see anything — layout, the CoreAnimation commit and the render server all come after the last line any view gets to run. `FrameTimer` times the tap against the display link instead, and reports the body, the frame that could carry it, and every stall after that. See CONTRIBUTING.
 
