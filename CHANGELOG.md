@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-### Performance
+### Changed
+
+- **Every page arrives complete.** A record already loaded before it navigated; everywhere else arrived empty and filled in a query later — an artist's records, a playlist's rows, favourites, history, search results, and the queue you left behind when koan reopened. `Navigator` now loads whatever a page draws and only then moves to it, so the first frame of a page is the finished page. There is no partial render to see and no second render a frame later putting the rows under a heading that was already up.
+
+  A page about one thing holds what it is about as one value, read whole and stamped with the library version it was read at — so asking again for the page on screen costs nothing, and asking after a scan is a real read. Sections hand their rows to the navigator, which adopts the page and its rows in one change rather than two. Typing in the search field no longer jumps to an empty results page on the first keystroke: it stays where you are until there is something to show.
 
 - **A browse listing is only redrawn when it has actually changed.** Albums, artists, favourites and history are each read whole and handed to SwiftUI whole — 5,610 records and 7,138 artists on a large library — and assigning that array again is a mutation whether or not a single row moved, so the grid was diffed end to end, laid out and committed for it. It was assigned again on every library version bump, which is every download landing and every playlist edit, and on every return to a section already visited. The rows are now compared before they are published, and the same answer as last time is dropped. The favourite id sets get the same treatment, for the sharper version of the same problem: every cell and every row reads them to draw its heart.
 

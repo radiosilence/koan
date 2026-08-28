@@ -96,11 +96,17 @@ struct ArtistDetailView: View {
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
 
-    /// Fetched, not looked up: the browser holds the page it is showing, and
-    /// this artist may well not be on it.
-    @State private var artist: Artist?
-    @State private var albums: [Album] = []
-    @State private var similar: [SimilarArtist] = []
+    /// Whatever the navigator loaded before it brought us here, so the first
+    /// body evaluation already has the whole page. Guarded on the id because
+    /// history can move faster than a read.
+    private var record: LibraryModel.ArtistRecord? {
+        let held = library.detailArtist
+        return held?.artistId == artistId ? held : nil
+    }
+
+    private var artist: Artist? { record?.artist }
+    private var albums: [Album] { record?.albums ?? [] }
+    private var similar: [SimilarArtist] { record?.similar ?? [] }
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
 
@@ -161,41 +167,8 @@ struct ArtistDetailView: View {
             }
             .padding(22)
         }
-        .reloading(on: artistId) { await load() }
-    }
-
-    /// Three independent reads, all at once and off the main actor.
-    ///
-    /// One after another they each waited on the one before for no reason, and
-    /// awaiting from a view callback means the *answer* waits for a main-actor
-    /// slot to be delivered — behind the state mirror's batch, which lands every
-    /// hundred milliseconds. Landed as one value, so the name cannot appear
-    /// ahead of the records.
-    private func load() async {
-        let engine = library.engine
-        let id = artistId
-        let loaded = await Task.detached(priority: .userInitiated) {
-            async let artist = try? await engine.artist(artistId: id)
-            async let albums = try? await engine.albums(
-                artistId: id, sort: .year, seed: 0, search: nil
-            )
-            async let similar = try? await engine.similarArtists(artistId: id)
-            return Loaded(
-                artist: await artist ?? nil,
-                albums: await albums ?? [],
-                similar: await similar ?? []
-            )
-        }.value
-        guard !Task.isCancelled else { return }
-        artist = loaded.artist
-        albums = loaded.albums
-        similar = loaded.similar
-    }
-
-    private struct Loaded: Sendable {
-        var artist: Artist?
-        var albums: [Album]
-        var similar: [SimilarArtist]
+        // Only for a library change — the artist arrived before the page did.
+        .reloading(on: artistId) { await library.prepare(artist: artistId) }
     }
 
     private func shufflePlay() {

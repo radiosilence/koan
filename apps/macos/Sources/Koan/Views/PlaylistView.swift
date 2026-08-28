@@ -86,8 +86,9 @@ struct PlaylistView: View {
             playlists.add(dropped: dropped, to: playlistId)
             return true
         }
+        // Only for a library change — the rows arrived before the page did.
         .reloading(on: playlistId) {
-            playlists.open(id: playlistId)
+            await playlists.prepare(id: playlistId)
         }
         .onChange(of: playlistId) { selection = [] }
         .alert("Rename Playlist", isPresented: $renaming) {
