@@ -51,6 +51,8 @@ final class AppState {
         library.activity = activity
         library.art = art
         library.mirror = mirror
+        playlists.mirror = mirror
+        nav.playlists = playlists
         player.activity = activity
         organize.activity = activity
         playlists.activity = activity
@@ -139,7 +141,7 @@ struct KoanApp: App {
                 do {
                     let created = try await AppState()
                     await created.player.start()
-                    created.player.restoreSession()
+                    await created.player.restoreSession()
                     state = created
                 } catch {
                     startupError = String(describing: error)

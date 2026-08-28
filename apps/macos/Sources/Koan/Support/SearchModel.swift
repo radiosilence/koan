@@ -97,9 +97,10 @@ final class SearchModel {
             return
         }
 
+        // Where to put them back, captured now — the move itself waits for
+        // results, and by then this is no longer where they were.
         if nav.section != .searchResults {
             locationBeforeSearch = nav.current
-            nav.show(.searchResults)
         }
 
         isSearching = true
@@ -121,6 +122,11 @@ final class SearchModel {
             albums = found.1
             artists = found.2
             isSearching = false
+            // Moved once there is something to show. Navigating on the first
+            // keystroke put an empty results page up and filled it in a query
+            // later — the page you were on is a better thing to look at while
+            // the answer is being read than a page with nothing on it.
+            nav.show(.searchResults)
         }
     }
 
