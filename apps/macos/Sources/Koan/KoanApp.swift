@@ -47,7 +47,7 @@ final class AppState {
         self.playlists = playlists
         let activity = ActivityModel()
         self.activity = activity
-        self.levels = PlayingLevels(engine: engine, mirror: mirror)
+        self.levels = PlayingLevels(engine: engine)
         library.activity = activity
         library.art = art
         library.mirror = mirror

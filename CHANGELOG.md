@@ -2,11 +2,11 @@
 
 ## Unreleased
 
-### Fixed
+### Changed
 
-- **The playing indicator stops lying about silence.** The bars ran their full dance through a track's silent opening, because the analyser reporting zeros was read as "nothing to go on yet" — which is what a track still buffering looks like too, and dancing was the safer guess for that one. The play head tells the two apart: it advances only as audio leaves the engine, so once it moves the analyser is believed, silence included, and the bars settle onto their resting heights until there is something to move them. Until it moves they run the plain carrier, as before.
+- **The playing indicator is a spectrum analyser, three columns wide.** It was a pair of sine waves the music modulated — the bands set how far the bars swung, never how high they stood — which meant a track that opens on ten seconds of silence got the full dance, because a carrier with nothing to scale it is still a carrier. The bars are the low, mid and high bands now, drawn at the height the analyser reports. Silence is flat.
 
-  They also react on the frame the music does. The analyser's own bars rise instantly and fall on a 50ms half-life; the indicator was smoothing that a second time over a third of a second, which is what made a beat land visibly late.
+  Bands are still measured against their own recent ceiling, so a quiet master is not a limp indicator, and the fall is the law the TUI's spectrum draws on: up on the frame it happens, down on a 150ms half-life. Reduce Motion and the bottom of the graphics ladder still get three still bars, and pausing still freezes them where they stand.
 
 ## v0.33.1 (2026-08-28)
 
