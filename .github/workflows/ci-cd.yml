@@ -225,6 +225,16 @@ jobs:
     timeout-minutes: 15
     # Blocking. The advisories already in the lockfile are acknowledged in
     # .cargo/audit.toml so this fails on anything new.
+    #
+    # The action reports through a GitHub check run, which is an API write, and
+    # this repository hands workflows a read-only token by default. Without this
+    # the job failed with "Resource not accessible by integration" *after* a
+    # clean audit — a green audit reported as a red build, on every push to
+    # main. `contents: read` is spelled out because naming any permission drops
+    # the rest to none.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: rustsec/audit-check@858dc40f52ca2b8570b7a997c1c4e35c6fc9a432 # main, post-v2.0.0: node24 runtime

@@ -7,6 +7,11 @@
 - **The playing indicator stops lying about silence.** The bars ran their full dance through a track's silent opening, because the analyser reporting zeros was read as "nothing to go on yet" — which is what a track still buffering looks like too, and dancing was the safer guess for that one. The play head tells the two apart: it advances only as audio leaves the engine, so once it moves the analyser is believed, silence included, and the bars settle onto their resting heights until there is something to move them. Until it moves they run the plain carrier, as before.
 
   They also react on the frame the music does. The analyser's own bars rise instantly and fall on a 50ms half-life; the indicator was smoothing that a second time over a third of a second, which is what made a beat land visibly late.
+- **A clean security audit no longer reports itself as a failed build.** The audit job reports through a GitHub check run, which is an API write, and this repository hands workflows a read-only token by default — so the job found nothing, tried to say so, and failed with "Resource not accessible by integration" on every push to main. It asks for the one permission it needs now.
+
+- **Dependencies refreshed.** Seventeen packages moved to their latest compatible release — `h2`, `hyper`, `flate2`, `log`, `uuid`, `rand` and the rest — with no version requirement changed and nothing to see from outside.
+
+- **`chacha20` moves off a yanked release.** 0.10.0 and 0.10.1 called an SSE4.1 intrinsic from inside the SSE2 backend, so on an x86 processor with SSE2 and not SSE4.1 the instruction is illegal and the process dies. Upstream yanked both and shipped 0.10.2. Not a weakness in the cipher — a crash, and only on hardware old enough to matter to the Linux builds.
 
 ## v0.33.1 (2026-08-28)
 
