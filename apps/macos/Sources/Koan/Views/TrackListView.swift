@@ -39,6 +39,11 @@ struct TrackListView: View {
                 // clicks resolve against each other and drop; List gives native
                 // selection, shift/⌘ range select and keyboard navigation.
                 ScrollViewReader { proxy in
+                    // Built once per pass rather than once per row. Every row
+                    // carries the list it belongs to so playing it keeps the
+                    // rest behind it, and mapping inside the `ForEach` body
+                    // allocated a fresh copy of the whole thing for each one.
+                    let allTrackIds = tracks.map(\.id)
                     List(selection: $selection) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                             TrackRow(
@@ -47,7 +52,7 @@ struct TrackListView: View {
                                 isCurrent: player.currentTrackId == track.id,
                                 isSelected: selection.contains(track.id),
                                 showsAlbum: mixedAlbums,
-                                allTrackIds: tracks.map(\.id)
+                                allTrackIds: allTrackIds
                             )
                             .rowBehaviour(playable: .track(track))
                         }
