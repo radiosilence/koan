@@ -119,7 +119,7 @@ struct OrganizeSheet: View {
 
                 // Destinations are relative to this, so it has to be visible
                 // even when there was nothing to choose.
-                Text("relative to \(organize.baseDir)")
+                Text(organize.hasDestination ? "relative to \(organize.baseDir)" : "no destination")
                 // An edited pattern previews and moves without being saved, so
                 // say which state you are looking at.
                 if organize.isModified {
@@ -142,7 +142,14 @@ struct OrganizeSheet: View {
 
     @ViewBuilder
     private var table: some View {
-        if let error = organize.error {
+        if !organize.hasDestination {
+            EmptyState(
+                icon: "folder.badge.questionmark",
+                title: "No library folder",
+                detail: "koan has nowhere to move these to. Add a folder in Settings › Library."
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error = organize.error {
             EmptyState(
                 icon: "exclamationmark.triangle",
                 title: "That pattern won't work",

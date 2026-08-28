@@ -112,6 +112,8 @@ struct FavouritesView: View {
 
     private var trackSection: some View {
         Section("Tracks") {
+            // Once per pass, not once per row — see `TrackListView`.
+            let allTrackIds = tracks.map(\.id)
             ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                 TrackRow(
                     track: track,
@@ -121,7 +123,7 @@ struct FavouritesView: View {
                     // Gathered from all over, so a row carries its own sleeve
                     // and says which record it came from.
                     showsAlbum: true,
-                    allTrackIds: tracks.map(\.id)
+                    allTrackIds: allTrackIds
                 )
                 .rowBehaviour(playable: .track(track))
             }

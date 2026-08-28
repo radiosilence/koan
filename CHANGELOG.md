@@ -8,7 +8,17 @@
 
   A page about one thing holds what it is about as one value, read whole and stamped with the library version it was read at — so asking again for the page on screen costs nothing, and asking after a scan is a real read. Sections hand their rows to the navigator, which adopts the page and its rows in one change rather than two. Typing in the search field no longer jumps to an empty results page on the first keystroke: it stays where you are until there is something to show.
 
+- **A browse listing is only redrawn when it has actually changed.** Albums, artists, favourites and history are each read whole and handed to SwiftUI whole — 5,610 records and 7,138 artists on a large library — and assigning that array again is a mutation whether or not a single row moved, so the grid was diffed end to end, laid out and committed for it. It was assigned again on every library version bump, which is every download landing and every playlist edit, and on every return to a section already visited. The rows are now compared before they are published, and the same answer as last time is dropped. The favourite id sets get the same treatment, for the sharper version of the same problem: every cell and every row reads them to draw its heart.
+
+  Nothing about how a listing is read has changed. It still arrives whole, so the scrollbar still tells the truth about how long the library is and one flick still reaches the end of it.
+
+- **A track row no longer copies the whole track list to itself.** Each row carries the ids of the list it belongs to, so playing it keeps the rest queued behind it — and that list was rebuilt inside the row's own body, once per row. It is built once per pass now.
+
 ### Fixed
+
+- **Organize no longer offers to move files into nowhere.** With no library folder configured the macOS sheet took the empty string as its destination, so every path the pattern produced was relative — and a relative path resolves against whatever directory the process happens to be sitting in, which for an app bundle is `/`. The preview was flawless: nothing occupied those destinations, so every file came back as a clean move. Pressing the button then failed on the first `mkdir` of every single file, and because a failed move comes back as a failed *row* rather than a thrown error, and the sheet re-read the library afterwards instead of reading its own result, the table came back identical and the button re-armed. It could be pressed all afternoon.
+
+  An empty destination is now refused where it is resolved, so the CLI and TUI get the same answer. The sheet says there is no library folder instead of drawing a plan, a move that fails is written to the log with its reason, and a run that fails keeps its own report — every row that did not make it says why, where its destination used to be.
 
 - **A track no longer leaves its album when its download finishes.** A track that streams starts on the partial tags symphonia can read, so when the file lands koan re-reads it properly and fills the queue item in. It filled in tracks that needed nothing — ones that came out of the library and already carried the record's own title. Where a file's tags disagree with the server's, and on a rip they often do, the item quietly changed album halfway down the queue and its record split in two: ten tracks under one heading, the one that had played under another. The file's word now only counts for a queue item with no library row behind it. Its duration still counts for everything, because that is the file's to know.
 

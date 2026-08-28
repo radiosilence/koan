@@ -48,6 +48,8 @@ For example, with `folders = ["/Volumes/Music/library"]` and the `standard` patt
 /Volumes/Music/library/Aphex Twin/(1999) Windowlicker EP/01. Windowlicker.flac
 ```
 
+With no library folder configured there is nowhere to organize *into*, and koan says so rather than offering a plan — a pattern on its own produces a relative path, which is not a place.
+
 ## Configuring patterns
 
 The macOS app edits them in place: **Edit** next to the pattern picker turns it into a field, the preview follows what you type, and **Save** writes it back to `config.toml` under its name. A pattern you have edited but not saved still previews and still runs, so trying one out costs nothing.

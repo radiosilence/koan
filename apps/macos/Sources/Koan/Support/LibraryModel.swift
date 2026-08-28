@@ -188,20 +188,32 @@ final class LibraryModel {
         )
     }
 
+    /// Publish what came back, and only where it differs from what is already
+    /// on screen.
+    ///
+    /// `@Observable` has no opinion about equality: assigning the same rows
+    /// again is still a mutation, and a mutation of a listing is a `ForEach`
+    /// diff over every id in it, a layout pass and a commit — 5,610 records and
+    /// 7,138 artists on a large library. The same answer as last time is the
+    /// common case, not the rare one: every library version bump reloads, so a
+    /// download landing or a playlist edit asks again, and so does every return
+    /// to a section already visited. Comparing the rows is one walk over them.
+    /// Publishing them is thousands of views' worth of work that changes
+    /// nothing on screen.
     private func show(_ rows: Rows) {
         switch rows {
         case .none:
             break
         case .albums(let rows):
-            visibleAlbums = rows
+            if rows != visibleAlbums { visibleAlbums = rows }
         case .artists(let rows):
-            visibleArtists = rows
+            if rows != visibleArtists { visibleArtists = rows }
         case .favourites(let tracks, let albums, let artists):
-            visibleFavourites = tracks
-            visibleFavouriteAlbums = albums
-            visibleFavouriteArtists = artists
+            if tracks != visibleFavourites { visibleFavourites = tracks }
+            if albums != visibleFavouriteAlbums { visibleFavouriteAlbums = albums }
+            if artists != visibleFavouriteArtists { visibleFavouriteArtists = artists }
         case .history(let rows):
-            visiblePlayHistory = rows
+            if rows != visiblePlayHistory { visiblePlayHistory = rows }
         }
     }
 
@@ -391,9 +403,16 @@ final class LibraryModel {
             async let tracks = engine.favouriteTrackIds()
             async let albums = engine.favouriteAlbumIds()
             async let artists = engine.favouriteArtistIds()
-            favouriteTrackIds = Set((try? await tracks) ?? [])
-            favouriteAlbumIds = Set((try? await albums) ?? [])
-            favouriteArtistIds = Set((try? await artists) ?? [])
+            let trackIds = Set((try? await tracks) ?? [])
+            let albumIds = Set((try? await albums) ?? [])
+            let artistIds = Set((try? await artists) ?? [])
+            // Guarded for the same reason a listing is. Every grid cell and
+            // every row reads these to draw its heart, so republishing a set
+            // that has not moved redraws the whole page for nothing — and a
+            // sync reconciling favourites usually finds them all the same.
+            if trackIds != favouriteTrackIds { favouriteTrackIds = trackIds }
+            if albumIds != favouriteAlbumIds { favouriteAlbumIds = albumIds }
+            if artistIds != favouriteArtistIds { favouriteArtistIds = artistIds }
             reloadFavourites()
         }
     }
