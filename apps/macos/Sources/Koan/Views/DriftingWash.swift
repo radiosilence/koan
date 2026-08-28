@@ -18,13 +18,19 @@ import SwiftUI
 /// it is the only way to have motion that costs nothing.
 ///
 /// The blur is baked into the texture *once*, not left on the layer. A live
-/// `CALayer.filters` looks free — it is the compositor's work, not ours — but a
-/// filter on a layer that is animating and the size of the window is a Gaussian
-/// blur re-run over the whole window every frame. The main thread then blocks
-/// in `CABackingStoreSynchronize` waiting for the render server to finish with
-/// the backing store, which is how a tap took six hundred milliseconds to be
-/// noticed. Blurred once and magnified as a texture, the compositor only has a
-/// transform to apply.
+/// `CALayer.filters` looks free — it is the compositor's work, not ours — but
+/// the compositor re-evaluates a layer's filters every frame it composites it,
+/// and this layer is the size of the window and never stops moving.
+///
+/// Measured on an M1 Pro, this same layer in a 1400x900 window: a live filter
+/// on a *settled* layer is indistinguishable from an empty window, and the
+/// moment the drift starts it costs the render server about a seventh of a core
+/// and ten points of GPU, continuously, for the wash on its own. Baked, the
+/// drift reads as idle on both. So the filter is not free, and what it charges
+/// for is the animation rather than its own presence.
+///
+/// This is not what made a tap slow — that survives at plain graphics, where no
+/// wash is rendered at all (koan#380). Baking is simply the cheaper of the two.
 struct DriftingWash: NSViewRepresentable {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
@@ -167,6 +173,12 @@ final class WashView: NSView {
     /// drawn at, and the image is clamped first — an unclamped blur samples
     /// transparent black past the edge and leaves the sleeve with a soft dark
     /// border all the way round.
+    ///
+    /// It is measured against `side`, so the wash is blurred at 14 points of a
+    /// 360pt reference and then magnified along with the texture. A live filter
+    /// blurs *after* magnification, so 14 points there is a fifth of this blur
+    /// and a different picture — matching it would take a radius around 70, and
+    /// the live filter costs more at that radius, not less.
     private nonisolated static func bake(_ image: NSImage) -> CGImage? {
         var rect = NSRect(origin: .zero, size: image.size)
         guard let source = image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
