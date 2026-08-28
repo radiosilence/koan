@@ -365,12 +365,14 @@ private struct StageView: View {
     /// actually looking at.
     var body: some View {
         ZStack {
+            if onQueue || ProcessInfo.processInfo.environment["KOAN_PROBE_NOQUEUE"] == nil {
             QueueView()
                 .opacity(onQueue ? 1 : 0)
                 .allowsHitTesting(onQueue)
                 .disabled(!onQueue)
                 .accessibilityHidden(!onQueue)
                 .environment(\.onStage, onQueue)
+            }
 
             if !onQueue { page }
         }

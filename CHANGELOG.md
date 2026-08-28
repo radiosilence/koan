@@ -18,6 +18,8 @@
 
 ### Fixed
 
+- **The room changes colour by fading again, not by cutting.** The wash installs a two second dissolve when the record changes, and the drift installs itself by clearing every animation on the same layers first — which took the dissolve with it. The drift is reinstalled from `layout()`, which a page switch triggers, so the fade was wiped a frame or two after it started and the new cover snapped in. The drift is removed by name now, and leaves alone what it did not put there.
+
 - **Back moves on the first press.** The cursor stepped on the click and left the page to catch up, so pressing Back while a record was still being read cancelled that record — which then never applied and never recorded — and stepped off a page nobody had arrived at. The screen stayed where it was and it took a second press to go anywhere. Where you are now changes beside the page rather than ahead of it.
 
 - **Organize no longer offers to move files into nowhere.** With no library folder configured the macOS sheet took the empty string as its destination, so every path the pattern produced was relative — and a relative path resolves against whatever directory the process happens to be sitting in, which for an app bundle is `/`. The preview was flawless: nothing occupied those destinations, so every file came back as a clean move. Pressing the button then failed on the first `mkdir` of every single file, and because a failed move comes back as a failed *row* rather than a thrown error, and the sheet re-read the library afterwards instead of reading its own result, the table came back identical and the button re-armed. It could be pressed all afternoon.
