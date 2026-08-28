@@ -1,142 +1,126 @@
+import AppKit
 import Foundation
 import KoanFFI
 
 /// The audio behind the playing indicators.
 ///
 /// One source for the whole app: the queue and a track list can both have a
-/// current row on screen, and they are watching the same music. Views take a
-/// subscription while they need one, so with nothing on screen — or nothing
-/// playing — nothing runs.
+/// current row on screen, and they are watching the same music. There is no
+/// timer here and nothing polls — an indicator asks for the bands as it draws
+/// a frame, and the first to ask on a given frame is the one that reads the
+/// analyser. Nothing on screen means nothing read, and the analyser stands
+/// itself down a second after the last read.
 ///
-/// Nothing here is observed. These values move thirty times a second and an
-/// observer would re-render at that rate; the indicators redraw off their own
-/// display-linked timeline and read this when they do.
+/// The bands themselves are not observed. They move at the refresh rate of the
+/// display and an observer would invalidate a view for each one; the
+/// indicators redraw off their own display-linked timeline and take the value
+/// as they go. `settled` is observed, because it is the one thing a view has
+/// to be told rather than ask: it is what stops the timeline.
 @MainActor
 @Observable
 final class PlayingLevels {
     private let engine: KoanEngine
 
-    /// How far each bar should swing from where it rests, 0...1, low band to
-    /// high. The music sets this and nothing else — it never reaches a height
-    /// directly, so there is no path from a transient to a jump.
-    @ObservationIgnored private(set) var travel = idle
+    /// How high each bar stands, 0...1, low band to high. The spectrum in
+    /// three columns: what the analyser says is coming out of the speakers,
+    /// and nothing else. Silence is zero and reads flat.
+    @ObservationIgnored private(set) var bands = [0.0, 0.0, 0.0]
 
-    /// The carrier's phase at `stamp`, and how fast it is advancing. Read it
-    /// through `phase(at:)` rather than directly: a frame and a poll are on
-    /// separate clocks even at the same nominal rate, and winding the phase on
-    /// to the moment being drawn keeps the motion continuous rather than
-    /// stepped at whatever rate the frames actually arrive.
-    @ObservationIgnored private var phase = 0.0
-    @ObservationIgnored private var stamp = Date().timeIntervalSinceReferenceDate
-    @ObservationIgnored private var rate = 1.0
+    /// Whether the bars have come to rest with nothing playing. False while
+    /// they still have somewhere to fall, which is what keeps the timeline
+    /// ticking through the decay after a pause and stops it after.
+    private(set) var settled = true
 
-    private var watchers = 0
-    private var poll: Task<Void, Never>?
+    @ObservationIgnored private var stamp = 0.0
 
     /// The loudest each band has been lately. Each band is judged against its
     /// own recent range rather than against full scale, which is what stops a
     /// track mastered quiet getting a limper indicator than a loud one — and
     /// incidentally undoes the analyser's A-weighting tilt, which otherwise
     /// leaves the bass bar permanently the sluggish one.
-    private var ceiling = [quietest, quietest, quietest]
+    @ObservationIgnored private var ceiling = [quietest, quietest, quietest]
 
-    /// Set once the analyser has shown us any audio at all. Until then the bars
-    /// run the plain carrier: a track still buffering is not a quiet one.
-    private var heard = false
-
-    /// Full travel — the motion the bars had before any of this. Where they go
-    /// when there is nothing to go on.
-    private static let idle = [1.0, 1.0, 1.0]
-    /// A band below this is room tone, and never sets a ceiling.
+    /// A band below this is room tone, and never sets a ceiling. It is also
+    /// what a silent passage is measured against, so silence stays flat rather
+    /// than being normalised back up into a dance.
     private static let quietest = 0.12
-    /// Fast up so a transient lands, slow down so nothing snaps to zero between
-    /// beats. Sluggish and legible beats accurate and spiky at eleven points.
-    private static let attack = 0.05
-    private static let release = 0.35
+    /// How long a band takes to fall away. Rises are not damped at all: this
+    /// is the law the TUI's spectrum runs on — up on the frame it happens,
+    /// down on a half-life so nothing snaps to zero between beats.
+    private static let release = 0.15
     /// How long a band takes to forget a loud passage.
     private static let forget = 4.0
-    /// The least the bars ever move. A state marker first: whatever the music
-    /// is doing, the row that is playing has to still say so at a glance.
-    private static let floor = 0.3
-    /// How much of the bars' rate the music gets to move.
-    private static let rateSwing = 0.4
-    /// How often the levels are resampled — and, since new numbers are the
-    /// only reason to redraw, the rate the indicators run at too.
-    static let interval = 1.0 / 30.0
+    /// Below a tenth of a point of bar there is nothing left to draw.
+    private static let flat = 0.01
 
     init(engine: KoanEngine) {
         self.engine = engine
-    }
-
-    /// The carrier's phase now, wound on from the last sample at the rate the
-    /// music last set.
-    func phase(at now: TimeInterval) -> Double {
-        phase + (now - stamp) * rate
-    }
-
-    func watch() {
-        watchers += 1
-        if watchers == 1 { start() }
-    }
-
-    func unwatch() {
-        watchers -= 1
-        if watchers == 0 { stop() }
-    }
-
-    private func start() {
-        stamp = Date().timeIntervalSinceReferenceDate
-        poll = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(Self.interval))
-                guard let self else { return }
-                sample()
+        // The rate the analyser should run at is the refresh rate of the
+        // display it is drawn on, which changes when the window is dragged to
+        // another screen and when a screen is reconfigured under it.
+        for name in [
+            NSWindow.didChangeScreenNotification,
+            NSWindow.didBecomeKeyNotification,
+            NSApplication.didChangeScreenParametersNotification,
+        ] {
+            NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.matchDisplay() }
             }
         }
+        matchDisplay()
     }
 
-    private func stop() {
-        poll?.cancel()
-        poll = nil
-        // Travel is left where it stands: the bars freeze mid-swing when the
-        // transport stops, and a redraw while paused should not move them.
-        heard = false
-    }
-
-    private func sample() {
-        let now = Date().timeIntervalSinceReferenceDate
+    /// The bands as of `now`, brought forward from the last frame that asked.
+    ///
+    /// Every indicator on screen calls this on every frame it draws and the
+    /// first one does the work: the rest are the same frame, and a spectrum
+    /// sampled twice in one frame would be two different answers to the same
+    /// question.
+    func bands(at now: TimeInterval, playing: Bool) -> [Double] {
+        guard now > stamp else { return bands }
         // Clamped: a machine that slept owes the bars nothing.
-        let elapsed = min(max(now - stamp, 0), 0.25)
-        let wound = phase(at: now)
-        let frame = engine.vizLevels()
-        let bands = [Double(frame.low), Double(frame.mid), Double(frame.high)]
-        heard = heard || bands.contains { $0 > Self.quietest }
+        let elapsed = min(now - stamp, 0.25)
+        stamp = now
+        let fall = Self.remaining(halfLife: Self.release, over: elapsed)
 
-        defer {
-            phase = wound
-            stamp = now
+        guard playing else {
+            // Nothing is coming out of the speakers, so nothing is read: the
+            // bars fall away on their own and the analyser, with no reader,
+            // stands down while they do.
+            for band in bands.indices { bands[band] *= fall }
+            if bands.allSatisfy({ $0 < Self.flat }) {
+                bands = [0, 0, 0]
+                rest(true)
+            }
+            return bands
         }
 
-        guard heard else {
-            travel = Self.idle
-            rate = 1
-            return
-        }
-
+        rest(false)
         let hold = Self.remaining(halfLife: Self.forget, over: elapsed)
-        var next = travel
-        for band in bands.indices {
-            ceiling[band] = max(bands[band], max(ceiling[band] * hold, Self.quietest))
-            let energy = min(bands[band] / ceiling[band], 1)
-            let target = Self.floor + (1 - Self.floor) * energy
-            let halfLife = target > travel[band] ? Self.attack : Self.release
-            next[band] =
-                target + (travel[band] - target) * Self.remaining(halfLife: halfLife, over: elapsed)
+        let frame = engine.vizLevels()
+        let levels = [Double(frame.low), Double(frame.mid), Double(frame.high)]
+        for band in levels.indices {
+            ceiling[band] = max(levels[band], max(ceiling[band] * hold, Self.quietest))
+            let level = min(levels[band] / ceiling[band], 1)
+            bands[band] = max(level, bands[band] * fall)
         }
-        travel = next
+        return bands
+    }
 
-        let mean = next.reduce(0, +) / Double(next.count)
-        rate = 1 + Self.rateSwing * (mean - Self.floor) / (1 - Self.floor)
+    /// Flip the one observed property from outside the body that noticed. It
+    /// changes twice a pause rather than once a frame, and a view is midway
+    /// through drawing when the change is spotted.
+    private func rest(_ value: Bool) {
+        guard settled != value else { return }
+        Task { @MainActor in self.settled = value }
+    }
+
+    private func matchDisplay() {
+        let main = NSApp.windows.first { $0.identifier?.rawValue == MainWindow.id }
+        let screen = main?.screen ?? NSApp.keyWindow?.screen ?? NSScreen.main
+        engine.setVizFps(fps: UInt8(clamping: screen?.maximumFramesPerSecond ?? 60))
     }
 
     /// What is left of a distance after `elapsed` at the given half-life.

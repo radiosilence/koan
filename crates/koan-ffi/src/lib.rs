@@ -238,6 +238,16 @@ impl KoanEngine {
         self.viz.levels().into()
     }
 
+    /// Run the analyser at the refresh rate of the display it is drawn on.
+    ///
+    /// koan cannot know that rate and a window can: 60 on one panel, 120 on
+    /// another, and it changes when the window is dragged between them. One
+    /// atomic store — the analyser picks it up on its next pass, and nothing
+    /// wakes for it.
+    pub fn set_viz_fps(&self, fps: u8) {
+        self.viz.set_fps(fps);
+    }
+
     // --- Queue mutation ----------------------------------------------------
 
     /// Append tracks. Starts playback if the player was stopped, and kicks off

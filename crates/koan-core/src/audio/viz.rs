@@ -6,6 +6,10 @@ use parking_lot::{Mutex, RwLock};
 /// Number of spectrum bars produced by the analyzer.
 pub const NUM_BARS: usize = 48;
 
+/// Where the analyser runs until something tells it otherwise. A snapshot is
+/// created before any client has said what display it draws on.
+const DEFAULT_FPS: u8 = 60;
+
 /// Number of waveform frames carried in each VizFrame for oscilloscope/lissajous modes.
 /// 2048 frames (~46ms at 44.1kHz) matches the FFT window size — enough for smooth waveform display.
 pub const WAVEFORM_SAMPLES: usize = 2048;
@@ -72,6 +76,15 @@ pub struct VizSnapshot {
     /// ever opening a visualiser, and an FFT sixty times a second for nobody
     /// is a percent of a core.
     reads: AtomicU64,
+    /// Microseconds between analysis passes.
+    ///
+    /// It lives beside the frame because the party who knows the right rate is
+    /// the party reading frames: bars are drawn on a display, and the rate
+    /// worth running at is that display's — 60 on one panel, 120 on another,
+    /// and it changes when a window is dragged between them. The analyser
+    /// reads it when it next wakes, so setting it costs one store and wakes
+    /// nothing.
+    interval_us: AtomicU64,
 }
 
 impl VizSnapshot {
@@ -80,6 +93,7 @@ impl VizSnapshot {
         Arc::new(Self {
             inner: RwLock::new(VizFrame::default()),
             reads: AtomicU64::new(0),
+            interval_us: AtomicU64::new(Self::interval_us(DEFAULT_FPS)),
         })
     }
 
@@ -94,6 +108,29 @@ impl VizSnapshot {
     /// and there is nothing to analyse for.
     pub fn reads(&self) -> u64 {
         self.reads.load(Ordering::Relaxed)
+    }
+
+    /// Run the analyser at `fps` passes a second from its next wake.
+    ///
+    /// Clamped to something a display could plausibly ask for: the rate is set
+    /// from outside koan, and a zero here would be a division and a spin.
+    pub fn set_fps(&self, fps: u8) {
+        self.interval_us
+            .store(Self::interval_us(fps), Ordering::Relaxed);
+    }
+
+    /// How long the analyser sleeps between passes.
+    pub fn interval(&self) -> std::time::Duration {
+        std::time::Duration::from_micros(self.interval_us.load(Ordering::Relaxed))
+    }
+
+    /// Passes a second, as last set.
+    pub fn fps(&self) -> u8 {
+        (1_000_000 / self.interval_us.load(Ordering::Relaxed).max(1)) as u8
+    }
+
+    fn interval_us(fps: u8) -> u64 {
+        1_000_000 / fps.clamp(1, 240) as u64
     }
 
     /// Write a new frame. Acquires write lock, swaps, releases — <1us.
@@ -385,6 +422,20 @@ mod tests {
         assert_eq!(snap.channels, 1);
         assert_eq!(snap.sample_rate, 96000);
         assert_eq!(snap.samples, vec![1.0, 2.0]);
+    }
+
+    #[test]
+    fn fps_sets_the_analysis_interval_and_clamps() {
+        let snap = VizSnapshot::new();
+        assert_eq!(snap.fps(), DEFAULT_FPS);
+
+        snap.set_fps(120);
+        assert_eq!(snap.fps(), 120);
+        assert_eq!(snap.interval(), std::time::Duration::from_micros(8_333));
+
+        // A rate from outside koan: zero would be a division and a spin.
+        snap.set_fps(0);
+        assert_eq!(snap.fps(), 1);
     }
 
     #[test]
