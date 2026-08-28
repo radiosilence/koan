@@ -14,6 +14,8 @@ struct LyricsPanel: View {
     @State private var lyrics: Lyrics?
     @State private var loadedTrackId: Int64?
     @State private var loading = false
+    /// The line being sung. Set by `follow`, which wakes once per line.
+    @State private var active: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -66,8 +68,7 @@ struct LyricsPanel: View {
     }
 
     private func synced(_ lyrics: Lyrics) -> some View {
-        let active = currentIndex(lyrics)
-        return ScrollViewReader { proxy in
+        ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 11) {
                     ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { index, line in
@@ -88,17 +89,35 @@ struct LyricsPanel: View {
                     proxy.scrollTo(new, anchor: .center)
                 }
             }
+            // Restarted by the anchor, which moves on a seek, a pause and a
+            // track boundary — every reason the line being sung would change
+            // other than the song simply carrying on, which `follow` sleeps
+            // through by itself.
+            .task(id: mirror.playhead) { await follow(lyrics) }
         }
     }
 
-    /// Last line whose timestamp has passed.
+    /// Last line whose timestamp has passed, at `position` seconds.
+    private func currentIndex(_ lyrics: Lyrics, at position: Double) -> Int? {
+        lyrics.lines.lastIndex { $0.timeSecs <= position }
+    }
+
+    /// Follow the song, one line at a time.
     ///
-    /// Reads whole seconds rather than milliseconds: lyric lines are seconds
-    /// apart, and depending on the millisecond value would re-render every line
-    /// ten times a second for no visible gain.
-    private func currentIndex(_ lyrics: Lyrics) -> Int? {
-        let position = Double(mirror.positionSeconds)
-        return lyrics.lines.lastIndex { $0.timeSecs <= position }
+    /// A lyric line changes when a timestamp passes, and the panel knows every
+    /// timestamp — so it sleeps until the next one rather than asking where the
+    /// playhead is. One wake per line, none at all while paused, and a seek
+    /// restarts this because the anchor it reads is what changed.
+    private func follow(_ lyrics: Lyrics) async {
+        while !Task.isCancelled {
+            let playhead = mirror.playhead
+            let position = Double(playhead.at()) / 1000
+            active = currentIndex(lyrics, at: position)
+            guard playhead.playing,
+                  let next = lyrics.lines.first(where: { $0.timeSecs > position })
+            else { return }
+            try? await Task.sleep(for: .seconds(next.timeSecs - position))
+        }
     }
 
     private func fraction(of line: LyricLine) -> Double {

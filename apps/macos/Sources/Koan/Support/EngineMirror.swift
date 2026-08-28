@@ -48,8 +48,7 @@ final class EngineMirror: Observable {
         queueItemId: nil, entry: nil, format: nil, playlistVersion: 0,
         radioEnabled: false
     )
-    private var _positionMs: UInt64 = 0
-    private var _positionSeconds = 0
+    private var _playhead = Playhead(positionMs: 0, playing: false, at: .now)
     private var _seekableMs: UInt64 = 0
     private var _queue: [QueueItem] = []
     private var _queuedByTrack: [Int64: QueueItem] = [:]
@@ -66,18 +65,17 @@ final class EngineMirror: Observable {
         return _playback
     }
 
-    /// Where the playhead is. Its own keyPath, so only what draws a moving
-    /// figure inherits the tick.
-    var positionMs: UInt64 {
-        access(\.positionMs)
-        return _positionMs
-    }
-
-    /// Whole seconds, for anything that only needs "roughly where are we" —
-    /// lyric highlighting changes once a second, not ten times.
-    var positionSeconds: Int {
-        access(\.positionSeconds)
-        return _positionSeconds
+    /// Where the playhead was when the engine last said, and whether it has
+    /// been moving since.
+    ///
+    /// An anchor rather than a reading: a playhead advancing at one second per
+    /// second is the one thing a client can work out for itself, so the engine
+    /// says so when that stops being true — a seek, a pause, a track boundary,
+    /// a stall — and not otherwise. Ask it for `at(_:)` rather than reading a
+    /// number that would have to keep arriving to stay true.
+    var playhead: Playhead {
+        access(\.playhead)
+        return _playhead
     }
 
     /// How far into the current track a seek can land. Equal to the duration
@@ -205,15 +203,11 @@ final class EngineMirror: Observable {
         switch slice {
         case .playback(let nowPlaying):
             mutate(\.playback) { _playback = nowPlaying }
-        case .playhead(let ms, let seekableMs):
-            // Three keyPaths out of one slice, each moved only when it moved.
-            // The seconds are their own so lyric highlighting wakes once a
-            // second rather than ten times.
-            if ms != _positionMs { mutate(\.positionMs) { _positionMs = ms } }
-            let seconds = Int(ms / 1000)
-            if seconds != _positionSeconds {
-                mutate(\.positionSeconds) { _positionSeconds = seconds }
-            }
+        case .playhead(let ms, let seekableMs, let playing):
+            // Stamped on arrival. The engine cannot send a clock across the
+            // boundary and does not need to: the message is minutes old only
+            // if it sat in a queue, and it did not.
+            mutate(\.playhead) { _playhead = Playhead(positionMs: ms, playing: playing, at: .now) }
             if seekableMs != _seekableMs {
                 mutate(\.seekableMs) { _seekableMs = seekableMs }
             }
@@ -312,5 +306,31 @@ private struct ReloadOnLibraryChange<ID: Equatable>: ViewModifier {
     private struct Key: Equatable {
         let id: ID
         let version: UInt64
+    }
+}
+
+/// Where the playhead was, and whether it is still moving.
+///
+/// The engine publishes one of these when a client's own reckoning would go
+/// wrong, so everything that shows a position derives it from here rather than
+/// waiting to be told a number. Nothing in koan ticks to keep a position up to
+/// date; the anchor is what makes that possible.
+struct Playhead: Equatable {
+    let positionMs: UInt64
+    let playing: Bool
+    /// When this arrived. Local, because it is compared only with `Date.now`.
+    let at: Date
+
+    /// Where the playhead is at `date`, by this anchor's reckoning.
+    func at(_ date: Date = .now) -> UInt64 {
+        guard playing else { return positionMs }
+        return positionMs + UInt64(max(0, date.timeIntervalSince(at)) * 1000)
+    }
+
+    /// The same, capped at a track's length — a prediction runs past the end
+    /// of a track for as long as it takes the engine to say the next one has
+    /// started.
+    func at(_ date: Date = .now, within durationMs: UInt64) -> UInt64 {
+        durationMs > 0 ? min(at(date), durationMs) : at(date)
     }
 }

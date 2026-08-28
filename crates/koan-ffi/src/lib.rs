@@ -19,6 +19,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Weak};
+use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use koan_core::audio::viz::VizSnapshot;
@@ -198,6 +199,15 @@ pub struct KoanEngine {
     /// same to a client as one it asked for itself.
     library_version: Arc<std::sync::atomic::AtomicU64>,
 }
+
+/// How far a client's own reckoning of the playhead may drift before it is
+/// told again. Two frames of a 60Hz seek bar: below this there is nothing on
+/// screen to correct.
+const PLAYHEAD_TOLERANCE_MS: u64 = 32;
+
+/// The same, for how far a download reaches. The bar it draws is one bar wide
+/// and a fifth of a second of audio does not move it.
+const SEEKABLE_TOLERANCE_MS: u64 = 200;
 
 #[uniffi::export]
 impl KoanEngine {
@@ -2202,6 +2212,11 @@ impl KoanEngine {
                 let mut last_queue = u64::MAX;
                 let mut last_store = u64::MAX;
                 let mut last_library = u64::MAX;
+                // The playhead as a client last heard it, and when. What it
+                // would believe now is derived from these two, which is what
+                // makes publishing again unnecessary until it would be wrong.
+                let mut anchor: Option<state::Anchor> = None;
+                let mut last_seekable = u64::MAX;
                 // Which transfers were running last tick. A transfer leaving
                 // this set has landed on disk, which wrote a cached path onto a
                 // library row — and nothing else says so, because the download
@@ -2231,14 +2246,37 @@ impl KoanEngine {
                             ..snapshot.clone()
                         },
                     });
-                    // Unguarded: a paused position does not move, so publishing
-                    // it says nothing and costs nothing. The seekable extent
-                    // does move while paused, which is the case a "only while
-                    // playing" guard would have got wrong.
-                    out.publish(StateSlice::Playhead {
-                        position_ms: snapshot.position_ms,
-                        seekable_ms: engine.state.seekable_ms(),
+                    // Published when a client's own reckoning would be wrong,
+                    // not when the number changed — it changes continuously, by
+                    // definition, and saying so ten times a second is a stream
+                    // that can never go quiet while music plays. A playhead
+                    // advancing at one second per second is the one thing a
+                    // client can work out for itself; a seek, a pause, a track
+                    // boundary and a stall are not, and each of them breaks the
+                    // prediction by more than the tolerance below.
+                    let playing = snapshot.state == types::PlayState::Playing;
+                    let seekable = engine.state.seekable_ms();
+                    let now = Instant::now();
+                    let adrift = anchor.is_none_or(|held: state::Anchor| {
+                        held.stale(snapshot.position_ms, playing, now, PLAYHEAD_TOLERANCE_MS)
                     });
+                    // The extent a download reaches grows with every chunk, and
+                    // a bar drawn 200ms of audio short of the truth is a bar
+                    // nobody can tell from a correct one.
+                    let stretched = last_seekable.abs_diff(seekable) > SEEKABLE_TOLERANCE_MS;
+                    if adrift || stretched {
+                        anchor = Some(state::Anchor {
+                            position_ms: snapshot.position_ms,
+                            playing,
+                            at: now,
+                        });
+                        last_seekable = seekable;
+                        out.publish(StateSlice::Playhead {
+                            position_ms: snapshot.position_ms,
+                            seekable_ms: seekable,
+                            playing,
+                        });
+                    }
 
                     // Ten a second, which is this loop's rate and fast enough
                     // that a figure on screen reacts as a transfer changes pace.

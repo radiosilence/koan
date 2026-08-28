@@ -216,14 +216,20 @@ struct TransportBar: View {
     }
 }
 
-/// Drag to scrub. The engine keeps reporting its own position throughout, so
-/// the drag value takes precedence until it's released.
+/// Drag to scrub. The drag value takes precedence until it's released.
+///
+/// Nothing here is told the position as it moves. The engine sends an anchor
+/// when the playhead stops being predictable — a seek, a pause, a new track —
+/// and between those the bar is *animated* to the end of the track over
+/// however long is left of it. That is one animation per anchor rather than a
+/// redraw per tick, and it runs where animations run rather than on this
+/// thread. The elapsed figure is a system-drawn timer for the same reason.
 private struct SeekBar: View {
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
         HStack(spacing: 8) {
-            Text(Format.duration(displayedPosition))
+            elapsed
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 40, alignment: .trailing)
@@ -258,18 +264,18 @@ private struct SeekBar: View {
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a
                     // position off, not a thing that needs to say whose it is.
-                    Canvas { context, size in
-                        context.fill(Self.mark(in: size, fraction: player.progress), with: .style(.primary))
-                    }
-                    // The head itself, which the played extent cannot show on
-                    // its own: a third of a minute into nine hours is a tenth
-                    // of a percent of the bar, narrower than the bar is thick,
-                    // and a capsule that short is not drawn at all. A mark that
-                    // does not shrink with the fraction is the only thing that
-                    // says where playback is on a track this long.
-                    Canvas { context, size in
-                        context.fill(Self.head(in: size, fraction: player.progress), with: .style(.primary))
-                    }
+                    //
+                    // Both the played extent and the head, as layers rather
+                    // than as marks redrawn at each position — see
+                    // `SeekProgress`. The head is what the extent cannot show
+                    // on its own: a third of a minute into nine hours is a
+                    // tenth of a percent of the bar, narrower than the bar is
+                    // thick, and a capsule that short is not drawn at all.
+                    SeekProgress(
+                        fraction: reached,
+                        remaining: runway,
+                        thickness: Self.thickness
+                    )
                 }
                 .contentShape(.rect)
                 // Always attached, even where there is nowhere to drag to. The
@@ -304,23 +310,6 @@ private struct SeekBar: View {
 
     /// A capsule covering `fraction` of the bar, centred vertically. Shorter
     /// than its own thickness it would draw as a squashed dot, so it doesn't.
-    /// A round head centred on `fraction`, kept inside the bar at both ends so
-    /// it never hangs off the track it is marking.
-    private static func head(in size: CGSize, fraction: Double) -> Path {
-        let diameter = thickness * 2
-        let travel = size.width - diameter
-        guard travel > 0 else { return Path() }
-        let x = travel * fraction.clamped()
-        return Path(
-            ellipseIn: CGRect(
-                x: x,
-                y: (size.height - diameter) / 2,
-                width: diameter,
-                height: diameter
-            )
-        )
-    }
-
     private static func mark(in size: CGSize, fraction: Double) -> Path {
         let width = size.width * fraction.clamped()
         guard width >= thickness else { return Path() }
@@ -329,8 +318,45 @@ private struct SeekBar: View {
         )
     }
 
-    private var displayedPosition: UInt64 {
-        UInt64(player.progress * Double(player.durationMs))
+    /// Where the bar starts from: the drag if there is one, otherwise the
+    /// playhead as of now.
+    private var reached: Double {
+        if let scrubbing = player.scrubbing { return scrubbing }
+        guard player.durationMs > 0 else { return 0 }
+        return Double(player.playhead.at(within: player.durationMs)) / Double(player.durationMs)
+    }
+
+    /// How much of the track is left to animate through, and zero whenever the
+    /// bar should simply stay where it was put — paused, stopped, dragged, or
+    /// a stream that cannot yet say how long it is.
+    private var runway: TimeInterval {
+        guard player.scrubbing == nil, player.playhead.playing, player.durationMs > 0 else {
+            return 0
+        }
+        let position = player.playhead.at(within: player.durationMs)
+        return Double(player.durationMs - position) / 1000
+    }
+
+    /// The elapsed figure, drawn by the system from the same anchor.
+    ///
+    /// `Text(timerInterval:)` counts on its own without this view being
+    /// evaluated again, which is the whole point: a label that ticks once a
+    /// second is a second's worth of SwiftUI work in this window.
+    @ViewBuilder private var elapsed: some View {
+        let playhead = player.playhead
+        if let scrubbing = player.scrubbing {
+            Text(Format.duration(UInt64(scrubbing * Double(player.durationMs))))
+        } else if playhead.playing, player.durationMs > 0 {
+            // The moment the track would have started, so counting up from it
+            // reads as the elapsed time.
+            let started = playhead.at.addingTimeInterval(-Double(playhead.positionMs) / 1000)
+            Text(
+                timerInterval: started...started.addingTimeInterval(Double(player.durationMs) / 1000),
+                countsDown: false
+            )
+        } else {
+            Text(Format.duration(playhead.at(within: player.durationMs)))
+        }
     }
 
     /// How much of what is playing has arrived, while it is still arriving.

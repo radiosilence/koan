@@ -93,12 +93,13 @@ final class NowPlayingCentre {
 
     // MARK: - Now Playing info
 
-    /// Cheap when nothing has changed, which at a position tick is most of the
-    /// time.
+    /// Cheap when nothing has changed. The system extrapolates the elapsed
+    /// time from the rate it was given, so this wants telling exactly when the
+    /// playhead stops being predictable — which is when the anchor arrives.
     func refresh() {
         guard let player else { return }
         let now = mirror.playback
-        let positionMs = mirror.positionMs
+        let positionMs = mirror.playhead.at(within: now.durationMs)
 
         guard let entry = now.entry else {
             if publishedTrack != nil || publishedState != nil {
