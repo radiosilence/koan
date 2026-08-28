@@ -721,9 +721,15 @@ impl SharedPlayerState {
         self.bump_version();
     }
 
-    /// Update playlist item metadata after a full download completes.
-    /// Used for progressive enhancement: streaming started with partial Symphonia tags,
-    /// now the full file is available so we can refresh with complete lofty metadata.
+    /// Take what a finished download's own tags can add.
+    ///
+    /// Streaming starts on partial Symphonia tags, so an item with nothing
+    /// behind it takes the lot once the whole file is there. An item that came
+    /// out of the library does not: the record is what the queue was built
+    /// from and what every other track on it carries, and a file whose tags
+    /// disagree — a server album titled one way, the file inside titled
+    /// another — would split its album in two the moment it finished
+    /// downloading. The duration is the file's to know either way.
     pub fn update_item_metadata(
         &self,
         id: QueueItemId,
@@ -735,10 +741,12 @@ impl SharedPlayerState {
     ) {
         let mut pl = self.playlist.write();
         if let Some(item) = pl.items.iter_mut().find(|item| item.id == id) {
-            item.title = title;
-            item.artist = artist;
-            item.album_artist = album_artist;
-            item.album = album;
+            if item.db_id.is_none() {
+                item.title = title;
+                item.artist = artist;
+                item.album_artist = album_artist;
+                item.album = album;
+            }
             if let Some(dur) = duration_ms {
                 item.duration_ms = Some(dur);
             }
@@ -1710,6 +1718,53 @@ mod tests {
         let bogus = QueueItemId::new();
         let mates = state.same_album_item_ids(bogus);
         assert!(mates.is_empty());
+    }
+
+    // --- update_item_metadata ---
+
+    #[test]
+    fn test_update_item_metadata_leaves_library_tags_alone() {
+        let state = SharedPlayerState::new();
+        let mut item = make_album_item("A1", "Nite Versions (mixed)", "Soulwax");
+        item.db_id = Some(29615);
+        let id = item.id;
+        state.add_items(vec![item]);
+
+        state.update_item_metadata(
+            id,
+            "[unknown]".into(),
+            "Soulwax".into(),
+            "Soulwax".into(),
+            "Nite Versions".into(),
+            Some(54_000),
+        );
+
+        let pl = state.playlist.read();
+        assert_eq!(pl.items[0].album, "Nite Versions (mixed)");
+        assert_eq!(pl.items[0].title, "A1");
+        assert_eq!(pl.items[0].duration_ms, Some(54_000));
+    }
+
+    #[test]
+    fn test_update_item_metadata_fills_in_an_item_with_nothing_behind_it() {
+        let state = SharedPlayerState::new();
+        let item = make_album_item("A1", "", "");
+        let id = item.id;
+        state.add_items(vec![item]);
+
+        state.update_item_metadata(
+            id,
+            "Teachers".into(),
+            "Soulwax".into(),
+            "Soulwax".into(),
+            "Nite Versions".into(),
+            Some(148_000),
+        );
+
+        let pl = state.playlist.read();
+        assert_eq!(pl.items[0].title, "Teachers");
+        assert_eq!(pl.items[0].album, "Nite Versions");
+        assert_eq!(pl.items[0].duration_ms, Some(148_000));
     }
 
     // --- move_item_to ---
