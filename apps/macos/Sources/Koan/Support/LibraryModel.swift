@@ -317,6 +317,7 @@ final class LibraryModel {
                 )
             }.value
         }
+        FrameTimer.shared.note("record")
         detailRecord = loaded
     }
 

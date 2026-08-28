@@ -53,6 +53,8 @@ final class FrameTimer: NSObject {
         var evaluated: Duration?
         /// Every tick since the tap, as an offset from it.
         var ticks: [Duration] = []
+        /// TEMPORARY (#380): what landed when, to name the second commit.
+        var notes: [(String, Duration)] = []
     }
 
     /// A gesture that should end in a new page. Supersedes any move still in
@@ -80,13 +82,20 @@ final class FrameTimer: NSObject {
         self.move = move
     }
 
+    /// TEMPORARY (#380): mark a state change against the tap that caused it.
+    func note(_ name: String) {
+        guard var move else { return }
+        move.notes.append((name, .now - move.started))
+        self.move = move
+    }
+
     @objc private func tick() {
         guard var move else { return discard() }
         move.ticks.append(.now - move.started)
         self.move = move
         guard let evaluated = move.evaluated, settled(move.ticks) else { return }
         Trace.signposter.endInterval("tap-to-frame", move.signpost)
-        report(evaluated: evaluated, ticks: move.ticks)
+        report(evaluated: evaluated, ticks: move.ticks, notes: move.notes)
         discard()
     }
 
@@ -98,7 +107,7 @@ final class FrameTimer: NSObject {
             .allSatisfy { $0 - $1 < Self.stall }
     }
 
-    private func report(evaluated: Duration, ticks: [Duration]) {
+    private func report(evaluated: Duration, ticks: [Duration], notes: [(String, Duration)]) {
         // The frame that could have carried the page, and every stall the run
         // loop took after it — a record arrives in more than one commit, and
         // the later ones are still time spent looking at the old page.
@@ -115,6 +124,10 @@ final class FrameTimer: NSObject {
                    privacy: .public)
             """
         )
+        let landed = notes.map { "\($0.0)@\(Self.ms($0.1))" }.joined(separator: " ")
+        let series = ticks.map { Self.ms($0) }.joined(separator: " ")
+        log.info("  landed \(landed, privacy: .public)")
+        log.info("  ticks \(series, privacy: .public)")
     }
 
     /// The link only runs between a tap and the frame that answers it; leaving

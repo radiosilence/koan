@@ -82,6 +82,7 @@ struct ArtworkBleed: View {
 
     private func show(_ new: NSImage?) {
         guard new !== image else { return }
+        FrameTimer.shared.note("wash-image")
         image = new
     }
 }

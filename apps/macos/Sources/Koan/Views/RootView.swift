@@ -146,6 +146,7 @@ struct RootView: View {
             // `LibraryModel.prepare(album:)` — so this is the usual path, and
             // the room is the right colour in the frame the page appears in.
             if let known = art.cachedColour(for: colourSource) {
+                FrameTimer.shared.note("tint-cached")
                 withAnimation(Self.tintEase) { recordTint = known }
                 return
             }
@@ -155,6 +156,7 @@ struct RootView: View {
             // it for artwork, threads and a slot on the main actor.
             try? await Task.sleep(for: .milliseconds(150))
             let colour = await art.dominantColour(for: colourSource)
+            FrameTimer.shared.note("tint-fetched")
             withAnimation(Self.tintEase) {
                 recordTint = colour
             }
