@@ -35,13 +35,18 @@ struct DriftingWash: NSViewRepresentable {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
     let image: NSImage?
+    /// Whether nothing is an answer. A sleeve still being fetched is not a
+    /// record without one, and clearing the wash for it wipes the room grey and
+    /// then fades the new colour in over two seconds. While it is pending the
+    /// room keeps what it is wearing.
+    var pending = false
     /// Whether the room is breathing. False settles it where it stands.
     let drifts: Bool
 
     func makeNSView(context: Context) -> WashView { WashView() }
 
     func updateNSView(_ view: WashView, context: Context) {
-        view.show(image)
+        if !(pending && image == nil) { view.show(image) }
         view.drift(drifts)
     }
 }
@@ -201,6 +206,14 @@ final class WashView: NSView {
     /// is dropped rather than drawn.
     private var generation = 0
 
+    /// The keys the drift is installed under.
+    ///
+    /// Named, and removed by name. `removeAllAnimations` also took the dissolve
+    /// between two records with it — and `start()` runs from `layout()`, which a
+    /// page switch triggers, so the fade was wiped a frame or two after it began
+    /// and the room changed colour in a cut.
+    nonisolated fileprivate static let driftKeys = ["scale", "rotation", "position"]
+
     func drift(_ on: Bool) {
         guard on != drifting else { return }
         drifting = on
@@ -214,7 +227,7 @@ final class WashView: NSView {
     private func start() {
         guard bounds.width > 0 else { return }
         for texture in [current, previous] {
-            texture.removeAllAnimations()
+            texture.removeDrift()
             texture.add(
                 Self.breathe(
                     "transform.scale",
@@ -267,7 +280,7 @@ final class WashView: NSView {
                 texture.transform = held.transform
                 texture.position = held.position
             }
-            texture.removeAllAnimations()
+            texture.removeDrift()
             CATransaction.commit()
 
             CATransaction.begin()
@@ -300,4 +313,11 @@ final class WashView: NSView {
         return animation
     }
 
+}
+
+private extension CALayer {
+    /// Take the drift off, and leave everything else — see `WashView.driftKeys`.
+    nonisolated func removeDrift() {
+        for key in WashView.driftKeys { removeAnimation(forKey: key) }
+    }
 }

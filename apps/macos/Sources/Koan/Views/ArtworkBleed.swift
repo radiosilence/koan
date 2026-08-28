@@ -26,11 +26,27 @@ struct ArtworkBleed: View {
     @Environment(CoverArtCache.self) private var cache
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("graphics") private var graphics = Graphics.full
-    /// Held rather than drawn through `AlbumArtwork`, which shows a placeholder
-    /// while it loads. Over a two second dissolve that placeholder is a long
-    /// grey wipe between two records, so the old cover stays up until the new
-    /// one is actually in hand.
-    @State private var image: NSImage?
+    /// The last cover that had to be fetched, and the record it was for. Only
+    /// consulted when the cache cannot answer.
+    @State private var fetched: (source: AlbumArtwork.Source, image: NSImage?)?
+
+    /// What this record's sleeve is — read straight through the cache on every
+    /// pass, the way `AlbumArtwork` reads its bitmap. Held in `@State` and
+    /// written by a task, the wash was a second commit after every navigation,
+    /// and a commit that dirties a drawn layer is a synchronous round trip to
+    /// the render server whatever it is carrying.
+    ///
+    /// Doubly optional on purpose. The outer `nil` means *nobody has answered
+    /// yet*, which is not the same as a record having no cover: the first keeps
+    /// the room as it is until the sleeve arrives, the second empties it. Told
+    /// apart, a record whose art is still being fetched no longer wipes the
+    /// wash grey and then fades the new one in over two seconds.
+    private var answered: NSImage?? {
+        guard let source else { return .some(nil) }
+        if let held = cache.cached(source, size: .tile) { return .some(held) }
+        guard let fetched, fetched.source == source else { return nil }
+        return .some(fetched.image)
+    }
 
     /// Whether the wash is actually moving: something to breathe to, a setting
     /// that allows it, and a system that has not asked for less motion.
@@ -50,7 +66,7 @@ struct ArtworkBleed: View {
     /// the dissolve between records all belong to the compositor now, and this
     /// view's body runs when a record changes and at no other time.
     private var bleed: some View {
-        DriftingWash(image: image, drifts: breathes)
+        DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes)
             .opacity(0.5)
             .mask(
                 LinearGradient(
@@ -64,25 +80,15 @@ struct ArtworkBleed: View {
             .task(id: source) { await load() }
     }
 
+    /// Only for a cover the cache could not already answer for. The usual path
+    /// is read through in `cover`, in the same pass as the page that changed it.
     private func load() async {
-        guard let source else {
-            show(nil)
-            return
-        }
-        if let cached = cache.cached(source, size: .tile) {
-            show(cached)
-            return
-        }
+        guard let source, cache.cached(source, size: .tile) == nil else { return }
         let loaded = await cache.image(for: source, size: .tile)
         // A cancelled load means the record moved on again; whatever came back
         // is for the wrong one.
         guard !Task.isCancelled else { return }
-        show(loaded)
-    }
-
-    private func show(_ new: NSImage?) {
-        guard new !== image else { return }
-        image = new
+        fetched = (source, loaded)
     }
 }
 

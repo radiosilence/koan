@@ -398,19 +398,22 @@ private struct AppearanceSettings: View {
     var body: some View {
         Form {
             Section {
+                // Positioned by where a step sits in the list, not by its raw
+                // value: the raw values are what is on disk and cannot be
+                // reordered, and the cheapest step was added last.
                 Slider(
                     value: Binding(
-                        get: { Double(graphics.rawValue) },
-                        set: { graphics = Graphics(rawValue: Int($0.rounded())) ?? .full }
+                        get: { Double(Graphics.allCases.firstIndex(of: graphics) ?? 0) },
+                        set: { graphics = Graphics.allCases[Int($0.rounded())] }
                     ),
                     in: 0...Double(Graphics.allCases.count - 1),
                     step: 1
                 ) {
                     Text("Level")
                 } minimumValueLabel: {
-                    Text("Plain").font(.caption)
+                    Text(Graphics.allCases.first?.label ?? "").font(.caption)
                 } maximumValueLabel: {
-                    Text("Full").font(.caption)
+                    Text(Graphics.allCases.last?.label ?? "").font(.caption)
                 }
                 Text("**\(graphics.label)** — \(graphics.detail)")
                     .font(.caption)

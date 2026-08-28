@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **Opening a record says how long it took.** A signpost in a view says when SwiftUI worked out what to draw, which on this gesture is a few milliseconds and nowhere near when you see anything — layout, the CoreAnimation commit and the render server all come after the last line any view gets to run. `FrameTimer` times the tap against the display link instead, and reports the body, the frame that could carry it, and every stall after that. See CONTRIBUTING.
+
 - **Every page arrives complete.** A record already loaded before it navigated; everywhere else arrived empty and filled in a query later — an artist's records, a playlist's rows, favourites, history, search results, and the queue you left behind when koan reopened. `Navigator` now loads whatever a page draws and only then moves to it, so the first frame of a page is the finished page. There is no partial render to see and no second render a frame later putting the rows under a heading that was already up.
 
   A page about one thing holds what it is about as one value, read whole and stamped with the library version it was read at — so asking again for the page on screen costs nothing, and asking after a scan is a real read. Sections hand their rows to the navigator, which adopts the page and its rows in one change rather than two. Typing in the search field no longer jumps to an empty results page on the first keystroke: it stays where you are until there is something to show.
@@ -15,6 +17,10 @@
 - **A track row no longer copies the whole track list to itself.** Each row carries the ids of the list it belongs to, so playing it keeps the rest queued behind it — and that list was rebuilt inside the row's own body, once per row. It is built once per pass now.
 
 ### Fixed
+
+- **The room changes colour by fading again, not by cutting.** The wash installs a two second dissolve when the record changes, and the drift installs itself by clearing every animation on the same layers first — which took the dissolve with it. The drift is reinstalled from `layout()`, which a page switch triggers, so the fade was wiped a frame or two after it started and the new cover snapped in. The drift is removed by name now, and leaves alone what it did not put there.
+
+- **Back moves on the first press.** The cursor stepped on the click and left the page to catch up, so pressing Back while a record was still being read cancelled that record — which then never applied and never recorded — and stepped off a page nobody had arrived at. The screen stayed where it was and it took a second press to go anywhere. Where you are now changes beside the page rather than ahead of it.
 
 - **The transport no longer sits on the lyrics.** It floats over the window rather than inside the stage, and it already stepped aside for the sidebar — but not for the lyrics panel, so the last few lines of a song were behind the glass whenever the panel was open. The panel measures itself the way the sidebar does and the bar stops at its edge, tracking it as it is dragged.
 

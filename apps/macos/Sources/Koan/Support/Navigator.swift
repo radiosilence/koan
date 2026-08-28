@@ -104,6 +104,7 @@ final class Navigator {
     }
 
     func open(album id: Int64, highlighting trackId: Int64? = nil) {
+        FrameTimer.shared.begin()
         // Set before the move rather than on arrival: the page that reads it is
         // not on screen yet, and this is the same click.
         highlightedTrackId = trackId
@@ -120,20 +121,20 @@ final class Navigator {
 
     func goBack() {
         guard canGoBack else { return }
-        cursor -= 1
-        move(to: history[cursor], recording: false)
+        let landing = cursor - 1
+        move(to: history[landing]) { [weak self] in self?.cursor = landing }
     }
 
     func goForward() {
         guard canGoForward else { return }
-        cursor += 1
-        move(to: history[cursor], recording: false)
+        let landing = cursor + 1
+        move(to: history[landing]) { [weak self] in self?.cursor = landing }
     }
 
     /// Go to a page, recording it. The only way anything moves.
     func go(to next: Page) {
         guard next != current else { return }
-        move(to: next, recording: true)
+        move(to: next) { [weak self] in self?.record(next) }
     }
 
     /// Load the page, *then* move to it.
@@ -148,7 +149,15 @@ final class Navigator {
     /// One task at a time, so a second click while the first page is still
     /// being read wins: the older move is cancelled before it can apply, rather
     /// than landing on top of the newer one.
-    private func move(to next: Page, recording: Bool) {
+    ///
+    /// `arriving` is where the history moves, and it runs beside the page
+    /// rather than before it. Back used to step the cursor on the click and
+    /// leave the move to catch up, so a Back pressed while a record was still
+    /// being read cancelled that record — which then never applied and never
+    /// recorded — and stepped off a page nobody had arrived at. The screen did
+    /// not move, and it took a second press to go anywhere. Nothing about where
+    /// you are changes until there is a page to be there.
+    private func move(to next: Page, arriving: @escaping @MainActor () -> Void) {
         moving?.cancel()
         moving = Task {
             await Trace.region("click-to-page") {
@@ -156,7 +165,7 @@ final class Navigator {
                 guard !Task.isCancelled else { return }
                 Trace.region("apply") {
                     apply(next, showing: listing)
-                    if recording { record(next) }
+                    arriving()
                 }
             }
         }

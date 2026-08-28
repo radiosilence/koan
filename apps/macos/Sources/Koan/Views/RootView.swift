@@ -34,17 +34,26 @@ struct RootView: View {
     @Environment(PlaylistsModel.self) private var playlists
 
     @AppStorage("showLyrics") private var showLyrics = false
+    /// Read for the window's own glass — the toolbar and the transport's soft
+    /// edge, which are the platform's rather than koan's and which no step of
+    /// this setting used to reach.
+    @AppStorage("graphics") private var graphics = Graphics.full
     @State private var transportHeight: CGFloat = 0
-    /// The colour of the record playing. The app's own accent is a neutral, so
-    /// the only colour in the chrome is the one the music brought.
-    @State private var recordTint: Color?
+    /// The colour of a record the cache could not already answer for, and which
+    /// record it was worked out for. Only consulted when the cache cannot.
+    @State private var fetchedTint: (source: AlbumArtwork.Source, colour: Color?)?
 
-    /// Matched to the wash's own dissolve, because they are one change: the
-    /// room's colour arriving in two steps at two speeds is what reads as a
-    /// glitch. The one animation here the compositor cannot take — a tint is a
-    /// value every control reads, not a property of a layer — but it is only
-    /// colour resolution, and it measures at a few percent of the main thread
-    /// rather than the layout pass the drift used to cost.
+    /// Only for a colour that had to be worked out, which arrives after the page
+    /// and would otherwise cut. A colour already in hand needs no ease: it lands
+    /// in the same frame as the record it belongs to, which is what an ease was
+    /// standing in for.
+    ///
+    /// It is deliberately not on the common path. A tint is a value every
+    /// control reads rather than a property of a layer, so the compositor
+    /// cannot take this one — easing it over two seconds is a hundred and
+    /// twenty renders of the whole window, each one a commit, and each commit a
+    /// synchronous round trip to the render server. That was half of what
+    /// opening a record cost.
     private static let tintEase = Animation.easeInOut(duration: 2)
     /// Watched rather than inferred from the measured width: a collapsed
     /// sidebar still reports its last width, so the transport kept a gap where
@@ -61,6 +70,17 @@ struct RootView: View {
     /// history — is not about any record in particular, so it answers with the
     /// one playing. The room is coloured by the music wherever you have
     /// wandered off to, and only a page that disagrees says otherwise.
+    /// Read straight through the cache on every pass, the way `AlbumArtwork`
+    /// reads its bitmap: a colour the app already holds lands in the same commit
+    /// as the page that wanted it. Held in `@State` and written by a task, it
+    /// was a second commit every time — the page, and then the room around it.
+    private var recordTint: Color? {
+        guard let colourSource else { return nil }
+        if let held = art.cachedColour(for: colourSource) { return held }
+        guard let fetchedTint, fetchedTint.source == colourSource else { return nil }
+        return fetchedTint.colour
+    }
+
     private var colourSource: AlbumArtwork.Source? {
         switch nav.current {
         case .album(let id): .album(id)
@@ -87,7 +107,7 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
             StageView()
-                .clearsTransport(transportHeight)
+                .clearsTransport(transportHeight, glass: graphics.usesWindowGlass)
                 // A page fills the column whether or not it has anything in it
                 // to fill it with. Results while the query is still running
                 // measure nothing, and an unfilled page leaves the transport
@@ -136,28 +156,18 @@ struct RootView: View {
             library.libraryChanged()
             playlists.load()
         }
+        // Only for a record whose colour is not already known. The usual path
+        // is answered above, in the same pass as the page — navigating warms
+        // this alongside the rows, see `LibraryModel.prepare(album:)`.
         .task(id: colourSource) {
-            guard let colourSource else {
-                withAnimation(Self.tintEase) { recordTint = nil }
-                return
-            }
-            // Already worked out, so it lands with the page rather than after
-            // it. Navigating warms this alongside the rows — see
-            // `LibraryModel.prepare(album:)` — so this is the usual path, and
-            // the room is the right colour in the frame the page appears in.
-            if let known = art.cachedColour(for: colourSource) {
-                withAnimation(Self.tintEase) { recordTint = known }
-                return
-            }
-            // Not yet known, so it has to be fetched — and the wash is a slow
-            // ease into the background that nobody is waiting on. It stands
+            guard let colourSource, art.cachedColour(for: colourSource) == nil else { return }
+            // Nobody is waiting on a slow ease into the background, so it stands
             // aside until the page in front of it has drawn rather than racing
             // it for artwork, threads and a slot on the main actor.
             try? await Task.sleep(for: .milliseconds(150))
             let colour = await art.dominantColour(for: colourSource)
-            withAnimation(Self.tintEase) {
-                recordTint = colour
-            }
+            guard !Task.isCancelled else { return }
+            withAnimation(Self.tintEase) { fetchedTint = (colourSource, colour) }
         }
         // Overrides the app-wide tint for everything below, which is every
         // control koan draws itself. What AppKit draws — list selection, focus
@@ -169,7 +179,11 @@ struct RootView: View {
         // of the record. Hidden, the glass controls sit in that colour — which
         // is the whole point of them being glass — and the scroll edge effect
         // keeps rows legible as they pass under.
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        // Restored at `bare`: the ground it paints is opaque, so nothing behind
+        // it is sampled and a page switch does not redraw it.
+        .toolbarBackgroundVisibility(
+            graphics.usesWindowGlass ? .hidden : .automatic, for: .windowToolbar
+        )
         .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { handleSubmit() }
         // On the window rather than inside the detail column, padded clear of
@@ -477,11 +491,12 @@ private extension View {
     /// and a control size, so any number written here would be right until one
     /// of them changed and then be a gap, or a row clipped by a bar with
     /// nothing to say why.
-    func clearsTransport(_ height: CGFloat) -> some View {
+    func clearsTransport(_ height: CGFloat, glass: Bool) -> some View {
         // Content passing under the glass is what makes it glass. The soft edge
         // fades a row out as it goes, so one half under the bar reads as behind
-        // it rather than cut off.
+        // it rather than cut off — and it is a live blur of a window-wide strip,
+        // which is why `bare` does without it and takes the hard edge instead.
         safeAreaPadding(.bottom, height)
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
     }
 }
