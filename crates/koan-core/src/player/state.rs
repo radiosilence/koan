@@ -302,6 +302,7 @@ impl SharedPlayerState {
     }
 
     pub fn set_playback_state(&self, state: PlaybackState) {
+        self.changed();
         self.state.store(state as u8, Ordering::Release);
     }
 
@@ -311,6 +312,11 @@ impl SharedPlayerState {
 
     pub fn set_position_ms(&self, pos: u64) {
         self.position_ms.store(pos, Ordering::Release);
+        // Deliberately silent. The playhead advances on its own and is
+        // published as an anchor rather than as a reading — a wake per
+        // position would be the tick this whole arrangement removes. A seek, a
+        // pause and a track change all move something else here as well, and
+        // those are exactly the ones a client has to be told about.
     }
 
     pub fn track_info(&self) -> Option<TrackInfo> {
@@ -318,6 +324,7 @@ impl SharedPlayerState {
     }
 
     pub fn set_track_info(&self, info: Option<TrackInfo>) {
+        self.changed();
         *self.track_info.write() = info;
     }
 
@@ -469,6 +476,7 @@ impl SharedPlayerState {
     }
 
     pub fn set_radio_mode(&self, enabled: bool) {
+        self.changed();
         self.radio_mode.store(enabled, Ordering::Release);
     }
 
@@ -483,6 +491,7 @@ impl SharedPlayerState {
     }
 
     pub fn set_output_sample_rate(&self, rate: u32) {
+        self.changed();
         self.output_sample_rate
             .store(u64::from(rate), Ordering::Release);
     }
@@ -503,6 +512,16 @@ impl SharedPlayerState {
 
     fn bump_version(&self) {
         self.playlist_version.fetch_add(1, Ordering::AcqRel);
+        self.changed();
+    }
+
+    /// Say that something here moved, without saying what.
+    ///
+    /// Every version and atomic in this struct stays exactly as it was — they
+    /// are what a watcher consults to find out what changed. This is what
+    /// spares it looking when nothing did. See `crate::signal`.
+    pub fn changed(&self) {
+        crate::signal::engine_changed().bump();
     }
 
     // --- Playlist mutations (called from player thread via commands) ---

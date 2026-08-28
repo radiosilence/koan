@@ -107,6 +107,14 @@ pub struct DownloadStore {
     /// Separate from the entries so taking a sample does not touch the list
     /// every client is reading.
     samples: parking_lot::Mutex<HashMap<QueueItemId, Sample>>,
+    /// When the last reading was taken, and the count that goes with it.
+    ///
+    /// Readings are taken as bytes land rather than on a timer — the thing
+    /// that knows a transfer moved is the code moving it — and a chunk lands
+    /// far more often than a figure needs redrawing, so this is what holds
+    /// them to `MIN_SAMPLE_GAP`.
+    last_sample: parking_lot::Mutex<Option<Instant>>,
+    figures: AtomicU64,
     /// How many settled entries to keep. This is a view of now, not an archive,
     /// and old rows would push the live ones off the end of it.
     settled_limit: usize,
@@ -118,6 +126,8 @@ impl DownloadStore {
             entries: parking_lot::RwLock::new(Vec::new()),
             version: AtomicU64::new(0),
             samples: parking_lot::Mutex::new(HashMap::new()),
+            last_sample: parking_lot::Mutex::new(None),
+            figures: AtomicU64::new(0),
             settled_limit: 50,
         })
     }
@@ -127,6 +137,13 @@ impl DownloadStore {
     /// counters every frame regardless.
     pub fn version(&self) -> u64 {
         self.version.load(Ordering::Acquire)
+    }
+
+    /// Bumped whenever a byte count or a rate here moved. What a client
+    /// redraws a figure on, as against `version`, which is the list itself
+    /// changing shape.
+    pub fn figures(&self) -> u64 {
+        self.figures.load(Ordering::Acquire)
     }
 
     /// Everything, running first, then whatever settled most recently.
@@ -223,8 +240,15 @@ impl DownloadStore {
         let mut entries = self.entries.write();
         if let Some(entry) = entries.iter_mut().find(|d| d.id == id) {
             entry.state = state;
+            // Said here rather than at the next reading: a transfer that has
+            // finished takes no more readings, and a row left showing the rate
+            // it managed on its last chunk is a row that never stops.
+            entry.bytes_per_second = 0;
         }
         drop(entries);
+        self.samples.lock().remove(&id);
+        self.figures.fetch_add(1, Ordering::Release);
+        // `settle` bumps the version, which says so for both.
         self.settle();
     }
 
@@ -242,6 +266,7 @@ impl DownloadStore {
 
     fn bump(&self) {
         self.version.fetch_add(1, Ordering::Release);
+        crate::signal::engine_changed().bump();
     }
 }
 
@@ -264,13 +289,31 @@ const RATE_SMOOTHING: f64 = 0.3;
 const MIN_SAMPLE_GAP: Duration = Duration::from_millis(250);
 
 impl DownloadStore {
-    /// Take a rate reading. Called on a timer by whoever is watching.
+    /// Take a rate reading, if one is due.
+    ///
+    /// Called by the downloader as bytes land, not by a timer: what knows a
+    /// transfer moved is the code moving it, and what knows it stopped is the
+    /// absence of the next call. Chunks arrive far faster than a figure needs
+    /// redrawing, so this is gated to `MIN_SAMPLE_GAP` before it touches the
+    /// list every client is reading.
+    ///
+    /// Every running transfer is sampled, not just the one that moved: a
+    /// transfer that has stalled has nothing to report by definition, and its
+    /// figure decaying to zero is the one worth noticing.
     ///
     /// Rates live here rather than in each front end because every one of them
     /// would otherwise keep its own last-reading map and get a different
     /// answer.
-    pub fn sample_rates(&self) {
-        self.sample_rates_at(Instant::now());
+    pub fn progressed(&self) {
+        let now = Instant::now();
+        {
+            let mut last = self.last_sample.lock();
+            if last.is_some_and(|at| now.saturating_duration_since(at) < MIN_SAMPLE_GAP) {
+                return;
+            }
+            *last = Some(now);
+        }
+        self.sample_rates_at(now);
     }
 
     fn sample_rates_at(&self, now: Instant) {
@@ -315,6 +358,11 @@ impl DownloadStore {
         // A transfer that left the list leaves its reading behind with it.
         let live: std::collections::HashSet<QueueItemId> = entries.iter().map(|e| e.id).collect();
         samples.retain(|id, _| live.contains(id));
+
+        // Said once for the whole reading, so a client redraws every figure
+        // from one moment rather than a row at a time.
+        self.figures.fetch_add(1, Ordering::Release);
+        crate::signal::engine_changed().bump();
     }
 }
 
