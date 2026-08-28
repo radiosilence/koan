@@ -4,11 +4,11 @@
 
 ### Changed
 
-- **The playing indicator is a spectrum analyser, three columns wide.** It was a pair of sine waves the music modulated — the bands set how far the bars swung, never how high they stood — which meant a track that opens on ten seconds of silence got the full dance, because a carrier with nothing to scale it is still a carrier. The bars are the low, mid and high bands now, drawn at the height the analyser reports. Silence is flat. Pausing lets them fall away rather than freezing them mid-swing, which is what the TUI's spectrum has always done.
+- **The spectrum is published, not polled.** The playing indicator asked the engine for levels on a clock — a timer at first, then the display link — because there was no event to react to. There is one now: the analyser sends a frame when it has one, the app wakes on it, and the bars are drawn from what arrived. No timer, no tick, and no frame read twice or missed.
 
-  Bands are still measured against their own recent ceiling, so a quiet master is not a limp indicator, and the fall is the law the TUI's bars draw on: up on the frame it happens, down on a half-life so nothing snaps to zero between beats.
+  What falls out of that is the idle cost. The analyser decays the bars to flat when the play head stops rather than holding the last chord, and once they are flat it publishes nothing at all — so a paused koan wakes nothing. The thread itself parks on a wait instead of standing down to a quarter-second look-again loop: with no reader and nothing playing it is not scheduled at all, until a reader arrives or playback starts. That last one cannot be signalled from the play head, which the audio render callback writes and which may never take a lock, so the player says so on the two edges where silence ends.
 
-- **The analyser runs at the refresh rate of the display it is drawn on.** Its rate was a config figure and the macOS indicator sampled it on a timer of its own, so a 120Hz panel got 60 analyses drawn at 30, and two clocks decided between them which frames a bar was allowed to move on. The window knows what it is drawn on: koan sets the rate from the screen the window is on and again when it is dragged to another one or a display is reconfigured under it. The indicators read on the frame they draw, so a frame is one new set of numbers and there is no timer anywhere in it — nothing on screen means nothing read, and the analyser stands itself down a second later. The TUI is unchanged: its rate is still `visualizer.fps`, which is what the analyser starts at.
+  `koan-core` takes `tokio` for `sync` only — `watch` is the analyser telling its subscribers a frame is ready. No runtime, no reactor.
 
 ## v0.33.1 (2026-08-28)
 

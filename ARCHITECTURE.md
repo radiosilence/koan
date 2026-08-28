@@ -91,8 +91,10 @@ Five threads at steady state during playback:
 ┌─────────────────────────────────────────────────┐
 │ Analyzer Thread ("viz-analyzer")               │
 │ Always spawned. Reads VizBuffer, runs FFT,      │
-│ writes VizSnapshot. Configurable fps (default   │
-│ 60). Never blocks audio or UI.                  │
+│ publishes VizSnapshot. Runs at the rate a       │
+│ client asks for — the macOS app sets its        │
+│ display's. Parks when nothing reads and nothing │
+│ plays. Never blocks audio or UI.                │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -110,7 +112,7 @@ Five threads at steady state during playback:
 | Track boundaries | Decode | TUI, Player | `parking_lot::RwLock` |
 | `running` flag | Player (start/stop) | Audio RT | `AtomicBool` (Relaxed) |
 | Viz samples | Decode | Analyzer | `VizBuffer` (`parking_lot::Mutex` ring) |
-| Analysis output | Analyzer | TUI | `VizSnapshot` (`parking_lot::Mutex`) |
+| Analysis output | Analyzer | TUI, FFI clients | `VizSnapshot` (`parking_lot::RwLock` + `tokio::sync::watch` for subscribers) |
 
 **The golden rule: nothing on the audio render thread may allocate or lock.** It only touches atomics and the ring buffer consumer. This applies to both the CoreAudio callback (macOS) and the cpal callback (Linux).
 
@@ -215,7 +217,7 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
 | `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread), `VizLevels` (spectrum reduced to low/mid/high, cloning no waveform) |
-| `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold, beat detection (low-band transient). Configurable fps. Writes to `VizSnapshot`. |
+| `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold, beat detection (low-band transient). Runs at whatever rate a client sets, decays to flat when the play head stops, and parks when nothing is reading. Publishes to `VizSnapshot`. |
 | `streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
 
 ### `player/`

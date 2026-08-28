@@ -1,7 +1,8 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use parking_lot::{Mutex, RwLock};
+use parking_lot::{Condvar, Mutex, RwLock};
+use tokio::sync::watch;
 
 /// Number of spectrum bars produced by the analyzer.
 pub const NUM_BARS: usize = 48;
@@ -76,6 +77,25 @@ pub struct VizSnapshot {
     /// ever opening a visualiser, and an FFT sixty times a second for nobody
     /// is a percent of a core.
     reads: AtomicU64,
+    /// Bumped by every published frame, and the thing a subscriber waits on.
+    /// Nothing is sent through the channel but the count: a frame is a whole
+    /// snapshot behind a lock, so a waiter that misses two publishes wants the
+    /// newest one, not the two it slept through.
+    published: watch::Sender<u64>,
+    /// Where the analyser waits when there is nothing to analyse for, and how
+    /// it is woken. Parking rather than looking again on a timer is what makes
+    /// an idle koan cost nothing at all: the thread is not scheduled until a
+    /// reader arrives or playback starts.
+    ///
+    /// The flag under the lock is a wake that has already happened. It is what
+    /// makes a wake arriving in the moment before the thread parks — the whole
+    /// width of the race, and playback starting is exactly when it would land
+    /// — a park that returns immediately rather than one nothing will end.
+    park: Mutex<bool>,
+    unpark: Condvar,
+    /// Read on every frame read, so waking a parked analyser costs nothing on
+    /// the path that does not need it.
+    parked: AtomicBool,
     /// Microseconds between analysis passes.
     ///
     /// It lives beside the frame because the party who knows the right rate is
@@ -93,14 +113,65 @@ impl VizSnapshot {
         Arc::new(Self {
             inner: RwLock::new(VizFrame::default()),
             reads: AtomicU64::new(0),
+            published: watch::Sender::new(0),
+            park: Mutex::new(false),
+            unpark: Condvar::new(),
+            parked: AtomicBool::new(false),
             interval_us: AtomicU64::new(Self::interval_us(DEFAULT_FPS)),
         })
     }
 
     /// Read the latest frame. Acquires read lock, clones, releases — <1us.
     pub fn read(&self) -> VizFrame {
-        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.touch();
         self.inner.read().clone()
+    }
+
+    /// Say that someone wants frames: counted, and enough to wake an analyser
+    /// that had parked for want of a reader.
+    ///
+    /// A subscriber calls this before it waits. Waiting for a frame is wanting
+    /// one, and an analyser that stood down because nobody was reading would
+    /// otherwise never produce the frame being waited for.
+    pub fn touch(&self) {
+        self.reads.fetch_add(1, Ordering::Relaxed);
+        if self.parked.load(Ordering::Relaxed) {
+            self.wake();
+        }
+    }
+
+    /// Wake the analysis thread if it is parked.
+    ///
+    /// Called when playback starts: the play head is the one input the
+    /// analyser cannot be signalled from, because it is written by the audio
+    /// render callback, which may never take a lock.
+    pub fn wake(&self) {
+        let mut pending = self.park.lock();
+        *pending = true;
+        self.unpark.notify_all();
+    }
+
+    /// Park until something wants a frame again, or until `still_idle` is no
+    /// longer true at the moment the lock is held.
+    ///
+    /// The condition is checked under the same lock `wake` takes, so a reader
+    /// arriving between the check and the wait cannot be missed.
+    pub fn park_while_idle(&self, still_idle: impl Fn() -> bool) {
+        let mut pending = self.park.lock();
+        if std::mem::take(&mut pending) || !still_idle() {
+            return;
+        }
+        self.parked.store(true, Ordering::Relaxed);
+        while !*pending {
+            self.unpark.wait(&mut pending);
+        }
+        *pending = false;
+        self.parked.store(false, Ordering::Relaxed);
+    }
+
+    /// A receiver that wakes on each published frame. See `published`.
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.published.subscribe()
     }
 
     /// How many times the frame has been looked at, by either route. Only the
@@ -137,6 +208,9 @@ impl VizSnapshot {
     /// MUST only be called after all FFT computation is finished (never hold lock during FFT).
     pub fn write(&self, frame: VizFrame) {
         *self.inner.write() = frame;
+        // After the frame is in place, so a woken subscriber reads the frame
+        // it was told about rather than the one before it.
+        self.published.send_modify(|version| *version += 1);
     }
 
     /// Reduce the latest frame to three bands.
@@ -145,7 +219,7 @@ impl VizSnapshot {
     /// expensive part of a frame by an order of magnitude, and a caller drawing
     /// three bars would only average it away.
     pub fn levels(&self) -> VizLevels {
-        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.touch();
         let frame = self.inner.read();
         VizLevels::of(&frame.spectrum)
     }
@@ -436,6 +510,43 @@ mod tests {
         // A rate from outside koan: zero would be a division and a spin.
         snap.set_fps(0);
         assert_eq!(snap.fps(), 1);
+    }
+
+    #[test]
+    fn a_wake_landing_before_the_park_is_not_slept_through() {
+        let snap = VizSnapshot::new();
+        // Playback starting is a wake with no read behind it, and it can land
+        // in the moment between the analyser deciding to park and parking.
+        snap.wake();
+        // Would block forever if the wake had been missed.
+        snap.park_while_idle(|| true);
+
+        // And it is not sticky beyond the one park it was meant for.
+        let woken = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&woken);
+        let snapshot = Arc::clone(&snap);
+        let waiter = std::thread::spawn(move || {
+            snapshot.park_while_idle(|| true);
+            flag.store(true, Ordering::Relaxed);
+        });
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(
+            !woken.load(Ordering::Relaxed),
+            "parked thread woke on its own"
+        );
+        snap.wake();
+        waiter.join().unwrap();
+    }
+
+    #[test]
+    fn a_read_wakes_a_parked_analyser() {
+        let snap = VizSnapshot::new();
+        let snapshot = Arc::clone(&snap);
+        let waiter = std::thread::spawn(move || snapshot.park_while_idle(|| true));
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        // What a subscriber does before it waits for a frame.
+        snap.touch();
+        waiter.join().unwrap();
     }
 
     #[test]
