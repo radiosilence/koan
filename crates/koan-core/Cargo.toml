@@ -32,6 +32,9 @@ getrandom = "0.4"
 md5 = "0.8"
 # Async/threading
 parking_lot = "0.12"
+# Only `sync`: `watch` is the analyser telling its subscribers a frame is
+# ready. No runtime, no reactor — koan-core stays threads and channels.
+tokio = { version = "1", default-features = false, features = ["sync"] }
 rayon = "1"
 reqwest = { workspace = true }
 realfft = "3"

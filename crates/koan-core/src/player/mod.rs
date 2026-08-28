@@ -389,6 +389,7 @@ impl Player {
         if result.is_err() {
             self.stop_playback_and_clear_state();
         }
+        self.wake_analyzer();
         result
     }
 
@@ -945,7 +946,18 @@ impl Player {
                 return;
             }
             self.shared_state.set_playback_state(PlaybackState::Playing);
+            self.wake_analyzer();
         }
+    }
+
+    /// Tell the analyser there is about to be something to hear.
+    ///
+    /// It parks when nothing is playing and nothing is reading, and the one
+    /// thing it cannot be signalled from is the play head — that counter is
+    /// written by the audio render callback, which may never take a lock. So
+    /// the player says so instead, on the two edges where silence ends.
+    fn wake_analyzer(&self) {
+        self.viz_snapshot.wake();
     }
 
     /// Stop playback and clear playlist.

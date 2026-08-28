@@ -18,7 +18,7 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use crossbeam_channel::Sender;
 use koan_core::audio::viz::VizSnapshot;
@@ -133,6 +133,48 @@ fn init_logging() {
     }
 }
 
+/// One client's subscription to the analyser.
+///
+/// A cursor over the published frame, in the shape `StateStream` already uses:
+/// the value is a whole snapshot, so a subscriber that slept through two
+/// publishes wants the newest frame rather than the two it missed.
+#[derive(uniffi::Object)]
+pub struct VizStream {
+    /// Weak, so a client's loop ends when the engine goes rather than holding
+    /// the analyser up. The loop *is* the subscription.
+    viz: Weak<VizSnapshot>,
+    inner: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
+}
+
+impl VizStream {
+    fn new(viz: &Arc<VizSnapshot>) -> Arc<Self> {
+        // Counted as a reader from here rather than at the first frame: an
+        // analyser parked for want of one would otherwise never publish the
+        // frame this is about to wait for.
+        viz.touch();
+        Arc::new(Self {
+            viz: Arc::downgrade(viz),
+            inner: tokio::sync::Mutex::new(viz.subscribe()),
+        })
+    }
+}
+
+#[uniffi::export]
+impl VizStream {
+    /// The next frame, as three band energies. Waits until there is one.
+    ///
+    /// `None` once the engine is gone, which ends the caller's loop.
+    pub async fn next(&self) -> Option<VizLevels> {
+        let mut cursor = self.inner.lock().await;
+        // Marked seen *before* the wait, so a frame published between the last
+        // answer and this call is returned rather than slept through.
+        cursor.borrow_and_update();
+        cursor.changed().await.ok()?;
+        let viz = self.viz.upgrade()?;
+        Some(viz.levels().into())
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct KoanEngine {
     state: Arc<SharedPlayerState>,
@@ -226,6 +268,17 @@ impl KoanEngine {
     /// `queue()`, which allocates the whole list.
     pub fn playlist_version(&self) -> u64 {
         self.state.playlist_version()
+    }
+
+    /// Follow the spectrum, one message per analysed frame.
+    ///
+    /// The analyser is the clock. It runs at the rate the display asks for
+    /// (see `set_viz_fps`), publishes a frame when it has one, and publishes
+    /// nothing at all when the play head has stopped and the bars have fallen
+    /// — so a paused koan delivers no messages, wakes nothing, and the thread
+    /// that would have produced them is parked rather than looping.
+    pub fn viz_stream(&self) -> Arc<VizStream> {
+        VizStream::new(&self.viz)
     }
 
     /// What is coming out of the speakers right now, as three band energies.

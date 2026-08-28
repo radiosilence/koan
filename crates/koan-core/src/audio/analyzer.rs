@@ -48,8 +48,9 @@ const DB_CEIL: f32 = 0.0;
 /// Generous enough that a reader drawing slower than we analyse never trips it.
 const IDLE_AFTER: Duration = Duration::from_secs(1);
 
-/// How often a stood-down analyser looks for a reader coming back.
-const IDLE_POLL: Duration = Duration::from_millis(250);
+/// Below this a band is off. Reached by decay, which is asymptotic — without
+/// a floor the last frame is never quite the flat one.
+const SILENT: f32 = 0.001;
 
 // ── Frequency scale ──────────────────────────────────────────────────────────
 
@@ -482,6 +483,25 @@ impl AnalysisState {
         }
     }
 
+    /// Whether everything this publishes has decayed away. Nothing to say and
+    /// nothing to publish: the pass is skipped and, with no reader kept alive
+    /// by it, the thread parks.
+    fn is_silent(&self) -> bool {
+        self.spectrum.iter().all(|&v| v < SILENT)
+            && self.peaks.iter().all(|&v| v < SILENT)
+            && self.vu_levels.iter().all(|&v| v < SILENT)
+            && self.beat_energy < SILENT
+    }
+
+    /// Snap what is left to zero, so the last frame published is the flat one
+    /// rather than a hundredth of a bar that never quite arrives.
+    fn silence(&mut self) {
+        self.spectrum.fill(0.0);
+        self.peaks.fill(0.0);
+        self.vu_levels = [0.0, 0.0];
+        self.beat_energy = 0.0;
+    }
+
     /// Apply decay-to-silence (called when paused or no audio).
     fn decay_silence(&mut self) {
         let (bar_decay, peak_decay) = self.decay_factors();
@@ -539,6 +559,9 @@ impl AnalysisState {
 /// shutdown; the thread exits within one analysis interval.
 pub struct VizAnalyzer {
     running: Arc<AtomicBool>,
+    /// Kept for shutdown alone: a parked thread is waiting on this, and
+    /// clearing `running` under it would never be read.
+    snapshot: Arc<VizSnapshot>,
     handle: Option<thread::JoinHandle<()>>,
 }
 
@@ -567,13 +590,14 @@ impl VizAnalyzer {
         snapshot.set_fps(cfg.fps);
 
         let running_clone = Arc::clone(&running);
+        let snapshot_clone = Arc::clone(&snapshot);
 
         let handle = thread::Builder::new()
             .name("viz-analyzer".into())
             .spawn(move || {
                 analysis_loop(
                     viz_buffer,
-                    snapshot,
+                    snapshot_clone,
                     samples_played,
                     running_clone,
                     scale,
@@ -586,6 +610,7 @@ impl VizAnalyzer {
 
         Self {
             running,
+            snapshot,
             handle: Some(handle),
         }
     }
@@ -593,6 +618,9 @@ impl VizAnalyzer {
     /// Signal the background thread to stop and wait for it to exit.
     pub fn shutdown(&mut self) {
         self.running.store(false, Ordering::Relaxed);
+        // It may be parked with nothing to analyse for, which is a wait with
+        // no timeout on it: the flag alone would never be looked at again.
+        self.snapshot.wake();
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
@@ -630,6 +658,7 @@ fn analysis_loop(
     let mut snap = RawVizSnapshot::default();
     let mut last_reads = u64::MAX;
     let mut last_read_at = Instant::now();
+    let mut last_played = u64::MAX;
 
     while running.load(Ordering::Relaxed) {
         let start = Instant::now();
@@ -639,25 +668,51 @@ fn analysis_loop(
         // per-frame waveform allocation and the delay-line copy all go away
         // until a visualiser opens, which is the whole cost of this thread in
         // a client that never opens one.
+        //
+        // Parked rather than slowed: a thread that looks again every quarter
+        // second is a thread the scheduler still runs, four times a second,
+        // for as long as koan is open. It waits instead, and a reader arriving
+        // or playback starting wakes it — see `VizSnapshot::park_while_idle`.
         let reads = snapshot.reads();
         if reads != last_reads {
             last_reads = reads;
             last_read_at = start;
         } else if start.duration_since(last_read_at) > IDLE_AFTER {
-            thread::sleep(IDLE_POLL);
+            snapshot.park_while_idle(|| snapshot.reads() == last_reads);
+            last_read_at = Instant::now();
             continue;
         }
 
         // ── Phase 1: read the delay line at the play head (lock held briefly) ─
+        // A play head that has not moved means nothing has been heard since
+        // the last pass, whatever the delay line still holds — paused, stopped,
+        // or starved. The bars fall away rather than holding the last chord,
+        // and once they have fallen there is nothing left to publish.
         let played = samples_played.load(Ordering::Relaxed);
-        viz_buffer.snapshot_at(played, WINDOW_FRAMES, &mut snap);
+        let heard = played != last_played;
+        last_played = played;
 
-        // ── Phase 2: compute (no lock held) ──────────────────────────────────
-        state.analyze(
-            &snap.samples,
-            snap.channels.max(1) as usize,
-            snap.sample_rate as f32,
-        );
+        if !heard {
+            if state.is_silent() {
+                // Nothing to say. No frame is published, so no subscriber
+                // wakes, and with nothing reading, the next pass parks.
+                thread::sleep(snapshot.interval());
+                continue;
+            }
+            state.decay_silence();
+            if state.is_silent() {
+                state.silence();
+            }
+        } else {
+            viz_buffer.snapshot_at(played, WINDOW_FRAMES, &mut snap);
+
+            // ── Phase 2: compute (no lock held) ──────────────────────────────
+            state.analyze(
+                &snap.samples,
+                snap.channels.max(1) as usize,
+                snap.sample_rate as f32,
+            );
+        }
 
         // ── Phase 3: publish to VizSnapshot (RwLock write, <1us) ─────────────
         // The tail of the window is the newest audible audio, which is what the
