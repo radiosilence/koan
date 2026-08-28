@@ -2,13 +2,13 @@
 
 ## Unreleased
 
-### Fixed
+### Changed
 
-- **A clean security audit no longer reports itself as a failed build.** The audit job reports through a GitHub check run, which is an API write, and this repository hands workflows a read-only token by default — so the job found nothing, tried to say so, and failed with "Resource not accessible by integration" on every push to main. It asks for the one permission it needs now.
+- **The playing indicator is a spectrum analyser, three columns wide.** It was a pair of sine waves the music modulated — the bands set how far the bars swung, never how high they stood — which meant a track that opens on ten seconds of silence got the full dance, because a carrier with nothing to scale it is still a carrier. The bars are the low, mid and high bands now, drawn at the height the analyser reports. Silence is flat. Pausing lets them fall away rather than freezing them mid-swing, which is what the TUI's spectrum has always done.
 
-- **Dependencies refreshed.** Seventeen packages moved to their latest compatible release — `h2`, `hyper`, `flate2`, `log`, `uuid`, `rand` and the rest — with no version requirement changed and nothing to see from outside.
+  Bands are still measured against their own recent ceiling, so a quiet master is not a limp indicator, and the fall is the law the TUI's bars draw on: up on the frame it happens, down on a half-life so nothing snaps to zero between beats.
 
-- **`chacha20` moves off a yanked release.** 0.10.0 and 0.10.1 called an SSE4.1 intrinsic from inside the SSE2 backend, so on an x86 processor with SSE2 and not SSE4.1 the instruction is illegal and the process dies. Upstream yanked both and shipped 0.10.2. Not a weakness in the cipher — a crash, and only on hardware old enough to matter to the Linux builds.
+- **The analyser runs at the refresh rate of the display it is drawn on.** Its rate was a config figure and the macOS indicator sampled it on a timer of its own, so a 120Hz panel got 60 analyses drawn at 30, and two clocks decided between them which frames a bar was allowed to move on. The window knows what it is drawn on: koan sets the rate from the screen the window is on and again when it is dragged to another one or a display is reconfigured under it. The indicators read on the frame they draw, so a frame is one new set of numbers and there is no timer anywhere in it — nothing on screen means nothing read, and the analyser stands itself down a second later. The TUI is unchanged: its rate is still `visualizer.fps`, which is what the analyser starts at.
 
 ## v0.33.1 (2026-08-28)
 

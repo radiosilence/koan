@@ -562,7 +562,9 @@ impl VizAnalyzer {
         let amplitude_scale = AmplitudeScale::parse(&cfg.amplitude_scale);
         let bar_half_life = cfg.bar_decay_ms as f32 / 1000.0;
         let peak_half_life = cfg.peak_decay_ms as f32 / 1000.0;
-        let interval = Duration::from_millis(1000 / cfg.fps.max(1) as u64);
+        // The configured rate is the starting one. A client drawing on a
+        // display can set its own — see `VizSnapshot::set_fps`.
+        snapshot.set_fps(cfg.fps);
 
         let running_clone = Arc::clone(&running);
 
@@ -578,7 +580,6 @@ impl VizAnalyzer {
                     amplitude_scale,
                     bar_half_life,
                     peak_half_life,
-                    interval,
                 );
             })
             .expect("failed to spawn viz-analyzer thread");
@@ -624,7 +625,6 @@ fn analysis_loop(
     amplitude_scale: AmplitudeScale,
     bar_half_life: f32,
     peak_half_life: f32,
-    interval: Duration,
 ) {
     let mut state = AnalysisState::new(scale, bar_half_life, peak_half_life, amplitude_scale);
     let mut snap = RawVizSnapshot::default();
@@ -674,6 +674,9 @@ fn analysis_loop(
         });
 
         // ── Sleep for the remainder of the interval ───────────────────────────
+        // Read each pass, so a window moving to a 120Hz display is followed on
+        // the next one rather than at the next track.
+        let interval = snapshot.interval();
         let elapsed = start.elapsed();
         if elapsed < interval {
             thread::sleep(interval - elapsed);
