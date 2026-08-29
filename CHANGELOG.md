@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Fixed
+
+- **The transport sheds what will not fit rather than squashing it.** The centre zone held `maxWidth: 560` at the highest layout priority, so it claimed 560 points of any bar wide enough to offer them and left the two sides to share the remainder — about thirty points each at the smallest window. The format badge and the output device were drawn a few points wide, and the track's name got three letters. The centre is handed a share of the bar now and the sides split what is left equally, which is what keeps the transport centred; a side that runs short drops things in order — the radio toggle's word, then the sleeve, then the format badge — instead of compressing all of them.
+
+- **The window is wide enough for the columns it has.** `NavigationSplitView` does not refuse to go below a column's declared minimum: it lays the column out at its *ideal* width and clips whatever does not fit. With the lyrics panel open there was nothing left to take, so the sidebar's rows and half the lyrics hung outside their own panes — and with no slack to move through, the split view stopped animating and started clamping, which is why the panel arrived whole in one frame instead of sliding. The floor is now the sum of what the columns actually draw at: the widest page's stage, the sidebar, and the panel. It is one number rather than one per column count, because a floor that moved when the panel opened resized the window under you.
+
+- **The lyrics panel slides open.** Its state was `@AppStorage`, and a `UserDefaults` write publishes on its own after the transaction that caused it has gone — so the pane had no animation to expand with while everything around it was still moving. It is observable state that writes through to defaults now, so the change happens inside the transaction and the pane and the stage move together.
+
 ### Changed
 
 - **The playhead is an anchor, not a reading.** Position was published ten times a second, which is a stream that can never go quiet while music plays and a seek bar redrawn ten times a second to move it a pixel. It is the one number in koan that changes without anything happening — and a playhead advancing at one second per second is exactly what a client can work out for itself. The engine now says where the playhead is when your own reckoning would go wrong: a seek, a pause, a track boundary, a stall. Nothing in between.

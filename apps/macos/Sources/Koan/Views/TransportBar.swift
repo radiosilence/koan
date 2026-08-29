@@ -20,65 +20,109 @@ struct TransportBar: View {
     @State private var backSkips = 0
     @State private var forwardSkips = 0
 
+    /// The bar's outer width, so it can shed rather than squash. The sidebar
+    /// and the lyrics panel both take their room out of this, so the window
+    /// being wide is no promise that the bar is.
+    @State private var barWidth: CGFloat = 0
+
     /// Wide enough to read as a slab rather than a pill at this height.
     private static let radius: CGFloat = 26
     /// One height for all three zones, so the bar is a bar and not a stack of
     /// controls that happen to be near each other.
     private static let zoneHeight: CGFloat = 46
+    private static let zoneGap: CGFloat = 18
+    private static let inset: CGFloat = 16
 
     var body: some View {
-        // Three equal-weight columns so the transport stays centred as the
-        // window grows, rather than the centre pinning at a fixed width and
-        // everything bunching to the left.
-        HStack(spacing: 18) {
+        // Three columns: a centre sized to the room there is, and two flexible
+        // sides that split what is left equally, so the transport stays centred
+        // as the window grows.
+        //
+        // The centre is *given* a width rather than allowed to claim one. It
+        // held `maxWidth: 560` at the highest layout priority, which meant it
+        // took 560 of any bar wide enough to offer it and left the sides to
+        // share the remainder — at the smallest window that was 30pt between
+        // them, and the format badge and the output device were squeezed to
+        // slivers rather than being dropped.
+        HStack(spacing: Self.zoneGap) {
             nowPlaying
                 .frame(height: Self.zoneHeight)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .layoutPriority(1)
 
             VStack(spacing: 5) {
                 controls
                 SeekBar()
             }
             .frame(height: Self.zoneHeight)
-            .frame(maxWidth: 560)
-            .layoutPriority(2)
+            .frame(width: centreWidth)
 
             trailing
                 .frame(height: Self.zoneHeight)
                 .frame(maxWidth: .infinity, alignment: .trailing)
-                .layoutPriority(1)
         }
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Self.inset)
         .padding(.vertical, 9)
         .glass(.regular, fallback: .regularMaterial, in: .rect(cornerRadius: Self.radius))
-        .padding(.horizontal, 16)
+        .padding(.horizontal, Self.inset)
         .padding(.bottom, 14)
+        // Measured outside the paddings, so nothing the layout below decides
+        // feeds back into the width it was decided from.
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { barWidth = $0 }
     }
+
+    /// What the three zones have between them, once both insets are paid.
+    private var available: CGFloat { max(0, barWidth - Self.inset * 4) }
+
+    /// Room enough to read a seek bar off, and no more than the controls need.
+    /// A share of the bar rather than a constant: the transport is the middle
+    /// of the window, and it should look like it at every width.
+    private var centreWidth: CGFloat { min(560, max(210, available * 0.40)) }
+
+    /// What each side gets. Both are the same by construction — that is what
+    /// keeps the centre centred — so one number answers for both.
+    private var sideWidth: CGFloat { max(0, (available - Self.zoneGap * 2 - centreWidth) / 2) }
+
+    /// Below this the radio toggle is its icon alone. The word is the first
+    /// thing worth giving up: the button is lit when it is on, so it says what
+    /// it is either way.
+    private var compact: Bool { sideWidth < 190 }
+
+    /// And below this the format badge goes too. It is the last thing dropped
+    /// because it is the one thing on the bar that says what the DAC is being
+    /// handed — but a badge crushed to a sliver says nothing at all.
+    private var showsFormat: Bool { sideWidth >= 145 }
+
+    /// The sleeve is the leading side's own version of the same trade. It is
+    /// the largest thing there and the least informative — the queue behind it
+    /// is nothing but sleeves — so a narrow bar spends its room on the names
+    /// instead, rather than truncating them to three letters beside a cover.
+    private var showsArtwork: Bool { sideWidth >= 150 }
 
     // MARK: - Left: what's on
 
     @ViewBuilder
     private var nowPlaying: some View {
         HStack(spacing: 11) {
-            if let sleeve = player.currentArtwork {
-                AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 8)
-                    .frame(width: 44, height: 44)
-                    .showsArtworkFullSize(
-                        source: sleeve,
-                        title: player.currentEntry?.title ?? "",
-                        subtitle: player.currentEntry.map {
-                            "\($0.artist) — \($0.album)"
+            if showsArtwork {
+                if let sleeve = player.currentArtwork {
+                    AlbumArtwork(source: sleeve, size: .thumb, cornerRadius: 8)
+                        .frame(width: 44, height: 44)
+                        .showsArtworkFullSize(
+                            source: sleeve,
+                            title: player.currentEntry?.title ?? "",
+                            subtitle: player.currentEntry.map {
+                                "\($0.artist) — \($0.album)"
+                            }
+                        )
+                } else {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(.quaternary)
+                        .frame(width: 44, height: 44)
+                        .overlay {
+                            Image(systemName: "music.note")
+                                .foregroundStyle(.tertiary)
                         }
-                    )
-            } else {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(.quaternary)
-                    .frame(width: 44, height: 44)
-                    .overlay {
-                        Image(systemName: "music.note")
-                            .foregroundStyle(.tertiary)
-                    }
+                }
             }
 
             VStack(alignment: .leading, spacing: 2) {
@@ -114,7 +158,10 @@ struct TransportBar: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            .frame(minWidth: 90, alignment: .leading)
+            // No minimum: a narrow bar should truncate the names, which is what
+            // a line of text is for, rather than hold a width that pushes the
+            // heart off the end of the zone.
+            .frame(maxWidth: .infinity, alignment: .leading)
             // Gapless means a track can change with nothing else to mark it.
             // A cross-fade catches the corner of the eye; a hard swap doesn't.
             .contentTransition(.opacity)
@@ -186,9 +233,13 @@ struct TransportBar: View {
     private var trailing: some View {
         HStack(spacing: 12) {
             // The whole point of the player: what the DAC is being handed.
-            if let format = player.currentFormat {
+            if let format = player.currentFormat, showsFormat {
                 Text(Format.quality(format))
                     .font(.caption.monospaced())
+                    // One line or none. Mid-resize the zone is briefly narrower
+                    // than the badge, and a badge that wraps to two lines is
+                    // taller than the bar it sits in.
+                    .lineLimit(1)
                     // A refused rate isn't a fault to raise an alarm over, so
                     // it reads at the same weight as the rest of the badge and
                     // explains itself only to someone who looks.
@@ -203,9 +254,15 @@ struct TransportBar: View {
                 get: { player.radioEnabled },
                 set: { player.setRadio($0) }
             )) {
-                Label("Radio", systemImage: Icon.radio)
-                    .labelStyle(.titleAndIcon)
-                    .font(.caption)
+                if compact {
+                    Label("Radio", systemImage: Icon.radio)
+                        .labelStyle(.iconOnly)
+                        .font(.caption)
+                } else {
+                    Label("Radio", systemImage: Icon.radio)
+                        .labelStyle(.titleAndIcon)
+                        .font(.caption)
+                }
             }
             .toggleStyle(.button)
             .buttonStyle(.glass)
@@ -213,6 +270,10 @@ struct TransportBar: View {
 
             DeviceMenu()
         }
+        // Natural size, always. What does not fit is dropped above rather than
+        // compressed — a badge and a menu squeezed to a few points wide is what
+        // the smallest window used to show.
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 

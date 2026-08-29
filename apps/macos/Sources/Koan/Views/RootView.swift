@@ -33,7 +33,6 @@ struct RootView: View {
     /// record in it, since a playlist has no cover of its own.
     @Environment(PlaylistsModel.self) private var playlists
 
-    @AppStorage("showLyrics") private var showLyrics = false
     /// Read for the window's own glass — the toolbar and the transport's soft
     /// edge, which are the platform's rather than koan's and which no step of
     /// this setting used to reach.
@@ -114,9 +113,13 @@ struct RootView: View {
                 // and the scroll edges sized to it.
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .inspector(isPresented: $showLyrics) {
+        .inspector(isPresented: $ui.showLyrics) {
             LyricsPanel()
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
+                // The column animates on its own; its contents do not come
+                // with it. Without this the stage slides over and the pane
+                // then appears whole in one frame, a fifth of a second later.
+                .transition(.move(edge: .trailing))
                 // The toggle belongs to the inspector rather than the window, so
                 // it sits at the pane's leading edge and moves with it. In the
                 // window's trailing group the pane opened out from underneath
@@ -124,7 +127,7 @@ struct RootView: View {
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
-                            showLyrics.toggle()
+                            ui.toggleLyrics()
                         } label: {
                             Label("Lyrics", systemImage: Icon.lyrics)
                         }
@@ -193,7 +196,7 @@ struct RootView: View {
         .overlay(alignment: .bottom) {
             TransportBar()
                 .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
-                .padding(.trailing, showLyrics ? ui.lyricsWidth : 0)
+                .padding(.trailing, ui.showLyrics ? ui.lyricsWidth : 0)
                 .background(
                     GeometryReader { proxy in
                         Color.clear.preference(
