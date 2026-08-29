@@ -134,6 +134,17 @@ fn init_logging() {
     }
 }
 
+impl Drop for KoanEngine {
+    /// Wake the state watcher so it notices there is nothing left to watch.
+    ///
+    /// It waits with no timeout, holding a weak reference precisely so it does
+    /// not keep the engine alive — and a thread parked for ever would never
+    /// find out that it had gone.
+    fn drop(&mut self) {
+        koan_core::signal::engine_changed().bump();
+    }
+}
+
 /// One client's subscription to the analyser.
 ///
 /// A cursor over the published frame, in the shape `StateStream` already uses:
@@ -2193,17 +2204,25 @@ impl OrganizeSelection {
 impl KoanEngine {
     /// Watch shared state and publish what changed.
     ///
-    /// Polls, but in Rust and over atomics, which is nothing — and the client
-    /// sees changes rather than asking for them. The alternative, notifying
-    /// from the player's own mutation points, would put foreign calls on the
-    /// decode thread.
+    /// Woken rather than timed. It used to look at every version and atomic in
+    /// the engine ten times a second for as long as koan was open, which is a
+    /// scheduled thread and a rebuilt `NowPlaying` per tick to find, nearly
+    /// always, that nothing had moved. The writers say so now — every setter on
+    /// `SharedPlayerState`, the download store, the library version — and this
+    /// waits in between. A koan with nothing happening does not run this thread
+    /// at all.
     ///
-    /// The loop's period is the batch window: whatever moved inside one tick
-    /// leaves as at most one message per slice, so a client's cost is set by
-    /// how many slices changed and never by how many times they changed. The
-    /// expensive snapshots are built only when the version behind them moved —
-    /// deriving the whole queue ten times a second to find it unchanged is the
-    /// waste this guard exists to avoid.
+    /// What the wake does *not* say is which of them moved: that is still read
+    /// off the versions here, on waking, because they are cheap and because a
+    /// single wake covers a burst. So a pass batches: whatever moved between
+    /// two wakes leaves as at most one message per slice, and a client's cost
+    /// is set by how many slices changed and never by how many times they
+    /// changed. The expensive snapshots are built only when the version behind
+    /// them moved — deriving the whole queue to find it unchanged is the waste
+    /// that guard exists to avoid.
+    ///
+    /// The playhead is the one thing no writer can announce, because it moves
+    /// on its own. It is published as an anchor instead: see `state::Anchor`.
     fn spawn_watcher(self: &Arc<Self>) {
         let engine = Arc::downgrade(self);
         std::thread::Builder::new()
@@ -2211,20 +2230,32 @@ impl KoanEngine {
             .spawn(move || {
                 let mut last_queue = u64::MAX;
                 let mut last_store = u64::MAX;
+                let mut last_figures = u64::MAX;
                 let mut last_library = u64::MAX;
                 // The playhead as a client last heard it, and when. What it
                 // would believe now is derived from these two, which is what
                 // makes publishing again unnecessary until it would be wrong.
                 let mut anchor: Option<state::Anchor> = None;
                 let mut last_seekable = u64::MAX;
-                // Which transfers were running last tick. A transfer leaving
+                // Which transfers were running last pass. A transfer leaving
                 // this set has landed on disk, which wrote a cached path onto a
                 // library row — and nothing else says so, because the download
                 // ran in koan-core, which has no notion of that version.
                 let mut running: HashSet<String> = HashSet::new();
 
+                // Where this thread spends the whole of a quiet koan. Every
+                // slice below is derived from a version or an atomic, all of
+                // them cheap to read and none of them able to say when they
+                // moved — so this used to look at the lot of them ten times a
+                // second for as long as the app was open. The writers say so
+                // now, and this is not scheduled at all in between.
+                let wake = koan_core::signal::engine_changed();
+                // Read before the first pass, not after it: anything that moves
+                // while a pass is publishing leaves the generation past this,
+                // and the wait at the foot of the loop returns at once rather
+                // than sleeping through it.
+                let mut seen = wake.generation();
                 loop {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
                     let Some(engine) = engine.upgrade() else {
                         return; // Engine dropped; so is the app.
                     };
@@ -2278,31 +2309,46 @@ impl KoanEngine {
                         });
                     }
 
-                    // Ten a second, which is this loop's rate and fast enough
-                    // that a figure on screen reacts as a transfer changes pace.
-                    koan_core::remote::downloads::store().sample_rates();
-                    let store_version = koan_core::remote::downloads::store().version();
-                    let transfers = koan_core::remote::downloads::store().all();
-                    // Structural and volatile from one reading of one list, so
-                    // a row and its figure can never describe different moments.
-                    out.publish(StateSlice::Figures {
-                        figures: transfers.iter().map(TransferFigure::from).collect(),
-                    });
-                    if store_version != last_store {
-                        last_store = store_version;
-                        out.publish(StateSlice::Transfers {
-                            transfers: transfers.iter().map(Transfer::from).collect(),
-                        });
+                    // Taken as the bytes land rather than here — see
+                    // `DownloadStore::progressed`. This asks whether a reading
+                    // has been taken since the last one it published, which for
+                    // a koan with nothing downloading is never.
+                    // Readings are taken as the bytes land rather than here —
+                    // see `DownloadStore::progressed` — so this asks whether
+                    // one has been taken since the last it published, which for
+                    // a koan with nothing downloading is never. The list is
+                    // read once and only when one of the two has moved: it is a
+                    // clone of every transfer koan knows about.
+                    let store = koan_core::remote::downloads::store();
+                    let store_version = store.version();
+                    let figures_version = store.figures();
+                    if figures_version != last_figures || store_version != last_store {
+                        // Structural and volatile from one reading of one list,
+                        // so a row and its figure can never describe different
+                        // moments.
+                        let transfers = store.all();
+                        if figures_version != last_figures {
+                            last_figures = figures_version;
+                            out.publish(StateSlice::Figures {
+                                figures: transfers.iter().map(TransferFigure::from).collect(),
+                            });
+                        }
+                        if store_version != last_store {
+                            last_store = store_version;
+                            out.publish(StateSlice::Transfers {
+                                transfers: transfers.iter().map(Transfer::from).collect(),
+                            });
+                        }
+                        let now_running: HashSet<String> = transfers
+                            .iter()
+                            .filter(|d| !d.state.is_settled())
+                            .map(|d| d.id.0.to_string())
+                            .collect();
+                        if running.difference(&now_running).next().is_some() {
+                            engine.bump_library();
+                        }
+                        running = now_running;
                     }
-                    let now_running: HashSet<String> = transfers
-                        .iter()
-                        .filter(|d| !d.state.is_settled())
-                        .map(|d| d.id.0.to_string())
-                        .collect();
-                    if running.difference(&now_running).next().is_some() {
-                        engine.bump_library();
-                    }
-                    running = now_running;
 
                     let library = engine
                         .library_version
@@ -2331,6 +2377,12 @@ impl KoanEngine {
                             lock: engine.queue_lock_blocking(),
                         });
                     }
+
+                    // Dropped before the wait: this thread holds the engine
+                    // only for as long as it is reading it, so parking here
+                    // cannot be what keeps koan open.
+                    drop(engine);
+                    seen = wake.wait(seen);
                 }
             })
             .ok();
@@ -2501,6 +2553,7 @@ impl KoanEngine {
     fn bump_library(&self) {
         self.library_version
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        koan_core::signal::engine_changed().bump();
     }
 
     fn scan_blocking(
@@ -2705,7 +2758,10 @@ impl KoanEngine {
         std::thread::Builder::new()
             .name("koan-session-restore".into())
             .spawn(move || {
-                for _ in 0..600 {
+                let wake = koan_core::signal::engine_changed();
+                let mut seen = wake.generation();
+                let deadline = Instant::now() + std::time::Duration::from_secs(60);
+                loop {
                     // The user may have started playing something in the
                     // meantime; restoring a position over that would be rude.
                     if state.playback_state() != PlaybackState::Stopped
@@ -2730,7 +2786,13 @@ impl KoanEngine {
                         }
                         return;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                        break;
+                    };
+                    // A track becoming ready moves the queue, which is a change
+                    // like any other. The timeout is the giving-up clock rather
+                    // than a look-again one: this wakes when the item does.
+                    seen = wake.wait_until(seen, left);
                 }
                 log::info!("session restore: track never became ready, leaving position at 0");
             })
