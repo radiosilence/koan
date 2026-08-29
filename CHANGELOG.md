@@ -1,6 +1,38 @@
 # Changelog
 
-## Unreleased
+## v0.33.2 (2026-08-29)
+
+### Changed
+
+- **The playing indicator is a spectrum analyser, three columns wide.** It was a pair of sine waves the music modulated — the bands set how far the bars swung, never how high they stood — which meant a track that opens on ten seconds of silence got the full dance, because a carrier with nothing to scale it is still a carrier. The bars are the low, mid and high bands now, drawn at the height the analyser reports. Silence is flat. Pausing lets them fall away rather than freezing them mid-swing, which is what the TUI's spectrum has always done.
+
+  Bands are still measured against their own recent ceiling, so a quiet master is not a limp indicator, and the fall is the law the TUI's bars draw on: up on the frame it happens, down on a half-life so nothing snaps to zero between beats.
+
+- **The analyser runs at the refresh rate of the display it is drawn on.** Its rate was a config figure and the macOS indicator sampled it on a timer of its own, so a 120Hz panel got 60 analyses drawn at 30, and two clocks decided between them which frames a bar was allowed to move on. The window knows what it is drawn on: koan sets the rate from the screen the window is on and again when it is dragged to another one or a display is reconfigured under it. The indicators read on the frame they draw, so a frame is one new set of numbers and there is no timer anywhere in it — nothing on screen means nothing read, and the analyser stands itself down a second later. The TUI is unchanged: its rate is still `visualizer.fps`, which is what the analyser starts at.
+
+- **The spectrum is published, not polled.** The playing indicator asked the engine for levels on a clock — a timer at first, then the display link — because there was no event to react to. There is one now: the analyser sends a frame when it has one, the app wakes on it, and the bars are drawn from what arrived. No timer, no tick, and no frame read twice or missed.
+
+  What falls out of that is the idle cost. The analyser decays the bars to flat when the play head stops rather than holding the last chord, and once they are flat it publishes nothing at all — so a paused koan wakes nothing. The thread itself parks on a wait instead of standing down to a quarter-second look-again loop: with no reader and nothing playing it is not scheduled at all, until a reader arrives or playback starts. That last one cannot be signalled from the play head, which the audio render callback writes and which may never take a lock, so the player says so on the two edges where silence ends.
+
+  `koan-core` takes `tokio` for `sync` only — `watch` is the analyser telling its subscribers a frame is ready. No runtime, no reactor.
+
+- **The playhead is an anchor, not a reading.** Position was published ten times a second, which is a stream that can never go quiet while music plays and a seek bar redrawn ten times a second to move it a pixel. It is the one number in koan that changes without anything happening — and a playhead advancing at one second per second is exactly what a client can work out for itself. The engine now says where the playhead is when your own reckoning would go wrong: a seek, a pause, a track boundary, a stall. Nothing in between.
+
+  What draws it derives it. The seek bar is handed to Core Animation once per anchor with the rest of the track as its duration, so it moves without this process being woken at all; the elapsed figure is a system-drawn timer for the same reason; the lyrics panel sleeps until the next line's timestamp rather than checking where the song is. Media Remote gets told exactly when the system's own extrapolation would drift, which is what its elapsed-and-rate pair was always asking for.
+
+- **The engine stops polling itself.** A thread woke ten times a second for as long as koan was open, rebuilt what is playing, sampled every transfer's byte count, compared three version counters and published whatever had moved. The interface was reactive — the app has read events rather than asking since v0.32 — but the events were manufactured by a clock.
+
+  The writers say so now. Every setter on the player's shared state, the download store and the library version bump a wake; the watcher waits on it and reads the versions when it comes round, so a burst is still one pass and one message per slice. A koan with nothing happening does not schedule that thread at all.
+
+  Transfer rates go the same way: a reading is taken as the bytes land, held to one every 250ms, rather than by whoever happened to be watching. A transfer that settles zeroes its own figure rather than waiting to be sampled again — a row that finished used to keep the rate it managed on its last chunk until something looked.
+
+- **The last three clocks go.** The activity rows asked the engine whether a scan or a sync was running, once a second, for the whole life of the app, to notice something that happens twice a day — the engine says so now, in the same stream as everything else. The session autosave woke every second whether or not there was anything to save; it runs while the music does and writes on the edge when it stops. And a decode thread reading a track that is still downloading looked at the byte count every ten milliseconds: it waits on the count itself now, woken by the bytes as they land and by whatever ends the transfer.
+
+- **The GraphQL subscriptions are pushed, not polled.** `nowPlaying` and `queueUpdated` looked at the engine every 200ms and 500ms and yielded when something had moved; `vizFrame` resampled the analyser at whatever rate the client asked for, sending frames twice or skipping them depending on how the two clocks lined up. All three wait on a signal now. `vizFrame` is one message per analysed frame, and its `fps` sets the rate the analyser itself runs at rather than a rate to resample it at — one analyser, so a second client asking for a different figure moves it for both.
+
+  `nowPlaying` sends an anchor, the way the native client already receives one: `positionMs` is where the playhead was when the message was sent, and a client that knows it is playing can work out the rest. It arrives on a seek, a pause, a track boundary or a stall — not on a clock — so a paused koan sends nothing at all. **A client drawing a moving position must derive it rather than waiting to be told.** The `intervalMs` arguments remain in the schema and are ignored, so existing queries still parse.
+
+- **The app waits to be told rather than looking.** Restoring a session and jumping to the queue after an enqueue both watched a value every five milliseconds until it moved. They wait on the mirror now, with the deadline as one sleep for the whole wait rather than one per look.
 
 ### Fixed
 
@@ -10,31 +42,11 @@
 
 - **The lyrics panel slides open.** Its state was `@AppStorage`, and a `UserDefaults` write publishes on its own after the transaction that caused it has gone — so the pane had no animation to expand with while everything around it was still moving. It is observable state that writes through to defaults now, so the change happens inside the transaction and the pane and the stage move together.
 
-### Changed
+- **A clean security audit no longer reports itself as a failed build.** The audit job reports through a GitHub check run, which is an API write, and this repository hands workflows a read-only token by default — so the job found nothing, tried to say so, and failed with "Resource not accessible by integration" on every push to main. It asks for the one permission it needs now.
 
-- **The GraphQL subscriptions are pushed, not polled.** `nowPlaying` and `queueUpdated` looked at the engine every 200ms and 500ms and yielded when something had moved; `vizFrame` resampled the analyser at whatever rate the client asked for, sending frames twice or skipping them depending on how the two clocks lined up. All three wait on a signal now. `vizFrame` is one message per analysed frame, and its `fps` sets the rate the analyser itself runs at rather than a rate to resample it at — one analyser, so a second client asking for a different figure moves it for both.
+- **Dependencies refreshed.** Seventeen packages moved to their latest compatible release — `h2`, `hyper`, `flate2`, `log`, `uuid`, `rand` and the rest — with no version requirement changed and nothing to see from outside.
 
-  `nowPlaying` sends an anchor, the way the native client already receives one: `positionMs` is where the playhead was when the message was sent, and a client that knows it is playing can work out the rest. It arrives on a seek, a pause, a track boundary or a stall — not on a clock — so a paused koan sends nothing at all. **A client drawing a moving position must derive it rather than waiting to be told.** The `intervalMs` arguments remain in the schema and are ignored, so existing queries still parse.
-
-- **The app waits to be told rather than looking.** Restoring a session and jumping to the queue after an enqueue both watched a value every five milliseconds until it moved. They wait on the mirror now, with the deadline as one sleep for the whole wait rather than one per look.
-
-- **The last three clocks go.** The activity rows asked the engine whether a scan or a sync was running, once a second, for the whole life of the app, to notice something that happens twice a day — the engine says so now, in the same stream as everything else. The session autosave woke every second whether or not there was anything to save; it runs while the music does and writes on the edge when it stops. And a decode thread reading a track that is still downloading looked at the byte count every ten milliseconds: it waits on the count itself now, woken by the bytes as they land and by whatever ends the transfer.
-
-- **The engine stops polling itself.** A thread woke ten times a second for as long as koan was open, rebuilt what is playing, sampled every transfer's byte count, compared three version counters and published whatever had moved. The interface was reactive — the app has read events rather than asking since v0.32 — but the events were manufactured by a clock.
-
-  The writers say so now. Every setter on the player's shared state, the download store and the library version bump a wake; the watcher waits on it and reads the versions when it comes round, so a burst is still one pass and one message per slice. A koan with nothing happening does not schedule that thread at all.
-
-  Transfer rates go the same way: a reading is taken as the bytes land, held to one every 250ms, rather than by whoever happened to be watching. A transfer that settles zeroes its own figure rather than waiting to be sampled again — a row that finished used to keep the rate it managed on its last chunk until something looked.
-
-- **The playhead is an anchor, not a reading.** Position was published ten times a second, which is a stream that can never go quiet while music plays and a seek bar redrawn ten times a second to move it a pixel. It is the one number in koan that changes without anything happening — and a playhead advancing at one second per second is exactly what a client can work out for itself. The engine now says where the playhead is when your own reckoning would go wrong: a seek, a pause, a track boundary, a stall. Nothing in between.
-
-  What draws it derives it. The seek bar is handed to Core Animation once per anchor with the rest of the track as its duration, so it moves without this process being woken at all; the elapsed figure is a system-drawn timer for the same reason; the lyrics panel sleeps until the next line's timestamp rather than checking where the song is. Media Remote gets told exactly when the system's own extrapolation would drift, which is what its elapsed-and-rate pair was always asking for.
-
-- **The spectrum is published, not polled.** The playing indicator asked the engine for levels on a clock — a timer at first, then the display link — because there was no event to react to. There is one now: the analyser sends a frame when it has one, the app wakes on it, and the bars are drawn from what arrived. No timer, no tick, and no frame read twice or missed.
-
-  What falls out of that is the idle cost. The analyser decays the bars to flat when the play head stops rather than holding the last chord, and once they are flat it publishes nothing at all — so a paused koan wakes nothing. The thread itself parks on a wait instead of standing down to a quarter-second look-again loop: with no reader and nothing playing it is not scheduled at all, until a reader arrives or playback starts. That last one cannot be signalled from the play head, which the audio render callback writes and which may never take a lock, so the player says so on the two edges where silence ends.
-
-  `koan-core` takes `tokio` for `sync` only — `watch` is the analyser telling its subscribers a frame is ready. No runtime, no reactor.
+- **`chacha20` moves off a yanked release.** 0.10.0 and 0.10.1 called an SSE4.1 intrinsic from inside the SSE2 backend, so on an x86 processor with SSE2 and not SSE4.1 the instruction is illegal and the process dies. Upstream yanked both and shipped 0.10.2. Not a weakness in the cipher — a crash, and only on hardware old enough to matter to the Linux builds.
 
 ## v0.33.1 (2026-08-28)
 
