@@ -57,6 +57,8 @@ final class EngineMirror: Observable {
     private var _transfers: [Transfer] = []
     private var _figures: [String: TransferFigure] = [:]
     private var _libraryVersion: UInt64 = 0
+    private var _scanning = false
+    private var _syncing = false
 
     /// Everything a transport bar shows other than the position. Changes per
     /// track, per state, per format — not per tick.
@@ -85,6 +87,14 @@ final class EngineMirror: Observable {
     var seekableMs: UInt64 {
         access(\.seekableMs)
         return _seekableMs
+    }
+
+    /// What koan is doing on its own. One property for both, because the only
+    /// thing that reads them draws a row for each and would be invalidated by
+    /// either.
+    var tasks: EngineTasks {
+        access(\.tasks)
+        return EngineTasks(scanning: _scanning, syncing: _syncing)
     }
 
     var queue: [QueueItem] {
@@ -238,6 +248,13 @@ final class EngineMirror: Observable {
             }
         case .library(let version):
             mutate(\.libraryVersion) { _libraryVersion = version }
+        case .tasks(let scanning, let syncing):
+            if scanning != _scanning || syncing != _syncing {
+                mutate(\.tasks) {
+                    _scanning = scanning
+                    _syncing = syncing
+                }
+            }
         }
     }
 
@@ -307,6 +324,15 @@ private struct ReloadOnLibraryChange<ID: Equatable>: ViewModifier {
         let id: ID
         let version: UInt64
     }
+}
+
+/// What koan is doing on its own, as one value: the only thing that reads
+/// either draws a row for each, and would be invalidated by both.
+struct EngineTasks: Equatable {
+    /// The startup scan or the watched folders finding something.
+    let scanning: Bool
+    /// The automatic sync with a server.
+    let syncing: Bool
 }
 
 /// Where the playhead was, and whether it is still moving.

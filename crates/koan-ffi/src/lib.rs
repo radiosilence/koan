@@ -2646,6 +2646,9 @@ impl KoanEngine {
                 } else {
                     flag.store(running, std::sync::atomic::Ordering::Relaxed);
                 }
+                // Either way something a client draws has moved: the row for
+                // this task, or the library the task just wrote to.
+                koan_core::signal::engine_changed().bump();
             }
         };
 

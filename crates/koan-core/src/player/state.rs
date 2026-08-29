@@ -108,7 +108,7 @@ pub enum LoadState {
         total: u64,
         /// How many bytes have landed. The download thread writes it per chunk
         /// without taking any lock the player holds.
-        bytes_written: Arc<AtomicU64>,
+        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
     },
     Ready,
     Failed(String),
@@ -157,7 +157,7 @@ pub enum PlaybackSource {
     /// File being downloaded — enough data buffered to start streaming.
     Streaming {
         path: PathBuf,
-        bytes_written: Arc<AtomicU64>,
+        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
         total: u64,
     },
 }
@@ -1204,7 +1204,11 @@ mod tests {
 
     /// An item with a transfer running against it, told to the store the way
     /// the downloader tells it.
-    fn downloading_item(title: &str, total: u64, written: Arc<AtomicU64>) -> PlaylistItem {
+    fn downloading_item(
+        title: &str,
+        total: u64,
+        written: Arc<crate::remote::downloads::ByteFeed>,
+    ) -> PlaylistItem {
         let item = make_item(title, ItemState::Pending);
         let store = crate::remote::downloads::store();
         store.queued(crate::remote::downloads::Download {
@@ -1255,7 +1259,8 @@ mod tests {
         bitrate_kbps: Option<u32>,
         container_duration_ms: u64,
     ) -> Arc<SharedPlayerState> {
-        let written = Arc::new(AtomicU64::new(downloaded));
+        let written = crate::remote::downloads::ByteFeed::new();
+        written.set(downloaded);
         let item = make_item("train", ItemState::Pending);
         let id = item.id;
         let path = item.path.clone();
@@ -1610,8 +1615,8 @@ mod tests {
     fn test_derive_visible_queue_downloading_statuses() {
         // A Downloading item at cursor → PriorityPending; after cursor → Downloading.
         let state = SharedPlayerState::new();
-        let bytes_cursor = Arc::new(AtomicU64::new(0));
-        let bytes_queued = Arc::new(AtomicU64::new(0));
+        let bytes_cursor = crate::remote::downloads::ByteFeed::new();
+        let bytes_queued = crate::remote::downloads::ByteFeed::new();
         let dl_cursor = downloading_item("downloading-at-cursor", 1_000_000, bytes_cursor.clone());
         let dl_queued = downloading_item("downloading-queued", 500_000, bytes_queued.clone());
         let id_cursor = dl_cursor.id;
@@ -1631,12 +1636,12 @@ mod tests {
         // afterwards must see them — the version has not moved, and the load
         // state it was given is the one it still holds.
         let state = SharedPlayerState::new();
-        let bytes = Arc::new(AtomicU64::new(0));
+        let bytes = crate::remote::downloads::ByteFeed::new();
         let item = downloading_item("downloading", 1_000, bytes.clone());
         state.add_items(vec![item]);
 
         let version = state.playlist_version();
-        bytes.store(250, Ordering::Release);
+        bytes.set(250);
 
         let snap = state.derive_visible_queue();
         assert_eq!(snap.entries[0].download_progress, Some((250, 1_000)));

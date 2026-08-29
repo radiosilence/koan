@@ -49,7 +49,7 @@ final class PlayerModel {
 
     func start() async {
         refreshDevices()
-        startAutosave()
+        followSession()
         // The two things that are not views and so have no body to invalidate:
         // where a seek asked to land, and where what is playing lives.
         mirror.follow { [weak self] in self?.followEngine() }
@@ -463,17 +463,39 @@ final class PlayerModel {
     /// and only rewritten when it actually changes, because re-serialising a
     /// library-sized queue once a second would be megabytes of writing to
     /// remember one number.
-    private func startAutosave() {
-        Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                guard let self else { return }
-                if self.queueVersion != self.savedQueueVersion {
-                    await self.saveSession()
-                } else if self.currentEntry != nil {
-                    try? await self.engine.savePosition()
-                }
-            }
+    ///
+    /// It runs while the music does. A position that is not advancing is one
+    /// already written, so a stopped koan has nothing to save and no reason to
+    /// wake once a second for ever to decide that. A queue edited while paused
+    /// is written by the edge below rather than by the next tick.
+    private var autosave: Task<Void, Never>?
+
+    private func followSession() {
+        mirror.follow { [weak self] in
+            guard let self else { return }
+            let playing = mirror.playhead.playing
+            guard playing != (autosave != nil) else { return }
+            autosave?.cancel()
+            autosave = playing ? Task { [weak self] in await self?.keepSaving() } : nil
+            // A pause, a stop or a track change is a moment worth remembering
+            // in its own right, and the last one before a long silence.
+            if !playing { Task { [weak self] in await self?.save() } }
+        }
+    }
+
+    private func keepSaving() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled else { return }
+            await save()
+        }
+    }
+
+    private func save() async {
+        if queueVersion != savedQueueVersion {
+            await saveSession()
+        } else if currentEntry != nil {
+            try? await engine.savePosition()
         }
     }
 

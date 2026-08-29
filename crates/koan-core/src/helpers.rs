@@ -1217,7 +1217,7 @@ pub fn download_track(
     // the decoder reads bytes as they land; it flips to `dest` on success.
     state.update_paths(&[(queue_id, crate::remote::download::part_path(&dest))]);
 
-    let bytes_written: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    let bytes_written = crate::remote::downloads::ByteFeed::new();
 
     // Announce it before a byte moves, so a queue of six shows six rows rather
     // than one row and five tracks that look like nothing is happening to them.
@@ -1243,7 +1243,7 @@ pub fn download_track(
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
-        bytes_written_progress.store(downloaded, Ordering::Release);
+        bytes_written_progress.set(downloaded);
         // What knows a transfer moved is the code moving it. Held to a reading
         // every 250ms inside, so a chunk landing costs an atomic and a compare.
         store.progressed();
@@ -1261,6 +1261,12 @@ pub fn download_track(
                 .ok();
         }
     });
+
+    // However it ended, a decoder reading the `.part` file is parked waiting
+    // for bytes that are not coming — either because there are no more or
+    // because the file is now under its final name. It waits on the feed, so
+    // the feed is what has to say so.
+    bytes_written.done();
 
     if let Err(e) = result {
         store.failed(queue_id, e.to_string());

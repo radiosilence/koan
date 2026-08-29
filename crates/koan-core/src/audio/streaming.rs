@@ -18,16 +18,13 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 /// Longest a read may block waiting for bytes before the transfer counts as
 /// dead. A download that stops advancing must surface as an error, not park the
 /// decode thread forever holding the ring buffer producer.
 const STALL_LIMIT: Duration = Duration::from_secs(30);
-
-/// How long to wait between checks for bytes that have not landed yet.
-const POLL_INTERVAL: Duration = Duration::from_millis(10);
 
 /// Where a download has got to, as the source needs to know it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -47,7 +44,7 @@ pub struct PartialFileSource {
     file: File,
     pos: u64,
     /// How many bytes the download has committed to disk so far.
-    bytes_written: Arc<AtomicU64>,
+    bytes_written: Arc<crate::remote::downloads::ByteFeed>,
     /// Total expected length, or 0 when the server sent no Content-Length.
     total: u64,
     status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
@@ -115,7 +112,7 @@ impl PartialFileSource {
     /// decode thread, where the cost is silence rather than a busy player.
     pub fn open(
         path: &Path,
-        bytes_written: Arc<AtomicU64>,
+        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
         total: u64,
         status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
         mode: ProbeMode,
@@ -130,7 +127,7 @@ impl PartialFileSource {
     /// cannot describe itself from what has arrived says so at once.
     pub fn open_for_probe(
         path: &Path,
-        bytes_written: Arc<AtomicU64>,
+        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
         total: u64,
         status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
         mode: ProbeMode,
@@ -144,7 +141,7 @@ impl PartialFileSource {
 
     fn with_stall_limit(
         path: &Path,
-        bytes_written: Arc<AtomicU64>,
+        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
         total: u64,
         status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
         stall_limit: Duration,
@@ -173,6 +170,10 @@ impl PartialFileSource {
     }
 
     /// Read straight from the file, tolerating a short read at the write head:
+    /// Whatever ends a transfer must call `ByteFeed::done` when it sets the
+    /// status: a read waiting for bytes is parked on the feed, and a download
+    /// that failed has no more bytes to wake it with.
+    ///
     /// `bytes_written` is published by the downloader as it goes and the data
     /// behind it can lag by a moment.
     fn read_available(&mut self, buf: &mut [u8], limit: u64) -> io::Result<usize> {
@@ -231,7 +232,10 @@ impl Read for PartialFileSource {
                     "stream download stalled",
                 ));
             }
-            std::thread::sleep(POLL_INTERVAL);
+            // Woken by the download itself, and by it finishing or failing.
+            // The deadline is the giving-up clock rather than a look-again
+            // one: this thread is not scheduled between one chunk and the next.
+            self.bytes_written.wait_past(available, deadline);
         }
     }
 }
@@ -302,7 +306,7 @@ mod tests {
     struct Fixture {
         _dir: tempfile::TempDir,
         path: std::path::PathBuf,
-        written: Arc<AtomicU64>,
+        written: Arc<crate::remote::downloads::ByteFeed>,
         status: Arc<AtomicU8>,
     }
 
@@ -318,7 +322,7 @@ mod tests {
             Self {
                 _dir: dir,
                 path,
-                written: Arc::new(AtomicU64::new(0)),
+                written: crate::remote::downloads::ByteFeed::new(),
                 status: Arc::new(AtomicU8::new(DOWNLOADING)),
             }
         }
@@ -331,12 +335,15 @@ mod tests {
                 .unwrap();
             f.write_all(chunk).unwrap();
             f.flush().unwrap();
-            self.written
-                .fetch_add(chunk.len() as u64, Ordering::Release);
+            self.written.advance(chunk.len() as u64);
         }
 
         fn set(&self, status: u8) {
             self.status.store(status, Ordering::Release);
+            // What ends a transfer says so, the way the downloader does — a
+            // reader blocked for bytes that will never come is waiting on the
+            // feed, not on the status.
+            self.written.done();
         }
 
         fn status_fn(&self) -> Arc<dyn Fn() -> StreamStatus + Send + Sync> {
@@ -402,7 +409,7 @@ mod tests {
                     .unwrap();
                 f.write_all(b"efghij").unwrap();
                 f.flush().unwrap();
-                written.fetch_add(6, Ordering::Release);
+                written.advance(6);
             }
         });
 
@@ -552,10 +559,11 @@ mod tests {
         let fx = Fixture::new();
         let mut src = fx.source(1000);
 
-        let status = fx.status.clone();
+        let (status, written) = (fx.status.clone(), fx.written.clone());
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(20));
             status.store(FAILED, Ordering::Release);
+            written.done();
         });
 
         let mut out = [0u8; 8];
@@ -620,7 +628,7 @@ mod tests {
                     .unwrap();
                 f.write_all(b"abcde").unwrap();
                 f.flush().unwrap();
-                written.fetch_add(5, Ordering::Release);
+                written.advance(5);
             }
         });
 
