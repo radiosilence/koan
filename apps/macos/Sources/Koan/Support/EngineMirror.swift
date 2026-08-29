@@ -326,6 +326,8 @@ private struct ReloadOnLibraryChange<ID: Equatable>: ViewModifier {
     }
 }
 
+/// What koan is doing on its own, as one value: the only thing that reads
+/// either draws a row for each, and would be invalidated by both.
 struct EngineTasks: Equatable {
     /// The startup scan or the watched folders finding something.
     let scanning: Bool
@@ -334,6 +336,11 @@ struct EngineTasks: Equatable {
 }
 
 /// Where the playhead was, and whether it is still moving.
+///
+/// The engine publishes one of these when a client's own reckoning would go
+/// wrong, so everything that shows a position derives it from here rather than
+/// waiting to be told a number. Nothing in koan ticks to keep a position up to
+/// date; the anchor is what makes that possible.
 struct Playhead: Equatable {
     let positionMs: UInt64
     let playing: Bool
