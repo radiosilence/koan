@@ -78,7 +78,7 @@ final class PlayerModel {
     /// settle, and "happens to" is not a property worth relying on.
     private func followEngine() {
         let trackId = mirror.playback.entry?.trackId
-        let position = mirror.positionMs
+        let position = mirror.playhead.at()
         if trackId != followedTrackId {
             followedTrackId = trackId
             resolveCurrentPlace(trackId: trackId)
@@ -116,11 +116,19 @@ final class PlayerModel {
         return Array(queue.dropFirst(index + 1))
     }
 
-    /// 0–1 through the current track. Reflects the drag while scrubbing.
+    /// Where the playhead was last said to be, and whether it is still
+    /// moving. What draws a position derives it from this rather than being
+    /// handed a number ten times a second — see `Playhead`.
+    var playhead: Playhead { mirror.playhead }
+
+    /// 0–1 through the current track, as of now. Reflects the drag while
+    /// scrubbing. A value for a moment, not a value that arrives: anything
+    /// drawing it continuously should animate toward the end of the track
+    /// instead of asking again.
     var progress: Double {
         if let scrubbing { return scrubbing }
         guard durationMs > 0 else { return 0 }
-        return min(1, Double(mirror.positionMs) / Double(durationMs))
+        return min(1, Double(mirror.playhead.at(within: durationMs)) / Double(durationMs))
     }
 
     /// Whether the track can be seeked at all yet.
@@ -258,7 +266,7 @@ final class PlayerModel {
     /// shortcuts and the TUI's `,`/`.` do.
     func seek(bySeconds delta: Int) {
         guard canSeek else { return explainUnseekable() }
-        let current = Int64(mirror.positionMs)
+        let current = Int64(mirror.playhead.at())
         let target = max(0, current + Int64(delta) * 1000)
         seek(toMs: UInt64(min(target, Int64(mirror.seekableMs))))
     }

@@ -1244,6 +1244,9 @@ pub fn download_track(
     let announced_total = AtomicU64::new(u64::MAX);
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
         bytes_written_progress.store(downloaded, Ordering::Release);
+        // What knows a transfer moved is the code moving it. Held to a reading
+        // every 250ms inside, so a chunk landing costs an atomic and a compare.
+        store.progressed();
         if announced_total.swap(total, Ordering::Relaxed) != total {
             // The store, and only the store. The item's state says whether its
             // file can be played, which a transfer in flight has not changed.

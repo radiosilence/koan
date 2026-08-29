@@ -18,6 +18,7 @@
 //! reads the whole state, which is how a client seeds itself.
 
 use std::sync::{Arc, Weak};
+use std::time::Instant;
 
 use crate::types::{NowPlaying, QueueItem, QueueLock, Transfer, TransferFigure};
 
@@ -32,13 +33,25 @@ pub enum StateSlice {
     /// is always zero here — it has a slice of its own, and leaving it in would
     /// make every tick a change to this one.
     Playback { now_playing: NowPlaying },
-    /// Where the playhead is, and how far it can be dragged.
+    /// Where the playhead is, how far it can be dragged, and whether it is
+    /// moving on its own.
+    ///
+    /// An anchor, not a reading. A client that knows the playhead was at
+    /// `position_ms` when this arrived, and that it is playing, knows where it
+    /// is now without being told again — so this is published when that stops
+    /// being true (a seek, a pause, a new track, a stall) rather than on a
+    /// clock. It is the one number in the engine that changes without anything
+    /// happening, and a stream that had to keep saying so could never be quiet.
     ///
     /// One slice because they move together and are read by one thing. The
     /// seekable extent belongs here rather than beside the track's title: it
     /// grows for as long as a download is arriving, and a field that moves at
     /// that rate drags every reader of whatever it sits next to along with it.
-    Playhead { position_ms: u64, seekable_ms: u64 },
+    Playhead {
+        position_ms: u64,
+        seekable_ms: u64,
+        playing: bool,
+    },
     /// The queue, in order. The whole list: a queue that is one copy refetched
     /// whole has nothing to forget to patch.
     Queue { items: Vec<QueueItem> },
@@ -216,9 +229,81 @@ impl StateStream {
     }
 }
 
+/// The playhead as a client last heard it.
+///
+/// Kept by whoever publishes so it can answer the only question that matters
+/// for a value that changes on its own: would the client still be right? A
+/// playhead advancing at one second per second is something the far side can
+/// work out; a seek, a pause, a track boundary and a stall are not.
+#[derive(Clone, Copy, Debug)]
+pub struct Anchor {
+    pub position_ms: u64,
+    pub playing: bool,
+    pub at: Instant,
+}
+
+impl Anchor {
+    /// Where a client holding this anchor believes the playhead is now.
+    pub fn reckoning(&self, now: Instant) -> u64 {
+        if self.playing {
+            self.position_ms + now.duration_since(self.at).as_millis() as u64
+        } else {
+            self.position_ms
+        }
+    }
+
+    /// Whether that belief has come apart, by more than `tolerance`.
+    pub fn stale(&self, position_ms: u64, playing: bool, now: Instant, tolerance: u64) -> bool {
+        playing != self.playing || self.reckoning(now).abs_diff(position_ms) > tolerance
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
+
+    fn anchor(position_ms: u64, playing: bool) -> Anchor {
+        Anchor {
+            position_ms,
+            playing,
+            at: Instant::now(),
+        }
+    }
+
+    #[test]
+    fn a_playhead_running_on_is_not_worth_saying() {
+        let held = anchor(10_000, true);
+        let now = held.at + Duration::from_millis(500);
+        // Exactly where a client would have put it by itself.
+        assert!(!held.stale(10_500, true, now, 32));
+    }
+
+    #[test]
+    fn a_seek_is() {
+        let held = anchor(10_000, true);
+        let now = held.at + Duration::from_millis(500);
+        assert!(held.stale(90_000, true, now, 32));
+        // And so is a jump backwards, which is the same distance the other way.
+        assert!(held.stale(2_000, true, now, 32));
+    }
+
+    #[test]
+    fn a_pause_is_said_even_where_the_position_agrees() {
+        let held = anchor(10_000, true);
+        let now = held.at + Duration::from_millis(500);
+        assert!(held.stale(10_500, false, now, 32));
+    }
+
+    #[test]
+    fn a_paused_playhead_stays_where_it_was_left() {
+        let held = anchor(10_000, false);
+        let now = held.at + Duration::from_secs(30);
+        assert!(!held.stale(10_000, false, now, 32));
+        // A stall while playing is the same shape: time passed, the playhead
+        // did not, and that is worth saying.
+        assert!(anchor(10_000, true).stale(10_000, true, now, 32));
+    }
 
     fn library(version: u64) -> StateSlice {
         StateSlice::Library { version }
@@ -257,6 +342,7 @@ mod tests {
         state.publish(StateSlice::Playhead {
             position_ms: 5,
             seekable_ms: 0,
+            playing: true,
         });
 
         let mut seen = [0; SLOTS];
@@ -275,6 +361,7 @@ mod tests {
             state.publish(StateSlice::Playhead {
                 position_ms: ms,
                 seekable_ms: 0,
+                playing: true,
             });
         }
 
@@ -283,7 +370,8 @@ mod tests {
             batch,
             vec![StateSlice::Playhead {
                 position_ms: 100,
-                seekable_ms: 0
+                seekable_ms: 0,
+                playing: true,
             }]
         );
     }
@@ -314,11 +402,13 @@ mod tests {
         state.publish(StateSlice::Playhead {
             position_ms: 1,
             seekable_ms: 0,
+            playing: true,
         });
         state.publish(library(1));
         state.publish(StateSlice::Playhead {
             position_ms: 2,
             seekable_ms: 0,
+            playing: true,
         });
         state.publish(library(2));
 
@@ -326,7 +416,8 @@ mod tests {
         assert_eq!(batch.len(), 2);
         assert!(batch.contains(&StateSlice::Playhead {
             position_ms: 2,
-            seekable_ms: 0
+            seekable_ms: 0,
+            playing: true,
         }));
         assert!(batch.contains(&library(2)));
     }
