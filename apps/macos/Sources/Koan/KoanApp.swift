@@ -60,15 +60,20 @@ final class AppState {
         // than into a modal of their own.
         playlists.report = { [weak player] message in player?.lastError = message }
 
+        activity.cancelLibraryTask = { engine.cancelLibraryTask() }
+
         // The engine syncs and scans on its own — on startup, on a timer, and
         // when the library folders change. Those are the slow things a user is
         // most likely to notice and least likely to have asked for, so they get
-        // a row like anything else.
-        activity.mirror("Syncing with server", uses: [.remoteTracks]) { engine.isAutoSyncing() }
-        activity.mirror("Scanning library", uses: .localLibrary, cancellable: true) {
-            engine.isAutoScanning()
+        // a row like anything else. Followed rather than polled: the engine
+        // says whether each is running, in the same stream as everything else.
+        mirror.follow { [weak activity, weak mirror] in
+            guard let activity, let mirror else { return }
+            activity.mirror("Syncing with server", uses: [.remoteTracks], running: mirror.tasks.syncing)
+            activity.mirror(
+                "Scanning library", uses: .localLibrary, cancellable: true,
+                running: mirror.tasks.scanning)
         }
-        activity.cancelLibraryTask = { engine.cancelLibraryTask() }
 
         // Nothing wires an event to a model here any more. The engine
         // publishes state, `EngineMirror` holds it and views read it; what is

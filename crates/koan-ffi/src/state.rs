@@ -70,6 +70,13 @@ pub enum StateSlice {
     /// so a client can hold a copy is the opposite of the point. What a client
     /// needs is to know to ask again.
     Library { version: u64 },
+    /// What koan is doing on its own: the startup and watched-folder scan, and
+    /// the automatic sync with a server.
+    ///
+    /// Flags rather than a version, because a client draws a row per running
+    /// task and nothing else. They flip twice per task, which is why they can
+    /// be published rather than asked after.
+    Tasks { scanning: bool, syncing: bool },
 }
 
 /// Which slot a slice occupies. One per variant, in apply order.
@@ -82,9 +89,10 @@ enum Slot {
     Transfers,
     Figures,
     Library,
+    Tasks,
 }
 
-const SLOTS: usize = 7;
+const SLOTS: usize = 8;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -96,6 +104,7 @@ impl StateSlice {
             Self::Transfers { .. } => Slot::Transfers,
             Self::Figures { .. } => Slot::Figures,
             Self::Library { .. } => Slot::Library,
+            Self::Tasks { .. } => Slot::Tasks,
         }
     }
 }

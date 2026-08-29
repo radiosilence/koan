@@ -5,7 +5,6 @@ pub mod undo;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::thread;
 
 use thiserror::Error;
@@ -44,7 +43,7 @@ pub enum PlayerError {
 #[derive(Clone)]
 struct StreamSource {
     path: PathBuf,
-    bytes_written: Arc<AtomicU64>,
+    bytes_written: Arc<crate::remote::downloads::ByteFeed>,
     total: u64,
     mode: streaming::ProbeMode,
 }
@@ -506,7 +505,7 @@ impl Player {
         &self,
         id: QueueItemId,
         path: &Path,
-        bytes_written: Arc<AtomicU64>,
+        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
         total: u64,
     ) {
         let path = path.to_path_buf();
@@ -1603,6 +1602,7 @@ mod tests {
     use super::*;
     use state::PlaylistItem;
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicU64;
 
     fn make_item(title: &str) -> PlaylistItem {
         PlaylistItem {

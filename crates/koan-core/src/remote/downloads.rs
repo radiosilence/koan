@@ -55,7 +55,7 @@ pub struct Download {
     /// Total expected, or 0 when the server sent no Content-Length.
     pub total: u64,
     /// Live byte count, shared with the downloader. Read it, do not store it.
-    pub written: Arc<AtomicU64>,
+    pub written: Arc<ByteFeed>,
     pub state: DownloadState,
     /// Bytes per second, smoothed. Zero until there are two samples to take a
     /// rate from — and zero is the honest answer for a transfer that has
@@ -95,6 +95,76 @@ pub enum PhaseKind {
 impl Phase {
     pub fn is_running(&self) -> bool {
         matches!(self.state, PhaseKind::Queued | PhaseKind::Running)
+    }
+}
+
+/// A byte count that can be waited on.
+///
+/// The downloader publishes it as chunks land, and a decode thread reading a
+/// file that is still arriving used to look at it every ten milliseconds to
+/// find out whether there was more. Same atomic — every read is unchanged and
+/// costs nothing — with somewhere to wait beside it, so the reader sleeps
+/// until there is something to read and the last poll in the audio path goes
+/// with it.
+#[derive(Debug, Default)]
+pub struct ByteFeed {
+    written: AtomicU64,
+    /// Taken by both sides. A store outside it could land between a reader
+    /// deciding to wait and waiting, and be slept through — which for a stream
+    /// is a stall the length of the whole timeout.
+    at: parking_lot::Mutex<()>,
+    more: parking_lot::Condvar,
+}
+
+impl ByteFeed {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self::default())
+    }
+
+    /// What has been written so far. Reads take nothing.
+    pub fn load(&self, order: Ordering) -> u64 {
+        self.written.load(order)
+    }
+
+    /// Say how much has been written, and wake whoever is waiting for it.
+    pub fn set(&self, bytes: u64) {
+        let _at = self.at.lock();
+        self.written.store(bytes, Ordering::Release);
+        self.more.notify_all();
+    }
+
+    /// Add to the count, for a writer that knows only how much it just wrote.
+    pub fn advance(&self, bytes: u64) {
+        let _at = self.at.lock();
+        self.written.fetch_add(bytes, Ordering::Release);
+        self.more.notify_all();
+    }
+
+    /// The transfer is over, however it ended. Whoever is waiting wants to
+    /// look at the status now rather than at the byte count.
+    pub fn done(&self) {
+        let _at = self.at.lock();
+        self.more.notify_all();
+    }
+
+    /// Wait for something to happen past `seen` bytes, or until `deadline`.
+    /// Returns what has been written either way.
+    ///
+    /// Returns on any wake, not only on a byte: a transfer that failed has no
+    /// more bytes to offer and the caller has a status to re-read, which is
+    /// the answer it is really waiting for. Deciding that here would be
+    /// deciding it twice.
+    pub fn wait_past(&self, seen: u64, deadline: Instant) -> u64 {
+        let mut at = self.at.lock();
+        let written = self.written.load(Ordering::Acquire);
+        if written > seen {
+            return written;
+        }
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+            return written;
+        };
+        self.more.wait_for(&mut at, left);
+        self.written.load(Ordering::Acquire)
     }
 }
 
@@ -202,7 +272,7 @@ impl DownloadStore {
     }
 
     /// Bytes have started arriving, and this is how many there are in total.
-    pub fn started(&self, id: QueueItemId, total: u64, written: Arc<AtomicU64>) {
+    pub fn started(&self, id: QueueItemId, total: u64, written: Arc<ByteFeed>) {
         let mut entries = self.entries.write();
         if let Some(entry) = entries.iter_mut().find(|d| d.id == id) {
             entry.total = total;
@@ -389,7 +459,7 @@ mod tests {
             source: PathBuf::from(format!("/cache/{title}.opus.part")),
             dest: PathBuf::from(format!("/cache/{title}.opus")),
             total: 0,
-            written: Arc::new(AtomicU64::new(0)),
+            written: ByteFeed::new(),
             state: DownloadState::Queued,
             bytes_per_second: 0,
         }
@@ -403,9 +473,9 @@ mod tests {
         store.queued(entry);
         assert_eq!(store.active(), 1);
 
-        let written = Arc::new(AtomicU64::new(0));
+        let written = ByteFeed::new();
         store.started(id, 400, written.clone());
-        written.store(100, Ordering::Relaxed);
+        written.set(100);
         assert_eq!(store.all()[0].fraction(), Some(0.25));
 
         store.finished(id);
@@ -422,11 +492,11 @@ mod tests {
         let entry = download("train");
         let id = entry.id;
         store.queued(entry);
-        let written = Arc::new(AtomicU64::new(0));
+        let written = ByteFeed::new();
         store.started(id, 1000, written.clone());
 
         let before = store.version();
-        written.store(500, Ordering::Relaxed);
+        written.set(500);
         assert_eq!(store.version(), before);
         assert_eq!(store.all()[0].bytes_written(), 500);
     }
@@ -438,7 +508,11 @@ mod tests {
         let entry = download("chunked");
         let id = entry.id;
         store.queued(entry);
-        store.started(id, 0, Arc::new(AtomicU64::new(9000)));
+        store.started(id, 0, {
+            let feed = ByteFeed::new();
+            feed.set(9000);
+            feed
+        });
         assert_eq!(store.all()[0].fraction(), None);
         assert_eq!(store.all()[0].bytes_written(), 9000);
     }
@@ -506,7 +580,7 @@ mod tests {
         );
 
         // A second too close to the first says nothing.
-        written.store(100_000, Ordering::Relaxed);
+        written.set(100_000);
         store.sample_rates_at(start + Duration::from_millis(50));
         assert_eq!(store.all()[0].bytes_per_second, 0);
 
@@ -527,7 +601,7 @@ mod tests {
         store.started(id, 1000, written.clone());
         let start = Instant::now();
         store.sample_rates_at(start);
-        written.store(500, Ordering::Relaxed);
+        written.set(500);
         store.sample_rates_at(start + Duration::from_secs(1));
         assert!(store.all()[0].bytes_per_second > 0);
 
@@ -543,7 +617,7 @@ mod tests {
         let (id, written) = (entry.id, entry.written.clone());
         store.queued(entry);
         store.started(id, 400, written.clone());
-        written.store(100, Ordering::Relaxed);
+        written.set(100);
 
         let phase = store.phase_of(id).expect("the transfer is there");
         assert_eq!(phase.state, PhaseKind::Running);

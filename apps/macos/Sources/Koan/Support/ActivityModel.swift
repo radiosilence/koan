@@ -170,31 +170,33 @@ final class ActivityModel {
 
     /// Mirror a background job the engine runs on its own — the startup scan,
     /// the folder watcher, the automatic sync. They are not started by the UI,
-    /// so nothing here can wrap them; this polls the flag instead and shows a
-    /// row for as long as it is set.
+    /// so nothing here can wrap them: the engine says whether each is running
+    /// and this shows a row for as long as it is.
+    ///
+    /// Called with each answer as it arrives rather than asking for it. It
+    /// asked once a second, for ever, so that a row would appear within a
+    /// second of a scan starting — which is a wake a second for the whole life
+    /// of the app to notice something that happens twice a day.
     func mirror(
         _ label: String,
         uses: Resources = [],
         cancellable: Bool = false,
-        while running: @escaping @Sendable () -> Bool
+        running: Bool
     ) {
-        _Concurrency.Task { [weak self] in
-            var id: UUID?
-            while !_Concurrency.Task.isCancelled {
-                let isRunning = running()
-                switch (isRunning, id) {
-                case (true, nil):
-                    id = self?.begin(label, uses: uses, cancellable: cancellable)
-                case (false, let some?):
-                    self?.end(some)
-                    id = nil
-                default:
-                    break
-                }
-                try? await _Concurrency.Task.sleep(for: .seconds(1))
-            }
+        let existing = mirrored[label]
+        switch (running, existing) {
+        case (true, nil):
+            mirrored[label] = begin(label, uses: uses, cancellable: cancellable)
+        case (false, let some?):
+            end(some)
+            mirrored[label] = nil
+        default:
+            break
         }
     }
+
+    /// The row standing for each mirrored job, by its label.
+    private var mirrored: [String: UUID] = [:]
 
     /// A `ProgressReporter` the engine can call from its worker threads,
     /// forwarding onto the main actor.

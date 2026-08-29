@@ -4,6 +4,8 @@
 
 ### Changed
 
+- **The last three clocks go.** The activity rows asked the engine whether a scan or a sync was running, once a second, for the whole life of the app, to notice something that happens twice a day — the engine says so now, in the same stream as everything else. The session autosave woke every second whether or not there was anything to save; it runs while the music does and writes on the edge when it stops. And a decode thread reading a track that is still downloading looked at the byte count every ten milliseconds: it waits on the count itself now, woken by the bytes as they land and by whatever ends the transfer.
+
 - **The engine stops polling itself.** A thread woke ten times a second for as long as koan was open, rebuilt what is playing, sampled every transfer's byte count, compared three version counters and published whatever had moved. The interface was reactive — the app has read events rather than asking since v0.32 — but the events were manufactured by a clock.
 
   The writers say so now. Every setter on the player's shared state, the download store and the library version bump a wake; the watcher waits on it and reads the versions when it comes round, so a burst is still one pass and one message per slice. A koan with nothing happening does not schedule that thread at all.

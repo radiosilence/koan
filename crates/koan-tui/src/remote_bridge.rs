@@ -187,7 +187,7 @@ fn download_and_play(
     // as they land; it flips to `dest` once the rename has happened.
     state.update_paths(&[(queue_id, download::part_path(dest))]);
 
-    let bytes_written = Arc::new(AtomicU64::new(0));
+    let bytes_written = downloads::ByteFeed::new();
     let stream_ready_sent = std::sync::atomic::AtomicBool::new(false);
 
     // Told to the download store like any other transfer. It used not to be,
@@ -214,7 +214,7 @@ fn download_and_play(
     // Once per attempt, not per chunk — see `helpers::download_track`.
     let announced_total = AtomicU64::new(u64::MAX);
     let result = streamer.stream_to_file(&track_id.to_string(), dest, |downloaded, total| {
-        bytes_written.store(downloaded, Ordering::Release);
+        bytes_written.set(downloaded);
         if announced_total.swap(total, Ordering::Relaxed) != total {
             store.started(queue_id, total, bytes_written.clone());
         }
@@ -227,6 +227,10 @@ fn download_and_play(
                 .ok();
         }
     });
+
+    // Whatever ends a transfer says so: a decoder reading the `.part` file is
+    // parked on the feed waiting for bytes that are not coming.
+    bytes_written.done();
 
     if let Err(e) = result {
         log::warn!("failed to stream {} from server: {}", dest.display(), e);
