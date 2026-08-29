@@ -509,10 +509,14 @@ final class PlayerModel {
     /// window shut.
     func restoreSession() async {
         guard let restored = try? await engine.restoreSession(), restored > 0 else { return }
-        let deadline = ContinuousClock.now + .milliseconds(500)
-        while mirror.queue.count < Int(restored), ContinuousClock.now < deadline {
-            try? await Task.sleep(for: .milliseconds(5))
-        }
+        await settle(within: .milliseconds(500)) { self.mirror.queue.count >= Int(restored) }
+    }
+
+    /// Wait for the engine to catch up with something already asked of it, or
+    /// give up after `limit`. Woken by the mirror rather than looking again —
+    /// see `EngineMirror.waitUntil`.
+    func settle(within limit: Duration, _ settled: @escaping @MainActor () -> Bool) async {
+        await mirror.waitUntil(.now + limit, settled)
     }
 
     // MARK: - Errors

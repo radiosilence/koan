@@ -263,14 +263,8 @@ final class Navigator {
     func showQueueWhenReady(watching player: PlayerModel) {
         let before = player.queueVersion
         Task {
-            let deadline = ContinuousClock.now + .milliseconds(50)
-            while ContinuousClock.now < deadline {
-                if player.queueVersion != before {
-                    show(.queue)
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(5))
-            }
+            await player.settle(within: .milliseconds(50)) { player.queueVersion != before }
+            if player.queueVersion != before { show(.queue) }
         }
     }
 }

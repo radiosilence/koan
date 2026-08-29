@@ -286,6 +286,69 @@ extension EngineMirror {
             Task { @MainActor [weak self] in self?.follow(body) }
         }
     }
+
+    /// Wait until `settled` holds, or until `deadline` passes.
+    ///
+    /// For the two places that have asked the engine for something and want the
+    /// answer before drawing — a restored queue, a queue mutation to confirm.
+    /// Both looked again every five milliseconds until it arrived; the mirror
+    /// is observable, so the arrival is a thing to be woken by. The deadline is
+    /// one sleep for the whole wait rather than one per look, and it is a
+    /// giving-up clock, not a checking one.
+    func waitUntil(
+        _ deadline: ContinuousClock.Instant,
+        _ settled: @escaping @MainActor () -> Bool
+    ) async {
+        while !settled(), ContinuousClock.now < deadline {
+            await nextChange(before: deadline)
+        }
+    }
+
+    /// Resumes on the next change to anything held here, or at `deadline`.
+    ///
+    /// Resumed from a task rather than from the change handler itself: the
+    /// handler runs *before* the mutation it is announcing, so a caller told
+    /// there and then would read the value it was waiting to see change.
+    ///
+    /// Whichever arrives first resumes; the `Once` is what makes the other one
+    /// harmless, since observation is registered for one change and a handler
+    /// that lost the race still fires.
+    private func nextChange(before deadline: ContinuousClock.Instant) async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            let once = Once()
+            withObservationTracking {
+                _ = playback
+                _ = playhead
+                _ = queue
+                _ = lock
+                _ = transfers
+                _ = figures
+                _ = libraryVersion
+                _ = tasks
+            } onChange: {
+                Task { @MainActor in
+                    if once.take() { continuation.resume() }
+                }
+            }
+            Task { @MainActor in
+                try? await Task.sleep(until: deadline, clock: .continuous)
+                if once.take() { continuation.resume() }
+            }
+        }
+    }
+}
+
+/// One-shot latch. Everything that touches it is on the main actor, so it is
+/// a Bool and a method rather than anything cleverer.
+@MainActor
+private final class Once {
+    private var spent = false
+
+    func take() -> Bool {
+        guard !spent else { return false }
+        spent = true
+        return true
+    }
 }
 
 extension TransferState {

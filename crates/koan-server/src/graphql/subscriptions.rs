@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_graphql::{Context, Subscription};
 use tokio_stream::Stream;
@@ -17,20 +16,27 @@ pub struct SubscriptionRoot;
 
 #[Subscription]
 impl SubscriptionRoot {
-    /// Playback state updates — pushes on state change and position at the given interval.
-    /// Default interval: 200ms (5Hz). Override with `intervalMs` for faster/slower updates.
-    /// Minimum 16ms (~60fps) — values below this are clamped to prevent CPU waste.
+    /// Playback updates, pushed when something changes.
+    ///
+    /// `positionMs` is an anchor rather than a reading. A playhead advancing at
+    /// one second per second is the one thing a client can work out for itself,
+    /// so this pushes when that stops being true — a seek, a pause, a track
+    /// boundary, a stall — and not on a clock. Derive the current position from
+    /// the last message and `state`; that is what the native client does, and
+    /// what lets a paused koan send nothing at all.
     async fn now_playing(
         &self,
         ctx: &Context<'_>,
         #[graphql(
             default = 200,
-            desc = "Push interval in milliseconds (minimum 16). Default 200 (5Hz)."
+            desc = "Ignored. Kept so existing queries still parse — this stream \
+                    pushes on change rather than on an interval."
         )]
         interval_ms: u64,
     ) -> impl Stream<Item = GqlNowPlaying> {
+        let _ = interval_ms; // Kept in the schema, not used — see above.
         let state = ctx.data_unchecked::<Arc<SharedPlayerState>>().clone();
-        let interval = Duration::from_millis(interval_ms.max(16)); // floor at ~60fps
+        let mut wake = koan_core::signal::engine_changed().subscribe();
 
         async_stream::stream! {
             let mut last_state = 255u8; // impossible value to force first emit
@@ -42,7 +48,6 @@ impl SubscriptionRoot {
                 let position_ms = state.position_ms();
                 let queue_item_id = state.track_info().map(|ti| ti.id.0.to_string());
 
-                // Emit on any change: state, position, or track.
                 let changed = playback_state != last_state
                     || position_ms != last_position
                     || queue_item_id != last_queue_item;
@@ -55,22 +60,35 @@ impl SubscriptionRoot {
                     yield GqlNowPlaying::capture(&state);
                 }
 
-                tokio::time::sleep(interval).await;
+                // Marked seen before the wait, so a change landing between the
+                // read above and this cannot be slept through.
+                wake.borrow_and_update();
+                if wake.changed().await.is_err() {
+                    return; // The engine is gone; so is this stream.
+                }
             }
         }
     }
 
-    /// Queue updates — pushes the full queue snapshot whenever the playlist
-    /// version changes, and while anything is downloading, since progress moves
-    /// without the version moving.
+    /// Queue updates — the full snapshot whenever the playlist changes, and
+    /// while anything is downloading, since progress moves without the
+    /// playlist version moving.
+    ///
+    /// Woken rather than polled: the download store takes a rate reading as the
+    /// bytes land and says so, which is the same signal a queue edit sends.
     async fn queue_updated(
         &self,
         ctx: &Context<'_>,
-        #[graphql(default = 500, desc = "Poll interval in milliseconds. Default 500.")]
+        #[graphql(
+            default = 500,
+            desc = "Ignored. Kept so existing queries still parse — this stream \
+                    pushes on change rather than on an interval."
+        )]
         interval_ms: u64,
     ) -> impl Stream<Item = GqlQueueSnapshot> {
+        let _ = interval_ms; // Kept in the schema, not used — see above.
         let state = ctx.data_unchecked::<Arc<SharedPlayerState>>().clone();
-        let interval = Duration::from_millis(interval_ms.max(50));
+        let mut wake = koan_core::signal::engine_changed().subscribe();
 
         async_stream::stream! {
             let mut last_version = u64::MAX; // force first emit
@@ -84,30 +102,54 @@ impl SubscriptionRoot {
                     yield GqlQueueSnapshot::capture(&state);
                 }
 
-                tokio::time::sleep(interval).await;
+                wake.borrow_and_update();
+                if wake.changed().await.is_err() {
+                    return;
+                }
             }
         }
     }
 
     /// Visualizer frames — spectrum, peaks, VU, beat energy, optional waveform.
-    /// Pushes at `fps` rate (default 30). Set `includeWaveform` for oscilloscope modes.
+    /// Set `includeWaveform` for oscilloscope modes.
+    ///
+    /// One message per analysed frame: `fps` sets the rate the analyser itself
+    /// runs at rather than a rate to resample it at, so no frame is sent twice
+    /// and none is skipped. The analyser stops publishing when the play head
+    /// does, so a paused koan sends nothing and this stream costs nothing.
+    ///
+    /// The rate is the analyser's, and it is one analyser: a second client
+    /// asking for a different `fps` moves it for both.
     async fn viz_frame(
         &self,
         ctx: &Context<'_>,
-        #[graphql(default = 30, desc = "Target frames per second. Default 30.")] fps: u32,
+        #[graphql(
+            default = 30,
+            desc = "Frames per second to run the analyser at. Default 30."
+        )]
+        fps: u32,
         #[graphql(default = false, desc = "Include raw waveform samples. Default false.")]
         include_waveform: bool,
     ) -> impl Stream<Item = GqlVizFrame> {
         let viz = ctx.data_opt::<Arc<VizSnapshot>>().cloned();
-        let interval = Duration::from_millis((1000 / fps.clamp(1, 120)) as u64);
 
         async_stream::stream! {
             let Some(viz) = viz else {
                 // No VizSnapshot — nothing to push.
                 return;
             };
+            viz.set_fps(fps.clamp(1, 240) as u8);
+            // Counted as a reader before the first wait: an analyser parked for
+            // want of one would otherwise never publish the frame this waits
+            // for. Every read below keeps it counted.
+            viz.touch();
+            let mut published = viz.subscribe();
 
             loop {
+                published.borrow_and_update();
+                if published.changed().await.is_err() {
+                    return;
+                }
                 let frame = viz.read();
                 yield GqlVizFrame {
                     spectrum: frame.spectrum.to_vec(),
@@ -120,9 +162,30 @@ impl SubscriptionRoot {
                         Vec::new()
                     },
                 };
-
-                tokio::time::sleep(interval).await;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// The arguments stay in the schema even though the streams no longer run
+    /// on them: a query that named one still has to parse.
+    #[test]
+    fn the_interval_arguments_are_still_in_the_schema() {
+        let (state, _timeline, _viz, cmd_tx) = koan_core::player::Player::spawn();
+        let schema = crate::graphql::build_schema(
+            state,
+            cmd_tx,
+            std::path::PathBuf::from("/nonexistent/koan-test.db"),
+            None,
+        );
+        let sdl = schema.sdl();
+        let subscription = sdl
+            .split("type SubscriptionRoot")
+            .nth(1)
+            .expect("subscription root in SDL");
+        assert!(subscription.contains("intervalMs"), "{subscription}");
+        assert!(subscription.contains("fps"), "{subscription}");
     }
 }
