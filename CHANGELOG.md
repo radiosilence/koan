@@ -12,6 +12,12 @@
 
 ### Changed
 
+- **The GraphQL subscriptions are pushed, not polled.** `nowPlaying` and `queueUpdated` looked at the engine every 200ms and 500ms and yielded when something had moved; `vizFrame` resampled the analyser at whatever rate the client asked for, sending frames twice or skipping them depending on how the two clocks lined up. All three wait on a signal now. `vizFrame` is one message per analysed frame, and its `fps` sets the rate the analyser itself runs at rather than a rate to resample it at — one analyser, so a second client asking for a different figure moves it for both.
+
+  `nowPlaying` sends an anchor, the way the native client already receives one: `positionMs` is where the playhead was when the message was sent, and a client that knows it is playing can work out the rest. It arrives on a seek, a pause, a track boundary or a stall — not on a clock — so a paused koan sends nothing at all. **A client drawing a moving position must derive it rather than waiting to be told.** The `intervalMs` arguments remain in the schema and are ignored, so existing queries still parse.
+
+- **The app waits to be told rather than looking.** Restoring a session and jumping to the queue after an enqueue both watched a value every five milliseconds until it moved. They wait on the mirror now, with the deadline as one sleep for the whole wait rather than one per look.
+
 - **The last three clocks go.** The activity rows asked the engine whether a scan or a sync was running, once a second, for the whole life of the app, to notice something that happens twice a day — the engine says so now, in the same stream as everything else. The session autosave woke every second whether or not there was anything to save; it runs while the music does and writes on the edge when it stops. And a decode thread reading a track that is still downloading looked at the byte count every ten milliseconds: it waits on the count itself now, woken by the bytes as they land and by whatever ends the transfer.
 
 - **The engine stops polling itself.** A thread woke ten times a second for as long as koan was open, rebuilt what is playing, sampled every transfer's byte count, compared three version counters and published whatever had moved. The interface was reactive — the app has read events rather than asking since v0.32 — but the events were manufactured by a clock.

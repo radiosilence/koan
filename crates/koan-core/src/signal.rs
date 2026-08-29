@@ -13,11 +13,16 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use parking_lot::{Condvar, Mutex};
+use tokio::sync::watch;
 
 /// A generation counter that can be waited on.
 pub struct Wake {
     generation: Mutex<u64>,
     changed: Condvar,
+    /// The same signal for a caller that cannot park a thread on it. A GraphQL
+    /// subscription is a task on a runtime, and a task that blocks holds a
+    /// worker rather than sleeping.
+    published: watch::Sender<u64>,
 }
 
 impl Wake {
@@ -25,6 +30,7 @@ impl Wake {
         Self {
             generation: Mutex::new(0),
             changed: Condvar::new(),
+            published: watch::Sender::new(0),
         }
     }
 
@@ -33,6 +39,9 @@ impl Wake {
         let mut generation = self.generation.lock();
         *generation = generation.wrapping_add(1);
         self.changed.notify_all();
+        // Both kinds of waiter from one lock, so a thread and a task can never
+        // disagree about which generation they are looking at.
+        self.published.send_replace(*generation);
     }
 
     /// The generation now, to be handed back to `wait`.
@@ -50,6 +59,13 @@ impl Wake {
             self.changed.wait(&mut generation);
         }
         *generation
+    }
+
+    /// A receiver that wakes on each bump, for an async caller. Its value is
+    /// the generation, so a subscriber that slept through a burst sees one
+    /// wake and reads the versions once — the same batching a thread gets.
+    pub fn subscribe(&self) -> watch::Receiver<u64> {
+        self.published.subscribe()
     }
 
     /// The same, giving up after `timeout`. For a caller that has something
