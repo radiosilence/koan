@@ -75,6 +75,12 @@ struct LinkText: View {
 struct PlayableArtwork: View {
     let albumId: Int64
     var cornerRadius: CGFloat = 6
+    /// What dragging the cover carries, if anything.
+    ///
+    /// It rides on this view rather than on whatever contains it: a tap
+    /// gesture claims the press from every ancestor, so a `.draggable` above
+    /// this one never sees the movement that would start a drag.
+    var drag: Playable?
 
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
@@ -106,6 +112,7 @@ struct PlayableArtwork: View {
             .animation(.easeOut(duration: 0.12), value: hovering)
             .onHover { hovering = $0 }
             .onTapGesture { play() }
+            .modifier(OptionalDrag(playable: drag))
             .help("Play album")
     }
 
