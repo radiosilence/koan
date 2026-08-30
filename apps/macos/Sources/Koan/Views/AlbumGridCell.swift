@@ -18,7 +18,7 @@ struct AlbumGridCell: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            PlayableArtwork(albumId: album.id)
+            PlayableArtwork(albumId: album.id, drag: .album(album))
                 .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
                 .overlay(alignment: .topTrailing) {
                     if let codec = album.codec {
@@ -64,6 +64,7 @@ struct AlbumGridCell: View {
                 .contentShape(.rect)
                 .onHover { titleHovering = $0 }
                 .onTapGesture { Trace.event("tap"); nav.open(album: album.id) }
+                .draggablePlayable(.album(album))
 
             HStack(spacing: 4) {
                 if showArtist {
@@ -79,7 +80,6 @@ struct AlbumGridCell: View {
         .onHover { hovering = $0 }
         .animation(.smooth(duration: 0.18), value: hovering)
         .contextMenu { PlayableMenu(playable: .album(album)) }
-        .draggablePlayable(.album(album))
     }
 
 }

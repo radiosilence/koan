@@ -28,7 +28,7 @@ struct RowBehaviour: ViewModifier {
 /// Known limit: with a multi-selection this drags only the row you grabbed, not
 /// the selection. Dragging a whole selection means building the item providers
 /// from `selection` by hand.
-private struct OptionalDrag: ViewModifier {
+struct OptionalDrag: ViewModifier {
     let playable: Playable?
 
     func body(content: Content) -> some View {

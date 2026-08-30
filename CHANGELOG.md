@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **An album can be dragged off its tile.** The drag was declared on the tile's container, above both the cover and the title — and each of those carries a tap gesture of its own, which claims the press before any ancestor sees it. What was left to grab was the year line and a few points of padding, so the drag almost never started: dropping a record onto a playlist read as a drop that had been refused, rather than as a drag that never began. Whether the album was downloaded or still remote never came into it, since that is not decided until long after the gesture.
+
+  The payload rides on the same views as the taps now, where the drag recogniser's own movement threshold is what separates a click from a drag — the arrangement the queue's rows have always used. Dragging by the artist name still means the artist.
+
 ## v0.33.2 (2026-08-29)
 
 ### Changed
