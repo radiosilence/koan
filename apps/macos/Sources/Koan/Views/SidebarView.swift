@@ -170,6 +170,12 @@ struct SidebarView: View {
                     } isTargeted: { targeted in
                         playlistDropTarget = targeted ? playlist.id : nil
                     }
+                    .dropDestination(for: URL.self) { urls, _ in
+                        playlists.add(files: urls, to: playlist.id)
+                        return true
+                    } isTargeted: { targeted in
+                        playlistDropTarget = targeted ? playlist.id : nil
+                    }
                     .listRowBackground(
                         playlistDropTarget == playlist.id
                             ? RoundedRectangle(cornerRadius: 5).fill(.tint.opacity(0.25))
@@ -209,6 +215,10 @@ struct SidebarView: View {
             .onTapGesture { playlists.naming = [] }
             .dropDestination(for: PlayableTransfer.self) { dropped, _ in
                 playlists.beginNaming(dropped: dropped)
+                return true
+            } isTargeted: { newPlaylistDropTargeted = $0 }
+            .dropDestination(for: URL.self) { urls, _ in
+                playlists.beginNaming(files: urls)
                 return true
             } isTargeted: { newPlaylistDropTargeted = $0 }
             .listRowBackground(

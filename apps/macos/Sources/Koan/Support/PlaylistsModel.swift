@@ -142,6 +142,37 @@ final class PlaylistsModel {
         Task { naming = await resolve(dropped) }
     }
 
+    /// Files from outside koan, added to a playlist.
+    ///
+    /// A playlist row names a track id and a file that is not in the library
+    /// has none, so the drop is indexed before anything is added — the same
+    /// import a drop on the queue does.
+    func add(files urls: [URL], to id: Int64) {
+        Task {
+            let ids = await importing(urls)
+            guard !ids.isEmpty else { return }
+            add(trackIds: ids, to: id)
+        }
+    }
+
+    /// The same, for the playlist that does not exist yet.
+    func beginNaming(files urls: [URL]) {
+        Task {
+            let ids = await importing(urls)
+            guard !ids.isEmpty else { return }
+            naming = ids
+        }
+    }
+
+    private func importing(_ urls: [URL]) async -> [Int64] {
+        await FileImport.trackIds(
+            for: urls,
+            engine: engine,
+            activity: activity,
+            report: { self.report?($0) }
+        )
+    }
+
     func rename(id: Int64, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

@@ -407,25 +407,15 @@ final class PlayerModel {
     /// move them into the music tree afterwards, on purpose and with a preview.
     /// Folders are walked, so dropping a rip queues the album.
     func importFiles(_ urls: [URL]) {
-        let paths = urls.filter(\.isFileURL).map(\.path)
-        guard !paths.isEmpty else { return }
-        let engine = self.engine
         Task {
-            // Holds the local library: it reads tags and writes rows, the same
-            // ones a scan would. A folder of a few hundred files takes long
-            // enough that a drop with no sign of life reads as a drop that
-            // missed.
-            let summary = try? await activity?.run("Adding dropped files", uses: .localLibrary) {
-                try await engine.importFiles(paths: paths)
-            }.get()
-            guard let summary, !summary.trackIds.isEmpty else {
-                lastError = "Nothing there koan can play."
-                return
-            }
-            if let first = summary.errors.first {
-                lastError = first
-            }
-            enqueue(trackIds: summary.trackIds)
+            let ids = await FileImport.trackIds(
+                for: urls,
+                engine: engine,
+                activity: activity,
+                report: { self.lastError = $0 }
+            )
+            guard !ids.isEmpty else { return }
+            enqueue(trackIds: ids)
         }
     }
 

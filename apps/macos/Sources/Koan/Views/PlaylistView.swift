@@ -86,6 +86,13 @@ struct PlaylistView: View {
             playlists.add(dropped: dropped, to: playlistId)
             return true
         }
+        // Files from outside koan — a USB drive, a folder of rips. The row
+        // targets take koan's own payload only, so a file dragged over one
+        // falls through to here and lands at the end.
+        .dropDestination(for: URL.self) { urls, _ in
+            playlists.add(files: urls, to: playlistId)
+            return true
+        }
         // Only for a library change — the rows arrived before the page did.
         .reloading(on: playlistId) {
             await playlists.prepare(id: playlistId)
