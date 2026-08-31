@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **A playlist takes files dropped on it.** Dropping a folder on the queue has always worked — the files are indexed where they lie, which is what gives them the rows organize needs to move them into the music tree later. Playlists took koan's own payload and nothing else, so a drive of tracks from a friend could be played but not put in a list, and the drop was refused with no sign it had been understood. The playlist page, a playlist's row in the sidebar and **New Playlist…** all take files now, through the same import: dropping on the page adds at the end, and dropping on **New Playlist…** names the list the files became.
+
 ## v0.33.2 (2026-08-29)
 
 ### Changed
