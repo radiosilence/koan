@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A recording two sources credit differently is no longer two tracks.** Cross-source dedup matched on the artist alongside album, disc, track number and title, so a local file tagged `Petrol Girls` and the same recording arriving from Navidrome as `Petrol Girls • Ren Aldridge` resolved to two artists and therefore two tracks — drawn one after the other on the same album page, each with its own source icon. A server that merely disagrees about case did it too: `Polysics` against `POLYSICS`, `War Of Ages` against `War of Ages`.
+
+  Album, disc, track number and title already name one position on a release, so the artist is the thing the sources disagree about rather than the thing telling two recordings apart. A fourth matching step drops it. It requires a track number on both sides: with no slot to match on, the artist is all that separates two same-titled recordings on one release, and the step declines rather than guess. The cross-source rule is untouched — two files on disk are two tracks however identical their tags, and so are two entries on one server.
+
+  Pairs already split are folded together on the next launch. A sync could never do it: it matches a remote row by the id the server gave it, long before any content match runs, so the two would have stayed apart for good. The local row wins — it holds the path and the properties read from the file, and playback prefers it — and inherits the id the server knows it by. Only a clean pair is touched: one row with a path and no remote id, one with a remote id and no path, sharing an album, a title, a disc and a track number. Anything else is left where it is rather than guessed at.
+
 ## v0.33.2 (2026-08-29)
 
 ### Changed

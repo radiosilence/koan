@@ -340,6 +340,7 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
 
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
+    crate::db::queries::tracks::merge_split_cross_source_tracks(conn)?;
 
     Ok(())
 }
