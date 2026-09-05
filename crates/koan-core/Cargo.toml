@@ -13,7 +13,7 @@ categories = ["multimedia::audio"]
 # Acoustic analysis
 bliss-audio = { version = "0.13", default-features = false, features = ["symphonia-all"] }
 # Auth
-argon2 = "0.5"
+argon2 = "0.6"
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 pem = "4"
 ring = "0.17"
