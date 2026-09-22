@@ -1,12 +1,16 @@
 # Changelog
 
-## Unreleased
+## v0.34.0 (2026-09-22)
 
 ### Added
 
 - **Pick several albums and play or queue them together.** Select in the Albums toolbar, ⌘-click a cover, or ⌘A turns the grid into a selection: a click ticks a record, ⇧-click ticks a range, and Play or Add to Queue takes the lot and puts the grid back. A mode rather than list-style clicking, because a click on a tile already plays the record and its title already opens it.
 
   Ticks survive the filter changing, so a pick can be gathered across several searches, and they play in the order they were made — the grid has no order for a record it is no longer showing. Dragging a ticked tile carries every tick to the queue or a playlist; an unticked one still carries only itself. Escape, Done or leaving the page ends it.
+
+### Security
+
+- **rustls accepted TLS 1.3 handshake messages across a key change (RUSTSEC-2026-0285)** — a Subsonic/Navidrome server, or anyone between koan and one, could send handshake messages in plaintext that should have been encrypted without the connection being refused. The transcript is still authenticated, so a handshake could not be altered or completed this way. rustls is now 0.23.45.
 
 ### Fixed
 
