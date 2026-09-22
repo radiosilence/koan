@@ -22,6 +22,9 @@ final class LibraryModel {
     typealias Section = Navigator.Section
 
     let engine: KoanEngine
+    /// A constant, so reaching it subscribes nothing; what it holds is
+    /// observed where it is drawn.
+    let selection = AlbumSelection()
 
     /// What is on screen. Written only by the navigator, which owns it — the
     /// library follows where you are, it does not decide it.
