@@ -74,6 +74,9 @@ pub fn scan_folder(
     on_track: Option<&dyn Fn(ScanEvent)>,
 ) -> ScanResult {
     let mut result = ScanResult::default();
+    // The files under it are stored as the directory spells them; the root has
+    // to agree, or nothing under it matches a path an earlier scan stored.
+    let path = &super::spelling::on_disk(path);
 
     // Collect audio files via walkdir. `follow_links` means a symlink pointing at
     // a sibling directory inside the library indexes its files under both paths.
@@ -340,8 +343,13 @@ pub fn import_paths(db: &Database, paths: &[PathBuf]) -> ImportResult {
 
     let mut files: Vec<PathBuf> = Vec::new();
     let mut seen = std::collections::HashSet::new();
+    // Dropped paths are spelled by whoever dropped them, and Foundation spells
+    // accents differently from the disk. Walked children come from the
+    // directory itself and need nothing.
+    let mut spelling = super::spelling::Spelling::default();
     for path in paths {
-        let mut found: Vec<PathBuf> = walkdir::WalkDir::new(path)
+        let path = spelling.on_disk(path);
+        let mut found: Vec<PathBuf> = walkdir::WalkDir::new(&path)
             .follow_links(true)
             .into_iter()
             .filter_map(Result::ok)
@@ -843,5 +851,33 @@ mod tests {
         assert_eq!(r2.updated, 1, "modified file should be re-indexed");
         assert_eq!(r2.added, 0, "the row already exists");
         assert_eq!(r2.skipped, 0, "modified file should not be skipped");
+    }
+
+    #[test]
+    fn a_drop_and_a_scan_spell_a_file_the_same_way() {
+        use unicode_normalization::UnicodeNormalization;
+        let dir = tempfile::tempdir().unwrap();
+        let nfd: String = "Roman Flügel".nfd().collect();
+        let nfc: String = "Roman Flügel".nfc().collect();
+        let music_dir = dir.path().join(&nfd);
+        std::fs::create_dir_all(&music_dir).unwrap();
+        test_utils::generate_wav(&music_dir.join("softice.wav"), 44100, 1, 0.2, 16);
+        let db = test_db(dir.path());
+
+        // Dropped from Finder: the path arrives precomposed.
+        let dropped = import_paths(&db, &[dir.path().join(&nfc).join("softice.wav")]);
+        assert_eq!(dropped.added, 1, "errors: {:?}", dropped.errors);
+
+        // Rescanned from the folder: the walker reads the directory's own bytes.
+        let scanned = scan_folder(&db, &music_dir, ScanOptions::default(), None);
+        assert_eq!(scanned.added, 0, "the same file, not a second one");
+
+        let stats = queries::library_stats(&db.conn).unwrap();
+        assert_eq!(stats.total_tracks, 1);
+        let stored: String = db
+            .conn
+            .query_row("SELECT path FROM tracks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(stored, music_dir.join("softice.wav").to_string_lossy());
     }
 }

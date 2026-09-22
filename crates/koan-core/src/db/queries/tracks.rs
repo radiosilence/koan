@@ -567,6 +567,82 @@ pub(crate) fn merge_split_cross_source_tracks(conn: &Connection) -> rusqlite::Re
     Ok(())
 }
 
+/// Fold together the rows one file got by being spelled two ways.
+///
+/// A drop from Finder used to index a file under the precomposed spelling
+/// Foundation hands over, and the next scan stored the same file again under
+/// the directory entry's own, decomposed bytes — the two open the same file on
+/// a Mac, and `tracks.path` is compared bytewise. Paths are resolved against
+/// the directory on the way in now, so only this can bring the pairs it left
+/// back together.
+///
+/// The older row wins: it carries the play history, and the sync link if a
+/// server has the recording. It takes the decomposed spelling, which is the one
+/// a scan wrote — Foundation never produces a decomposed path, so that row is
+/// the one that came from the directory. A pair with no such spelling, or a
+/// path with more than two, is left visible rather than guessed at. Favourites
+/// and the scan cache are keyed by path, so they move by name.
+pub(crate) fn merge_spelling_twins(conn: &Connection) -> rusqlite::Result<()> {
+    use unicode_normalization::{UnicodeNormalization, is_nfd};
+
+    let rows: Vec<(i64, String)> = {
+        let mut stmt = conn.prepare("SELECT id, path FROM tracks WHERE path IS NOT NULL")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+    let mut by_spelling: HashMap<String, Vec<(i64, String)>> = HashMap::new();
+    for (id, path) in rows.into_iter().filter(|(_, path)| !path.is_ascii()) {
+        by_spelling
+            .entry(path.nfc().collect())
+            .or_default()
+            .push((id, path));
+    }
+
+    for mut pair in by_spelling.into_values().filter(|group| group.len() == 2) {
+        pair.sort_by_key(|(id, _)| *id);
+        let (winner, winner_path) = &pair[0];
+        let (loser, loser_path) = &pair[1];
+        let Some(disk) = [winner_path, loser_path]
+            .into_iter()
+            .find(|path| is_nfd(path))
+        else {
+            continue;
+        };
+        let disk = disk.clone();
+        let stale = if winner_path == &disk {
+            loser_path
+        } else {
+            winner_path
+        }
+        .clone();
+
+        conn.execute(
+            "UPDATE tracks SET
+                 remote_id = COALESCE(remote_id, (SELECT remote_id FROM tracks WHERE id = ?2)),
+                 remote_url = COALESCE(remote_url, (SELECT remote_url FROM tracks WHERE id = ?2)),
+                 cached_path = COALESCE(cached_path, (SELECT cached_path FROM tracks WHERE id = ?2)),
+                 cache_size_bytes = COALESCE(cache_size_bytes, (SELECT cache_size_bytes FROM tracks WHERE id = ?2)),
+                 cache_download_date = COALESCE(cache_download_date, (SELECT cache_download_date FROM tracks WHERE id = ?2)),
+                 genre = COALESCE(genre, (SELECT genre FROM tracks WHERE id = ?2)),
+                 mbid = COALESCE(mbid, (SELECT mbid FROM tracks WHERE id = ?2))
+               WHERE id = ?1",
+            params![winner, loser],
+        )?;
+        merge_track_rows(conn, *loser, *winner)?;
+        conn.execute("DELETE FROM scan_cache WHERE path = ?1", params![stale])?;
+        conn.execute(
+            "UPDATE tracks SET path = ?1 WHERE id = ?2",
+            params![disk, winner],
+        )?;
+        conn.execute(
+            "UPDATE OR REPLACE favourites SET track_path = ?1 WHERE track_path = ?2",
+            params![disk, stale],
+        )?;
+    }
+
+    Ok(())
+}
+
 /// Drop an album or artist the last track just left. Correcting a tag moves a row
 /// to a different album, and the one it came from is usually a misreading nobody
 /// wants left in the browser looking like a record with nothing on it.
@@ -2841,5 +2917,99 @@ mod tests {
         assert!(path.is_none());
         assert!(size.is_none());
         assert!(date.is_none());
+    }
+
+    #[test]
+    fn test_migration_folds_a_file_indexed_under_two_spellings() {
+        use unicode_normalization::UnicodeNormalization;
+        let db = test_db();
+        let nfc: String = "/music/Roman Flügel - Softice.flac".nfc().collect();
+        let nfd: String = "/music/Roman Flügel - Softice.flac".nfd().collect();
+        assert_ne!(nfc, nfd);
+
+        // The state a drop left behind: the file under Foundation's spelling,
+        // with the sync link, then the next scan's row under the disk's.
+        let mut dropped = sample_meta("Softice", "Roman Flügel", "Renaissance");
+        dropped.path = Some(nfc.clone());
+        dropped.remote_id = Some("sub-7".into());
+        let winner = upsert_track(&db.conn, &dropped).unwrap();
+        let mut scanned = sample_meta("Softice", "Roman Flügel", "Renaissance");
+        scanned.path = Some(nfd.clone());
+        let loser = upsert_track(&db.conn, &scanned).unwrap();
+        assert_ne!(
+            winner, loser,
+            "the bytes differ, so the old key made two rows"
+        );
+        db.conn
+            .execute(
+                "INSERT INTO favourites (track_path) VALUES (?1)",
+                params![nfc],
+            )
+            .unwrap();
+        for (path, id) in [(&nfc, winner), (&nfd, loser)] {
+            db.conn
+                .execute(
+                    "INSERT INTO scan_cache (path, mtime, size, track_id) VALUES (?1, 1, 1, ?2)",
+                    params![path, id],
+                )
+                .unwrap();
+        }
+
+        merge_spelling_twins(&db.conn).unwrap();
+
+        let rows: Vec<(i64, String, Option<String>)> = db
+            .conn
+            .prepare("SELECT id, path, remote_id FROM tracks")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 1, "one file, one row");
+        assert_eq!(rows[0].0, winner, "the older row keeps its identity");
+        assert_eq!(rows[0].1, nfd, "and takes the disk's spelling");
+        assert_eq!(rows[0].2.as_deref(), Some("sub-7"), "and its sync link");
+        let starred: String = db
+            .conn
+            .query_row("SELECT track_path FROM favourites", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(starred, nfd, "the favourite follows the path");
+        let cached: Vec<(String, i64)> = db
+            .conn
+            .prepare("SELECT path, track_id FROM scan_cache")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            cached,
+            vec![(nfd, winner)],
+            "one cache row, under the spelling a scan will ask for"
+        );
+    }
+
+    #[test]
+    fn test_migration_leaves_a_pair_with_no_disk_spelling_alone() {
+        use unicode_normalization::UnicodeNormalization;
+        let db = test_db();
+        // Two precomposed rows can't both have come from the directory, so there
+        // is nothing to say which is the file.
+        let a: String = "/music/Isolée - Allowance.flac".nfc().collect();
+        let b: String = "/music/Isolée - Allowance.flac"
+            .nfc()
+            .chain(" ".chars())
+            .collect();
+        for path in [&a, &b] {
+            let mut meta = sample_meta("Allowance", "Isolée", "Renaissance");
+            meta.path = Some(path.clone());
+            upsert_track(&db.conn, &meta).unwrap();
+        }
+        merge_spelling_twins(&db.conn).unwrap();
+        let rows: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 2);
     }
 }
