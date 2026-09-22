@@ -83,7 +83,7 @@ final class LibraryModel {
 
     /// Long enough that a burst of typing is one round trip, short enough not
     /// to read as lag.
-    private static let filterDebounce = Duration.milliseconds(120)
+    private static let filterDebounce = Duration.milliseconds(80)
 
     /// Newest first by default: the record you just added is the one you're
     /// looking for. Persisted so it survives a relaunch.

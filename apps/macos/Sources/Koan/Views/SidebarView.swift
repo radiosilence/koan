@@ -4,13 +4,11 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct SidebarView: View {
-    @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
     @Environment(SearchModel.self) private var search
     @Environment(UIState.self) private var ui
     @Environment(PlaylistsModel.self) private var playlists
-    @Environment(EngineMirror.self) private var mirror
     @FocusState private var searchFocused: Bool
     /// Highlights the Queue row while something is held over it — without it a
     /// drop is a guess.
@@ -33,13 +31,7 @@ struct SidebarView: View {
         // highlight is not derived from the stack.
         List(selection: nav.sidebarSelection) {
             Section {
-                HStack {
-                    Label("Queue", systemImage: Icon.queueSection)
-                    if player.isBusy {
-                        Spacer()
-                        ProgressView().controlSize(.small)
-                    }
-                }
+                QueueRowLabel()
                     .tag(Navigator.Section.queue)
                     // Full width, so the target is the row rather than just the
                     // text — dropping onto the empty part of the row should
@@ -72,18 +64,8 @@ struct SidebarView: View {
                     .tag(Navigator.Section.favourites)
                 Label("History", systemImage: Icon.history)
                     .tag(Navigator.Section.playHistory)
-                HStack {
-                    Label("Downloads", systemImage: Icon.downloads)
-                    // Only while something is happening. A zero sitting there
-                    // permanently is a number nobody reads.
-                    if mirror.activeTransfers > 0 {
-                        Spacer()
-                        Text("\(mirror.activeTransfers)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .tag(Navigator.Section.downloads)
+                DownloadsRowLabel()
+                    .tag(Navigator.Section.downloads)
             }
 
             playlistSection
@@ -119,7 +101,7 @@ struct SidebarView: View {
         .onChange(of: ui.searchFocusToken) { _, _ in
             searchFocused = true
         }
-        .safeAreaInset(edge: .bottom) { footer }
+        .safeAreaInset(edge: .bottom) { SidebarFooter() }
         .alert("Rename Playlist", isPresented: Binding(
             get: { renaming != nil },
             set: { if !$0 { renaming = nil } }
@@ -260,6 +242,14 @@ struct SidebarView: View {
             )
         }
     }
+}
+
+/// Library size and what koan is doing. Its own view because it reads the
+/// queue and the cursor, and read in `SidebarView` those re-ran the sidebar on
+/// every track.
+private struct SidebarFooter: View {
+    @Environment(LibraryModel.self) private var library
+    @Environment(PlayerModel.self) private var player
 
     /// What radio is about to do, rather than that it is switched on.
     private var radioStatus: String {
@@ -276,8 +266,7 @@ struct SidebarView: View {
 
     /// Library size and scan state. The counts are the quickest way to tell
     /// whether a scan actually picked anything up.
-    @ViewBuilder
-    private var footer: some View {
+    var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Every long task, one row each. Replaces a "Scanning…" line that
             // said the same thing whatever was actually running.
@@ -310,8 +299,6 @@ struct SidebarView: View {
     }
 }
 
-
-
 /// One playlist in the sidebar: its mosaic, its name, and how much is in it.
 private struct PlaylistRow: View {
     let playlist: Playlist
@@ -334,5 +321,40 @@ private struct PlaylistRow: View {
         // same reason the Queue row does it.
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+}
+
+// The two rows that show something live, each reading it for itself — read in
+// `SidebarView`, a transfer finishing re-ran the whole sidebar.
+
+private struct QueueRowLabel: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        HStack {
+            Label("Queue", systemImage: Icon.queueSection)
+            if player.isBusy {
+                Spacer()
+                ProgressView().controlSize(.small)
+            }
+        }
+    }
+}
+
+private struct DownloadsRowLabel: View {
+    @Environment(EngineMirror.self) private var mirror
+
+    var body: some View {
+        HStack {
+            Label("Downloads", systemImage: Icon.downloads)
+            // Only while something is happening. A zero sitting there
+            // permanently is a number nobody reads.
+            if mirror.activeTransfers > 0 {
+                Spacer()
+                Text("\(mirror.activeTransfers)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }

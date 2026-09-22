@@ -104,13 +104,6 @@ final class AppState {
 struct KoanApp: App {
     @State private var state: AppState?
 
-    /// Someone is in a text field, so every shortcut whose key also means
-    /// something while typing stands down. Read in the Scene body, so flipping
-    /// it re-evaluates the menus — which is the point: a *disabled* menu item
-    /// releases its key equivalent to the responder chain, and that is the only
-    /// thing that hands the keystroke back to macOS.
-    private var isTyping: Bool { state?.textFocus.isEditing == true }
-    @Environment(\.scenePhase) private var scenePhase
     @State private var startupError: String?
 
     var body: some Scene {
@@ -168,12 +161,6 @@ struct KoanApp: App {
                 }
             }
         }
-        .onChange(of: scenePhase) { _, phase in
-            // Backgrounding is the last dependable moment before termination.
-            if phase != .active {
-                Task { await state?.player.saveSession() }
-            }
-        }
         .windowToolbarStyle(.unified(showsTitle: false))
         .commands {
             CommandGroup(after: .newItem) {
@@ -190,9 +177,9 @@ struct KoanApp: App {
                 }
                 Divider()
                 ShortcutButton(.back) { state?.nav.goBack() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 ShortcutButton(.forward) { state?.nav.goForward() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 Divider()
                 ShortcutButton(.lyrics) { state?.ui.toggleLyrics() }
                 Divider()
@@ -210,14 +197,14 @@ struct KoanApp: App {
                 // declined — a disabled item releases its key equivalent, and
                 // that is the only way the field ever sees it.
                 ShortcutButton(.next) { state?.player.next() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 ShortcutButton(.previous) { state?.player.previous() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 Divider()
                 ShortcutButton(.skipForward) { state?.player.seek(bySeconds: 10) }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 ShortcutButton(.skipBack) { state?.player.seek(bySeconds: -10) }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 Divider()
                 // Through the library, which is what every heart in the app
                 // reads. Going straight to the engine flipped the row and left
@@ -235,9 +222,9 @@ struct KoanApp: App {
                 // ⌘Z while typing is undoing the typing, not the queue — and
                 // the field editor has its own undo stack to do it with.
                 ShortcutButton(.undo) { state?.player.undo() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 ShortcutButton(.redo) { state?.player.redo() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
             }
 
             // The queue borrows these, but they must still mean the ordinary

@@ -1,3 +1,4 @@
+import AppKit
 import KoanFFI
 import SwiftUI
 
@@ -89,8 +90,6 @@ struct RootView: View {
     }
 
     var body: some View {
-        @Bindable var library = library
-        @Bindable var search = search
         @Bindable var ui = ui
 
         // The window background is evaluated by the *scene*, outside every
@@ -98,7 +97,7 @@ struct RootView: View {
         // here. Reading an `@Environment` inside that closure — including to
         // put one back — traps, and the app dies on launch.
         let wash = colourSource
-        let washDrifts = player.isPlaying
+        let player = player
         let artCache = art
 
         NavigationSplitView(columnVisibility: $columns) {
@@ -147,7 +146,7 @@ struct RootView: View {
             // its own leaves you looking through the app at the desktop.
             ZStack {
                 Rectangle().fill(.background)
-                ArtworkBleed(source: wash, drifts: washDrifts)
+                WindowWash(source: wash, player: player)
                     .environment(artCache)
             }
         }
@@ -187,8 +186,15 @@ struct RootView: View {
         .toolbarBackgroundVisibility(
             graphics.usesWindowGlass ? .hidden : .automatic, for: .windowToolbar
         )
-        .onChange(of: search.query) { _, _ in search.schedule() }
         .onSubmit(of: .search) { handleSubmit() }
+        // Backgrounding is the last dependable moment before termination. A
+        // notification rather than `scenePhase`: reading that re-ran whatever
+        // read it — it was the whole Scene — each time the app lost focus.
+        .onReceive(
+            NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
+        ) { _ in
+            Task { await player.saveSession() }
+        }
         // On the window rather than inside the detail column, padded clear of
         // both columns: glass floating on glass reads as neither, and over the
         // lyrics it hides the last lines of the song. The page makes its own
@@ -234,12 +240,8 @@ struct RootView: View {
             // search, which navigates away instead of narrowing.
             if let placeholder = nav.section?.filterPlaceholder {
                 ToolbarItem(placement: .primaryAction) {
-                    FilterField(
-                        placeholder: placeholder,
-                        text: $library.filter,
-                        focusToken: ui.filterFocusToken
-                    )
-                    .frame(width: 180)
+                    LibraryFilter(placeholder: placeholder)
+                        .frame(width: 180)
                 }
             }
 
@@ -312,16 +314,8 @@ struct RootView: View {
             ShortcutsSheet(hotkeys: hotkeys.all)
         }
         .overlay(alignment: .bottom) {
-            // One slot, and a failure outranks a remark about something that
-            // has not finished yet.
-            if let error = player.lastError {
-                ErrorToast(message: error) { player.lastError = nil }
-                    // Above the transport, not behind it.
-                    .padding(.bottom, transportHeight + 10)
-            } else if let notice = player.lastNotice {
-                ErrorToast(message: notice, kind: .notice) { player.lastNotice = nil }
-                    .padding(.bottom, transportHeight + 10)
-            }
+            // Above the transport, not behind it.
+            Toasts().padding(.bottom, transportHeight + 10)
         }
     }
 
@@ -349,6 +343,52 @@ struct RootView: View {
             nav.open(artist: id)
         }
         search.reset()
+    }
+}
+
+/// The filter field, and the only reader of what is typed into it.
+///
+/// Its own view because the field reads the filter back on every update, and
+/// SwiftUI charges that read to whichever body the field sits in. Placed in
+/// `RootView` directly, that was the root: every keystroke re-ran the window
+/// and rebuilt the toolbar, field and focus with it.
+private struct LibraryFilter: View {
+    let placeholder: String
+    @Environment(LibraryModel.self) private var library
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        @Bindable var library = library
+        FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
+    }
+}
+
+/// The wash behind the window, reading whether anything is playing itself —
+/// play and pause change how it breathes and nothing else about the window.
+///
+/// Handed the model rather than a value taken from it: taken in `RootView`, the
+/// read was the root's, and every pause re-ran the whole window.
+private struct WindowWash: View {
+    let source: AlbumArtwork.Source?
+    let player: PlayerModel
+
+    var body: some View {
+        ArtworkBleed(source: source, drifts: player.isPlaying)
+    }
+}
+
+/// Its own view so that a toast coming and going is read here, not by the root.
+private struct Toasts: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        // One slot, and a failure outranks a remark about something that has
+        // not finished yet.
+        if let error = player.lastError {
+            ErrorToast(message: error) { player.lastError = nil }
+        } else if let notice = player.lastNotice {
+            ErrorToast(message: notice, kind: .notice) { player.lastNotice = nil }
+        }
     }
 }
 
