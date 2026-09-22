@@ -62,6 +62,12 @@ them:
   whole window.
 - An `NSViewRepresentable` reads its bindings in `updateNSView`, and that read
   is charged to the body it sits in. Wrap it in a view of its own.
+- A `List`'s selection is `@State` its body must not read. Rows learn they are
+  selected from `@Environment(\.backgroundProminence)`; anything else that
+  needs the set — a count, a mirror to a model — takes the binding into a
+  child and reads it there.
+- Something that moves every frame — a level meter, a position — does not go
+  through observation at all. Hand it to a layer.
 
 A re-run is not free even where nothing changes: the toolbar rebuilds its
 AppKit-backed items when the body declaring them re-runs, which throws away the

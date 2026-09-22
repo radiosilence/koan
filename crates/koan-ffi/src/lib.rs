@@ -220,6 +220,11 @@ const PLAYHEAD_TOLERANCE_MS: u64 = 32;
 /// and a fifth of a second of audio does not move it.
 const SEEKABLE_TOLERANCE_MS: u64 = 200;
 
+/// How long a run of downloads landing is allowed to go before the library
+/// says so again. A record is fetched a track at a time a few seconds apart;
+/// one reload per track is a reload per few seconds for the length of it.
+const LANDING_COALESCE: std::time::Duration = std::time::Duration::from_secs(2);
+
 #[uniffi::export]
 impl KoanEngine {
     /// Spawns the player thread and opens the library. One per process.
@@ -2242,6 +2247,9 @@ impl KoanEngine {
                 // library row — and nothing else says so, because the download
                 // ran in koan-core, which has no notion of that version.
                 let mut running: HashSet<String> = HashSet::new();
+                // A transfer landed since the library last said so.
+                let mut landed = false;
+                let mut last_landing = Instant::now();
 
                 // Where this thread spends the whole of a quiet koan. Every
                 // slice below is derived from a version or an atomic, all of
@@ -2272,8 +2280,12 @@ impl KoanEngine {
                     out.publish(StateSlice::Playback {
                         now_playing: NowPlaying {
                             // Position has a slice of its own; leaving it here
-                            // would make every tick a change to this one.
+                            // would make every tick a change to this one. The
+                            // queue version likewise: it rides with the queue,
+                            // so an edit there is not a change to what is
+                            // playing.
                             position_ms: 0,
+                            playlist_version: 0,
                             ..snapshot.clone()
                         },
                     });
@@ -2345,9 +2357,20 @@ impl KoanEngine {
                             .map(|d| d.id.0.to_string())
                             .collect();
                         if running.difference(&now_running).next().is_some() {
-                            engine.bump_library();
+                            landed = true;
                         }
                         running = now_running;
+                    }
+                    // A landing is a library change, but a record arriving is
+                    // a dozen of them a few seconds apart, and every client
+                    // answers each one by asking for everything again. Said
+                    // once the batch is down, or every couple of seconds while
+                    // it is still coming — the row for the track that just
+                    // landed is not worth a full reload per track.
+                    if landed && (running.is_empty() || last_landing.elapsed() > LANDING_COALESCE) {
+                        landed = false;
+                        last_landing = Instant::now();
+                        engine.bump_library();
                     }
 
                     let library = engine
@@ -2367,6 +2390,7 @@ impl KoanEngine {
                     if queue_moved {
                         out.publish(StateSlice::Queue {
                             items: engine.queue_blocking(),
+                            version: queue_version,
                         });
                     }
                     // A playlist edit moves the library version, and following

@@ -27,13 +27,22 @@ struct AlbumBrowser: View {
                     .padding(20)
                     // Dragging a ticked tile carries every tick, in the order
                     // they were made; an unticked one carries itself.
-                    .dragContainer(for: PlayableTransfer.self, itemID: \.id) { ids in
-                        ids.map { id in
+                    //
+                    // Worked out here, at drag time, rather than handed to the
+                    // container as its selection: that was a read of the ticks
+                    // in the grid's body, and every tick re-diffed the grid.
+                    // What it costs is the preview — a stack of ticks drags as
+                    // the one tile under the pointer.
+                    .dragContainer(for: PlayableTransfer.self, itemID: \.id) { grabbed in
+                        let selection = library.selection
+                        let ids = grabbed.contains(where: selection.contains)
+                            ? selection.ids
+                            : Array(grabbed)
+                        return ids.map { id in
                             let name = library.visibleAlbums.first { $0.id == id }?.title ?? ""
                             return PlayableTransfer(kind: .album, id: id, name: name)
                         }
                     }
-                    .dragContainerSelection(library.selection.ids)
                 }
             }
             // ⌘A picks everything the filter is showing, starting a selection

@@ -51,6 +51,7 @@ final class EngineMirror: Observable {
     private var _playhead = Playhead(positionMs: 0, playing: false, at: .now)
     private var _seekableMs: UInt64 = 0
     private var _queue: [QueueItem] = []
+    private var _queueVersion: UInt64 = 0
     private var _queuedByTrack: [Int64: QueueItem] = [:]
     private var _queuedByPlaylistEntry: [Int64: QueueItem] = [:]
     private var _lock: QueueLock?
@@ -100,6 +101,13 @@ final class EngineMirror: Observable {
     var queue: [QueueItem] {
         access(\.queue)
         return _queue
+    }
+
+    /// Bumped by every queue mutation. Observed as `queue`: it arrives with the
+    /// rows and means the same thing.
+    var queueVersion: UInt64 {
+        access(\.queue)
+        return _queueVersion
     }
 
     /// Queue entries indexed by library track id, so a library row can say what
@@ -221,9 +229,10 @@ final class EngineMirror: Observable {
             if seekableMs != _seekableMs {
                 mutate(\.seekableMs) { _seekableMs = seekableMs }
             }
-        case .queue(let items):
+        case .queue(let items, let version):
             mutate(\.queue) {
                 _queue = items
+                _queueVersion = version
                 _queuedByTrack = Dictionary(
                     items.compactMap { item in item.trackId.map { ($0, item) } },
                     // A track queued twice: prefer the entry that is actually
@@ -282,8 +291,8 @@ extension EngineMirror {
     /// its callback *before* the mutation completes and unregisters itself, so
     /// the hop is both what lets the new value be read and what re-arms it.
     func follow(_ body: @escaping @MainActor () -> Void) {
-        withObservationTracking(body) {
-            Task { @MainActor [weak self] in self?.follow(body) }
+        withObservationTracking(body) { [weak self] in
+            Task { @MainActor in self?.follow(body) }
         }
     }
 

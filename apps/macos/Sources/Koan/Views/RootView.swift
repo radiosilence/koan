@@ -27,78 +27,25 @@ struct RootView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
     @Environment(SearchModel.self) private var search
-    @Environment(PlayerModel.self) private var player
-    /// Read here only to hand back to the window background — see below.
-    @Environment(CoverArtCache.self) private var art
-    /// Read for the wash a playlist page sits in: its colour is the first
-    /// record in it, since a playlist has no cover of its own.
+    /// Held for `reloading` below; nothing on it is read in this body.
     @Environment(PlaylistsModel.self) private var playlists
+    /// Held for the closures below — the artwork sheet, the session save.
+    /// Nothing on it is read in this body: what is playing is read by the
+    /// views that draw it, and by `RecordRoom` for the colour of the window.
+    @Environment(PlayerModel.self) private var player
 
     /// Read for the window's own glass — the toolbar and the transport's soft
     /// edge, which are the platform's rather than koan's and which no step of
     /// this setting used to reach.
     @AppStorage("graphics") private var graphics = Graphics.full
     @State private var transportHeight: CGFloat = 0
-    /// The colour of a record the cache could not already answer for, and which
-    /// record it was worked out for. Only consulted when the cache cannot.
-    @State private var fetchedTint: (source: AlbumArtwork.Source, colour: Color?)?
-
-    /// Only for a colour that had to be worked out, which arrives after the page
-    /// and would otherwise cut. A colour already in hand needs no ease: it lands
-    /// in the same frame as the record it belongs to, which is what an ease was
-    /// standing in for.
-    ///
-    /// It is deliberately not on the common path. A tint is a value every
-    /// control reads rather than a property of a layer, so the compositor
-    /// cannot take this one — easing it over two seconds is a hundred and
-    /// twenty renders of the whole window, each one a commit, and each commit a
-    /// synchronous round trip to the render server. That was half of what
-    /// opening a record cost.
-    private static let tintEase = Animation.easeInOut(duration: 2)
     /// Watched rather than inferred from the measured width: a collapsed
     /// sidebar still reports its last width, so the transport kept a gap where
     /// it used to be.
     @State private var columns: NavigationSplitViewVisibility = .automatic
 
-    /// The record the room takes its colour from — both the wash on the window
-    /// and the tint on the controls, which are the same answer and were once
-    /// two.
-    ///
-    /// A page about one record answers with it: an album with its own sleeve, a
-    /// playlist with the first of its records, the same one that leads its
-    /// mosaic. Every other page — a grid, a list of artists, favourites,
-    /// history — is not about any record in particular, so it answers with the
-    /// one playing. The room is coloured by the music wherever you have
-    /// wandered off to, and only a page that disagrees says otherwise.
-    /// Read straight through the cache on every pass, the way `AlbumArtwork`
-    /// reads its bitmap: a colour the app already holds lands in the same commit
-    /// as the page that wanted it. Held in `@State` and written by a task, it
-    /// was a second commit every time — the page, and then the room around it.
-    private var recordTint: Color? {
-        guard let colourSource else { return nil }
-        if let held = art.cachedColour(for: colourSource) { return held }
-        guard let fetchedTint, fetchedTint.source == colourSource else { return nil }
-        return fetchedTint.colour
-    }
-
-    private var colourSource: AlbumArtwork.Source? {
-        switch nav.current {
-        case .album(let id): .album(id)
-        case .section(.playlist(let id)): playlists.covers[id]?.first ?? player.currentArtwork
-        default: player.currentArtwork
-        }
-    }
-
     var body: some View {
         @Bindable var ui = ui
-
-        // The window background is evaluated by the *scene*, outside every
-        // environment `RootView` was handed, so anything it needs is captured
-        // here. Reading an `@Environment` inside that closure — including to
-        // put one back — traps, and the app dies on launch.
-        let wash = colourSource
-        let player = player
-        let artCache = art
 
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
@@ -134,22 +81,10 @@ struct RootView: View {
                     }
                 }
         }
-        // The queue is a list of names, and the record playing is the only
-        // thing in it with a colour. On the *window* rather than behind the
-        // queue: nothing inside a split view column reaches past the toolbar's
-        // inset, and a wash that stops in a line under the toolbar is worse
-        // than none. An album page washes its own header, so the window stays
-        // out of its way.
-        .containerBackground(for: .window) {
-            // Over an opaque ground, because this *replaces* the window's own
-            // background rather than sitting on it — a half-transparent wash on
-            // its own leaves you looking through the app at the desktop.
-            ZStack {
-                Rectangle().fill(.background)
-                WindowWash(source: wash, player: player)
-                    .environment(artCache)
-            }
-        }
+        // The wash and the tint, both the colour of one record. Its own
+        // modifier because what it reads moves per track, and a read here
+        // re-runs the window — see `RecordRoom`.
+        .modifier(RecordRoom())
         // The one place a library change reaches the app's own lists. Every
         // page showing something asked for on demand reloads where it is
         // drawn — see `View.reloading(on:)` — so nothing here decides which
@@ -158,24 +93,6 @@ struct RootView: View {
             library.libraryChanged()
             playlists.load()
         }
-        // Only for a record whose colour is not already known. The usual path
-        // is answered above, in the same pass as the page — navigating warms
-        // this alongside the rows, see `LibraryModel.prepare(album:)`.
-        .task(id: colourSource) {
-            guard let colourSource, art.cachedColour(for: colourSource) == nil else { return }
-            // Nobody is waiting on a slow ease into the background, so it stands
-            // aside until the page in front of it has drawn rather than racing
-            // it for artwork, threads and a slot on the main actor.
-            try? await Task.sleep(for: .milliseconds(150))
-            let colour = await art.dominantColour(for: colourSource)
-            guard !Task.isCancelled else { return }
-            withAnimation(Self.tintEase) { fetchedTint = (colourSource, colour) }
-        }
-        // Overrides the app-wide tint for everything below, which is every
-        // control koan draws itself. What AppKit draws — list selection, focus
-        // rings — keeps the declared accent, and that is deliberately a neutral
-        // so the two never argue.
-        .tint(recordTint ?? .koanAccent)
         // The toolbar paints its own ground over whatever is behind it, which
         // put a hard grey strip across the top of a queue washed in the colour
         // of the record. Hidden, the glass controls sit in that colour — which
@@ -200,17 +117,7 @@ struct RootView: View {
         // lyrics it hides the last lines of the song. The page makes its own
         // room with `clearsTransport`.
         .overlay(alignment: .bottom) {
-            TransportBar()
-                .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
-                .padding(.trailing, ui.showLyrics ? ui.lyricsWidth : 0)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: TransportHeightKey.self,
-                            value: proxy.size.height
-                        )
-                    }
-                )
+            TransportOverlay(columns: columns)
         }
         .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { ui.windowSize = $0 }
@@ -371,6 +278,153 @@ private struct LibraryFilter: View {
     var body: some View {
         @Bindable var library = library
         FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
+    }
+}
+
+extension EnvironmentValues {
+    /// The colour the room is wearing — what `.tint` was set to, readable.
+    ///
+    /// SwiftUI offers no way to read a tint back, and an AppKit-backed view
+    /// drawing in it has to be handed the colour. Set beside the tint, by the
+    /// same modifier, so the two cannot disagree.
+    @Entry var roomTint: Color = .koanAccent
+}
+
+/// The room around the page: the wash on the window and the tint on the
+/// controls, which are the same answer and were once two.
+///
+/// A modifier rather than lines in `RootView.body`, because what it reads
+/// moves per track — the record playing, the page you are on — and a read in
+/// the root body is charged to the root, which re-runs the window and rebuilds
+/// the toolbar with it, throwing away the filter field and the focus in it. A
+/// modifier's body is its own. `content` is the window already built, and the
+/// tint reaches it as an environment change that only what draws in it sees.
+///
+/// The record the room takes its colour from: a page about one record answers
+/// with it — an album with its own sleeve, a playlist with the first of its
+/// records, the same one that leads its mosaic. Every other page — a grid, a
+/// list of artists, favourites, history — is not about any record in
+/// particular, so it answers with the one playing. The room is coloured by the
+/// music wherever you have wandered off to, and only a page that disagrees
+/// says otherwise.
+private struct RecordRoom: ViewModifier {
+    @Environment(Navigator.self) private var nav
+    @Environment(PlayerModel.self) private var player
+    @Environment(CoverArtCache.self) private var art
+    /// Read for the wash a playlist page sits in: its colour is the first
+    /// record in it, since a playlist has no cover of its own.
+    @Environment(PlaylistsModel.self) private var playlists
+
+    /// The colour of a record the cache could not already answer for, and which
+    /// record it was worked out for. Only consulted when the cache cannot.
+    @State private var fetchedTint: (source: AlbumArtwork.Source, colour: Color?)?
+
+    /// Only for a colour that had to be worked out, which arrives after the page
+    /// and would otherwise cut. A colour already in hand needs no ease: it lands
+    /// in the same frame as the record it belongs to, which is what an ease was
+    /// standing in for.
+    ///
+    /// It is deliberately not on the common path. A tint is a value every
+    /// control reads rather than a property of a layer, so the compositor
+    /// cannot take this one — easing it over two seconds is a hundred and
+    /// twenty renders of the whole window, each one a commit, and each commit a
+    /// synchronous round trip to the render server. That was half of what
+    /// opening a record cost.
+    private static let tintEase = Animation.easeInOut(duration: 2)
+
+    /// Read straight through the cache on every pass, the way `AlbumArtwork`
+    /// reads its bitmap: a colour the app already holds lands in the same commit
+    /// as the page that wanted it. Held in `@State` and written by a task, it
+    /// was a second commit every time — the page, and then the room around it.
+    private var recordTint: Color? {
+        guard let colourSource else { return nil }
+        if let held = art.cachedColour(for: colourSource) { return held }
+        guard let fetchedTint, fetchedTint.source == colourSource else { return nil }
+        return fetchedTint.colour
+    }
+
+    private var colourSource: AlbumArtwork.Source? {
+        switch nav.current {
+        case .album(let id): .album(id)
+        case .section(.playlist(let id)): playlists.covers[id]?.first ?? player.currentArtwork
+        default: player.currentArtwork
+        }
+    }
+
+    func body(content: Content) -> some View {
+        // The window background is evaluated by the *scene*, outside every
+        // environment this was handed, so anything it needs is captured here.
+        // Reading an `@Environment` inside that closure — including to put one
+        // back — traps, and the app dies on launch.
+        let wash = colourSource
+        let player = player
+        let artCache = art
+        let tint = recordTint ?? .koanAccent
+
+        content
+            // The queue is a list of names, and the record playing is the only
+            // thing in it with a colour. On the *window* rather than behind
+            // the queue: nothing inside a split view column reaches past the
+            // toolbar's inset, and a wash that stops in a line under the
+            // toolbar is worse than none. An album page washes its own header,
+            // so the window stays out of its way.
+            .containerBackground(for: .window) {
+                // Over an opaque ground, because this *replaces* the window's
+                // own background rather than sitting on it — a half-transparent
+                // wash on its own leaves you looking through the app at the
+                // desktop.
+                ZStack {
+                    Rectangle().fill(.background)
+                    WindowWash(source: wash, player: player)
+                        .environment(artCache)
+                }
+            }
+            // Only for a record whose colour is not already known. The usual
+            // path is answered above, in the same pass as the page —
+            // navigating warms this alongside the rows, see
+            // `LibraryModel.prepare(album:)`.
+            .task(id: colourSource) {
+                guard let colourSource, art.cachedColour(for: colourSource) == nil else { return }
+                // Nobody is waiting on a slow ease into the background, so it
+                // stands aside until the page in front of it has drawn rather
+                // than racing it for artwork, threads and a slot on the main
+                // actor.
+                try? await Task.sleep(for: .milliseconds(150))
+                let colour = await art.dominantColour(for: colourSource)
+                guard !Task.isCancelled else { return }
+                withAnimation(Self.tintEase) { fetchedTint = (colourSource, colour) }
+            }
+            // Overrides the app-wide tint for everything below, which is every
+            // control koan draws itself. What AppKit draws — list selection,
+            // focus rings — keeps the declared accent, and that is deliberately
+            // a neutral so the two never argue.
+            .tint(tint)
+            .environment(\.roomTint, tint)
+    }
+}
+
+/// The transport, padded clear of the columns.
+///
+/// Its own view because the widths it reads move while the sidebar is being
+/// dragged and on every frame the lyrics panel slides — read in the root, each
+/// of those frames re-ran the window.
+private struct TransportOverlay: View {
+    let columns: NavigationSplitViewVisibility
+
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        TransportBar()
+            .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
+            .padding(.trailing, ui.showLyrics ? ui.lyricsWidth : 0)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: TransportHeightKey.self,
+                        value: proxy.size.height
+                    )
+                }
+            )
     }
 }
 

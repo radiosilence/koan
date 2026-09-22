@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **Every change on screen now does only the work that change needs.** A pass over what each view reads, following the rule the last release set for the filter field: a read is a subscription, and a read high in the tree re-runs everything below it.
+
+  The room's colour — the wash and the tint — was read by the root, so every track change re-ran the whole window and rebuilt the toolbar, which is the same thing that used to throw you out of the filter field. It is a modifier of its own now. The queue and every track list read what was playing and which rows were selected in the list's body, so a pause, a click or a queue edit re-diffed every row; the rows read those themselves, and selection comes from the List through `backgroundProminence`. A playlist page found each row's position by searching the list per row per evaluation, quadratic on every click. The seek bar read the download figures, so while anything was downloading it re-anchored its animation ten times a second — the animation the anchor exists to hand over once. Every row and tile read the favourite sets, so one heart flipping re-ran every visible row; the hearts read them now. Favourites laid out every record you had ever favourited the moment the page opened and fetched all their sleeves at once; the grid is cut into list rows, which the list recycles.
+
+  The playing indicator is no longer SwiftUI. The analyser published each frame through observation, which made every frame a body, a canvas raster and a commit at the display's rate for as long as music played. The bars are layers now, moved directly, at the same rate — and detach when off stage or held still, which lets the analyser park.
+
+- **A click outside a text field ends the editing.** Filter the albums, click a cover to play it, and every key after that went into the filter — a cover is a SwiftUI gesture and takes no focus, so the field kept it. It used to be let go by accident, when the toolbar rebuilt itself on the next track change. The hotkey monitor now ends editing on any click that is not inside the field being edited.
+
+- **A queue edit is no longer a playback change.** The queue version rode in the same slice as what is playing, so every edit re-ran the transport bar and every list that knew what was playing. It rides with the queue rows now.
+
+- **Downloads landing one after another are one library change, not one each.** A record fetched a track at a time made every page reload its rows per track. The engine says so once the batch is down, or every couple of seconds while it is still coming.
+
 ## v0.34.0 (2026-09-22)
 
 ### Added
