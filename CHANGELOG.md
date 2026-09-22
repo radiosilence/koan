@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Security
+
+- **rustls accepted TLS 1.3 handshake messages across a key change (RUSTSEC-2026-0285)** — a Subsonic/Navidrome server, or anyone between koan and one, could send handshake messages in plaintext that should have been encrypted without the connection being refused. The transcript is still authenticated, so a handshake could not be altered or completed this way. rustls is now 0.23.45.
+
 ### Fixed
 
 - **Typing in the filter field no longer throws you out of it.** The first keystroke re-ran the whole window, and the toolbar rebuilt the field with it — so the filter applied and focus went with the old field. Two reads caused it: the menus asked whether anyone was typing from the Scene body, which is the whole window, and the field read the filter back in `RootView`, where SwiftUI charged it to the root.

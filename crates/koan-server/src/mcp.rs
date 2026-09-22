@@ -10,7 +10,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Json;
-use rmcp::model::{ServerCapabilities, ServerInfo};
+use rmcp::model::{ServerCapabilities, ServerConfig};
 use rmcp::{ServerHandler, schemars, tool_router};
 use serde::{Deserialize, Serialize};
 
@@ -137,8 +137,8 @@ impl KoanMcpServer {
 
 #[rmcp::tool_handler]
 impl ServerHandler for KoanMcpServer {
-    fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
+    fn get_info(&self) -> ServerConfig {
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "koan is a bit-perfect macOS music player. You control it entirely via GraphQL.\n\n\
              ## How to use\n\
              1. Call `schema_sdl` to get the full GraphQL schema\n\
