@@ -210,7 +210,7 @@ final class ActivityModel {
 /// The engine calls these from whichever thread is doing the work, so every
 /// hop is explicit. koan already throttles them — roughly one call per sixty-odd
 /// files — so this does not need to throttle again.
-final class EngineProgress: ProgressReporter, @unchecked Sendable {
+final class EngineProgress: KoanFFI.ProgressReporter, @unchecked Sendable {
     private weak var activity: ActivityModel?
     private let task: UUID
     private let total = OSAllocatedUnfairLock(initialState: UInt64(0))
