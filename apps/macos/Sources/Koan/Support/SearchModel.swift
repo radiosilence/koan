@@ -117,7 +117,9 @@ final class SearchModel {
             locationBeforeSearch = nav.current
         }
 
-        isSearching = true
+        // Only on the edge: written per keystroke, the results page re-ran per
+        // keystroke for a flag that had not moved.
+        if !isSearching { isSearching = true }
         let engine = self.engine
         task = Task {
             try? await Task.sleep(for: .milliseconds(160))

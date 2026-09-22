@@ -49,8 +49,6 @@ struct TrackListView: View {
                             TrackRow(
                                 track: track,
                                 position: index + 1,
-                                isCurrent: player.currentTrackId == track.id,
-                                isSelected: selection.contains(track.id),
                                 showsAlbum: mixedAlbums,
                                 allTrackIds: allTrackIds
                             )
@@ -178,18 +176,24 @@ struct TrackListView: View {
 struct TrackRow: View {
     let track: Track
     let position: Int
-    let isCurrent: Bool
-    let isSelected: Bool
     /// Draws the cover and names the album — see `TrackListView.mixedAlbums`.
     let showsAlbum: Bool
     /// The whole list, so playing this row keeps the rest queued behind it.
     let allTrackIds: [Int64]
 
     @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
+    /// Whether the List has this row selected — see `QueueRow.prominence`.
+    @Environment(\.backgroundProminence) private var prominence
     @State private var hovering = false
 
     var body: some View {
+        // Read here, in the row, rather than handed down by the list: what is
+        // playing moves on every pause and every queue edit, and a list that
+        // read it re-diffed every row for each. Only the rows on screen exist,
+        // so this is thirty small bodies rather than one large one.
+        let isCurrent = player.currentTrackId == track.id
+        let isSelected = prominence == .increased
+
         HStack(spacing: 12) {
             // The row number becomes bars for whatever is playing —
             // same width either way so the column doesn't twitch.
@@ -258,9 +262,7 @@ struct TrackRow: View {
 
             TrackAvailability(track: track)
 
-            FavouriteButton(isOn: library.isFavourite(track: track.id), showing: hovering) {
-                library.toggleFavourite(track: track.id)
-            }
+            TrackHeart(trackId: track.id, showing: hovering)
 
             if let quality = Format.quality(track) {
                 Text(quality)

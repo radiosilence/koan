@@ -52,8 +52,11 @@ private struct DownloadRow: View {
 
     /// The numbers, read here rather than carried on the row. They move ten
     /// times a second while this row is going and not at all once it has
-    /// settled — which is exactly what the two slices are for.
-    private var figures: TransferFigure? { mirror.figure(for: transfer.queueItemId) }
+    /// settled — which is exactly what the two slices are for. A settled row
+    /// does not read them at all, or it would redraw at the others' rate.
+    private var figures: TransferFigure? {
+        isRunning ? mirror.figure(for: transfer.queueItemId) : nil
+    }
     private var bytesWritten: UInt64 { figures?.bytesWritten ?? 0 }
     private var totalBytes: UInt64 { figures?.totalBytes ?? 0 }
     private var bytesPerSecond: UInt64 { figures?.bytesPerSecond ?? 0 }

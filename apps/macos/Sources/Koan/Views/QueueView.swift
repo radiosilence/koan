@@ -27,13 +27,16 @@ struct QueueView: View {
     /// what it is and show its own sleeve.
     @AppStorage("queueGrouped") private var grouped = true
 
-    /// Selection is local `@State`, deliberately.
+    /// Selection is local `@State`, and this body never reads it.
     ///
     /// It lived on `PlayerModel` so the Edit menu could reach it, but reading an
     /// observable in the body means every selection change invalidates the whole
     /// view and rebuilds the List — under the very click that caused it, which
-    /// is what made clicking here so unreliable. It is mirrored to the model on
-    /// change instead: written, never read, so it stays out of the render path.
+    /// is what made clicking here so unreliable. A `@State` read here is the
+    /// same invalidation with a different owner, so nothing here reads it: the
+    /// rows learn they are selected from the List's own `backgroundProminence`,
+    /// and the header's count and the mirror to the model live in
+    /// `QueueSelectionHeader`, which holds the binding and re-runs alone.
     @State private var selection: Set<String> = []
 
     /// Album headings are rows in their own right, not decoration attached to
@@ -45,8 +48,12 @@ struct QueueView: View {
     }
 
     var body: some View {
+        // Once per pass. Built again for the header's count and again for the
+        // rows, a large queue was grouped twice per evaluation.
+        let rows = self.rows
+
         VStack(spacing: 0) {
-            header
+            header(rows)
 
             if player.queue.isEmpty {
                 EmptyState(
@@ -85,12 +92,6 @@ struct QueueView: View {
                         return .handled
                     }
                     .onDeleteCommand { removeSelected() }
-                    // Mirror the *queue item* ids, not the row ids: an album
-                    // heading's id is synthetic, and handing that to the engine
-                    // gets it rejected as not being a queue item.
-                    .onChange(of: selection) { _, new in
-                        player.queueSelection = Set(itemIds(in: new))
-                    }
                     .onChange(of: ui.selectAllToken) { _, _ in
                         guard onStage else { return }
                         selection = Set(rows.map(\.id))
@@ -109,7 +110,7 @@ struct QueueView: View {
 
     // MARK: - Header
 
-    private var header: some View {
+    private func header(_ rows: [Row]) -> some View {
         HStack(spacing: 12) {
             // What the queue *is*, when it is still something. A queue that
             // came from a playlist and has not been touched since follows that
@@ -148,23 +149,9 @@ struct QueueView: View {
 
             Spacer()
 
-            if !selection.isEmpty {
-                Text("\(selectedItemIds.count) selected")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Button("Clear") { selection = [] }
-                Button("Remove", role: .destructive) { removeSelected() }
-            }
+            QueueSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
 
-            // Beside the layout picker because both are about what you are
-            // looking at rather than what is in the queue. Disabled rather than
-            // hidden when nothing is playing: a control that comes and goes is
-            // one you have to look for.
-            Button { ui.jumpQueue(to: .playing) } label: {
-                Image(systemName: Icon.jumpToPlaying)
-            }
-            .disabled(player.currentItemId == nil)
-            .help("Scroll to what's playing")
+            JumpToPlayingButton()
 
             // Both modes shown with the active one lit, the way Finder switches
             // view. A single icon has to choose between naming the mode you are
@@ -234,8 +221,11 @@ struct QueueView: View {
         case .track(let item):
             QueueRow(
                 item: QueueRowContent(item: item),
-                isCurrent: item.queueItemId == player.currentItemId,
-                isSelected: selection.contains(item.queueItemId),
+                // The queue already says which row the cursor is on — and says
+                // it again when the cursor moves, since that redraws two rows
+                // either way. Asking the player as well subscribed the whole
+                // list to everything else about what is playing.
+                isCurrent: item.status == .playing,
                 // Ungrouped there is no heading above to say what record this
                 // is, so the row says it itself.
                 showArtist: !grouped || item.artist != item.albumArtist,
@@ -349,7 +339,7 @@ struct QueueView: View {
     /// Expand a set of row ids to the queue items they stand for. An album
     /// heading stands for its whole run; a track stands for itself.
     private func itemIds(in rowIds: Set<String>) -> [String] {
-        rows.filter { rowIds.contains($0.id) }.flatMap(\.itemIds)
+        Row.itemIds(in: rowIds, of: rows)
     }
 
     private func removeSelected() {
@@ -499,6 +489,11 @@ extension QueueView {
             }
         }
 
+        /// Expand a set of row ids to the queue items they stand for.
+        static func itemIds(in rowIds: Set<String>, of rows: [Row]) -> [String] {
+            rows.filter { rowIds.contains($0.id) }.flatMap(\.itemIds)
+        }
+
         /// Contiguous runs, mirroring the TUI: queue order is the user's, and
         /// collapsing two separate visits to the same record into one heading
         /// would misrepresent it. A heading precedes each run; tracks with no
@@ -579,6 +574,52 @@ struct QueueGroup: Identifiable {
     }
 
     var year: String? { items.first?.year }
+}
+
+/// What the selection is, and what to do with it. The one reader of the
+/// selection outside the List, so a click re-runs this and not the queue.
+private struct QueueSelectionHeader: View {
+    @Binding var selection: Set<String>
+    let rows: [QueueView.Row]
+    let remove: () -> Void
+
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        if !selection.isEmpty {
+            Text("\(QueueView.Row.itemIds(in: selection, of: rows).count) selected")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Button("Clear") { selection = [] }
+            Button("Remove", role: .destructive, action: remove)
+        }
+        // Mirrored to the model for the Edit menu, which cannot reach a view's
+        // state. The *queue item* ids, not the row ids: an album heading's id
+        // is synthetic, and handing that to the engine gets it rejected as not
+        // being a queue item.
+        Color.clear.frame(width: 0, height: 0)
+            .onChange(of: selection) { _, new in
+                player.queueSelection = Set(QueueView.Row.itemIds(in: new, of: rows))
+            }
+    }
+}
+
+/// Beside the layout picker because both are about what you are looking at
+/// rather than what is in the queue. Disabled rather than hidden when nothing
+/// is playing: a control that comes and goes is one you have to look for. Its
+/// own view because that read is of what is playing, which moves on every
+/// pause and every edit.
+private struct JumpToPlayingButton: View {
+    @Environment(PlayerModel.self) private var player
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        Button { ui.jumpQueue(to: .playing) } label: {
+            Image(systemName: Icon.jumpToPlaying)
+        }
+        .disabled(player.currentItemId == nil)
+        .help("Scroll to what's playing")
+    }
 }
 
 private struct QueueAlbumHeader: View {

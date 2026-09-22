@@ -88,13 +88,15 @@ struct QueueRowContent {
 struct QueueRow: View {
     let item: QueueRowContent
     let isCurrent: Bool
-    let isSelected: Bool
     let showArtist: Bool
     /// Its own sleeve, for when there is no album heading above carrying one.
     var artwork = false
 
     @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
+    /// Whether the List has this row selected. The List says so through the
+    /// environment, which is what lets the list above never read its own
+    /// selection: passed down as a value, every click re-ran the whole list.
+    @Environment(\.backgroundProminence) private var prominence
     @State private var hovering = false
 
     var body: some View {
@@ -164,14 +166,8 @@ struct QueueRow: View {
             )
 
             if let trackId = item.trackId {
-                FavouriteButton(
-                    isOn: library.isFavourite(track: trackId),
-                    showing: hovering,
-                    size: .caption
-                ) {
-                    library.toggleFavourite(track: trackId)
-                }
-                .frame(width: 16)
+                TrackHeart(trackId: trackId, showing: hovering, size: .caption)
+                    .frame(width: 16)
             } else {
                 // Keeps the column even for an item with no library row, so
                 // the durations stay in line down the queue.
@@ -227,7 +223,7 @@ struct QueueRow: View {
     /// where accent-on-accent is unreadable. A played row is never the current
     /// one, so the two never contend.
     private var titleStyle: AnyShapeStyle {
-        if isCurrent && !isSelected { return AnyShapeStyle(.tint) }
+        if isCurrent && prominence != .increased { return AnyShapeStyle(.tint) }
         return AnyShapeStyle(played ? HierarchicalShapeStyle.secondary : .primary)
     }
 
