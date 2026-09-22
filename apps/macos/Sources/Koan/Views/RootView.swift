@@ -290,6 +290,17 @@ struct RootView: View {
                         .help("Shuffle again")
                     }
                 }
+
+                // Last, and apart from the filter: what you do with a pick is
+                // not part of narrowing the grid, and next to the field the two
+                // read as one control. Always here, whatever it is showing, so
+                // starting or finishing a selection changes one item rather
+                // than the toolbar.
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+
+                ToolbarItem(placement: .primaryAction) {
+                    AlbumSelectionControls()
+                }
             }
 
         }
@@ -360,6 +371,47 @@ private struct LibraryFilter: View {
     var body: some View {
         @Bindable var library = library
         FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
+    }
+}
+
+/// Select, or what to do with what has been selected. The only reader of the
+/// selection outside the tiles, so a tick re-runs this and not the root.
+private struct AlbumSelectionControls: View {
+    @Environment(LibraryModel.self) private var library
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        let selection = library.selection
+        if selection.isActive {
+            let count = selection.ids.count
+            HStack(spacing: 2) {
+                Button {
+                    selection.commit(engine: library.engine, player: player, play: true)
+                } label: {
+                    Label(count > 0 ? "Play \(count)" : "Play", systemImage: Icon.play)
+                        .labelStyle(.titleAndIcon)
+                }
+                .disabled(count == 0)
+                .help("Play the selected albums, replacing the queue")
+                Button {
+                    selection.commit(engine: library.engine, player: player, play: false)
+                } label: {
+                    Label(count > 0 ? "Add \(count) to Queue" : "Add to Queue", systemImage: Icon.queue)
+                        .labelStyle(.titleAndIcon)
+                }
+                .disabled(count == 0)
+                .help("Add the selected albums to the end of the queue")
+                Button("Done") { selection.end() }
+                    .help("Stop selecting (Esc)")
+            }
+        } else {
+            Button {
+                selection.begin()
+            } label: {
+                Label("Select", systemImage: Icon.selectAll)
+            }
+            .help("Pick several albums to play or queue (⌘-click a cover, or ⌘A)")
+        }
     }
 }
 

@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AlbumBrowser: View {
     @Environment(LibraryModel.self) private var library
+    @Environment(UIState.self) private var ui
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
 
@@ -20,12 +21,28 @@ struct AlbumBrowser: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 22) {
                         ForEach(library.visibleAlbums, id: \.id) { album in
-                            AlbumGridCell(album: album)
+                            AlbumGridCell(album: album, selectable: true)
                         }
                     }
                     .padding(20)
+                    // Dragging a ticked tile carries every tick, in the order
+                    // they were made; an unticked one carries itself.
+                    .dragContainer(for: PlayableTransfer.self, itemID: \.id) { ids in
+                        ids.map { id in
+                            let name = library.visibleAlbums.first { $0.id == id }?.title ?? ""
+                            return PlayableTransfer(kind: .album, id: id, name: name)
+                        }
+                    }
+                    .dragContainerSelection(library.selection.ids)
                 }
             }
+            // ⌘A picks everything the filter is showing, starting a selection
+            // if there was none. Escape and leaving the page drop it.
+            .onChange(of: ui.selectAllToken) { _, _ in
+                library.selection.selectAll(library.visibleAlbums)
+            }
+            .onChange(of: ui.clearSelectionToken) { _, _ in library.selection.end() }
+            .onDisappear { library.selection.end() }
     }
 }
 

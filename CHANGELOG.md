@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Added
+
+- **Pick several albums and play or queue them together.** Select in the Albums toolbar, ⌘-click a cover, or ⌘A turns the grid into a selection: a click ticks a record, ⇧-click ticks a range, and Play or Add to Queue takes the lot and puts the grid back. A mode rather than list-style clicking, because a click on a tile already plays the record and its title already opens it.
+
+  Ticks survive the filter changing, so a pick can be gathered across several searches, and they play in the order they were made — the grid has no order for a record it is no longer showing. Dragging a ticked tile carries every tick to the queue or a playlist; an unticked one still carries only itself. Escape, Done or leaving the page ends it.
+
 ### Fixed
 
 - **Typing in the filter field no longer throws you out of it.** The first keystroke re-ran the whole window, and the toolbar rebuilt the field with it — so the filter applied and focus went with the old field. Two reads caused it: the menus asked whether anyone was typing from the Scene body, which is the whole window, and the field read the filter back in `RootView`, where SwiftUI charged it to the root.
