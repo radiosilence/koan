@@ -10,6 +10,8 @@
 
   The playing indicator is no longer SwiftUI. The analyser published each frame through observation, which made every frame a body, a canvas raster and a commit at the display's rate for as long as music played. The bars are layers now, moved directly, at the same rate — and detach when off stage or held still, which lets the analyser park.
 
+- **A click outside a text field ends the editing.** Filter the albums, click a cover to play it, and every key after that went into the filter — a cover is a SwiftUI gesture and takes no focus, so the field kept it. It used to be let go by accident, when the toolbar rebuilt itself on the next track change. The hotkey monitor now ends editing on any click that is not inside the field being edited.
+
 - **A queue edit is no longer a playback change.** The queue version rode in the same slice as what is playing, so every edit re-ran the transport bar and every list that knew what was playing. It rides with the queue rows now.
 
 - **Downloads landing one after another are one library change, not one each.** A record fetched a track at a time made every page reload its rows per track. The engine says so once the batch is down, or every couple of seconds while it is still coming.
