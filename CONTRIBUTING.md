@@ -45,6 +45,29 @@ the first frame that could carry it, and what follows is each further stall
 before the run loop is back at cadence — a page does not arrive in one commit,
 and the later ones are still time spent looking at the old page.
 
+### A body reads only what it draws
+
+`@Observable` subscribes a body to every property it reads while running, and
+nothing else — so a read is a subscription, and a read high in the tree re-runs
+everything below it when that property moves. Keep reads in the leaf that draws
+them:
+
+- Something that changes often gets its own small view that reads it. A toast,
+  a spinner, a count on a sidebar row.
+- A reaction to a model changing belongs in the model's `didSet`, not in an
+  `.onChange(of:)` on a view: the `onChange` makes that view a reader.
+- Pass a model into a view rather than a value taken from it, so the read
+  happens in the view that uses it.
+- Nothing in the Scene body reads state that changes. The Scene body is the
+  whole window.
+- An `NSViewRepresentable` reads its bindings in `updateNSView`, and that read
+  is charged to the body it sits in. Wrap it in a view of its own.
+
+A re-run is not free even where nothing changes: the toolbar rebuilds its
+AppKit-backed items when the body declaring them re-runs, which throws away the
+filter field and the focus in it. `let _ = Self._printChanges()` at the top of
+a body prints what made it run.
+
 ## Submitting a PR
 
 1. Fork the repo and create a feature branch.

@@ -17,7 +17,22 @@ final class SearchModel {
     private let engine: KoanEngine
     private let nav: Navigator
 
-    var query: String = ""
+    /// Searching follows from the query changing, here rather than in an
+    /// `onChange` on a view: a view that watches the query is a view that is
+    /// rebuilt on every keystroke.
+    var query: String = "" {
+        didSet {
+            guard query != oldValue else { return }
+            let has = !query.trimmingCharacters(in: .whitespaces).isEmpty
+            if has != hasQuery { hasQuery = has }
+            schedule()
+        }
+    }
+
+    /// Stored, and only written when it flips. Computed from `query`, it made
+    /// everything that asked — the sidebar, for its Results row — a reader of
+    /// every keystroke.
+    private(set) var hasQuery = false
 
     private(set) var artists: [Artist] = []
     private(set) var albums: [Album] = []
@@ -35,7 +50,6 @@ final class SearchModel {
     }
 
     var isEmpty: Bool { artists.isEmpty && albums.isEmpty && tracks.isEmpty }
-    var hasQuery: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     /// What a suggestion row completes to.
     ///
@@ -144,8 +158,10 @@ final class SearchModel {
     /// Clearing after acting on a result: the field empties but the user has
     /// already been sent somewhere, so don't drag them back.
     func reset() {
+        // Forgotten first: emptying the query runs `schedule`, which would
+        // otherwise take them back to where they searched from.
+        locationBeforeSearch = nil
         query = ""
         clear()
-        locationBeforeSearch = nil
     }
 }

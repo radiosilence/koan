@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Typing in the filter field no longer throws you out of it.** The first keystroke re-ran the whole window, and the toolbar rebuilt the field with it — so the filter applied and focus went with the old field. Two reads caused it: the menus asked whether anyone was typing from the Scene body, which is the whole window, and the field read the filter back in `RootView`, where SwiftUI charged it to the root.
+
+  The same mistake ran through the rest of the window. Every letter typed into the search box re-ran the root and the whole sidebar, and a pause, a toast or a download ticking over re-ran one or the other. Each is now read by the view that draws it — the menu items, the filter field, the sidebar's Queue and Downloads rows, its footer, the toasts, the wash behind the window — and a keystroke reaches the field and what shows the results, nothing else.
+
 - **A recording two sources credit differently is no longer two tracks.** Cross-source dedup matched on the artist alongside album, disc, track number and title, so a local file tagged `Petrol Girls` and the same recording arriving from Navidrome as `Petrol Girls • Ren Aldridge` resolved to two artists and therefore two tracks — drawn one after the other on the same album page, each with its own source icon. A server that merely disagrees about case did it too: `Polysics` against `POLYSICS`, `War Of Ages` against `War of Ages`.
 
   Album, disc, track number and title already name one position on a release, so the artist is the thing the sources disagree about rather than the thing telling two recordings apart. A fourth matching step drops it. It requires a track number on both sides: with no slot to match on, the artist is all that separates two same-titled recordings on one release, and the step declines rather than guess. The cross-source rule is untouched — two files on disk are two tracks however identical their tags, and so are two entries on one server.
