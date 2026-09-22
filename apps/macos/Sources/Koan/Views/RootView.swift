@@ -415,6 +415,7 @@ private struct AlbumSelectionControls: View {
     }
 }
 
+||||||| 3857158
 /// The wash behind the window, reading whether anything is playing itself —
 /// play and pause change how it breathes and nothing else about the window.
 ///
