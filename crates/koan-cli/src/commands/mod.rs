@@ -292,13 +292,9 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
             artist: meta.artist,
             album_artist: meta.album_artist.unwrap_or_default(),
             album: meta.album,
-            year: meta.date.and_then(|d| {
-                if d.len() >= 4 {
-                    Some(d[..4].to_string())
-                } else {
-                    None
-                }
-            }),
+            year: meta
+                .date
+                .and_then(|d| koan_core::helpers::year_of(&d).map(str::to_string)),
             codec: meta.codec,
             track_number: meta.track_number.map(|n| n as i64),
             disc: meta.disc.map(|n| n as i64),

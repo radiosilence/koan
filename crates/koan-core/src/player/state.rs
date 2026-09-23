@@ -23,8 +23,9 @@ impl Default for QueueItemId {
 
 impl fmt::Debug for QueueItemId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // Short form for logs: first 8 hex chars.
-        write!(f, "QId({})", &self.0.to_string()[..8])
+        // The tail: a v7's leading hex is its timestamp, shared by a whole batch.
+        let hex = self.0.simple().to_string();
+        write!(f, "QId({})", &hex[hex.len() - 8..])
     }
 }
 
@@ -302,8 +303,8 @@ impl SharedPlayerState {
     }
 
     pub fn set_playback_state(&self, state: PlaybackState) {
-        self.changed();
         self.state.store(state as u8, Ordering::Release);
+        self.changed();
     }
 
     pub fn position_ms(&self) -> u64 {
@@ -324,8 +325,8 @@ impl SharedPlayerState {
     }
 
     pub fn set_track_info(&self, info: Option<TrackInfo>) {
-        self.changed();
         *self.track_info.write() = info;
+        self.changed();
     }
 
     /// How far into the currently playing track a seek can land.
@@ -460,6 +461,7 @@ impl SharedPlayerState {
     /// force a souvlaki/cover-art update without waiting for a track change.
     pub fn signal_metadata_refresh(&self) {
         self.metadata_refresh_pending.store(true, Ordering::Release);
+        self.changed();
     }
 
     /// Returns true and clears the flag if a metadata refresh is pending.
@@ -476,8 +478,8 @@ impl SharedPlayerState {
     }
 
     pub fn set_radio_mode(&self, enabled: bool) {
-        self.changed();
         self.radio_mode.store(enabled, Ordering::Release);
+        self.changed();
     }
 
     // --- Output device rate ---
@@ -491,9 +493,9 @@ impl SharedPlayerState {
     }
 
     pub fn set_output_sample_rate(&self, rate: u32) {
-        self.changed();
         self.output_sample_rate
             .store(u64::from(rate), Ordering::Release);
+        self.changed();
     }
 
     /// Back to "not known yet", for the window where the device is between
