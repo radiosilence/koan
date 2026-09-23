@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use koan_core::db::queries;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::LoadState;
+use koan_core::player::state::{LoadState, PlaybackState, QueueItemId};
 
 use crate::app::{self, PickerAction};
 use crate::enqueue::enqueue_playlist;
@@ -74,6 +74,37 @@ fn save_playback_state_from_app(app: &app::App) {
     }
 }
 
+/// Persist the cursor and position alone, leaving the saved queue as it is.
+fn save_playback_position_from_app(app: &app::App) {
+    let (items, cursor) = app.state.snapshot_playlist();
+    let cursor_path = cursor
+        .and_then(|cid| items.iter().find(|i| i.id == cid))
+        .map(|i| i.path.to_string_lossy().into_owned());
+    match koan_core::db::pool::shared().get() {
+        Ok(db) => {
+            if let Err(e) = koan_core::db::queries::save_playback_position(
+                &db.conn,
+                cursor_path.as_deref(),
+                app.state.position_ms(),
+                app.state.playback_state() == PlaybackState::Playing,
+                app.state.radio_mode(),
+            ) {
+                log::warn!("failed to save playback position: {}", e);
+            }
+        }
+        Err(e) => {
+            log::warn!("failed to open db for autosave: {}", e);
+        }
+    }
+}
+
+/// Where a restored session left off, applied once its track is ready.
+pub struct RestoredPosition {
+    pub item: QueueItemId,
+    pub position_ms: u64,
+    pub was_playing: bool,
+}
+
 /// Run the Ratatui TUI event loop. This is the main entry point for the TUI.
 ///
 /// Called by koan-cli after spawning the player and setting up initial playback.
@@ -85,7 +116,7 @@ pub fn run_tui(
     log_buffer: Arc<Mutex<Vec<String>>>,
     start_in_library: bool,
     expects_playback: bool,
-    restored_position_ms: Option<u64>,
+    restored: Option<RestoredPosition>,
     download_queue: DownloadQueue,
     callbacks: TuiCallbacks,
 ) -> std::io::Result<()> {
@@ -158,13 +189,16 @@ pub fn run_tui(
 
     app.load_favourites();
 
-    let mut pending_seek: Option<u64> = restored_position_ms;
+    let mut pending_restore = restored.filter(|r| r.position_ms > 0 || r.was_playing);
 
     let mut media = crate::media_keys::MediaKeyHandler::new(tx.clone(), app.state.clone());
     let mut last_track_path: Option<PathBuf> = None;
 
     let mut last_autosave = std::time::Instant::now();
     const AUTOSAVE_INTERVAL: Duration = Duration::from_millis(100);
+    let mut last_position_save = std::time::Instant::now();
+    let mut saved_playback_state = app.state.playback_state();
+    const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(1);
 
     loop {
         if (callbacks.sigint_received)() {
@@ -277,17 +311,26 @@ pub fn run_tui(
 
         app.handle_tick();
 
-        if let Some(pos) = pending_seek
-            && let Some(cid) = app.state.cursor()
-            && app
+        if let Some(r) = &pending_restore {
+            // Anything played in the meantime wins over the restored position.
+            if app.state.playback_state() != PlaybackState::Stopped
+                || app.state.cursor() != Some(r.item)
+            {
+                pending_restore = None;
+            } else if app
                 .state
-                .item_load_state(cid)
+                .item_load_state(r.item)
                 .is_some_and(|s| matches!(s, LoadState::Ready))
-        {
-            tx.send(PlayerCommand::Play(cid)).ok();
-            tx.send(PlayerCommand::Seek(pos)).ok();
-            tx.send(PlayerCommand::Pause).ok();
-            pending_seek = None;
+            {
+                tx.send(PlayerCommand::Play(r.item)).ok();
+                if r.position_ms > 0 {
+                    tx.send(PlayerCommand::Seek(r.position_ms)).ok();
+                }
+                if !r.was_playing {
+                    tx.send(PlayerCommand::Pause).ok();
+                }
+                pending_restore = None;
+            }
         }
 
         if let Some(ref mut mk) = media {
@@ -391,10 +434,23 @@ pub fn run_tui(
                 .ok();
         }
 
+        // The whole queue is rewritten only when it changed; otherwise the
+        // position is saved about once a second, and on every play/pause/stop.
+        let playback_state = app.state.playback_state();
         if app.state_dirty && last_autosave.elapsed() >= AUTOSAVE_INTERVAL {
             save_playback_state_from_app(&app);
             app.state_dirty = false;
             last_autosave = std::time::Instant::now();
+            last_position_save = last_autosave;
+            saved_playback_state = playback_state;
+        } else if app.has_played
+            && (playback_state != saved_playback_state
+                || (playback_state == PlaybackState::Playing
+                    && last_position_save.elapsed() >= POSITION_SAVE_INTERVAL))
+        {
+            save_playback_position_from_app(&app);
+            last_position_save = std::time::Instant::now();
+            saved_playback_state = playback_state;
         }
 
         if app.quit {

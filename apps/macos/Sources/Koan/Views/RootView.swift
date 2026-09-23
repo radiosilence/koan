@@ -616,8 +616,9 @@ private struct ErrorToast: View {
             fallback: kind.tint.opacity(0.22),
             in: .capsule
         )
-        .task {
-            try? await Task.sleep(for: .seconds(6))
+        // Restarted by a new message; a cancelled sleep is not a timeout.
+        .task(id: message) {
+            guard (try? await Task.sleep(for: .seconds(6))) != nil else { return }
             dismiss()
         }
     }

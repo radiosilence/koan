@@ -498,18 +498,19 @@ impl MutationRoot {
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         let resolved = with_db(ctx, move |db| {
-            let mut track_ids = queries::playlist_track_ids(&db.conn, id)
+            let mut entries = queries::playlist_entries(&db.conn, id)
                 .map_err(|e| super::internal_error("db", e))?;
             if shuffled {
-                koan_core::helpers::shuffle(&mut track_ids);
+                koan_core::helpers::shuffle(&mut entries);
             }
-            let rows = queries::tracks_by_ids(&db.conn, &track_ids)
-                .map_err(|e| super::internal_error("db", e))?;
 
             let mut items = Vec::new();
             let mut pending_downloads: Vec<(i64, QueueItemId)> = Vec::new();
-            for track in &rows {
-                let item = track_to_playlist_item(track, db);
+            for entry in &entries {
+                let track = &entry.track;
+                let mut item = track_to_playlist_item(track, db);
+                // Which playlist row is playing, and which of two copies of a song.
+                item.playlist_entry_id = Some(entry.id);
                 if matches!(item.state, koan_core::player::state::ItemState::Pending) {
                     pending_downloads.push((track.id, item.id));
                 }
@@ -525,12 +526,17 @@ impl MutationRoot {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         let tx = ctx.data::<Sender<PlayerCommand>>()?;
 
-        send_cmd_via(tx, PlayerCommand::ClearPlaylist)?;
         let count = resolved.items.len();
-        if !resolved.items.is_empty() {
-            let first_id = resolved.items[0].id;
-            send_cmd_via(tx, PlayerCommand::AddToPlaylist(resolved.items))?;
-            send_cmd_via(tx, PlayerCommand::Play(first_id))?;
+        if resolved.items.is_empty() {
+            send_cmd_via(tx, PlayerCommand::ClearPlaylist)?;
+        } else {
+            send_cmd_via(
+                tx,
+                PlayerCommand::ReplacePlaylist {
+                    items: resolved.items,
+                    start: 0,
+                },
+            )?;
             if !resolved.pending_downloads.is_empty() {
                 spawn_downloads(resolved.pending_downloads, tx.clone(), state.clone());
             }
@@ -648,6 +654,20 @@ impl MutationRoot {
             ));
         }
 
+        fn in_range<T: TryFrom<i32>>(
+            value: Option<i32>,
+            name: &str,
+        ) -> async_graphql::Result<Option<T>> {
+            value
+                .map(T::try_from)
+                .transpose()
+                .map_err(|_| async_graphql::Error::new(format!("{name} is out of range")))
+        }
+        let target_fps = in_range::<u8>(input.target_fps, "targetFps")?;
+        let art_size = in_range::<u16>(input.art_size, "artSize")?;
+        let visualizer_fps = in_range::<u8>(input.visualizer_fps, "visualizerFps")?;
+        let graphql_port = in_range::<u16>(input.graphql_port, "graphqlPort")?;
+
         super::blocking(move || {
             Config::persist(|cfg| {
                 if let Some(ref mode) = input.replaygain_mode {
@@ -667,11 +687,11 @@ impl MutationRoot {
                         Some(device.clone())
                     };
                 }
-                if let Some(fps) = input.target_fps {
-                    cfg.playback.target_fps = fps as u8;
+                if let Some(fps) = target_fps {
+                    cfg.playback.target_fps = fps;
                 }
-                if let Some(size) = input.art_size {
-                    cfg.playback.art_size = size as u16;
+                if let Some(size) = art_size {
+                    cfg.playback.art_size = size;
                 }
                 if let Some(enabled) = input.remote_enabled {
                     cfg.remote.enabled = enabled;
@@ -686,11 +706,11 @@ impl MutationRoot {
                         Some(limit.clone())
                     };
                 }
-                if let Some(fps) = input.visualizer_fps {
-                    cfg.visualizer.fps = fps as u8;
+                if let Some(fps) = visualizer_fps {
+                    cfg.visualizer.fps = fps;
                 }
-                if let Some(port) = input.graphql_port {
-                    cfg.graphql.port = port as u16;
+                if let Some(port) = graphql_port {
+                    cfg.graphql.port = port;
                 }
                 if let Some(pg) = input.graphql_playground {
                     cfg.graphql.playground = pg;
@@ -793,12 +813,10 @@ async fn set_favourite(
         let track = queries::get_track_row(&db.conn, track_id)
             .map_err(|e| super::internal_error("db", e))?
             .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
-        let path = track
-            .path
-            .as_ref()
-            .or(track.cached_path.as_ref())
-            .ok_or_else(|| async_graphql::Error::new(format!("track {} has no path", track_id)))?;
-        let fs_path = std::path::Path::new(path);
+        let path = queries::track_favourite_key(&db.conn, track_id)
+            .map_err(|e| super::internal_error("db", e))?
+            .ok_or_else(|| async_graphql::Error::new(format!("track {} not found", track_id)))?;
+        let fs_path = std::path::Path::new(&path);
 
         let now_starred = match star {
             Some(true) => {
@@ -815,7 +833,7 @@ async fn set_favourite(
                 .map_err(|e| super::internal_error("db", e))?,
         };
 
-        sync_favourite_to_remote(db, path, now_starred);
+        sync_favourite_to_remote(db, &path, now_starred);
         Ok(GqlTrack { row: track })
     })
     .await

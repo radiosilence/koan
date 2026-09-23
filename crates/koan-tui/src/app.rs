@@ -504,10 +504,8 @@ impl App {
             self.status_message = None;
         }
 
-        // Track playing state — mark dirty so position is persisted.
         if self.state.playback_state() == PlaybackState::Playing {
             self.has_played = true;
-            self.state_dirty = true;
         }
 
         // Clear loading overlay once playback starts or pending queue populates.

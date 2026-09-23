@@ -32,7 +32,10 @@ struct PlaylistView: View {
     @State private var renameTo = ""
 
     private var playlist: Playlist? { playlists.playlist(id: playlistId) }
-    private var entries: [PlaylistEntry] { playlists.entries }
+    /// Guarded on the id because history can move faster than a read.
+    private var entries: [PlaylistEntry] {
+        playlists.openId == playlistId ? playlists.entries : []
+    }
 
     /// A playlist can hold the same track twice, so a row's identity is its
     /// position, not its track id. Selecting one copy must not light the other.
@@ -437,14 +440,12 @@ extension PlaylistView {
                     index += 1
                     continue
                 }
-                let run = entries[index...].prefix {
-                    $0.track.albumTitle == first.track.albumTitle
-                }
+                let run = entries[index...].prefix { sameRecord($0.track, first.track) }
                 rows.append(.album(
                     id: "album:\(first.id)",
                     group: PlaylistGroup(
                         album: first.track.albumTitle,
-                        artist: first.track.artistName,
+                        artist: first.track.albumArtistName,
                         positions: Array(index..<(index + run.count)),
                         entries: Array(run)
                     )
@@ -453,6 +454,12 @@ extension PlaylistView {
                 index += run.count
             }
             return rows
+        }
+
+        /// Two records can share a title; the id tells them apart where there is one.
+        private static func sameRecord(_ a: Track, _ b: Track) -> Bool {
+            if let id = a.albumId, let other = b.albumId { return id == other }
+            return a.albumTitle == b.albumTitle && a.albumArtistName == b.albumArtistName
         }
     }
 }

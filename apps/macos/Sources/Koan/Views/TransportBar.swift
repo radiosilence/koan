@@ -192,18 +192,9 @@ struct TransportBar: View {
                 Image(systemName: Icon.previous)
                     .symbolEffect(.bounce, value: reduceMotion ? 0 : backSkips)
             }
-            .keyboardShortcut(.leftArrow, modifiers: .command)
             .help("Previous track (⌘←)")
 
-            // Bigger than the pair either side of it: it is the one you reach
-            // for without looking.
-            Button(action: player.togglePlayPause) {
-                Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
-                    .font(.system(size: 25))
-                    .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 30)
-            }
-            .help(player.isPlaying ? "Pause (Space)" : "Play (Space)")
+            PlayPauseButton()
 
             Button {
                 forwardSkips += 1
@@ -212,7 +203,6 @@ struct TransportBar: View {
                 Image(systemName: Icon.next)
                     .symbolEffect(.bounce, value: reduceMotion ? 0 : forwardSkips)
             }
-            .keyboardShortcut(.rightArrow, modifiers: .command)
             .help("Next track (⌘→)")
         }
         .buttonStyle(.plain)
@@ -448,14 +438,14 @@ private struct DeviceMenu: View {
             Button {
                 player.setDevice(nil)
             } label: {
-                Label("System Default", systemImage: player.currentDevice == nil ? "checkmark" : "")
+                choice("System Default", selected: player.currentDevice == nil)
             }
             Divider()
             ForEach(player.devices, id: \.name) { device in
                 Button {
                     player.setDevice(device.name)
                 } label: {
-                    Label(device.name, systemImage: player.currentDevice == device.name ? "checkmark" : "")
+                    choice(device.name, selected: player.currentDevice == device.name)
                 }
             }
         } label: {
@@ -465,6 +455,32 @@ private struct DeviceMenu: View {
         .menuIndicator(.hidden)
         .frame(width: 24)
         .help("Output device — \(player.currentDevice ?? "System Default")")
+    }
+
+    @ViewBuilder
+    private func choice(_ name: String, selected: Bool) -> some View {
+        if selected {
+            Label(name, systemImage: "checkmark")
+        } else {
+            Text(name)
+        }
+    }
+}
+
+/// Its own view so a pause re-runs the button, not the whole bar.
+private struct PlayPauseButton: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        // Bigger than the pair either side of it: it is the one you reach
+        // for without looking.
+        Button(action: player.togglePlayPause) {
+            Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
+                .font(.system(size: 25))
+                .contentTransition(.symbolEffect(.replace))
+                .frame(width: 30)
+        }
+        .help(player.isPlaying ? "Pause (Space)" : "Play (Space)")
     }
 }
 

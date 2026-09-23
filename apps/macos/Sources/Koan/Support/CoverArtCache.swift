@@ -136,8 +136,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         let task = Task<NSImage?, Never> { [weak self] in
             guard let self else { return nil }
             let data = await self.bytes(for: source)
-            self.locked { self.decodes[key] = nil }
-            guard let data else { return nil }
+            guard let data, !Task.isCancelled else { return nil }
 
             let image = await ImageWork.onCPU { Self.decode(data, to: size) }
             guard let image else { return nil }
@@ -148,8 +147,20 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             }
             return image
         }
-        locked { decodes[key] = task }
-        return await task.value
+        // Check and insert as one step: a caller that lost the race waits on
+        // the winner, and its own task stands down.
+        let shared = locked {
+            if let running = decodes[key] { return running }
+            decodes[key] = task
+            return task
+        }
+        guard shared == task else {
+            task.cancel()
+            return await shared.value
+        }
+        let image = await task.value
+        locked { if decodes[key] == task { decodes[key] = nil } }
+        return image
     }
 
     /// The colour a record reads as.
@@ -193,6 +204,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             let engine = self.engine
             let file = directory?.appendingPathComponent(Self.filename(for: key))
             let task = Task<Fetched, Never> {
+                guard !Task.isCancelled else { return .failed }
                 // Every step off both the main actor and the cooperative pool —
                 // see `ImageWork`. The hash comes back with the bytes because it
                 // is a pass over the whole payload.
@@ -206,9 +218,18 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                 }
                 return fetched
             }
-            locked { loads[key] = task }
-            payload = await task.value
-            locked { loads[key] = nil }
+            let shared = locked {
+                if let running = loads[key] { return running }
+                loads[key] = task
+                return task
+            }
+            if shared == task {
+                payload = await task.value
+                locked { if loads[key] == task { loads[key] = nil } }
+            } else {
+                task.cancel()
+                payload = await shared.value
+            }
         }
 
         // Nothing recorded: the next tile that asks tries again.

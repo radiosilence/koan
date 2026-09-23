@@ -119,9 +119,7 @@ struct PlayableArtwork: View {
         let albumId = self.albumId
         nav.open(album: albumId)
         Task {
-            let ids = ((try? await engine.tracks(
-                albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
-            )) ?? []).map(\.id)
+            let ids = (try? await engine.trackIds(albumId: albumId, artistId: nil)) ?? []
             loading = false
             player.playNow(trackIds: ids)
         }

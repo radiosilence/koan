@@ -183,21 +183,23 @@ fn op_available() -> bool {
 
 /// Generate a secure random password (alphanumeric + symbols, 32 chars).
 fn generate_password() -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
+    use ring::rand::SecureRandom;
     let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*-_=+";
-    (0..32)
-        .map(|_| {
-            let mut h = RandomState::new().build_hasher();
-            h.write_u64(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64,
-            );
-            chars[h.finish() as usize % chars.len()] as char
-        })
-        .collect()
+    // Bytes at or above the largest multiple of the alphabet length are thrown
+    // away, so every character is equally likely.
+    let limit = 256 - 256 % chars.len();
+    let rng = ring::rand::SystemRandom::new();
+    let mut password = String::with_capacity(32);
+    let mut buf = [0u8; 64];
+    while password.len() < 32 {
+        rng.fill(&mut buf).expect("system RNG failure");
+        for &b in &buf {
+            if (b as usize) < limit && password.len() < 32 {
+                password.push(chars[b as usize % chars.len()] as char);
+            }
+        }
+    }
+    password
 }
 
 /// Get password from KOAN_PASSWORD env var, or prompt interactively.
@@ -592,4 +594,17 @@ fn prompt(message: &str) -> String {
 
 fn prompt_password(message: &str) -> String {
     rpassword::prompt_password(message).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_password() {
+        let a = generate_password();
+        assert_eq!(a.len(), 32);
+        assert!(a.bytes().all(|b| b.is_ascii_graphic()));
+        assert_ne!(a, generate_password());
+    }
 }

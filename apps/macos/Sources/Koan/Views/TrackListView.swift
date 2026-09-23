@@ -72,7 +72,7 @@ struct TrackListView: View {
                     }
                     // Arriving from search: single out the matched track rather
                     // than dropping the user at the top of a 20-track record.
-                    .task(id: tracks.count) {
+                    .task(id: HighlightKey(target: nav.highlightedTrackId, count: tracks.count)) {
                         guard let target = nav.highlightedTrackId,
                               tracks.contains(where: { $0.id == target })
                         else { return }
@@ -170,6 +170,12 @@ struct TrackListView: View {
             }
             Spacer(minLength: 0)
         }
+    }
+
+    /// The same record can be opened again highlighting a different track.
+    private struct HighlightKey: Equatable {
+        let target: Int64?
+        let count: Int
     }
 }
 

@@ -67,8 +67,12 @@ final class PlaylistsModel {
 
     func load() {
         let engine = self.engine
-        Task {
-            playlists = (try? await engine.playlists()) ?? []
+        // Cancelled on re-entry, so a slower earlier read can't land over a newer one.
+        loading?.cancel()
+        loading = Task {
+            let fetched = (try? await engine.playlists()) ?? []
+            guard !Task.isCancelled else { return }
+            playlists = fetched
             // A playlist whose contents changed has a different mosaic, and a
             // deleted one should stop holding memory.
             let live = Set(playlists.map(\.id))
@@ -76,10 +80,13 @@ final class PlaylistsModel {
             coverStamp = coverStamp.filter { live.contains($0.key) }
             for playlist in playlists where coverStamp[playlist.id] != playlist.changedAt {
                 await loadCovers(for: playlist.id)
+                guard !Task.isCancelled else { return }
                 coverStamp[playlist.id] = playlist.changedAt
             }
         }
     }
+
+    @ObservationIgnored private var loading: Task<Void, Never>?
 
     /// Read a playlist's rows *before* the navigator moves to it.
     ///
@@ -102,6 +109,10 @@ final class PlaylistsModel {
             async let covers = engine.playlistCoverAlbumIds(playlistId: id)
             return ((try? await rows) ?? [], (try? await covers) ?? [])
         }.value
+        guard !Task.isCancelled else {
+            isLoading = false
+            return
+        }
         openId = id
         openStamp = stamp
         entries = loaded.0

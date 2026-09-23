@@ -122,13 +122,25 @@ final class Navigator {
     func goBack() {
         guard canGoBack else { return }
         let landing = cursor - 1
-        move(to: history[landing]) { [weak self] in self?.cursor = landing }
+        let page = history[landing]
+        move(to: page) { [weak self] in self?.arrive(at: page, near: landing) }
     }
 
     func goForward() {
         guard canGoForward else { return }
         let landing = cursor + 1
-        move(to: history[landing]) { [weak self] in self?.cursor = landing }
+        let page = history[landing]
+        move(to: page) { [weak self] in self?.arrive(at: page, near: landing) }
+    }
+
+    /// `forget` can prune history while a move loads, so the index captured
+    /// before it may no longer name the page, or exist.
+    private func arrive(at page: Page, near landing: Int) {
+        if history.indices.contains(landing), history[landing] == page {
+            cursor = landing
+        } else {
+            cursor = history.lastIndex(of: page) ?? min(landing, history.count - 1)
+        }
     }
 
     /// Go to a page, recording it. The only way anything moves.
