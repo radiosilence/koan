@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.34.1 (2026-09-23)
 
 ### Changed
 
@@ -15,6 +15,10 @@
 - **A queue edit is no longer a playback change.** The queue version rode in the same slice as what is playing, so every edit re-ran the transport bar and every list that knew what was playing. It rides with the queue rows now.
 
 - **Downloads landing one after another are one library change, not one each.** A record fetched a track at a time made every page reload its rows per track. The engine says so once the batch is down, or every couple of seconds while it is still coming.
+
+### Fixed
+
+- **A file dropped from Finder no longer doubles on the next rescan if its name has an accent.** Foundation hands over file paths with accents precomposed, and a Mac-written disk holds them decomposed; both open the same file, but `tracks.path` is compared bytewise, so a rescan saw a file it had no row for and added a second one. Only the accented names on an album doubled, which is what made it look like nothing in particular. Paths from outside — a drop, a configured folder, a folder being forgotten — are now resolved against the directory that holds them and stored as it spells them. Pairs already split are folded on the next launch: the older row keeps its history and sync link and takes the disk's spelling; favourites follow. ([#418](https://github.com/radiosilence/koan/issues/418))
 
 ## v0.34.0 (2026-09-22)
 

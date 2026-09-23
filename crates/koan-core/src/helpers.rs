@@ -263,6 +263,8 @@ pub fn tracks_from_server(db: &Database) -> u64 {
 /// Albums and artists left holding nothing go too, or the browser fills with
 /// empty shelves.
 pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::connection::DbError> {
+    // Rows are keyed by the disk's spelling; a folder named the other way would forget nothing.
+    let folder = &crate::index::spelling::on_disk(folder);
     let (lower, upper) = queries::folder_prefix_range(folder);
 
     let tx = db.conn.unchecked_transaction()?;
