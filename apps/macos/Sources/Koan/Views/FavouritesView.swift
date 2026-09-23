@@ -18,8 +18,15 @@ struct FavouritesView: View {
     @Environment(LibraryModel.self) private var library
 
     @State private var selection: Set<Int64> = []
+    /// The list's width, for how many records fit across a row.
+    @State private var width: CGFloat = 0
 
-    private let columns = [GridItem(.adaptive(minimum: 140, maximum: 190), spacing: 16)]
+    /// The same tile the grids use, at the same sizes.
+    private static let tileMin: CGFloat = 140
+    private static let tileMax: CGFloat = 190
+    private static let tileSpacing: CGFloat = 16
+    /// What an inset list keeps clear at each side.
+    private static let listInset: CGFloat = 20
 
     private var artists: [Artist] { library.visibleFavouriteArtists }
     private var albums: [Album] { library.visibleFavouriteAlbums }
@@ -59,6 +66,7 @@ struct FavouritesView: View {
                     play(selection)
                     return KeyPress.Result.handled
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
             }
         }
     }
@@ -98,15 +106,40 @@ struct FavouritesView: View {
         }
     }
 
+    /// The records, a row of tiles per List row.
+    ///
+    /// Not a `LazyVGrid`. A grid inside a List row is one cell, and a cell is
+    /// laid out whole, so every record you have ever favourited was built and
+    /// asked for its sleeve the moment the page opened — hundreds of fetches
+    /// at once, and none of them cancelled by scrolling away, because nothing
+    /// ever scrolled off. Rows of the List are what the List recycles, so the
+    /// grid is cut into them.
     private var albumSection: some View {
         Section("Albums") {
-            LazyVGrid(columns: columns, spacing: 18) {
-                ForEach(albums, id: \.id) { album in
-                    AlbumGridCell(album: album)
+            ForEach(albumRows, id: \.first!.id) { row in
+                HStack(alignment: .top, spacing: Self.tileSpacing) {
+                    ForEach(row, id: \.id) { album in
+                        AlbumGridCell(album: album)
+                            .frame(maxWidth: Self.tileMax)
+                    }
+                    Spacer(minLength: 0)
                 }
+                .padding(.vertical, 6)
+                .selectionDisabled()
             }
-            .padding(.vertical, 6)
-            .selectionDisabled()
+        }
+    }
+
+    /// How many tiles fit across, the way an adaptive grid would decide it.
+    private var albumColumns: Int {
+        let usable = width - Self.listInset * 2 + Self.tileSpacing
+        return max(1, Int(usable / (Self.tileMin + Self.tileSpacing)))
+    }
+
+    private var albumRows: [[Album]] {
+        let per = albumColumns
+        return stride(from: 0, to: albums.count, by: per).map { start in
+            Array(albums[start..<min(start + per, albums.count)])
         }
     }
 
@@ -118,8 +151,6 @@ struct FavouritesView: View {
                 TrackRow(
                     track: track,
                     position: index + 1,
-                    isCurrent: player.currentTrackId == track.id,
-                    isSelected: selection.contains(track.id),
                     // Gathered from all over, so a row carries its own sleeve
                     // and says which record it came from.
                     showsAlbum: true,

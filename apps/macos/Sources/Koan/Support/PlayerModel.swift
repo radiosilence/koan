@@ -100,7 +100,7 @@ final class PlayerModel {
     var currentEntry: QueueItem? { mirror.playback.entry }
     var currentFormat: StreamFormat? { mirror.playback.format }
     var radioEnabled: Bool { mirror.playback.radioEnabled }
-    var queueVersion: UInt64 { mirror.playback.playlistVersion }
+    var queueVersion: UInt64 { mirror.queueVersion }
     var durationMs: UInt64 { mirror.playback.durationMs }
     var queue: [QueueItem] { mirror.queue }
 
@@ -201,8 +201,11 @@ final class PlayerModel {
             // The track moved on while we were asking, so whatever came back
             // belongs to something that is no longer playing.
             guard trackId == self.currentTrackId else { return }
-            self.currentAlbumId = track?.albumId
-            self.currentArtistId = track?.artistId
+            // Written only where the answer moved. `@Observable` has no
+            // opinion about equality, so the next track off the same record
+            // would otherwise re-run everything coloured by it.
+            if self.currentAlbumId != track?.albumId { self.currentAlbumId = track?.albumId }
+            if self.currentArtistId != track?.artistId { self.currentArtistId = track?.artistId }
             self.placeResolvedFor = trackId
         }
     }

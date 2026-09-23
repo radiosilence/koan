@@ -54,7 +54,12 @@ pub enum StateSlice {
     },
     /// The queue, in order. The whole list: a queue that is one copy refetched
     /// whole has nothing to forget to patch.
-    Queue { items: Vec<QueueItem> },
+    ///
+    /// The version travels with the rows rather than in `Playback`: a client
+    /// that wants to know the queue moved is reading the queue, and one that
+    /// is drawing a transport bar is not — leaving it there re-ran every
+    /// reader of what is playing on every edit to what is queued.
+    Queue { items: Vec<QueueItem>, version: u64 },
     /// What the queue still is, when it is still a playlist or a record.
     Lock { lock: Option<QueueLock> },
     /// Every transfer koan knows about — running first, then whatever settled
@@ -320,6 +325,7 @@ mod tests {
 
     fn queue(n: usize) -> StateSlice {
         StateSlice::Queue {
+            version: n as u64,
             items: (0..n)
                 .map(|i| QueueItem {
                     queue_item_id: format!("01930000-0000-7000-8000-{i:012}"),

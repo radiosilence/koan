@@ -12,7 +12,6 @@ import SwiftUI
 /// glass floating on glass reads as neither.
 struct TransportBar: View {
     @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     /// One per direction, so the arrow that was pressed is the only one that
@@ -171,14 +170,7 @@ struct TransportBar: View {
             // does the same from anywhere, but a heart you can see also tells
             // you whether this one is already in.
             if let trackId = player.currentTrackId {
-                FavouriteButton(
-                    isOn: library.isFavourite(track: trackId),
-                    size: .callout
-                ) {
-                    library.toggleFavourite(track: trackId)
-                }
-                .help(library.isFavourite(track: trackId)
-                    ? "Remove favourite (⌘D)" : "Favourite this track (⌘D)")
+                TrackHeart(trackId: trackId, size: .callout, hint: "⌘D")
             }
         }
     }
@@ -301,26 +293,7 @@ private struct SeekBar: View {
                 // and AppKit answered each one with a full window Auto Layout
                 // pass. Same bar, same marks; only the pixels change now.
                 ZStack {
-                    // What has not arrived, drawn quieter than the rest.
-                    //
-                    // The dimming is on the tail rather than the head on
-                    // purpose: a track on disk is the ordinary case and should
-                    // look like the ordinary bar, so a download finishing
-                    // changes nothing about what is drawn. Lighting the
-                    // downloaded part instead meant the bar went *dark* the
-                    // moment a transfer completed, which is exactly backwards.
-                    Canvas { context, size in
-                        context.fill(Self.mark(in: size, fraction: 1), with: .style(.quaternary))
-                    }
-                    .opacity(0.4)
-                    // What can be played: the whole bar for anything already
-                    // here, and as far as the bytes reach for anything still
-                    // arriving. Where the track can also be seeked, the engine
-                    // stops a scrub at this same extent, so the bar never
-                    // offers a position playback would refuse.
-                    Canvas { context, size in
-                        context.fill(Self.mark(in: size, fraction: fetched ?? 1), with: .style(.quaternary))
-                    }
+                    FetchedMark()
                     // Not the tint. The tint is the colour of the record now,
                     // and a muted sleeve puts the played portion at the same
                     // value as the track behind it — this is a bar you read a
@@ -355,7 +328,6 @@ private struct SeekBar: View {
                             player.seek(fraction: (value.location.x / geo.size.width).clamped())
                         }
                 )
-                .help(help)
             }
             .frame(height: 14)
 
@@ -371,7 +343,7 @@ private struct SeekBar: View {
 
     /// A capsule covering `fraction` of the bar, centred vertically. Shorter
     /// than its own thickness it would draw as a squashed dot, so it doesn't.
-    private static func mark(in size: CGSize, fraction: Double) -> Path {
+    fileprivate static func mark(in size: CGSize, fraction: Double) -> Path {
         let width = size.width * fraction.clamped()
         guard width >= thickness else { return Path() }
         return Capsule().path(
@@ -420,13 +392,46 @@ private struct SeekBar: View {
         }
     }
 
-    /// How much of what is playing has arrived, while it is still arriving.
-    /// `nil` for anything on disk, which is every track most of the time.
-    private var fetched: Double? { player.fetched }
+}
+
+/// The track, and how much of it has arrived.
+///
+/// Its own view because the arrived fraction is the fast slice — it moves ten
+/// times a second while anything at all is downloading. Read by `SeekBar`,
+/// every one of those ticks re-ran the bar and re-anchored the progress
+/// animation, which is the animation the anchor exists to hand over once.
+private struct FetchedMark: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        // How much of what is playing has arrived, while it is still arriving.
+        // `nil` for anything on disk, which is every track most of the time.
+        let fetched = player.fetched
+
+        Canvas { context, size in
+            // What has not arrived, drawn quieter than the rest.
+            //
+            // The dimming is on the tail rather than the head on purpose: a
+            // track on disk is the ordinary case and should look like the
+            // ordinary bar, so a download finishing changes nothing about what
+            // is drawn. Lighting the downloaded part instead meant the bar went
+            // *dark* the moment a transfer completed, which is exactly
+            // backwards.
+            context.opacity = 0.4
+            context.fill(SeekBar.mark(in: size, fraction: 1), with: .style(.quaternary))
+            // What can be played: the whole bar for anything already here, and
+            // as far as the bytes reach for anything still arriving. Where the
+            // track can also be seeked, the engine stops a scrub at this same
+            // extent, so the bar never offers a position playback would refuse.
+            context.opacity = 1
+            context.fill(SeekBar.mark(in: size, fraction: fetched ?? 1), with: .style(.quaternary))
+        }
+        .help(help(fetched))
+    }
 
     /// Says which of the three states the bar is in, because a bar that stops
     /// short or stops responding without saying why reads as broken.
-    private var help: String {
+    private func help(_ fetched: Double?) -> String {
         guard let fetched else { return "" }
         let percent = Int(fetched * 100)
         return player.canSeek

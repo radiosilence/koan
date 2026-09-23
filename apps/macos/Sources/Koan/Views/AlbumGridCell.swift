@@ -43,23 +43,7 @@ struct AlbumGridCell: View {
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
-                    // Over artwork, which can be any colour — the plain
-                    // tertiary heart disappears against half of them. Glass
-                    // gives it a ground of its own, so the shape is legible
-                    // whatever is behind it, and it grows in on hover rather
-                    // than fading a shadowed glyph up.
-                    if hovering || library.isFavourite(album: album.id) {
-                        FavouriteButton(
-                            isOn: library.isFavourite(album: album.id),
-                            size: .callout
-                        ) {
-                            library.toggleFavourite(album: album.id)
-                        }
-                        .padding(7)
-                        .glass(.clear.interactive(), fallback: .ultraThinMaterial, in: .circle)
-                        .glassEffectTransition(.materialize)
-                        .padding(7)
-                    }
+                    AlbumTileHeart(albumId: album.id, hovering: hovering)
                 }
 
             Text(album.title)
@@ -110,6 +94,30 @@ struct AlbumGridCell: View {
     /// the mode, not on every tick.
     private var selecting: Bool { selectable && library.selection.isActive }
 
+}
+
+/// The heart on a tile, and the only part of it that reads the favourites — a
+/// heart flipping anywhere re-runs these and not the tiles.
+///
+/// Over artwork, which can be any colour — the plain tertiary heart disappears
+/// against half of them. Glass gives it a ground of its own, so the shape is
+/// legible whatever is behind it, and it grows in on hover rather than fading
+/// a shadowed glyph up.
+private struct AlbumTileHeart: View {
+    let albumId: Int64
+    let hovering: Bool
+
+    @Environment(LibraryModel.self) private var library
+
+    var body: some View {
+        if hovering || library.isFavourite(album: albumId) {
+            AlbumHeart(albumId: albumId, size: .callout)
+                .padding(7)
+                .glass(.clear.interactive(), fallback: .ultraThinMaterial, in: .circle)
+                .glassEffectTransition(.materialize)
+                .padding(7)
+        }
+    }
 }
 
 /// The tick on a tile, and the only part of it that reads what is selected — a

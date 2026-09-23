@@ -38,7 +38,6 @@ struct ArtistBrowser: View {
 private struct ArtistRow: View {
     let artist: Artist
 
-    @Environment(LibraryModel.self) private var library
     @State private var hovered = false
 
     var body: some View {
@@ -61,14 +60,8 @@ private struct ArtistRow: View {
                 font: .body,
                 prominent: true
             )
-            FavouriteButton(
-                isOn: library.isFavourite(artist: artist.id),
-                showing: hovered,
-                size: .caption
-            ) {
-                library.toggleFavourite(artist: artist.id)
-            }
-            .frame(width: 16)
+            ArtistHeart(artistId: artist.id, showing: hovered, size: .caption)
+                .frame(width: 16)
             Spacer(minLength: 12)
             Text(Format.count(artist.albumCount, "album"))
                 .font(.caption.monospacedDigit())

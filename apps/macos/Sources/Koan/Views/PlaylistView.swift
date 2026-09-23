@@ -22,9 +22,8 @@ struct PlaylistView: View {
     @Environment(Navigator.self) private var nav
     @Environment(UIState.self) private var ui
 
-    /// Selection is local `@State` for the same reason the queue's is: reading
-    /// an observable in `body` invalidates the whole List under the click that
-    /// caused it.
+    /// Selection is local `@State` for the same reason the queue's is, and
+    /// unread here for the same reason too — see `QueueView.selection`.
     @State private var selection: Set<String> = []
     /// Where a drop would land, so the gesture says what it will do. Dropping
     /// `onMove` lost the insertion indicator that came with it; this is it.
@@ -38,12 +37,17 @@ struct PlaylistView: View {
     /// A playlist can hold the same track twice, so a row's identity is its
     /// position, not its track id. Selecting one copy must not light the other.
     private var rows: [Row] {
-        grouped ? Row.build(from: entries) : entries.map(Row.entry)
+        grouped
+            ? Row.build(from: entries)
+            : entries.enumerated().map { Row.entry($1, position: $0) }
     }
 
     var body: some View {
+        // Once per pass, for the header and the rows both.
+        let rows = self.rows
+
         VStack(spacing: 0) {
-            header
+            header(rows)
                 .padding(.horizontal, 24)
                 .padding(.top, 18)
                 .padding(.bottom, 16)
@@ -108,7 +112,7 @@ struct PlaylistView: View {
         playlist.map { .playlist(id: $0.id, name: $0.name) }
     }
 
-    private var header: some View {
+    private func header(_ rows: [Row]) -> some View {
         HStack(alignment: .bottom, spacing: 18) {
             PlaylistArtwork(sources: playlists.covers[playlistId] ?? [], cornerRadius: 8)
                 .frame(width: 132, height: 132)
@@ -143,16 +147,7 @@ struct PlaylistView: View {
             Spacer(minLength: 0)
 
             VStack(alignment: .trailing, spacing: 10) {
-                if !selection.isEmpty {
-                    HStack(spacing: 8) {
-                        Text("\(positions(in: selection).count) selected")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Button("Remove", role: .destructive) { removeSelected() }
-                        Button("Clear") { selection = [] }
-                    }
-                    .buttonStyle(.borderless)
-                }
+                PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
 
                 HStack(spacing: 10) {
                     // Both modes shown with the active one lit, the way the
@@ -223,25 +218,9 @@ struct PlaylistView: View {
                 } isTargeted: { targeted in
                     dropBefore = targeted ? position : (dropBefore == position ? nil : dropBefore)
                 }
-        case .entry(let entry):
-            let position = entries.firstIndex { $0.id == entry.id } ?? 0
-            QueueRow(
-                item: QueueRowContent(
-                    entry: entry,
-                    position: position + 1,
-                    // Found by entry, not by track: two copies of one song are
-                    // two rows, and each wears its own queue item's state.
-                    queued: mirror.queuedByPlaylistEntry[entry.id],
-                    isCurrent: player.currentPlaylistEntryId == entry.id
-                ),
-                isCurrent: player.currentPlaylistEntryId == entry.id,
-                isSelected: selection.contains(row.id),
-                // Ungrouped there is no heading above to say what record this
-                // is, so the row says it itself.
-                showArtist: true,
-                artwork: !grouped
-            )
-            .rowBehaviour()
+        case .entry(let entry, let position):
+            PlaylistEntryRow(entry: entry, position: position, artwork: !grouped)
+                .rowBehaviour()
             // Carries where it came from, so dropping it back into this
             // playlist is a move of *this* row rather than of its track — and
             // dropping it anywhere else is just a track.
@@ -315,7 +294,7 @@ struct PlaylistView: View {
     /// Expand a set of row ids to the playlist positions they stand for. An
     /// album heading stands for its whole run.
     private func positions(in rowIds: Set<String>) -> [Int] {
-        rows.filter { rowIds.contains($0.id) }.flatMap { $0.positions(in: entries) }
+        Row.positions(in: rowIds, of: rows)
     }
 
     private func entryIds(in rowIds: Set<String>) -> [Int64] {
@@ -413,28 +392,36 @@ struct PlaylistView: View {
 
 extension PlaylistView {
     /// A playlist row: an album heading, or one entry.
+    ///
+    /// An entry carries its position. It used to find itself by id in the
+    /// entries each time it was asked, which was a walk of the list per row per
+    /// evaluation — quadratic, and evaluated on every click and every pause.
+    /// The rows are rebuilt whenever the entries move, so the position cannot
+    /// go stale.
     enum Row: Identifiable {
         case album(id: String, group: PlaylistGroup)
-        case entry(PlaylistEntry)
+        case entry(PlaylistEntry, position: Int)
 
         /// The entry's own id. Two copies of one track are two entries and so
         /// two rows — selecting one must not light the other.
         var id: String {
             switch self {
             case .album(let id, _): id
-            case .entry(let entry): "entry:\(entry.id)"
+            case .entry(let entry, _): "entry:\(entry.id)"
             }
         }
 
-        /// Where this row sits. An album heading stands for its whole run; an
-        /// entry finds itself by id, since its index moves as the list is
-        /// edited underneath it.
-        func positions(in entries: [PlaylistEntry]) -> [Int] {
+        /// Where this row sits. An album heading stands for its whole run.
+        var positions: [Int] {
             switch self {
             case .album(_, let group): group.positions
-            case .entry(let entry):
-                entries.firstIndex { $0.id == entry.id }.map { [$0] } ?? []
+            case .entry(_, let position): [position]
             }
+        }
+
+        /// Expand a set of row ids to the playlist positions they stand for.
+        static func positions(in rowIds: Set<String>, of rows: [Row]) -> [Int] {
+            rows.filter { rowIds.contains($0.id) }.flatMap(\.positions)
         }
 
         /// Contiguous runs of the same record, mirroring the queue's grouping.
@@ -446,7 +433,7 @@ extension PlaylistView {
             while index < entries.count {
                 let first = entries[index]
                 guard !first.track.albumTitle.isEmpty else {
-                    rows.append(.entry(first))
+                    rows.append(.entry(first, position: index))
                     index += 1
                     continue
                 }
@@ -462,7 +449,7 @@ extension PlaylistView {
                         entries: Array(run)
                     )
                 ))
-                rows.append(contentsOf: run.map { Row.entry($0) })
+                rows.append(contentsOf: run.enumerated().map { Row.entry($1, position: index + $0) })
                 index += run.count
             }
             return rows
@@ -478,13 +465,70 @@ struct PlaylistGroup {
     let entries: [PlaylistEntry]
 }
 
+/// One entry, wearing whatever the queue currently thinks of it.
+///
+/// Its own view so that what is playing and what is queued are read per row:
+/// read by the list, every pause and every queue edit re-ran the whole of it.
+private struct PlaylistEntryRow: View {
+    let entry: PlaylistEntry
+    let position: Int
+    /// Ungrouped there is no heading above to say what record this is, so the
+    /// row says it itself.
+    let artwork: Bool
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
+
+    var body: some View {
+        let isCurrent = player.currentPlaylistEntryId == entry.id
+        QueueRow(
+            item: QueueRowContent(
+                entry: entry,
+                position: position + 1,
+                // Found by entry, not by track: two copies of one song are
+                // two rows, and each wears its own queue item's state.
+                queued: mirror.queuedByPlaylistEntry[entry.id],
+                isCurrent: isCurrent
+            ),
+            isCurrent: isCurrent,
+            showArtist: true,
+            artwork: artwork
+        )
+    }
+}
+
+/// What the selection is, and what to do with it. The one reader of the
+/// selection outside the List, so a click re-runs this and not the page.
+private struct PlaylistSelectionHeader: View {
+    @Binding var selection: Set<String>
+    let rows: [PlaylistView.Row]
+    let remove: () -> Void
+
+    var body: some View {
+        if !selection.isEmpty {
+            HStack(spacing: 8) {
+                Text("\(PlaylistView.Row.positions(in: selection, of: rows).count) selected")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Remove", role: .destructive, action: remove)
+                Button("Clear") { selection = [] }
+            }
+            .buttonStyle(.borderless)
+        }
+    }
+}
+
 private struct PlaylistAlbumHeader: View {
     let group: PlaylistGroup
 
     var body: some View {
         HStack(spacing: 12) {
-            if let trackId = group.entries.first?.track.id {
-                AlbumArtwork(source: .track(trackId), cornerRadius: 5)
+            // By record where the library knows it: art is stored per record,
+            // and asking by track fetches the same sleeve once per run.
+            if let track = group.entries.first?.track {
+                AlbumArtwork(
+                    source: track.albumId.map { .album($0) } ?? .track(track.id), cornerRadius: 5
+                )
                     .frame(width: 44, height: 44)
                     .shadow(color: .black.opacity(0.28), radius: 4, y: 2)
             }
