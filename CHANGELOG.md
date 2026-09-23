@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A record whose files say disc 0 no longer shows every track twice.** Taggers write disc 0 for a single-disc release; Navidrome leaves the field out. Dedup compares the disc, so 0 against nothing read as two different tracks — the local copy and the server's, side by side on one album page, the server's failing whenever it was unreachable. Disc 0 is stored as no disc now, whichever source sends it. Pairs already split are folded on the next launch; the local row keeps its file and history and takes the server's id.
+
 ## v0.34.1 (2026-09-23)
 
 ### Changed
