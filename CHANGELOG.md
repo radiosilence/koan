@@ -6,6 +6,8 @@
 
 - **A record whose files say disc 0 no longer shows every track twice.** Taggers write disc 0 for a single-disc release; Navidrome leaves the field out. Dedup compares the disc, so 0 against nothing read as two different tracks — the local copy and the server's, side by side on one album page, the server's failing whenever it was unreachable. Disc 0 is stored as no disc now, whichever source sends it. Pairs already split are folded on the next launch; the local row keeps its file and history and takes the server's id.
 
+- **A file on disk and the server's copy of it are one track, whatever the server calls the album.** Navidrome appends a release's MusicBrainz disambiguation to its name — "(deluxe)", "(Bandcamp)", "(Unmixed)" — and dedup matched on the album name, so thousands of tracks sat twice on two album pages: one playing from disk, one streaming, and dead whenever the server was unreachable. koan now reads the recording and release ids from local tags (Picard's `MUSICBRAINZ_TRACKID` / `MUSICBRAINZ_ALBUMID`) and matches on the pair. The recording alone would fold an album track into every compilation it is on; the release is what keeps those apart. The next scan after upgrading re-reads the files indexed without an id, once, and folds what it finds. ([#422](https://github.com/radiosilence/koan/issues/422))
+
 ## v0.34.1 (2026-09-23)
 
 ### Changed

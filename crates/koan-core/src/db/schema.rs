@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -325,6 +325,24 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         if !column_exists(conn, table, column)? {
             conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"), [])?;
         }
+    }
+
+    // Cross-source dedup looks tracks up by recording id.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tracks_mbid ON tracks(mbid) WHERE mbid IS NOT NULL",
+        [],
+    )?;
+
+    // Scans before version 4 never read MusicBrainz ids from tags. Forgetting
+    // the files that came through without one has the next scan read them
+    // again, which is what pairs them with the server's copy by id. Files that
+    // have none are read once more and then left alone.
+    if found < 4 {
+        conn.execute(
+            "DELETE FROM scan_cache WHERE track_id IN
+               (SELECT id FROM tracks WHERE path IS NOT NULL AND mbid IS NULL)",
+            [],
+        )?;
     }
 
     // Locally-scanned albums were briefly stamped with the time the scan ran,
