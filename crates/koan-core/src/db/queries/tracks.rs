@@ -162,6 +162,9 @@ pub fn upsert_track_status(conn: &Connection, meta: &TrackMeta) -> Result<(i64, 
 }
 
 fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool), DbError> {
+    // Disc 0 is no disc. Taggers write it for a single-disc release and servers
+    // leave the field out, and a zero on one side only splits every track in two.
+    let disc = meta.disc.filter(|d| *d > 0);
     let album_artist_name = meta.album_artist.as_deref().unwrap_or(&meta.artist);
     let album_artist_id =
         get_or_create_artist(conn, album_artist_name, meta.artist_remote_id.as_deref())?;
@@ -226,7 +229,7 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
                 album_id,
                 meta.title,
                 meta.track_number,
-                meta.disc,
+                disc,
                 meta.path,
                 meta.remote_id
             ],
@@ -259,7 +262,7 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
                 album_id,
                 meta.title,
                 meta.track_number,
-                meta.disc,
+                disc,
                 meta.path,
                 meta.remote_id
             ],
@@ -303,7 +306,7 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
                         album_id,
                         meta.title,
                         meta.track_number,
-                        meta.disc,
+                        disc,
                         have_path,
                         have_remote
                     ],
@@ -374,7 +377,7 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
             params![
                 album_id,
                 track_artist_id,
-                meta.disc,
+                disc,
                 meta.track_number,
                 meta.title,
                 merged_duration_ms,
@@ -433,7 +436,7 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
             params![
                 album_id,
                 track_artist_id,
-                meta.disc,
+                disc,
                 meta.track_number,
                 meta.title,
                 meta.duration_ms,
@@ -502,6 +505,14 @@ fn merge_track_rows(conn: &Connection, loser: i64, winner: i64) -> rusqlite::Res
 
     conn.execute("DELETE FROM tracks WHERE id = ?1", params![loser])?;
     conn.execute("DELETE FROM tracks_fts WHERE rowid = ?1", params![loser])?;
+    Ok(())
+}
+
+/// Clear the disc numbers stored as 0, which `upsert_track` now reads as none.
+/// Run before the cross-source fold, which then finds the pairs a zero on one
+/// side kept apart.
+pub(crate) fn clear_zero_discs(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute("UPDATE tracks SET disc = NULL WHERE disc = 0", [])?;
     Ok(())
 }
 
@@ -2051,6 +2062,70 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
             .unwrap();
         assert_eq!(rows, 1, "the album page must not show the track twice");
+    }
+
+    #[test]
+    fn test_dedup_reads_disc_zero_as_no_disc() {
+        let db = test_db();
+
+        // The file says disc 0; the server leaves the field out.
+        let mut local = sample_meta(
+            "Miss Broadway (Main Version)",
+            "Glass Candy",
+            "Miss Broadway",
+        );
+        local.disc = Some(0);
+        let id = upsert_track(&db.conn, &local).unwrap();
+
+        let mut remote = remote_meta(
+            "Miss Broadway (Main Version)",
+            "Glass Candy",
+            "Miss Broadway",
+            "sub-1",
+        );
+        remote.disc = None;
+        assert_eq!(upsert_track(&db.conn, &remote).unwrap(), id);
+
+        let disc: Option<i32> = db
+            .conn
+            .query_row("SELECT disc FROM tracks WHERE id = ?1", params![id], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(disc, None);
+    }
+
+    #[test]
+    fn test_migration_folds_tracks_split_by_a_zero_disc() {
+        let db = test_db();
+
+        let local = sample_meta("Sumo", "Simtek", "In The Face EP");
+        let winner = upsert_track(&db.conn, &local).unwrap();
+        db.conn
+            .execute("UPDATE tracks SET disc = 0 WHERE id = ?1", params![winner])
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO tracks (album_id, artist_id, disc, track_number, title,
+                                     source, remote_id, remote_url)
+                 SELECT album_id, artist_id, NULL, track_number, title,
+                        'remote', 'sub-4', 'http://server/4'
+                   FROM tracks WHERE id = ?1",
+                params![winner],
+            )
+            .unwrap();
+
+        clear_zero_discs(&db.conn).unwrap();
+        merge_split_cross_source_tracks(&db.conn).unwrap();
+
+        let (rows, remote_id): (i64, Option<String>) = db
+            .conn
+            .query_row("SELECT COUNT(*), MAX(remote_id) FROM tracks", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(rows, 1);
+        assert_eq!(remote_id.as_deref(), Some("sub-4"));
     }
 
     #[test]
