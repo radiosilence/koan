@@ -131,6 +131,8 @@ impl ExistingTrack {
 /// 4. The same, minus the artist, when both sides carry a track number. Sources
 ///    disagree about how to credit a release; album + disc + track# + title
 ///    already names one position on it.
+/// 5. By MusicBrainz recording + release, when both sides carry the ids. Nothing about the names has to agree — a server that appends the
+///    release's disambiguation to the album title still names the same track.
 ///
 /// A row matched by path or remote_id is then asked the content-match question a
 /// second time, against the corrected metadata: strategies 1 and 2 pin a row to
@@ -186,6 +188,12 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
         meta.album_remote_id.as_deref(),
         meta.album_added_at.as_deref(),
     )?;
+    if let Some(release) = &meta.album_mbid {
+        conn.execute(
+            "UPDATE albums SET mbid = COALESCE(mbid, ?1) WHERE id = ?2",
+            params![release, album_id],
+        )?;
+    }
 
     // 1. Match by path.
     let track_id: Option<i64> = if let Some(ref path) = meta.path {
@@ -271,6 +279,18 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
         .ok()
     });
 
+    // 5. The same recording on the same release, however either source names it.
+    let track_id = track_id.or_else(|| {
+        musicbrainz_twin(
+            conn,
+            meta,
+            disc,
+            None,
+            meta.path.is_some(),
+            meta.remote_id.is_some(),
+        )
+    });
+
     if let Some(id) = track_id {
         // Merge: the incoming meta fills gaps, it never blanks what is already there.
         // A local scan supplies path + audio properties; a remote sync supplies
@@ -312,7 +332,8 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
                     ],
                     |row| row.get(0),
                 )
-                .ok();
+                .ok()
+                .or_else(|| musicbrainz_twin(conn, meta, disc, Some(id), have_path, have_remote));
 
             if let Some(loser) = counterpart {
                 let absorbed = ExistingTrack::load(conn, loser)?;
@@ -469,6 +490,58 @@ fn upsert_track_inner(conn: &Connection, meta: &TrackMeta) -> Result<(i64, bool)
         )?;
 
         Ok((id, true))
+    }
+}
+
+/// The cross-source row holding the same MusicBrainz recording on the same
+/// release. Both ids are required: a recording recurs on every compilation it
+/// appears on, and those are different tracks.
+///
+/// Position is only a tie-break. Sources disagree about disc numbers — one says
+/// disc 1, the other nothing — and the ids already name the track; a release
+/// carrying one recording twice is the one case where the slot has to decide,
+/// and with no candidate in the same slot the match is declined.
+fn musicbrainz_twin(
+    conn: &Connection,
+    meta: &TrackMeta,
+    disc: Option<i32>,
+    not: Option<i64>,
+    have_path: bool,
+    have_remote: bool,
+) -> Option<i64> {
+    let (recording, release) = (meta.mbid.as_ref()?, meta.album_mbid.as_ref()?);
+    let mut stmt = conn
+        .prepare_cached(
+            "SELECT t.id,
+                    COALESCE(t.track_number, -1) = COALESCE(?4, -1)
+                      AND (t.disc IS NULL OR ?5 IS NULL OR t.disc = ?5)
+               FROM tracks t JOIN albums a ON a.id = t.album_id
+              WHERE t.mbid = ?1 AND a.mbid = ?2 AND t.id IS NOT ?3
+                AND (t.path IS NULL OR ?6 = 0)
+                AND (t.remote_id IS NULL OR ?7 = 0)
+              ORDER BY 2 DESC
+              LIMIT 2",
+        )
+        .ok()?;
+    let candidates: Vec<(i64, bool)> = stmt
+        .query_map(
+            params![
+                recording,
+                release,
+                not,
+                meta.track_number,
+                disc,
+                have_path,
+                have_remote
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .ok()?
+        .collect::<rusqlite::Result<_>>()
+        .ok()?;
+    match candidates.as_slice() {
+        [(id, _)] | [(id, true), ..] => Some(*id),
+        _ => None,
     }
 }
 
@@ -2126,6 +2199,142 @@ mod tests {
             .unwrap();
         assert_eq!(rows, 1);
         assert_eq!(remote_id.as_deref(), Some("sub-4"));
+    }
+
+    /// A track as tagged by Picard: recording and release ids alongside the names.
+    fn with_ids(mut meta: TrackMeta, recording: &str, release: &str) -> TrackMeta {
+        meta.mbid = Some(recording.into());
+        meta.album_mbid = Some(release.into());
+        meta
+    }
+
+    fn track_count(db: &Database) -> i64 {
+        db.conn
+            .query_row("SELECT COUNT(*) FROM tracks", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn test_dedup_matches_by_musicbrainz_ids_whatever_the_album_is_called() {
+        let db = test_db();
+
+        // Navidrome appends the release's disambiguation to the album name.
+        let local = with_ids(
+            sample_meta(
+                "Hypnotized",
+                "Oliver Koletzki",
+                "Renaissance: The Mix Collection",
+            ),
+            "rec-1",
+            "rel-1",
+        );
+        let id = upsert_track(&db.conn, &local).unwrap();
+
+        let mut remote = with_ids(
+            remote_meta(
+                "Hypnotized",
+                "Oliver Koletzki",
+                "Renaissance: The Mix Collection (Unmixed)",
+                "sub-1",
+            ),
+            "rec-1",
+            "rel-1",
+        );
+        remote.disc = None;
+        assert_eq!(upsert_track(&db.conn, &remote).unwrap(), id);
+        assert_eq!(track_count(&db), 1);
+    }
+
+    #[test]
+    fn test_dedup_keeps_a_recording_apart_across_releases() {
+        let db = test_db();
+
+        // The same recording on the album and on a compilation is two tracks.
+        let local = with_ids(
+            sample_meta("Azure", "Paul Kalkbrenner", "Album"),
+            "rec-1",
+            "rel-1",
+        );
+        let first = upsert_track(&db.conn, &local).unwrap();
+
+        let remote = with_ids(
+            remote_meta("Azure", "Paul Kalkbrenner", "Compilation", "sub-1"),
+            "rec-1",
+            "rel-2",
+        );
+        assert_ne!(upsert_track(&db.conn, &remote).unwrap(), first);
+    }
+
+    #[test]
+    fn test_dedup_by_musicbrainz_ids_picks_the_slot_when_a_release_repeats_a_recording() {
+        let db = test_db();
+
+        // A mixed disc and an unmixed disc can carry one recording each.
+        let mut first = with_ids(
+            sample_meta("Azure", "Paul Kalkbrenner", "Mixes"),
+            "rec-1",
+            "rel-1",
+        );
+        first.disc = Some(1);
+        let first = upsert_track(&db.conn, &first).unwrap();
+        let mut second = with_ids(
+            sample_meta("Azure", "Paul Kalkbrenner", "Mixes"),
+            "rec-1",
+            "rel-1",
+        );
+        second.disc = Some(2);
+        second.path = Some("/music/Mixes/2-01 Azure.flac".into());
+        let second = upsert_track(&db.conn, &second).unwrap();
+
+        let mut remote = with_ids(
+            remote_meta("Azure", "Paul Kalkbrenner", "Mixes (Unmixed)", "sub-1"),
+            "rec-1",
+            "rel-1",
+        );
+        remote.disc = Some(2);
+        assert_eq!(upsert_track(&db.conn, &remote).unwrap(), second);
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn test_rescan_with_musicbrainz_ids_folds_an_already_split_pair() {
+        let db = test_db();
+
+        // Scanned before koan read the ids: nothing tied the two rows together.
+        let local = sample_meta("Hypnotized", "Oliver Koletzki", "The Mix Collection");
+        let id = upsert_track(&db.conn, &local).unwrap();
+        let remote = with_ids(
+            remote_meta(
+                "Hypnotized",
+                "Oliver Koletzki",
+                "The Mix Collection (Unmixed)",
+                "sub-1",
+            ),
+            "rec-1",
+            "rel-1",
+        );
+        upsert_track(&db.conn, &remote).unwrap();
+        assert_eq!(track_count(&db), 2);
+
+        assert_eq!(
+            upsert_track(&db.conn, &with_ids(local, "rec-1", "rel-1")).unwrap(),
+            id
+        );
+        assert_eq!(track_count(&db), 1);
+        let remote_id: Option<String> = db
+            .conn
+            .query_row(
+                "SELECT remote_id FROM tracks WHERE id = ?1",
+                params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(remote_id.as_deref(), Some("sub-1"));
+        let albums: i64 = db
+            .conn
+            .query_row("SELECT COUNT(*) FROM albums", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(albums, 1, "the server's album goes with its last track");
     }
 
     #[test]

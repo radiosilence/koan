@@ -317,6 +317,7 @@ fn write_albums(
                 album_remote_id: Some(album.id.clone()),
                 artist_remote_id: album.artist_id.clone(),
                 mbid: song.music_brainz_id.clone(),
+                album_mbid: album.music_brainz_id.clone(),
                 album_added_at: album.created.clone(),
             };
 
@@ -484,6 +485,7 @@ mod tests {
             album_remote_id: Some(format!("album-of-{remote_id}")),
             artist_remote_id: Some(format!("artist-of-{remote_id}")),
             mbid: Some(format!("mbid-of-{remote_id}")),
+            album_mbid: None,
             album_added_at: None,
         }
     }
