@@ -13,7 +13,7 @@
 - **The cache limit saves what you typed, not each keystroke.** Typing "50GB" wrote "5", "50", "50G" on the way. The discovery slider saves when you let go.
 - **Playlist runs group by record.** Two neighbouring "Greatest Hits" by different artists merged under one heading, named after the first track's artist.
 - **Go to Album highlights the track** when the album is already open, or has as many tracks as the one before.
-- **Add & Play in the picker waits for the queue** rather than a guessed 120ms, and albums and artists there queue whole instead of stopping at 500 or 2000 tracks.
+- **Add & Play in the picker waits for the queue** rather than a guessed 120ms.
 - **With several artists selected, the menu and double-click no longer act on one at random.**
 - Smaller: an error toast replaced by another keeps its own six seconds; a drop highlight on one playlist is no longer cleared by the row it left; "New Playlist…" is a button to VoiceOver; a filter field created after ⌘F was used no longer steals focus; the frame timer's settle check compared ticks the wrong way round and stopped early; the Plain graphics description had holes in it; the output device menu no longer asks for a symbol named "".
 - **A pause no longer re-runs the whole transport bar, and a seek no longer re-diffs every lyric line.** The reads moved into the views that draw them.
