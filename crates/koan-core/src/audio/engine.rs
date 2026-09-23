@@ -330,23 +330,14 @@ unsafe extern "C" fn render_callback(
     // happens to free that block, which is why this read as a double free in
     // `AudioUnitUninitialize` and, before that, in `AudioUnitSetProperty`.
     let capacity = buf.mDataByteSize as usize / mem::size_of::<f32>();
-    let wanted = (in_number_frames * channels) as usize;
-    if wanted > capacity {
-        log::warn!(
-            "CoreAudio buffer holds {} samples but {} frames x {} channels were asked for",
-            capacity,
-            in_number_frames,
-            channels
-        );
-    }
-    let total_samples = wanted.min(capacity);
+    let total_samples = ((in_number_frames * channels) as usize).min(capacity);
     if buf.mData.is_null() || total_samples == 0 {
         data.in_callback.store(false, Ordering::Release);
         return 0;
     }
     if !(buf.mData as usize).is_multiple_of(mem::align_of::<f32>()) {
-        log::error!("CoreAudio buffer not aligned for f32");
-        // Fill silence rather than risking UB from an unaligned cast.
+        // Fill silence rather than risking UB from an unaligned cast. No log:
+        // this is the render thread.
         for i in 0..buffer_list.mNumberBuffers as usize {
             let b = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr().add(i) };
             if !b.mData.is_null() {

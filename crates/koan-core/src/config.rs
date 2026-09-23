@@ -851,7 +851,7 @@ fn check_secrets_in_git() {
 }
 
 fn scan_for_tracked_secrets() {
-    let sensitive_fields = ["password"];
+    let sensitive_fields = ["password", "refresh_token"];
 
     for (label, path) in [
         ("config.toml", config_file_path()),
