@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **A record whose files say disc 0 no longer shows every track twice.** Taggers write disc 0 for a single-disc release; Navidrome leaves the field out. Dedup compares the disc, so 0 against nothing read as two different tracks — the local copy and the server's, side by side on one album page, the server's failing whenever it was unreachable. Disc 0 is stored as no disc now, whichever source sends it. Pairs already split are folded on the next launch; the local row keeps its file and history and takes the server's id.
+
 - **The test suite no longer opens the library of whoever runs it.** The TUI's `App` and `LibraryState` took a database path and ignored it, reading through the shared pool, which opens the configured library. A render test that browsed the library therefore opened the developer's own — and opening it runs the checked-out branch's migrations against it. The dead parameters are gone, the test isolates its config like the others, and `just check` runs the suite against a throwaway config dir and fails if anything writes there. ([#423](https://github.com/radiosilence/koan/issues/423))
 
 ## v0.34.1 (2026-09-23)
