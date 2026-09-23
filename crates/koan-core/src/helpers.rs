@@ -904,6 +904,12 @@ pub fn sanitise_filename(s: &str) -> String {
     truncate_bytes(&cleaned, 240).trim_end().to_string()
 }
 
+/// The year a tag date starts with. `get`, not a slice: a date is free text,
+/// and a multibyte character in its first four bytes would panic a slice.
+pub fn year_of(date: &str) -> Option<&str> {
+    date.get(..4)
+}
+
 /// Build a structured cache path for a track:
 ///   cache_dir/Album Artist/(Year) Album [Codec]/01. Track Artist - Title.ext
 pub fn cache_path_for_track(
@@ -914,7 +920,7 @@ pub fn cache_path_for_track(
     let artist_dir = sanitise_filename(&track.artist_name);
 
     let year = album_date
-        .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
+        .and_then(year_of)
         .map(|y| format!("({}) ", y))
         .unwrap_or_default();
     let codec = track
@@ -1001,13 +1007,7 @@ pub fn playlist_item_from_track(
     dest: PathBuf,
     state: ItemState,
 ) -> PlaylistItem {
-    let year = album_date.and_then(|d| {
-        if d.len() >= 4 {
-            Some(d[..4].to_string())
-        } else {
-            None
-        }
-    });
+    let year = album_date.and_then(year_of).map(str::to_string);
     PlaylistItem {
         playlist_entry_id: None,
         id: QueueItemId::new(),
@@ -1063,13 +1063,7 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
     let cfg = Config::load().unwrap_or_default();
     let (path, state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
 
-    let year = album_date.as_deref().and_then(|d| {
-        if d.len() >= 4 {
-            Some(d[..4].to_string())
-        } else {
-            None
-        }
-    });
+    let year = album_date.as_deref().and_then(year_of).map(str::to_string);
 
     PlaylistItem {
         playlist_entry_id: None,
@@ -1264,23 +1258,22 @@ pub fn download_track(
         }
     });
 
-    // However it ended, a decoder reading the `.part` file is parked waiting
-    // for bytes that are not coming — either because there are no more or
-    // because the file is now under its final name. It waits on the feed, so
-    // the feed is what has to say so.
-    bytes_written.done();
-
+    // However it ended, a decoder reading the `.part` file may be parked at the
+    // write head. It waits on the feed, so the feed has to wake it — and only
+    // once the item says how it ended, or it looks, sees a download, and parks
+    // again with nothing left to wake it.
     if let Err(e) = result {
         store.failed(queue_id, e.to_string());
         fail_track(state, tx, queue_id, e.to_string());
+        bytes_written.done();
         push_log(log_buf, format!("x {} — {}", track.title, e));
         return;
     }
     store.finished(queue_id);
 
-    // Download succeeded.
     state.update_paths(&[(queue_id, dest.clone())]);
     state.update_item_state(queue_id, ItemState::Ready);
+    bytes_written.done();
     // Without this row the file is invisible to cache eviction and never reclaimed.
     if let Err(e) = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy()) {
         log::warn!(
@@ -1364,6 +1357,19 @@ pub fn spawn_downloads(
         return;
     }
     crate::remote::queue::shared(&tx, &state, None).enqueue(pending);
+}
+
+#[cfg(test)]
+mod year_tests {
+    use super::year_of;
+
+    #[test]
+    fn a_year_is_the_first_four_characters_when_they_are_bytes_too() {
+        assert_eq!(year_of("1997-05-21"), Some("1997"));
+        assert_eq!(year_of("199"), None);
+        // Full-width digits: four bytes in is mid-character.
+        assert_eq!(year_of("１９９７"), None);
+    }
 }
 
 #[cfg(test)]

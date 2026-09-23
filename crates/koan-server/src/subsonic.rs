@@ -2246,6 +2246,7 @@ mod tests {
             album_remote_id: None,
             artist_remote_id: None,
             mbid: None,
+            album_mbid: None,
             album_added_at: None,
         }
     }
