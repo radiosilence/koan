@@ -5,7 +5,7 @@
 //! terminal is degenerately small.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -355,8 +355,9 @@ fn empty_queue_panics_with_no_inner_row() {
 // ---------------------------------------------------------------------------
 
 fn library_state() -> LibraryState {
-    // Path whose parent does not exist — no DB is opened, nodes stay empty.
-    let mut st = LibraryState::new(Path::new("/koan-render-test-no-such-dir/none.db"));
+    // Loading reads the library, so it has to be this process's own.
+    koan_core::config::isolate_config_for_tests();
+    let mut st = LibraryState::load();
     for (i, name) in NASTY.iter().enumerate() {
         st.nodes.push(LibraryNode::Artist {
             id: i as i64,
