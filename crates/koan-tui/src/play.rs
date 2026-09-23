@@ -163,8 +163,6 @@ pub fn run_tui(
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let db_path = koan_core::config::db_path();
-
     let target_fps = {
         let cfg = koan_core::config::Config::load().unwrap_or_default();
         cfg.playback.target_fps.max(1)
@@ -177,7 +175,6 @@ pub fn run_tui(
         viz_snapshot,
         tx.clone(),
         log_buffer,
-        db_path,
         target_fps,
         download_queue.clone(),
     );

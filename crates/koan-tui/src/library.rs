@@ -1,5 +1,3 @@
-use std::path::{Path, PathBuf};
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
@@ -43,7 +41,6 @@ pub struct LibraryState {
     pub nodes: Vec<LibraryNode>,
     pub cursor: usize,
     pub scroll_offset: usize,
-    pub db_path: PathBuf,
     /// Active filter text. When non-empty, only matching nodes are shown.
     pub filter: String,
     /// Whether the filter input box is focused (typing mode).
@@ -53,12 +50,11 @@ pub struct LibraryState {
 }
 
 impl LibraryState {
-    pub fn new(db_path: &Path) -> Self {
+    pub fn load() -> Self {
         let mut state = Self {
             nodes: Vec::new(),
             cursor: 0,
             scroll_offset: 0,
-            db_path: db_path.to_path_buf(),
             filter: String::new(),
             filter_active: false,
             all_artists: Vec::new(),
