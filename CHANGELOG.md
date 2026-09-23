@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **Organize could jam on "Moving…" for good.** Changing the pattern or destination while a run was going invalidated the run's result before it cleared its own running flag, so the sheet never came back until relaunch.
+- **A slow load no longer lands on the page you moved to.** A cover still loading when the track changed, lyrics still reading when you skipped, a playlist still opening when you clicked another: each finished late and painted over what was now on screen.
+- **Back and Forward after deleting a playlist could crash.** The history entry was pruned while the move was loading, and the arrival set the cursor past the end.
+- **Opening several covers of one record at once fetches and decodes it once.** Concurrent tiles each started their own fetch and decode — the sharing checked and claimed in two separate steps.
+- **A seek the engine clamps no longer pins the seek bar.** It gave up after twenty playhead updates, which were once a timer's ticks and now arrive only on a seek or pause, so it could wait until the track ended. It gives up after two seconds. A Control Center scrub past what has downloaded is clamped like one in the app.
+- **The wash and the seek bar hold their place across page switches.** Each re-laid itself out from its last anchor on any layout pass, snapping the drift to its start and the bar backwards.
+- **The cache limit saves what you typed, not each keystroke.** Typing "50GB" wrote "5", "50", "50G" on the way. The discovery slider saves when you let go.
+- **Playlist runs group by record.** Two neighbouring "Greatest Hits" by different artists merged under one heading, named after the first track's artist.
+- **Go to Album highlights the track** when the album is already open, or has as many tracks as the one before.
+- **Add & Play in the picker waits for the queue** rather than a guessed 120ms, and albums and artists there queue whole instead of stopping at 500 or 2000 tracks.
+- **With several artists selected, the menu and double-click no longer act on one at random.**
+- Smaller: an error toast replaced by another keeps its own six seconds; a drop highlight on one playlist is no longer cleared by the row it left; "New Playlist…" is a button to VoiceOver; a filter field created after ⌘F was used no longer steals focus; the frame timer's settle check compared ticks the wrong way round and stopped early; the Plain graphics description had holes in it; the output device menu no longer asks for a symbol named "".
+- **A pause no longer re-runs the whole transport bar, and a seek no longer re-diffs every lyric line.** The reads moved into the views that draw them.
 - **A record whose files say disc 0 no longer shows every track twice.** Taggers write disc 0 for a single-disc release; Navidrome leaves the field out. Dedup compares the disc, so 0 against nothing read as two different tracks — the local copy and the server's, side by side on one album page, the server's failing whenever it was unreachable. Disc 0 is stored as no disc now, whichever source sends it. Pairs already split are folded on the next launch; the local row keeps its file and history and takes the server's id.
 
 ## v0.34.1 (2026-09-23)
