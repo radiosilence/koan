@@ -279,10 +279,9 @@ fn offer_save_to_1password(username: &str, password: &str) {
         .stderr(std::process::Stdio::null())
         .output()
         .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok());
+        .filter(|o| o.status.success());
 
-    if let Some(mut item) = existing {
+    if existing.is_some() {
         // Item exists — offer to update.
         eprint!(
             "{} '{}' already exists in 1Password. Update it? [Y/n] ",
@@ -297,26 +296,14 @@ fn offer_save_to_1password(username: &str, password: &str) {
             return;
         }
 
-        // The edited item goes over stdin: an argv assignment would put the
-        // password in the process table.
-        set_item_field(&mut item, "username", username);
-        set_item_field(&mut item, "password", password);
-        let mut child = match std::process::Command::new("op")
-            .args(["item", "edit", &title])
-            .stdin(std::process::Stdio::piped())
+        let user_field = format!("username={}", username);
+        let pass_field = format!("password={}", password);
+        let status = std::process::Command::new("op")
+            .args(["item", "edit", &title, &user_field, &pass_field])
             .stdout(std::process::Stdio::null())
-            .spawn()
-        {
-            Ok(c) => c,
-            Err(_) => return,
-        };
+            .status();
 
-        if let Some(mut stdin) = child.stdin.take() {
-            use std::io::Write;
-            let _ = stdin.write_all(item.to_string().as_bytes());
-        }
-
-        match child.wait() {
+        match status {
             Ok(s) if s.success() => {
                 println!("{} Updated '{}' in 1Password", "✓".green().bold(), title);
             }
@@ -362,16 +349,6 @@ fn offer_save_to_1password(username: &str, password: &str) {
                 );
             }
         }
-    }
-}
-
-/// Set the value of the field with this `id` in a 1Password item's JSON.
-fn set_item_field(item: &mut serde_json::Value, id: &str, value: &str) {
-    let Some(fields) = item.get_mut("fields").and_then(|f| f.as_array_mut()) else {
-        return;
-    };
-    if let Some(field) = fields.iter_mut().find(|f| f["id"] == id) {
-        field["value"] = value.into();
     }
 }
 
@@ -629,15 +606,5 @@ mod tests {
         assert_eq!(a.len(), 32);
         assert!(a.bytes().all(|b| b.is_ascii_graphic()));
         assert_ne!(a, generate_password());
-    }
-
-    #[test]
-    fn test_set_item_field() {
-        let mut item = serde_json::json!({
-            "fields": [{"id": "username", "value": "old"}, {"id": "password", "value": "old"}]
-        });
-        set_item_field(&mut item, "password", "new");
-        assert_eq!(item["fields"][0]["value"], "old");
-        assert_eq!(item["fields"][1]["value"], "new");
     }
 }
