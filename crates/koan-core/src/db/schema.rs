@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -271,7 +271,7 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         DROP INDEX IF EXISTS idx_refresh_tokens_expires;
         ",
     )?;
-    apply_migrations(conn)?;
+    apply_migrations(conn, found)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -320,7 +320,7 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("albums", "sort_name", "TEXT"),
 ];
 
-fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
+fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
         if !column_exists(conn, table, column)? {
             conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"), [])?;
@@ -340,7 +340,10 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
 
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
-    crate::db::queries::tracks::clear_zero_discs(conn)?;
+    // Once: `upsert_track` stores no new zeros, and the sweep reads every track.
+    if found < 3 {
+        crate::db::queries::tracks::clear_zero_discs(conn)?;
+    }
     crate::db::queries::tracks::merge_split_cross_source_tracks(conn)?;
     crate::db::queries::tracks::merge_spelling_twins(conn)?;
 
@@ -849,7 +852,7 @@ mod tests {
         .unwrap();
         assert!(!fk_cascades(&conn, "play_history").unwrap());
 
-        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn, SCHEMA_VERSION).unwrap();
 
         assert!(fk_cascades(&conn, "play_history").unwrap());
         let kept: Vec<(i64, i64, Option<i64>)> = conn
@@ -938,8 +941,8 @@ mod tests {
         // already present must now be a no-op decided by schema inspection.
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
-        apply_migrations(&conn).unwrap();
-        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn, SCHEMA_VERSION).unwrap();
+        apply_migrations(&conn, SCHEMA_VERSION).unwrap();
     }
 
     #[test]
