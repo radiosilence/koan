@@ -210,6 +210,10 @@ private struct RemoteSettings: View {
     @State private var url = ""
     @State private var username = ""
     @State private var confirmingSignOut = false
+    /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
+    /// not a limit anyone set.
+    @State private var cacheLimit: String?
+    @FocusState private var cacheLimitFocused: Bool
 
     var body: some View {
         Form {
@@ -293,9 +297,14 @@ private struct RemoteSettings: View {
                     in: 1...16
                 )
                 TextField("Cache limit, e.g. 50GB — blank for no limit", text: Binding(
-                    get: { model.settings.cacheLimit },
-                    set: { v in model.edit { $0.cacheLimit = v } }
+                    get: { cacheLimit ?? model.settings.cacheLimit },
+                    set: { cacheLimit = $0 }
                 ))
+                .focused($cacheLimitFocused)
+                .onSubmit(commitCacheLimit)
+                .onChange(of: cacheLimitFocused) { _, focused in
+                    if !focused { commitCacheLimit() }
+                }
                 LabeledContent("Using") {
                     HStack {
                         Text(Format.bytes(Int64(model.settings.cacheBytes)))
@@ -326,6 +335,12 @@ private struct RemoteSettings: View {
         } message: {
             Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
         }
+    }
+
+    private func commitCacheLimit() {
+        guard let draft = cacheLimit else { return }
+        cacheLimit = nil
+        if draft != model.settings.cacheLimit { model.edit { $0.cacheLimit = draft } }
     }
 }
 
@@ -423,7 +438,7 @@ private struct AppearanceSettings: View {
             } header: {
                 Text("Graphics")
             } footer: {
-                Text("How much koan spends on looking like itself. Every step down removes something that costs while the music plays — the colour drifting behind the window first, since on this machine it is the only one that shows up in a measurement.")
+                Text("How much koan spends on looking like itself. Every step down removes something that costs while the music plays — the colour drifting behind the window first, since it costs the most.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -436,6 +451,8 @@ private struct AppearanceSettings: View {
 
 private struct RadioSettings: View {
     @Bindable var model: SettingsModel
+    /// Held while the slider is dragged, so the drag commits once on release.
+    @State private var discovery: Double?
 
     var body: some View {
         Form {
@@ -467,8 +484,14 @@ private struct RadioSettings: View {
             Section {
                 Slider(
                     value: Binding(
-                        get: { model.settings.radioDiscoveryWeight },
-                        set: { v in model.edit { $0.radioDiscoveryWeight = v } }
+                        get: { discovery ?? model.settings.radioDiscoveryWeight },
+                        set: { v in
+                            if discovery != nil {
+                                discovery = v
+                            } else {
+                                model.edit { $0.radioDiscoveryWeight = v }
+                            }
+                        }
                     ),
                     in: 0...1
                 ) {
@@ -477,6 +500,13 @@ private struct RadioSettings: View {
                     Text("Familiar").font(.caption)
                 } maximumValueLabel: {
                     Text("New").font(.caption)
+                } onEditingChanged: { editing in
+                    if editing {
+                        discovery = model.settings.radioDiscoveryWeight
+                    } else if let settled = discovery {
+                        discovery = nil
+                        model.edit { $0.radioDiscoveryWeight = settled }
+                    }
                 }
             } header: {
                 Text("What it picks")

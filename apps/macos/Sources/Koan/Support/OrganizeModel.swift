@@ -85,6 +85,7 @@ final class OrganizeModel {
         plan = nil
         error = nil
         editing = false
+        running = false
         patterns = await engine.organizePatterns()
         folders = await engine.libraryFolders()
         baseDir = folders.first ?? ""
@@ -247,8 +248,8 @@ final class OrganizeModel {
             let result = await activity?.run("Moving files", uses: .localLibrary) {
                 try await engine.organizeExecute(pattern: pattern, trackIds: ids, baseDir: base)
             } ?? .failure(OrganizeFailure.noEngine)
-            guard requested == generation else { return }
             running = false
+            guard requested == generation else { return }
             switch result {
             case .success(let report) where report.errorCount > 0:
                 // A move that fails comes back as a failed *row*, not a thrown

@@ -150,7 +150,10 @@ struct SidebarView: View {
                         accept(dropped, on: playlist)
                         return true
                     } isTargeted: { targeted in
-                        playlistDropTarget = targeted ? playlist.id : nil
+                        // Guarded: the row being left can report after the one entered.
+                        playlistDropTarget = targeted
+                            ? playlist.id
+                            : (playlistDropTarget == playlist.id ? nil : playlistDropTarget)
                     }
                     .listRowBackground(
                         playlistDropTarget == playlist.id
@@ -189,6 +192,8 @@ struct SidebarView: View {
             .contentShape(Rectangle())
             .selectionDisabled()
             .onTapGesture { playlists.naming = [] }
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { playlists.naming = [] }
             .dropDestination(for: PlayableTransfer.self) { dropped, _ in
                 playlists.beginNaming(dropped: dropped)
                 return true

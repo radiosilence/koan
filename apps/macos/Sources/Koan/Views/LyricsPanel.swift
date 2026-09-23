@@ -7,15 +7,12 @@ import SwiftUI
 /// current one and scroll to it.
 struct LyricsPanel: View {
     @Environment(PlayerModel.self) private var player
-    @Environment(EngineMirror.self) private var mirror
     @Environment(LibraryModel.self) private var library
     @Environment(UIState.self) private var ui
 
     @State private var lyrics: Lyrics?
     @State private var loadedTrackId: Int64?
     @State private var loading = false
-    /// The line being sung. Set by `follow`, which wakes once per line.
-    @State private var active: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -47,7 +44,7 @@ struct LyricsPanel: View {
     @ViewBuilder
     private var content: some View {
         if let lyrics, !lyrics.lines.isEmpty {
-            synced(lyrics)
+            SyncedLyrics(lyrics: lyrics)
         } else if let lyrics, !lyrics.content.isEmpty {
             ScrollView {
                 Text(lyrics.content)
@@ -67,7 +64,47 @@ struct LyricsPanel: View {
         }
     }
 
-    private func synced(_ lyrics: Lyrics) -> some View {
+    /// Cache first so the panel fills instantly, then LRCLIB in the background
+    /// for a miss.
+    private func load() async {
+        guard let trackId = player.currentTrackId else {
+            lyrics = nil
+            loadedTrackId = nil
+            return
+        }
+        guard trackId != loadedTrackId else { return }
+
+        loadedTrackId = trackId
+        let cached = try? await library.engine.lyrics(trackId: trackId)
+        guard loadedTrackId == trackId else { return }
+        guard !Task.isCancelled else {
+            loadedTrackId = nil
+            return
+        }
+        lyrics = cached
+        guard cached == nil else { return }
+
+        loading = true
+        let engine = library.engine
+        let fetched = try? await engine.fetchLyrics(trackId: trackId)
+        loading = false
+        // The track may have changed while LRCLIB was answering.
+        guard loadedTrackId == trackId else { return }
+        lyrics = fetched ?? nil
+    }
+}
+
+/// The synced list, apart so the playhead it follows re-runs only this.
+private struct SyncedLyrics: View {
+    let lyrics: Lyrics
+
+    @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
+
+    /// The line being sung. Set by `follow`, which wakes once per line.
+    @State private var active: Int?
+
+    var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 11) {
@@ -123,28 +160,5 @@ struct LyricsPanel: View {
     private func fraction(of line: LyricLine) -> Double {
         guard player.durationMs > 0 else { return 0 }
         return (line.timeSecs * 1000 / Double(player.durationMs)).clamped()
-    }
-
-    /// Cache first so the panel fills instantly, then LRCLIB in the background
-    /// for a miss.
-    private func load() async {
-        guard let trackId = player.currentTrackId else {
-            lyrics = nil
-            loadedTrackId = nil
-            return
-        }
-        guard trackId != loadedTrackId else { return }
-
-        loadedTrackId = trackId
-        lyrics = try? await library.engine.lyrics(trackId: trackId)
-        guard lyrics == nil else { return }
-
-        loading = true
-        let engine = library.engine
-        let fetched = try? await engine.fetchLyrics(trackId: trackId)
-        loading = false
-        // The track may have changed while LRCLIB was answering.
-        guard loadedTrackId == trackId else { return }
-        lyrics = fetched ?? nil
     }
 }

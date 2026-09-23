@@ -131,8 +131,10 @@ struct AlbumArtwork: View {
                 guard !Task.isCancelled else { return }
 
                 isLoading = true
-                image = await cache.image(for: source, size: size)
+                let loaded = await cache.image(for: source, size: size)
                 isLoading = false
+                guard !Task.isCancelled else { return }
+                image = loaded
             }
     }
 
