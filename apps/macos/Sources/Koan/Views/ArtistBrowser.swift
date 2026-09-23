@@ -21,7 +21,7 @@ struct ArtistBrowser: View {
                 PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
             }
         } primaryAction: { ids in
-            if let id = ids.first { nav.open(artist: id) }
+            if ids.count == 1, let id = ids.first { nav.open(artist: id) }
         }
         .overlay {
             if library.visibleArtists.isEmpty {
