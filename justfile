@@ -9,8 +9,20 @@ cli *ARGS:
     cargo run --release -p koan-cli -- {{ARGS}}
 
 # Run tests + clippy
+# Tests run against a config dir of their own. One that reaches past
+# `isolate_config_for_tests` would otherwise open the real library and run the
+# branch's migrations on it; here it writes into the canary and fails the check.
 check:
-    cargo test --all-targets
+    #!/usr/bin/env bash
+    set -euo pipefail
+    canary=$(mktemp -d)
+    trap 'rm -rf "$canary"' EXIT
+    KOAN_CONFIG_DIR="$canary" cargo test --all-targets
+    if [ -n "$(ls -A "$canary")" ]; then
+        echo "a test wrote to the config dir instead of isolating it:" >&2
+        ls -A "$canary" >&2
+        exit 1
+    fi
     cargo clippy --all-targets -- -D warnings
 
 # Format

@@ -18,6 +18,8 @@
 
 - **A file on disk and the server's copy of it are one track, whatever the server calls the album.** Navidrome appends a release's MusicBrainz disambiguation to its name — "(deluxe)", "(Bandcamp)", "(Unmixed)" — and dedup matched on the album name, so thousands of tracks sat twice on two album pages: one playing from disk, one streaming, and dead whenever the server was unreachable. koan now reads the recording and release ids from local tags (Picard's `MUSICBRAINZ_TRACKID` / `MUSICBRAINZ_ALBUMID`) and matches on the pair. The recording alone would fold an album track into every compilation it is on; the release is what keeps those apart. The next scan after upgrading re-reads the files indexed without an id, once, and folds what it finds. ([#422](https://github.com/radiosilence/koan/issues/422))
 
+- **The test suite no longer opens the library of whoever runs it.** The TUI's `App` and `LibraryState` took a database path and ignored it, reading through the shared pool, which opens the configured library. A render test that browsed the library therefore opened the developer's own — and opening it runs the checked-out branch's migrations against it. The dead parameters are gone, the test isolates its config like the others, and `just check` runs the suite against a throwaway config dir and fails if anything writes there. ([#423](https://github.com/radiosilence/koan/issues/423))
+
 ## v0.34.1 (2026-09-23)
 
 ### Changed

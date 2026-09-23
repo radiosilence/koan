@@ -208,7 +208,6 @@ pub struct App {
     // Library browser.
     pub library: Option<LibraryState>,
     pub library_focus: LibraryFocus,
-    pub db_path: PathBuf,
 
     /// Cover art caches.
     pub art: ArtState,
@@ -318,7 +317,6 @@ impl App {
         viz_snapshot: Arc<VizSnapshot>,
         tx: Sender<PlayerCommand>,
         log_buffer: Arc<Mutex<Vec<String>>>,
-        db_path: PathBuf,
         ticks_per_sec: u8,
         download_queue: DownloadQueue,
     ) -> Self {
@@ -348,7 +346,6 @@ impl App {
             last_playing_path: None,
             library: None,
             library_focus: LibraryFocus::Library,
-            db_path,
             art: ArtState::default(),
             context_menu: None,
             organize: None,
@@ -2659,7 +2656,7 @@ impl App {
 
     pub fn open_library(&mut self) {
         if self.library.is_none() {
-            self.library = Some(LibraryState::new(&self.db_path));
+            self.library = Some(LibraryState::load());
         }
         self.mode = Mode::LibraryBrowse;
         self.library_focus = LibraryFocus::Library;

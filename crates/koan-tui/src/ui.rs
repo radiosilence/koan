@@ -541,7 +541,6 @@ mod tests {
             koan_core::audio::viz::VizSnapshot::new(),
             tx,
             log_buffer,
-            PathBuf::from("/nonexistent/koan-test.db"),
             60,
             download_queue,
         );
