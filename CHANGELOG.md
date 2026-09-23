@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- **Signing out of the web client revokes the session.** The refresh cookie was scoped to `/auth/refresh`, so the browser never sent it to `/auth/logout`: the cookies were cleared and the token stayed valid for its full thirty days. It is scoped to `/auth`, and the old narrower one is cleared wherever the cookie is set.
+- **Login takes as long for a username that doesn't exist as for one that does.** An unknown name returned at once, while a known one paid for an Argon2 verify — enough to list who has an account.
+- **Long tracks proxied through the Subsonic API no longer cut off at thirty seconds.** The upstream client's timeout covered the whole body, so any stream that took longer to drain than that was ended mid-track. It bounds connecting and stalls instead.
+- **Subsonic "now playing" is no longer recorded as a play.** Clients scrobble with `submission=false` when a track starts and `true` when it ends; both were recorded, so every listen was two plays and a skip was one.
+- **Starring a remote-only track over Subsonic or GraphQL stars that track.** Subsonic keyed it by an empty path, so every remote track shared one favourite; GraphQL refused them. Both use the same key the app does now, and Subsonic stars sync back to the server. An album or artist id is refused rather than read as a track id.
+- **`koan config` no longer prints passwords and tokens.**
+- **Generated admin passwords come from the system RNG.** They were hashed from the clock a character at a time.
+- **A file dropped into the TUI with an accent in its path opens.** Percent-escapes were decoded as Latin-1.
+- **The TUI no longer rewrites the whole queue ten times a second while playing.** It saves the queue when it changes and the position about once a second.
+- **A restored TUI session resumes the track it saved, the way it saved it.** The saved position went to whichever track became ready first, and always paused.
+- **Deleting a playlist that was never on a server removes it from the sidebar.**
+- **Playing a playlist over GraphQL keeps the queue following the playlist**, as it does in the app, and is one queue change rather than three.
+- **`koan --headless` exits non-zero if its port is taken**, and the `[subsonic] port` from config is used on every path, not only the TUI.
+- **`updateConfig` refuses out-of-range numbers** instead of wrapping them — a port of 70000 was saved as 4464.
 - **A record whose files say disc 0 no longer shows every track twice.** Taggers write disc 0 for a single-disc release; Navidrome leaves the field out. Dedup compares the disc, so 0 against nothing read as two different tracks — the local copy and the server's, side by side on one album page, the server's failing whenever it was unreachable. Disc 0 is stored as no disc now, whichever source sends it. Pairs already split are folded on the next launch; the local row keeps its file and history and takes the server's id.
 
 ## v0.34.1 (2026-09-23)
