@@ -181,27 +181,25 @@ fn shell_split_paths(text: &str) -> Vec<String> {
 }
 
 fn percent_decode(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.bytes();
-    while let Some(b) = chars.next() {
+    let mut out = Vec::with_capacity(input.len());
+    let mut bytes = input.bytes();
+    while let Some(b) = bytes.next() {
         if b == b'%' {
-            let hi = chars.next().unwrap_or(b'0');
-            let lo = chars.next().unwrap_or(b'0');
+            let hi = bytes.next().unwrap_or(b'0');
+            let lo = bytes.next().unwrap_or(b'0');
             let hex = [hi, lo];
             if let Ok(s) = std::str::from_utf8(&hex)
                 && let Ok(val) = u8::from_str_radix(s, 16)
             {
-                out.push(val as char);
+                out.push(val);
                 continue;
             }
-            out.push('%');
-            out.push(hi as char);
-            out.push(lo as char);
+            out.extend_from_slice(&[b'%', hi, lo]);
         } else {
-            out.push(b as char);
+            out.push(b);
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Build PlaylistItems from file paths. Checks the DB first for already-scanned
@@ -330,6 +328,12 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_percent_decode_utf8() {
+        assert_eq!(percent_decode("/music/Bj%C3%B6rk"), "/music/Björk");
+        assert_eq!(percent_decode("/music/Björk%20Live"), "/music/Björk Live");
+    }
 
     #[test]
     fn test_shell_split_backslash_spaces() {

@@ -17,6 +17,21 @@
 - **With several artists selected, the menu and double-click no longer act on one at random.**
 - Smaller: an error toast replaced by another keeps its own six seconds; a drop highlight on one playlist is no longer cleared by the row it left; "New Playlist…" is a button to VoiceOver; a filter field created after ⌘F was used no longer steals focus; the frame timer's settle check compared ticks the wrong way round and stopped early; the Plain graphics description had holes in it; the output device menu no longer asks for a symbol named "".
 - **A pause no longer re-runs the whole transport bar, and a seek no longer re-diffs every lyric line.** The reads moved into the views that draw them.
+||||||| 754b015
+- **Signing out of the web client revokes the session.** The refresh cookie was scoped to `/auth/refresh`, so the browser never sent it to `/auth/logout`: the cookies were cleared and the token stayed valid for its full thirty days. It is scoped to `/auth`, and the old narrower one is cleared wherever the cookie is set.
+- **Login takes as long for a username that doesn't exist as for one that does.** An unknown name returned at once, while a known one paid for an Argon2 verify — enough to list who has an account.
+- **Long tracks proxied through the Subsonic API no longer cut off at thirty seconds.** The upstream client's timeout covered the whole body, so any stream that took longer to drain than that was ended mid-track. It bounds connecting and stalls instead.
+- **Subsonic "now playing" is no longer recorded as a play.** Clients scrobble with `submission=false` when a track starts and `true` when it ends; both were recorded, so every listen was two plays and a skip was one.
+- **Starring a remote-only track over Subsonic or GraphQL stars that track.** Subsonic keyed it by an empty path, so every remote track shared one favourite; GraphQL refused them. Both use the same key the app does now, and Subsonic stars sync back to the server. An album or artist id is refused rather than read as a track id.
+- **`koan config` no longer prints passwords and tokens.**
+- **Generated admin passwords come from the system RNG.** They were hashed from the clock a character at a time.
+- **A file dropped into the TUI with an accent in its path opens.** Percent-escapes were decoded as Latin-1.
+- **The TUI no longer rewrites the whole queue ten times a second while playing.** It saves the queue when it changes and the position about once a second.
+- **A restored TUI session resumes the track it saved, the way it saved it.** The saved position went to whichever track became ready first, and always paused.
+- **Deleting a playlist that was never on a server removes it from the sidebar.**
+- **Playing a playlist over GraphQL keeps the queue following the playlist**, as it does in the app, and is one queue change rather than three.
+- **`koan --headless` exits non-zero if its port is taken**, and the `[subsonic] port` from config is used on every path, not only the TUI.
+- **`updateConfig` refuses out-of-range numbers** instead of wrapping them — a port of 70000 was saved as 4464.
 - **A record whose files say disc 0 no longer shows every track twice.** Taggers write disc 0 for a single-disc release; Navidrome leaves the field out. Dedup compares the disc, so 0 against nothing read as two different tracks — the local copy and the server's, side by side on one album page, the server's failing whenever it was unreachable. Disc 0 is stored as no disc now, whichever source sends it. Pairs already split are folded on the next launch; the local row keeps its file and history and takes the server's id.
 - **Skipping, seeking or stopping a track that is still downloading no longer freezes the player.** The decoder waits at the download's write head for the next bytes, and stopping it only asked it to stop — it did not wake it. On a slow or stalled transfer the player thread sat in that join for as long as the network took, up to thirty seconds, answering nothing.
 - **A stream no longer stalls for thirty seconds when its download ends.** The reader was woken before the track was marked finished or failed, looked, saw a download still running, and went back to sleep with nothing left to wake it. It is woken after, now.
