@@ -5,9 +5,6 @@ use super::state::{PlaylistItem, QueueItemId};
 /// Maximum number of undo entries retained.
 const MAX_UNDO_DEPTH: usize = 100;
 
-/// Maximum number of sub-entries allowed in a single `UndoEntry::Batch`.
-const MAX_BATCH_SIZE: usize = 500;
-
 /// A reversible playlist operation. Stores enough state to undo/redo.
 ///
 /// Each variant describes an action to reverse. `apply_entry` executes the
@@ -66,10 +63,9 @@ impl UndoStack {
     }
 
     /// Push an undo entry. Clears the redo stack.
-    /// Batch entries exceeding `MAX_BATCH_SIZE` are truncated.
     pub fn push(&mut self, entry: UndoEntry) {
         self.redo.clear();
-        self.undo.push_back(Self::clamp_batch(entry));
+        self.undo.push_back(entry);
         if self.undo.len() > MAX_UNDO_DEPTH {
             self.undo.pop_front();
         }
@@ -93,20 +89,9 @@ impl UndoStack {
     /// Push an entry onto the undo stack without clearing redo
     /// (called when redoing).
     pub fn push_undo_keep_redo(&mut self, entry: UndoEntry) {
-        self.undo.push_back(Self::clamp_batch(entry));
+        self.undo.push_back(entry);
         if self.undo.len() > MAX_UNDO_DEPTH {
             self.undo.pop_front();
-        }
-    }
-
-    /// Truncate `Batch` entries that exceed `MAX_BATCH_SIZE`.
-    fn clamp_batch(entry: UndoEntry) -> UndoEntry {
-        match entry {
-            UndoEntry::Batch(mut items) => {
-                items.truncate(MAX_BATCH_SIZE);
-                UndoEntry::Batch(items)
-            }
-            other => other,
         }
     }
 

@@ -620,6 +620,11 @@ fn decode_queue_loop<N>(
                 }
             }
         }
+        // A stop ends the session wherever it lands; looking ahead would peek
+        // the playlist and log a transition that never happens.
+        if stop.load(Ordering::Relaxed) || !timeline.is_current() {
+            break;
+        }
 
         seek_ms = 0;
         pending = (next_track)();

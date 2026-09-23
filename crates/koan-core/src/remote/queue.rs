@@ -16,9 +16,6 @@ use crate::helpers::download_track;
 /// every extra request competes with it for the same link.
 const PRIORITY_PERMITS: usize = 2;
 
-/// How often the cursor is sampled for priority reordering.
-const CURSOR_POLL: std::time::Duration = std::time::Duration::from_millis(30);
-
 /// Persistent download queue — lives for the app's lifetime.
 ///
 /// Items are submitted via `enqueue()` and downloaded by a fixed pool of worker
@@ -330,9 +327,11 @@ fn worker_loop(inner: Arc<Inner>) {
 /// Cursor watcher: when the cursor moves to a pending track, hand it and the
 /// next track to the priority lane and bump same-album tracks to the front.
 fn cursor_watcher(inner: Arc<Inner>) {
+    let changed = crate::signal::engine_changed();
+    let mut seen = changed.generation();
     let mut last_cursor: Option<QueueItemId> = None;
     loop {
-        std::thread::sleep(CURSOR_POLL);
+        seen = changed.wait(seen);
 
         let current = inner.state.cursor();
         if current == last_cursor {

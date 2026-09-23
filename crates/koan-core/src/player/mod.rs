@@ -119,9 +119,27 @@ pub struct Player {
 struct ActivePlayback {
     engine: Box<dyn AudioEngineHandle>,
     decode_handle: buffer::DecodeHandle,
+    /// Set when the decoder is reading a download as it arrives.
+    stream: Option<LiveStream>,
     /// Keeps the device rate subscription alive for as long as this engine is
     /// the one feeding the DAC. Dropped with it.
     _rate_watch: Option<Box<dyn SampleRateWatch>>,
+}
+
+/// A download being decoded as it lands. The reader may be parked at the write
+/// head waiting for bytes, so stopping has to tell it to give up and wake it,
+/// or the join waits on the network.
+struct LiveStream {
+    feed: Arc<crate::remote::downloads::ByteFeed>,
+    abandoned: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl LiveStream {
+    fn abandon(&self) {
+        self.abandoned
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.feed.done();
+    }
 }
 
 impl Default for Player {
@@ -481,6 +499,7 @@ impl Player {
         self.active_playback = Some(ActivePlayback {
             engine,
             decode_handle,
+            stream: None,
             _rate_watch: rate_watch,
         });
 
@@ -701,7 +720,21 @@ impl Player {
         self.stream_mode = source.mode;
         let path = source.path.as_path();
 
-        let status = self.stream_status_fn(id);
+        let live = LiveStream {
+            feed: source.bytes_written.clone(),
+            abandoned: Default::default(),
+        };
+        let status = {
+            let downloading = self.stream_status_fn(id);
+            let abandoned = live.abandoned.clone();
+            Arc::new(move || {
+                if abandoned.load(std::sync::atomic::Ordering::Acquire) {
+                    streaming::StreamStatus::Failed
+                } else {
+                    downloading()
+                }
+            }) as Arc<dyn Fn() -> streaming::StreamStatus + Send + Sync>
+        };
         let open_source = {
             let StreamSource {
                 path,
@@ -808,6 +841,7 @@ impl Player {
         self.active_playback = Some(ActivePlayback {
             engine,
             decode_handle,
+            stream: Some(live),
             _rate_watch: rate_watch,
         });
 
@@ -906,15 +940,7 @@ impl Player {
     /// Go back to previous track.
     pub fn prev_track(&mut self) {
         match self.shared_state.retreat_cursor() {
-            Some((id, path)) => {
-                if matches!(path.try_exists(), Ok(true)) {
-                    if let Err(e) = self.start_playback(id, &path, 0) {
-                        log::error!("prev track failed: {}", e);
-                    }
-                } else {
-                    log::warn!("prev track path doesn't exist: {}", path.display());
-                }
-            }
+            Some((id, _)) => self.play(id),
             None => {
                 // No previous track — restart current from the beginning.
                 if let Some(info) = self.shared_state.track_info()
@@ -967,10 +993,9 @@ impl Player {
 
     /// Stop the audio engine and decode thread without touching shared state.
     ///
-    /// The engine is stopped synchronously (silence begins immediately), but
-    /// the heavy teardown (decode thread join + AudioUnit dispose) is moved to
-    /// a background thread so the player command loop never blocks — preventing
-    /// UI freezes when CoreAudio or the decode thread is slow to shut down.
+    /// Output stops first, then the decode thread is joined, then the engine
+    /// drops: tearing CoreAudio down under a live producer is the end-of-queue
+    /// crash (#89).
     fn stop_engine(&mut self) {
         let Some(playback) = self.active_playback.take() else {
             return;
@@ -978,20 +1003,17 @@ impl Player {
         let ActivePlayback {
             engine,
             mut decode_handle,
+            stream,
             _rate_watch,
         } = playback;
 
-        // Stop audio output first, then get the decode thread gone *before* the
-        // engine is dropped.
-        //
-        // The old order signalled the decode thread and dropped the engine
-        // immediately, joining the thread afterwards on a background thread —
-        // so the engine's teardown ran while the decode thread was still alive
-        // and still writing into the ring buffer that the render callback
-        // reads. Tearing CoreAudio down underneath a live producer is exactly
-        // the shape of the end-of-queue crash (#89), and the overlap buys
-        // nothing: `stop()` has already silenced the output.
         let _ = engine.stop();
+        // Stop first, so the failed read the abandon causes reads as a stop
+        // rather than a bad source to skip past.
+        decode_handle.signal_stop();
+        if let Some(stream) = stream {
+            stream.abandon();
+        }
         decode_handle.stop();
         drop(engine);
     }
@@ -2468,6 +2490,7 @@ mod tests {
                 dropped: dropped.clone(),
             }),
             decode_handle,
+            stream: None,
             _rate_watch: None,
         });
 
@@ -2480,6 +2503,28 @@ mod tests {
             dropped.load(Ordering::SeqCst),
             "AudioEngine must be dropped synchronously in stop_engine (GitHub #89)"
         );
+    }
+
+    #[test]
+    fn abandoning_a_stream_wakes_a_reader_parked_at_the_write_head() {
+        let live = LiveStream {
+            feed: crate::remote::downloads::ByteFeed::new(),
+            abandoned: Default::default(),
+        };
+        let feed = live.feed.clone();
+        let started = std::time::Instant::now();
+        let reader = thread::spawn(move || {
+            feed.wait_past(
+                0,
+                std::time::Instant::now() + std::time::Duration::from_secs(30),
+            )
+        });
+        thread::sleep(std::time::Duration::from_millis(50));
+        live.abandon();
+        reader.join().unwrap();
+
+        assert!(live.abandoned.load(std::sync::atomic::Ordering::Acquire));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
     }
 
     // --- Engine format matches the decoded PCM ---
