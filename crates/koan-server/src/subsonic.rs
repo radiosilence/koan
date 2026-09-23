@@ -842,6 +842,7 @@ struct ScrobbleParams {
     auth: SubsonicParams,
     id: Option<String>,
     time: Option<i64>,
+    submission: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1582,31 +1583,36 @@ fn resize_image(data: &[u8], size: u32, output_png: bool) -> Result<Vec<u8>, Sub
 
 async fn star(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     respond_db(&state, &params.auth, |db, b| {
-        toggle_star(db, params.id.as_deref(), queries::add_favourite)?;
+        toggle_star(db, params.id.as_deref(), true)?;
         Ok(b)
     })
 }
 
 async fn unstar(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     respond_db(&state, &params.auth, |db, b| {
-        toggle_star(db, params.id.as_deref(), queries::remove_favourite)?;
+        toggle_star(db, params.id.as_deref(), false)?;
         Ok(b)
     })
 }
 
-fn toggle_star(
-    db: &Database,
-    id: Option<&str>,
-    op: fn(&rusqlite::Connection, &std::path::Path) -> rusqlite::Result<()>,
-) -> Result<(), SubsonicError> {
-    let track_id = require_id(id)?;
+fn toggle_star(db: &Database, id: Option<&str>, star: bool) -> Result<(), SubsonicError> {
+    let op = if star {
+        queries::add_favourite
+    } else {
+        queries::remove_favourite
+    };
+    let track_id = match require_entity(id)? {
+        (Some(EntityKind::Song) | None, id) => id,
+        _ => return Err(SubsonicError::not_found("Track")),
+    };
 
-    let track = queries::get_track_row(&db.conn, track_id)
+    let key = queries::track_favourite_key(&db.conn, track_id)
         .map_err(|e| SubsonicError::internal(e.to_string()))?
         .ok_or_else(|| SubsonicError::not_found("Track"))?;
-
-    let path_str = track_file_path(&track).unwrap_or("");
-    op(&db.conn, std::path::Path::new(path_str)).map_err(|e| SubsonicError::internal(e.to_string()))
+    let path = std::path::Path::new(&key);
+    op(&db.conn, path).map_err(|e| SubsonicError::internal(e.to_string()))?;
+    koan_core::helpers::sync_favourite_to_remote(db, path, star);
+    Ok(())
 }
 
 async fn get_starred2(
@@ -1641,6 +1647,11 @@ async fn scrobble(
         queries::get_track_row(&db.conn, track_id)
             .map_err(|e| SubsonicError::internal(e.to_string()))?
             .ok_or_else(|| SubsonicError::not_found("Track"))?;
+
+        // `submission=false` is a now-playing notice, not a play.
+        if params.submission == Some(false) {
+            return Ok(b);
+        }
 
         // `time` is when the client played it, which can be well in the past
         // after an offline session.
@@ -2150,7 +2161,9 @@ pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
         password,
         upstream: koan_core::helpers::subsonic_auth(&cfg),
         http: reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            // A whole-request deadline would cut off long proxied streams.
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_default(),
         cover_cache: Mutex::new(LruCache::new(
@@ -3083,6 +3096,41 @@ mod tests {
         )
         .await;
         assert!(body.contains("status=\"ok\""));
+    }
+
+    #[tokio::test]
+    async fn test_now_playing_scrobble_records_no_play() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/scrobble?{}&id={}&submission=false",
+                auth_query(""),
+                track_id
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""));
+        assert_eq!(queries::play_count(&db.conn, track_id).unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_star_rejects_album_id() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/star?{}&id=al-1", auth_query(""))).await;
+        assert!(body.contains("status=\"failed\""), "{}", body);
+
+        let db = Database::open(&state.db_path).unwrap();
+        assert!(queries::load_favourites(&db.conn).unwrap().is_empty());
     }
 
     #[tokio::test]

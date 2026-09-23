@@ -183,21 +183,23 @@ fn op_available() -> bool {
 
 /// Generate a secure random password (alphanumeric + symbols, 32 chars).
 fn generate_password() -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::{BuildHasher, Hasher};
+    use ring::rand::SecureRandom;
     let chars = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%&*-_=+";
-    (0..32)
-        .map(|_| {
-            let mut h = RandomState::new().build_hasher();
-            h.write_u64(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64,
-            );
-            chars[h.finish() as usize % chars.len()] as char
-        })
-        .collect()
+    // Bytes at or above the largest multiple of the alphabet length are thrown
+    // away, so every character is equally likely.
+    let limit = 256 - 256 % chars.len();
+    let rng = ring::rand::SystemRandom::new();
+    let mut password = String::with_capacity(32);
+    let mut buf = [0u8; 64];
+    while password.len() < 32 {
+        rng.fill(&mut buf).expect("system RNG failure");
+        for &b in &buf {
+            if (b as usize) < limit && password.len() < 32 {
+                password.push(chars[b as usize % chars.len()] as char);
+            }
+        }
+    }
+    password
 }
 
 /// Get password from KOAN_PASSWORD env var, or prompt interactively.
@@ -277,9 +279,10 @@ fn offer_save_to_1password(username: &str, password: &str) {
         .stderr(std::process::Stdio::null())
         .output()
         .ok()
-        .filter(|o| o.status.success());
+        .filter(|o| o.status.success())
+        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok());
 
-    if existing.is_some() {
+    if let Some(mut item) = existing {
         // Item exists — offer to update.
         eprint!(
             "{} '{}' already exists in 1Password. Update it? [Y/n] ",
@@ -294,14 +297,26 @@ fn offer_save_to_1password(username: &str, password: &str) {
             return;
         }
 
-        let user_field = format!("username={}", username);
-        let pass_field = format!("password={}", password);
-        let status = std::process::Command::new("op")
-            .args(["item", "edit", &title, &user_field, &pass_field])
+        // The edited item goes over stdin: an argv assignment would put the
+        // password in the process table.
+        set_item_field(&mut item, "username", username);
+        set_item_field(&mut item, "password", password);
+        let mut child = match std::process::Command::new("op")
+            .args(["item", "edit", &title])
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::null())
-            .status();
+            .spawn()
+        {
+            Ok(c) => c,
+            Err(_) => return,
+        };
 
-        match status {
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            let _ = stdin.write_all(item.to_string().as_bytes());
+        }
+
+        match child.wait() {
             Ok(s) if s.success() => {
                 println!("{} Updated '{}' in 1Password", "✓".green().bold(), title);
             }
@@ -347,6 +362,16 @@ fn offer_save_to_1password(username: &str, password: &str) {
                 );
             }
         }
+    }
+}
+
+/// Set the value of the field with this `id` in a 1Password item's JSON.
+fn set_item_field(item: &mut serde_json::Value, id: &str, value: &str) {
+    let Some(fields) = item.get_mut("fields").and_then(|f| f.as_array_mut()) else {
+        return;
+    };
+    if let Some(field) = fields.iter_mut().find(|f| f["id"] == id) {
+        field["value"] = value.into();
     }
 }
 
@@ -592,4 +617,27 @@ fn prompt(message: &str) -> String {
 
 fn prompt_password(message: &str) -> String {
     rpassword::prompt_password(message).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_password() {
+        let a = generate_password();
+        assert_eq!(a.len(), 32);
+        assert!(a.bytes().all(|b| b.is_ascii_graphic()));
+        assert_ne!(a, generate_password());
+    }
+
+    #[test]
+    fn test_set_item_field() {
+        let mut item = serde_json::json!({
+            "fields": [{"id": "username", "value": "old"}, {"id": "password", "value": "old"}]
+        });
+        set_item_field(&mut item, "password", "new");
+        assert_eq!(item["fields"][0]["value"], "old");
+        assert_eq!(item["fields"][1]["value"], "new");
+    }
 }

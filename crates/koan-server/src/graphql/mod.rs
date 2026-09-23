@@ -798,15 +798,15 @@ mod tests {
             .execute(&format!("mutation {{ playPlaylist(id: {id}) {{ ok }} }}"))
             .await;
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
-        assert!(matches!(
-            rx.try_recv().unwrap(),
-            PlayerCommand::ClearPlaylist
-        ));
         match rx.try_recv().unwrap() {
-            PlayerCommand::AddToPlaylist(items) => assert_eq!(items.len(), 2),
-            other => panic!("expected AddToPlaylist, got {:?}", other),
+            PlayerCommand::ReplacePlaylist { items, start } => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(start, 0);
+                assert!(items.iter().all(|i| i.playlist_entry_id.is_some()));
+            }
+            other => panic!("expected ReplacePlaylist, got {:?}", other),
         }
-        assert!(matches!(rx.try_recv().unwrap(), PlayerCommand::Play(_)));
+        assert!(rx.try_recv().is_err());
 
         let resp = schema
             .execute(&format!("mutation {{ deletePlaylist(id: {id}) {{ ok }} }}"))

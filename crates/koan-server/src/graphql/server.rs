@@ -133,6 +133,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
     let cfg = Config::load().unwrap_or_default();
     let port = port.unwrap_or(cfg.graphql.port);
     let bind = bind.unwrap_or(cfg.graphql.bind);
+    let subsonic_port = subsonic_port.or(cfg.subsonic.port);
     let playground_enabled = playground || cfg.graphql.playground;
     let auth_enabled = cfg.graphql.auth_enabled;
 
@@ -317,12 +318,9 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
                 l
             }
             Err(e) => {
-                log::warn!(
-                    "API disabled: failed to bind GraphQL port {} — {} (another instance running?)",
-                    port,
-                    e,
-                );
-                return Ok(());
+                return Err(format!(
+                    "failed to bind GraphQL port {port} — {e} (another instance running?)"
+                ));
             }
         };
         let gql_server = axum::serve(

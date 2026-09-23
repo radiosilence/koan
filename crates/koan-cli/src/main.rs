@@ -493,7 +493,7 @@ fn start_player(
             Some(commands::ApiOptions {
                 port: cli.port.or(Some(cfg.graphql.port)),
                 bind: cli.bind.or(Some(cfg.graphql.bind)),
-                subsonic: cli.subsonic.or(cfg.subsonic.port),
+                subsonic: cli.subsonic,
                 playground: cli.playground || cfg.graphql.playground,
             })
         } else {

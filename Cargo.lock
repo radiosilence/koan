@@ -2564,6 +2564,7 @@ dependencies = [
  "owo-colors",
  "rayon",
  "reqwest",
+ "ring",
  "rpassword",
  "serde_json",
  "tempfile",

@@ -100,7 +100,7 @@ pub fn cmd_play(
     }
 
     let mut expects_playback = track_ids.is_some() || !paths.is_empty();
-    let mut restored_position_ms: Option<u64> = None;
+    let mut restored: Option<koan_tui::play::RestoredPosition> = None;
 
     if let Some(ids) = track_ids {
         let tx_bg = tx.clone();
@@ -177,7 +177,11 @@ pub fn cmd_play(
                 .expect("player thread died");
             if let Some(cid) = cursor_id {
                 state.set_cursor(Some(cid));
-                restored_position_ms = Some(persisted.position_ms);
+                restored = Some(koan_tui::play::RestoredPosition {
+                    item: cid,
+                    position_ms: persisted.position_ms,
+                    was_playing: persisted.was_playing,
+                });
             }
             expects_playback = true;
 
@@ -205,7 +209,7 @@ pub fn cmd_play(
         log_buffer,
         start_in_library,
         expects_playback,
-        restored_position_ms,
+        restored,
         download_queue,
         callbacks,
     ) {

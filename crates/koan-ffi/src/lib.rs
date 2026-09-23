@@ -1207,9 +1207,11 @@ impl KoanEngine {
                 .flatten()
                 .and_then(|p| p.remote_id);
             let deleted = queries::delete_playlist(&db.conn, playlist_id).map_err(db_err)?;
-            if deleted && let Some(remote_id) = remote_id {
+            if deleted {
                 self.bump_library();
-                koan_core::playlists::delete_on_remote(remote_id);
+                if let Some(remote_id) = remote_id {
+                    koan_core::playlists::delete_on_remote(remote_id);
+                }
             }
             Ok(deleted)
         })
