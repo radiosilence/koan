@@ -15,7 +15,8 @@ struct ArtistBrowser: View {
         .clearsSelection($selection)
         .washedGround()
         .contextMenu(forSelectionType: Int64.self) { ids in
-            if let id = ids.first,
+            // A set has no first; with several picked, no one artist is meant.
+            if ids.count == 1, let id = ids.first,
                let artist = library.visibleArtists.first(where: { $0.id == id }) {
                 PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
             }

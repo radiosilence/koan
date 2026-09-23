@@ -126,8 +126,13 @@ final class WashView: NSView {
         current.frame = box
         previous.frame = box
         CATransaction.commit()
+        // Layout passes that leave the size alone must not snap the drift home.
+        guard bounds.size != laidOut else { return }
+        laidOut = bounds.size
         if drifting { start() }
     }
+
+    private var laidOut: CGSize?
 
     /// Swap in a new cover, dissolving from the old one over long enough that
     /// you notice the room has changed colour without catching it changing.

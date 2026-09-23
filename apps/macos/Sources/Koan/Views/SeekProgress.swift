@@ -60,8 +60,14 @@ struct SeekProgress: NSViewRepresentable {
 
         override func layout() {
             super.layout()
+            // The fraction is from the last anchor; re-placing on an unrelated
+            // pass would pull the running animation back to it.
+            guard bounds.size != laidOut else { return }
+            laidOut = bounds.size
             place()
         }
+
+        private var laidOut: CGSize?
 
         override func viewDidChangeEffectiveAppearance() {
             super.viewDidChangeEffectiveAppearance()

@@ -52,9 +52,7 @@ enum Graphics: Int, CaseIterable, Identifiable {
     var detail: String {
         switch self {
         case .bare:
-            """
-            Everything Plain stands down, and the window's own glass with it:             an opaque toolbar and no soft edge where content passes under the             transport. Those are the platform's, not koan's, and they are             redrawn whenever anything behind them moves.
-            """
+            "Everything Plain stands down, and the window's own glass with it: an opaque toolbar and no soft edge where content passes under the transport. Those are the platform's, not koan's, and they are redrawn whenever anything behind them moves."
         case .plain:
             "No colour behind the window, indicators held still, flat chrome instead of glass. For a machine that would rather spend nothing on this."
         case .reduced:

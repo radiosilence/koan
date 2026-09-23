@@ -43,14 +43,17 @@ struct FilterField: NSViewRepresentable {
         }
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(text: $text) }
+    /// Starts at the current token, so a field built after an earlier ⌘F
+    /// doesn't take focus for it.
+    func makeCoordinator() -> Coordinator { Coordinator(text: $text, focusToken: focusToken) }
 
     final class Coordinator: NSObject, NSSearchFieldDelegate {
         private let text: Binding<String>
-        private var seenFocusToken = 0
+        private var seenFocusToken: Int
 
-        init(text: Binding<String>) {
+        init(text: Binding<String>, focusToken: Int) {
             self.text = text
+            self.seenFocusToken = focusToken
         }
 
         /// True the first time a given token is seen — the field is rebuilt on

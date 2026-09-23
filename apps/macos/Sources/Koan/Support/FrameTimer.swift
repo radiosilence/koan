@@ -94,7 +94,7 @@ final class FrameTimer: NSObject {
     /// frame or two of each other, so whatever the page cost, it has been paid.
     private func settled(_ ticks: [Duration]) -> Bool {
         guard ticks.count > Self.calm else { return false }
-        return zip(ticks.dropFirst(ticks.count - Self.calm), ticks.suffix(Self.calm - 1))
+        return zip(ticks.suffix(Self.calm - 1), ticks.dropFirst(ticks.count - Self.calm))
             .allSatisfy { $0 - $1 < Self.stall }
     }
 
