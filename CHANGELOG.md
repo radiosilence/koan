@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.34.3 (2026-09-24)
 
 ### Added
 
@@ -23,7 +23,6 @@
 - **With several artists selected, the menu and double-click no longer act on one at random.**
 - Smaller: an error toast replaced by another keeps its own six seconds; a drop highlight on one playlist is no longer cleared by the row it left; "New Playlist…" is a button to VoiceOver; a filter field created after ⌘F was used no longer steals focus; the frame timer's settle check compared ticks the wrong way round and stopped early; the Plain graphics description had holes in it; the output device menu no longer asks for a symbol named "".
 - **A pause no longer re-runs the whole transport bar, and a seek no longer re-diffs every lyric line.** The reads moved into the views that draw them.
-||||||| 754b015
 - **Signing out of the web client revokes the session.** The refresh cookie was scoped to `/auth/refresh`, so the browser never sent it to `/auth/logout`: the cookies were cleared and the token stayed valid for its full thirty days. It is scoped to `/auth`, and the old narrower one is cleared wherever the cookie is set.
 - **Login takes as long for a username that doesn't exist as for one that does.** An unknown name returned at once, while a known one paid for an Argon2 verify — enough to list who has an account.
 - **Long tracks proxied through the Subsonic API no longer cut off at thirty seconds.** The upstream client's timeout covered the whole body, so any stream that took longer to drain than that was ended mid-track. It bounds connecting and stalls instead.
@@ -49,9 +48,7 @@
 - **The download queue no longer looks at the cursor every 30ms for the life of the process.** It waits for the engine to say something moved, like every other watcher.
 - **A refresh token in a git-tracked config refuses to start**, the same as a password does.
 - **The CoreAudio render callback no longer logs.** Two warnings on rare paths formatted and took the logger's lock on the real-time thread.
-
 - **A file on disk and the server's copy of it are one track, whatever the server calls the album.** Navidrome appends a release's MusicBrainz disambiguation to its name — "(deluxe)", "(Bandcamp)", "(Unmixed)" — and dedup matched on the album name, so thousands of tracks sat twice on two album pages: one playing from disk, one streaming, and dead whenever the server was unreachable. koan now reads the recording and release ids from local tags (Picard's `MUSICBRAINZ_TRACKID` / `MUSICBRAINZ_ALBUMID`) and matches on the pair. The recording alone would fold an album track into every compilation it is on; the release is what keeps those apart. The next scan after upgrading re-reads the files indexed without an id, once, and folds what it finds. ([#422](https://github.com/radiosilence/koan/issues/422))
-
 - **The test suite no longer opens the library of whoever runs it.** The TUI's `App` and `LibraryState` took a database path and ignored it, reading through the shared pool, which opens the configured library. A render test that browsed the library therefore opened the developer's own — and opening it runs the checked-out branch's migrations against it. The dead parameters are gone, the test isolates its config like the others, and `just check` runs the suite against a throwaway config dir and fails if anything writes there. ([#423](https://github.com/radiosilence/koan/issues/423))
 
 ## v0.34.1 (2026-09-23)
