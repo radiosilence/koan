@@ -921,7 +921,7 @@ impl Player {
         }
 
         if was_paused {
-            self.pause();
+            self.pause_now();
         }
         Ok(())
     }
@@ -952,8 +952,28 @@ impl Player {
         }
     }
 
-    /// Pause playback.
+    /// Pause playback, fading out if the config asks for it.
+    ///
+    /// A fade leaves the unit running until it reaches silence;
+    /// `update_playback_state` stops it from there.
     pub fn pause(&mut self) {
+        let Some(ref playback) = self.active_playback else {
+            return;
+        };
+        if crate::config::Config::load_or_default()
+            .playback
+            .fade_on_pause
+        {
+            playback.engine.fade_out();
+            self.shared_state.set_playback_state(PlaybackState::Paused);
+        } else {
+            self.pause_now();
+        }
+    }
+
+    /// Pause without a fade — for a restart that should come back paused,
+    /// where there is nothing audible to fade.
+    fn pause_now(&mut self) {
         if let Some(ref playback) = self.active_playback {
             if let Err(e) = playback.engine.stop() {
                 log::error!("pause failed: {}", e);
@@ -963,10 +983,16 @@ impl Player {
         }
     }
 
-    /// Resume playback.
+    /// Resume playback. Fades back in if the pause faded out.
     pub fn resume(&mut self) {
         if let Some(ref playback) = self.active_playback {
-            if let Err(e) = playback.engine.start() {
+            let engine = &playback.engine;
+            let resumed = if engine.is_running() || engine.is_silent() {
+                engine.fade_in()
+            } else {
+                engine.start()
+            };
+            if let Err(e) = resumed {
                 log::error!("resume failed: {}", e);
                 return;
             }
@@ -1213,8 +1239,16 @@ impl Player {
     }
 
     pub fn update_playback_state(&mut self) {
-        if self.active_playback.is_none() {
+        let Some(playback) = self.active_playback.as_ref() else {
             return;
+        };
+
+        if self.shared_state.playback_state() == PlaybackState::Paused
+            && playback.engine.is_running()
+            && playback.engine.is_silent()
+            && let Err(e) = playback.engine.stop()
+        {
+            log::error!("stopping after fade failed: {}", e);
         }
 
         if let Some((id, path, info, position_ms)) = self.timeline.current_playback() {
@@ -2471,6 +2505,13 @@ mod tests {
             fn is_running(&self) -> bool {
                 false
             }
+            fn fade_out(&self) {}
+            fn fade_in(&self) -> Result<(), BackendError> {
+                Ok(())
+            }
+            fn is_silent(&self) -> bool {
+                false
+            }
         }
         impl Drop for MockEngine {
             fn drop(&mut self) {
@@ -2545,6 +2586,13 @@ mod tests {
             Ok(())
         }
         fn is_running(&self) -> bool {
+            false
+        }
+        fn fade_out(&self) {}
+        fn fade_in(&self) -> Result<(), BackendError> {
+            Ok(())
+        }
+        fn is_silent(&self) -> bool {
             false
         }
     }

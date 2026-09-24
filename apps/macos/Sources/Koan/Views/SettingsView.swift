@@ -371,6 +371,19 @@ private struct PlaybackSettings: View {
             }
 
             Section {
+                Toggle("Fade on pause", isOn: Binding(
+                    get: { model.settings.fadeOnPause },
+                    set: { v in model.edit { $0.fadeOnPause = v } }
+                ))
+            } header: {
+                Text("Transport")
+            } footer: {
+                Text("Pause and resume ramp the volume over a moment instead of cutting.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Section {
                 Picker("ReplayGain", selection: Binding(
                     get: { model.settings.replaygain },
                     set: { v in model.edit { $0.replaygain = v } }

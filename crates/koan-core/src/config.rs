@@ -57,6 +57,8 @@ pub struct PlaybackConfig {
     /// ReplayGain pre-amplification in dB. Applied on top of track/album gain.
     /// Positive values boost, negative values attenuate. Default: 0.0.
     pub pre_amp_db: f64,
+    /// Fade out on pause and back in on resume, rather than cutting.
+    pub fade_on_pause: bool,
     /// Output audio device name. None = system default.
     /// Persisted by name (not ID) since IDs can change across reboots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,6 +124,7 @@ impl Default for PlaybackConfig {
             target_fps: 60,
             show_fps: false,
             pre_amp_db: 0.0,
+            fade_on_pause: true,
             output_device: None,
             art_size: 24,
         }

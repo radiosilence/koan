@@ -9,6 +9,7 @@ pub mod cpal_backend;
 pub mod device;
 #[cfg(target_os = "macos")]
 pub mod engine;
+pub mod fade;
 pub mod opus;
 pub mod replaygain;
 pub mod streaming;

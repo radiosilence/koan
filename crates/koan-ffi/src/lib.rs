@@ -1631,6 +1631,7 @@ impl KoanEngine {
                     config::ReplayGainMode::Album => "album".into(),
                 },
                 pre_amp_db: cfg.playback.pre_amp_db,
+                fade_on_pause: cfg.playback.fade_on_pause,
 
                 radio_lookahead: cfg.radio.lookahead as u32,
                 radio_batch_size: cfg.radio.batch_size as u32,
@@ -1669,6 +1670,7 @@ impl KoanEngine {
                     _ => config::ReplayGainMode::Off,
                 };
                 cfg.playback.pre_amp_db = s.pre_amp_db;
+                cfg.playback.fade_on_pause = s.fade_on_pause;
 
                 cfg.radio.lookahead = s.radio_lookahead as usize;
                 cfg.radio.batch_size = (s.radio_batch_size.max(1)) as usize;

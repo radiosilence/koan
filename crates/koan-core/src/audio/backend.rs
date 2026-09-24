@@ -80,10 +80,18 @@ pub trait AudioBackend: Send + Sync {
 pub trait SampleRateWatch: Send + Sync {}
 
 /// Handle to a running audio engine. Start/stop control.
+///
+/// `start` and `stop` are immediate. `fade_out` and `fade_in` are what pause
+/// and resume use: the output ramps rather than cuts, and the unit keeps
+/// running through a fade out until `is_silent`, when it can be stopped.
 pub trait AudioEngineHandle: Send {
     fn start(&self) -> Result<(), BackendError>;
     fn stop(&self) -> Result<(), BackendError>;
     fn is_running(&self) -> bool;
+    fn fade_out(&self);
+    /// Ramp back to full volume, starting the unit if it was stopped.
+    fn fade_in(&self) -> Result<(), BackendError>;
+    fn is_silent(&self) -> bool;
 }
 
 #[cfg(test)]

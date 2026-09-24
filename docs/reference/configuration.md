@@ -144,6 +144,7 @@ stay local.
 [playback]
 replaygain = "off"          # off | track | album
 pre_amp_db = 0.0            # dB gain on top of ReplayGain (default: 0.0)
+fade_on_pause = true        # fade out on pause, back in on resume (default: true)
 target_fps = 60             # TUI render rate in Hz (default: 60)
 show_fps = false            # FPS counter overlay in top-right corner (default: false)
 
@@ -163,6 +164,10 @@ ReplayGain normalizes volume levels across tracks so you don't reach for the vol
 | `album` | Per-album normalization. Preserves dynamic range within an album (quiet intros, loud climaxes) while normalizing between albums. **(recommended)** |
 
 `pre_amp_db` adds a fixed gain on top of the ReplayGain adjustment. Positive values make everything louder (risk of clipping), negative values quieter. Useful if your ReplayGain-tagged library feels too quiet at the target level.
+
+### Fade on pause
+
+With `fade_on_pause`, pause ramps the output down over 150ms before the audio unit stops, and resume ramps it back up. The ramp is applied in the render callback and only while it runs; at full level samples are copied unmodified. The position rests on the last sample that was audible, not on audio consumed during the fade and discarded. Off, pause and resume cut immediately.
 
 ### Render FPS
 

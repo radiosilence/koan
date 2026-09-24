@@ -817,6 +817,7 @@ pub struct Settings {
     /// `off`, `track` or `album`.
     pub replaygain: String,
     pub pre_amp_db: f64,
+    pub fade_on_pause: bool,
 
     pub radio_lookahead: u32,
     pub radio_batch_size: u32,
