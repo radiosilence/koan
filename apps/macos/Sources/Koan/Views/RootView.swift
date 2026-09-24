@@ -191,7 +191,7 @@ struct RootView: View {
                         Button {
                             library.reshuffleAlbums()
                         } label: {
-                            Label("Shuffle", systemImage: "shuffle")
+                            Label("Shuffle", systemImage: Icon.reshuffle)
                         }
                         .tint(.primary)
                         .help("Shuffle again")
