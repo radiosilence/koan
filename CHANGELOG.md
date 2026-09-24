@@ -1,14 +1,15 @@
 # Changelog
 
-## Unreleased
+## v0.35.0 (2026-09-24)
 
 ### Added
 
-- **An artist page carries a photograph and a biography.** The photograph sits beside the name; the opening of the artist's Wikipedia article sits below the albums, with a link to the rest and the photographer's credit. Both are found through the artist's MusicBrainz id and the Wikidata item it links to, never by name alone, since a name search picks the wrong one of several bands sharing a name. An artist without an id on record is identified through one of their releases first, and only then by an exact, unique name match. Answers are cached, misses included, so the page draws from the database and is refreshed after a month. No API key is needed. ([#434](https://github.com/radiosilence/koan/issues/434), [#435](https://github.com/radiosilence/koan/issues/435))
+- **An artist page carries a photograph and a biography.** The photograph sits beside the name; the opening of the artist's Wikipedia article sits below the albums, with a link to the rest and the photographer's credit. Both are found through the artist's MusicBrainz id and the Wikidata item it links to, never by name alone, since a name search picks the wrong one of several bands sharing a name. An artist without an id on record is identified through one of their releases first, and only then by an exact, unique name match. Answers are cached, misses included, so the page draws from the database and is refreshed after a month. No API key is needed. ([#436](https://github.com/radiosilence/koan/pull/436))
 
 ### Fixed
 
 - **MusicBrainz artist searches match the whole name.** A name of several words was searched word by word, so "Azure Ray" found Ray Charles. This also sharpens radio's relationship lookups.
+- **Shuffle sits in the artist page's button row**, beside Play Next and Queue, rather than on a line of its own below them. ([#437](https://github.com/radiosilence/koan/pull/437))
 
 ## v0.34.3 (2026-09-24)
 
