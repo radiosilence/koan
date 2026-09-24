@@ -103,6 +103,20 @@ final class Navigator {
         go(to: .section(section))
     }
 
+    /// How many times each section has been sent back to its top. The stage
+    /// keys a section's page on it, so a bump rebuilds the page: on macOS a
+    /// `List` cannot be told to scroll, and starting over is the one way to
+    /// put it at the top. See `StageView`.
+    private(set) var rewinds: [Section: Int] = [:]
+
+    /// A click on the sidebar row for the page already showing: back to the
+    /// top, the way a browser tab's own link reloads it. A click from anywhere
+    /// else is an ordinary move, and a page kept alive keeps its place.
+    func rewind(_ section: Section) {
+        guard current == .section(section) else { return }
+        rewinds[section, default: 0] += 1
+    }
+
     func open(album id: Int64, highlighting trackId: Int64? = nil) {
         FrameTimer.shared.begin()
         // Set before the move rather than on arrival: the page that reads it is

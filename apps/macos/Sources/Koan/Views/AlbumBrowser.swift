@@ -4,6 +4,8 @@ import SwiftUI
 struct AlbumBrowser: View {
     @Environment(LibraryModel.self) private var library
     @Environment(UIState.self) private var ui
+    /// Kept mounted behind other pages once visited — see `StageView`.
+    @Environment(\.onStage) private var onStage
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
 
@@ -46,11 +48,15 @@ struct AlbumBrowser: View {
                 }
             }
             // ⌘A picks everything the filter is showing, starting a selection
-            // if there was none. Escape and leaving the page drop it.
+            // if there was none — only while this is the page on screen, since
+            // it stays mounted behind the others. Escape and leaving the page
+            // drop it.
             .onChange(of: ui.selectAllToken) { _, _ in
+                guard onStage else { return }
                 library.selection.selectAll(library.visibleAlbums)
             }
             .onChange(of: ui.clearSelectionToken) { _, _ in library.selection.end() }
+            .onChange(of: onStage) { _, now in if !now { library.selection.end() } }
             .onDisappear { library.selection.end() }
     }
 }
