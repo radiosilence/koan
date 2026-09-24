@@ -6,3 +6,4 @@ pub mod lrclib;
 pub mod musicbrainz;
 pub mod queue;
 pub mod sync;
+pub mod wikimedia;

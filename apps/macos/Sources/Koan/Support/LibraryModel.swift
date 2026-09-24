@@ -326,11 +326,14 @@ final class LibraryModel {
         var artist: Artist?
         var albums: [Album]
         var similar: [SimilarArtist]
+        /// Biography and photograph, as cached. Filled in from the network
+        /// after the page is up — see `enrich(artist:)`.
+        var info: ArtistInfo?
     }
 
     /// Read an artist and everything their page draws, at once and off the main
-    /// actor. Three independent queries, so three at once: one after another
-    /// each waited on the one before for no reason.
+    /// actor. Independent queries, so all at once: one after another each
+    /// waited on the one before for no reason.
     func prepare(artist id: Int64) async {
         let stamp = mirror?.libraryVersion ?? 0
         if let held = detailArtist, held.artistId == id, held.stamp == stamp { return }
@@ -343,14 +346,33 @@ final class LibraryModel {
                     artistId: id, sort: .year, seed: 0, search: nil
                 )
                 async let similar = try? await engine.similarArtists(artistId: id)
+                async let info = try? await engine.artistInfo(artistId: id)
                 return ArtistRecord(
                     artistId: id,
                     stamp: stamp,
                     artist: await artist ?? nil,
                     albums: await albums ?? [],
-                    similar: await similar ?? []
+                    similar: await similar ?? [],
+                    info: await info ?? nil
                 )
             }.value
+        }
+        enrich(artist: id)
+    }
+
+    /// Ask for the artist's biography and photograph, and fold them into the
+    /// page when they land.
+    ///
+    /// Never waited on: a miss is several seconds of MusicBrainz and Wikipedia,
+    /// and the page is already drawn from the cache. A fresh cache answers at
+    /// once and changes nothing.
+    private func enrich(artist id: Int64) {
+        let engine = self.engine
+        Task {
+            let fetched = try? await engine.fetchArtistInfo(artistId: id)
+            guard let fetched, detailArtist?.artistId == id, detailArtist?.info != fetched
+            else { return }
+            detailArtist?.info = fetched
         }
     }
 

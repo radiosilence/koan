@@ -9,6 +9,9 @@ struct AlbumArtwork: View {
     enum Source: Hashable {
         case album(Int64)
         case track(Int64)
+        /// An artist's photograph. Ask only once the artist's info says there
+        /// is one: a miss is remembered for the session.
+        case artist(Int64)
     }
 
     /// How large a bitmap to keep, not how large to draw it.

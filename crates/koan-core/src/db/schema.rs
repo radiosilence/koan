@@ -157,6 +157,17 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             UNIQUE(track_id)
         );
 
+        -- One row per artist looked up, misses included: an empty row is the
+        -- answer that nothing was found, which stops a page asking again.
+        CREATE TABLE IF NOT EXISTS artist_info (
+            artist_id     INTEGER PRIMARY KEY REFERENCES artists(id) ON DELETE CASCADE,
+            bio           TEXT,
+            bio_url       TEXT,
+            image_url     TEXT,
+            image_credit  TEXT,
+            fetched_at    INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS favourites (
             track_path  TEXT PRIMARY KEY,
             created_at  TEXT DEFAULT (datetime('now'))
