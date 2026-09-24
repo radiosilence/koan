@@ -135,16 +135,15 @@ struct ArtistDetailView: View {
                             let playable = Playable.artist(id: artist.id, name: artist.name)
                             HStack(spacing: 10) {
                                 QueueButtons(playable: playable)
+                                Button {
+                                    shufflePlay()
+                                } label: {
+                                    Label("Shuffle", systemImage: Icon.shuffle)
+                                }
                                 ShareButton(playable: playable)
                                 FavouriteHeaderButton(playable: playable)
                             }
                             .padding(.top, 4)
-                        }
-                        Spacer()
-                        Button {
-                            shufflePlay()
-                        } label: {
-                            Label("Shuffle", systemImage: Icon.shuffle)
                         }
                     }
                 }
