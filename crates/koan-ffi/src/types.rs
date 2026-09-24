@@ -732,6 +732,29 @@ pub struct ImportSummary {
     pub errors: Vec<String>,
 }
 
+/// An artist beyond the library: the opening of their Wikipedia article and
+/// whether there is a photograph to ask for.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct ArtistInfo {
+    pub bio: Option<String>,
+    /// The article the biography opens, for reading on and for credit.
+    pub bio_url: Option<String>,
+    pub has_image: bool,
+    /// Photographer and licence.
+    pub image_credit: Option<String>,
+}
+
+impl From<koan_core::artist_info::ArtistInfo> for ArtistInfo {
+    fn from(info: koan_core::artist_info::ArtistInfo) -> Self {
+        Self {
+            bio: info.bio,
+            bio_url: info.bio_url,
+            has_image: info.image_url.is_some(),
+            image_credit: info.image_credit,
+        }
+    }
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct SimilarArtist {
     pub artist_id: i64,

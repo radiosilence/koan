@@ -853,6 +853,57 @@ impl KoanEngine {
         .await
     }
 
+    // --- Artist info -------------------------------------------------------
+
+    /// Cached only — never the network, so a page can ask on every draw.
+    pub async fn artist_info(
+        self: Arc<Self>,
+        artist_id: i64,
+    ) -> Result<Option<ArtistInfo>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(koan_core::artist_info::cached(&db.conn, artist_id)
+                .map_err(db_err)?
+                .map(ArtistInfo::from))
+        })
+        .await
+    }
+
+    /// The cache while fresh, otherwise MusicBrainz, Wikidata and Wikipedia.
+    /// Seconds on a miss; an artist nothing can be found for is the normal
+    /// case, not an error.
+    pub async fn fetch_artist_info(
+        self: Arc<Self>,
+        artist_id: i64,
+    ) -> Result<Option<ArtistInfo>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(koan_core::artist_info::fetch(&db.conn, artist_id)
+                .ok()
+                .flatten()
+                .map(ArtistInfo::from))
+        })
+        .await
+    }
+
+    /// The artist's photograph. Hits the network; the caller caches it.
+    pub async fn artist_image(
+        self: Arc<Self>,
+        artist_id: i64,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(koan_core::artist_info::image(&db.conn, artist_id)
+                .ok()
+                .flatten()
+                .map(|data| CoverArt {
+                    mime: sniff_mime(&data).to_string(),
+                    data,
+                }))
+        })
+        .await
+    }
+
     // --- Play history ------------------------------------------------------
 
     /// Every play, most recent first, narrowed by `search`.

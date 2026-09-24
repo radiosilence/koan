@@ -1,3 +1,4 @@
+pub mod artist_info;
 pub mod audio;
 pub mod auth;
 pub mod config;

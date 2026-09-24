@@ -247,6 +247,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         switch source {
         case .album(let id): "album-\(id)"
         case .track(let id): "track-\(id)"
+        case .artist(let id): "artist-\(id)"
         }
     }
 
@@ -279,6 +280,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                 data = try await engine.albumCoverArt(albumId: albumId, size: sourcePixels)?.data
             case .track(let trackId):
                 data = try await engine.coverArt(trackId: trackId, size: sourcePixels)?.data
+            case .artist(let artistId):
+                data = try await engine.artistImage(artistId: artistId)?.data
             }
             guard let data, !data.isEmpty else { return .none }
             return .art(data, hash: await ImageWork.onCPU { digest(data) })

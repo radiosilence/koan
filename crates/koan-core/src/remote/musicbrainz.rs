@@ -7,7 +7,11 @@ use serde::Deserialize;
 use thiserror::Error;
 
 const MB_BASE: &str = "https://musicbrainz.org/ws/2";
-const USER_AGENT: &str = "koan/0.10.0 (https://github.com/radiosilence/koan)";
+const USER_AGENT: &str = concat!(
+    "koan/",
+    env!("CARGO_PKG_VERSION"),
+    " (https://github.com/radiosilence/koan)"
+);
 
 #[derive(Debug, Error)]
 pub enum MusicBrainzError {
@@ -84,6 +88,25 @@ struct MbRelation {
     relation_type: Option<String>,
     #[serde(default)]
     artist: Option<MbRelatedArtist>,
+    #[serde(default)]
+    url: Option<MbUrl>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MbUrl {
+    #[serde(default)]
+    resource: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct MbRelease {
+    #[serde(rename = "artist-credit", default)]
+    artist_credit: Vec<MbCredit>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MbCredit {
+    artist: MbRelatedArtist,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,13 +131,18 @@ pub fn search_artist(
     artist_name: &str,
     limit: usize,
 ) -> Result<Vec<ArtistSearchResult>, MusicBrainzError> {
-    let url = format!(
-        "{}/artist?query=artist:{}&fmt=json&limit={}",
-        MB_BASE,
-        urlencoded(artist_name),
-        limit
-    );
-    let resp = http.get(&url).header("User-Agent", USER_AGENT).send()?;
+    // Quoted, so a name of several words is searched as a phrase. Unquoted,
+    // `artist:Azure Ray` is Azure or Ray, and Ray Charles scores highest.
+    let query = format!("artist:\"{}\"", artist_name.replace(['\\', '"'], ""));
+    let resp = http
+        .get(format!("{MB_BASE}/artist"))
+        .query(&[
+            ("query", query.as_str()),
+            ("fmt", "json"),
+            ("limit", &limit.to_string()),
+        ])
+        .header("User-Agent", USER_AGENT)
+        .send()?;
 
     if resp.status().as_u16() == 503 {
         return Err(MusicBrainzError::RateLimited);
@@ -183,6 +211,50 @@ pub fn get_artist_relations(
     Ok(relations)
 }
 
+/// The Wikidata item an artist is linked to, as its id (`Q2358013`).
+pub fn wikidata_id(
+    http: &reqwest::blocking::Client,
+    artist_mbid: &str,
+) -> Result<Option<String>, MusicBrainzError> {
+    let url = format!("{MB_BASE}/artist/{artist_mbid}?inc=url-rels&fmt=json");
+    let resp = http.get(&url).header("User-Agent", USER_AGENT).send()?;
+    match resp.status().as_u16() {
+        503 => return Err(MusicBrainzError::RateLimited),
+        404 => return Err(MusicBrainzError::NotFound),
+        _ => {}
+    }
+    let artist: MbArtist = resp.error_for_status()?.json()?;
+    Ok(artist
+        .relations
+        .into_iter()
+        .filter(|rel| rel.relation_type.as_deref() == Some("wikidata"))
+        .find_map(|rel| {
+            let resource = rel.url?.resource;
+            let id = resource.rsplit('/').next()?;
+            id.starts_with('Q').then(|| id.to_string())
+        }))
+}
+
+/// The artists a release is credited to, as `(name, mbid)`.
+pub fn release_artists(
+    http: &reqwest::blocking::Client,
+    release_mbid: &str,
+) -> Result<Vec<(String, String)>, MusicBrainzError> {
+    let url = format!("{MB_BASE}/release/{release_mbid}?inc=artist-credits&fmt=json");
+    let resp = http.get(&url).header("User-Agent", USER_AGENT).send()?;
+    match resp.status().as_u16() {
+        503 => return Err(MusicBrainzError::RateLimited),
+        404 => return Err(MusicBrainzError::NotFound),
+        _ => {}
+    }
+    let release: MbRelease = resp.error_for_status()?.json()?;
+    Ok(release
+        .artist_credit
+        .into_iter()
+        .map(|credit| (credit.artist.name, credit.artist.id))
+        .collect())
+}
+
 /// Categorize a MusicBrainz relation type string into a simplified category.
 fn categorize_relation(rel_type: &str) -> RelationCategory {
     let lower = rel_type.to_lowercase();
@@ -199,17 +271,6 @@ fn categorize_relation(rel_type: &str) -> RelationCategory {
     } else {
         RelationCategory::Associated
     }
-}
-
-/// Minimal URL encoding for search queries.
-fn urlencoded(s: &str) -> String {
-    s.replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('&', "%26")
-        .replace('=', "%3D")
-        .replace('+', "%2B")
-        .replace('#', "%23")
-        .replace('?', "%3F")
 }
 
 /// Create a default HTTP client suitable for MusicBrainz API calls.
@@ -250,13 +311,6 @@ mod tests {
             categorize_relation("support act"),
             RelationCategory::Associated
         );
-    }
-
-    #[test]
-    fn test_urlencoded() {
-        assert_eq!(urlencoded("Aphex Twin"), "Aphex%20Twin");
-        assert_eq!(urlencoded("AC/DC"), "AC/DC");
-        assert_eq!(urlencoded("a&b=c"), "a%26b%3Dc");
     }
 
     #[test]

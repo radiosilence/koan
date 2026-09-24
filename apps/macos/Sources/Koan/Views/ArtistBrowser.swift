@@ -101,6 +101,7 @@ struct ArtistDetailView: View {
     private var artist: Artist? { record?.artist }
     private var albums: [Album] { record?.albums ?? [] }
     private var similar: [SimilarArtist] { record?.similar ?? [] }
+    private var info: ArtistInfo? { record?.info }
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
 
@@ -110,41 +111,54 @@ struct ArtistDetailView: View {
                 // The play button reads as part of the title, so it sits on the
                 // title's line. Everything below is full width rather than
                 // indented into a column beside it.
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 14) {
+                HStack(alignment: .center, spacing: 20) {
+                    if info?.hasImage == true {
+                        AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: 56)
+                            .frame(width: 112, height: 112)
+                            .transition(.opacity)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 14) {
+                            if let artist {
+                                PlayableHeaderButton(
+                                    playable: .artist(id: artist.id, name: artist.name)
+                                )
+                                .alignmentGuide(.firstTextBaseline) { $0[.bottom] * 0.78 }
+                            }
+                            Text(artist?.name ?? "Artist")
+                                .font(.system(size: 26, weight: .semibold))
+                        }
+                        Text(Format.count(Int64(albums.count), "album"))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
                         if let artist {
-                            PlayableHeaderButton(
-                                playable: .artist(id: artist.id, name: artist.name)
-                            )
-                            .alignmentGuide(.firstTextBaseline) { $0[.bottom] * 0.78 }
+                            let playable = Playable.artist(id: artist.id, name: artist.name)
+                            HStack(spacing: 10) {
+                                QueueButtons(playable: playable)
+                                ShareButton(playable: playable)
+                                FavouriteHeaderButton(playable: playable)
+                            }
+                            .padding(.top, 4)
                         }
-                        Text(artist?.name ?? "Artist")
-                            .font(.system(size: 26, weight: .semibold))
-                    }
-                    Text(Format.count(Int64(albums.count), "album"))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    if let artist {
-                        let playable = Playable.artist(id: artist.id, name: artist.name)
-                        HStack(spacing: 10) {
-                            QueueButtons(playable: playable)
-                            ShareButton(playable: playable)
-                            FavouriteHeaderButton(playable: playable)
+                        Spacer()
+                        Button {
+                            shufflePlay()
+                        } label: {
+                            Label("Shuffle", systemImage: Icon.shuffle)
                         }
-                        .padding(.top, 4)
-                    }
-                    Spacer()
-                    Button {
-                        shufflePlay()
-                    } label: {
-                        Label("Shuffle", systemImage: Icon.shuffle)
                     }
                 }
+                .animation(.easeOut(duration: 0.2), value: info?.hasImage)
 
                 LazyVGrid(columns: columns, spacing: 22) {
                     ForEach(albums, id: \.id) { album in
                         AlbumGridCell(album: album, showArtist: false)
                     }
+                }
+
+                if let info, let bio = info.bio {
+                    Divider()
+                    ArtistBio(bio: bio, source: info.bioUrl, imageCredit: info.imageCredit)
                 }
 
                 if !similar.isEmpty {
@@ -172,6 +186,36 @@ struct ArtistDetailView: View {
             let ids = ((try? await engine.randomTracks(count: 50, artistId: id)) ?? []).map(\.id)
             player.playNow(trackIds: ids)
             nav.showQueueWhenReady(watching: player)
+        }
+    }
+}
+
+/// The opening of the artist's Wikipedia article, credited as its licence asks.
+private struct ArtistBio: View {
+    let bio: String
+    let source: String?
+    let imageCredit: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("About")
+                .font(.headline)
+            // The extract separates paragraphs with a single newline.
+            Text(bio.replacingOccurrences(of: "\n", with: "\n\n"))
+                .foregroundStyle(.secondary)
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .frame(maxWidth: 680, alignment: .leading)
+            HStack(spacing: 12) {
+                if let url = source.flatMap(URL.init(string:)) {
+                    Link("From Wikipedia", destination: url)
+                }
+                if let imageCredit {
+                    Text("Photo: \(imageCredit)")
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.caption)
         }
     }
 }
