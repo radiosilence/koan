@@ -504,57 +504,105 @@ private struct StageView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
 
-    private var onQueue: Bool { nav.current == .section(.queue) }
-
-    /// The queue is never torn down; every other page is built when you arrive
-    /// and thrown away when you leave.
+    /// The queue is never torn down, and nor are the album and artist browsers
+    /// once visited; every other page is built when you arrive and thrown away
+    /// when you leave.
     ///
     /// That asymmetry buys the one thing a `List` cannot be given back: where it
     /// was scrolled to. On macOS a `List` is AppKit's table, and every SwiftUI
     /// way of asking one to go to an offset — `scrollPosition`, `scrollTo(y:)`,
-    /// `scrollPosition(id:)` — is inert on it, so a queue rebuilt on the way
-    /// back always starts at the top. Keeping it mounted means it never left.
+    /// `scrollPosition(id:)` — is inert on it, so a page rebuilt on the way
+    /// back always starts at the top. Keeping it mounted means it never left:
+    /// scroll down the artists, open one, go Back, and the list is where it
+    /// was. The browsers are the pages you leave to look at one thing and come
+    /// back to; a record or an artist is the thing, and starts at its top.
     ///
-    /// Off stage it is invisible, untouchable, unfocusable and told so, which
-    /// is what stops the row that is playing animating behind a page you are
-    /// actually looking at.
+    /// Off stage a page is invisible, untouchable, unfocusable and told so,
+    /// which is what stops the row that is playing animating behind a page you
+    /// are actually looking at.
     var body: some View {
         ZStack {
             QueueView()
-                .opacity(onQueue ? 1 : 0)
-                .allowsHitTesting(onQueue)
-                .disabled(!onQueue)
-                .accessibilityHidden(!onQueue)
-                .environment(\.onStage, onQueue)
+                .staged(nav.current == .section(.queue))
 
-            if !onQueue { page }
+            ForEach(kept) { section in
+                browser(section)
+                    .id(nav.rewinds[section, default: 0])
+                    .staged(nav.current == .section(section))
+            }
+
+            if let page = unkeptPage {
+                page
+            }
+        }
+        .onChange(of: nav.current, initial: true) { _, now in
+            if let section = now.section, Self.keepable.contains(section), !visited.contains(section) {
+                visited.append(section)
+            }
         }
     }
 
-    @ViewBuilder private var page: some View {
+    private static let keepable: [Navigator.Section] = [.albums, .artists]
+
+    /// Browsers mounted so far, in the order first visited. Held rather than
+    /// derived so that leaving one keeps it.
+    @State private var visited: [Navigator.Section] = []
+
+    /// What stays mounted: everything visited, and the browser being arrived at
+    /// now. Including the current one here rather than waiting for `visited`
+    /// means the first frame builds it where it will stay, instead of building
+    /// it once as a page and again when it is recorded.
+    private var kept: [Navigator.Section] {
+        guard let section = nav.current.section, Self.keepable.contains(section),
+              !visited.contains(section)
+        else { return visited }
+        return visited + [section]
+    }
+
+    @ViewBuilder private func browser(_ section: Navigator.Section) -> some View {
+        switch section {
+        case .albums: AlbumBrowser()
+        case .artists: ArtistBrowser()
+        default: EmptyView()
+        }
+    }
+
+    /// The page on screen when it is neither the queue nor a kept browser.
+    private var unkeptPage: AnyView? {
         switch nav.current {
         case .section(.queue):
-            // Kept alive above, and this is only reached when it is not showing.
-            EmptyView()
-        case .section(.searchResults):
-            SearchResultsView()
-        case .section(.albums):
-            AlbumBrowser()
-        case .section(.artists):
-            ArtistBrowser()
-        case .section(.favourites):
-            FavouritesView()
-        case .section(.playHistory):
-            HistoryView()
-        case .section(.downloads):
-            DownloadsView()
-        case .section(.playlist(let id)):
-            PlaylistView(playlistId: id)
+            return nil
+        case .section(let section) where Self.keepable.contains(section):
+            return nil
+        case .section(let section):
+            return AnyView(page(section).id(nav.rewinds[section, default: 0]))
         case .album(let id):
-            AlbumDetailView(albumId: id)
+            return AnyView(AlbumDetailView(albumId: id))
         case .artist(let id):
-            ArtistDetailView(artistId: id)
+            return AnyView(ArtistDetailView(artistId: id))
         }
+    }
+
+    @ViewBuilder private func page(_ section: Navigator.Section) -> some View {
+        switch section {
+        case .searchResults: SearchResultsView()
+        case .favourites: FavouritesView()
+        case .playHistory: HistoryView()
+        case .downloads: DownloadsView()
+        case .playlist(let id): PlaylistView(playlistId: id)
+        case .queue, .albums, .artists: EmptyView()
+        }
+    }
+}
+
+private extension View {
+    /// On stage, or kept mounted behind whatever is.
+    func staged(_ onStage: Bool) -> some View {
+        opacity(onStage ? 1 : 0)
+            .allowsHitTesting(onStage)
+            .disabled(!onStage)
+            .accessibilityHidden(!onStage)
+            .environment(\.onStage, onStage)
     }
 }
 

@@ -57,15 +57,15 @@ struct SidebarView: View {
 
             Section("Library") {
                 Label("Albums", systemImage: Icon.album)
-                    .tag(Navigator.Section.albums)
+                    .sidebarRow(.albums)
                 Label("Artists", systemImage: Icon.artist)
-                    .tag(Navigator.Section.artists)
+                    .sidebarRow(.artists)
                 Label("Favourites", systemImage: Icon.favourite)
-                    .tag(Navigator.Section.favourites)
+                    .sidebarRow(.favourites)
                 Label("History", systemImage: Icon.history)
-                    .tag(Navigator.Section.playHistory)
+                    .sidebarRow(.playHistory)
                 DownloadsRowLabel()
-                    .tag(Navigator.Section.downloads)
+                    .sidebarRow(.downloads)
             }
 
             playlistSection
@@ -361,5 +361,28 @@ private struct DownloadsRowLabel: View {
                     .foregroundStyle(.secondary)
             }
         }
+    }
+}
+
+private extension View {
+    /// A row that is a place: selecting it goes there, and clicking it while
+    /// already there goes back to the top.
+    ///
+    /// Selection alone cannot see the second click — the `List` reports a
+    /// change, and clicking the selected row changes nothing — so the tap rides
+    /// alongside it. Simultaneous, so it never takes the click that selects.
+    func sidebarRow(_ section: Navigator.Section) -> some View {
+        modifier(SidebarRow(section: section))
+    }
+}
+
+private struct SidebarRow: ViewModifier {
+    let section: Navigator.Section
+    @Environment(Navigator.self) private var nav
+
+    func body(content: Content) -> some View {
+        content
+            .tag(section)
+            .simultaneousGesture(TapGesture().onEnded { nav.rewind(section) })
     }
 }
