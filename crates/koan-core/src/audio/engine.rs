@@ -8,6 +8,7 @@ use coreaudio_sys::*;
 use thiserror::Error;
 
 use super::device;
+use super::fade::{FadeControl, Fader};
 
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -39,6 +40,7 @@ struct CallbackData {
     /// Set true while the render callback is executing.
     /// Drop spins on this to avoid tearing down while a callback is in flight.
     in_callback: Arc<AtomicBool>,
+    fader: Fader,
 }
 
 // SAFETY: `rtrb::Consumer` is `!Send` due to internal raw pointers, but our usage is
@@ -57,6 +59,7 @@ pub struct AudioEngine {
     callback_data: *mut CallbackData,
     running: Arc<AtomicBool>,
     in_callback: Arc<AtomicBool>,
+    fade: Arc<FadeControl>,
 }
 
 // SAFETY: AudioEngine contains an AudioUnit (opaque C pointer) and a *mut CallbackData.
@@ -78,6 +81,7 @@ impl AudioEngine {
     ) -> Result<Self> {
         let running = Arc::new(AtomicBool::new(false));
         let in_callback = Arc::new(AtomicBool::new(false));
+        let fade = FadeControl::new();
 
         let desc = AudioComponentDescription {
             componentType: kAudioUnitType_Output,
@@ -144,6 +148,7 @@ impl AudioEngine {
             running: running.clone(),
             samples_played,
             in_callback: in_callback.clone(),
+            fader: Fader::new(fade.clone(), sample_rate),
         }));
 
         let render_cb = AURenderCallbackStruct {
@@ -169,6 +174,7 @@ impl AudioEngine {
             callback_data,
             running,
             in_callback,
+            fade,
         })
     }
 
@@ -190,6 +196,10 @@ impl AudioEngine {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+
+    pub fn fade(&self) -> &FadeControl {
+        &self.fade
     }
 }
 
@@ -351,8 +361,9 @@ unsafe extern "C" fn render_callback(
     }
     let out_ptr = buf.mData as *mut f32;
 
+    let channels = channels as usize;
     let available = data.consumer.slots();
-    let to_read = available.min(total_samples);
+    let to_read = available.min(data.fader.readable(total_samples, channels));
 
     if to_read > 0
         && let Ok(chunk) = data.consumer.read_chunk(to_read)
@@ -371,6 +382,9 @@ unsafe extern "C" fn render_callback(
         chunk.commit_all();
         data.samples_played
             .fetch_add(copy_total as u64, Ordering::AcqRel);
+        // SAFETY: the first `copy_total` samples were just written above.
+        let written = unsafe { std::slice::from_raw_parts_mut(out_ptr, copy_total) };
+        data.fader.apply(written, channels);
     }
 
     // Zero remaining frames on underrun — silence > glitches.

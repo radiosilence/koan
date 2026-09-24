@@ -115,4 +115,21 @@ impl AudioEngineHandle for CoreAudioEngineHandle {
     fn is_running(&self) -> bool {
         self.engine.is_running()
     }
+
+    fn fade_out(&self) {
+        self.engine.fade().fade_out();
+    }
+
+    fn fade_in(&self) -> Result<(), BackendError> {
+        if self.engine.is_running() {
+            self.engine.fade().fade_in(false);
+            return Ok(());
+        }
+        self.engine.fade().fade_in(true);
+        self.start()
+    }
+
+    fn is_silent(&self) -> bool {
+        self.engine.fade().is_silent()
+    }
 }
