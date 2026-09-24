@@ -1,10 +1,10 @@
 # Changelog
 
-## Unreleased
+## v0.35.1 (2026-09-24)
 
 ### Fixed
 
-- **Back returns to where the album grid and the artist list were scrolled.** Both were rebuilt on the way back, and a macOS `List` cannot be told to scroll, so they always came back at the top. Once visited they now stay mounted behind the other pages, as the queue already did. Clicking a sidebar row for the page already showing sends it back to the top instead, the way a browser tab's own link does.
+- **Back returns to where the album grid and the artist list were scrolled.** Both were rebuilt on the way back, and a macOS `List` cannot be told to scroll, so they always came back at the top. Once visited they now stay mounted behind the other pages, as the queue already did. Clicking a sidebar row for the page already showing sends it back to the top instead, the way a browser tab's own link does. ([#440](https://github.com/radiosilence/koan/pull/440))
 - **The `koan-app` cask uses `postflight_steps`.** Homebrew deprecated the block form of `postflight` and warns about it on every `brew update`.
 
 ## v0.35.0 (2026-09-24)
