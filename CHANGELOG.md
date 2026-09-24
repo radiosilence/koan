@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The `koan-app` cask uses `postflight_steps`.** Homebrew deprecated the block form of `postflight` and warns about it on every `brew update`.
+
 ## v0.35.0 (2026-09-24)
 
 ### Added
