@@ -98,6 +98,9 @@ fn init_logging() {
                 return;
             }
             let Ok(mut guard) = self.0.lock() else { return };
+            if guard.is_none() {
+                *guard = config::open_log();
+            }
             let Some(file) = guard.as_mut() else { return };
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             let _ = writeln!(
@@ -120,14 +123,7 @@ fn init_logging() {
 
     static LOGGER: std::sync::OnceLock<FileLogger> = std::sync::OnceLock::new();
 
-    let logger = LOGGER.get_or_init(|| {
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(config::config_dir().join("koan.log"))
-            .ok();
-        FileLogger(Mutex::new(file))
-    });
+    let logger = LOGGER.get_or_init(|| FileLogger(Mutex::new(config::open_log())));
     // A second engine in one process is not an error worth failing over.
     if log::set_logger(logger).is_ok() {
         log::set_max_level(log::LevelFilter::Info);

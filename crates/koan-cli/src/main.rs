@@ -1,4 +1,3 @@
-use std::fs::OpenOptions;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,16 +24,9 @@ struct BufferedLogger {
 
 impl BufferedLogger {
     fn init() {
-        let log_path = config::config_dir().join("koan.log");
-        let log_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .ok();
-
         let logger = LOGGER.get_or_init(|| BufferedLogger {
             buffer: Mutex::new(None),
-            log_file: Mutex::new(log_file),
+            log_file: Mutex::new(config::open_log()),
         });
         log::set_logger(logger).expect("failed to set logger");
         log::set_max_level(log::LevelFilter::Info);
@@ -69,10 +61,15 @@ impl log::Log for BufferedLogger {
         );
 
         // Always write to log file (including noisy library warnings).
-        if let Some(file) = self.log_file.lock().unwrap().as_mut() {
+        let mut log_file = self.log_file.lock().unwrap();
+        if log_file.is_none() {
+            *log_file = config::open_log();
+        }
+        if let Some(file) = log_file.as_mut() {
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             let _ = writeln!(file, "[{}] {}", now, msg);
         }
+        drop(log_file);
 
         // Suppress warn-level noise from lofty/symphonia internals on stderr/buffer.
         // Our own fallback warnings (from koan_core) still come through.
