@@ -841,6 +841,20 @@ pub fn db_path() -> PathBuf {
     config_dir().join("koan.db")
 }
 
+/// Open `koan.log` for appending, creating the configuration directory first.
+///
+/// A logger starts before anything else has had reason to create the
+/// directory, so on a first launch it would otherwise find nowhere to write.
+pub fn open_log() -> Option<fs::File> {
+    let dir = config_dir();
+    fs::create_dir_all(&dir).ok()?;
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("koan.log"))
+        .ok()
+}
+
 /// Refuse to start when credentials are sitting in version control, which is a
 /// security incident rather than a warning anyone would act on.
 ///
