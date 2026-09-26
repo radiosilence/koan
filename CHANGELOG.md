@@ -4,7 +4,12 @@
 
 ### Fixed
 
-- **A full sync relinks files after the server renumbers its tracks.** When a Navidrome rescan gave every track a new id, the local file kept the old one. The sync added the recording again under the new id, and the two were never merged because both carried a server id, so the library listed each affected track twice. After a complete full sync, a file whose id the server no longer has is unlinked and merged into the entry carrying the current id, keeping its play history and favourites. ([#445](https://github.com/radiosilence/koan/pull/445))
+- **A full sync relinks files after the server renumbers its tracks.** When a Navidrome rescan gave every track a new id, the local file kept the old one. The sync added the recording again under the new id, and the two were never merged because both carried a server id, so the library listed each affected track twice. After a complete full sync, a file whose id the server no longer has is unlinked and merged into the entry carrying the current id, keeping its play history and favourites. A server-only entry left behind under a dead id is folded into its replacement the same way. ([#445](https://github.com/radiosilence/koan/pull/445))
+- **The album grid's reshuffle button is a die.** It used the shuffle symbol, the same one as playing an artist or a record shuffled, for an action that plays nothing. ([#441](https://github.com/radiosilence/koan/pull/441))
+
+### Changed
+
+- `dirs` 7.0.0 ([#444](https://github.com/radiosilence/koan/pull/444)) and `lru` 0.18.5 ([#443](https://github.com/radiosilence/koan/pull/443)). Neither changes behaviour; `dirs` 7 resolves the home and music folders exactly as 6 did.
 
 ## v0.35.2 (2026-09-25)
 
