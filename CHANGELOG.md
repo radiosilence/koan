@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.35.3 (2026-09-26)
+
+### Fixed
+
+- **A full sync relinks files after the server renumbers its tracks.** When a Navidrome rescan gave every track a new id, the local file kept the old one. The sync added the recording again under the new id, and the two were never merged because both carried a server id, so the library listed each affected track twice. After a complete full sync, a file whose id the server no longer has is unlinked and merged into the entry carrying the current id, keeping its play history and favourites. ([#445](https://github.com/radiosilence/koan/pull/445))
+
 ## v0.35.2 (2026-09-25)
 
 ### Fixed
