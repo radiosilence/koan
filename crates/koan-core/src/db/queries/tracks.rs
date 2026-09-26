@@ -651,6 +651,44 @@ pub(crate) fn merge_split_cross_source_tracks(conn: &Connection) -> rusqlite::Re
     Ok(())
 }
 
+/// Unlink the files whose server id the server no longer has, then fold each
+/// into its counterpart under the current id.
+///
+/// A server that rescans or reorganises its library can give every track a new
+/// id. The file keeps the old one, so the sync finds nothing by id and inserts
+/// the recording again, and the content match refuses the pair because both
+/// rows carry a remote id. The library shows every track twice, and the file's
+/// link points at nothing. Only a complete full sync has seen every id the
+/// server knows, so only one may call this.
+pub fn relink_vanished_remote_ids(
+    conn: &Connection,
+    live: &HashSet<String>,
+) -> rusqlite::Result<usize> {
+    conn.execute_batch(
+        "SAVEPOINT relink_vanished; CREATE TEMP TABLE live_remote_ids (id TEXT PRIMARY KEY)",
+    )?;
+    let unlinked = (|| {
+        let mut insert = conn.prepare("INSERT OR IGNORE INTO live_remote_ids (id) VALUES (?1)")?;
+        for id in live {
+            insert.execute(params![id])?;
+        }
+        let unlinked = conn.execute(
+            "UPDATE tracks SET remote_id = NULL, remote_url = NULL
+              WHERE path IS NOT NULL AND remote_id IS NOT NULL
+                AND remote_id NOT IN (SELECT id FROM live_remote_ids)",
+            [],
+        )?;
+        merge_split_cross_source_tracks(conn)?;
+        Ok(unlinked)
+    })();
+    conn.execute_batch("DROP TABLE temp.live_remote_ids")?;
+    match &unlinked {
+        Ok(_) => conn.execute_batch("RELEASE relink_vanished")?,
+        Err(_) => conn.execute_batch("ROLLBACK TO relink_vanished; RELEASE relink_vanished")?,
+    }
+    unlinked
+}
+
 /// Fold together the rows one file got by being spelled two ways.
 ///
 /// A drop from Finder used to index a file under the precomposed spelling
