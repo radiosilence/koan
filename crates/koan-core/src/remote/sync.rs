@@ -1001,6 +1001,66 @@ mod tests {
     }
 
     #[test]
+    fn a_full_sync_folds_server_rows_whose_id_vanished() {
+        let (db, _dir) = test_db();
+        let ghost = TrackMeta {
+            date: None,
+            disc: None,
+            album_remote_id: None,
+            artist_remote_id: None,
+            mbid: None,
+            ..remote_track_meta(
+                "s-before-rescan",
+                "Song a0000",
+                "Stub Artist",
+                "Album a0000",
+            )
+        };
+        let ghost_id = queries::upsert_track(&db.conn, &ghost).unwrap();
+        let ghost_url = ghost.remote_url.clone().unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO favourites (track_path) VALUES (?1)",
+                params![ghost_url],
+            )
+            .unwrap();
+
+        let state = Arc::new(StubState {
+            albums: Mutex::new(stub_albums(1)),
+            ..Default::default()
+        });
+        let server = StubServer::start(state);
+        let client = SubsonicClient::new(&server.url(), "u", "p");
+        sync_library(&db, &client, true, &server.url(), "u").unwrap();
+
+        let rows: Vec<(i64, String, String)> = db
+            .conn
+            .prepare("SELECT id, remote_id, remote_url FROM tracks WHERE title = 'Song a0000'")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 1, "the dead row is folded into the live one");
+        let (id, remote_id, remote_url) = &rows[0];
+        assert_ne!(*id, ghost_id);
+        assert_eq!(remote_id, "sa0000");
+        let favourites: Vec<String> = db
+            .conn
+            .prepare("SELECT track_path FROM favourites")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            favourites,
+            vec![remote_url.clone()],
+            "the favourite follows"
+        );
+    }
+
+    #[test]
     fn incremental_sync_only_fetches_albums_created_after_last_sync() {
         let (db, _dir) = test_db();
         let mut albums = stub_albums(3);
