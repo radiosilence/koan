@@ -39,7 +39,7 @@ struct SettingsView: View {
         .frame(width: 560, height: 460)
         .task {
             if model == nil {
-                model = await SettingsModel(engine: library.engine, activity: activity)
+                model = await SettingsModel(engine: library.engine, activity: activity, art: library.art)
             }
         }
         // The CLI and TUI write the same file; coming back to this window is

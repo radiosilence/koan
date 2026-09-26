@@ -16,6 +16,7 @@ import Observation
 final class SettingsModel {
     private let engine: KoanEngine
     private let activity: ActivityModel
+    private let art: CoverArtCache?
 
     private(set) var settings: Settings
     private(set) var lastError: String?
@@ -25,9 +26,10 @@ final class SettingsModel {
     /// the engine — the credential store is write-only from this side.
     var password = ""
 
-    init(engine: KoanEngine, activity: ActivityModel) async {
+    init(engine: KoanEngine, activity: ActivityModel, art: CoverArtCache?) async {
         self.engine = engine
         self.activity = activity
+        self.art = art
         self.settings = await engine.settings()
     }
 
@@ -213,6 +215,9 @@ final class SettingsModel {
             }
             switch result {
             case .success(let s):
+                // Artwork is cached by album, track and artist id, and the
+                // rebuilt library hands those ids out again from 1.
+                art?.purge()
                 lastResult = "Removed \(s.tracks) tracks — scan or sync to rebuild"
             case .failure(let e):
                 lastError = Self.describe(e)
