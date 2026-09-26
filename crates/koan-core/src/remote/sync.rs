@@ -151,6 +151,7 @@ pub fn sync_library(
     // Guards against an album appearing on two pages when the server-side list
     // shifts under the offset walk.
     let mut seen_ids: HashSet<String> = HashSet::new();
+    let mut song_ids: HashSet<String> = HashSet::new();
 
     loop {
         let page = client.get_album_list("alphabeticalByName", page_size, offset)?;
@@ -192,7 +193,7 @@ pub fn sync_library(
                 .collect();
             result.albums_failed += failures.into_inner();
 
-            write_albums(db, client, &fetched, &mut result)?;
+            write_albums(db, client, &fetched, &mut result, &mut song_ids)?;
         }
 
         log::info!(
@@ -211,6 +212,16 @@ pub fn sync_library(
     // why not one of them had a MusicBrainz id or a sort name. Applied last,
     // because the rows do not exist until their tracks have been written.
     write_artists(db, &artists, &mut result);
+
+    // An empty listing is far likelier to be a server fault than an empty
+    // library, and would unlink every file.
+    if full && result.is_complete() && !song_ids.is_empty() {
+        match queries::relink_vanished_remote_ids(&db.conn, &song_ids) {
+            Ok(0) => {}
+            Ok(n) => log::info!("{n} files had ids the server no longer knows; relinked"),
+            Err(e) => log::warn!("failed to relink tracks with vanished remote ids: {e}"),
+        }
+    }
 
     if result.is_complete() {
         update_last_sync(db, server_url, username, sync_start)?;
@@ -272,6 +283,7 @@ fn write_albums(
     client: &SubsonicClient,
     albums: &[SubsonicAlbumFull],
     result: &mut SyncResult,
+    song_ids: &mut HashSet<String>,
 ) -> Result<(), SyncError> {
     db.conn
         .execute_batch("BEGIN")
@@ -282,6 +294,7 @@ fn write_albums(
         let artist_name = album.artist.as_deref().unwrap_or("Unknown Artist");
 
         for song in &album.song {
+            song_ids.insert(song.id.clone());
             let meta = TrackMeta {
                 title: song.title.clone(),
                 artist: song
@@ -941,6 +954,49 @@ mod tests {
             types.iter().all(|t| t == "alphabeticalByName"),
             "the paginated walk must use a stable ordering, got {:?}",
             types
+        );
+    }
+
+    #[test]
+    fn a_full_sync_relinks_files_whose_server_id_changed() {
+        let (db, _dir) = test_db();
+        let file = TrackMeta {
+            date: None,
+            disc: None,
+            path: Some("/music/song.flac".into()),
+            source: "local".into(),
+            album_remote_id: None,
+            artist_remote_id: None,
+            mbid: None,
+            ..remote_track_meta(
+                "s-before-rescan",
+                "Song a0000",
+                "Stub Artist",
+                "Album a0000",
+            )
+        };
+        queries::upsert_track(&db.conn, &file).unwrap();
+
+        let state = Arc::new(StubState {
+            albums: Mutex::new(stub_albums(1)),
+            ..Default::default()
+        });
+        let server = StubServer::start(state);
+        let client = SubsonicClient::new(&server.url(), "u", "p");
+        sync_library(&db, &client, true, &server.url(), "u").unwrap();
+
+        let rows: Vec<(Option<String>, Option<String>)> = db
+            .conn
+            .prepare("SELECT path, remote_id FROM tracks WHERE title = 'Song a0000'")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(
+            rows,
+            vec![(Some("/music/song.flac".into()), Some("sa0000".into()))],
+            "the file takes the server's current id, and the recording is listed once"
         );
     }
 
