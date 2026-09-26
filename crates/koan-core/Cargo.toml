@@ -20,7 +20,7 @@ ring = "0.17"
 crossbeam-channel = "0.5"
 chrono = "0.4"
 # Config
-dirs = "6"
+dirs = "7"
 figment = { version = "0.10", features = ["toml", "env"] }
 # Credentials (cross-platform: macOS Keychain, Linux secret-service)
 # Metadata
