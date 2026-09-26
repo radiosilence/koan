@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.35.5 (2026-09-26)
+
+### Fixed
+
+- **Clear Index no longer leaves albums showing another album's cover.** Artwork is cached on disk by album, track and artist id, and a cleared library hands those ids out again from 1, so the cache served each new album the cover of whichever old one had held its number. Clearing the index now clears the artwork cache too. A library already affected needs Clear Artwork Cache once.
+
 ## v0.35.4 (2026-09-26)
 
 ### Fixed
