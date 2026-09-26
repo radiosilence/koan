@@ -623,32 +623,38 @@ pub(crate) fn merge_split_cross_source_tracks(conn: &Connection) -> rusqlite::Re
     };
 
     for (loser, winner) in pairs {
-        let stranded: Option<i64> = conn
-            .query_row(
-                "SELECT artist_id FROM tracks WHERE id = ?1",
-                params![loser],
-                |row| row.get(0),
-            )
-            .optional()?;
-
-        conn.execute(
-            "UPDATE tracks SET
-                 remote_id = (SELECT remote_id FROM tracks WHERE id = ?2),
-                 remote_url = (SELECT remote_url FROM tracks WHERE id = ?2),
-                 cached_path = COALESCE(cached_path, (SELECT cached_path FROM tracks WHERE id = ?2)),
-                 cache_size_bytes = COALESCE(cache_size_bytes, (SELECT cache_size_bytes FROM tracks WHERE id = ?2)),
-                 cache_download_date = COALESCE(cache_download_date, (SELECT cache_download_date FROM tracks WHERE id = ?2)),
-                 genre = COALESCE(genre, (SELECT genre FROM tracks WHERE id = ?2)),
-                 mbid = COALESCE(mbid, (SELECT mbid FROM tracks WHERE id = ?2))
-               WHERE id = ?1",
-            params![winner, loser],
-        )?;
-
-        merge_track_rows(conn, loser, winner)?;
-        prune_if_empty(conn, None, stranded)?;
+        absorb_remote_row(conn, loser, winner)?;
     }
 
     Ok(())
+}
+
+/// Give the file's row `winner` the server identity of the remote-only row
+/// `loser`, then fold the loser into it.
+fn absorb_remote_row(conn: &Connection, loser: i64, winner: i64) -> rusqlite::Result<()> {
+    let stranded: Option<i64> = conn
+        .query_row(
+            "SELECT artist_id FROM tracks WHERE id = ?1",
+            params![loser],
+            |row| row.get(0),
+        )
+        .optional()?;
+
+    conn.execute(
+        "UPDATE tracks SET
+             remote_id = (SELECT remote_id FROM tracks WHERE id = ?2),
+             remote_url = (SELECT remote_url FROM tracks WHERE id = ?2),
+             cached_path = COALESCE(cached_path, (SELECT cached_path FROM tracks WHERE id = ?2)),
+             cache_size_bytes = COALESCE(cache_size_bytes, (SELECT cache_size_bytes FROM tracks WHERE id = ?2)),
+             cache_download_date = COALESCE(cache_download_date, (SELECT cache_download_date FROM tracks WHERE id = ?2)),
+             genre = COALESCE(genre, (SELECT genre FROM tracks WHERE id = ?2)),
+             mbid = COALESCE(mbid, (SELECT mbid FROM tracks WHERE id = ?2))
+           WHERE id = ?1",
+        params![winner, loser],
+    )?;
+
+    merge_track_rows(conn, loser, winner)?;
+    prune_if_empty(conn, None, stranded)
 }
 
 /// Unlink the files whose server id the server no longer has, then fold each
@@ -672,14 +678,41 @@ pub fn relink_vanished_remote_ids(
         for id in live {
             insert.execute(params![id])?;
         }
-        let unlinked = conn.execute(
-            "UPDATE tracks SET remote_id = NULL, remote_url = NULL
-              WHERE path IS NOT NULL AND remote_id IS NOT NULL
-                AND remote_id NOT IN (SELECT id FROM live_remote_ids)",
-            [],
-        )?;
+        let unlinked: Vec<i64> = {
+            let mut stmt = conn.prepare(
+                "UPDATE tracks SET remote_id = NULL, remote_url = NULL
+                  WHERE path IS NOT NULL AND remote_id IS NOT NULL
+                    AND remote_id NOT IN (SELECT id FROM live_remote_ids)
+                  RETURNING id",
+            )?;
+            stmt.query_map([], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?
+        };
+        // The pairing the sync's own upsert would make on its next pass, so one
+        // sync is enough. Then the looser pairing the launch-time fold makes.
+        for &file in &unlinked {
+            let counterpart: Option<i64> = conn
+                .query_row(
+                    "SELECT MIN(r.id) FROM tracks f
+                       JOIN tracks r
+                         ON r.artist_id = f.artist_id AND r.album_id = f.album_id
+                        AND r.title = f.title
+                        AND COALESCE(r.track_number, -1) = COALESCE(f.track_number, -1)
+                        AND COALESCE(r.disc, -1) = COALESCE(f.disc, -1)
+                      WHERE f.id = ?1 AND r.path IS NULL
+                        AND r.remote_id IN (SELECT id FROM live_remote_ids)
+                     HAVING COUNT(*) = 1",
+                    params![file],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if let Some(remote) = counterpart {
+                absorb_remote_row(conn, remote, file)?;
+            }
+        }
         merge_split_cross_source_tracks(conn)?;
-        Ok(unlinked)
+        fold_vanished_remote_rows(conn)?;
+        Ok(unlinked.len())
     })();
     conn.execute_batch("DROP TABLE temp.live_remote_ids")?;
     match &unlinked {
@@ -687,6 +720,55 @@ pub fn relink_vanished_remote_ids(
         Err(_) => conn.execute_batch("ROLLBACK TO relink_vanished; RELEASE relink_vanished")?,
     }
     unlinked
+}
+
+/// Fold each server-only row whose id has vanished into the row holding the
+/// current id for the same slot. The dead row can no longer be streamed, and
+/// without this it sits beside its replacement as a second copy. Its history
+/// and favourite move across; a slot with more than one live candidate is left
+/// alone. Expects `live_remote_ids` to be populated.
+fn fold_vanished_remote_rows(conn: &Connection) -> rusqlite::Result<()> {
+    let pairs: Vec<(i64, i64)> = {
+        let mut stmt = conn.prepare(
+            "SELECT d.id, MIN(l.id)
+               FROM tracks d
+               JOIN tracks l
+                 ON l.album_id = d.album_id
+                AND l.title = d.title
+                AND l.track_number IS d.track_number
+                AND COALESCE(l.disc, -1) = COALESCE(d.disc, -1)
+                AND l.remote_id IN (SELECT id FROM live_remote_ids)
+              WHERE d.path IS NULL AND d.remote_id IS NOT NULL
+                AND d.remote_id NOT IN (SELECT id FROM live_remote_ids)
+              GROUP BY d.id
+             HAVING COUNT(*) = 1",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+    };
+
+    for (loser, winner) in pairs {
+        let stranded: Option<i64> = conn
+            .query_row(
+                "SELECT artist_id FROM tracks WHERE id = ?1",
+                params![loser],
+                |row| row.get(0),
+            )
+            .optional()?;
+        conn.execute(
+            "UPDATE OR IGNORE favourites
+                SET track_path = (SELECT COALESCE(path, remote_url) FROM tracks WHERE id = ?1)
+              WHERE track_path = (SELECT remote_url FROM tracks WHERE id = ?2)",
+            params![winner, loser],
+        )?;
+        conn.execute(
+            "DELETE FROM favourites WHERE track_path = (SELECT remote_url FROM tracks WHERE id = ?1)",
+            params![loser],
+        )?;
+        merge_track_rows(conn, loser, winner)?;
+        prune_if_empty(conn, None, stranded)?;
+    }
+    Ok(())
 }
 
 /// Fold together the rows one file got by being spelled two ways.
