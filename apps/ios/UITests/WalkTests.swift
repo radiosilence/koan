@@ -58,6 +58,15 @@ final class WalkTests: XCTestCase {
             pause(1)
         }
 
+        tab("Settings")
+        pause(1)
+        snap("09-settings")
+
+        tab("Queue")
+        pause(1)
+        snap("10-queue-playing")
+
+        // Last, because its keyboard covers the tab bar.
         tab("Search")
         // The search tab's field lives in the tab bar and arrives after the
         // tab does.
@@ -68,14 +77,6 @@ final class WalkTests: XCTestCase {
             pause(3)
         }
         snap("08-search")
-
-        tab("Settings")
-        pause(1)
-        snap("09-settings")
-
-        tab("Queue")
-        pause(1)
-        snap("10-queue-playing")
     }
 
     private func tab(_ name: String) {
