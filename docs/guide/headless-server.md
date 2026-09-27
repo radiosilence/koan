@@ -116,3 +116,5 @@ The page and its audio answer for the share's own tracks and nothing else, addre
 The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first user with `koan auth setup` inside the container, and `koan subsonic setup` to enable the Subsonic API.
 
 MCP over HTTP (`KOAN_MCP_BIND=0.0.0.0:8081`) carries no credential of its own, like the stdio transport: put an authenticating gateway in front of it and let nothing else reach that port.
+
+On Kubernetes, a Helm chart is published alongside each release at `oci://ghcr.io/radiosilence/charts/koan`. See [charts/koan/README.md](../../charts/koan/README.md) for install instructions and values.

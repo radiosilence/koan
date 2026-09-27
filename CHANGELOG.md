@@ -8,6 +8,10 @@
 
 ## 0.36.3
 
+### Added
+
+- **A Helm chart for the headless server**, published to `oci://ghcr.io/radiosilence/charts/koan` with each release at the app's version. What a koan server needs in a cluster is koan's own knowledge -- the Deployment, its init container, Services and NetworkPolicy -- not a copy of it kept in every deployment's own repository.
+
 ### Changed
 
 - **Releases publish the container image as `latest` and `vX.Y.Z`.** The image was built by a workflow of its own and only ever tagged with the commit and `main`, so a release had no image of its version and `ghcr.io/radiosilence/koan` without a tag resolved to nothing. It is now a job in CI/CD, which knows when a commit is a release. Pull requests build the image only when the `Dockerfile` or `.dockerignore` changes; the Rust jobs already cover the code it compiles.

@@ -92,6 +92,8 @@ Development builds are signed with a self-signed certificate — `just macos-sig
 
 Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy --workspace -- -D warnings` before any `git push`. If clippy fails, fix before pushing.
 
+`charts/koan/Chart.yaml`'s `version` and `appVersion` move with the workspace version in `Cargo.toml`; `check-version` in CI fails a build where they drift.
+
 **Zero warnings policy.** Fix all clippy/compiler/lint warnings immediately. Run fmt after every change.
 
 ## Where things live
