@@ -109,13 +109,14 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
+- **Music server** -- run headless and koan serves the library itself: a mobile-first web UI with gapless browser playback, share links (a track shares its album cued to it) that unfurl with their cover, and an OpenSubsonic API for Subsonic apps, signed in with a koan account by password, token or API key. See [Headless Server](docs/guide/headless-server.md)
 - **Playlists** -- ordered, named, reorderable; synced both ways with Navidrome, exportable as M3U8
 - **Radio mode** -- infinite play, scored from your own library: acoustic similarity over bliss-audio feature vectors (once you have run `koan scan --analyze`), genre and era matching, same-artist, and a random tail. It does not query anyone for recommendations -- [the guide says why](docs/guide/radio-mode.md#what-it-does-not-use)
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` — 59 of them — for display and file organization
 - **File organization** -- rename/reorganize your library from the macOS app or the TUI using format string patterns
 - **GraphQL API** -- full programmatic control alongside the app and TUI, or headless. Relay pagination, rich filters, mutations for everything
-- **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol
+- **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol, and a server serves it over HTTP behind an authenticating gateway, acting as the signed-in account
 - **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
 - **SQLite FTS5 search** -- full-text search across your entire library
 - **Media keys** -- macOS Control Center and Linux MPRIS (play/pause, next/prev, now playing info)

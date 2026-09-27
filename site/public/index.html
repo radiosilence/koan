@@ -180,6 +180,18 @@ koan</code></pre>
       </figure>
     </div>
 
+    <section id="server" class="wrap">
+      <h2>As a server</h2>
+      <p>Run kōan on the machine that holds the music (<code>koan --headless</code>, or a container) and it serves the library to everything else. It stands in for Navidrome rather than needing it.</p>
+      <ul>
+        <li><strong>Web UI.</strong> Albums, artists, search and a queue, laid out for a phone as well as a desktop. Sorting and filters live in the URL. Playback is gapless, in the browser.</li>
+        <li><strong>Share links.</strong> Sharing a track shares its album, cued to that track. An album shares the album, and an artist their albums. The page plays without an account, and a pasted link unfurls with its cover.</li>
+        <li><strong>OpenSubsonic API.</strong> Subsonic apps such as Play:Sub, and kōan's own app and terminal UI on other machines, connect with a kōan account: by password, by token auth or with an API key.</li>
+        <li><strong>Accounts.</strong> Admin, user and read-only roles, and API keys that can be revoked from the web UI.</li>
+        <li><strong>MCP.</strong> Over HTTP, behind a gateway that signs people in, so an assistant can browse the library and drive playback as that person.</li>
+      </ul>
+    </section>
+
     <section id="docs" class="wrap">
       <h2>Documentation</h2>
       <ul class="links">

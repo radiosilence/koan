@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The README and koan.rocks describe koan as a server: web UI, share links, OpenSubsonic, accounts and API keys, MCP over HTTP.
+
 ## 0.36.0
 
 ### Added
