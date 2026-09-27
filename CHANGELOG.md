@@ -2,8 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- **Web UI.** A server serves a small browser UI at `/`: sign in, browse albums (newest first), artists and search, and play in the browser. Tracks the browser can decode are decoded ahead and started on the sample the last one ends, the same engine as the share page, now one file both load. The queue lives in the browser and survives a reload; the transport has lock-screen controls through the Media Session API. Server-rendered HTML with Datastar for search, paging and the share button; navigation swaps only the page content, so playback continues across pages. Sign-in is koan's own session in `HttpOnly` cookies: a lapsed access cookie is renewed from the refresh cookie (`/auth/resume` for page loads, `/auth/renew` for an open page), so no token reaches page script.
+
 ### Fixed
 
+- **Browser sign-in set only one cookie.** `/auth/login`, `/auth/refresh` and `/auth/logout` sent their cookies as a header array, which keeps only the last value per name, so browsers received the stale-path clear and never the access or refresh cookie.
 - **The share page plays on iPhone.** iOS starts audio only inside the tap itself; the player created its audio context there but resumed it after fetching and decoding the first track, which iOS no longer counts as the tap, so nothing played. The context and the streaming element are now unlocked in the gesture, and the page declares itself a media player (`navigator.audioSession`), so the ring/silent switch no longer mutes Web Audio.
 
 ## Unreleased

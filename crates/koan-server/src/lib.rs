@@ -8,6 +8,7 @@ pub mod graphql;
 pub mod mcp;
 pub mod share;
 pub mod subsonic;
+pub mod ui;
 
 // Re-exports for downstream convenience.
 pub use auth::AuthUser;

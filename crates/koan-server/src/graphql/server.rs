@@ -252,6 +252,11 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
             ))
             .with_state(schema);
 
+        // The web UI checks its own session (a page load without one is sent
+        // to sign in rather than refused), so it sits outside the GraphQL auth
+        // layer. Built before the auth routes take their state.
+        let ui_routes = crate::ui::router(db_path.clone(), auth_route_state.clone(), auth_enabled);
+
         // Auth routes — always accessible (no auth middleware).
         let auth_app = auth_router(auth_route_state);
 
@@ -291,7 +296,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
 
-        let mut app = auth_app.merge(gql_app).merge(share_routes);
+        let mut app = auth_app.merge(gql_app).merge(share_routes).merge(ui_routes);
         if let Some(sub) = subsonic_merged {
             app = app.merge(sub);
         }
