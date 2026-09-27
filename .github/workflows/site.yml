@@ -26,9 +26,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # A placeholder left in the pages would be published as-is.
+      # A placeholder left in the pages would be published as-is. Text files only: an image's bytes can match.
       - name: No placeholders
-        run: "! grep -rn '__[A-Z]*__' site/public"
+        run: "! grep -rnI '__[A-Z]*__' site/public"
 
       # The stylesheet is compiled rather than committed, and the image serves public/ as it is, so it has to exist
       # before the build. The Tailwind CLI comes from site/mise.toml.
