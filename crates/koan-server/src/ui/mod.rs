@@ -12,6 +12,7 @@
 //! `/auth/resume`, which spends the refresh cookie (scoped to `/auth`, so only
 //! that route sees it) for fresh cookies, or on to the sign-in form.
 
+mod browse;
 mod pages;
 mod session;
 #[cfg(test)]
@@ -52,6 +53,8 @@ const DATASTAR_JS: &str = include_str!("../../assets/datastar.js");
 pub struct UiState {
     pool: Arc<Pool>,
     covers: Arc<Covers>,
+    /// The codecs and genres the filters offer, with when they were read.
+    options: Arc<std::sync::Mutex<Option<(std::time::Instant, pages::Options)>>>,
     auth: AuthRouteState,
     auth_enabled: bool,
 }
@@ -65,6 +68,7 @@ pub fn router(
     let state = UiState {
         pool: Arc::new(Pool::new(db_path)),
         covers,
+        options: Arc::default(),
         auth,
         auth_enabled,
     };

@@ -2,6 +2,7 @@
 // player keeps playing, the transport and queue, and keeping the session alive.
 (() => {
   const main = document.getElementById("content");
+  document.documentElement.classList.add("js");
   const all = (sel, root = document) => [...root.querySelectorAll(sel)];
   const fmt = (s) => {
     s = Math.max(0, Math.floor(s || 0));
@@ -204,7 +205,10 @@
   document.addEventListener("focusin", (e) => { if (e.target.id === "share-url") e.target.select(); });
   // A cover that is not there leaves an empty tile rather than a broken image.
   document.addEventListener("error", (e) => {
-    if (e.target.tagName === "IMG") e.target.classList.add("missing");
+    if (e.target.tagName !== "IMG") return;
+    e.target.classList.add("missing");
+    // With no source the image draws as its own empty box, not a broken icon.
+    e.target.removeAttribute("src");
   }, true);
 
   // --- Navigation ------------------------------------------------------------
@@ -241,9 +245,38 @@
       else a.removeAttribute("aria-current");
     }
     const focus = main.querySelector("[autofocus]");
-    if (focus && matchMedia("(hover: hover)").matches) focus.focus();
+    if (focus) focus.focus();
+    // The sort and filter row stands open on a wide screen; on a phone it is
+    // one button that opens as a sheet.
+    for (const d of all("details.browse", main)) d.open = wide.matches;
     render(player.state());
   }
+
+  // --- Sort and filter ---------------------------------------------------------
+  // The toolbar is a GET form; its state is the URL. On a wide screen a change
+  // applies at once, on a phone the sheet's Apply does.
+  const wide = matchMedia("(min-width: 721px)");
+  function formUrl(form) {
+    const params = new URLSearchParams();
+    for (const [k, v] of new FormData(form)) if (String(v).trim()) params.append(k, v);
+    const q = params.toString();
+    return form.getAttribute("action") + (q ? `?${q}` : "");
+  }
+  document.addEventListener("change", (e) => {
+    const form = e.target.closest && e.target.closest("form.toolbar");
+    if (form && wide.matches) navigate(formUrl(form), true);
+  });
+  document.addEventListener("submit", (e) => {
+    if (!e.target.matches("form.toolbar")) return;
+    e.preventDefault();
+    navigate(formUrl(e.target), true);
+  });
+  // The search view's query lives in the URL too, so reload and back find it.
+  document.addEventListener("input", (e) => {
+    if (!e.target.matches(".search input[name=q]")) return;
+    const q = e.target.value.trim();
+    history.replaceState(null, "", q ? `/search?q=${encodeURIComponent(q)}` : "/search");
+  });
 
   document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;

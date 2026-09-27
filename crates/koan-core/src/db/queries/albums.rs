@@ -115,6 +115,66 @@ impl AlbumOrder {
     }
 }
 
+/// Codecs that lose nothing, as the indexer names them.
+pub const LOSSLESS_CODECS: [&str; 5] = ["FLAC", "ALAC", "WAV", "AIFF", "PCM"];
+
+/// Narrowing by what the records are, shared by the album and artist listings:
+/// an artist passes when any of their albums does.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AlbumFilter<'a> {
+    /// Only records in a codec from `LOSSLESS_CODECS`.
+    pub lossless: bool,
+    /// Only records in this codec, matched as the indexer names it.
+    pub codec: Option<&'a str>,
+    /// Release year bounds, inclusive. Records without a date are left out
+    /// when either is set.
+    pub year_from: Option<i32>,
+    pub year_to: Option<i32>,
+    /// Records with at least one track tagged with this genre.
+    pub genre: Option<&'a str>,
+}
+
+impl AlbumFilter<'_> {
+    /// Conditions on the album aliased `al`.
+    pub(crate) fn push(
+        &self,
+        wheres: &mut Vec<String>,
+        params: &mut Vec<Box<dyn rusqlite::ToSql>>,
+    ) {
+        if self.lossless {
+            wheres.push(format!(
+                "al.codec IN ({})",
+                vec!["?"; LOSSLESS_CODECS.len()].join(",")
+            ));
+            params.extend(
+                LOSSLESS_CODECS
+                    .iter()
+                    .map(|c| Box::new(*c) as Box<dyn rusqlite::ToSql>),
+            );
+        }
+        if let Some(codec) = self.codec {
+            wheres.push("al.codec = ? COLLATE NOCASE".into());
+            params.push(Box::new(codec.to_owned()));
+        }
+        let year = "CAST(substr(al.date, 1, 4) AS INTEGER)";
+        if let Some(from) = self.year_from {
+            wheres.push(format!("{year} >= ?"));
+            params.push(Box::new(from));
+        }
+        if let Some(to) = self.year_to {
+            wheres.push(format!("al.date IS NOT NULL AND {year} <= ?"));
+            params.push(Box::new(to));
+        }
+        if let Some(genre) = self.genre {
+            wheres.push(
+                "EXISTS (SELECT 1 FROM tracks g WHERE g.album_id = al.id AND g.genre = ? COLLATE NOCASE)"
+                    .into(),
+            );
+            params.push(Box::new(genre.to_owned()));
+        }
+    }
+}
+
 /// What to list. Everything optional, so one query answers the browser, the
 /// search field, an artist's discography and the favourites page.
 #[derive(Debug, Clone, Copy, Default)]
@@ -125,6 +185,7 @@ pub struct AlbumQuery<'a> {
     pub order: AlbumOrder,
     /// Favourited records only.
     pub favourites_only: bool,
+    pub filter: AlbumFilter<'a>,
     /// `None` for the whole listing. A client that scrolls should page.
     pub limit: Option<u32>,
     pub offset: u32,
@@ -154,10 +215,10 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
     }
 
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
-    let mut wheres: Vec<&str> = Vec::new();
+    let mut wheres: Vec<String> = Vec::new();
     if let Some(id) = q.artist_id {
         params.push(Box::new(id));
-        wheres.push("al.artist_id = ?");
+        wheres.push("al.artist_id = ?".into());
     }
     if let Some(query) = q.search {
         let pattern = format!("%{}%", super::artists::escape_like(query));
@@ -167,9 +228,11 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
         params.push(Box::new(pattern));
         wheres.push(
             "(al.title LIKE ? COLLATE NOCASE ESCAPE '\\'
-              OR a.name LIKE ? COLLATE NOCASE ESCAPE '\\')",
+              OR a.name LIKE ? COLLATE NOCASE ESCAPE '\\')"
+                .into(),
         );
     }
+    q.filter.push(&mut wheres, &mut params);
     if !wheres.is_empty() {
         sql.push_str(" WHERE ");
         sql.push_str(&wheres.join(" AND "));
@@ -192,6 +255,30 @@ pub fn list_albums(conn: &Connection, q: &AlbumQuery) -> Result<Vec<AlbumRow>, D
         .query_map(rusqlite::params_from_iter(params.iter()), album_row)?
         .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+/// Genres by how many records carry them, most first: what a genre filter
+/// offers. Blank tags are left out.
+pub fn genres(conn: &Connection, limit: u32) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT genre FROM tracks
+         WHERE genre IS NOT NULL AND TRIM(genre) != '' AND album_id IS NOT NULL
+         GROUP BY genre COLLATE NOCASE
+         ORDER BY COUNT(DISTINCT album_id) DESC, genre COLLATE NOCASE
+         LIMIT ?1",
+    )?;
+    let rows = stmt.query_map([limit], |r| r.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+/// The codecs records are in, most common first.
+pub fn album_codecs(conn: &Connection) -> Result<Vec<String>, DbError> {
+    let mut stmt = conn.prepare(
+        "SELECT codec FROM albums WHERE codec IS NOT NULL AND codec != ''
+         GROUP BY codec ORDER BY COUNT(*) DESC, codec",
+    )?;
+    let rows = stmt.query_map([], |r| r.get(0))?;
+    Ok(rows.collect::<Result<_, _>>()?)
 }
 
 /// Get albums for a specific artist, ordered chronologically.
@@ -291,6 +378,108 @@ mod tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    /// Three records by two artists: a FLAC techno one from 1995, an MP3 rock
+    /// one from 2005 and an ALAC techno one from 2010.
+    fn filter_library() -> Database {
+        let db = test_db();
+        for (title, artist, album, codec, date, genre) in [
+            ("A", "Rrose", "Early", "FLAC", "1995", "Techno"),
+            ("B", "Band", "Middle", "MP3", "2005", "Rock"),
+            ("C", "Rrose", "Late", "ALAC", "2010-03-01", "techno"),
+        ] {
+            let mut meta = crate::db::queries::sample_meta(title, artist, album);
+            meta.codec = Some(codec.into());
+            meta.date = Some(date.into());
+            meta.genre = Some(genre.into());
+            crate::db::queries::upsert_track(&db.conn, &meta).unwrap();
+        }
+        db
+    }
+
+    fn titles(db: &Database, filter: AlbumFilter) -> Vec<String> {
+        list_albums(
+            &db.conn,
+            &AlbumQuery {
+                filter,
+                order: AlbumOrder::Date,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .map(|a| a.title)
+        .collect()
+    }
+
+    #[test]
+    fn albums_filter_by_codec_year_and_genre_in_sql() {
+        let db = filter_library();
+        let lossless = AlbumFilter {
+            lossless: true,
+            ..Default::default()
+        };
+        assert_eq!(titles(&db, lossless), ["Early", "Late"]);
+        let mp3 = AlbumFilter {
+            codec: Some("mp3"),
+            ..Default::default()
+        };
+        assert_eq!(titles(&db, mp3), ["Middle"]);
+        let years = AlbumFilter {
+            year_from: Some(2000),
+            year_to: Some(2010),
+            ..Default::default()
+        };
+        assert_eq!(titles(&db, years), ["Middle", "Late"]);
+        let techno = AlbumFilter {
+            genre: Some("TECHNO"),
+            ..Default::default()
+        };
+        assert_eq!(titles(&db, techno), ["Early", "Late"]);
+        let all = AlbumFilter {
+            lossless: true,
+            year_from: Some(2000),
+            genre: Some("techno"),
+            ..Default::default()
+        };
+        assert_eq!(titles(&db, all), ["Late"]);
+        assert_eq!(
+            genres(&db.conn, 10).unwrap().len(),
+            2,
+            "techno counted once"
+        );
+        assert_eq!(album_codecs(&db.conn).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn artists_sort_and_count_what_the_filter_leaves() {
+        use crate::db::queries::{ArtistOrder, ArtistQuery, list_artists};
+        let db = filter_library();
+        let names = |q: ArtistQuery| {
+            list_artists(&db.conn, &q)
+                .unwrap()
+                .into_iter()
+                .map(|a| (a.name, a.album_count))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(ArtistQuery {
+                order: ArtistOrder::AlbumCount,
+                ..Default::default()
+            }),
+            [("Rrose".to_string(), 2), ("Band".to_string(), 1)]
+        );
+        assert_eq!(
+            names(ArtistQuery {
+                filter: AlbumFilter {
+                    year_from: Some(2000),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }),
+            [("Band".to_string(), 1), ("Rrose".to_string(), 1)]
+        );
     }
 
     #[test]

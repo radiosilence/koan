@@ -44,6 +44,32 @@ pub fn get_or_create_artist(
     Ok(conn.last_insert_rowid())
 }
 
+/// How to order the artist listing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ArtistOrder {
+    /// By sort name, falling back to the name.
+    #[default]
+    Name,
+    /// Most albums first.
+    AlbumCount,
+    /// The artist whose newest album arrived most recently first.
+    RecentlyAdded,
+}
+
+impl ArtistOrder {
+    fn clause(self) -> &'static str {
+        match self {
+            Self::Name => "COALESCE(a.sort_name, a.name) COLLATE LIBRARY",
+            Self::AlbumCount => {
+                "COUNT(DISTINCT al.id) DESC, COALESCE(a.sort_name, a.name) COLLATE LIBRARY"
+            }
+            Self::RecentlyAdded => {
+                "COALESCE(MAX(al.added_at), '') DESC, COALESCE(a.sort_name, a.name) COLLATE LIBRARY"
+            }
+        }
+    }
+}
+
 /// What to list. Artists are always album artists — a track-only credit (a
 /// featured guest) appears inline in the queue, not as a shelf of its own.
 #[derive(Debug, Clone, Copy, Default)]
@@ -52,13 +78,17 @@ pub struct ArtistQuery<'a> {
     pub search: Option<&'a str>,
     /// Favourited artists only.
     pub favourites_only: bool,
+    /// Albums that count; an artist with none left is not listed, and the
+    /// counts are of what is left.
+    pub filter: super::albums::AlbumFilter<'a>,
+    pub order: ArtistOrder,
     /// `None` for the whole listing. A client that scrolls should page.
     pub limit: Option<u32>,
     pub offset: u32,
 }
 
-/// Artists with their album and track counts, narrowed and paged by the
-/// database. Ordered by sort name, falling back to the name.
+/// Artists with their album and track counts, narrowed, ordered and paged by
+/// the database.
 pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>, DbError> {
     let mut sql = String::from(
         "SELECT a.id, a.name, a.sort_name, a.remote_id,
@@ -72,11 +102,18 @@ pub fn list_artists(conn: &Connection, q: &ArtistQuery) -> Result<Vec<ArtistRow>
     }
 
     let mut params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+    let mut wheres: Vec<String> = Vec::new();
     if let Some(query) = q.search {
         params.push(Box::new(format!("%{}%", escape_like(query))));
-        sql.push_str(" WHERE a.name LIKE ? COLLATE NOCASE ESCAPE '\\'");
+        wheres.push("a.name LIKE ? COLLATE NOCASE ESCAPE '\\'".into());
     }
-    sql.push_str(" GROUP BY a.id ORDER BY COALESCE(a.sort_name, a.name) COLLATE LIBRARY");
+    q.filter.push(&mut wheres, &mut params);
+    if !wheres.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(&wheres.join(" AND "));
+    }
+    sql.push_str(" GROUP BY a.id ORDER BY ");
+    sql.push_str(q.order.clause());
     if let Some(limit) = q.limit {
         params.push(Box::new(limit as i64));
         params.push(Box::new(q.offset as i64));

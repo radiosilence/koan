@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use axum::Extension;
 use axum::extract::{Path, Query, State};
@@ -15,12 +16,14 @@ use koan_core::auth::Role;
 use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, ArtistQuery, TrackRow};
 use koan_core::helpers::ShareTarget;
 
+use super::browse::{self, Browse};
 use super::{PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
 
 const ALBUMS_PAGE: u32 = 60;
 const ARTISTS_PAGE: u32 = 100;
+const GENRES_OFFERED: u32 = 80;
 
 const ICON_PREV: &str =
     "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M6 5h2v14H6zM20 5v14L9 12z\"/></svg>";
@@ -190,14 +193,39 @@ src=\"{src}\" alt=\"\">\
     })
 }
 
-fn more(path: &str, offset: Option<u32>) -> String {
-    match offset {
-        Some(offset) => format!(
+/// The "Load more" button, fetching `next` (a path with its query), or an
+/// empty placeholder at the end of the listing.
+fn more(next: Option<String>) -> String {
+    match next {
+        Some(next) => format!(
             "<div id=more class=more><button data-indicator:_more data-attr:disabled=\"$_more\" \
-data-class:busy=\"$_more\" data-on:click=\"@get('{path}?offset={offset}')\">Load more</button></div>"
+data-class:busy=\"$_more\" data-on:click=\"@get('{next}')\">Load more</button></div>"
         ),
         None => "<div id=more class=more></div>".into(),
     }
+}
+
+/// The codecs and genres the filters offer.
+pub(super) type Options = Arc<(Vec<String>, Vec<String>)>;
+
+/// How long the filter options are reused. Counting genres reads every track,
+/// and a library changes far more slowly than people page through it.
+const OPTIONS_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn filter_options(s: &UiState) -> Option<Options> {
+    let mut held = s.options.lock().ok()?;
+    if let Some((at, options)) = held.as_ref()
+        && at.elapsed() < OPTIONS_TTL
+    {
+        return Some(options.clone());
+    }
+    let db = open(&s.pool)?;
+    let options = Arc::new((
+        queries::album_codecs(&db.conn).unwrap_or_default(),
+        queries::genres(&db.conn, GENRES_OFFERED).unwrap_or_default(),
+    ));
+    *held = Some((std::time::Instant::now(), options.clone()));
+    Some(options)
 }
 
 /// A track row. `album` is set where the row stands alone (search) and names
@@ -263,54 +291,48 @@ data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><sp
     )
 }
 
-/// One page of albums, newest first, and the offset of the next if there is one.
-fn album_page(s: &UiState, offset: u32) -> Option<(Vec<AlbumRow>, Option<u32>, Versions)> {
+/// One page of albums as `b` narrows and orders them, and the URL of the next
+/// page if there is one.
+fn album_page(s: &UiState, b: &Browse) -> Option<(Vec<AlbumRow>, Option<String>, Versions)> {
     let db = open(&s.pool)?;
-    let mut albums = queries::list_albums(
-        &db.conn,
-        &AlbumQuery {
-            order: AlbumOrder::RecentlyAdded,
-            limit: Some(ALBUMS_PAGE + 1),
-            offset,
-            ..Default::default()
-        },
-    )
-    .ok()?;
-    let next = (albums.len() > ALBUMS_PAGE as usize).then_some(offset + ALBUMS_PAGE);
+    let mut albums = queries::list_albums(&db.conn, &b.albums(ALBUMS_PAGE + 1)).ok()?;
+    let next = (albums.len() > ALBUMS_PAGE as usize)
+        .then(|| format!("/albums/more?{}", b.query(b.offset + ALBUMS_PAGE)));
     albums.truncate(ALBUMS_PAGE as usize);
     let versions = album_versions(&db.conn, &albums);
     Some((albums, next, versions))
 }
 
-#[derive(serde::Deserialize, Default)]
-#[serde(default)]
-pub(super) struct Offset {
-    offset: u32,
-}
-
 pub(super) async fn albums(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
+    Query(b): Query<Browse>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
-    let Some((albums, next, versions)) = blocking(move || album_page(&st, 0)).await else {
+    let b = b.seeded();
+    let (st, bb) = (s.clone(), b.clone());
+    let found = blocking(move || Some((album_page(&st, &bb)?, filter_options(&st)?))).await;
+    let Some(((albums, next, versions), options)) = found else {
         return unavailable();
     };
-    let inner = if albums.is_empty() {
-        "<h1>Albums</h1><p class=empty>The library is empty.</p>".to_owned()
+    let grid = if albums.is_empty() {
+        "<p class=empty>No albums match.</p>".to_owned()
     } else {
         format!(
-            "<h1>Albums</h1><div class=grid id=albums>{}</div>{}",
+            "<div class=grid id=albums>{}</div>{}",
             cells(&albums, &versions),
-            more("/albums/more", next)
+            more(next)
         )
     };
+    let inner = format!(
+        "<h1>Albums</h1>{}{grid}",
+        browse::toolbar(&b, "/albums", false, &options.0, &options.1)
+    );
     respond(&s, &headers, &user, "Albums", "albums", &inner)
 }
 
-pub(super) async fn albums_more(State(s): State<UiState>, Query(q): Query<Offset>) -> Response {
-    let Some((albums, next, versions)) = blocking(move || album_page(&s, q.offset)).await else {
+pub(super) async fn albums_more(State(s): State<UiState>, Query(b): Query<Browse>) -> Response {
+    let Some((albums, next, versions)) = blocking(move || album_page(&s, &b)).await else {
         return unavailable();
     };
     let mut out = Vec::new();
@@ -320,7 +342,7 @@ pub(super) async fn albums_more(State(s): State<UiState>, Query(q): Query<Offset
             Some(("#albums", "append")),
         ));
     }
-    out.push(patch(&more("/albums/more", next), None));
+    out.push(patch(&more(next), None));
     events(out)
 }
 
@@ -479,18 +501,11 @@ fn artist_list(artists: &[queries::ArtistRow]) -> String {
     })
 }
 
-fn artist_page(s: &UiState, offset: u32) -> Option<(Vec<queries::ArtistRow>, Option<u32>)> {
+fn artist_page(s: &UiState, b: &Browse) -> Option<(Vec<queries::ArtistRow>, Option<String>)> {
     let db = open(&s.pool)?;
-    let mut artists = queries::list_artists(
-        &db.conn,
-        &ArtistQuery {
-            limit: Some(ARTISTS_PAGE + 1),
-            offset,
-            ..Default::default()
-        },
-    )
-    .ok()?;
-    let next = (artists.len() > ARTISTS_PAGE as usize).then_some(offset + ARTISTS_PAGE);
+    let mut artists = queries::list_artists(&db.conn, &b.artists(ARTISTS_PAGE + 1)).ok()?;
+    let next = (artists.len() > ARTISTS_PAGE as usize)
+        .then(|| format!("/artists/more?{}", b.query(b.offset + ARTISTS_PAGE)));
     artists.truncate(ARTISTS_PAGE as usize);
     Some((artists, next))
 }
@@ -498,29 +513,39 @@ fn artist_page(s: &UiState, offset: u32) -> Option<(Vec<queries::ArtistRow>, Opt
 pub(super) async fn artists(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
+    Query(b): Query<Browse>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
-    let Some((artists, next)) = blocking(move || artist_page(&st, 0)).await else {
+    let (st, bb) = (s.clone(), b.clone());
+    let found = blocking(move || Some((artist_page(&st, &bb)?, filter_options(&st)?))).await;
+    let Some(((artists, next), options)) = found else {
         return unavailable();
     };
+    let list = if artists.is_empty() {
+        "<p class=empty>No artists match.</p>".to_owned()
+    } else {
+        format!(
+            "<ul class=list id=artists>{}</ul>{}",
+            artist_list(&artists),
+            more(next)
+        )
+    };
     let inner = format!(
-        "<h1>Artists</h1><ul class=list id=artists>{}</ul>{}",
-        artist_list(&artists),
-        more("/artists/more", next)
+        "<h1>Artists</h1>{}{list}",
+        browse::toolbar(&b, "/artists", true, &options.0, &options.1)
     );
     respond(&s, &headers, &user, "Artists", "artists", &inner)
 }
 
-pub(super) async fn artists_more(State(s): State<UiState>, Query(q): Query<Offset>) -> Response {
-    let Some((artists, next)) = blocking(move || artist_page(&s, q.offset)).await else {
+pub(super) async fn artists_more(State(s): State<UiState>, Query(b): Query<Browse>) -> Response {
+    let Some((artists, next)) = blocking(move || artist_page(&s, &b)).await else {
         return unavailable();
     };
     let mut out = Vec::new();
     if !artists.is_empty() {
         out.push(patch(&artist_list(&artists), Some(("#artists", "append"))));
     }
-    out.push(patch(&more("/artists/more", next), None));
+    out.push(patch(&more(next), None));
     events(out)
 }
 

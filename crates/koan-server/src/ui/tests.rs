@@ -502,6 +502,53 @@ async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered() {
 }
 
 #[tokio::test]
+async fn sorting_and_filtering_live_in_the_query_string() {
+    let f = setup(true);
+    let page = |uri: &str| {
+        let req = authed(&f.state, uri).body(Body::empty()).unwrap();
+        let app = f.app.clone();
+        async move { send(&app, req).await }
+    };
+    let r = page("/albums?sort=title&lossless=1&genre=").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Hymn &lt;to&gt; Moisture"),
+        "FLAC is lossless"
+    );
+    assert!(r.body.contains("<option value=\"title\" selected>"));
+    assert!(r.body.contains("name=lossless value=1 checked"));
+    assert!(r.body.contains("<span class=badge>1</span>"));
+
+    let r = page("/albums?codec=MP3").await;
+    assert!(r.body.contains("No albums match."));
+    let r = page("/albums?from=2020").await;
+    assert!(r.body.contains("No albums match."), "released 2019");
+    let r = page("/albums?from=2015&to=2019").await;
+    assert!(r.body.contains("Hymn &lt;to&gt; Moisture"));
+
+    // A value from a link, not among those offered, is still shown and kept.
+    let r = page("/albums?genre=%22%3E%3Cscript%3E").await;
+    assert!(
+        r.body
+            .contains("<option value=\"&quot;&gt;&lt;script&gt;\" selected>")
+    );
+    assert!(!r.body.contains("\"><script>"));
+
+    for uri in [
+        "/artists?sort=albums&fav=1",
+        "/artists?sort=recent&lossless=1",
+        "/albums?sort=random",
+    ] {
+        assert_eq!(page(uri).await.status, StatusCode::OK, "{uri}");
+    }
+    let r = page("/albums?sort=random").await;
+    assert!(
+        r.body.contains("<input type=hidden name=seed value="),
+        "the shuffle is pinned"
+    );
+}
+
+#[tokio::test]
 async fn with_auth_off_everything_is_open() {
     let f = setup(false);
     let r = send(&f.app, get("/albums").body(Body::empty()).unwrap()).await;
