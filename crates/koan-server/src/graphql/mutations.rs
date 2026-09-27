@@ -11,7 +11,7 @@ use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedP
 use koan_core::auth::Role;
 
 use super::helpers::{spawn_downloads, sync_favourite_to_remote};
-use super::jobs::{JobRegistry, JobState};
+use super::jobs::{JobHandle, JobRegistry, JobState};
 use super::types::*;
 use super::{DbHandle, parse_queue_item_id, require_role, send_cmd, send_cmd_via, with_db};
 use koan_core::helpers::track_to_playlist_item;
@@ -732,7 +732,7 @@ impl MutationRoot {
     /// audio stream on the same process.
     async fn trigger_scan(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;
-        spawn_job(ctx, "scan", |db| {
+        spawn_job(ctx, "scan", |db, _| {
             let cfg = Config::load().unwrap_or_default();
             let result = koan_core::index::scanner::full_scan(
                 &db,
@@ -750,7 +750,7 @@ impl MutationRoot {
     /// Start a remote library sync and return immediately.
     async fn trigger_remote_sync(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlJob> {
         require_role(ctx, Role::Admin)?;
-        spawn_job(ctx, "remoteSync", |db| {
+        spawn_job(ctx, "remoteSync", |db, job| {
             let cfg = Config::load().unwrap_or_default();
             let client = koan_core::helpers::subsonic_client(&cfg)
                 .ok_or_else(|| "remote not configured".to_string())?;
@@ -760,6 +760,7 @@ impl MutationRoot {
                 false,
                 &cfg.remote.url,
                 &cfg.remote.username,
+                &|p| job.progress(p.done, p.total, describe_sync(p)),
             )
             .map_err(|e| e.to_string())?;
             if synced.library.is_complete() {
@@ -911,9 +912,23 @@ async fn set_favourite(
 /// Run `work` on a detached thread with its own connection, returning a job
 /// handle. A job of the same kind already running is returned as-is rather than
 /// started twice.
+/// What a running sync job says it is doing.
+fn describe_sync(p: koan_core::remote::sync::SyncProgress) -> String {
+    use koan_core::remote::sync::SyncPhase;
+    match (p.phase, p.total) {
+        (SyncPhase::Albums, _) => format!("listing albums: {}", p.done),
+        (SyncPhase::Tracks, Some(total)) => format!("tracks: {} of {}", p.done, total),
+        (SyncPhase::Tracks, None) => format!("tracks: {}", p.done),
+        (SyncPhase::Artists, _) => "recording artists".into(),
+        (SyncPhase::Finishing, _) => "finishing".into(),
+    }
+}
+
 fn spawn_job<F>(ctx: &Context<'_>, kind: &'static str, work: F) -> async_graphql::Result<GqlJob>
 where
-    F: FnOnce(koan_core::db::connection::Database) -> Result<String, String> + Send + 'static,
+    F: FnOnce(koan_core::db::connection::Database, JobHandle) -> Result<String, String>
+        + Send
+        + 'static,
 {
     let registry = ctx.data::<JobRegistry>()?.clone();
     let handle = ctx.data::<DbHandle>()?.clone();
@@ -925,13 +940,14 @@ where
 
     let id = job.id.clone();
     let finisher = registry.clone();
+    let reporter = registry.handle(&id);
     let spawned = std::thread::Builder::new()
         .name(format!("koan-job-{}", kind))
         .spawn(move || {
             // Deliberately outside the pool: this connection is held for
             // minutes and must not deny one to request-path resolvers.
             let outcome = match handle.open_detached() {
-                Ok(db) => work(db),
+                Ok(db) => work(db, reporter),
                 Err(e) => Err(e.to_string()),
             };
             match outcome {

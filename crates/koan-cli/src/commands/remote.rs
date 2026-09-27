@@ -1,4 +1,7 @@
+use std::io::Write as _;
+
 use koan_core::config;
+use koan_core::remote::sync::{SyncPhase, SyncProgress};
 use owo_colors::OwoColorize;
 
 use super::open_db;
@@ -46,6 +49,7 @@ pub fn cmd_remote_sync(full: bool) {
         full,
         &cfg.remote.url,
         &cfg.remote.username,
+        &draw_progress,
     ) {
         Ok(synced) => synced,
         Err(e) => {
@@ -54,6 +58,7 @@ pub fn cmd_remote_sync(full: bool) {
         }
     };
 
+    eprint!("\r\x1b[K");
     let library = &synced.library;
     let elapsed = start.elapsed();
     let headline = if library.is_complete() {
@@ -90,6 +95,27 @@ pub fn cmd_remote_sync(full: bool) {
         synced.playlists.pulled.to_string().bold(),
         synced.playlists.pushed.to_string().bold(),
     );
+}
+
+/// One line on stderr, redrawn in place.
+fn draw_progress(p: SyncProgress) {
+    let phase = match p.phase {
+        SyncPhase::Albums => "listing albums",
+        SyncPhase::Tracks => "tracks",
+        SyncPhase::Artists => "artists",
+        SyncPhase::Finishing => "finishing",
+    };
+    let count = match (p.phase, p.total) {
+        (SyncPhase::Finishing, _) => String::new(),
+        (SyncPhase::Artists, Some(total)) => total.to_string(),
+        (_, Some(total)) if total > 0 => {
+            let pct = (p.done as f64 / total as f64 * 100.0).min(100.0);
+            format!("{} of {} ({pct:.0}%)", p.done, total)
+        }
+        _ => p.done.to_string(),
+    };
+    eprint!("\r  {} {}\x1b[K", phase.cyan(), count.bold());
+    std::io::stderr().flush().ok();
 }
 
 pub fn cmd_remote_status() {

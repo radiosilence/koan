@@ -126,7 +126,7 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 | `format/` | fb2k-compatible template engine: parser (recursive descent), evaluator, 59 built-in functions |
 | `remote/client.rs` | Subsonic/Navidrome HTTP client (reqwest blocking, MD5+salt auth) |
 | `remote/download.rs` | Streaming downloads: `.part` → verify → atomic rename, progress, retries. All disk-bound remote bytes go through here |
-| `remote/sync.rs` | Parallel library sync: paginate → rayon fetch → batch DB write |
+| `remote/sync.rs` | Library sync: album list, then songs paged in bulk via empty-query `search3` (per-album `getAlbum` for incremental syncs and servers that cannot), one transaction per page, progress per page |
 | `remote/wikimedia.rs` | Wikidata items, Wikipedia lead sections and Commons images — where artist bios and photos come from |
 | `remote/queue.rs` | The download queue: worker pool, a priority lane for the track under the cursor, cursor-aware reordering |
 | `remote/downloads.rs` | The download store — what koan is fetching and what it just fetched. One place every front end reads, rather than each deriving its own |

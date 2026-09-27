@@ -179,9 +179,9 @@ final class SettingsModel {
             let result = await activity.runReporting(
                 full ? "Full sync with server" : "Syncing with server",
                 uses: [.remoteTracks],
-                cancellable: false
-            ) { progress in
-                try await engine.syncRemoteReporting(full: full, reporter: progress)
+                followsSync: true
+            ) {
+                try await engine.syncRemote(full: full)
             }
             switch result {
             case .success(let s):

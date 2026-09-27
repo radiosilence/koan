@@ -1251,8 +1251,11 @@ struct Search3Params {
     auth: SubsonicParams,
     query: Option<String>,
     artist_count: Option<u32>,
+    artist_offset: Option<u32>,
     album_count: Option<u32>,
+    album_offset: Option<u32>,
     song_count: Option<u32>,
+    song_offset: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1636,6 +1639,17 @@ fn structured_lyrics(track: &queries::TrackRow, content: &str, synced: bool) -> 
 // Endpoints — search
 // ===========================================================================
 
+/// The most `search3` returns of any one kind per request. Large enough that a
+/// client walking the whole library needs few pages, small enough that one
+/// response stays a few megabytes.
+const SEARCH_PAGE_MAX: u32 = 1000;
+
+/// Whether a `search3` query asks for everything. OpenSubsonic clients send an
+/// empty query, and some send a pair of quotes, to list the whole library.
+fn lists_everything(query: &str) -> bool {
+    matches!(query.trim(), "" | "\"\"")
+}
+
 async fn search3(
     State(state): State<Arc<AppState>>,
     Query(params): Query<Search3Params>,
@@ -1647,17 +1661,109 @@ async fn search3(
                 .as_deref()
                 .ok_or_else(|| SubsonicError::missing_param("query"))?;
 
-            let artist_count = params.artist_count.unwrap_or(20);
-            let album_count = params.album_count.unwrap_or(20);
-            let song_count = params.song_count.unwrap_or(20);
+        let artist_count = params.artist_count.unwrap_or(20).min(SEARCH_PAGE_MAX);
+        let album_count = params.album_count.unwrap_or(20).min(SEARCH_PAGE_MAX);
+        let song_count = params.song_count.unwrap_or(20).min(SEARCH_PAGE_MAX);
+        let artist_offset = params.artist_offset.unwrap_or(0);
+        let album_offset = params.album_offset.unwrap_or(0);
+        let song_offset = params.song_offset.unwrap_or(0);
+        let internal =
+            |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
 
-            let total_needed = (artist_count + album_count + song_count).max(100);
-            let tracks = queries::search_tracks_paged(&db.conn, query, total_needed, 0)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-
-            let artist_ids: Vec<(i64, &str)> = {
+        let (artists, albums, songs): (
+            Vec<(i64, String)>,
+            Vec<queries::AlbumRow>,
+            Vec<queries::TrackRow>,
+        ) = if lists_everything(query) {
+            // Every kind in id order, straight off the primary keys, so an
+            // offset walk is exact: nothing added mid-walk can shift a page
+            // that has already been read.
+            let artists = if artist_count == 0 {
+                Vec::new()
+            } else {
+                queries::list_artists(
+                    &db.conn,
+                    &queries::ArtistQuery {
+                        order: queries::ArtistOrder::Id,
+                        limit: Some(artist_count),
+                        offset: artist_offset,
+                        ..Default::default()
+                    },
+                )
+                .map_err(internal)?
+                .into_iter()
+                .map(|a| (a.id, a.name))
+                .collect()
+            };
+            let albums = if album_count == 0 {
+                Vec::new()
+            } else {
+                queries::list_albums(
+                    &db.conn,
+                    &queries::AlbumQuery {
+                        order: queries::AlbumOrder::Id,
+                        limit: Some(album_count),
+                        offset: album_offset,
+                        ..Default::default()
+                    },
+                )
+                .map_err(internal)?
+            };
+            let songs = if song_count == 0 {
+                Vec::new()
+            } else {
+                queries::tracks_page(&db.conn, song_count, song_offset).map_err(internal)?
+            };
+            (artists, albums, songs)
+        } else {
+            let songs = if song_count == 0 {
+                Vec::new()
+            } else {
+                queries::search_tracks_paged(&db.conn, query, song_count, song_offset)
+                    .map_err(internal)?
+            };
+            // Artists and albums are the distinct ones among the matching
+            // tracks, read from enough of them to cover the page asked for.
+            let reach = (artist_offset + artist_count)
+                .max(album_offset + album_count)
+                .saturating_mul(5)
+                .clamp(100, 5 * SEARCH_PAGE_MAX);
+            let pool = if artist_count == 0 && album_count == 0 {
+                Vec::new()
+            } else {
+                queries::search_tracks_paged(&db.conn, query, reach, 0).map_err(internal)?
+            };
+            let artists = {
                 let mut seen = std::collections::HashSet::new();
-                tracks
+                pool.iter()
+                    .filter_map(|t| Some((t.artist_id?, t.artist_name.clone())))
+                    .filter(|(id, _)| seen.insert(*id))
+                    .skip(artist_offset as usize)
+                    .take(artist_count as usize)
+                    .collect()
+            };
+            let albums = {
+                let mut seen = std::collections::HashSet::new();
+                pool.iter()
+                    .filter_map(|t| t.album_id)
+                    .filter(|id| seen.insert(*id))
+                    .skip(album_offset as usize)
+                    .take(album_count as usize)
+                    .map(|id| queries::get_album(&db.conn, id))
+                    .filter_map(Result::transpose)
+                    .collect::<Result<_, _>>()
+                    .map_err(internal)?
+            };
+            (artists, albums, songs)
+        };
+
+        let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
+        let album_extras = album_extras(db, &albums)?;
+        let song_extras = song_extras(db, &songs)?;
+        let result_node = XmlNode::new("searchResult3")
+            .list(
+                "artist",
+                artists
                     .iter()
                     .filter_map(|t| Some((t.artist_id?, t.artist_name.as_str())))
                     .filter(|(id, _)| seen.insert(*id))
@@ -4003,6 +4109,129 @@ mod tests {
             get_response(app, &format!("/rest/search3?{}&query=Test", auth_query(""))).await;
         assert!(body.contains("Test Song"));
         assert!(body.contains("Test Artist"));
+    }
+
+    /// Seven tracks over three albums, for the paging tests.
+    fn seed_library(state: &AppState) -> Vec<i64> {
+        let db = Database::open(&state.db_path).unwrap();
+        (0..7)
+            .map(|i| {
+                queries::upsert_track(
+                    &db.conn,
+                    &track_meta(
+                        &format!("/music/{i}.flac"),
+                        &format!("Song {i}"),
+                        &format!("Album {}", i / 3),
+                        i % 3 + 1,
+                    ),
+                )
+                .unwrap()
+            })
+            .collect()
+    }
+
+    async fn search3_json(state: &Arc<AppState>, params: &str) -> serde_json::Value {
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/search3?{}&{params}", auth_query("f=json")),
+        )
+        .await;
+        let parsed: serde_json::Value = serde_json::from_str(&body).unwrap();
+        parsed["subsonic-response"]["searchResult3"].clone()
+    }
+
+    fn ids(list: &serde_json::Value) -> Vec<i64> {
+        list.as_array()
+            .map(|a| {
+                a.iter()
+                    .map(|v| v["id"].as_str().unwrap().parse().unwrap())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// An empty query lists the whole library, as OpenSubsonic clients use it
+    /// to — both as `query=` and as a pair of quotes.
+    #[tokio::test]
+    async fn test_search3_empty_query_lists_everything_in_id_order() {
+        let (state, _dir) = test_state();
+        let tracks = seed_library(&state);
+
+        for query in ["query=", "query=%22%22"] {
+            let r = search3_json(
+                &state,
+                &format!("{query}&songCount=100&albumCount=100&artistCount=100"),
+            )
+            .await;
+            assert_eq!(ids(&r["song"]), tracks, "{query}");
+            assert_eq!(ids(&r["album"]).len(), 3, "{query}");
+            assert_eq!(ids(&r["artist"]).len(), 1, "{query}");
+        }
+    }
+
+    /// Pages walked by offset cover every track exactly once.
+    #[tokio::test]
+    async fn test_search3_song_offset_pages_without_gaps_or_repeats() {
+        let (state, _dir) = test_state();
+        let tracks = seed_library(&state);
+
+        let mut walked = Vec::new();
+        for offset in (0..).step_by(3) {
+            let r = search3_json(
+                &state,
+                &format!("query=&songCount=3&songOffset={offset}&albumCount=0&artistCount=0"),
+            )
+            .await;
+            assert!(ids(&r["album"]).is_empty() && ids(&r["artist"]).is_empty());
+            let page = ids(&r["song"]);
+            if page.is_empty() {
+                break;
+            }
+            walked.extend(page);
+        }
+        assert_eq!(walked, tracks);
+    }
+
+    #[tokio::test]
+    async fn test_search3_album_and_artist_offsets_are_honoured() {
+        let (state, _dir) = test_state();
+        seed_library(&state);
+
+        let all = ids(&search3_json(&state, "query=&albumCount=10&songCount=0").await["album"]);
+        let second = ids(
+            &search3_json(&state, "query=&albumCount=1&albumOffset=1&songCount=0").await["album"],
+        );
+        assert_eq!(second, vec![all[1]]);
+
+        let past = search3_json(&state, "query=&artistCount=5&artistOffset=1&songCount=0").await;
+        assert!(ids(&past["artist"]).is_empty());
+
+        // A text search pages its songs too.
+        let first = ids(&search3_json(&state, "query=Song&songCount=2").await["song"]);
+        let next = ids(&search3_json(&state, "query=Song&songCount=2&songOffset=2").await["song"]);
+        assert_eq!(first.len(), 2);
+        assert_eq!(next.len(), 2);
+        assert!(first.iter().all(|id| !next.contains(id)));
+    }
+
+    #[tokio::test]
+    async fn test_search3_song_count_is_capped() {
+        let (state, _dir) = test_state();
+        {
+            let db = Database::open(&state.db_path).unwrap();
+            db.conn.execute_batch("BEGIN").unwrap();
+            for i in 0..(SEARCH_PAGE_MAX + 5) {
+                queries::upsert_track(
+                    &db.conn,
+                    &track_meta(&format!("/m/{i}.flac"), &format!("T{i}"), "A", 1),
+                )
+                .unwrap();
+            }
+            db.conn.execute_batch("COMMIT").unwrap();
+        }
+        let r = search3_json(&state, "query=&songCount=5000&albumCount=0&artistCount=0").await;
+        assert_eq!(ids(&r["song"]).len(), SEARCH_PAGE_MAX as usize);
     }
 
     #[tokio::test]
