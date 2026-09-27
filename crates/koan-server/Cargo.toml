@@ -36,6 +36,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 tower = { version = "0.5", features = ["util", "limit", "load-shed"] }
 tower-http = { version = "0.7", features = ["catch-panic", "cors", "timeout"] }
 uuid = { version = "1.22.0", features = ["v7"] }
+chrono = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

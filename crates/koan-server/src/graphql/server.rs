@@ -281,11 +281,14 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // --server <url>` because the remote TUI bridge builds its stream
         // URL off the GraphQL base.
         // Built once and cloned: each build re-read the config from disk.
+        // Public by design, so outside the auth layers: each route answers for
+        // one share's own tracks and nothing else. The Host guard still applies.
+        let share_routes = crate::share::router(db_path.clone());
         let subsonic_merged = crate::subsonic::subsonic_router(db_path);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
 
-        let mut app = auth_app.merge(gql_app);
+        let mut app = auth_app.merge(gql_app).merge(share_routes);
         if let Some(sub) = subsonic_merged {
             app = app.merge(sub);
         }

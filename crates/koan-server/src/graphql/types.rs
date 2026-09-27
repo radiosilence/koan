@@ -729,6 +729,25 @@ pub(super) struct GqlShare {
     pub skipped: i32,
 }
 
+/// A share link this server serves, as managed by its owner.
+#[derive(SimpleObject)]
+#[graphql(name = "ShareLink")]
+pub(super) struct GqlShareLink {
+    pub id: String,
+    /// `None` when `sharing.public_url` is not set.
+    pub url: Option<String>,
+    pub description: Option<String>,
+    /// Unix seconds.
+    pub created_at: i64,
+    /// Unix seconds; `None` never expires.
+    pub expires_at: Option<i64>,
+    pub expired: bool,
+    pub visits: i64,
+    pub last_visited: Option<i64>,
+    /// In shared order.
+    pub track_ids: Vec<i64>,
+}
+
 pub(super) struct GqlSimilarTrack {
     pub row: queries::TrackRow,
     pub distance: f64,

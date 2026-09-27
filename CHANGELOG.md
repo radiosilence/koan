@@ -4,6 +4,12 @@
 
 ### Added
 
+- **Native sharing.** A koan with no remote Subsonic server makes share links itself, at `{sharing.public_url}/share/{id}`: a page anyone can open without an account, with cover art, the track list and a player per track, and no script at all. The page and its audio serve the share's own tracks and nothing else, by position rather than library id, and an expired, revoked or unknown id is the same 404. Shares are listed with `shares`, renewed with `updateShare` and revoked with `deleteShare` (GraphQL and MCP), and koan's Subsonic API implements `createShare`, `getShares`, `updateShare` and `deleteShare` with `shareRole` on, so Subsonic clients' own share buttons and a koan app pointed at a koan server create native shares. Sharing no longer needs Navidrome behind it.
+
+## Unreleased
+
+### Added
+
 - **MCP over HTTP for a headless server.** `--mcp-bind ADDR:PORT` (or `KOAN_MCP_BIND`) serves the same two MCP tools at `/mcp` over streamable HTTP, on a listener of its own, for an authenticating gateway to proxy. It carries no credential check, as stdio does not, so it stays off the public port.
 - **A headless server keeps its index current.** It scans the library folders at start and whenever they change, as the macOS app already did; new music needed `koan scan` or the `triggerScan` mutation before.
 - **Container image.** A `Dockerfile` for the headless server (Debian slim, non-root, state in `/config`), published to `ghcr.io/radiosilence/koan` from `main`, tagged with the commit.

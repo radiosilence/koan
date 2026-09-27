@@ -92,6 +92,17 @@ auth_enabled = false
 > the network still gets in. Only disable auth on a host you control, bound to `127.0.0.1`, and never
 > with the port forwarded.
 
+## Sharing
+
+A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `https://<public_url>/share/<id>`, a page anyone can open without an account, with a player for each shared track. Set where the server is reached from outside:
+
+```toml
+[sharing]
+public_url = "https://koan.example.com"
+```
+
+The page and its audio answer for the share's own tracks and nothing else, addressed by position in the share rather than by library id. An expired, revoked or made-up id is the same 404. List shares with `shares`, set an expiry with `updateShare`, revoke with `deleteShare`. A koan TUI or macOS app whose remote server is this koan shares through it.
+
 ## In a container
 
 The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first user with `koan auth setup` inside the container, and `koan subsonic setup` to enable the Subsonic API.
