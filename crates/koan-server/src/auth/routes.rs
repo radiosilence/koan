@@ -134,7 +134,7 @@ impl AuthRouteState {
 
 /// A hash with the same parameters as a real one, to verify unknown usernames
 /// against.
-fn dummy_password_hash() -> &'static str {
+pub(crate) fn dummy_password_hash() -> &'static str {
     static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     HASH.get_or_init(|| auth::hash_password("koan-dummy-password").unwrap_or_default())
 }

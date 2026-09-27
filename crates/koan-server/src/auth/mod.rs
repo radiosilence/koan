@@ -8,6 +8,7 @@
 //!   - All requests are treated as admin — no auth required. Same behavior as before this feature.
 
 pub mod middleware;
+pub mod password;
 pub mod routes;
 
 use koan_core::auth::Role;
