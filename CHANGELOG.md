@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **iOS: the queue is not in selection mode until asked.** Every row showed a selection circle and a drag handle all the time. Select, in the queue's menu, turns them on, and Done turns them off and clears the selection.
+- **A downloading MP4 or M4A starts playing before it has all arrived.** MP4 bounds its top-level boxes by the end of the file, and the fallback probe gave it the end of what had arrived, so a `moov` larger than the first 256 KB overran it and the track waited for the whole download: two hours of mix, over a phone connection. MP4 now gets the whole file's end, as Ogg does. The probe also read a download's extension as `part` (from `track.m4a.part`), so neither rule nor Symphonia's format hint applied to any download in progress.
+- **Sharing a whole album from a koan server shares that album.** koan numbers albums and songs separately and publishes album ids bare, and its `createShare` reads a bare id as a song, so album 46215 was shared as whichever song had that number. A client talking to a koan server now names the album `al-46215`. Other servers are sent their ids unchanged.
+- **iOS: a share link is reported as done, not as an error.** "Share link copied" appeared under "Something went wrong"; it is now a notice, as on the Mac.
 - **iOS: the queue header in selection mode fits a phone.** The count, Clear and Remove were squeezed by the rest of the header and wrapped a few letters to a line. Each now keeps its own width, and on iOS Clear and Remove are icons.
 - **iOS: queue rows give the title the width.** A duration of an hour or more wrapped onto two lines in its fixed column, and the codec repeated what the album heading says. The duration keeps one line at whatever width it needs, and the codec is left off on iOS.
 
