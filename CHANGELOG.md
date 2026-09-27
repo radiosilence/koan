@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Added
+
+- The web UI and share pages have a favicon and home-screen icon: the app icon, as on koan.rocks.
+- The web UI spells its name kōan in the sidebar, the tab title, the sign-in page and the version label.
+
 ### Changed
 
 - **koan.rocks is styled with Tailwind.** The page keeps its hand-written HTML and takes blit's look: Geist Mono, lowercase thin headings and one red accent, dark by default. The stylesheet is compiled by the standalone Tailwind CLI (`mise run css` in `site/`), so the site has no package manifest; the Site workflow builds it before the image and it is not committed. The app screenshots are cropped to the window, so nothing behind it shows at the edges.
