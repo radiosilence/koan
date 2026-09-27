@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **koan.rocks.** The project website, as hand-written static HTML and CSS in `site/` with no build step and no tracking. The Site workflow builds `ghcr.io/radiosilence/koan-site` (nano-web) on every push to main, tagged `sha-<commit>` and `latest`, and asks the jaritanet deployment to pick it up.
+
 ### Changed
 
 - **The MCP over HTTP acts as the gateway's signed-in koan account.** The gateway sends \`x-koan-username\` and \`x-koan-password\`; the \`graphql\` tool runs at that account's role (admin, user or readonly), checked the same way as Subsonic's \`p=\`. A request naming no account keeps the transport default (\`User\`, or \`Admin\` with \`KOAN_MCP_ADMIN=1\`), unless \`KOAN_MCP_REQUIRE_LOGIN=1\` refuses it. stdio is unchanged.
