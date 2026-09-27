@@ -10,6 +10,11 @@
 - **Subsonic clients sign in with koan accounts.** \`/rest/*\` accepts \`p=\` (plain or \`enc:\` hex) checked against the account's argon2 hash, so the web UI login works in Subsonic clients too; a successful check is remembered for ten minutes, keyed on the stored hash so a password change ends it. Token auth needs the plaintext on the server, so it remains only for the \`[subsonic]\` shared secret, which is now optional. \`readonly\` accounts get code 50 from every endpoint that writes (stars, scrobbles, playlists, shares) and \`getUser\` reports each account's real roles. koan's own client sends \`p=enc:\` over HTTPS and the salted token over HTTP.
 - **Releases of the macOS app are signed with a Developer ID and notarised.** The release job imports the certificate into a keychain of its own, signs the app with the hardened runtime and a secure timestamp, signs the DMG, has Apple notarise it and staples the ticket, so a downloaded \`Koan.dmg\` opens without the quarantine workaround. \`just macos-notarize\` does the same locally. Without the signing secrets (a fork) the build is ad-hoc signed as before.
 
+### Fixed
+
+- **Sound with the iPhone on silent.** Decoded audio is now heard through a media element (a MediaStream destination played by `<audio>`) rather than straight from Web Audio, which iOS silences with the ring/silent switch however the page declares itself. Scheduling stays on the AudioContext clock, so gapless playback is unchanged, and a media element also keeps playing on the lock screen and in the background. Browsers without MediaStream output play to the context directly, as before.
+- **The seek bar follows the track again.** It stopped updating once clicked, because the position updater skipped a focused range and a clicked range keeps focus; it now skips only while the range is being dragged, and resets as soon as the track changes.
+
 ## Unreleased
 
 ### Added
