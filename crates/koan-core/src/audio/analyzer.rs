@@ -802,13 +802,23 @@ mod tests {
         let cfg = make_cfg();
         // Everything pushed has been played, so the window sits at the head.
         let (mut analyzer, snapshot) = spawn_analyzer(Arc::clone(&buf), &cfg, samples.len() as u64);
-        // Wait for at least two analysis passes.
-        std::thread::sleep(Duration::from_millis(150));
-
-        let frame = snapshot.read();
+        // Until the spectrum shows, rather than a fixed sleep: a loaded CI
+        // runner does not always fit two passes into 150ms.
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        let max_bar = loop {
+            let max_bar = snapshot
+                .read()
+                .spectrum
+                .iter()
+                .cloned()
+                .fold(0.0f32, f32::max);
+            if max_bar > 0.05 || std::time::Instant::now() >= deadline {
+                break max_bar;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
         analyzer.shutdown();
 
-        let max_bar = frame.spectrum.iter().cloned().fold(0.0f32, f32::max);
         assert!(
             max_bar > 0.05,
             "expected nonzero spectrum for 440 Hz sine, max = {}",

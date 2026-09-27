@@ -120,19 +120,19 @@ private struct SelectionDrag: ViewModifier {
     @Environment(LibraryModel.self) private var library
 
     func body(content: Content) -> some View {
-        if #available(iOS 27, *) {
-            content.dragContainer(for: PlayableTransfer.self, itemID: \.id) { grabbed in
-                let selection = library.selection
-                let ids = grabbed.contains(where: selection.contains)
-                    ? selection.ids
-                    : Array(grabbed)
-                return ids.map { id in
-                    let name = library.visibleAlbums.first { $0.id == id }?.title ?? ""
-                    return PlayableTransfer(kind: .album, id: id, name: name)
-                }
+        #if os(macOS)
+        content.dragContainer(for: PlayableTransfer.self, itemID: \.id) { grabbed in
+            let selection = library.selection
+            let ids = grabbed.contains(where: selection.contains)
+                ? selection.ids
+                : Array(grabbed)
+            return ids.map { id in
+                let name = library.visibleAlbums.first { $0.id == id }?.title ?? ""
+                return PlayableTransfer(kind: .album, id: id, name: name)
             }
-        } else {
-            content
         }
+        #else
+        content
+        #endif
     }
 }
