@@ -47,8 +47,11 @@ struct NowPlayingSheet: View {
     /// lyric sheet share a sleeve.
     @ViewBuilder private var stage: some View {
         if ui.showLyrics {
+            // The words stand in the wash, as the sleeve did. The panel's ground
+            // is the environment's background style, which the Mac leaves as
+            // its inspector's and this clears.
             LyricsPanel()
-                .clipShape(.rect(cornerRadius: 12))
+                .backgroundStyle(.clear)
                 .transition(.opacity)
         } else if let source = player.currentArtwork {
             AlbumArtwork(source: source, size: .tile, cornerRadius: 12)

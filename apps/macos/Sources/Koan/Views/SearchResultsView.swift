@@ -32,7 +32,7 @@ struct SearchResultsView: View {
                 .padding(22)
             }
         }
-        .navigationTitle("Results for “\(search.query)”")
+        .navigationTitle(search.hasQuery ? "Results for “\(search.query)”" : "Search")
     }
 
     private var artistSection: some View {

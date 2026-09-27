@@ -568,9 +568,36 @@ ios-walk device="koan-dev": (ios-ffi "iphonesimulator") ios-project
     set -euo pipefail
     out=target/ios-walk
     rm -rf "$out" && mkdir -p "$out"
+    udid=$(xcrun simctl list devices available | grep -F "{{device}} (" | head -1 | grep -oE '[0-9A-F-]{36}')
+    xcrun simctl boot "$udid" 2>/dev/null || true
+    xcrun simctl bootstatus "$udid" -b >/dev/null
+    # Apple's clean status bar, so the screenshots can go anywhere.
+    xcrun simctl status_bar "$udid" override --time 9:41 --dataNetwork wifi --wifiMode active \
+        --wifiBars 3 --cellularMode active --cellularBars 4 --batteryState charged --batteryLevel 100
+    trap 'xcrun simctl status_bar "$udid" clear' EXIT
     xcodebuild test -quiet \
         -project apps/ios/Koan.xcodeproj -scheme Koan \
-        -destination "platform=iOS Simulator,name={{device}}" \
+        -destination "id=$udid" \
         -resultBundlePath "$out/walk.xcresult" || true
     xcrun xcresulttool export attachments --path "$out/walk.xcresult" --output-path "$out"
     echo "screenshots in $out"
+
+# Build, install and launch on the iPhone plugged in (or on the same Wi-Fi).
+#
+# Signed with the free personal team unless APPLE_TEAM_ID says otherwise: it
+# needs nothing but the Apple ID Xcode is signed in to, and installs expire
+# after seven days. Installing over the app keeps its library and sign-in.
+ios-phone config="Release": (ios-ffi "iphoneos")
+    #!/usr/bin/env bash
+    set -euo pipefail
+    phone=$(xcrun devicectl list devices | awk '/physical/ && /connected|available/' \
+        | grep -oE '[0-9A-F]{8}-[0-9A-F]{16}' | head -1 || true)
+    [ -n "$phone" ] || { echo "No iPhone found — plug it in, or unlock it if it is on Wi-Fi." >&2; exit 1; }
+    APPLE_TEAM_ID=${APPLE_TEAM_ID:-2256Q92VF2} just ios-project
+    xcodebuild build -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan -configuration {{config}} \
+        -destination "id=$phone" -derivedDataPath target/ios-build \
+        -allowProvisioningUpdates
+    xcrun devicectl device install app --device "$phone" \
+        "target/ios-build/Build/Products/{{config}}-iphoneos/koan.app"
+    xcrun devicectl device process launch --device "$phone" {{bundle_id}}

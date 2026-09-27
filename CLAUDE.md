@@ -14,7 +14,7 @@ Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ff
 
 Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
 
-**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web SPA, iOS, jukebox remotes. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
+**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web UI, jukebox remotes. The iOS app links the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
 ## Architecture overview
 
@@ -82,6 +82,8 @@ just macos-dmg      # package the app for release
 just ios-typecheck  # the shared SwiftUI sources still build for iOS
 just ios-run        # build and launch on a booted simulator
 just ios-smoke FILE # play a file through the real Player on the simulator
+just ios-phone      # install on the plugged-in iPhone (personal team)
+just ios-walk       # UI test that screenshots every page, into target/ios-walk
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
@@ -171,8 +173,13 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 `Koan/` is the app: models, pages and rows, shared by both platforms. `KoanIOS/`
 is the iOS scene root and audio session — the phone's shell over the same state.
 The directory is still called `macos` because the macOS app is what it builds
-with SwiftPM; an Xcode project is what an iOS *device* build needs, and it does
-not exist yet.
+with SwiftPM. iOS device builds and the UI walk go through an Xcode project that
+XcodeGen generates from `apps/ios/project.yml` (`just ios-project`); it is not
+checked in.
+
+On iOS each tab is a `NavigationStack` with its own path of `Route`s. Pages draw
+from the route that pushed them, never from `nav.current`, and the navigator
+follows the top of the stack in front — see `TabShell`.
 
 | Module | What |
 |--------|------|

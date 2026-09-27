@@ -11,11 +11,14 @@ struct IOSSearchView: View {
     var body: some View {
         SearchResultsView()
             .environment(\.onStage, true)
-            .navigationTitle("Search")
-            .searchable(text: Binding(
-                get: { search.query },
-                set: { search.query = $0 }
-            ))
+            // Always showing, under the title. Left to itself the field hides
+            // until the page is pulled down, and on the one page whose whole
+            // purpose is the field, that reads as there being none.
+            .searchable(
+                text: Binding(get: { search.query }, set: { search.query = $0 }),
+                placement: .navigationBarDrawer(displayMode: .always),
+                prompt: "Artists, albums, tracks"
+            )
             .onSubmit(of: .search) { search.submit() }
     }
 }

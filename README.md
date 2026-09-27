@@ -223,7 +223,7 @@ in the others, and a scan run in either is a scan for both.
 
 Two things it deliberately leaves alone: visualizers, which are what the TUI is
 for, and running the server, which is a `koan serve` job. GraphQL remains the
-surface for clients that genuinely *can't* link the core — the web SPA, iOS, and
+surface for clients that genuinely *can't* link the core — the web UI and
 jukebox-style remotes.
 
 Dropping a folder from Finder onto the queue indexes it into the library and
@@ -237,6 +237,28 @@ just macos-dmg     # package for release
 ```
 
 Requires Swift 6 and macOS 26+.
+
+## iOS app
+
+<img alt="Now Playing, lyrics, a record and the queue on iPhone" src="docs/images/koan-ios.png" />
+
+The same SwiftUI app over the same engine, in a phone's shell. `koan-core` runs
+in-process through `koan-ffi`, as on the Mac, and plays out through RemoteIO. A
+tab bar holds the queue, the library, search and settings; Now Playing has the
+seek bar, synced lyrics, radio and an AirPlay picker, over the playing record's
+colour. An iPad with room for a sidebar gets the Mac's layout instead.
+
+It plays from a Subsonic or Navidrome server, since a phone has no music folder
+to scan. Output crosses the system mixer, so bit-perfect is a claim for the Mac
+and Linux only.
+
+```bash
+just ios-run      # build and launch on a simulator
+just ios-phone    # install on the iPhone plugged in, signed with your personal team
+just ios-walk     # screenshot every page on a simulator
+```
+
+Requires iOS 27.
 
 ## Coming soon
 
