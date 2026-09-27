@@ -1,16 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.36.4
+
+### Added
+
+- **A Helm chart for the headless server**, published to `oci://ghcr.io/radiosilence/charts/koan` with each release at the app's version. What a koan server needs in a cluster is koan's own knowledge -- the Deployment, its init container, Services and NetworkPolicy -- not a copy of it kept in every deployment's own repository.
 
 ### Fixed
 
 - **iOS: the Albums page can be sorted.** The sort menu lived only in the Mac's window toolbar. It is now in the navigation bar, with the reshuffle button beside it under Random.
 
 ## 0.36.3
-
-### Added
-
-- **A Helm chart for the headless server**, published to `oci://ghcr.io/radiosilence/charts/koan` with each release at the app's version. What a koan server needs in a cluster is koan's own knowledge -- the Deployment, its init container, Services and NetworkPolicy -- not a copy of it kept in every deployment's own repository.
 
 ### Changed
 

@@ -28,7 +28,7 @@ spec:
             pathType: Prefix
             backend:
               service:
-                name: {{ $fullname }}
+                name: {{ include "koan.apiServiceName" $ }}
                 port:
                   number: 80
     {{- end }}
