@@ -377,6 +377,7 @@ async fn pages_render_whole_or_as_content_escaped_and_without_inline_script() {
     let full = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
     assert_eq!(full.status, StatusCode::OK);
     assert!(full.body.starts_with("<!doctype html>"));
+    assert!(full.body.contains("rel=icon"), "pages carry the favicon");
     assert!(full.body.contains("<nav class=side"));
     assert!(full.body.contains("Wet &lt;Moss&gt; &amp; Stone"));
     assert!(full.body.contains("Hymn &lt;to&gt; Moisture"));
@@ -556,7 +557,7 @@ async fn with_auth_off_everything_is_open() {
     assert!(!r.body.contains("Sign out"));
     assert!(
         r.body
-            .contains(concat!("koan ", env!("CARGO_PKG_VERSION"), "</a>")),
+            .contains(concat!("kōan ", env!("CARGO_PKG_VERSION"), "</a>")),
         "the version shows without an account too"
     );
     let r = send(

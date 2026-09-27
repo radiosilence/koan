@@ -114,7 +114,7 @@ async fn ui_asset(Path(name): Path<String>) -> Response {
         "ui.js" => asset(UI_JS, JS),
         "player.js" => asset(crate::share::ENGINE_JS, JS),
         "datastar.js" => asset(DATASTAR_JS, JS),
-        _ => not_found(),
+        other => crate::share::icon(other).unwrap_or_else(not_found),
     }
 }
 

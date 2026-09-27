@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- The web UI and share pages have a favicon and home-screen icon: the app icon, as on koan.rocks.
+- The web UI spells its name kōan in the sidebar, the tab title, the sign-in page and the version label.
+
 ## 0.36.1
 
 ### Added
