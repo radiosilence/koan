@@ -37,8 +37,8 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: v
 .side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .side .version, .version { color: var(--dim); font-size: 12px; padding: 2px 4px; text-decoration: none; font-variant-numeric: tabular-nums; }
 .version:hover { color: var(--text); }
-.account { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; padding: 0 4px; min-width: 0; }
-.account span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; color: var(--dim); font-size: 13px; padding: 0 4px; min-width: 0; }
+.account span { flex: 1 0 100%; min-width: 0; padding: 0 6px 2px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account button { padding: 4px 8px; font-size: 13px; }
 .account-foot { display: none; }
 main { margin-left: var(--side-w); padding: 24px 28px 40px; padding-top: max(24px, env(safe-area-inset-top)); max-width: calc(var(--side-w) + 1200px); min-width: 0; }

@@ -61,13 +61,13 @@ pub struct UiState {
 }
 
 pub fn router(
-    db_path: PathBuf,
+    pool: Arc<Pool>,
     auth: AuthRouteState,
     auth_enabled: bool,
     covers: Arc<Covers>,
 ) -> axum::Router {
     let state = UiState {
-        pool: Arc::new(Pool::new(db_path)),
+        pool,
         covers,
         options: Arc::default(),
         auth,

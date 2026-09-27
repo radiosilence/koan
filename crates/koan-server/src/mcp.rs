@@ -91,9 +91,9 @@ impl KoanMcpServer {
         match (get(USERNAME_HEADER), get(PASSWORD_HEADER)) {
             (Some(u), Some(p)) => users
                 .verify(u, p)
-                .ok_or_else(|| "koan rejected that username and password".to_string()),
+                .ok_or_else(|| "kōan rejected that username and password".to_string()),
             _ if std::env::var("KOAN_MCP_REQUIRE_LOGIN").is_ok_and(|v| v == "1") => Err(format!(
-                "this koan needs an account: send {USERNAME_HEADER} and {PASSWORD_HEADER}"
+                "this kōan needs an account: send {USERNAME_HEADER} and {PASSWORD_HEADER}"
             )),
             _ => Ok(mcp_role()),
         }
@@ -223,15 +223,13 @@ pub fn spawn_http(
     addr: std::net::SocketAddr,
     state: Arc<SharedPlayerState>,
     cmd_tx: Sender<PlayerCommand>,
-    db_path: PathBuf,
+    pool: Arc<koan_core::db::pool::Pool>,
 ) -> std::io::Result<std::thread::JoinHandle<()>> {
     use rmcp::transport::streamable_http_server::{
         StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
     };
-    let mut template = KoanMcpServer::new(state, cmd_tx, db_path.clone());
-    template.users = Some(Arc::new(crate::auth::password::PasswordVerifier::new(
-        db_path,
-    )));
+    let mut template = KoanMcpServer::new(state, cmd_tx, pool.path().to_path_buf());
+    template.users = Some(Arc::new(crate::auth::password::PasswordVerifier::new(pool)));
     // Bound here rather than on the thread, so a taken port fails the start.
     let listener = std::net::TcpListener::bind(addr)?;
     listener.set_nonblocking(true)?;
@@ -333,7 +331,7 @@ mod tests {
         queries::auth::create_user(&db.conn, "owner", "sesame", Role::Admin).unwrap();
         queries::auth::create_user(&db.conn, "mate", "hunter22", Role::Readonly).unwrap();
         server.users = Some(Arc::new(crate::auth::password::PasswordVerifier::new(
-            db_path,
+            Arc::new(koan_core::db::pool::Pool::new(db_path)),
         )));
 
         let as_ = |u: &str, p: &str| {

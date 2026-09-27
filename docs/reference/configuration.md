@@ -1,6 +1,6 @@
 # Configuration Reference
 
-koan uses [figment](https://docs.rs/figment) for layered configuration. Four sources are merged in order -- each layer overrides the one before it:
+kōan uses [figment](https://docs.rs/figment) for layered configuration. Four sources are merged in order -- each layer overrides the one before it:
 
 ```
 Defaults -> config.toml -> config.local.toml -> KOAN_* env vars
@@ -19,7 +19,7 @@ Run `koan config` to see all layers and the fully resolved result (including whi
 ## Which file a setting goes in
 
 You can put any setting in either file by hand -- the merge does not care. What
-the split decides is where *koan* writes when it changes a setting itself, and
+the split decides is where *kōan* writes when it changes a setting itself, and
 that matters because `config.toml` is meant to be committed.
 
 Three kinds of setting are machine-scoped and always land in
@@ -37,7 +37,7 @@ Writing a setting also clears any copy of it from the other file. That is not
 tidiness: `config.local.toml` wins the merge, so a shared write left shadowed by
 a local copy would silently do nothing. In the other direction it drains
 machine-scoped keys out of the file you commit, which is how a `config.toml`
-polluted by an older koan cleans itself up as you use the app.
+polluted by an older kōan cleans itself up as you use the app.
 
 ## What is not in the config files
 
@@ -101,7 +101,7 @@ Field names match the TOML key in SCREAMING_SNAKE_CASE. Nested sections use `__`
 
 ## CI usage
 
-Env vars make koan easy to configure in CI without config files:
+Env vars make kōan easy to configure in CI without config files:
 
 ```yaml
 env:
@@ -112,7 +112,7 @@ env:
 
 ## `koan config init`
 
-Creates the config directory at `~/.config/koan/` with everything koan needs to run:
+Creates the config directory at `~/.config/koan/` with everything kōan needs to run:
 
 ```bash
 koan config init
@@ -155,7 +155,7 @@ output_device = "My DAC"    # audio output device name (default: system default)
 
 ### ReplayGain
 
-ReplayGain normalizes volume levels across tracks so you don't reach for the volume knob between a whisper-quiet jazz track and a wall-of-sound metal album. koan reads standard ReplayGain tags (embedded by tools like `loudgain`, `r128gain`, foobar2000) at decode time and applies gain with peak limiting to prevent clipping.
+ReplayGain normalizes volume levels across tracks so you don't reach for the volume knob between a whisper-quiet jazz track and a wall-of-sound metal album. kōan reads standard ReplayGain tags (embedded by tools like `loudgain`, `r128gain`, foobar2000) at decode time and applies gain with peak limiting to prevent clipping.
 
 | Mode | Description |
 |------|-------------|
@@ -179,7 +179,7 @@ With `fade_on_pause`, pause ramps the output down over 150ms before the audio un
 
 ### Output device
 
-`output_device` selects an audio output by name. Press `Shift+D` in the TUI to browse available devices and switch live. The choice is saved to `config.local.toml` -- your DAC is not the next machine's. If the named device isn't available at startup, koan falls back to the system default.
+`output_device` selects an audio output by name. Press `Shift+D` in the TUI to browse available devices and switch live. The choice is saved to `config.local.toml` -- your DAC is not the next machine's. If the named device isn't available at startup, kōan falls back to the system default.
 
 Run `koan devices` to list available audio outputs.
 
@@ -226,12 +226,12 @@ See [Remote Servers](../guide/remote-servers.md) for the full setup guide.
 
 ### Where credentials live
 
-Every secret koan holds -- the remote password, the Subsonic shared secret, the
-refresh token for a koan server -- is written to `config.local.toml`, which is
+Every secret kōan holds -- the remote password, the Subsonic shared secret, the
+refresh token for a kōan server -- is written to `config.local.toml`, which is
 gitignored and created `0600`.
 
-Not the OS keychain, which koan used until v0.31.2. A keychain item's ACL is
-keyed on the reading binary's code signature, and koan has no stable signing
+Not the OS keychain, which kōan used until v0.31.2. A keychain item's ACL is
+keyed on the reading binary's code signature, and kōan has no stable signing
 identity: ad-hoc signing derives that identity from the binary's own hash, so
 every release is a different application to macOS, no grant ever matches twice,
 and the password dialog returns on every launch after every update.
@@ -245,8 +245,8 @@ machine and from an unencrypted backup, which is the bargain `~/.netrc`,
 
 ## `[auth]`
 
-Credentials for a remote koan server *this machine signs in to* -- the other
-direction from `[graphql]`, which configures the server koan is.
+Credentials for a remote kōan server *this machine signs in to* -- the other
+direction from `[graphql]`, which configures the server kōan is.
 
 ```toml
 # config.local.toml
@@ -362,9 +362,9 @@ Auth is enabled by default. Run `koan auth setup` to create a keypair and admin 
 
 `cors_origins` is empty by default, which means no web page may read the API cross-origin. Add the origin your web client is served from — `["https://music.example.com"]` — to allow it.
 
-`allowed_hosts` names the hostnames this server answers to, on top of `localhost` and any bare IP address. A request arriving with any other `Host` is refused: without that check, a page whose DNS flips to `127.0.0.1` after loading reaches the API as same-origin and CORS stops applying. Set it if you reach koan through a name like `koan.lan`.
+`allowed_hosts` names the hostnames this server answers to, on top of `localhost` and any bare IP address. A request arriving with any other `Host` is refused: without that check, a page whose DNS flips to `127.0.0.1` after loading reaches the API as same-origin and CORS stops applying. Set it if you reach kōan through a name like `koan.lan`.
 
-`cookie_secure` should stay `false` unless clients reach koan over HTTPS. Browsers discard `Secure` cookies delivered over plain `http://` to anything but localhost, so setting it on a LAN deployment silently breaks cookie auth.
+`cookie_secure` should stay `false` unless clients reach kōan over HTTPS. Browsers discard `Secure` cookies delivered over plain `http://` to anything but localhost, so setting it on a LAN deployment silently breaks cookie auth.
 
 `allow_organize` gates `organizePreview`, `organizeExecute` and `organizeUndo`. They rename and move files on disk, which is not something a network API should offer by default.
 
@@ -372,7 +372,7 @@ Auth is enabled by default. Run `koan auth setup` to create a keypair and admin 
 
 ## `[subsonic]`
 
-koan's own Subsonic-compatible REST API, served at `/rest/*`.
+kōan's own Subsonic-compatible REST API, served at `/rest/*`.
 
 ```toml
 # config.local.toml -- which machine serves Subsonic, and as whom

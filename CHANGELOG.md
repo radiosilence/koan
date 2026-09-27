@@ -7,6 +7,16 @@
 - The web UI and share pages have a favicon and home-screen icon: the app icon, as on koan.rocks.
 - The web UI spells its name kōan in the sidebar, the tab title, the sign-in page and the version label.
 
+### Changed
+
+- **koan.rocks is styled with Tailwind.** The page keeps its hand-written HTML and takes blit's look: Geist Mono, lowercase thin headings and one red accent, dark by default. The stylesheet is compiled by the standalone Tailwind CLI (`mise run css` in `site/`), so the site has no package manifest; the Site workflow builds it before the image and it is not committed. The app screenshots are cropped to the window, so nothing behind it shows at the edges.
+
+- **The product is spelled kōan wherever a person reads it:** the README and guides, the macOS and iOS apps (window title, settings, errors, the iOS home-screen name), CLI help, and the messages the CLI, daemon and MCP endpoint print. The command, crates, paths, URLs, environment variables and config keys stay `koan`.
+
+### Fixed
+
+- Web UI: the signed-in username gets a line of its own above API keys and Sign out, instead of being truncated beside them.
+
 ## 0.36.1
 
 ### Added
@@ -36,6 +46,8 @@
 ## Unreleased
 ### Changed
 
+- **The Subsonic API, share pages, sign-in and token refresh reuse database connections.** Each request opened its own, which applied the schema DDL and ran a WAL checkpoint first, and a Subsonic client syncing a library makes thousands of requests. They now share one connection pool per server, as GraphQL and the web UI already did; account password and token checks for Subsonic and MCP over HTTP use it too. The radio's top-ups, background playlist pushes and organize by path use pooled connections as well.
+- **Subsonic, sign-in, token refresh and sign-out no longer run on the server's async workers.** Their SQLite queries and argon2 checks ran inline, so a few concurrent Subsonic calls could occupy every worker and stall unrelated routes, the web UI included. They now run on the blocking pool, as GraphQL, the web UI and share pages already did.
 - The README and koan.rocks describe koan as a server: web UI, share links, OpenSubsonic, accounts and API keys, MCP over HTTP.
 
 ## 0.36.0

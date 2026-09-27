@@ -1,6 +1,6 @@
 # Remote Servers
 
-koan integrates with [Navidrome](https://www.navidrome.org/), Subsonic, and any server with a Subsonic-compatible API. Remote tracks merge seamlessly with your local library into a single unified collection.
+kōan integrates with [Navidrome](https://www.navidrome.org/), Subsonic, and any server with a Subsonic-compatible API. Remote tracks merge seamlessly with your local library into a single unified collection.
 
 ## Setup
 
@@ -29,7 +29,7 @@ Run `koan remote sync` periodically (or after adding music to your server) to pu
 
 ## How merging works
 
-When you have both local files and a remote server, koan deduplicates tracks using a 3-strategy match:
+When you have both local files and a remote server, kōan deduplicates tracks using a 3-strategy match:
 
 1. **File path** -- exact local path match
 2. **Remote ID** -- Subsonic server ID
@@ -75,7 +75,7 @@ cache_dir = "/custom/path"     # explicit cache dir (default: ~/.config/koan/cac
 
 Favourites sync bidirectionally with your remote server:
 
-- Star a track in koan (`f`) -> stars it on the server
+- Star a track in kōan (`f`) -> stars it on the server
 - Star a track on the server (via Navidrome web UI, DSub, etc.) -> next `koan remote sync` picks it up
 
 ## Configuration reference

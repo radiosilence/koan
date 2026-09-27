@@ -1,6 +1,6 @@
 # File Organization
 
-koan can rename and reorganize your music library using fb2k-compatible format strings, from the TUI or the macOS app. No external tools needed.
+kōan can rename and reorganize your music library using fb2k-compatible format strings, from the TUI or the macOS app. No external tools needed.
 
 ## In the macOS app
 
@@ -48,7 +48,7 @@ For example, with `folders = ["/Volumes/Music/library"]` and the `standard` patt
 /Volumes/Music/library/Aphex Twin/(1999) Windowlicker EP/01. Windowlicker.flac
 ```
 
-With no library folder configured there is nowhere to organize *into*, and koan says so rather than offering a plan — a pattern on its own produces a relative path, which is not a place.
+With no library folder configured there is nowhere to organize *into*, and kōan says so rather than offering a plan — a pattern on its own produces a relative path, which is not a place.
 
 ## Configuring patterns
 

@@ -12,12 +12,14 @@
 //! gaplessly. Its CSP allows this server's own scripts and nothing else.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use koan_core::db::connection::Database;
+use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries::shares::{ShareKind, ShareRow};
 use koan_core::db::queries::{self, AlbumRow, ArtistRow, TrackRow};
 
@@ -33,14 +35,14 @@ const PAGE_CSS: &str = include_str!("../assets/share.css");
 
 #[derive(Clone)]
 struct ShareState {
-    db_path: PathBuf,
+    pool: Arc<Pool>,
     /// `sharing.public_url`: link previews need absolute addresses.
     public_url: Option<String>,
     covers: std::sync::Arc<crate::covers::Covers>,
 }
 
 pub fn router(
-    db_path: PathBuf,
+    pool: Arc<Pool>,
     public_url: Option<String>,
     covers: std::sync::Arc<crate::covers::Covers>,
 ) -> axum::Router {
@@ -66,7 +68,7 @@ pub fn router(
         .route("/share/{id}/{n}", get(track))
         .route("/share/{id}/{n}/cover", get(track_cover))
         .with_state(ShareState {
-            db_path,
+            pool,
             public_url: public_url.filter(|u| !u.trim().is_empty()),
             covers,
         })
@@ -80,12 +82,12 @@ fn now() -> i64 {
 
 /// A live share and its tracks in shared order, or `None` for anything a
 /// visitor should not be able to tell apart from a share that never existed.
-fn live(db_path: &std::path::Path, id: &str) -> Option<(Database, ShareRow, Vec<TrackRow>)> {
+fn live<'a>(pool: &'a Pool, id: &str) -> Option<(Handle<'a>, ShareRow, Vec<TrackRow>)> {
     // Ids are 32 hex characters; anything else is not worth a query.
     if id.len() != 32 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let db = Database::open(db_path).ok()?;
+    let db = pool.get().ok()?;
     let share = queries::shares::get_share(&db.conn, id).ok()??;
     if !share.is_live(now()) {
         return None;
@@ -420,7 +422,7 @@ fn render(
 
 async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
     let found = blocking(move || {
-        let (db, share, tracks) = live(&s.db_path, &id)?;
+        let (db, share, tracks) = live(&s.pool, &id)?;
         let _ = queries::shares::record_visit(&db.conn, &id, now());
         let subject = subject(&db, &share, &tracks);
         Some(render(
@@ -462,7 +464,7 @@ async fn track(
     headers: HeaderMap,
 ) -> Response {
     let path = blocking(move || {
-        let (_, _, tracks) = live(&s.db_path, &id)?;
+        let (_, _, tracks) = live(&s.pool, &id)?;
         let t = tracks.get(n.checked_sub(1)?)?;
         crate::subsonic::track_file_path(t).map(PathBuf::from)
     })
@@ -485,7 +487,7 @@ async fn track(
 /// The cover at the size link previews and the page's header want.
 async fn cover(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
     let art = blocking(move || {
-        let (_, _, tracks) = live(&s.db_path, &id)?;
+        let (_, _, tracks) = live(&s.pool, &id)?;
         s.covers.cover(&tracks, crate::covers::LARGE)
     })
     .await;
@@ -498,7 +500,7 @@ async fn track_cover(
     Path((id, n)): Path<(String, usize)>,
 ) -> Response {
     let art = blocking(move || {
-        let (_, _, tracks) = live(&s.db_path, &id)?;
+        let (_, _, tracks) = live(&s.pool, &id)?;
         let t = tracks.get(n.checked_sub(1)?)?;
         s.covers
             .cover(std::slice::from_ref(t), crate::covers::SIZES[0])
@@ -588,7 +590,12 @@ mod tests {
         let share =
             queries::shares::create_share(&db.conn, Slice::TRACKS, &[a], None, 0, None).unwrap();
         let covers = test_covers(&dir);
-        (dir, router(db_path, None, covers), share.id, b)
+        (
+            dir,
+            router(Arc::new(Pool::new(db_path)), None, covers),
+            share.id,
+            b,
+        )
     }
 
     async fn get(
@@ -720,7 +727,7 @@ mod tests {
             .unwrap();
         Library {
             app: router(
-                db_path,
+                Arc::new(Pool::new(db_path)),
                 Some("https://koan.example/".into()),
                 test_covers(&dir),
             ),
@@ -837,7 +844,11 @@ mod tests {
         assert!(html.contains("<h1>2 tracks</h1>"));
         assert_eq!(html.matches("<section").count(), 0);
 
-        let bare = router(lib.dir.path().join("koan.db"), None, test_covers(&lib.dir));
+        let bare = router(
+            Arc::new(Pool::new(lib.dir.path().join("koan.db"))),
+            None,
+            test_covers(&lib.dir),
+        );
         let (_, _, body) = get(&bare, &format!("/share/{id}"), None).await;
         let html = String::from_utf8(body).unwrap();
         assert!(html.contains("property=\"og:title\""));

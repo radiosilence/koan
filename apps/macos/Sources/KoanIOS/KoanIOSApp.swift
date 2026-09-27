@@ -36,12 +36,12 @@ struct KoanIOSApp: App {
                         .tint(.koanAccent)
                 } else if let startupError {
                     ContentUnavailableView(
-                        "koan could not start",
+                        "kōan could not start",
                         systemImage: "exclamationmark.triangle",
                         description: Text(startupError)
                     )
                 } else {
-                    ProgressView().controlSize(.large)
+                    Splash()
                 }
             }
             // Posted from whichever thread noticed; read again rather than
@@ -72,5 +72,19 @@ struct KoanIOSApp: App {
                 }
             }
         }
+    }
+}
+
+/// What shows while the engine starts: the launch screen, continued.
+///
+/// The system draws `LaunchEnso` on `LaunchBackground` before any of koan has
+/// run; this draws the same image at the same size in the same place, so the
+/// moment the app takes over is not a moment anyone sees.
+private struct Splash: View {
+    var body: some View {
+        Image("LaunchEnso")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color("LaunchBackground"))
+            .ignoresSafeArea()
     }
 }

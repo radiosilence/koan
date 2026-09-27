@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axum::Json;
@@ -14,7 +13,7 @@ use axum::routing::post;
 use serde::{Deserialize, Serialize};
 
 use koan_core::auth;
-use koan_core::db::connection::Database;
+use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries::auth as auth_queries;
 
 /// Name of the cookie carrying the refresh token. Scoped to `/auth` so it
@@ -68,7 +67,7 @@ impl LoginRateLimiter {
 
 #[derive(Clone)]
 pub struct AuthRouteState {
-    pub db_path: PathBuf,
+    pub pool: Arc<Pool>,
     pub private_pem: Arc<Vec<u8>>,
     pub public_pem: Arc<Vec<u8>>,
     pub access_ttl_secs: u64,
@@ -188,8 +187,8 @@ pub(crate) async fn login_rate_limit(
 }
 
 impl AuthRouteState {
-    fn open_db(&self) -> Result<Database, (StatusCode, String)> {
-        Database::open(&self.db_path).map_err(|e| {
+    fn open_db(&self) -> Result<Handle<'_>, (StatusCode, String)> {
+        self.pool.get().map_err(|e| {
             log::error!("auth db open error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -279,7 +278,23 @@ pub fn auth_router(state: AuthRouteState) -> axum::Router {
 /// Check a username and password and open a session: a fresh access token and
 /// a stored refresh token. The error is the response to send. Shared by the
 /// JSON login and the web UI's sign-in form, so both are one implementation.
+///
+/// On the blocking pool as a whole: the queries, argon2 and the sealing all
+/// block, and on a runtime worker they stall every other request the server
+/// is handling.
 pub(crate) async fn authenticate(
+    state: &AuthRouteState,
+    username: &str,
+    password: &str,
+) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
+    let state = state.clone();
+    let (username, password) = (username.to_owned(), password.to_owned());
+    tokio::task::spawn_blocking(move || authenticate_blocking(&state, &username, &password))
+        .await
+        .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())))
+}
+
+fn authenticate_blocking(
     state: &AuthRouteState,
     username: &str,
     password: &str,
@@ -295,11 +310,7 @@ pub(crate) async fn authenticate(
         Ok(None) => {
             // Pay for a verify anyway, so response time doesn't say which
             // usernames exist.
-            let password = password.to_string();
-            let _ = tokio::task::spawn_blocking(move || {
-                auth::verify_password(&password, dummy_password_hash())
-            })
-            .await;
+            let _ = auth::verify_password(password, dummy_password_hash());
             return Err(Box::new(
                 (
                     StatusCode::UNAUTHORIZED,
@@ -318,16 +329,7 @@ pub(crate) async fn authenticate(
         }
     };
 
-    // Argon2 blocks for milliseconds at a time; on the async workers that stalls
-    // every other request the server is handling.
-    let hash = user.password_hash.clone();
-    let typed = password.to_string();
-    let verified = tokio::task::spawn_blocking(move || auth::verify_password(&typed, &hash))
-        .await
-        .map(|r| r.is_ok())
-        .unwrap_or(false);
-
-    if !verified {
+    if auth::verify_password(password, &user.password_hash).is_err() {
         return Err(Box::new(
             (
                 StatusCode::UNAUTHORIZED,
@@ -526,7 +528,11 @@ async fn refresh(
             .into_response();
     };
 
-    let (access_token, new_refresh_id) = match rotate(&state, &supplied) {
+    let rotating = state.clone();
+    let rotated = tokio::task::spawn_blocking(move || rotate(&rotating, &supplied))
+        .await
+        .unwrap_or_else(|_| Err(Box::new(StatusCode::INTERNAL_SERVER_ERROR.into_response())));
+    let (access_token, new_refresh_id) = match rotated {
         Ok(pair) => pair,
         Err(resp) => return *resp,
     };
@@ -548,14 +554,25 @@ async fn logout(
     headers: axum::http::HeaderMap,
     body: Option<Json<LogoutRequest>>,
 ) -> Response {
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err((status, msg)) => return (status, msg).into_response(),
-    };
-
     let supplied = body.and_then(|Json(req)| req.refresh_token);
-    if let Some(token) = refresh_token_from(supplied.as_deref(), &headers) {
-        let _ = auth_queries::revoke_refresh_token(&db.conn, &token);
+    let token = refresh_token_from(supplied.as_deref(), &headers);
+    let revoking = state.clone();
+    let revoked = tokio::task::spawn_blocking(move || {
+        let db = revoking.open_db()?;
+        if let Some(token) = token {
+            let _ = auth_queries::revoke_refresh_token(&db.conn, &token);
+        }
+        Ok(())
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal error".to_string(),
+        ))
+    });
+    if let Err((status, msg)) = revoked {
+        return (status, msg).into_response();
     }
 
     let cookies = state.cleared_cookies();
@@ -618,7 +635,7 @@ mod tests {
     #[test]
     fn cookies_are_lax_and_only_secure_when_tls_is_in_play() {
         let state = |cookie_secure| AuthRouteState {
-            db_path: PathBuf::from("/nonexistent"),
+            pool: Arc::new(Pool::new("/nonexistent".into())),
             private_pem: Arc::new(Vec::new()),
             public_pem: Arc::new(Vec::new()),
             access_ttl_secs: 900,

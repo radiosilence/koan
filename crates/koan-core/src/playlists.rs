@@ -298,9 +298,9 @@ fn newer(local: &str, remote: Option<&str>) -> bool {
 /// this. A failure leaves the local copy newer than the server's, which is
 /// exactly what [`reconcile_playlists`] resolves on the next sync.
 ///
-/// The thread opens its own database handle rather than borrowing the caller's:
-/// a `rusqlite::Connection` is neither `Send` nor `Sync`, and the answer has to
-/// be written back — the new server id — so it needs one of its own.
+/// The thread takes its own connection rather than borrowing the caller's:
+/// a `rusqlite::Connection` is not `Sync`, and the answer has to be written
+/// back — the new server id — so it needs one of its own.
 pub fn push_to_remote(id: i64) {
     let cfg = Config::load().unwrap_or_default();
     if !cfg.remote.enabled {
@@ -312,7 +312,7 @@ pub fn push_to_remote(id: i64) {
     std::thread::Builder::new()
         .name("koan-playlist-sync".into())
         .spawn(move || {
-            let Ok(db) = Database::open_default() else {
+            let Ok(db) = crate::db::pool::shared().get() else {
                 return;
             };
             let remote_id = queries::get_playlist(&db.conn, id)
