@@ -291,7 +291,8 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // Built once and cloned: each build re-read the config from disk.
         // Public by design, so outside the auth layers: each route answers for
         // one share's own tracks and nothing else. The Host guard still applies.
-        let share_routes = crate::share::router(db_path.clone());
+        let share_routes =
+            crate::share::router(db_path.clone(), cfg.sharing.public_url.clone());
         let subsonic_merged = crate::subsonic::subsonic_router(db_path);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();

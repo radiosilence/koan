@@ -18,7 +18,8 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use koan_core::db::connection::Database;
-use koan_core::db::queries::{self, TrackRow, shares::ShareRow};
+use koan_core::db::queries::shares::{ShareKind, ShareRow};
+use koan_core::db::queries::{self, AlbumRow, ArtistRow, TrackRow};
 
 /// The page's own script and stylesheet, from this server and nowhere else;
 /// `connect-src` is for the player fetching the tracks it decodes.
@@ -33,9 +34,11 @@ const PAGE_CSS: &str = include_str!("../assets/share.css");
 #[derive(Clone)]
 struct ShareState {
     db_path: PathBuf,
+    /// `sharing.public_url`: link previews need absolute addresses.
+    public_url: Option<String>,
 }
 
-pub fn router(db_path: PathBuf) -> axum::Router {
+pub fn router(db_path: PathBuf, public_url: Option<String>) -> axum::Router {
     axum::Router::new()
         .route(
             "/share/assets/share.js",
@@ -52,7 +55,11 @@ pub fn router(db_path: PathBuf) -> axum::Router {
         .route("/share/{id}", get(page))
         .route("/share/{id}/cover", get(cover))
         .route("/share/{id}/{n}", get(track))
-        .with_state(ShareState { db_path })
+        .route("/share/{id}/{n}/cover", get(track_cover))
+        .with_state(ShareState {
+            db_path,
+            public_url: public_url.filter(|u| !u.trim().is_empty()),
+        })
 }
 
 fn now() -> i64 {
@@ -128,51 +135,211 @@ pub(crate) fn duration(ms: Option<i64>) -> String {
         .unwrap_or_default()
 }
 
-/// The page: what was shared, and the player. The track list carries what
-/// the player needs in data attributes; without script, each row is a link.
-fn render(id: &str, share: &ShareRow, tracks: &[TrackRow]) -> String {
-    let album = tracks
+/// What the page shows besides the tracks, read when it is served: the album
+/// or artist the share is a slice of, and the albums its tracks come from.
+struct Subject {
+    artist: Option<ArtistRow>,
+    albums: Vec<AlbumRow>,
+}
+
+fn subject(db: &Database, share: &ShareRow, tracks: &[TrackRow]) -> Subject {
+    let artist = match (share.slice.kind, share.slice.subject_id) {
+        (ShareKind::Artist, Some(id)) => queries::get_artist(&db.conn, id).ok().flatten(),
+        _ => None,
+    };
+    let mut ids: Vec<i64> = tracks.iter().filter_map(|t| t.album_id).collect();
+    ids.dedup();
+    let albums = ids
+        .iter()
+        .filter_map(|id| queries::get_album(&db.conn, *id).ok().flatten())
+        .collect();
+    Subject { artist, albums }
+}
+
+fn plural(n: usize, word: &str) -> String {
+    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
+}
+
+fn year(date: Option<&str>) -> Option<&str> {
+    date.and_then(|d| d.get(..4))
+}
+
+/// A `<meta>` for link previews. OpenGraph uses `property`, Twitter `name`.
+fn meta(attr: &str, key: &str, content: &str) -> String {
+    format!("<meta {attr}=\"{key}\" content=\"{}\">", escape(content))
+}
+
+/// The page: what was shared, shown the way the app shows it, and the player.
+/// Each row carries what the player needs in data attributes; without script,
+/// each row is a link. The link-preview tags need absolute URLs, so they are
+/// only complete when `sharing.public_url` is set.
+fn render(
+    id: &str,
+    share: &ShareRow,
+    tracks: &[TrackRow],
+    subject: &Subject,
+    public_url: Option<&str>,
+) -> String {
+    // The slice as recorded, unless what it names has since left the library.
+    let album = match share.slice.kind {
+        ShareKind::Album => subject
+            .albums
+            .first()
+            .filter(|a| Some(a.id) == share.slice.subject_id),
+        _ => None,
+    };
+    let artist = subject.artist.as_ref();
+    let one_album = tracks
         .first()
         .filter(|f| tracks.iter().all(|t| t.album_id == f.album_id))
         .map(|f| (f.album_title.clone(), f.album_artist_name.clone()));
-    let title = share
-        .description
-        .clone()
-        .filter(|d| !d.trim().is_empty())
-        .or_else(|| album.as_ref().map(|(a, _)| a.clone()))
-        .unwrap_or_else(|| format!("{} tracks", tracks.len()));
     let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
-    let mut sub = Vec::new();
-    if let Some((_, artist)) = &album {
-        sub.push(escape(artist));
+    let count = plural(tracks.len(), "track");
+    let start = share
+        .slice
+        .start_track_id
+        .and_then(|s| tracks.iter().position(|t| t.id == s));
+    let note = share.description.clone().filter(|d| !d.trim().is_empty());
+
+    let (title, sub, og_type, og_title, og_desc) = if let Some(album) = album {
+        let mut sub = vec![album.artist_name.clone()];
+        sub.extend(year(album.date.as_deref()).map(str::to_owned));
+        sub.push(count.clone());
+        sub.push(duration(Some(total)));
+        match start.map(|i| &tracks[i]) {
+            Some(t) => (
+                album.title.clone(),
+                sub,
+                "music.song",
+                format!("{} · {}", t.title, t.artist_name),
+                format!("From {} by {}", album.title, album.artist_name),
+            ),
+            None => (
+                album.title.clone(),
+                sub.clone(),
+                "music.album",
+                format!("{} · {}", album.title, album.artist_name),
+                sub[1..].join(" · "),
+            ),
+        }
+    } else if let Some(artist) = artist {
+        let sub = vec![
+            plural(subject.albums.len(), "album"),
+            count.clone(),
+            duration(Some(total)),
+        ];
+        (
+            artist.name.clone(),
+            sub.clone(),
+            "profile",
+            artist.name.clone(),
+            sub.join(" · "),
+        )
+    } else {
+        let title = note
+            .clone()
+            .or_else(|| one_album.as_ref().map(|(a, _)| a.clone()))
+            .unwrap_or_else(|| count.clone());
+        let mut sub = Vec::new();
+        sub.extend(one_album.as_ref().map(|(_, artist)| artist.clone()));
+        sub.push(count.clone());
+        sub.push(duration(Some(total)));
+        (
+            title.clone(),
+            sub.clone(),
+            "music.playlist",
+            title,
+            sub.join(" · "),
+        )
+    };
+    // A loose list is titled by its note; a slice keeps the note beside it.
+    let note = note
+        .filter(|n| (album.is_some() || artist.is_some()) && *n != title)
+        .map(|n| format!("<p class=note>{}</p>", escape(&n)))
+        .unwrap_or_default();
+
+    let mut preview = vec![
+        meta("property", "og:site_name", "koan"),
+        meta("property", "og:type", og_type),
+        meta("property", "og:title", &og_title),
+        meta("property", "og:description", &og_desc),
+        meta("name", "description", &og_desc),
+        meta("name", "twitter:card", "summary_large_image"),
+        meta("name", "twitter:title", &og_title),
+        meta("name", "twitter:description", &og_desc),
+    ];
+    if let Some(base) = public_url.map(|u| u.trim_end_matches('/')) {
+        let image = format!("{base}/share/{id}/cover");
+        preview.push(meta(
+            "property",
+            "og:url",
+            &koan_core::helpers::share_url(base, id),
+        ));
+        preview.push(meta("property", "og:image", &image));
+        preview.push(meta("name", "twitter:image", &image));
     }
-    sub.push(format!(
-        "{} track{}",
-        tracks.len(),
-        if tracks.len() == 1 { "" } else { "s" }
-    ));
-    sub.push(duration(Some(total)));
-    let rows: String = tracks
-        .iter()
-        .enumerate()
-        .map(|(i, t)| {
-            let artist = if album.is_some() && t.artist_name == t.album_artist_name {
-                String::new()
-            } else {
-                format!("<small>{}</small>", escape(&t.artist_name))
-            };
-            format!(
-                "<li tabindex=0 data-src=\"/share/{id}/{n}\" data-dur=\"{secs}\" data-title=\"{title}\" \
-                 data-artist=\"{art}\"><span class=n>{n}</span><span class=t>{title}{artist}</span>\
-                 <span class=d>{dur}</span></li>",
-                n = i + 1,
-                secs = t.duration_ms.unwrap_or(0) / 1000,
-                title = escape(&t.title),
-                art = escape(&t.artist_name),
-                dur = duration(t.duration_ms),
-            )
-        })
-        .collect();
+
+    // An artist's album shows the album artist once, in its heading; a loose
+    // list names everyone.
+    let row = |i: usize, t: &TrackRow| {
+        let credited = if one_album.is_some() || artist.is_some() {
+            t.artist_name != t.album_artist_name
+        } else {
+            true
+        };
+        let small = if credited {
+            format!("<small>{}</small>", escape(&t.artist_name))
+        } else {
+            String::new()
+        };
+        let n = match (album.is_some() || artist.is_some(), t.track_number) {
+            (true, Some(n)) => n as usize,
+            _ => i + 1,
+        };
+        format!(
+            "<li tabindex=0 data-src=\"/share/{id}/{pos}\" data-dur=\"{secs}\" data-title=\"{title}\" \
+             data-artist=\"{art}\" data-album=\"{alb}\"><span class=n>{n}</span><span class=t>{title}{small}</span>\
+             <span class=d>{dur}</span></li>",
+            pos = i + 1,
+            secs = t.duration_ms.unwrap_or(0) / 1000,
+            title = escape(&t.title),
+            art = escape(&t.artist_name),
+            alb = escape(&t.album_title),
+            dur = duration(t.duration_ms),
+        )
+    };
+    let body = if artist.is_some() {
+        // One section per album, in the order shared, which is release order.
+        let mut out = String::new();
+        let mut i = 0;
+        while i < tracks.len() {
+            let album_id = tracks[i].album_id;
+            let end = tracks[i..]
+                .iter()
+                .position(|t| t.album_id != album_id)
+                .map_or(tracks.len(), |k| i + k);
+            let info = subject.albums.iter().find(|a| Some(a.id) == album_id);
+            let mut sub: Vec<String> = info
+                .and_then(|a| year(a.date.as_deref()))
+                .map(str::to_owned)
+                .into_iter()
+                .collect();
+            sub.push(plural(end - i, "track"));
+            let rows: String = (i..end).map(|k| row(k, &tracks[k])).collect();
+            out.push_str(&format!(
+                "<section class=album><header><img class=art src=\"/share/{id}/{first}/cover\" alt=\"\" loading=lazy>\
+                 <div><h2>{title}</h2><p class=sub>{sub}</p></div></header><ol class=tracks>{rows}</ol></section>",
+                first = i + 1,
+                title = escape(&tracks[i].album_title),
+                sub = escape(&sub.join(" · ")),
+            ));
+            i = end;
+        }
+        out
+    } else {
+        let rows: String = tracks.iter().enumerate().map(|(i, t)| row(i, t)).collect();
+        format!("<ol class=tracks>{rows}</ol>")
+    };
     let links: String = tracks
         .iter()
         .enumerate()
@@ -184,22 +351,29 @@ fn render(id: &str, share: &ShareRow, tracks: &[TrackRow]) -> String {
             )
         })
         .collect();
+    let kicker = if artist.is_some() {
+        "Artist shared from koan"
+    } else {
+        "Shared from koan"
+    };
     format!(
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
 <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
-<meta name=robots content=\"noindex,nofollow\"><title>{title}</title>\
+<meta name=robots content=\"noindex,nofollow\"><title>{title}</title>{preview}\
 <link rel=stylesheet href=\"/share/assets/share.css\"></head><body><main>\
 <header class=hero><img id=cover class=cover src=\"/share/{id}/cover\" alt=\"\">\
-<div class=info><p class=kicker>Shared from koan</p><h1>{title}</h1><p class=sub>{sub}</p>\
+<div class=info><p class=kicker>{kicker}</p><h1>{title}</h1><p class=sub>{sub}</p>{note}\
 <div class=controls><button id=prev class=quiet aria-label=Previous>&#9198;</button>\
 <button id=play class=primary>Play</button><button id=next class=quiet aria-label=Next>&#9197;</button></div>\
 <div class=scrub><span id=pos>0:00</span><input id=seek type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span id=len>0:00</span></div></div></header>\
-<ol id=tracks>{rows}</ol><noscript><p>{links}</p></noscript></main>\
+<div id=tracks data-start=\"{start}\">{body}</div><noscript><p>{links}</p></noscript></main>\
 <script src=\"/share/assets/player.js\" defer></script>\
 <script src=\"/share/assets/share.js\" defer></script></body></html>",
         title = escape(&title),
-        sub = sub.join(" · "),
+        preview = preview.concat(),
+        sub = escape(&sub.join(" · ")),
+        start = start.map_or(-1, |i| i as i64),
     )
 }
 
@@ -207,7 +381,14 @@ async fn page(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
     let found = blocking(move || {
         let (db, share, tracks) = live(&s.db_path, &id)?;
         let _ = queries::shares::record_visit(&db.conn, &id, now());
-        Some(render(&id, &share, &tracks))
+        let subject = subject(&db, &share, &tracks);
+        Some(render(
+            &id,
+            &share,
+            &tracks,
+            &subject,
+            s.public_url.as_deref(),
+        ))
     })
     .await;
     let Some(html) = found else {
@@ -272,9 +453,44 @@ async fn cover(State(s): State<ShareState>, Path(id): Path<String>) -> Response 
     image(art)
 }
 
+/// The cover of the album track `n` comes from: an artist page's headings.
+async fn track_cover(
+    State(s): State<ShareState>,
+    Path((id, n)): Path<(String, usize)>,
+) -> Response {
+    let art = blocking(move || {
+        let (_, _, tracks) = live(&s.db_path, &id)?;
+        let t = tracks.get(n.checked_sub(1)?)?;
+        let path = crate::subsonic::track_file_path(t)?;
+        koan_core::index::metadata::extract_cover_art(std::path::Path::new(path))
+    })
+    .await;
+    image(art)
+}
+
+/// Covers are served at most this many pixels on a side: enough for a link
+/// preview's large card, and a fraction of what some embedded art weighs.
+const COVER_MAX: u32 = 1200;
+
+/// Embedded art as a JPEG or PNG no larger than `COVER_MAX`, which is what
+/// messaging apps will unfurl. Art already within bounds is passed through.
+fn fit_cover(bytes: Vec<u8>) -> Vec<u8> {
+    let png = bytes.starts_with(&[0x89, b'P', b'N', b'G']);
+    let jpeg = bytes.starts_with(&[0xFF, 0xD8]);
+    let dims = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.into_dimensions().ok());
+    match dims {
+        Some((w, h)) if (png || jpeg) && w.max(h) <= COVER_MAX => bytes,
+        Some(_) => crate::subsonic::resized(&bytes, COVER_MAX, png).unwrap_or(bytes),
+        None => bytes,
+    }
+}
+
 /// Embedded cover art as a response, typed by its magic number.
 pub(crate) fn image(art: Option<Vec<u8>>) -> Response {
-    let Some(bytes) = art else {
+    let Some(bytes) = art.map(fit_cover) else {
         return not_found();
     };
     let kind = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
@@ -298,6 +514,8 @@ mod tests {
     use axum::body::Body;
     use axum::http::Request;
     use koan_core::db::queries::TrackMeta;
+    use koan_core::db::queries::shares::Slice;
+    use koan_core::helpers::{ShareTarget, resolve_share};
     use tower::ServiceExt;
 
     fn meta(path: &std::path::Path, title: &str, n: i32) -> TrackMeta {
@@ -343,8 +561,9 @@ mod tests {
         std::fs::write(&other, b"secret").unwrap();
         let a = queries::upsert_track(&db.conn, &meta(&shared, "Wet <Moss> & Stone", 1)).unwrap();
         let b = queries::upsert_track(&db.conn, &meta(&other, "Unshared", 2)).unwrap();
-        let share = queries::shares::create_share(&db.conn, &[a], None, 0, None).unwrap();
-        (dir, router(db_path), share.id, b)
+        let share =
+            queries::shares::create_share(&db.conn, Slice::TRACKS, &[a], None, 0, None).unwrap();
+        (dir, router(db_path, None), share.id, b)
     }
 
     async fn get(
@@ -413,8 +632,10 @@ mod tests {
     async fn unknown_expired_and_revoked_shares_look_alike() {
         let (dir, app, id, _) = setup();
         let db = Database::open(&dir.path().join("koan.db")).unwrap();
-        let expired = queries::shares::create_share(&db.conn, &[1], None, 0, Some(1)).unwrap();
-        let revoked = queries::shares::create_share(&db.conn, &[1], None, 0, None).unwrap();
+        let expired =
+            queries::shares::create_share(&db.conn, Slice::TRACKS, &[1], None, 0, Some(1)).unwrap();
+        let revoked =
+            queries::shares::create_share(&db.conn, Slice::TRACKS, &[1], None, 0, None).unwrap();
         queries::shares::delete_share(&db.conn, &revoked.id).unwrap();
         let unknown = "0".repeat(32);
         let mut answers = Vec::new();
@@ -430,5 +651,187 @@ mod tests {
         );
         let (status, _, _) = get(&app, &format!("/share/{id}"), None).await;
         assert_eq!(status, StatusCode::OK, "the live one still works");
+    }
+
+    /// Two albums by one artist, released years apart, the first with a title
+    /// that needs escaping; each file holds a few bytes of fake audio.
+    struct Library {
+        dir: tempfile::TempDir,
+        db: Database,
+        app: axum::Router,
+        tracks: [i64; 3],
+        artist: i64,
+    }
+
+    fn library() -> Library {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("koan.db");
+        let db = Database::open(&db_path).unwrap();
+        let track = |file: &str, title: &str, album: &str, n: i32, date: &str| {
+            let path = dir.path().join(file);
+            std::fs::write(&path, b"audio").unwrap();
+            let mut m = meta(&path, title, n);
+            m.album = album.into();
+            m.date = Some(date.into());
+            queries::upsert_track(&db.conn, &m).unwrap()
+        };
+        let later = track("c.flac", "Later One", "Later", 1, "2021");
+        let t1 = track(
+            "a.flac",
+            "Wet \"Moss\"",
+            "Hymn <to> \"Moisture\"",
+            1,
+            "2019",
+        );
+        let t2 = track(
+            "b.flac",
+            "Stone & Salt",
+            "Hymn <to> \"Moisture\"",
+            2,
+            "2019",
+        );
+        let artist = queries::tracks_by_ids(&db.conn, &[t1]).unwrap()[0]
+            .artist_id
+            .unwrap();
+        Library {
+            app: router(db_path, Some("https://koan.example/".into())),
+            dir,
+            db,
+            tracks: [t1, t2, later],
+            artist,
+        }
+    }
+
+    impl Library {
+        fn share(&self, target: ShareTarget) -> String {
+            let (slice, ids) = resolve_share(&self.db.conn, &target).unwrap();
+            queries::shares::create_share(&self.db.conn, slice, &ids, None, 0, None)
+                .unwrap()
+                .id
+        }
+
+        async fn page(&self, id: &str) -> String {
+            let (status, _, body) = get(&self.app, &format!("/share/{id}"), None).await;
+            assert_eq!(status, StatusCode::OK);
+            String::from_utf8(body).unwrap()
+        }
+    }
+
+    fn og<'a>(html: &'a str, key: &str) -> &'a str {
+        let at = html
+            .find(&format!("property=\"{key}\" content=\""))
+            .unwrap_or_else(|| panic!("no {key}"));
+        let rest = &html[at + key.len() + 21..];
+        &rest[..rest.find('"').unwrap()]
+    }
+
+    #[tokio::test]
+    async fn a_track_shares_its_album_cued_to_it() {
+        let lib = library();
+        let [_, t2, _] = lib.tracks;
+        let id = lib.share(ShareTarget::Tracks(vec![t2]));
+        let html = lib.page(&id).await;
+        assert!(html.contains("<h1>Hymn &lt;to&gt; &quot;Moisture&quot;</h1>"));
+        assert!(
+            html.contains("data-start=\"1\""),
+            "cued to the second track"
+        );
+        assert_eq!(html.matches("data-src=").count(), 2, "the whole album");
+        assert_eq!(og(&html, "og:type"), "music.song");
+        assert_eq!(og(&html, "og:title"), "Stone &amp; Salt · Rrose");
+        assert_eq!(
+            og(&html, "og:description"),
+            "From Hymn &lt;to&gt; &quot;Moisture&quot; by Rrose"
+        );
+        assert_eq!(
+            og(&html, "og:image"),
+            format!("https://koan.example/share/{id}/cover")
+        );
+        assert_eq!(
+            og(&html, "og:url"),
+            format!("https://koan.example/share/{id}")
+        );
+        assert!(html.contains("name=\"twitter:card\" content=\"summary_large_image\""));
+        assert!(!html.contains("<to>") && !html.contains("\"Moss\""));
+    }
+
+    #[tokio::test]
+    async fn an_album_share_is_the_album() {
+        let lib = library();
+        let album_id = queries::tracks_by_ids(&lib.db.conn, &[lib.tracks[0]]).unwrap()[0]
+            .album_id
+            .unwrap();
+        let id = lib.share(ShareTarget::Album {
+            album_id,
+            start_track_id: None,
+        });
+        let html = lib.page(&id).await;
+        assert!(html.contains("data-start=\"-1\""));
+        assert_eq!(og(&html, "og:type"), "music.album");
+        assert_eq!(
+            og(&html, "og:title"),
+            "Hymn &lt;to&gt; &quot;Moisture&quot; · Rrose"
+        );
+        assert_eq!(og(&html, "og:description"), "2019 · 2 tracks · 4:10");
+    }
+
+    #[tokio::test]
+    async fn an_artist_share_is_their_albums_in_release_order() {
+        let lib = library();
+        let id = lib.share(ShareTarget::Artist(lib.artist));
+        let html = lib.page(&id).await;
+        assert_eq!(og(&html, "og:type"), "profile");
+        assert_eq!(og(&html, "og:title"), "Rrose");
+        assert_eq!(og(&html, "og:description"), "2 albums · 3 tracks · 6:15");
+        assert_eq!(html.matches("<section class=album>").count(), 2);
+        let first = html.find("Hymn &lt;to&gt;").unwrap();
+        assert!(first < html.find("<h2>Later</h2>").unwrap());
+        // Each album heading's art is addressed through the share, by position.
+        assert!(html.contains(&format!("src=\"/share/{id}/3/cover\"")));
+        for n in ["3", "4"] {
+            let (status, _, _) = get(&lib.app, &format!("/share/{id}/{n}/cover"), None).await;
+            assert_eq!(
+                status,
+                StatusCode::NOT_FOUND,
+                "no art in fake files, nor a 4th track"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn several_tracks_stay_a_list_and_previews_need_a_public_url() {
+        let lib = library();
+        let [t1, _, later] = lib.tracks;
+        let id = lib.share(ShareTarget::Tracks(vec![later, t1]));
+        let html = lib.page(&id).await;
+        assert_eq!(og(&html, "og:type"), "music.playlist");
+        assert!(html.contains("<h1>2 tracks</h1>"));
+        assert_eq!(html.matches("<section").count(), 0);
+
+        let bare = router(lib.dir.path().join("koan.db"), None);
+        let (_, _, body) = get(&bare, &format!("/share/{id}"), None).await;
+        let html = String::from_utf8(body).unwrap();
+        assert!(html.contains("property=\"og:title\""));
+        assert!(!html.contains("og:image") && !html.contains("og:url"));
+    }
+
+    #[test]
+    fn covers_are_bounded_jpeg_or_png() {
+        use image::GenericImageView as _;
+        let encode = |w, h, format| {
+            let mut out = std::io::Cursor::new(Vec::new());
+            image::DynamicImage::new_rgb8(w, h)
+                .write_to(&mut out, format)
+                .unwrap();
+            out.into_inner()
+        };
+        let big = fit_cover(encode(2400, 1200, image::ImageFormat::Png));
+        assert!(big.starts_with(&[0x89, b'P', b'N', b'G']));
+        assert_eq!(
+            image::load_from_memory(&big).unwrap().dimensions(),
+            (1200, 600)
+        );
+        let small = encode(300, 300, image::ImageFormat::Jpeg);
+        assert_eq!(fit_cover(small.clone()), small, "left alone");
     }
 }

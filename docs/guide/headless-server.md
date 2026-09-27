@@ -107,6 +107,8 @@ A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic cl
 public_url = "https://koan.example.com"
 ```
 
+A share is a slice of the library, shown the way the app shows it: one track shares its album cued to that track, an album the album, an artist their albums in release order, and several tracks stay a list. What a share covers is fixed when it is made; an artist share does not grow when the library does. Pages carry OpenGraph and Twitter card tags, with the cover as an absolute `og:image` on `public_url`, so a pasted link unfurls with its artwork.
+
 The page and its audio answer for the share's own tracks and nothing else, addressed by position in the share rather than by library id. An expired, revoked or made-up id is the same 404. List shares with `shares`, set an expiry with `updateShare`, revoke with `deleteShare`. A koan TUI or macOS app whose remote server is this koan shares through it.
 
 ## In a container

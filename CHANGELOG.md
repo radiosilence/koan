@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Changed
+
+- **Shares are slices of the library.** A single track shares its album, opening cued to that track; an album shares the album; an artist shares a page of their albums in release order, each playable; several tracks from different places stay a track list. The slice (kind, subject, start track and the explicit track list) is fixed when the share is made, so an artist share does not grow with later albums and the page and its audio still answer for exactly those tracks. Subsonic `createShare` picks the slice from the ids given; GraphQL `createShare` takes `albumId`, `artistId` and `startTrackId` besides `trackIds`, and `shares` reports each link's `kind`. The web UI shares albums, single tracks and artists. Schema version 5.
+- **Share links unfurl.** Share pages carry OpenGraph and Twitter card tags (title, a description with tracks and duration, and the cover as an absolute `og:image` on `sharing.public_url`), so messaging apps show a card with the cover. Covers are served as JPEG or PNG at most 1200 px on a side, here and in the web UI.
+
 ### Added
 
 - **Web UI.** A server serves a small browser UI at `/`: sign in, browse albums (newest first), artists and search, and play in the browser. Tracks the browser can decode are decoded ahead and started on the sample the last one ends, the same engine as the share page, now one file both load. The queue lives in the browser and survives a reload; the transport has lock-screen controls through the Media Session API. Server-rendered HTML with Datastar for search, paging and the share button; navigation swaps only the page content, so playback continues across pages. Sign-in is koan's own session in `HttpOnly` cookies: a lapsed access cookie is renewed from the refresh cookie (`/auth/resume` for page loads, `/auth/renew` for an open page), so no token reaches page script.

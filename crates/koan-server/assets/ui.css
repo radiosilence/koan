@@ -79,6 +79,8 @@ img.missing { visibility: hidden; }
 .tracks .t small { display: block; color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
 .tracks .d { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; flex: none; }
 .tracks button { flex: none; padding: 4px 10px; font-size: 16px; line-height: 1; }
+.tracks button svg { width: 15px; height: 15px; fill: currentColor; vertical-align: -2px; }
+.artist .actions { margin-bottom: 20px; }
 
 /* Search. */
 .search input { width: 100%; max-width: 560px; font-size: 16px; padding: 10px 12px; }

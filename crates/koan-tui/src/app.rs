@@ -1400,7 +1400,12 @@ impl App {
         let status_clone = Arc::clone(&status_msg);
 
         std::thread::spawn(move || {
-            let result = koan_core::helpers::create_share(&db, &cfg, &track_ids, None);
+            let result = koan_core::helpers::create_share(
+                &db,
+                &cfg,
+                &koan_core::helpers::ShareTarget::Tracks(track_ids),
+                None,
+            );
             let message = match result {
                 Ok(outcome) => {
                     copy_to_clipboard(&outcome.url);
