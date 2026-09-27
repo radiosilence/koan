@@ -361,7 +361,7 @@ macos-test: macos-ffi
 # --- iOS --------------------------------------------------------------------
 # There is no iOS app yet — this proves the shared sources still cross.
 
-ios_deployment_target := "27.0"
+ios_deployment_target := "26.0"
 
 # Type-check the shared SwiftUI sources against the iOS SDK.
 #

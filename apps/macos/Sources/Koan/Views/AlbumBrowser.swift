@@ -27,24 +27,7 @@ struct AlbumBrowser: View {
                         }
                     }
                     .padding(20)
-                    // Dragging a ticked tile carries every tick, in the order
-                    // they were made; an unticked one carries itself.
-                    //
-                    // Worked out here, at drag time, rather than handed to the
-                    // container as its selection: that was a read of the ticks
-                    // in the grid's body, and every tick re-diffed the grid.
-                    // What it costs is the preview — a stack of ticks drags as
-                    // the one tile under the pointer.
-                    .dragContainer(for: PlayableTransfer.self, itemID: \.id) { grabbed in
-                        let selection = library.selection
-                        let ids = grabbed.contains(where: selection.contains)
-                            ? selection.ids
-                            : Array(grabbed)
-                        return ids.map { id in
-                            let name = library.visibleAlbums.first { $0.id == id }?.title ?? ""
-                            return PlayableTransfer(kind: .album, id: id, name: name)
-                        }
-                    }
+                    .modifier(SelectionDrag())
                 }
             }
             // ⌘A picks everything the filter is showing, starting a selection
@@ -122,6 +105,34 @@ struct EmptyState: View {
                     .font(.callout)
                     .foregroundStyle(.tertiary)
             }
+        }
+    }
+}
+
+/// The grid as a drag container, so that dragging a ticked tile carries every
+/// tick in the order they were made, and an unticked one carries itself.
+///
+/// Worked out at drag time rather than handed to the container as its
+/// selection: that was a read of the ticks in the grid's body, and every tick
+/// re-diffed the grid. What it costs is the preview — a stack of ticks drags as
+/// the one tile under the pointer.
+private struct SelectionDrag: ViewModifier {
+    @Environment(LibraryModel.self) private var library
+
+    func body(content: Content) -> some View {
+        if #available(iOS 27, *) {
+            content.dragContainer(for: PlayableTransfer.self, itemID: \.id) { grabbed in
+                let selection = library.selection
+                let ids = grabbed.contains(where: selection.contains)
+                    ? selection.ids
+                    : Array(grabbed)
+                return ids.map { id in
+                    let name = library.visibleAlbums.first { $0.id == id }?.title ?? ""
+                    return PlayableTransfer(kind: .album, id: id, name: name)
+                }
+            }
+        } else {
+            content
         }
     }
 }

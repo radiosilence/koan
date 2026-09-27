@@ -151,7 +151,9 @@ private struct AlbumDrag: ViewModifier {
     let inContainer: Bool
 
     func body(content: Content) -> some View {
-        if inContainer {
+        // Drag containers arrived in iOS 27. Before it a tile drags itself,
+        // which is all a phone ever does anyway.
+        if inContainer, #available(iOS 27, *) {
             content.draggable(containerItemID: album.id)
         } else {
             content.draggablePlayable(.album(album))

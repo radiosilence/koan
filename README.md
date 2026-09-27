@@ -258,7 +258,7 @@ just ios-phone    # install on the iPhone plugged in, signed with your personal 
 just ios-walk     # screenshot every page on a simulator
 ```
 
-Requires iOS 27.
+Requires iOS 26+.
 
 ## Coming soon
 

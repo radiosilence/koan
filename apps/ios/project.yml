@@ -8,7 +8,7 @@
 name: Koan
 options:
   deploymentTarget:
-    iOS: "27.0"
+    iOS: "26.0"
   createIntermediateGroups: true
   generateEmptyDirectories: false
 

@@ -62,31 +62,18 @@ final class AudioSession {
     private func observe() {
         let centre = NotificationCenter.default
         // A `Notification` is not Sendable, so what crosses back to the actor is
-        // what was read out of it here rather than the notification.
+        // the two numbers read out of it here rather than the notification.
         observers.held.append(
             centre.addObserver(
-                forName: AVAudioSession.didBecomeInactiveNotification,
+                forName: AVAudioSession.interruptionNotification,
                 object: nil, queue: .main
             ) { [weak self] note in
-                let context = note.userInfo?[AVAudioSession.deactivationContextKey]
-                    as? AVAudioSession.DeactivationContext
-                // Only the system taking it. The app deactivating its own
-                // session is not an interruption and already knows about it.
-                guard context?.source == .system else { return }
-                MainActor.assumeIsolated { self?.onInterrupted?() }
-            }
-        )
-        observers.held.append(
-            centre.addObserver(
-                forName: AVAudioSession.resumptionRecommendationNotification,
-                object: nil, queue: .main
-            ) { [weak self] note in
-                let context = note.userInfo?[AVAudioSession.resumptionContextKey]
-                    as? AVAudioSession.ResumptionContext
-                // Only when told to. Something that ends without recommending
-                // a resume is something else still talking.
-                guard context?.recommendation == .shouldResume else { return }
-                MainActor.assumeIsolated { self?.resume() }
+                let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt
+                let options = note.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                guard let raw, let type = AVAudioSession.InterruptionType(rawValue: raw) else {
+                    return
+                }
+                MainActor.assumeIsolated { self?.handleInterruption(type, options: options) }
             }
         )
         observers.held.append(
@@ -103,9 +90,22 @@ final class AudioSession {
         )
     }
 
-    private func resume() {
-        try? AVAudioSession.sharedInstance().setActive(true)
-        onResumable?()
+    private func handleInterruption(
+        _ type: AVAudioSession.InterruptionType, options: UInt
+    ) {
+        switch type {
+        case .began:
+            onInterrupted?()
+        case .ended:
+            // Only resume when told to. An interruption that ends without the
+            // shouldResume option is one where something else is still talking.
+            if AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume) {
+                try? AVAudioSession.sharedInstance().setActive(true)
+                onResumable?()
+            }
+        @unknown default:
+            break
+        }
     }
 
     private func handleRouteChange(_ reason: AVAudioSession.RouteChangeReason) {
