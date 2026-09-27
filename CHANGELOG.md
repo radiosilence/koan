@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Added
+
+- **Web UI.** A server serves a small browser UI at `/`: sign in, browse albums (newest first), artists and search, and play in the browser. Tracks the browser can decode are decoded ahead and started on the sample the last one ends, the same engine as the share page, now one file both load. The queue lives in the browser and survives a reload; the transport has lock-screen controls through the Media Session API. Server-rendered HTML with Datastar for search, paging and the share button; navigation swaps only the page content, so playback continues across pages. Sign-in is koan's own session in `HttpOnly` cookies: a lapsed access cookie is renewed from the refresh cookie (`/auth/resume` for page loads, `/auth/renew` for an open page), so no token reaches page script.
+
+### Fixed
+
+- **Browser sign-in set only one cookie.** `/auth/login`, `/auth/refresh` and `/auth/logout` sent their cookies as a header array, which keeps only the last value per name, so browsers received the stale-path clear and never the access or refresh cookie.
+
+## Unreleased
+
 ### Changed
 
 - **The share page plays gaplessly, and looks like the rest of the estate.** Tracks the browser can decode are decoded ahead and each is started on the sample the last one ends, so albums that run into each other play without a gap; a track too long to hold decoded (over fifteen minutes) streams instead. One player with previous, play and next, a seek bar, and lock-screen and headphone controls through the Media Session API. The script and stylesheet are served by koan (`/share/assets/*`) and the CSP allows those and nothing else; without script, each track is a plain link.

@@ -7,8 +7,9 @@
 //! visitor learns nothing from trying ids. Only local files are served: a
 //! standalone server proxies for nobody.
 //!
-//! The page is plain HTML with an `<audio>` per track and no script at all,
-//! which is what lets its CSP forbid scripts outright.
+//! The page is plain HTML that works without script; with it, koan's browser
+//! player (`assets/player.js`, shared with the web UI) plays the tracks
+//! gaplessly. Its CSP allows this server's own scripts and nothing else.
 
 use std::path::PathBuf;
 
@@ -24,6 +25,8 @@ use koan_core::db::queries::{self, TrackRow, shares::ShareRow};
 const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; \
      media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
+/// The gapless queue player, shared with the web UI.
+pub(crate) const ENGINE_JS: &str = include_str!("../assets/player.js");
 const PLAYER_JS: &str = include_str!("../assets/share.js");
 const PAGE_CSS: &str = include_str!("../assets/share.css");
 
@@ -37,6 +40,10 @@ pub fn router(db_path: PathBuf) -> axum::Router {
         .route(
             "/share/assets/share.js",
             get(|| async { asset(PLAYER_JS, "text/javascript; charset=utf-8") }),
+        )
+        .route(
+            "/share/assets/player.js",
+            get(|| async { asset(ENGINE_JS, "text/javascript; charset=utf-8") }),
         )
         .route(
             "/share/assets/share.css",
@@ -75,7 +82,7 @@ fn live(db_path: &std::path::Path, id: &str) -> Option<(Database, ShareRow, Vec<
     Some((db, share, tracks))
 }
 
-fn asset(body: &'static str, kind: &'static str) -> Response {
+pub(crate) fn asset(body: &'static str, kind: &'static str) -> Response {
     (
         [
             (header::CONTENT_TYPE, kind),
@@ -86,7 +93,7 @@ fn asset(body: &'static str, kind: &'static str) -> Response {
         .into_response()
 }
 
-fn not_found() -> Response {
+pub(crate) fn not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
         [(header::CACHE_CONTROL, "no-store")],
@@ -95,11 +102,13 @@ fn not_found() -> Response {
         .into_response()
 }
 
-async fn blocking<T: Send + 'static>(f: impl FnOnce() -> Option<T> + Send + 'static) -> Option<T> {
+pub(crate) async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> Option<T> + Send + 'static,
+) -> Option<T> {
     tokio::task::spawn_blocking(f).await.ok().flatten()
 }
 
-fn escape(s: &str) -> String {
+pub(crate) fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -114,7 +123,7 @@ fn escape(s: &str) -> String {
     out
 }
 
-fn duration(ms: Option<i64>) -> String {
+pub(crate) fn duration(ms: Option<i64>) -> String {
     ms.map(|ms| format!("{}:{:02}", ms / 60_000, (ms / 1000) % 60))
         .unwrap_or_default()
 }
@@ -187,6 +196,7 @@ fn render(id: &str, share: &ShareRow, tracks: &[TrackRow]) -> String {
 <div class=scrub><span id=pos>0:00</span><input id=seek type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
 <span id=len>0:00</span></div></div></header>\
 <ol id=tracks>{rows}</ol><noscript><p>{links}</p></noscript></main>\
+<script src=\"/share/assets/player.js\" defer></script>\
 <script src=\"/share/assets/share.js\" defer></script></body></html>",
         title = escape(&title),
         sub = sub.join(" · "),
@@ -259,6 +269,11 @@ async fn cover(State(s): State<ShareState>, Path(id): Path<String>) -> Response 
         })
     })
     .await;
+    image(art)
+}
+
+/// Embedded cover art as a response, typed by its magic number.
+pub(crate) fn image(art: Option<Vec<u8>>) -> Response {
     let Some(bytes) = art else {
         return not_found();
     };

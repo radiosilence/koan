@@ -205,6 +205,8 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `graphql/server.rs` | HTTP server (axum), `cmd_serve`, `start_api_background`, daemon mode, timeout/load-shed/panic-catch layers |
 | `subsonic.rs` | Subsonic-compatible REST API (XML/JSON, auth, streaming, cover art) |
 | `mcp.rs` | MCP server for Claude Desktop (schema_sdl + graphql tools) |
+| `share.rs` | Public share pages and their audio, answering for a share's own tracks only |
+| `ui/` | Web UI: server-rendered pages + Datastar, cookie-session gate, sign-in/resume/renew/sign-out, stream and cover routes. `assets/player.js` is the browser player both it and the share page use |
 
 ### koan-cli (`crates/koan-cli/src/`)
 

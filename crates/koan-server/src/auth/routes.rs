@@ -9,7 +9,7 @@ use axum::Json;
 use axum::extract::{ConnectInfo, State};
 use axum::http::StatusCode;
 use axum::http::header::{COOKIE, SET_COOKIE};
-use axum::response::{IntoResponse, Response};
+use axum::response::{AppendHeaders, IntoResponse, Response};
 use axum::routing::post;
 use serde::{Deserialize, Serialize};
 
@@ -20,7 +20,7 @@ use koan_core::db::queries::auth as auth_queries;
 /// Name of the cookie carrying the refresh token. Scoped to `/auth` so it
 /// reaches refresh and logout but is never attached to an API call, and
 /// `HttpOnly` so script cannot read it.
-const REFRESH_COOKIE: &str = "koan_refresh";
+pub(crate) const REFRESH_COOKIE: &str = "koan_refresh";
 const REFRESH_COOKIE_PATH: &str = "/auth";
 /// A cookie left at this narrower path is sent ahead of the one at
 /// `REFRESH_COOKIE_PATH` and shadows it, so every response that sets or clears
@@ -104,6 +104,32 @@ impl AuthRouteState {
     fn stale_refresh_cookie(&self) -> String {
         self.cookie(REFRESH_COOKIE, "", STALE_REFRESH_COOKIE_PATH, 0)
     }
+
+    /// The cookies that open a session. Appended rather than inserted: a
+    /// header array as a response part keeps only the last value per name.
+    pub(crate) fn session_cookies(
+        &self,
+        access_token: &str,
+        refresh_token: &str,
+    ) -> AppendHeaders<[(axum::http::HeaderName, String); 3]> {
+        AppendHeaders([
+            (SET_COOKIE, self.access_cookie(access_token)),
+            (SET_COOKIE, self.refresh_cookie(refresh_token)),
+            (SET_COOKIE, self.stale_refresh_cookie()),
+        ])
+    }
+
+    /// Clears the access cookie and both refresh cookies: what signing out sets.
+    pub(crate) fn cleared_cookies(&self) -> AppendHeaders<[(axum::http::HeaderName, String); 3]> {
+        AppendHeaders([
+            (SET_COOKIE, self.cookie("koan_access", "", "/", 0)),
+            (
+                SET_COOKIE,
+                self.cookie(REFRESH_COOKIE, "", REFRESH_COOKIE_PATH, 0),
+            ),
+            (SET_COOKIE, self.stale_refresh_cookie()),
+        ])
+    }
 }
 
 /// A hash with the same parameters as a real one, to verify unknown usernames
@@ -115,7 +141,10 @@ fn dummy_password_hash() -> &'static str {
 
 /// Read the refresh token from the request body, falling back to the cookie so a
 /// browser client never has to keep one in script-reachable storage.
-fn refresh_token_from(body: Option<&str>, headers: &axum::http::HeaderMap) -> Option<String> {
+pub(crate) fn refresh_token_from(
+    body: Option<&str>,
+    headers: &axum::http::HeaderMap,
+) -> Option<String> {
     if let Some(t) = body.filter(|t| !t.is_empty()) {
         return Some(t.to_owned());
     }
@@ -135,7 +164,7 @@ fn refresh_token_from(body: Option<&str>, headers: &axum::http::HeaderMap) -> Op
 ///
 /// A middleware rather than an extractor so it runs before the request body is
 /// read and before the database is touched.
-async fn login_rate_limit(
+pub(crate) async fn login_rate_limit(
     State(state): State<AuthRouteState>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
@@ -254,10 +283,10 @@ pub(crate) async fn authenticate(
     state: &AuthRouteState,
     username: &str,
     password: &str,
-) -> Result<(auth_queries::UserRow, String, String), Response> {
+) -> Result<(auth_queries::UserRow, String, String), Box<Response>> {
     let db = match state.open_db() {
         Ok(db) => db,
-        Err((status, msg)) => return Err((status, msg).into_response()),
+        Err((status, msg)) => return Err(Box::new((status, msg).into_response())),
     };
 
     // Look up user.
@@ -271,17 +300,21 @@ pub(crate) async fn authenticate(
                 auth::verify_password(&password, dummy_password_hash())
             })
             .await;
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(MessageResponse {
-                    message: "invalid username or password".into(),
-                }),
-            )
-                .into_response());
+            return Err(Box::new(
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(MessageResponse {
+                        message: "invalid username or password".into(),
+                    }),
+                )
+                    .into_response(),
+            ));
         }
         Err(e) => {
             log::error!("auth login db error: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response());
+            return Err(Box::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response(),
+            ));
         }
     };
 
@@ -295,13 +328,15 @@ pub(crate) async fn authenticate(
         .unwrap_or(false);
 
     if !verified {
-        return Err((
-            StatusCode::UNAUTHORIZED,
-            Json(MessageResponse {
-                message: "invalid username or password".into(),
-            }),
-        )
-            .into_response());
+        return Err(Box::new(
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(MessageResponse {
+                    message: "invalid username or password".into(),
+                }),
+            )
+                .into_response(),
+        ));
     }
 
     // Mint access token.
@@ -315,7 +350,9 @@ pub(crate) async fn authenticate(
         Ok(t) => t,
         Err(e) => {
             log::error!("auth mint token error: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
+            return Err(Box::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
+            ));
         }
     };
 
@@ -324,7 +361,9 @@ pub(crate) async fn authenticate(
         Ok(t) => t,
         Err(e) => {
             log::error!("auth refresh token generation error: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
+            return Err(Box::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
+            ));
         }
     };
     let refresh_expires = auth::now_unix() as i64 + state.refresh_ttl_secs as i64;
@@ -332,7 +371,9 @@ pub(crate) async fn authenticate(
         auth_queries::store_refresh_token(&db.conn, &refresh_token_id, user.id, refresh_expires)
     {
         log::error!("auth store refresh token error: {}", e);
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
+        return Err(Box::new(
+            (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
+        ));
     }
 
     // Housekeeping: clean up expired tokens on login (non-blocking).
@@ -345,14 +386,10 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
     let (user, access_token, refresh_token_id) =
         match authenticate(&state, &req.username, &req.password).await {
             Ok(session) => session,
-            Err(resp) => return resp,
+            Err(resp) => return *resp,
         };
 
-    let cookies = [
-        (SET_COOKIE, state.access_cookie(&access_token)),
-        (SET_COOKIE, state.refresh_cookie(&refresh_token_id)),
-        (SET_COOKIE, state.stale_refresh_cookie()),
-    ];
+    let cookies = state.session_cookies(&access_token, &refresh_token_id);
 
     let resp = LoginResponse {
         access_token,
@@ -374,10 +411,13 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
 /// Spend a refresh token for a new access token and a new refresh token. The
 /// error is the response to send. Shared by the JSON refresh and the web UI's
 /// session resume.
-pub(crate) fn rotate(state: &AuthRouteState, supplied: &str) -> Result<(String, String), Response> {
+pub(crate) fn rotate(
+    state: &AuthRouteState,
+    supplied: &str,
+) -> Result<(String, String), Box<Response>> {
     let db = match state.open_db() {
         Ok(db) => db,
-        Err((status, msg)) => return Err((status, msg).into_response()),
+        Err((status, msg)) => return Err(Box::new((status, msg).into_response())),
     };
 
     // Atomically consume (validate + revoke) the refresh token in a single
@@ -385,17 +425,21 @@ pub(crate) fn rotate(state: &AuthRouteState, supplied: &str) -> Result<(String, 
     let token = match auth_queries::consume_refresh_token(&db.conn, supplied) {
         Ok(Some(t)) => t,
         Ok(None) => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(MessageResponse {
-                    message: "invalid or expired refresh token".into(),
-                }),
-            )
-                .into_response());
+            return Err(Box::new(
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(MessageResponse {
+                        message: "invalid or expired refresh token".into(),
+                    }),
+                )
+                    .into_response(),
+            ));
         }
         Err(e) => {
             log::error!("auth refresh db error: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response());
+            return Err(Box::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response(),
+            ));
         }
     };
 
@@ -403,17 +447,21 @@ pub(crate) fn rotate(state: &AuthRouteState, supplied: &str) -> Result<(String, 
     let user = match auth_queries::get_user_by_id(&db.conn, token.user_id) {
         Ok(Some(u)) => u,
         Ok(None) => {
-            return Err((
-                StatusCode::UNAUTHORIZED,
-                Json(MessageResponse {
-                    message: "user not found".into(),
-                }),
-            )
-                .into_response());
+            return Err(Box::new(
+                (
+                    StatusCode::UNAUTHORIZED,
+                    Json(MessageResponse {
+                        message: "user not found".into(),
+                    }),
+                )
+                    .into_response(),
+            ));
         }
         Err(e) => {
             log::error!("auth refresh user lookup error: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response());
+            return Err(Box::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response(),
+            ));
         }
     };
 
@@ -428,7 +476,9 @@ pub(crate) fn rotate(state: &AuthRouteState, supplied: &str) -> Result<(String, 
         Ok(t) => t,
         Err(e) => {
             log::error!("auth mint token error: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
+            return Err(Box::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
+            ));
         }
     };
 
@@ -437,7 +487,9 @@ pub(crate) fn rotate(state: &AuthRouteState, supplied: &str) -> Result<(String, 
         Ok(t) => t,
         Err(e) => {
             log::error!("auth refresh token generation error: {}", e);
-            return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
+            return Err(Box::new(
+                (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
+            ));
         }
     };
     let refresh_expires = auth::now_unix() as i64 + state.refresh_ttl_secs as i64;
@@ -445,7 +497,9 @@ pub(crate) fn rotate(state: &AuthRouteState, supplied: &str) -> Result<(String, 
         auth_queries::store_refresh_token(&db.conn, &new_refresh_id, user.id, refresh_expires)
     {
         log::error!("auth store refresh token error: {}", e);
-        return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
+        return Err(Box::new(
+            (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response(),
+        ));
     }
 
     Ok((access_token, new_refresh_id))
@@ -469,14 +523,10 @@ async fn refresh(
 
     let (access_token, new_refresh_id) = match rotate(&state, &supplied) {
         Ok(pair) => pair,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
 
-    let cookies = [
-        (SET_COOKIE, state.access_cookie(&access_token)),
-        (SET_COOKIE, state.refresh_cookie(&new_refresh_id)),
-        (SET_COOKIE, state.stale_refresh_cookie()),
-    ];
+    let cookies = state.session_cookies(&access_token, &new_refresh_id);
 
     let resp = RefreshResponse {
         access_token,
@@ -503,14 +553,7 @@ async fn logout(
         let _ = auth_queries::revoke_refresh_token(&db.conn, &token);
     }
 
-    let cookies = [
-        (SET_COOKIE, state.cookie("koan_access", "", "/", 0)),
-        (
-            SET_COOKIE,
-            state.cookie(REFRESH_COOKIE, "", REFRESH_COOKIE_PATH, 0),
-        ),
-        (SET_COOKIE, state.stale_refresh_cookie()),
-    ];
+    let cookies = state.cleared_cookies();
 
     (
         StatusCode::OK,
@@ -585,6 +628,20 @@ mod tests {
         assert!(!plain.contains("Secure"));
 
         assert!(state(true).access_cookie("tok").contains("; Secure"));
+
+        // Every cookie reaches the browser, not only the last one set.
+        let resp = (StatusCode::OK, state(false).session_cookies("a", "r")).into_response();
+        let set: Vec<_> = resp.headers().get_all(SET_COOKIE).iter().collect();
+        assert_eq!(set.len(), 3);
+        assert_eq!(
+            (StatusCode::OK, state(false).cleared_cookies())
+                .into_response()
+                .headers()
+                .get_all(SET_COOKIE)
+                .iter()
+                .count(),
+            3
+        );
 
         // The refresh cookie never rides along on an API call.
         let refresh = state(false).refresh_cookie("tok");

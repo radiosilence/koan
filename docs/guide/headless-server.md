@@ -92,6 +92,12 @@ auth_enabled = false
 > the network still gets in. Only disable auth on a host you control, bound to `127.0.0.1`, and never
 > with the port forwarded.
 
+## Web UI
+
+The server answers `http://host:4000/` with a browser UI: albums, artists, search, a play queue and share links, laid out for a phone as well as a desktop. Playback happens in the browser, streaming from the server; the server's own player is not involved.
+
+Sign in with a koan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port.
+
 ## Sharing
 
 A server makes share links itself: `createShare` (GraphQL, MCP, or a Subsonic client's own share button) returns `https://<public_url>/share/<id>`, a page anyone can open without an account, with a player for each shared track. Set where the server is reached from outside:

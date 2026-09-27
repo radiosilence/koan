@@ -1,0 +1,571 @@
+//! The UI's pages, rendered whole for a page load and as content alone for the
+//! UI's own navigation, which keeps the shell (and the player in it) in place.
+//!
+//! Track rows carry what the player needs in data attributes; the player reads
+//! them from the page rather than asking the server again.
+
+use std::collections::HashMap;
+use std::fmt::Write as _;
+
+use axum::Extension;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use koan_core::auth::Role;
+use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, ArtistQuery, TrackRow};
+
+use super::{PARTIAL, UiState, events, html, open, patch};
+use crate::auth::AuthUser;
+use crate::share::{blocking, duration, escape, not_found};
+
+const ALBUMS_PAGE: u32 = 60;
+const ARTISTS_PAGE: u32 = 100;
+
+const ICON_PREV: &str =
+    "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M6 5h2v14H6zM20 5v14L9 12z\"/></svg>";
+const ICON_NEXT: &str =
+    "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M16 5h2v14h-2zM4 5v14l11-7z\"/></svg>";
+const ICON_PLAY: &str =
+    "<svg class=i-play viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M7 4v16l13-8z\"/></svg>";
+const ICON_PAUSE: &str = "<svg class=i-pause viewBox=\"0 0 24 24\" aria-hidden=true>\
+     <path d=\"M6 4h4v16H6zM14 4h4v16h-4z\"/></svg>";
+
+fn buttons() -> String {
+    format!(
+        "<div class=buttons><button class=\"icon quiet\" data-ctl=prev aria-label=Previous>{ICON_PREV}</button>\
+<button class=\"icon primary\" data-ctl=play aria-label=\"Play or pause\">{ICON_PLAY}{ICON_PAUSE}</button>\
+<button class=\"icon quiet\" data-ctl=next aria-label=Next>{ICON_NEXT}</button></div>"
+    )
+}
+
+const SCRUB: &str = "<div class=scrub><span data-np=pos>0:00</span>\
+<input type=range data-ctl=seek min=0 max=0 step=0.1 value=0 aria-label=Position>\
+<span data-np=len>0:00</span></div>";
+
+fn head(title: &str) -> String {
+    format!(
+        "<!doctype html><html lang=en><head><meta charset=utf-8>\
+<meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
+<meta name=theme-color content=\"#181b1f\"><meta name=robots content=\"noindex,nofollow\">\
+<title>{} · koan</title><link rel=stylesheet href=\"/ui/assets/ui.css\">",
+        escape(title)
+    )
+}
+
+fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> String {
+    let account = if auth_enabled {
+        format!(
+            "<form class=account method=post action=\"/auth/signout\"><span>{}</span>\
+<button class=quiet>Sign out</button></form>",
+            escape(&user.username)
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "{head}<script type=module src=\"/ui/assets/datastar.js\"></script>\
+<script src=\"/ui/assets/player.js\" defer></script><script src=\"/ui/assets/ui.js\" defer></script>\
+</head><body><nav class=side aria-label=Library><a class=brand href=\"/\">koan</a>\
+<a href=\"/albums\" data-nav=albums>Albums</a><a href=\"/artists\" data-nav=artists>Artists</a>\
+<a href=\"/search\" data-nav=search>Search</a><a href=\"/queue\" data-nav=queue>Queue</a>{account}</nav>\
+<main id=content>{content}</main>{account_foot}\
+<footer class=bar><progress class=progress data-np=progress max=1 value=0></progress>\
+<a class=now href=\"/queue\"><img class=thumb data-np=cover alt=\"\" hidden>\
+<span class=np><span class=np-title data-np=title>Nothing playing</span>\
+<span class=np-artist data-np=artist></span></span></a>\
+<div class=transport>{buttons}{SCRUB}</div></footer></body></html>",
+        head = head(title),
+        account_foot = if auth_enabled {
+            format!("<div class=account-foot>{account}</div>")
+        } else {
+            String::new()
+        },
+        buttons = buttons(),
+    )
+}
+
+/// The whole page, or only its content when the UI's script asked for that.
+fn respond(
+    s: &UiState,
+    headers: &HeaderMap,
+    user: &AuthUser,
+    title: &str,
+    class: &str,
+    inner: &str,
+) -> Response {
+    let content = format!(
+        "<section class=\"page {class}\" data-title=\"{}\">{inner}</section>",
+        escape(title)
+    );
+    if headers.contains_key(PARTIAL) {
+        html(StatusCode::OK, content)
+    } else {
+        html(StatusCode::OK, shell(title, &content, user, s.auth_enabled))
+    }
+}
+
+fn unavailable() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the library is unavailable",
+    )
+        .into_response()
+}
+
+pub(super) fn login(next: &str, error: Option<&str>) -> String {
+    let error = error
+        .map(|e| format!("<p class=error role=alert>{}</p>", escape(e)))
+        .unwrap_or_default();
+    format!(
+        "{head}</head><body class=signin><main><h1>koan</h1>\
+<form method=post action=\"/login\"><input type=hidden name=next value=\"{next}\">\
+<label>Username<input name=username autocomplete=username autocapitalize=none spellcheck=false required autofocus></label>\
+<label>Password<input name=password type=password autocomplete=current-password required></label>\
+{error}<button class=primary>Sign in</button></form></main></body></html>",
+        head = head("Sign in"),
+        next = escape(next),
+    )
+}
+
+fn year(date: Option<&str>) -> &str {
+    date.and_then(|d| d.get(..4)).unwrap_or("")
+}
+
+fn cells(albums: &[AlbumRow]) -> String {
+    albums.iter().fold(String::new(), |mut out, a| {
+        let _ = write!(
+            out,
+            "<a class=cell href=\"/album/{id}\"><img loading=lazy src=\"/ui/cover/{id}\" alt=\"\">\
+<span class=ct>{title}</span><span class=ca>{artist}</span></a>",
+            id = a.id,
+            title = escape(&a.title),
+            artist = escape(&a.artist_name),
+        );
+        out
+    })
+}
+
+fn more(path: &str, offset: Option<u32>) -> String {
+    match offset {
+        Some(offset) => format!(
+            "<div id=more class=more><button data-indicator:_more data-attr:disabled=\"$_more\" \
+data-class:busy=\"$_more\" data-on:click=\"@get('{path}?offset={offset}')\">Load more</button></div>"
+        ),
+        None => "<div id=more class=more></div>".into(),
+    }
+}
+
+/// A track row. `album` is set where the row stands alone (search) and names
+/// the record it comes from.
+fn track_row(t: &TrackRow, n: usize, show_artist: bool, album: bool) -> String {
+    let mut sub = Vec::new();
+    if show_artist {
+        sub.push(escape(&t.artist_name));
+    }
+    if album {
+        sub.push(escape(&t.album_title));
+    }
+    let sub = if sub.is_empty() {
+        String::new()
+    } else {
+        format!("<small>{}</small>", sub.join(" · "))
+    };
+    format!(
+        "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
+data-album=\"{album_title}\" data-album-id={album_id}><span class=n>{n}</span>\
+<span class=t>{title}{sub}</span><span class=d>{dur}</span>\
+<button class=\"quiet add\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></li>",
+        id = t.id,
+        secs = t.duration_ms.unwrap_or(0) / 1000,
+        title = escape(&t.title),
+        artist = escape(&t.artist_name),
+        album_title = escape(&t.album_title),
+        album_id = t.album_id.unwrap_or(0),
+        dur = duration(t.duration_ms),
+    )
+}
+
+/// One page of albums, newest first, and the offset of the next if there is one.
+fn album_page(s: &UiState, offset: u32) -> Option<(Vec<AlbumRow>, Option<u32>)> {
+    let db = open(&s.pool)?;
+    let mut albums = queries::list_albums(
+        &db.conn,
+        &AlbumQuery {
+            order: AlbumOrder::RecentlyAdded,
+            limit: Some(ALBUMS_PAGE + 1),
+            offset,
+            ..Default::default()
+        },
+    )
+    .ok()?;
+    let next = (albums.len() > ALBUMS_PAGE as usize).then_some(offset + ALBUMS_PAGE);
+    albums.truncate(ALBUMS_PAGE as usize);
+    Some((albums, next))
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+pub(super) struct Offset {
+    offset: u32,
+}
+
+pub(super) async fn albums(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let Some((albums, next)) = blocking(move || album_page(&st, 0)).await else {
+        return unavailable();
+    };
+    let inner = if albums.is_empty() {
+        "<h1>Albums</h1><p class=empty>The library is empty.</p>".to_owned()
+    } else {
+        format!(
+            "<h1>Albums</h1><div class=grid id=albums>{}</div>{}",
+            cells(&albums),
+            more("/albums/more", next)
+        )
+    };
+    respond(&s, &headers, &user, "Albums", "albums", &inner)
+}
+
+pub(super) async fn albums_more(State(s): State<UiState>, Query(q): Query<Offset>) -> Response {
+    let Some((albums, next)) = blocking(move || album_page(&s, q.offset)).await else {
+        return unavailable();
+    };
+    let mut out = Vec::new();
+    if !albums.is_empty() {
+        out.push(patch(&cells(&albums), Some(("#albums", "append"))));
+    }
+    out.push(patch(&more("/albums/more", next), None));
+    events(out)
+}
+
+pub(super) async fn album(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        let album = queries::get_album(&db.conn, id).ok()??;
+        let tracks = queries::tracks_for_album(&db.conn, id).ok()?;
+        Some((album, tracks))
+    })
+    .await;
+    let Some((album, tracks)) = found else {
+        return not_found();
+    };
+    let discs = tracks
+        .iter()
+        .map(|t| t.disc.unwrap_or(1))
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut rows = String::new();
+    let mut disc = None;
+    for (i, t) in tracks.iter().enumerate() {
+        if discs.len() > 1 && disc != Some(t.disc.unwrap_or(1)) {
+            disc = Some(t.disc.unwrap_or(1));
+            let _ = write!(rows, "<li class=disc>Disc {}</li>", t.disc.unwrap_or(1));
+        }
+        let n = t.track_number.map_or(i + 1, |n| n as usize);
+        rows.push_str(&track_row(t, n, t.artist_name != album.artist_name, false));
+    }
+    let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
+    let mut sub = vec![format!(
+        "<a href=\"/artist/{}\">{}</a>",
+        album.artist_id,
+        escape(&album.artist_name)
+    )];
+    let y = year(album.date.as_deref());
+    if !y.is_empty() {
+        sub.push(escape(y));
+    }
+    sub.push(format!(
+        "{} track{}",
+        tracks.len(),
+        if tracks.len() == 1 { "" } else { "s" }
+    ));
+    sub.push(duration(Some(total)));
+    if let Some(codec) = &album.codec {
+        sub.push(escape(codec));
+    }
+    let share = if user.role.has_permission(Role::User) {
+        format!(
+            "<button data-indicator:_sharing data-attr:disabled=\"$_sharing\" data-class:busy=\"$_sharing\" \
+data-on:click=\"@post('/album/{}/share')\">Share</button>",
+            album.id
+        )
+    } else {
+        String::new()
+    };
+    let inner = format!(
+        "<header class=hero><img class=cover src=\"/ui/cover/{id}\" alt=\"\"><div class=info>\
+<p class=kicker>Album</p><h1>{title}</h1><p class=sub>{sub}</p><div class=actions>\
+<button class=primary data-act=play>Play</button><button data-act=shuffle>Shuffle</button>\
+<button data-act=queue>Add to queue</button>{share}</div><div id=share-result></div></div></header>\
+<ol class=tracks data-context=album>{rows}</ol>",
+        id = album.id,
+        title = escape(&album.title),
+        sub = sub.join(" · "),
+    );
+    respond(&s, &headers, &user, &album.title, "album", &inner)
+}
+
+/// Make a share link for the album and show it where the button was.
+pub(super) async fn share(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+) -> Response {
+    let result = if user.role.has_permission(Role::User) {
+        blocking(move || {
+            let db = open(&s.pool)?;
+            let album = queries::get_album(&db.conn, id).ok()??;
+            let ids: Vec<i64> = queries::tracks_for_album(&db.conn, id)
+                .ok()?
+                .iter()
+                .map(|t| t.id)
+                .collect();
+            let cfg = koan_core::config::Config::load().unwrap_or_default();
+            Some(
+                koan_core::helpers::create_share(&db, &cfg, &ids, Some(&album.title))
+                    .map(|o| o.url)
+                    .map_err(|e| e.to_string()),
+            )
+        })
+        .await
+        .unwrap_or_else(|| Err("That album is not in the library.".into()))
+    } else {
+        Err("This account cannot make share links.".into())
+    };
+    let html = match result {
+        Ok(url) => format!(
+            "<div id=share-result class=share><input id=share-url readonly value=\"{url}\" aria-label=\"Share link\">\
+<button data-on:click=\"navigator.clipboard.writeText(document.getElementById('share-url').value)\">Copy</button></div>",
+            url = escape(&url)
+        ),
+        Err(e) => format!(
+            "<div id=share-result class=\"share error\" role=alert>{}</div>",
+            escape(&e)
+        ),
+    };
+    events(vec![patch(&html, None)])
+}
+
+fn artist_list(artists: &[queries::ArtistRow]) -> String {
+    artists.iter().fold(String::new(), |mut out, a| {
+        let _ = write!(
+            out,
+            "<li><a href=\"/artist/{}\"><span class=t>{}</span><span class=d>{} album{}</span></a></li>",
+            a.id,
+            escape(&a.name),
+            a.album_count,
+            if a.album_count == 1 { "" } else { "s" }
+        );
+        out
+    })
+}
+
+fn artist_page(s: &UiState, offset: u32) -> Option<(Vec<queries::ArtistRow>, Option<u32>)> {
+    let db = open(&s.pool)?;
+    let mut artists = queries::list_artists(
+        &db.conn,
+        &ArtistQuery {
+            limit: Some(ARTISTS_PAGE + 1),
+            offset,
+            ..Default::default()
+        },
+    )
+    .ok()?;
+    let next = (artists.len() > ARTISTS_PAGE as usize).then_some(offset + ARTISTS_PAGE);
+    artists.truncate(ARTISTS_PAGE as usize);
+    Some((artists, next))
+}
+
+pub(super) async fn artists(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let Some((artists, next)) = blocking(move || artist_page(&st, 0)).await else {
+        return unavailable();
+    };
+    let inner = format!(
+        "<h1>Artists</h1><ul class=list id=artists>{}</ul>{}",
+        artist_list(&artists),
+        more("/artists/more", next)
+    );
+    respond(&s, &headers, &user, "Artists", "artists", &inner)
+}
+
+pub(super) async fn artists_more(State(s): State<UiState>, Query(q): Query<Offset>) -> Response {
+    let Some((artists, next)) = blocking(move || artist_page(&s, q.offset)).await else {
+        return unavailable();
+    };
+    let mut out = Vec::new();
+    if !artists.is_empty() {
+        out.push(patch(&artist_list(&artists), Some(("#artists", "append"))));
+    }
+    out.push(patch(&more("/artists/more", next), None));
+    events(out)
+}
+
+pub(super) async fn artist(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+    headers: HeaderMap,
+) -> Response {
+    let st = s.clone();
+    let found = blocking(move || {
+        let db = open(&st.pool)?;
+        let artist = queries::get_artist(&db.conn, id).ok()??;
+        let albums = queries::albums_for_artist(&db.conn, id).ok()?;
+        Some((artist, albums))
+    })
+    .await;
+    let Some((artist, albums)) = found else {
+        return not_found();
+    };
+    let inner = format!(
+        "<p class=kicker>Artist</p><h1>{}</h1><p class=sub>{} album{} · {} tracks</p>\
+<div class=grid>{}</div>",
+        escape(&artist.name),
+        artist.album_count,
+        if artist.album_count == 1 { "" } else { "s" },
+        artist.track_count,
+        cells(&albums)
+    );
+    respond(&s, &headers, &user, &artist.name, "artist", &inner)
+}
+
+fn results(s: &UiState, q: &str) -> String {
+    let q = q.trim();
+    if q.is_empty() {
+        return "<div id=results></div>".into();
+    }
+    let found = open(&s.pool).map(|db| {
+        let albums = queries::list_albums(
+            &db.conn,
+            &AlbumQuery {
+                search: Some(q),
+                order: AlbumOrder::RecentlyAdded,
+                limit: Some(12),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default();
+        let artists = queries::list_artists(
+            &db.conn,
+            &ArtistQuery {
+                search: Some(q),
+                limit: Some(10),
+                ..Default::default()
+            },
+        )
+        .unwrap_or_default();
+        let tracks = queries::search_tracks_paged(&db.conn, q, 50, 0).unwrap_or_default();
+        (albums, artists, tracks)
+    });
+    let Some((albums, artists, tracks)) = found else {
+        return "<div id=results><p class=error>The library is unavailable.</p></div>".into();
+    };
+    if albums.is_empty() && artists.is_empty() && tracks.is_empty() {
+        return format!(
+            "<div id=results><p class=empty>Nothing matches “{}”.</p></div>",
+            escape(q)
+        );
+    }
+    let mut out = String::from("<div id=results>");
+    if !artists.is_empty() {
+        let _ = write!(
+            out,
+            "<h2>Artists</h2><ul class=list>{}</ul>",
+            artist_list(&artists)
+        );
+    }
+    if !albums.is_empty() {
+        let _ = write!(
+            out,
+            "<h2>Albums</h2><div class=grid>{}</div>",
+            cells(&albums)
+        );
+    }
+    if !tracks.is_empty() {
+        let rows: String = tracks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| track_row(t, i + 1, true, true))
+            .collect();
+        let _ = write!(
+            out,
+            "<h2>Tracks</h2><ol class=tracks data-context=one>{rows}</ol>"
+        );
+    }
+    out.push_str("</div>");
+    out
+}
+
+pub(super) async fn search(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Query(params): Query<HashMap<String, String>>,
+    headers: HeaderMap,
+) -> Response {
+    let q = params.get("q").cloned().unwrap_or_default();
+    let st = s.clone();
+    let query = q.clone();
+    let found = blocking(move || Some(results(&st, &query)))
+        .await
+        .unwrap_or_default();
+    // Without script the form is an ordinary GET; with it, results follow typing.
+    let inner = format!(
+        "<h1>Search</h1><form class=search action=\"/search\" method=get \
+data-on:submit__prevent=\"@get('/search/results')\">\
+<input type=search name=q value=\"{q}\" placeholder=\"Albums, artists, tracks\" autocomplete=off \
+autocapitalize=none spellcheck=false enterkeyhint=search autofocus aria-label=Search data-bind:q \
+data-init=\"$q && @get('/search/results')\" \
+data-on:input__debounce.250ms=\"@get('/search/results')\"></form>{found}",
+        q = escape(&q),
+    );
+    respond(&s, &headers, &user, "Search", "search", &inner)
+}
+
+/// Datastar sends its signals as JSON in `datastar`; a plain request sends `q`.
+pub(super) async fn search_results(
+    State(s): State<UiState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let q = params
+        .get("datastar")
+        .and_then(|d| serde_json::from_str::<serde_json::Value>(d).ok())
+        .and_then(|v| v.get("q")?.as_str().map(str::to_owned))
+        .or_else(|| params.get("q").cloned())
+        .unwrap_or_default();
+    let html = blocking(move || Some(results(&s, &q)))
+        .await
+        .unwrap_or_default();
+    events(vec![patch(&html, None)])
+}
+
+/// The queue lives in the browser, so the page is a frame the script fills.
+pub(super) async fn queue(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    headers: HeaderMap,
+) -> Response {
+    let inner = format!(
+        "<header class=\"hero now-playing\"><img class=cover data-np=cover alt=\"\" hidden>\
+<div class=info><p class=kicker>Now playing</p><h1 data-np=title>Nothing playing</h1>\
+<p class=sub><span data-np=artist></span> <a data-np=album href=\"/albums\"></a></p>\
+<div class=controls>{}</div>{SCRUB}</div></header>\
+<div class=queue-head><h2>Up next</h2><button class=quiet data-act=clear>Clear</button></div>\
+<ol id=queue-list class=tracks></ol>",
+        buttons()
+    );
+    respond(&s, &headers, &user, "Queue", "queue", &inner)
+}
