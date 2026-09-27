@@ -1,3 +1,4 @@
+import Combine
 import KoanFFI
 import SwiftUI
 
@@ -12,6 +13,7 @@ struct KoanIOSApp: App {
     @State private var state: AppState?
     @State private var startupError: String?
     @State private var session = AudioSession()
+    @State private var powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
 
     var body: some Scene {
         WindowGroup {
@@ -30,6 +32,7 @@ struct KoanIOSApp: App {
                         .environment(state.levels)
                         .environment(state.ui)
                         .environment(state.mirror)
+                        .environment(\.powerSaving, powerSaving)
                         .tint(.koanAccent)
                 } else if let startupError {
                     ContentUnavailableView(
@@ -40,6 +43,15 @@ struct KoanIOSApp: App {
                 } else {
                     ProgressView().controlSize(.large)
                 }
+            }
+            // Posted from whichever thread noticed; read again rather than
+            // trusting the notification to say which way it went.
+            .onReceive(
+                NotificationCenter.default
+                    .publisher(for: Notification.Name.NSProcessInfoPowerStateDidChange)
+                    .receive(on: RunLoop.main)
+            ) { _ in
+                powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
             }
             .task {
                 guard state == nil, startupError == nil else { return }

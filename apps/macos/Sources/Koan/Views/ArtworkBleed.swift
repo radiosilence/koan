@@ -54,7 +54,8 @@ struct ArtworkBleed: View {
 
     /// Whether the wash is actually moving: something to breathe to, a setting
     /// that allows it, and a system that has not asked for less motion.
-    private var breathes: Bool { drifts && graphics.drifts && !reduceMotion }
+    @Environment(\.powerSaving) private var powerSaving
+    private var breathes: Bool { drifts && graphics.drifts && !reduceMotion && !powerSaving }
 
     var body: some View {
         // Below `reduced` this is nothing at all rather than a transparent

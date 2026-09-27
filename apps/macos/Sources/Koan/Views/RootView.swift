@@ -304,7 +304,7 @@ extension EnvironmentValues {
 /// particular, so it answers with the one playing. The room is coloured by the
 /// music wherever you have wandered off to, and only a page that disagrees
 /// says otherwise.
-private struct RecordRoom: ViewModifier {
+struct RecordRoom: ViewModifier {
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
     @Environment(CoverArtCache.self) private var art

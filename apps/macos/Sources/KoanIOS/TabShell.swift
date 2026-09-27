@@ -29,77 +29,74 @@ struct TabShell: View {
     @State private var selection: TabID = .queue
 
     var body: some View {
-        // The record's colour, behind everything. Not the window's container
-        // background the Mac uses — a phone has no window, and the tab bar and
-        // the transport float over this rather than sitting beside it.
-        ZStack {
-            WashLayer()
-                .ignoresSafeArea()
-
-            TabView(selection: tab) {
-                Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
-                    stage { QueueView() }
-                }
-                Tab("Library", systemImage: "music.note.house", value: TabID.library) {
-                    NavigationStack { LibraryTab() }
-                }
-                Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
-                    NavigationStack { SettingsView() }
-                }
-                Tab(value: TabID.search, role: .search) {
-                    NavigationStack { IOSSearchView() }
-                }
+        // The record's colour: the tint here, for everything below, and the wash
+        // as each tab's navigation background — see `roomBackground()`. A phone
+        // has no window to hang one wash on, and a stack paints its own ground
+        // over anything placed behind it.
+        TabView(selection: tab) {
+            Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
+                stage { QueueView() }
             }
-            .tabViewStyle(.sidebarAdaptable)
-            // Above the tab bar rather than below it — `safeAreaInset` would put
-            // the transport where the tab bar goes, which is to say on top of it.
-            .tabViewBottomAccessory {
-                MiniPlayer(showingNowPlaying: $showingNowPlaying)
+            Tab("Library", systemImage: "music.note.house", value: TabID.library) {
+                NavigationStack { LibraryTab().washedGround().roomBackground() }
             }
-            // What the app is busy with. The Mac stacks these at the foot of the
-            // sidebar; with no sidebar they float above the transport, which is
-            // the one part of the screen that is the same wherever you are.
-            // Absent when idle, so this is not furniture.
-            .overlay(alignment: .bottom) {
-                ActivityList()
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.regularMaterial, in: .rect(cornerRadius: 16))
-                    .padding(.horizontal, 12)
-                    // Clear of the mini player and the tab bar under it.
-                    .padding(.bottom, 150)
+            Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
+                NavigationStack { SettingsView().washedGround().roomBackground() }
             }
-            // Something other than the tab bar can move the navigator —
-            // submitting a search, or the queue being asked to show itself.
-            .onChange(of: nav.section) { _, section in
-                if let owner = Self.tab(for: section), owner != selection {
-                    selection = owner
-                }
+            Tab(value: TabID.search, role: .search) {
+                NavigationStack { IOSSearchView().roomBackground() }
             }
-            .sheet(isPresented: $showingNowPlaying) {
-                NowPlayingSheet()
-                    .presentationDetents([.large])
-            }
-            // What `RootView` does for the wide layout: the one place a library
-            // change reaches the app's own lists, and the last dependable
-            // moment to save the queue before iOS suspends the app.
-            .reloading(on: 0) {
-                library.libraryChanged()
-                playlists.load()
-            }
-            .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
-                Task { await player.saveSession() }
-            }
-            .alert(
-                "Something went wrong",
-                isPresented: Binding(
-                    get: { player.lastError != nil },
-                    set: { if !$0 { player.lastError = nil } }
-                ),
-                actions: { Button("OK") { player.lastError = nil } },
-                message: { Text(player.lastError ?? "") }
-            )
         }
+        .tabViewStyle(.sidebarAdaptable)
+        // Above the tab bar rather than below it — `safeAreaInset` would put
+        // the transport where the tab bar goes, which is to say on top of it.
+        .tabViewBottomAccessory {
+            MiniPlayer(showingNowPlaying: $showingNowPlaying)
+        }
+        // What the app is busy with. The Mac stacks these at the foot of the
+        // sidebar; with no sidebar they float above the transport, which is
+        // the one part of the screen that is the same wherever you are.
+        // Absent when idle, so this is not furniture.
+        .overlay(alignment: .bottom) {
+            ActivityList()
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.regularMaterial, in: .rect(cornerRadius: 16))
+                .padding(.horizontal, 12)
+                // Clear of the mini player and the tab bar under it.
+                .padding(.bottom, 150)
+        }
+        // Something other than the tab bar can move the navigator —
+        // submitting a search, or the queue being asked to show itself.
+        .onChange(of: nav.section) { _, section in
+            if let owner = Self.tab(for: section), owner != selection {
+                selection = owner
+            }
+        }
+        .sheet(isPresented: $showingNowPlaying) {
+            NowPlayingSheet()
+                .presentationDetents([.large])
+        }
+        .modifier(RecordRoom())
+        // What `RootView` does for the wide layout: the one place a library
+        // change reaches the app's own lists, and the last dependable moment
+        // to save the queue before iOS suspends the app.
+        .reloading(on: 0) {
+            library.libraryChanged()
+            playlists.load()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
+            Task { await player.saveSession() }
+        }
+        .alert(
+            "Something went wrong",
+            isPresented: Binding(
+                get: { player.lastError != nil },
+                set: { if !$0 { player.lastError = nil } }
+            ),
+            actions: { Button("OK") { player.lastError = nil } },
+            message: { Text(player.lastError ?? "") }
+        )
     }
 
     /// A page, with the navigator's own history in front of the tab bar's.
@@ -109,6 +106,7 @@ struct TabShell: View {
         NavigationStack {
             content()
                 .environment(\.onStage, true)
+                .roomBackground()
                 .pushesDetailPages()
                 .toolbar {
                     if nav.canGoBack {

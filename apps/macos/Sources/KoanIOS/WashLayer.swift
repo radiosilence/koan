@@ -2,9 +2,9 @@ import SwiftUI
 
 /// The room's colour: the record's sleeve, blurred out behind everything.
 ///
-/// Lifted out of `RootView` so the phone can stand in the same room. What the
-/// two shells differ on is where it goes — a window's container background on
-/// the Mac, behind the tab content on a phone — not what it is.
+/// The phone's counterpart to the window wash `RecordRoom` paints on the Mac.
+/// A phone has no window to hang one on: each navigation stack paints its own
+/// ground, so every page a stack shows hands this over as that ground.
 struct WashLayer: View {
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
@@ -34,5 +34,13 @@ struct WashLayer: View {
         case .section(.playlist(let id)): playlists.covers[id]?.first ?? player.currentArtwork
         default: player.currentArtwork
         }
+    }
+}
+
+extension View {
+    /// The wash as this page's navigation background. Each pushed page needs
+    /// its own: a stack paints an opaque ground behind every page it shows.
+    func roomBackground() -> some View {
+        containerBackground(for: .navigation) { WashLayer() }
     }
 }

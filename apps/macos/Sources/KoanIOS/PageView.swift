@@ -8,7 +8,11 @@ import SwiftUI
 struct PageView: View {
     @Environment(Navigator.self) private var nav
 
-    @ViewBuilder var body: some View {
+    var body: some View {
+        page.roomBackground()
+    }
+
+    @ViewBuilder private var page: some View {
         switch nav.current {
         case .section(.queue):
             // Kept alive above, and this is only reached when it is not showing.

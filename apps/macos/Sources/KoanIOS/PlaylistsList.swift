@@ -22,6 +22,7 @@ struct PlaylistsList: View {
                     NavigationLink {
                         PlaylistView(playlistId: playlist.id)
                             .environment(\.onStage, true)
+                            .roomBackground()
                     } label: {
                         PlaylistRow(
                             playlist: playlist,
@@ -32,6 +33,8 @@ struct PlaylistsList: View {
             }
         }
         .navigationTitle("Playlists")
+        .washedGround()
+        .roomBackground()
         .task { playlists.load() }
     }
 }

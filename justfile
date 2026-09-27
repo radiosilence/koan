@@ -413,7 +413,7 @@ ios-bundle: macos-ffi ios-ffi
         -I "$mod" -L "$mod" -lKoanFFI \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
         -L "$PWD/target/ios-link" -lkoan_ffi \
-        -framework AudioToolbox -framework AVFAudio -framework MediaPlayer \
+        -framework AudioToolbox -framework AVFAudio -framework AVKit -framework MediaPlayer \
         -o "$app/koan" \
         $(find {{app_dir}}/Sources/KoanIOS -name '*.swift') \
         $(find {{app_dir}}/Sources/Koan -name '*.swift' \

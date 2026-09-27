@@ -23,10 +23,13 @@ struct PlayingIndicator: View {
     /// AppKit view — see `EnvironmentValues.roomTint`.
     @Environment(\.roomTint) private var tint
     @AppStorage("graphics") private var graphics = Graphics.full
+    @Environment(\.powerSaving) private var powerSaving
 
     /// Whether the bars follow the music. Reduce Motion asks them not to, and
     /// so does the bottom of the graphics ladder; off stage nobody is looking.
-    private var live: Bool { onStage && !reduceMotion && graphics.animatesIndicators }
+    private var live: Bool {
+        onStage && !reduceMotion && !powerSaving && graphics.animatesIndicators
+    }
 
     var body: some View {
         PlayingBars(live: live, tint: PlatformColor(tint), levels: levels)

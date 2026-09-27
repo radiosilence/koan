@@ -76,7 +76,7 @@ final class PlayingLevels: Observable {
             NSApplication.didChangeScreenParametersNotification,
         ]
         #else
-        let moves = [UIScene.didActivateNotification]
+        let moves = [UIScene.didActivateNotification, Notification.Name.NSProcessInfoPowerStateDidChange]
         #endif
         for name in moves {
             NotificationCenter.default.addObserver(
@@ -86,15 +86,47 @@ final class PlayingLevels: Observable {
             }
         }
         matchDisplay()
+        #if !canImport(AppKit)
+        // Audio keeps playing with the app in the background, and the bars stay
+        // attached to views nobody can see. Left alone, the analyser would run
+        // an FFT at the display's rate for as long as the music did.
+        for (name, away) in [
+            (UIApplication.didEnterBackgroundNotification, true),
+            (UIApplication.willEnterForegroundNotification, false),
+        ] {
+            NotificationCenter.default.addObserver(
+                forName: name, object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.setAway(away) }
+            }
+        }
+        #endif
     }
 
     deinit { follow?.cancel() }
+
+    /// Out of sight: nothing is read, whoever is attached.
+    private var away = false
+
+    private func setAway(_ away: Bool) {
+        self.away = away
+        if away {
+            follow?.cancel()
+            follow = nil
+        } else if !bars.allObjects.isEmpty {
+            startFollowing()
+        }
+    }
 
     /// A bar that wants the music. The first one starts the follow.
     func attach(_ bar: PlayingBarsView) {
         bars.add(bar)
         bar.apply(bands)
-        guard follow == nil else { return }
+        startFollowing()
+    }
+
+    private func startFollowing() {
+        guard follow == nil, !away else { return }
         let stream = engine.vizStream()
         follow = Task { [weak self] in
             while let levels = await stream.next() {
@@ -143,9 +175,13 @@ final class PlayingLevels: Observable {
         let screen = main?.screen ?? NSApp.keyWindow?.screen ?? NSScreen.main
         let fps = screen?.maximumFramesPerSecond
         #else
-        let fps = UIApplication.shared.connectedScenes
+        // Capped below a ProMotion display's 120: three bars eleven points
+        // tall do not need it, and on a battery every frame is paid for. Low
+        // Power Mode halves it again.
+        let screen = UIApplication.shared.connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.screen.maximumFramesPerSecond }
-            .max()
+            .max() ?? 60
+        let fps: Int? = min(screen, ProcessInfo.processInfo.isLowPowerModeEnabled ? 30 : 60)
         #endif
         engine.setVizFps(fps: UInt8(clamping: fps ?? 60))
     }

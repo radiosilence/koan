@@ -44,6 +44,11 @@ final class AudioSession {
                 // which is why koan makes no bit-perfect claim here.
                 try session.setPreferredSampleRate(preferredSampleRate)
             }
+            // Larger than the default of a few milliseconds, so the render
+            // thread wakes a twentieth as often. Latency is no cost to a music
+            // player — the ring holds seconds, and pause fades out anyway —
+            // and each wake is the CPU leaving idle.
+            try session.setPreferredIOBufferDuration(0.093)
             try session.setActive(true)
         } catch {
             NSLog("koan: audio session refused activation: \(error)")

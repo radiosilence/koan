@@ -27,7 +27,10 @@ extension Color {
     #if canImport(AppKit)
     static let koanAccent = NSColor(named: "AccentColor").map(Color.init) ?? .accentColor
     #else
-    static let koanAccent = Color("AccentColor")
+    // Not the catalog's colour. That one is a neutral grey chosen to sit under
+    // AppKit's list selection; UIKit draws glyphs in the tint instead — the
+    // selected tab, borderless buttons — and grey on the dark ground is gone.
+    static let koanAccent = Color.primary
     #endif
 }
 
