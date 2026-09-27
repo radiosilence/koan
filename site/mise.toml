@@ -1,0 +1,7 @@
+[tools]
+# The standalone Tailwind CLI: one binary, so the site has no package manifest.
+"github:tailwindlabs/tailwindcss" = "4"
+
+[tasks.css]
+description = "Compile the stylesheet into public/"
+run = "tailwindcss --input src/style.css --output public/style.css --minify"

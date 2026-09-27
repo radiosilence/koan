@@ -26,9 +26,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # A placeholder left in the pages would be published as-is.
+      # A placeholder left in the pages would be published as-is. Text files only: an image's bytes can match.
       - name: No placeholders
-        run: "! grep -rn '__[A-Z]*__' site/public"
+        run: "! grep -rnI '__[A-Z]*__' site/public"
+
+      # The stylesheet is compiled rather than committed, and the image serves public/ as it is, so it has to exist
+      # before the build. The Tailwind CLI comes from site/mise.toml.
+      - name: Set up mise
+        uses: jdx/mise-action@9e7f7633ff6f6d6048a9418a68d48f288f50eb14 # v4.2.3
+        with:
+          working_directory: site
+
+      - name: Build the stylesheet
+        working-directory: site
+        run: mise run css
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0

@@ -2,6 +2,22 @@
 
 ## 0.36.2
 
+### Changed
+
+- **koan.rocks is styled with Tailwind.** The page keeps its hand-written HTML and takes blit's look: Geist Mono, lowercase thin headings and one red accent, dark by default. The stylesheet is compiled by the standalone Tailwind CLI (`mise run css` in `site/`), so the site has no package manifest; the Site workflow builds it before the image and it is not committed. The app screenshots are cropped to the window, so nothing behind it shows at the edges.
+
+- **The product is spelled kōan wherever a person reads it:** the README and guides, the macOS and iOS apps (window title, settings, errors, the iOS home-screen name), CLI help, and the messages the CLI, daemon and MCP endpoint print. The command, crates, paths, URLs, environment variables and config keys stay `koan`.
+
+### Fixed
+
+- Web UI: the signed-in username gets a line of its own above API keys and Sign out, instead of being truncated beside them.
+
+## 0.36.1
+
+### Added
+
+- The web UI shows the server's version under the account controls (the sidebar on a desktop, the footer on a phone), linked to its release notes.
+
 ### Added
 
 - The web UI and share pages have a favicon and home-screen icon: the app icon, as on koan.rocks.
