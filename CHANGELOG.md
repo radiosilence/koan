@@ -9,6 +9,7 @@
 ### Fixed
 
 - **Browser sign-in set only one cookie.** `/auth/login`, `/auth/refresh` and `/auth/logout` sent their cookies as a header array, which keeps only the last value per name, so browsers received the stale-path clear and never the access or refresh cookie.
+- **The share page plays on iPhone.** iOS starts audio only inside the tap itself; the player created its audio context there but resumed it after fetching and decoding the first track, which iOS no longer counts as the tap, so nothing played. The context and the streaming element are now unlocked in the gesture, and the page declares itself a media player (`navigator.audioSession`), so the ring/silent switch no longer mutes Web Audio.
 
 ## Unreleased
 

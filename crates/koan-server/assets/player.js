@@ -30,11 +30,20 @@ window.KoanPlayer = (opts = {}) => {
 
   // Runs synchronously at the top of every gesture handler, before any await:
   // iOS only lets a context start from inside the gesture itself.
-  function wake() {
+  let elUnlocked = false;
+  function wake(t) {
     // Without this iOS treats Web Audio as a sound effect, silenced by the mute switch.
     if (navigator.audioSession) { try { navigator.audioSession.type = "playback"; } catch {} }
     if (!ctx && window.AudioContext) ctx = new AudioContext();
     if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
+    // The streaming element needs the same blessing: once started in a gesture
+    // it may start again later, after a fetch or at a track change.
+    if (!elUnlocked && t) {
+      elUnlocked = true;
+      el.src = t.src;
+      // Silenced again unless this tap is what starts it streaming.
+      el.play().then(() => { if (mode !== "stream") el.pause(); }).catch(() => {});
+    }
   }
 
   function buffer(i) {
@@ -184,7 +193,7 @@ window.KoanPlayer = (opts = {}) => {
   }
 
   async function toggle() {
-    wake();
+    wake(playing ? null : queue[Math.max(cur, 0)]);
     if (!queue.length) return;
     if (mode === null) return go(Math.max(cur, 0), resumeAt);
     if (playing) {
@@ -219,16 +228,16 @@ window.KoanPlayer = (opts = {}) => {
       setPlaying(false);
     },
     // Replace the queue and play from track i.
-    play(tracks, i = 0) { wake(); queue = tracks.slice(); go(i, 0); },
+    play(tracks, i = 0) { wake(tracks[i]); queue = tracks.slice(); go(i, 0); },
     // Play these next, starting now, and keep the rest of the queue after them.
-    playNow(tracks) { wake(); queue.splice(cur + 1, 0, ...tracks); go(cur + 1, 0); },
+    playNow(tracks) { wake(tracks[0]); queue.splice(cur + 1, 0, ...tracks); go(cur + 1, 0); },
     append(tracks) {
       const wasLast = cur === queue.length - 1;
       queue.push(...tracks);
       if (wasLast && mode === "buffer") requeue();
       notify();
     },
-    playAt(i, from = 0) { wake(); go(i, from); },
+    playAt(i, from = 0) { wake(queue[i]); go(i, from); },
     remove(i) {
       if (i < 0 || i >= queue.length) return;
       queue.splice(i, 1);
@@ -238,11 +247,11 @@ window.KoanPlayer = (opts = {}) => {
       notify();
     },
     clear() { stop(); queue = []; cur = -1; resumeAt = 0; setPlaying(false); },
-    next() { wake(); if (cur + 1 < queue.length) go(cur + 1, 0); },
-    prev() { wake(); go(position() > 3 || cur <= 0 ? Math.max(cur, 0) : cur - 1, 0); },
+    next() { wake(queue[cur + 1]); if (cur + 1 < queue.length) go(cur + 1, 0); },
+    prev() { wake(queue[Math.max(cur - 1, 0)]); go(position() > 3 || cur <= 0 ? Math.max(cur, 0) : cur - 1, 0); },
     seek(s) {
       if (cur < 0) return;
-      wake();
+      wake(queue[cur]);
       if (mode === null) { resumeAt = s; notify(); return; }
       go(cur, s);
     },
