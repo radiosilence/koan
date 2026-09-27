@@ -247,54 +247,61 @@ pub fn auth_router(state: AuthRouteState) -> axum::Router {
 // Handlers
 // ---------------------------------------------------------------------------
 
-async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest>) -> Response {
+/// Check a username and password and open a session: a fresh access token and
+/// a stored refresh token. The error is the response to send. Shared by the
+/// JSON login and the web UI's sign-in form, so both are one implementation.
+pub(crate) async fn authenticate(
+    state: &AuthRouteState,
+    username: &str,
+    password: &str,
+) -> Result<(auth_queries::UserRow, String, String), Response> {
     let db = match state.open_db() {
         Ok(db) => db,
-        Err((status, msg)) => return (status, msg).into_response(),
+        Err((status, msg)) => return Err((status, msg).into_response()),
     };
 
     // Look up user.
-    let user = match auth_queries::get_user_by_username(&db.conn, &req.username) {
+    let user = match auth_queries::get_user_by_username(&db.conn, username) {
         Ok(Some(u)) => u,
         Ok(None) => {
             // Pay for a verify anyway, so response time doesn't say which
             // usernames exist.
-            let password = req.password.clone();
+            let password = password.to_string();
             let _ = tokio::task::spawn_blocking(move || {
                 auth::verify_password(&password, dummy_password_hash())
             })
             .await;
-            return (
+            return Err((
                 StatusCode::UNAUTHORIZED,
                 Json(MessageResponse {
                     message: "invalid username or password".into(),
                 }),
             )
-                .into_response();
+                .into_response());
         }
         Err(e) => {
             log::error!("auth login db error: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response());
         }
     };
 
     // Argon2 blocks for milliseconds at a time; on the async workers that stalls
     // every other request the server is handling.
     let hash = user.password_hash.clone();
-    let password = req.password.clone();
+    let password = password.to_string();
     let verified = tokio::task::spawn_blocking(move || auth::verify_password(&password, &hash))
         .await
         .map(|r| r.is_ok())
         .unwrap_or(false);
 
     if !verified {
-        return (
+        return Err((
             StatusCode::UNAUTHORIZED,
             Json(MessageResponse {
                 message: "invalid username or password".into(),
             }),
         )
-            .into_response();
+            .into_response());
     }
 
     // Mint access token.
@@ -308,7 +315,7 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
         Ok(t) => t,
         Err(e) => {
             log::error!("auth mint token error: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response();
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
         }
     };
 
@@ -317,7 +324,7 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
         Ok(t) => t,
         Err(e) => {
             log::error!("auth refresh token generation error: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response();
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
         }
     };
     let refresh_expires = auth::now_unix() as i64 + state.refresh_ttl_secs as i64;
@@ -325,11 +332,21 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
         auth_queries::store_refresh_token(&db.conn, &refresh_token_id, user.id, refresh_expires)
     {
         log::error!("auth store refresh token error: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response();
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
     }
 
     // Housekeeping: clean up expired tokens on login (non-blocking).
     let _ = auth_queries::cleanup_expired_tokens(&db.conn);
+
+    Ok((user, access_token, refresh_token_id))
+}
+
+async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest>) -> Response {
+    let (user, access_token, refresh_token_id) =
+        match authenticate(&state, &req.username, &req.password).await {
+            Ok(session) => session,
+            Err(resp) => return resp,
+        };
 
     let cookies = [
         (SET_COOKIE, state.access_cookie(&access_token)),
@@ -354,6 +371,86 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
     (StatusCode::OK, cookies, Json(resp)).into_response()
 }
 
+/// Spend a refresh token for a new access token and a new refresh token. The
+/// error is the response to send. Shared by the JSON refresh and the web UI's
+/// session resume.
+pub(crate) fn rotate(state: &AuthRouteState, supplied: &str) -> Result<(String, String), Response> {
+    let db = match state.open_db() {
+        Ok(db) => db,
+        Err((status, msg)) => return Err((status, msg).into_response()),
+    };
+
+    // Atomically consume (validate + revoke) the refresh token in a single
+    // statement to prevent TOCTOU races during token rotation.
+    let token = match auth_queries::consume_refresh_token(&db.conn, supplied) {
+        Ok(Some(t)) => t,
+        Ok(None) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(MessageResponse {
+                    message: "invalid or expired refresh token".into(),
+                }),
+            )
+                .into_response());
+        }
+        Err(e) => {
+            log::error!("auth refresh db error: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response());
+        }
+    };
+
+    // Look up the user.
+    let user = match auth_queries::get_user_by_id(&db.conn, token.user_id) {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                Json(MessageResponse {
+                    message: "user not found".into(),
+                }),
+            )
+                .into_response());
+        }
+        Err(e) => {
+            log::error!("auth refresh user lookup error: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response());
+        }
+    };
+
+    // Mint new access token.
+    let access_token = match auth::mint_access_token(
+        &state.private_pem,
+        user.id,
+        &user.username,
+        user.role,
+        state.access_ttl_secs,
+    ) {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!("auth mint token error: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
+        }
+    };
+
+    // Issue new refresh token.
+    let new_refresh_id = match auth::random_token() {
+        Ok(t) => t,
+        Err(e) => {
+            log::error!("auth refresh token generation error: {}", e);
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
+        }
+    };
+    let refresh_expires = auth::now_unix() as i64 + state.refresh_ttl_secs as i64;
+    if let Err(e) =
+        auth_queries::store_refresh_token(&db.conn, &new_refresh_id, user.id, refresh_expires)
+    {
+        log::error!("auth store refresh token error: {}", e);
+        return Err((StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response());
+    }
+
+    Ok((access_token, new_refresh_id))
+}
+
 async fn refresh(
     State(state): State<AuthRouteState>,
     headers: axum::http::HeaderMap,
@@ -370,78 +467,10 @@ async fn refresh(
             .into_response();
     };
 
-    let db = match state.open_db() {
-        Ok(db) => db,
-        Err((status, msg)) => return (status, msg).into_response(),
+    let (access_token, new_refresh_id) = match rotate(&state, &supplied) {
+        Ok(pair) => pair,
+        Err(resp) => return resp,
     };
-
-    // Atomically consume (validate + revoke) the refresh token in a single
-    // statement to prevent TOCTOU races during token rotation.
-    let token = match auth_queries::consume_refresh_token(&db.conn, &supplied) {
-        Ok(Some(t)) => t,
-        Ok(None) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(MessageResponse {
-                    message: "invalid or expired refresh token".into(),
-                }),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            log::error!("auth refresh db error: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
-        }
-    };
-
-    // Look up the user.
-    let user = match auth_queries::get_user_by_id(&db.conn, token.user_id) {
-        Ok(Some(u)) => u,
-        Ok(None) => {
-            return (
-                StatusCode::UNAUTHORIZED,
-                Json(MessageResponse {
-                    message: "user not found".into(),
-                }),
-            )
-                .into_response();
-        }
-        Err(e) => {
-            log::error!("auth refresh user lookup error: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "internal error").into_response();
-        }
-    };
-
-    // Mint new access token.
-    let access_token = match auth::mint_access_token(
-        &state.private_pem,
-        user.id,
-        &user.username,
-        user.role,
-        state.access_ttl_secs,
-    ) {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("auth mint token error: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response();
-        }
-    };
-
-    // Issue new refresh token.
-    let new_refresh_id = match auth::random_token() {
-        Ok(t) => t,
-        Err(e) => {
-            log::error!("auth refresh token generation error: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response();
-        }
-    };
-    let refresh_expires = auth::now_unix() as i64 + state.refresh_ttl_secs as i64;
-    if let Err(e) =
-        auth_queries::store_refresh_token(&db.conn, &new_refresh_id, user.id, refresh_expires)
-    {
-        log::error!("auth store refresh token error: {}", e);
-        return (StatusCode::INTERNAL_SERVER_ERROR, "token error").into_response();
-    }
 
     let cookies = [
         (SET_COOKIE, state.access_cookie(&access_token)),
