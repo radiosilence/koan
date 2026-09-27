@@ -6,27 +6,6 @@
 
 - The web UI and share pages have a favicon and home-screen icon: the app icon, as on koan.rocks.
 - The web UI spells its name kōan in the sidebar, the tab title, the sign-in page and the version label.
-
-### Changed
-
-- **koan.rocks is styled with Tailwind.** The page keeps its hand-written HTML and takes blit's look: Geist Mono, lowercase thin headings and one red accent, dark by default. The stylesheet is compiled by the standalone Tailwind CLI (`mise run css` in `site/`), so the site has no package manifest; the Site workflow builds it before the image and it is not committed. The app screenshots are cropped to the window, so nothing behind it shows at the edges.
-
-- **The product is spelled kōan wherever a person reads it:** the README and guides, the macOS and iOS apps (window title, settings, errors, the iOS home-screen name), CLI help, and the messages the CLI, daemon and MCP endpoint print. The command, crates, paths, URLs, environment variables and config keys stay `koan`.
-
-### Fixed
-
-- Web UI: the signed-in username gets a line of its own above API keys and Sign out, instead of being truncated beside them.
-
-## 0.36.1
-
-### Added
-
-- The web UI shows the server's version under the account controls (the sidebar on a desktop, the footer on a phone), linked to its release notes.
-
-### Added
-
-- The web UI and share pages have a favicon and home-screen icon: the app icon, as on koan.rocks.
-- The web UI spells its name kōan in the sidebar, the tab title, the sign-in page and the version label.
 - **koan runs on iOS.** The same engine, models and pages as the Mac app, in a phone's shell: a tab bar (Queue, Library, Settings, Search), a mini player above it, and a full-screen Now Playing with the seek bar, lyrics in place of the sleeve, radio, the output format and an AirPlay picker. Every page stands in the playing record's wash, as the Mac's window does. An iPad with room for a sidebar gets the Mac's layout instead; the choice follows the width, not the device. `just ios-run` builds it for a simulator. iOS 26 or later.
 
   Output goes through RemoteIO, from the same `engine.rs` the Mac uses; the two differ only in which output unit they open and whether a device can be named. The decode pipeline, timeline, gapless cursor and teardown are shared rather than rewritten. What iOS costs is the bit-perfect claim: everything crosses the system mixer, so koan plays at whatever rate the session settles on.
@@ -37,6 +16,7 @@
 
 ### Changed
 
+- **koan.rocks is styled with Tailwind.** The page keeps its hand-written HTML and takes blit's look: Geist Mono, lowercase thin headings and one red accent, dark by default. The stylesheet is compiled by the standalone Tailwind CLI (`mise run css` in `site/`), so the site has no package manifest; the Site workflow builds it before the image and it is not committed. The app screenshots are cropped to the window, so nothing behind it shows at the edges.
 - **The product is spelled kōan wherever a person reads it:** the README and guides, the macOS and iOS apps (window title, settings, errors, the iOS home-screen name), CLI help, and the messages the CLI, daemon and MCP endpoint print. The command, crates, paths, URLs, environment variables and config keys stay `koan`.
 - **The decode thread sleeps 10ms, not half a millisecond, while the ring buffer is full.** A full ring is where playback spends nearly all its time, so the old wait was two thousand wakes a second for the length of every track, on every platform. The ring holds a second or more of audio at any rate koan plays.
 - **The Subsonic API, share pages, sign-in and token refresh reuse database connections.** Each request opened its own, which applied the schema DDL and ran a WAL checkpoint first, and a Subsonic client syncing a library makes thousands of requests. They now share one connection pool per server, as GraphQL and the web UI already did; account password and token checks for Subsonic and MCP over HTTP use it too. The radio's top-ups, background playlist pushes and organize by path use pooled connections as well.
