@@ -321,34 +321,86 @@ impl SubsonicResponse {
 #[derive(Clone, Copy)]
 struct AuthFailed;
 
-/// Refuse a client that has failed to sign in too often, and count its
-/// failures.
+/// Failed sign-ins allowed per client and username in a minute.
+const AUTH_FAILURES_PER_MINUTE: u32 = 10;
+const AUTH_WINDOW: Duration = Duration::from_secs(60);
+
+/// Failed sign-ins by client address and username.
+///
+/// Keyed on both because the address alone may not be the client's: behind a
+/// relay that does not pass addresses on, every outside client arrives from
+/// the relay's, and a limit on that alone would let anyone lock everyone out.
+/// With the username in the key, guessing one account's password throttles
+/// that account's password sign-ins and nothing else.
+#[derive(Default)]
+struct FailureLimiter {
+    windows: Mutex<HashMap<(std::net::IpAddr, String), (std::time::Instant, u32)>>,
+}
+
+impl FailureLimiter {
+    fn exhausted(&self, key: &(std::net::IpAddr, String)) -> bool {
+        let windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        windows.get(key).is_some_and(|(start, count)| {
+            start.elapsed() < AUTH_WINDOW && *count >= AUTH_FAILURES_PER_MINUTE
+        })
+    }
+
+    fn record(&self, key: (std::net::IpAddr, String)) {
+        let mut windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
+        if windows.len() > 4096 {
+            windows.retain(|_, (start, _)| start.elapsed() < AUTH_WINDOW);
+        }
+        let entry = windows.entry(key).or_insert((std::time::Instant::now(), 0));
+        if entry.0.elapsed() >= AUTH_WINDOW {
+            *entry = (std::time::Instant::now(), 0);
+        }
+        entry.1 += 1;
+    }
+}
+
+struct AuthThrottle {
+    failures: FailureLimiter,
+    /// The `[subsonic]` user, whose token is checked against a random 256-bit
+    /// secret rather than a password.
+    shared_username: String,
+}
+
+/// Refuse password sign-ins for an account that has failed too often from
+/// this client, and count failures.
 ///
 /// Every request carries its credential, so each is a sign-in: a password
 /// through argon2, or a token against an account's sealed password, which is
-/// only an MD5 and costs an attacker nothing to try. Only refusals count, so a
-/// client syncing a library at full tilt is never slowed.
+/// only an MD5 and cheap to try. Only refusals count, so a client syncing a
+/// library is never slowed. API keys and the shared secret's token are random
+/// and not worth guessing, so they are never throttled: a flood of wrong
+/// passwords for an account cannot lock out the apps signed in with either.
 async fn throttle_auth(
-    State(limiter): State<Arc<crate::auth::routes::LoginRateLimiter>>,
+    State(throttle): State<Arc<AuthThrottle>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let ip = crate::auth::routes::client_ip(&request);
-    if limiter.exhausted(ip) {
-        let json = request.uri().query().is_some_and(|q| {
-            form_urlencoded::parse(q.as_bytes()).any(|(k, v)| k == "f" && v == "json")
-        });
+    let params = RawParams::parse(request.uri().query());
+    let username = params.get("u").unwrap_or_default().to_owned();
+    let unguessable = params.get("apiKey").is_some()
+        || (params.get("t").is_some() && username == throttle.shared_username);
+    if unguessable {
+        return next.run(request).await;
+    }
+
+    let key = (crate::auth::routes::client_ip(&request), username);
+    if throttle.failures.exhausted(&key) {
+        let json = params.get("f") == Some("json");
         return SubsonicResponse::error(
             json,
             &SubsonicError::new(
                 SubsonicErrorCode::Generic,
-                "Too many failed sign-ins from this address; try again in a minute",
+                "Too many failed sign-ins for this account from this address; try again in a minute",
             ),
         );
     }
     let response = next.run(request).await;
     if response.extensions().get::<AuthFailed>().is_some() {
-        limiter.record(ip);
+        throttle.failures.record(key);
     }
     response
 }
@@ -3252,6 +3304,22 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
             "/rest/{*endpoint}",
             get(unsupported_endpoint).post(unsupported_endpoint),
         )
+}
+
+/// The Subsonic routes with their state and the layers every request passes.
+/// `form_post` is outermost, so the sign-in throttle sees credentials sent in
+/// a form body as well as in the query.
+fn subsonic_app(state: Arc<AppState>) -> axum::Router {
+    let throttle = Arc::new(AuthThrottle {
+        failures: FailureLimiter::default(),
+        shared_username: state.username.clone(),
+    });
+    register_subsonic_routes(axum::Router::new())
+        .with_state(state)
+        .layer(axum::middleware::from_fn_with_state(
+            throttle,
+            throttle_auth,
+        ))
         .layer(axum::middleware::from_fn(form_post))
 }
 
@@ -3290,14 +3358,7 @@ pub fn subsonic_router(pool: Arc<Pool>) -> Option<axum::Router> {
         )),
     });
 
-    Some(
-        register_subsonic_routes(axum::Router::new())
-            .with_state(state)
-            .layer(axum::middleware::from_fn_with_state(
-                Arc::new(crate::auth::routes::LoginRateLimiter::default()),
-                throttle_auth,
-            )),
-    )
+    Some(subsonic_app(state))
 }
 
 // ===========================================================================
@@ -3339,18 +3400,16 @@ mod tests {
     }
 
     fn build_test_router(state: Arc<AppState>) -> axum::Router {
-        register_subsonic_routes(axum::Router::new()).with_state(state)
+        register_subsonic_routes(axum::Router::new())
+            .with_state(state)
+            .layer(axum::middleware::from_fn(form_post))
     }
 
     #[tokio::test]
-    async fn test_failed_sign_ins_lock_the_client_out() {
+    async fn test_failed_password_sign_ins_are_throttled_per_account() {
         let (state, _dir) = test_state();
-        let app = register_subsonic_routes(axum::Router::new())
-            .with_state(state)
-            .layer(axum::middleware::from_fn_with_state(
-                Arc::new(crate::auth::routes::LoginRateLimiter::default()),
-                throttle_auth,
-            ));
+        let app = subsonic_app(state);
+        let wrong = "/rest/ping?u=testuser&p=wrong&v=1.16.1&c=test";
 
         // Successes never count.
         for _ in 0..20 {
@@ -3359,13 +3418,24 @@ mod tests {
             assert!(body.contains("status=\"ok\""), "{}", body);
         }
         for _ in 0..10 {
-            let (_, body) =
-                get_response(app.clone(), "/rest/ping?u=testuser&p=wrong&v=1.16.1&c=test").await;
+            let (_, body) = get_response(app.clone(), wrong).await;
             assert!(body.contains("code=\"40\""), "{}", body);
         }
-        // Spent: even the right credential is refused for the rest of the window.
-        let (_, body) = get_response(app, &format!("/rest/ping?{}", auth_query(""))).await;
+        // Spent: password sign-ins for this account are refused, even correct
+        // ones, for the rest of the minute.
+        let (_, body) = get_response(
+            app.clone(),
+            "/rest/ping?u=testuser&p=testpass&v=1.16.1&c=test",
+        )
+        .await;
         assert!(body.contains("Too many failed sign-ins"), "{}", body);
+        // The shared secret's token is not a password and is not throttled,
+        // so the apps signed in with it keep working.
+        let (_, body) = get_response(app.clone(), &format!("/rest/ping?{}", auth_query(""))).await;
+        assert!(body.contains("status=\"ok\""), "{}", body);
+        // Nor is another account.
+        let (_, body) = get_response(app, "/rest/ping?u=someone&p=wrong&v=1.16.1&c=test").await;
+        assert!(body.contains("code=\"40\""), "{}", body);
     }
 
     fn auth_query(extra: &str) -> String {

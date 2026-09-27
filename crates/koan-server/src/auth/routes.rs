@@ -59,21 +59,6 @@ impl LoginRateLimiter {
         entry.1 += 1;
         entry.1 <= LOGIN_MAX_PER_WINDOW
     }
-
-    /// Whether `ip` has spent its allowance, without spending any. For
-    /// callers that count failures rather than attempts.
-    pub(crate) fn exhausted(&self, ip: IpAddr) -> bool {
-        let now = auth::now_unix();
-        let windows = self.windows.lock().unwrap_or_else(|e| e.into_inner());
-        windows.get(&ip).is_some_and(|(start, count)| {
-            now.saturating_sub(*start) < LOGIN_WINDOW_SECS && *count >= LOGIN_MAX_PER_WINDOW
-        })
-    }
-
-    /// Spend one of `ip`'s allowance.
-    pub(crate) fn record(&self, ip: IpAddr) {
-        let _ = self.allow(ip);
-    }
 }
 
 /// The address a request came from.
@@ -680,18 +665,6 @@ mod tests {
         // An internal peer with no header is itself.
         let r = request_from("10.42.0.7", None);
         assert_eq!(client_ip(&r), "10.42.0.7".parse::<IpAddr>().unwrap());
-    }
-
-    #[test]
-    fn failures_exhaust_without_attempts_counting() {
-        let limiter = LoginRateLimiter::default();
-        let ip: IpAddr = "203.0.113.9".parse().unwrap();
-        for _ in 0..LOGIN_MAX_PER_WINDOW {
-            assert!(!limiter.exhausted(ip));
-            limiter.record(ip);
-        }
-        assert!(limiter.exhausted(ip));
-        assert!(!limiter.exhausted("203.0.113.10".parse().unwrap()));
     }
 
     #[test]
