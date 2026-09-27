@@ -26,6 +26,7 @@ enum Icon {
     static let share = "link"
     static let organize = "folder.badge.gearshape"
     static let remove = "minus.circle"
+    static let deselect = "xmark.circle"
     static let clear = "trash"
     static let rename = "pencil"
     static let export = "square.and.arrow.up"
