@@ -1,6 +1,6 @@
 # CLI Reference
 
-koan is a single binary with subcommands. Running `koan` with no subcommand launches the TUI player.
+kōan is a single binary with subcommands. Running `koan` with no subcommand launches the TUI player.
 
 ## `koan play`
 
@@ -124,7 +124,7 @@ See [Remote Servers](../guide/remote-servers.md) for the full guide.
 
 ## `koan subsonic`
 
-Manage koan's own Subsonic-compatible REST API at `/rest/*`.
+Manage kōan's own Subsonic-compatible REST API at `/rest/*`.
 
 ```bash
 koan subsonic setup               # generate a secret and enable the API

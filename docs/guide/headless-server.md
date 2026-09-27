@@ -1,6 +1,6 @@
 # Headless Server
 
-Run koan as a background music server with no TUI -- controlled entirely via the GraphQL API, Subsonic REST API, or MCP.
+Run kōan as a background music server with no TUI -- controlled entirely via the GraphQL API, Subsonic REST API, or MCP.
 
 ## Quick start
 
@@ -17,13 +17,13 @@ koan -d --playground --subsonic 4040
 
 ## Daemon mode
 
-The `-d` flag detaches koan from the terminal and runs it in the background:
+The `-d` flag detaches kōan from the terminal and runs it in the background:
 
 ```bash
 koan -d
 ```
 
-koan logs to `~/.config/koan/koan.log` in daemon mode. The GraphQL API is available on `http://localhost:4000/graphql` by default.
+kōan logs to `~/.config/koan/koan.log` in daemon mode. The GraphQL API is available on `http://localhost:4000/graphql` by default.
 
 ## Server flags
 
@@ -64,7 +64,7 @@ export KOAN_GRAPHQL__PLAYGROUND=true
 
 ## Remote TUI
 
-Connect a TUI from another machine to a running headless koan:
+Connect a TUI from another machine to a running headless kōan:
 
 ```bash
 koan --server http://host:4000          # full TUI
@@ -96,7 +96,7 @@ auth_enabled = false
 
 The server answers `http://host:4000/` with a browser UI: albums, artists, search, a play queue and share links, laid out for a phone as well as a desktop. Albums and artists sort and filter (favourites, lossless or codec, years, genre) through the page URL, so a filtered view can be bookmarked or sent. Playback happens in the browser, streaming from the server; the server's own player is not involved.
 
-Sign in with a koan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
+Sign in with a kōan account (`koan auth create-user`). The session is the same pair of `HttpOnly` cookies the JSON login sets, so behind plain HTTP the UI needs `cookie_secure = false`, and a hostname it is reached by must be in `allowed_hosts`. The access cookie lasts `access_token_ttl`; an open page renews it from the refresh cookie, and a page loaded after it lapsed renews on the way in. With `auth_enabled = false` the UI is open to anyone who can reach the port. Covers are resized once and kept in `covers/` in the config directory; deleting it only costs regenerating them.
 
 ## Sharing
 
@@ -109,7 +109,7 @@ public_url = "https://koan.example.com"
 
 A share is a slice of the library, shown the way the app shows it: one track shares its album cued to that track, an album the album, an artist their albums in release order, and several tracks stay a list. What a share covers is fixed when it is made; an artist share does not grow when the library does. Pages carry OpenGraph and Twitter card tags, with the cover as an absolute `og:image` on `public_url`, so a pasted link unfurls with its artwork.
 
-The page and its audio answer for the share's own tracks and nothing else, addressed by position in the share rather than by library id. An expired, revoked or made-up id is the same 404. List shares with `shares`, set an expiry with `updateShare`, revoke with `deleteShare`. A koan TUI or macOS app whose remote server is this koan shares through it.
+The page and its audio answer for the share's own tracks and nothing else, addressed by position in the share rather than by library id. An expired, revoked or made-up id is the same 404. List shares with `shares`, set an expiry with `updateShare`, revoke with `deleteShare`. A kōan TUI or macOS app whose remote server is this kōan shares through it.
 
 ## In a container
 

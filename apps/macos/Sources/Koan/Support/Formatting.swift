@@ -49,10 +49,10 @@ enum Format {
     /// and the system volume stage are both past the point koan can see.
     static func outputExplanation(_ f: StreamFormat) -> String {
         guard let out = f.outputSampleRate else {
-            return "Source format — koan matches the device to the source rate rather than resampling"
+            return "Source format — kōan matches the device to the source rate rather than resampling"
         }
         return out == f.sampleRate
-            ? "Device is running at \(rate(out)) kHz, the source rate — koan is resampling nothing"
+            ? "Device is running at \(rate(out)) kHz, the source rate — kōan is resampling nothing"
             : "Device stayed at \(rate(out)) kHz, so \(rate(f.sampleRate)) kHz is being resampled to reach it"
     }
 

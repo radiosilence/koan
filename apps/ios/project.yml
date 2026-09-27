@@ -65,7 +65,7 @@ targets:
     info:
       path: ../../target/ios-project/Info.plist
       properties:
-        CFBundleDisplayName: koan
+        CFBundleDisplayName: kōan
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         # Without this the process is suspended when the screen locks, and the

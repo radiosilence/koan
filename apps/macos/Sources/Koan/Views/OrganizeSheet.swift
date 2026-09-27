@@ -149,7 +149,7 @@ struct OrganizeSheet: View {
             EmptyState(
                 icon: "folder.badge.questionmark",
                 title: "No library folder",
-                detail: "koan has nowhere to move these to. Add a folder in Settings › Library."
+                detail: "kōan has nowhere to move these to. Add a folder in Settings › Library."
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = organize.error {
