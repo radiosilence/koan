@@ -59,6 +59,10 @@ pub fn router(
             "/share/assets/share.css",
             get(|| async { asset(PAGE_CSS, "text/css; charset=utf-8") }),
         )
+        .route(
+            "/share/assets/{name}",
+            get(|Path(name): Path<String>| async move { icon(&name).unwrap_or_else(not_found) }),
+        )
         .route("/share/{id}", get(page))
         .route("/share/{id}/cover", get(cover))
         .route("/share/{id}/{n}", get(track))
@@ -95,6 +99,36 @@ fn live<'a>(pool: &'a Pool, id: &str) -> Option<(Handle<'a>, ShareRow, Vec<Track
         .filter_map(|id| rows.iter().find(|t| t.id == *id).cloned())
         .collect();
     Some((db, share, tracks))
+}
+
+/// The app icon, as the browser tab and home-screen icons of the web UI and
+/// the share pages. The same images koan.rocks uses.
+pub(crate) fn icon(name: &str) -> Option<Response> {
+    let bytes: &'static [u8] = match name {
+        "icon-32.png" => include_bytes!("../assets/icon-32.png"),
+        "icon-192.png" => include_bytes!("../assets/icon-192.png"),
+        "apple-touch-icon.png" => include_bytes!("../assets/apple-touch-icon.png"),
+        _ => return None,
+    };
+    Some(
+        (
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "public, max-age=86400"),
+            ],
+            bytes,
+        )
+            .into_response(),
+    )
+}
+
+/// `<link>`s for the icons, served under `base` (`/ui/assets` or `/share/assets`).
+pub(crate) fn icon_links(base: &str) -> String {
+    format!(
+        "<link rel=icon type=image/png sizes=32x32 href=\"{base}/icon-32.png\">\
+<link rel=icon type=image/png sizes=192x192 href=\"{base}/icon-192.png\">\
+<link rel=apple-touch-icon href=\"{base}/apple-touch-icon.png\">"
+    )
 }
 
 pub(crate) fn asset(body: &'static str, kind: &'static str) -> Response {
@@ -368,7 +402,7 @@ fn render(
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
 <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
 <meta name=robots content=\"noindex,nofollow\"><title>{title}</title>{preview}\
-<link rel=stylesheet href=\"/share/assets/share.css\"></head><body><main>\
+{icons}<link rel=stylesheet href=\"/share/assets/share.css\"></head><body><main>\
 <header class=hero><img id=cover class=cover src=\"/share/{id}/cover\" alt=\"\">\
 <div class=info><p class=kicker>{kicker}</p><h1>{title}</h1><p class=sub>{sub}</p>{note}\
 <div class=controls><button id=prev class=quiet aria-label=Previous>&#9198;</button>\
@@ -380,6 +414,7 @@ fn render(
 <script src=\"/share/assets/share.js\" defer></script></body></html>",
         title = escape(&title),
         preview = preview.concat(),
+        icons = icon_links("/share/assets"),
         sub = escape(&sub.join(" · ")),
         start = start.map_or(-1, |i| i as i64),
     )

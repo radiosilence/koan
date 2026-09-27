@@ -51,8 +51,9 @@ fn head(title: &str) -> String {
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
 <meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
 <meta name=theme-color content=\"#181b1f\"><meta name=robots content=\"noindex,nofollow\">\
-<title>{} · koan</title><link rel=stylesheet href=\"/ui/assets/ui.css\">",
-        escape(title)
+<title>{} · kōan</title>{}<link rel=stylesheet href=\"/ui/assets/ui.css\">",
+        escape(title),
+        crate::share::icon_links("/ui/assets")
     )
 }
 
@@ -68,13 +69,13 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> Str
     };
     let account = format!(
         "<div class=side-foot>{signout}<a class=version \
-href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">koan {v}</a></div>",
+href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">kōan {v}</a></div>",
         v = env!("CARGO_PKG_VERSION")
     );
     format!(
         "{head}<script type=module src=\"/ui/assets/datastar.js\"></script>\
 <script src=\"/ui/assets/player.js\" defer></script><script src=\"/ui/assets/ui.js\" defer></script>\
-</head><body><nav class=side aria-label=Library><a class=brand href=\"/\">koan</a>\
+</head><body><nav class=side aria-label=Library><a class=brand href=\"/\">kōan</a>\
 <a href=\"/albums\" data-nav=albums>Albums</a><a href=\"/artists\" data-nav=artists>Artists</a>\
 <a href=\"/search\" data-nav=search>Search</a><a href=\"/queue\" data-nav=queue>Queue</a>{account}</nav>\
 <main id=content>{content}</main><div class=account-foot>{account}</div>\
@@ -121,7 +122,7 @@ pub(super) fn login(next: &str, error: Option<&str>) -> String {
         .map(|e| format!("<p class=error role=alert>{}</p>", escape(e)))
         .unwrap_or_default();
     format!(
-        "{head}</head><body class=signin><main><h1>koan</h1>\
+        "{head}</head><body class=signin><main><h1>kōan</h1>\
 <form method=post action=\"/login\"><input type=hidden name=next value=\"{next}\">\
 <label>Username<input name=username autocomplete=username autocapitalize=none spellcheck=false required autofocus></label>\
 <label>Password<input name=password type=password autocomplete=current-password required></label>\

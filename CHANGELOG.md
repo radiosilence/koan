@@ -5,6 +5,10 @@
 ### Fixed
 
 - Web UI: the signed-in username gets a line of its own above API keys and Sign out, instead of being truncated beside them.
+### Added
+
+- The web UI and share pages have a favicon and home-screen icon: the app icon, as on koan.rocks.
+- The web UI spells its name kōan in the sidebar, the tab title, the sign-in page and the version label.
 
 ## 0.36.1
 
