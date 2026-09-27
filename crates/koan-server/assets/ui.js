@@ -194,7 +194,10 @@
   document.addEventListener("focusin", (e) => { if (e.target.id === "share-url") e.target.select(); });
   // A cover that is not there leaves an empty tile rather than a broken image.
   document.addEventListener("error", (e) => {
-    if (e.target.tagName === "IMG") e.target.classList.add("missing");
+    if (e.target.tagName !== "IMG") return;
+    e.target.classList.add("missing");
+    // With no source the image draws as its own empty box, not a broken icon.
+    e.target.removeAttribute("src");
   }, true);
 
   // --- Navigation ------------------------------------------------------------
