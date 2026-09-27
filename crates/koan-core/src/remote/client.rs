@@ -47,16 +47,24 @@ impl SubsonicAuth {
         }
     }
 
-    /// Build auth query params: u, t (token), s (salt), v, c, f.
+    /// Build auth query params: u, then p (HTTPS) or t and s, then v, c, f.
+    ///
+    /// Over HTTPS the password goes as `p=enc:<hex>`: a koan server checks
+    /// accounts against an argon2 hash, which token auth cannot be checked
+    /// against. Over plain HTTP that would expose the password, so the salted
+    /// token is sent instead, as every Subsonic server accepts.
     fn params(&self) -> Result<HashMap<String, String>, SubsonicError> {
-        let salt = random_salt()?;
-
-        let token = format!("{:x}", md5::compute(format!("{}{}", self.password, salt)));
-
         let mut params = HashMap::new();
         params.insert("u".into(), self.username.clone());
-        params.insert("t".into(), token);
-        params.insert("s".into(), salt);
+        if self.base_url.starts_with("https://") {
+            let hex: String = self.password.bytes().map(|b| format!("{b:02x}")).collect();
+            params.insert("p".into(), format!("enc:{hex}"));
+        } else {
+            let salt = random_salt()?;
+            let token = format!("{:x}", md5::compute(format!("{}{}", self.password, salt)));
+            params.insert("t".into(), token);
+            params.insert("s".into(), salt);
+        }
         params.insert("v".into(), API_VERSION.into());
         params.insert("c".into(), CLIENT_NAME.into());
         params.insert("f".into(), "json".into());
@@ -913,6 +921,14 @@ mod tests {
         assert_eq!(params["v"], "1.16.1");
         assert_eq!(params["c"], "koan");
         assert_eq!(params["f"], "json");
+    }
+
+    #[test]
+    fn test_auth_params_over_https_send_the_hex_password() {
+        let client = SubsonicClient::new("https://koan.example", "alice", "hi");
+        let params = client.auth_params().unwrap();
+        assert_eq!(params["p"], "enc:6869");
+        assert!(!params.contains_key("t") && !params.contains_key("s"));
     }
 
     #[test]
