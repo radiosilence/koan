@@ -67,7 +67,7 @@ final class PlayerModel {
         guard settings.remoteEnabled, !settings.remoteUrl.isEmpty, !settings.remoteSignedIn
         else { return }
         let host = URL(string: settings.remoteUrl)?.host() ?? settings.remoteUrl
-        report("koan has no password for \(host). Sign in again in Settings.")
+        report("kōan has no password for \(host). Sign in again in Settings.")
     }
 
     /// What the mirror moving means for the two things here that are not
@@ -438,7 +438,7 @@ final class PlayerModel {
                 try await engine.importFiles(paths: paths)
             }.get()
             guard let summary, !summary.trackIds.isEmpty else {
-                lastError = "Nothing there koan can play."
+                lastError = "Nothing there kōan can play."
                 return
             }
             if let first = summary.errors.first {

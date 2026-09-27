@@ -36,7 +36,7 @@ struct KoanIOSApp: App {
                         .tint(.koanAccent)
                 } else if let startupError {
                     ContentUnavailableView(
-                        "koan could not start",
+                        "kōan could not start",
                         systemImage: "exclamationmark.triangle",
                         description: Text(startupError)
                     )

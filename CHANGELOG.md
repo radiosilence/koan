@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **The product is spelled kōan wherever a person reads it:** the README and guides, the macOS and iOS apps (window title, settings, errors, the iOS home-screen name), CLI help, and the messages the CLI, daemon and MCP endpoint print. The command, crates, paths, URLs, environment variables and config keys stay `koan`.
+
 ### Fixed
 
 - Web UI: the signed-in username gets a line of its own above API keys and Sign out, instead of being truncated beside them.

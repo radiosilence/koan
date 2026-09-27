@@ -136,7 +136,7 @@ private struct LibrarySettings: View {
         Form {
             Section {
                 if model.settings.libraryFolders.isEmpty {
-                    Text("No folders yet — koan has nothing to scan.")
+                    Text("No folders yet — kōan has nothing to scan.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -237,7 +237,7 @@ private struct LibrarySettings: View {
             }
             Button("Cancel", role: .cancel) { removing = nil }
         } message: {
-            Text("Your files are not touched either way. Keeping them leaves records in the library that koan will not scan again.")
+            Text("Your files are not touched either way. Keeping them leaves records in the library that kōan will not scan again.")
         }
         .fileImporter(
             isPresented: $choosingFolder,
@@ -418,7 +418,7 @@ private struct PlaybackSettings: View {
             } header: {
                 Text("Device")
             } footer: {
-                Text("koan switches the device sample rate to match the source. No resampling.")
+                Text("kōan switches the device sample rate to match the source. No resampling.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -504,7 +504,7 @@ private struct AppearanceSettings: View {
             } header: {
                 Text("Graphics")
             } footer: {
-                Text("How much koan spends on looking like itself. Every step down removes something that costs while the music plays — the colour drifting behind the window first, since it costs the most.")
+                Text("How much kōan spends on looking like itself. Every step down removes something that costs while the music plays — the colour drifting behind the window first, since it costs the most.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }

@@ -1,6 +1,6 @@
 # GraphQL API
 
-koan exposes a GraphQL API for full programmatic control. The API runs alongside the TUI by default (port 4000, localhost only), or standalone in headless mode.
+kōan exposes a GraphQL API for full programmatic control. The API runs alongside the TUI by default (port 4000, localhost only), or standalone in headless mode.
 
 ## Quick start
 
@@ -64,7 +64,7 @@ access_token_ttl = "15m"      # access token lifetime (default: 15m)
 refresh_token_ttl = "30d"     # refresh token lifetime (default: 30d)
 ```
 
-koan's own Subsonic API is configured separately, under `[subsonic]` — see
+kōan's own Subsonic API is configured separately, under `[subsonic]` — see
 [Configuration](../reference/configuration.md#subsonic).
 
 The server binds to `127.0.0.1` by default. Use `--bind 0.0.0.0` or `bind = "0.0.0.0"` in config to expose on all interfaces.
@@ -208,13 +208,13 @@ every other client slow:
 
 ## Subsonic REST API
 
-koan can also expose a Subsonic-compatible REST API for clients that speak the Subsonic protocol:
+kōan can also expose a Subsonic-compatible REST API for clients that speak the Subsonic protocol:
 
 ```bash
 koan --headless --subsonic 4040
 ```
 
-This runs on a separate port from the GraphQL API. Useful for connecting Subsonic clients (DSub, Ultrasonic, play:Sub) to a headless koan instance. It speaks OpenSubsonic, including API-key sign-in and synced lyrics; see [Authentication](authentication.md#subsonic-api).
+This runs on a separate port from the GraphQL API. Useful for connecting Subsonic clients (DSub, Ultrasonic, play:Sub) to a headless kōan instance. It speaks OpenSubsonic, including API-key sign-in and synced lyrics; see [Authentication](authentication.md#subsonic-api).
 
 ## MCP server
 

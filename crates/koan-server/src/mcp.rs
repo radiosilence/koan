@@ -91,9 +91,9 @@ impl KoanMcpServer {
         match (get(USERNAME_HEADER), get(PASSWORD_HEADER)) {
             (Some(u), Some(p)) => users
                 .verify(u, p)
-                .ok_or_else(|| "koan rejected that username and password".to_string()),
+                .ok_or_else(|| "kōan rejected that username and password".to_string()),
             _ if std::env::var("KOAN_MCP_REQUIRE_LOGIN").is_ok_and(|v| v == "1") => Err(format!(
-                "this koan needs an account: send {USERNAME_HEADER} and {PASSWORD_HEADER}"
+                "this kōan needs an account: send {USERNAME_HEADER} and {PASSWORD_HEADER}"
             )),
             _ => Ok(mcp_role()),
         }

@@ -486,7 +486,7 @@ ios-bundle: macos-ffi ios-ffi
     <dict>
         <key>CFBundleExecutable</key><string>koan</string>
         <key>CFBundleIdentifier</key><string>{{bundle_id}}</string>
-        <key>CFBundleName</key><string>koan</string>
+        <key>CFBundleName</key><string>kōan</string>
         <!-- The catalog holds the icon; this is what names it. Without it the
              home screen shows an empty tile and no error anywhere. -->
         <key>CFBundleIconName</key><string>AppIcon</string>
