@@ -369,18 +369,26 @@ ios-typecheck: macos-ffi
     echo "the shared sources still build for iOS"
 
 
-# Build the Rust engine for the simulator and stage it for the Swift link.
-ios-ffi:
+# Build the Rust engine for an iOS SDK and stage it for the Swift link.
+#
+# `iphonesimulator` or `iphoneos`, staged under the SDK's own name so the Xcode
+# project can find the right one through `$(PLATFORM_NAME)`.
+ios-ffi platform="iphonesimulator":
     #!/usr/bin/env bash
     set -euo pipefail
+    case "{{platform}}" in
+        iphonesimulator) triple=aarch64-apple-ios-sim ;;
+        iphoneos) triple=aarch64-apple-ios ;;
+        *) echo "unknown platform: {{platform}}" >&2; exit 1 ;;
+    esac
     # Without this rustc targets arm64-apple-ios10.0.0 while every C dependency
     # compiled against the current SDK, and the link dies in a wall of "built
     # for newer iOS version". `macos-ffi` exports the macOS equivalent.
     export IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}}
-    cargo build --release -p koan-ffi --target aarch64-apple-ios-sim
-    rm -rf target/ios-link && mkdir -p target/ios-link
-    cp target/aarch64-apple-ios-sim/release/libkoan_ffi.a target/ios-link/
-    echo "koan-ffi ready for the simulator"
+    cargo build --release -p koan-ffi --target "$triple"
+    rm -rf "target/ios-link/{{platform}}" && mkdir -p "target/ios-link/{{platform}}"
+    cp "target/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
+    echo "koan-ffi ready for {{platform}}"
 
 # Assemble koan.app for the iOS simulator.
 #
@@ -412,7 +420,7 @@ ios-bundle: macos-ffi ios-ffi
         -package-name koan \
         -I "$mod" -L "$mod" -lKoanFFI \
         -Xcc -fmodule-map-file="$PWD/$ffi/module.modulemap" -I "$PWD/$ffi" \
-        -L "$PWD/target/ios-link" -lkoan_ffi \
+        -L "$PWD/target/ios-link/iphonesimulator" -lkoan_ffi \
         -framework AudioToolbox -framework AVFAudio -framework AVKit -framework MediaPlayer \
         -o "$app/koan" \
         $(find {{app_dir}}/Sources/KoanIOS -name '*.swift') \
@@ -505,3 +513,35 @@ ios-smoke FILE:
     echo "--- stopping mid-track"
     SIMCTL_CHILD_KOAN_STOP_AFTER_MS=1200 SIMCTL_CHILD_RUST_LOG=info \
         xcrun simctl spawn "$device" "$bin" "{{FILE}}"
+
+# Generate the Xcode project the device build and TestFlight need.
+#
+# SwiftPM has no app product, which is fine for a simulator bundle and not for
+# anything that has to be signed for a device. The project is generated from
+# `apps/ios/project.yml` rather than checked in. The team defaults to empty,
+# which builds but cannot sign.
+ios-project build="1": macos-ffi
+    #!/usr/bin/env bash
+    set -euo pipefail
+    mkdir -p target/ios-project
+    KOAN_VERSION=$(grep '^version' Cargo.toml | head -1 | cut -d'"' -f2) \
+    KOAN_BUILD={{build}} \
+    KOAN_TEAM_ID=${APPLE_TEAM_ID:-} \
+        xcodegen generate --quiet --spec apps/ios/project.yml
+    echo "generated apps/ios/Koan.xcodeproj"
+
+# Walk the app on a simulator and export a screenshot of every page.
+#
+# Runs `WalkTests` against whatever library that simulator holds, so sign it in
+# to a server first. Screenshots land in target/ios-walk.
+ios-walk device="koan-dev": (ios-ffi "iphonesimulator") ios-project
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=target/ios-walk
+    rm -rf "$out" && mkdir -p "$out"
+    xcodebuild test -quiet \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination "platform=iOS Simulator,name={{device}}" \
+        -resultBundlePath "$out/walk.xcresult" || true
+    xcrun xcresulttool export attachments --path "$out/walk.xcresult" --output-path "$out"
+    echo "screenshots in $out"

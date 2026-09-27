@@ -2,12 +2,10 @@ import SwiftUI
 
 /// The playlists, as a page rather than a sidebar section.
 ///
-/// The Mac lists them beside everything else because it has the room. Here they
-/// are a tab, and tapping one navigates to the same `PlaylistView` the Mac
-/// shows in its detail column.
+/// The Mac lists them in its sidebar because it has the room. Here they are a
+/// page in the library, and each leads to the same `PlaylistView` the Mac shows.
 struct PlaylistsList: View {
     @Environment(PlaylistsModel.self) private var playlists
-    @Environment(Navigator.self) private var nav
 
     var body: some View {
         Group {
@@ -19,11 +17,7 @@ struct PlaylistsList: View {
                 )
             } else {
                 List(playlists.playlists, id: \.id) { playlist in
-                    NavigationLink {
-                        PlaylistView(playlistId: playlist.id)
-                            .environment(\.onStage, true)
-                            .roomBackground()
-                    } label: {
+                    NavigationLink(value: Route.page(.section(.playlist(playlist.id)))) {
                         PlaylistRow(
                             playlist: playlist,
                             covers: playlists.covers[playlist.id] ?? []
@@ -33,8 +27,6 @@ struct PlaylistsList: View {
             }
         }
         .navigationTitle("Playlists")
-        .washedGround()
-        .roomBackground()
         .task { playlists.load() }
     }
 }

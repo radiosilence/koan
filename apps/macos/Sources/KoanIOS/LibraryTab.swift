@@ -8,43 +8,24 @@ import SwiftUI
 /// controller, so a tab that brings its own `NavigationStack` arrives with two
 /// back buttons stacked on top of each other.
 ///
-/// One Library tab holding all of them is both the fix and the better shape. It is
-/// what Music does, and it leaves the tab bar saying what koan is actually for:
-/// the queue, the library, finding something, and settings.
+/// One Library tab holding all of them is both the fix and the better shape. It
+/// is what Music does, and it leaves the tab bar saying what koan is for: the
+/// queue, the library, finding something, and settings.
 struct LibraryTab: View {
-    @Environment(Navigator.self) private var nav
-
     var body: some View {
         List {
-            row("Albums", Icon.album, .albums)
-            row("Artists", Icon.artist, .artists)
-            row("Favourites", Icon.favourite, .favourites)
-            NavigationLink {
-                PlaylistsList()
-            } label: {
-                Label("Playlists", systemImage: Icon.playlist)
-            }
-            row("History", Icon.history, .playHistory)
-            row("Downloads", Icon.downloads, .downloads)
+            row("Albums", Icon.album, .page(.section(.albums)))
+            row("Artists", Icon.artist, .page(.section(.artists)))
+            row("Favourites", Icon.favourite, .page(.section(.favourites)))
+            row("Playlists", Icon.playlist, .playlists)
+            row("History", Icon.history, .page(.section(.playHistory)))
+            row("Downloads", Icon.downloads, .page(.section(.downloads)))
         }
         .navigationTitle("Library")
     }
 
-    /// A section of the library, as a row that goes into it.
-    ///
-    /// The navigator is moved on the way in rather than by the page itself:
-    /// pages read where they are, they do not decide it.
-    private func row(
-        _ title: String,
-        _ symbol: String,
-        _ section: Navigator.Section
-    ) -> some View {
-        NavigationLink {
-            PageView()
-                .environment(\.onStage, true)
-                .navigationTitle(title)
-                .onAppear { nav.show(section) }
-        } label: {
+    private func row(_ title: String, _ symbol: String, _ route: Route) -> some View {
+        NavigationLink(value: route) {
             Label(title, systemImage: symbol)
         }
     }

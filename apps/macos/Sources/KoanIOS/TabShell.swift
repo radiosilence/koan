@@ -21,12 +21,9 @@ struct TabShell: View {
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(ActivityModel.self) private var activity
     @State private var showingNowPlaying = false
-    /// Which tab is showing.
-    ///
-    /// Held rather than derived from the navigator. Opening a record moves the
-    /// navigator to a page that is not a section at all, and a binding reading
-    /// `nav.section` answers "none" — which read as Queue and threw you out of
-    /// the tab you were browsing the moment you tapped an album.
+    /// Which tab is showing. Held rather than derived from the navigator: a
+    /// record belongs to whichever tab it was opened from, and the navigator
+    /// cannot say which that was.
     @State private var selection: TabID = .queue
 
     var body: some View {
@@ -36,16 +33,16 @@ struct TabShell: View {
         // over anything placed behind it.
         TabView(selection: tab) {
             Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
-                stage { QueueView() }
+                stack(.queue) { QueueView() }
             }
             Tab("Library", systemImage: "music.note.house", value: TabID.library) {
-                NavigationStack { LibraryTab().washedGround().roomBackground() }
+                stack(.library) { LibraryTab() }
             }
             Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
-                NavigationStack { SettingsView().washedGround().roomBackground() }
+                stack(.settings) { SettingsView() }
             }
             Tab(value: TabID.search, role: .search) {
-                NavigationStack { IOSSearchView().roomBackground() }
+                stack(.search) { IOSSearchView() }
             }
         }
         .tabViewStyle(.sidebarAdaptable)
@@ -72,13 +69,9 @@ struct TabShell: View {
                     .transition(.opacity)
             }
         }
-        // Something other than the tab bar can move the navigator —
-        // submitting a search, or the queue being asked to show itself.
-        .onChange(of: nav.section) { _, section in
-            if let owner = Self.tab(for: section), owner != selection {
-                selection = owner
-            }
-        }
+        // Something other than the stacks can move the navigator: a link on a
+        // page, a search result, Now Playing, playback showing the queue.
+        .onChange(of: nav.current) { _, page in arrive(at: page) }
         .sheet(isPresented: $showingNowPlaying) {
             NowPlayingSheet()
                 .presentationDetents([.large])
@@ -105,21 +98,25 @@ struct TabShell: View {
         )
     }
 
-    /// A page, with the navigator's own history in front of the tab bar's.
-    @ViewBuilder private func stage<Content: View>(
-        @ViewBuilder _ content: () -> Content
+    /// A tab's navigation stack. Pages are drawn from their routes — see
+    /// `RouteView` — and the navigator follows whatever is on top.
+    private func stack<Root: View>(
+        _ tab: TabID, @ViewBuilder root: () -> Root
     ) -> some View {
-        NavigationStack {
-            content()
-                .environment(\.onStage, true)
+        let routes = paths[tab] ?? []
+        // On stage is the top of the tab in front, and nothing else. A stack
+        // keeps every page it pushed and a tab view keeps every tab, and a
+        // playing indicator on any of them would keep the analyser running for
+        // bars nobody can see.
+        let showing = tab == selection
+        return NavigationStack(path: path(tab)) {
+            root()
+                .environment(\.onStage, showing && routes.isEmpty)
+                .washedGround()
                 .roomBackground()
-                .pushesDetailPages()
-                .toolbar {
-                    if nav.canGoBack {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button("Back", systemImage: "chevron.left") { nav.goBack() }
-                        }
-                    }
+                .navigationDestination(for: Route.self) { route in
+                    RouteView(route: route)
+                        .environment(\.onStage, showing && route == routes.last)
                 }
         }
     }
@@ -128,39 +125,73 @@ struct TabShell: View {
     /// and More brings a navigation stack of its own.
     enum TabID: Hashable {
         case queue, library, settings, search
+
+        /// The page the tab itself is, under anything pushed onto it. The
+        /// library is a list of sections rather than one, and settings is not
+        /// somewhere the navigator goes.
+        var root: Navigator.Page? {
+            switch self {
+            case .queue: .section(.queue)
+            case .search: .section(.searchResults)
+            case .library, .settings: nil
+            }
+        }
     }
 
-    /// The tab bar and the navigator are the same state seen twice.
-    ///
-    /// Reading the section rather than storing a selection is what keeps them
-    /// from disagreeing: opening an album from the Albums tab moves the
-    /// navigator to a page that is not a section, and the tab stays where it
-    /// was because that is what the deeper page belongs to.
+    /// What each tab has pushed. Held per tab, so leaving one and coming back
+    /// finds it where it was.
+    @State private var paths: [TabID: [Route]] = [:]
+
+    private func path(_ tab: TabID) -> Binding<[Route]> {
+        Binding(
+            get: { paths[tab] ?? [] },
+            set: { routes in
+                paths[tab] = routes
+                follow(tab)
+            }
+        )
+    }
+
+    /// The page on top of a tab: the last navigator page pushed, else the tab's
+    /// own.
+    private func top(of tab: TabID) -> Navigator.Page? {
+        (paths[tab] ?? []).reversed().lazy.compactMap(\.page).first ?? tab.root
+    }
+
+    /// Bring the navigator to what the stack now shows — after a push, a pop, a
+    /// swipe back, or a change of tab. The library's listings load by moving
+    /// it, so a page that did not move it would draw the last one's rows.
+    private func follow(_ tab: TabID) {
+        guard tab == selection, let page = top(of: tab), page != nav.current else { return }
+        nav.go(to: page)
+    }
+
+    /// The navigator moved on its own account; show where it went. A tab's own
+    /// page brings that tab forward, back at its root. Anything else is pushed
+    /// on the tab in front, or popped back to if it is already in the stack.
+    private func arrive(at page: Navigator.Page) {
+        if let owner = [TabID.queue, .search].first(where: { $0.root == page }) {
+            paths[owner] = []
+            selection = owner
+            return
+        }
+        guard top(of: selection) != page else { return }
+        var routes = paths[selection] ?? []
+        if let index = routes.lastIndex(of: .page(page)) {
+            routes.removeSubrange((index + 1)...)
+        } else {
+            routes.append(.page(page))
+        }
+        paths[selection] = routes
+    }
+
     private var tab: Binding<TabID> {
         Binding(
             get: { selection },
             set: { chosen in
                 selection = chosen
-                switch chosen {
-                case .queue: nav.show(.queue)
-                case .search: nav.show(.searchResults)
-                // The library tab is a list of sections rather than one of
-                // them, and settings is not somewhere the navigator goes.
-                case .library, .settings: break
-                }
+                follow(chosen)
             }
         )
-    }
-
-    /// Which tab a section belongs to, or nil for a page that is not a section
-    /// — a record or an artist, which belong to whichever tab they were opened
-    /// from and must not move the selection.
-    private static func tab(for section: Navigator.Section?) -> TabID? {
-        switch section {
-        case .albums, .artists, .favourites, .playHistory, .downloads, .playlist: .library
-        case .searchResults: .search
-        case .queue: .queue
-        case .none: nil
-        }
     }
 }

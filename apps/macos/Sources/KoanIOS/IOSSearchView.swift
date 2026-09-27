@@ -7,7 +7,6 @@ import SwiftUI
 /// — and the results are the same page the Mac shows.
 struct IOSSearchView: View {
     @Environment(SearchModel.self) private var search
-    @Environment(Navigator.self) private var nav
 
     var body: some View {
         SearchResultsView()
@@ -18,8 +17,5 @@ struct IOSSearchView: View {
                 set: { search.query = $0 }
             ))
             .onSubmit(of: .search) { search.submit() }
-            // Tapping a result opens a record or an artist, neither of which is
-            // a section this tab draws.
-            .pushesDetailPages()
     }
 }
