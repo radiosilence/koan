@@ -605,14 +605,12 @@ impl QueryRoot {
                 });
             }
 
-            // Parse pattern and tick until matching settles.
+            // Case-insensitive, and ticked until every item has been seen: a
+            // fixed tick count could snapshot a partial match on a large library.
             nucleo
                 .pattern
-                .reparse(0, &query, CaseMatching::Smart, Normalization::Smart, false);
-            // Tick enough times for matching to complete on the dataset.
-            for _ in 0..20 {
-                nucleo.tick(10);
-            }
+                .reparse(0, &query, CaseMatching::Ignore, Normalization::Smart, false);
+            while nucleo.tick(10).running {}
 
             let snap = nucleo.snapshot();
             let count = (snap.matched_item_count() as usize).min(limit);

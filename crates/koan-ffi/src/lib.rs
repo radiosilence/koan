@@ -3176,12 +3176,14 @@ fn fuzzy_rank(texts: &[&str], query: &str, limit: u32) -> Vec<usize> {
         });
     }
 
+    // Case-insensitive: a phone keyboard capitalises the first letter, and
+    // smart case would then read "Spfdj" as a request for that exact casing.
     nucleo
         .pattern
-        .reparse(0, query, CaseMatching::Smart, Normalization::Smart, false);
-    for _ in 0..20 {
-        nucleo.tick(10);
-    }
+        .reparse(0, query, CaseMatching::Ignore, Normalization::Smart, false);
+    // Until the matcher has seen every item. A fixed number of ticks let a
+    // slow device snapshot a partial match.
+    while nucleo.tick(10).running {}
 
     let snap = nucleo.snapshot();
     let count = (snap.matched_item_count() as usize).min(limit as usize);
@@ -3212,5 +3214,28 @@ fn organize_err(e: koan_core::organize::OrganizeError) -> KoanError {
 fn fav_err(e: rusqlite::Error) -> KoanError {
     KoanError::Database {
         message: e.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod fuzzy_tests {
+    use super::fuzzy_rank;
+
+    #[test]
+    fn fuzzy_rank_ignores_case() {
+        let texts = [
+            "Soulwax — Most of the remixes we've made for other people",
+            "SPFDJ",
+        ];
+        let ranked = fuzzy_rank(&texts, "Spfdj", 10);
+        assert_eq!(ranked.first(), Some(&1));
+    }
+
+    #[test]
+    fn fuzzy_rank_sees_every_item() {
+        let mut texts: Vec<String> = (0..20_000).map(|i| format!("Filler artist {i}")).collect();
+        texts.push("SPFDJ".into());
+        let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+        assert_eq!(fuzzy_rank(&texts, "spfdj", 5), vec![20_000]);
     }
 }

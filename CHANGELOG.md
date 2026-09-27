@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.36.6
+
+### Fixed
+
+- **Fuzzy search ignores case, and finishes.** The album and artist results in the apps' search, and GraphQL's fuzzy search, matched with smart case: a query with a capital letter matched case-sensitively, and a phone keyboard capitalises the first letter, so "Spfdj" missed "SPFDJ" and matched unrelated text instead. They also snapshotted the matcher after a fixed number of ticks, which on a slow device or large library could return a partial result. Matching is now case-insensitive and runs until every item has been seen.
+
 ## 0.36.5
 
 ### Fixed
