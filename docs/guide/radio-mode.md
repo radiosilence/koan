@@ -1,10 +1,10 @@
 # Radio Mode
 
-Radio mode turns koan into an infinite jukebox. When enabled, koan keeps the queue topped up from your own library as you listen -- you never run out of music.
+Radio mode turns kōan into an infinite jukebox. When enabled, kōan keeps the queue topped up from your own library as you listen -- you never run out of music.
 
 ## Quick start
 
-Press `R` in the TUI to toggle radio mode. That's it. koan starts adding tracks to your queue based on what's playing.
+Press `R` in the TUI to toggle radio mode. That's it. kōan starts adding tracks to your queue based on what's playing.
 
 ## How it works
 
@@ -18,7 +18,7 @@ Every signal it uses is a database read:
 
 2. **Same artist** -- other tracks by the artists in the seed window.
 
-3. **Acoustic similarity** -- if you have run `koan scan --analyze`, koan takes the
+3. **Acoustic similarity** -- if you have run `koan scan --analyze`, kōan takes the
    centroid of the seed tracks' feature vectors and finds its nearest neighbours.
    This is the only signal that hears the music rather than reading about it, and
    it is the one worth turning on.
@@ -33,7 +33,7 @@ the last `history_window` plays, or already in the queue, is excluded outright.
 
 ### What it does not use
 
-koan can query **ListenBrainz** and **MusicBrainz** for similar artists, and
+kōan can query **ListenBrainz** and **MusicBrainz** for similar artists, and
 **Subsonic `getSimilarSongs2`** for server-side recommendations. None of them run
 when radio picks a track.
 
@@ -51,7 +51,7 @@ Two consequences worth knowing, since they follow from the same gap:
 
 - The `similar_artists` cache is only ever written by those network signals, so it
   stays empty. `similarArtists` over GraphQL and FFI, and `getSimilarSongs2` on
-  koan's own Subsonic API, return nothing.
+  kōan's own Subsonic API, return nothing.
 - Radio works exactly the same offline as online. That is not the graceful
   degradation it looks like -- there is no online path to degrade from.
 

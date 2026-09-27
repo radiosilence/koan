@@ -84,7 +84,7 @@ koan                                        # launch the TUI
 `space` to pause, `<`/`>` to skip, `p` to pick tracks, `a` for albums, `q` to quit. That's it.
 
 **Rather not touch a terminal?** Install the app instead and do all of the above
-inside it: **Settings → Library** points koan at your music and scans it,
+inside it: **Settings → Library** points kōan at your music and scans it,
 **Settings → Server** signs you in to Navidrome or Subsonic, and playback,
 output device and radio have their own panes. Everything in this quickstart can
 be done from the app; the headless server and the MCP endpoint still want a
@@ -109,7 +109,7 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
-- **Music server** -- run headless and koan serves the library itself: a mobile-first web UI with gapless browser playback, share links (a track shares its album cued to it) that unfurl with their cover, and an OpenSubsonic API for Subsonic apps, signed in with a koan account by password, token or API key. See [Headless Server](docs/guide/headless-server.md)
+- **Music server** -- run headless and kōan serves the library itself: a mobile-first web UI with gapless browser playback, share links (a track shares its album cued to it) that unfurl with their cover, and an OpenSubsonic API for Subsonic apps, signed in with a kōan account by password, token or API key. See [Headless Server](docs/guide/headless-server.md)
 - **Playlists** -- ordered, named, reorderable; synced both ways with Navidrome, exportable as M3U8
 - **Radio mode** -- infinite play, scored from your own library: acoustic similarity over bliss-audio feature vectors (once you have run `koan scan --analyze`), genre and era matching, same-artist, and a random tail. It does not query anyone for recommendations -- [the guide says why](docs/guide/radio-mode.md#what-it-does-not-use)
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
@@ -131,7 +131,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 
 ### TUI / terminal players
 
-| | koan | ncmpcpp | cmus | musikcube | termusic | rmpc | stmp |
+| | kōan | ncmpcpp | cmus | musikcube | termusic | rmpc | stmp |
 |---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
 | **Language** | Rust | C++ | C | C++ | Rust | Rust | Go |
 | **Standalone** | **Yes** | No (MPD) | Yes | Yes | Yes | No (MPD) | No (Subsonic) |
@@ -162,7 +162,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 
 ### Desktop players (GUI)
 
-| | koan | foobar2000 | Strawberry | DeaDBeeF |
+| | kōan | foobar2000 | Strawberry | DeaDBeeF |
 |---|:---:|:---:|:---:|:---:|
 | **Type** | **Native GUI + TUI** | GUI | GUI (Qt) | GUI (GTK) |
 | **Bit-perfect** | **Yes** | Yes (WASAPI/ASIO) | Yes (Linux) | Yes (ALSA) |
@@ -191,7 +191,7 @@ No TUI player combines bit-perfect audio, Subsonic streaming, album art, fb2k-st
 | **[File Organization](docs/guide/file-organization.md)** | Rename and reorganize your library from the TUI |
 | **[GraphQL API](docs/guide/graphql-api.md)** | Headless operation, queries, mutations, daemon mode |
 | **[MCP Integration](docs/guide/mcp-integration.md)** | Claude Desktop setup, example prompts |
-| **[Headless Server](docs/guide/headless-server.md)** | Running koan as a background music server |
+| **[Headless Server](docs/guide/headless-server.md)** | Running kōan as a background music server |
 | **[Configuration](docs/reference/configuration.md)** | All config fields, layered config, env var overrides |
 | **[Keybindings](docs/reference/keybindings.md)** | Every key in every mode |
 | **[CLI Reference](docs/reference/cli.md)** | All commands, flags, and shell completions |
@@ -210,7 +210,7 @@ Five crates: `koan-core` (audio engine, player, database, indexer), `koan-tui` (
 ## macOS app
 
 A native SwiftUI app lives in [`apps/macos`](apps/macos), and it is a way to use
-koan rather than a viewer bolted onto the side of one. Browse and search the
+kōan rather than a viewer bolted onto the side of one. Browse and search the
 library, build and reorder the queue, keep playlists, favourite tracks, albums
 and artists, read synced lyrics, look through play history, and
 reorganize files on disk — and set the whole thing up on first run, library

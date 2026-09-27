@@ -26,9 +26,9 @@ Symphonia 0.5.5 has gapless support:
 - `codec_params.delay` / `codec_params.padding` — encoder delay/trailing samples
 - `SampleBuffer` — handles codec output format conversion
 
-### What koan Does
+### What kōan Does
 
-koan sets `enable_gapless: true` but **doesn't use the trim info Symphonia provides**. The gapless implementation is entirely about ring buffer continuity:
+kōan sets `enable_gapless: true` but **doesn't use the trim info Symphonia provides**. The gapless implementation is entirely about ring buffer continuity:
 
 1. Decode thread loops: decode track A → EOF → get next track → decode track B
 2. Ring buffer producer stays alive across track boundaries
@@ -46,7 +46,7 @@ koan sets `enable_gapless: true` but **doesn't use the trim info Symphonia provi
 | Decode cursor lookahead | Custom (separate from UI cursor) | No — player architecture concern |
 | Seek precision | `SeekMode::Coarse` | Could use `SeekMode::Accurate` |
 
-**Bottom line:** Most of koan's gapless code is playlist orchestration that Symphonia can't handle. The one thing Symphonia could help with is trimming encoder delay/padding (relevant for MP3 where there's ~50ms silence between tracks without it). Whether to use it depends on philosophy: bit-perfect purists want all samples, but fb2k and most players do trim encoder artifacts.
+**Bottom line:** Most of kōan's gapless code is playlist orchestration that Symphonia can't handle. The one thing Symphonia could help with is trimming encoder delay/padding (relevant for MP3 where there's ~50ms silence between tracks without it). Whether to use it depends on philosophy: bit-perfect purists want all samples, but fb2k and most players do trim encoder artifacts.
 
 ### Recommendation
 
@@ -61,4 +61,4 @@ Config fields that exist but aren't wired into anything:
 | Field | Config Location | Library Code | Wired In? |
 |-------|----------------|-------------|-----------|
 | `playback.replaygain` | config.rs | replaygain.rs (full impl) | **Yes** -- wired into decode pipeline |
-| `remote.transcode_quality` | -- | -- | Removed in v0.31.0 -- re-encoding a stream is the opposite of what koan is for |
+| `remote.transcode_quality` | -- | -- | Removed in v0.31.0 -- re-encoding a stream is the opposite of what kōan is for |

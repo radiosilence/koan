@@ -1,6 +1,6 @@
 # MCP Integration
 
-`koan mcp` runs koan as a headless player controllable by Claude Desktop (or any MCP client). No TUI, no terminal -- just the audio engine and 2 tools exposed over the Model Context Protocol on stdio. The LLM reads the GraphQL schema, then drives everything through one `graphql` tool.
+`koan mcp` runs kōan as a headless player controllable by Claude Desktop (or any MCP client). No TUI, no terminal -- just the audio engine and 2 tools exposed over the Model Context Protocol on stdio. The LLM reads the GraphQL schema, then drives everything through one `graphql` tool.
 
 ## Setup
 
@@ -19,7 +19,7 @@
 }
 ```
 
-If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the full path:
+If kōan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the full path:
 
 ```json
 {
@@ -32,7 +32,7 @@ If koan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the f
 }
 ```
 
-3. Restart Claude Desktop. You should see koan in the MCP server list (plug icon).
+3. Restart Claude Desktop. You should see kōan in the MCP server list (plug icon).
 
 4. Make sure you've run `koan scan` at least once so your library is indexed.
 
@@ -47,7 +47,7 @@ The LLM reads the schema first, then constructs whatever queries it needs. This 
 
 ## Example prompts
 
-Things you can ask Claude when koan is connected:
+Things you can ask Claude when kōan is connected:
 
 - "Play me some ambient music"
 - "What albums do I have by Aphex Twin?"

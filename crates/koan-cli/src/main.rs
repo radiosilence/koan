@@ -167,7 +167,7 @@ enum Commands {
         #[arg(long)]
         clear: bool,
 
-        /// Connect to a remote koan server (e.g. http://host:4000)
+        /// Connect to a remote kōan server (e.g. http://host:4000)
         #[arg(long)]
         server: Option<String>,
 
@@ -223,7 +223,7 @@ enum Commands {
     /// Manage authentication (users, tokens)
     #[command(subcommand)]
     Auth(AuthCommands),
-    /// Manage koan's own Subsonic REST API
+    /// Manage kōan's own Subsonic REST API
     #[command(subcommand)]
     Subsonic(SubsonicCommands),
     /// Generate shell completions
@@ -306,7 +306,7 @@ enum AuthCommands {
     },
     /// List all users
     ListUsers,
-    /// Log in to a koan server and store refresh token
+    /// Log in to a kōan server and store refresh token
     Login {
         /// Server URL (e.g. http://localhost:4000)
         #[arg(long, default_value = "http://127.0.0.1:4000")]

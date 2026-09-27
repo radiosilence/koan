@@ -1,6 +1,6 @@
 # Getting Started
 
-This guide walks you through installing koan, setting up your music library, and playing your first track.
+This guide walks you through installing kōan, setting up your music library, and playing your first track.
 
 ## Install
 
@@ -64,7 +64,7 @@ Running `koan config init` on an existing setup is safe -- it merges new default
 
 ## Add your music
 
-koan needs at least one music source -- local files, a remote server, or both.
+kōan needs at least one music source -- local files, a remote server, or both.
 
 ### Option A: Local files
 
@@ -81,7 +81,7 @@ Then scan your library:
 koan scan
 ```
 
-Scanning runs in parallel -- fast even for large collections (tens of thousands of tracks). koan reads metadata from FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF, CAF, Ogg, MKV/WebM, and MP4 files.
+Scanning runs in parallel -- fast even for large collections (tens of thousands of tracks). kōan reads metadata from FLAC, MP3, AAC, Vorbis, Opus, ALAC, ADPCM, WAV, AIFF, CAF, Ogg, MKV/WebM, and MP4 files.
 
 A scan also removes tracks whose files have gone, taking their play history with them -- so it refuses to do that when the pattern looks like a mount failure rather than a deletion: a folder that yields no audio files at all, a path it cannot stat, or more than 20% of a folder disappearing at once. If you really did delete that much, `koan scan --force-remove` lifts the last of those (only the last -- an empty or unreadable folder is still left alone).
 
@@ -178,7 +178,7 @@ Then `koan play --album <TAB>` shows your actual albums with artist names.
 
 - **[Configuration](reference/configuration.md)** -- customize playback, visualizer, organize patterns, and more
 - **[Authentication](guide/authentication.md)** -- set up API auth, manage users
-- **[Radio Mode](guide/radio-mode.md)** -- let koan pick tracks for you
+- **[Radio Mode](guide/radio-mode.md)** -- let kōan pick tracks for you
 - **[File Organization](guide/file-organization.md)** -- rename your library using format string patterns
 - **[Remote Servers](guide/remote-servers.md)** -- advanced Subsonic/Navidrome setup
 - **[GraphQL API](guide/graphql-api.md)** -- programmatic control and headless operation
