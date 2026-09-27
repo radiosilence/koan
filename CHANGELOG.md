@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.36.5
+
+### Fixed
+
+- **Album and artist favourites over Subsonic.** A koan server's `star` and `unstar` handled one song per request: `albumId` and `artistId` were refused, a repeated `id` was a plain-text HTTP 400, and `getStarred2` listed songs only. So starring an album or artist from the koan apps against a koan server failed, and favourites made elsewhere never reached them. All three parameters now repeat and combine, an `id` may name an album or artist by prefix, and `getStarred2` returns starred artists and albums alongside songs.
+
 ## 0.36.4
 
 ### Added

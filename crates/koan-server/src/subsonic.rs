@@ -2158,43 +2158,79 @@ fn resize_image(data: &[u8], size: u32, output_png: bool) -> Result<Vec<u8>, Sub
 // Endpoints — interaction (star, unstar, scrobble, etc.)
 // ===========================================================================
 
-async fn star(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
+async fn star(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    set_starred(state, raw, true).await
+}
+
+async fn unstar(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    set_starred(state, raw, false).await
+}
+
+/// `star` and `unstar`. `id`, `albumId` and `artistId` may each repeat, and
+/// an `id` may name an album or artist by its prefix as well as a song.
+async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> Response {
     offload_response(move || {
-        respond_db_as(&state, &params.auth, Role::User, |db, b| {
-            toggle_star(db, params.id.as_deref(), true)?;
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_as(&state, &auth, Role::User, |db, b| {
+            let mut targets = Vec::new();
+            for raw in params.all("id") {
+                let (kind, id) =
+                    parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param("id"))?;
+                targets.push((kind.unwrap_or(EntityKind::Song), id));
+            }
+            for (key, kind) in [
+                ("albumId", EntityKind::Album),
+                ("artistId", EntityKind::Artist),
+            ] {
+                for raw in params.all(key) {
+                    let (_, id) =
+                        parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param(key))?;
+                    targets.push((kind, id));
+                }
+            }
+            if targets.is_empty() {
+                return Err(SubsonicError::missing_param("id"));
+            }
+            for (kind, id) in targets {
+                set_star(db, kind, id, star)?;
+            }
             Ok(b)
         })
     })
     .await
 }
 
-async fn unstar(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    offload_response(move || {
-        respond_db_as(&state, &params.auth, Role::User, |db, b| {
-            toggle_star(db, params.id.as_deref(), false)?;
-            Ok(b)
-        })
-    })
-    .await
-}
-
-fn toggle_star(db: &Database, id: Option<&str>, star: bool) -> Result<(), SubsonicError> {
-    let op = if star {
-        queries::add_favourite
-    } else {
-        queries::remove_favourite
-    };
-    let track_id = match require_entity(id)? {
-        (Some(EntityKind::Song) | None, id) => id,
-        _ => return Err(SubsonicError::not_found("Track")),
-    };
-
-    let key = queries::track_favourite_key(&db.conn, track_id)
-        .map_err(|e| SubsonicError::internal(e.to_string()))?
-        .ok_or_else(|| SubsonicError::not_found("Track"))?;
-    let path = std::path::Path::new(&key);
-    op(&db.conn, path).map_err(|e| SubsonicError::internal(e.to_string()))?;
-    koan_core::helpers::sync_favourite_to_remote(db, path, star);
+fn set_star(db: &Database, kind: EntityKind, id: i64, star: bool) -> Result<(), SubsonicError> {
+    let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+    match kind {
+        EntityKind::Song => {
+            let key = queries::track_favourite_key(&db.conn, id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Track"))?;
+            let path = std::path::Path::new(&key);
+            let op = if star {
+                queries::add_favourite
+            } else {
+                queries::remove_favourite
+            };
+            op(&db.conn, path).map_err(internal)?;
+            koan_core::helpers::sync_favourite_to_remote(db, path, star);
+        }
+        EntityKind::Album => {
+            let album = queries::get_album(&db.conn, id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Album"))?;
+            queries::set_favourite_album(&db.conn, &album.artist_name, &album.title, star)
+                .map_err(internal)?;
+        }
+        EntityKind::Artist => {
+            let artist = queries::get_artist(&db.conn, id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Artist"))?;
+            queries::set_favourite_artist(&db.conn, &artist.name, star).map_err(internal)?;
+        }
+    }
     Ok(())
 }
 
@@ -2216,8 +2252,41 @@ async fn get_starred2(
                 })
                 .collect();
             let extras = song_extras(db, &tracks)?;
+
+            let internal = |e: rusqlite::Error| SubsonicError::internal(e.to_string());
+            let mut album_ids: Vec<i64> = queries::favourite_album_id_set(&db.conn)
+                .map_err(internal)?
+                .into_iter()
+                .collect();
+            album_ids.sort_unstable();
+            let albums: Vec<queries::AlbumRow> = album_ids
+                .into_iter()
+                .filter_map(|id| queries::get_album(&db.conn, id).ok().flatten())
+                .collect();
+            let mut artist_ids: Vec<i64> = queries::favourite_artist_id_set(&db.conn)
+                .map_err(internal)?
+                .into_iter()
+                .collect();
+            artist_ids.sort_unstable();
+            let artists: Vec<queries::ArtistRow> = artist_ids
+                .into_iter()
+                .filter_map(|id| queries::get_artist(&db.conn, id).ok().flatten())
+                .collect();
+            let album_extras = album_extras(db, &albums)?;
+            let artist_extras = artist_extras(db, artists.iter().map(|a| a.id))?;
+
             Ok(b.child(
                 XmlNode::new("starred2")
+                    .list(
+                        "artist",
+                        artists
+                            .iter()
+                            .map(|a| artist_id3_node(a.id, &a.name, &artist_extras)),
+                    )
+                    .list(
+                        "album",
+                        albums.iter().map(|a| album_to_xml_node(a, &album_extras)),
+                    )
                     .list("song", tracks.iter().map(|t| track_to_xml_node(t, &extras))),
             ))
         })
@@ -4433,16 +4502,98 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_star_rejects_album_id() {
+    async fn test_star_album_by_prefixed_id() {
         let (state, _dir) = test_state();
         seed_data(&state);
+        let db = Database::open(state.pool.path()).unwrap();
+        let album_id = queries::all_tracks(&db.conn).unwrap()[0].album_id.unwrap();
 
         let app = build_test_router(state.clone());
-        let (_, body) = get_response(app, &format!("/rest/star?{}&id=al-1", auth_query(""))).await;
-        assert!(body.contains("status=\"failed\""), "{}", body);
+        let (_, body) = get_response(
+            app,
+            &format!("/rest/star?{}&id=al-{}", auth_query(""), album_id),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""), "{}", body);
 
-        let db = Database::open(state.pool.path()).unwrap();
+        // The album, not one of its tracks.
         assert!(queries::load_favourites(&db.conn).unwrap().is_empty());
+        assert!(
+            queries::favourite_album_id_set(&db.conn)
+                .unwrap()
+                .contains(&album_id)
+        );
+    }
+
+    /// Clients star in bulk: `id`, `albumId` and `artistId` repeat, and all
+    /// three can arrive in one request.
+    #[tokio::test]
+    async fn test_star_repeated_ids_albums_and_artists() {
+        let (state, _dir) = test_state();
+        let db = Database::open(state.pool.path()).unwrap();
+        for (path, title, album) in [
+            ("/music/a.flac", "Song A", "Album A"),
+            ("/music/b.flac", "Song B", "Album B"),
+        ] {
+            queries::upsert_track(&db.conn, &track_meta(path, title, album, 1)).unwrap();
+        }
+        let tracks = queries::all_tracks(&db.conn).unwrap();
+        let (a, b) = (&tracks[0], &tracks[1]);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/star?{}&id={}&id={}&albumId={}&artistId={}",
+                auth_query(""),
+                a.id,
+                b.id,
+                a.album_id.unwrap(),
+                a.artist_id.unwrap()
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""), "{}", body);
+
+        let app = build_test_router(state.clone());
+        let (_, body) =
+            get_response(app, &format!("/rest/getStarred2?{}&f=json", auth_query(""))).await;
+        let starred: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let starred = &starred["subsonic-response"]["starred2"];
+        assert_eq!(starred["song"].as_array().unwrap().len(), 2, "{}", body);
+        assert_eq!(starred["album"].as_array().unwrap().len(), 1, "{}", body);
+        assert_eq!(starred["artist"].as_array().unwrap().len(), 1, "{}", body);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/unstar?{}&albumId={}&artistId={}",
+                auth_query(""),
+                a.album_id.unwrap(),
+                a.artist_id.unwrap()
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""), "{}", body);
+        assert!(
+            queries::favourite_album_id_set(&db.conn)
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            queries::favourite_artist_id_set(&db.conn)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_star_without_an_id_is_an_error() {
+        let (state, _dir) = test_state();
+        let app = build_test_router(state);
+        let (_, body) = get_response(app, &format!("/rest/star?{}", auth_query(""))).await;
+        assert!(body.contains("status=\"failed\""), "{}", body);
     }
 
     #[tokio::test]
