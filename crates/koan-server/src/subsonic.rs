@@ -3732,9 +3732,14 @@ mod tests {
         let slow_uri = "/rest/getAlbum?u=mate&p=wrong&v=1.16.1&c=test&id=1";
         let probe_uri = "/rest/getOpenSubsonicExtensions";
 
-        let idle = std::time::Instant::now();
-        get_response(app.clone(), probe_uri).await;
-        let idle = idle.elapsed();
+        let probe = app.clone();
+        let idle = tokio::spawn(async move {
+            let t = std::time::Instant::now();
+            get_response(probe, probe_uri).await;
+            t.elapsed()
+        })
+        .await
+        .unwrap();
 
         let started = std::time::Instant::now();
         let slow: Vec<_> = (0..SLOW)
@@ -3743,10 +3748,16 @@ mod tests {
                 tokio::spawn(async move { get_response(app, slow_uri).await })
             })
             .collect();
+        // The test body does not run on a worker, so each probe is spawned and
+        // timed from the spawn, as an arriving request would be. A thread sleep
+        // lets the slow requests take the workers; a timer would need one to fire.
+        std::thread::sleep(std::time::Duration::from_millis(20));
         let mut probes = Vec::with_capacity(PROBES);
         for _ in 0..PROBES {
             let t = std::time::Instant::now();
-            let (status, _) = get_response(app.clone(), probe_uri).await;
+            let (status, _) = tokio::spawn(get_response(app.clone(), probe_uri))
+                .await
+                .unwrap();
             assert_eq!(status, StatusCode::OK);
             probes.push(t.elapsed());
         }
