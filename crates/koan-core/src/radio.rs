@@ -1017,6 +1017,7 @@ pub fn spawn_autoqueue(
     std::thread::Builder::new()
         .name("koan-radio".into())
         .spawn(move || {
+            let pool = crate::db::pool::Pool::new(db_path);
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(2));
 
@@ -1050,7 +1051,7 @@ pub fn spawn_autoqueue(
                     cfg.radio.lookahead
                 );
 
-                let Ok(db) = crate::db::connection::Database::open(&db_path) else {
+                let Ok(db) = pool.get() else {
                     continue;
                 };
                 let (items, cursor) = state.snapshot_playlist();

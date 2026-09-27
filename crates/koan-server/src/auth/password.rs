@@ -11,11 +11,11 @@
 //! by password can then use clients that only speak `t`/`s`.
 
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use koan_core::auth::{self, Role};
-use koan_core::db::connection::Database;
+use koan_core::db::pool::Pool;
 use koan_core::db::queries::auth as auth_queries;
 use lru::LruCache;
 use parking_lot::Mutex;
@@ -24,7 +24,7 @@ use sha2::{Digest, Sha256};
 const REMEMBER: Duration = Duration::from_secs(600);
 
 pub struct PasswordVerifier {
-    db_path: PathBuf,
+    pool: Arc<Pool>,
     verified: Mutex<LruCache<[u8; 32], Instant>>,
     /// Seals passwords for token auth; `None` if it could not be loaded, which
     /// leaves password auth working and token auth refused.
@@ -32,16 +32,16 @@ pub struct PasswordVerifier {
 }
 
 impl PasswordVerifier {
-    pub fn new(db_path: PathBuf) -> Self {
+    pub fn new(pool: Arc<Pool>) -> Self {
         let sealing = auth::subsonic_key()
             .inspect_err(|e| log::warn!("Subsonic token auth for accounts is off: {e}"))
             .ok();
-        Self::with_key(db_path, sealing)
+        Self::with_key(pool, sealing)
     }
 
-    pub fn with_key(db_path: PathBuf, sealing: Option<[u8; 32]>) -> Self {
+    pub fn with_key(pool: Arc<Pool>, sealing: Option<[u8; 32]>) -> Self {
         Self {
-            db_path,
+            pool,
             verified: Mutex::new(LruCache::new(NonZeroUsize::new(256).expect("non-zero"))),
             sealing,
         }
@@ -53,8 +53,8 @@ impl PasswordVerifier {
     pub fn verify_token(&self, username: &str, token: &str, salt: &str) -> Option<Role> {
         use subtle::ConstantTimeEq;
         let key = self.sealing.as_ref()?;
-        let db = Database::open(&self.db_path).ok()?;
-        let sealed = auth_queries::sealed_password(&db.conn, username).ok()??;
+        let sealed =
+            auth_queries::sealed_password(&self.pool.get().ok()?.conn, username).ok()??;
         let password = auth::open_password(key, username, &sealed)?;
         let expected = format!("{:x}", md5::compute(format!("{password}{salt}")));
         if !bool::from(
@@ -71,7 +71,9 @@ impl PasswordVerifier {
     /// Whether token auth could work for this user: a key and a sealed copy.
     pub fn has_sealed(&self, username: &str) -> bool {
         self.sealing.is_some()
-            && Database::open(&self.db_path)
+            && self
+                .pool
+                .get()
                 .ok()
                 .and_then(|db| auth_queries::sealed_password(&db.conn, username).ok())
                 .flatten()
@@ -80,7 +82,7 @@ impl PasswordVerifier {
 
     /// The user's role when the password is theirs.
     pub fn verify(&self, username: &str, password: &str) -> Option<Role> {
-        let db = Database::open(&self.db_path).ok()?;
+        let db = self.pool.get().ok()?;
         let Some(user) = auth_queries::get_user_by_username(&db.conn, username).ok()? else {
             // Pay for a verify anyway, so response time doesn't say which
             // usernames exist.
@@ -116,6 +118,7 @@ impl PasswordVerifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use koan_core::db::connection::Database;
 
     fn verifier() -> (PasswordVerifier, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
@@ -123,7 +126,10 @@ mod tests {
         let db = Database::open(&path).unwrap();
         koan_core::db::schema::create_tables(&db.conn).unwrap();
         auth_queries::create_user(&db.conn, "mate", "hunter22", Role::Readonly).unwrap();
-        (PasswordVerifier::with_key(path, Some([7; 32])), dir)
+        (
+            PasswordVerifier::with_key(Arc::new(Pool::new(path)), Some([7; 32])),
+            dir,
+        )
     }
 
     #[test]

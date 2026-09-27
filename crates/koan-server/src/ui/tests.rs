@@ -65,8 +65,9 @@ fn setup(auth_enabled: bool) -> Fixture {
         .unwrap();
     queries::auth::create_user(&db.conn, "alice", "hunter2", Role::User).unwrap();
     let (private_pem, public_pem) = auth::generate_keypair_pem().unwrap();
+    let pool = Arc::new(koan_core::db::pool::Pool::new(db_path));
     let state = AuthRouteState {
-        db_path: db_path.clone(),
+        pool: pool.clone(),
         private_pem: Arc::new(private_pem.into_bytes()),
         public_pem: Arc::new(public_pem.into_bytes()),
         access_ttl_secs: 900,
@@ -76,7 +77,7 @@ fn setup(auth_enabled: bool) -> Fixture {
     };
     Fixture {
         app: super::router(
-            db_path,
+            pool,
             state.clone(),
             auth_enabled,
             Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
@@ -603,7 +604,7 @@ async fn api_keys_are_shown_once_listed_and_revoked() {
         .and_then(|rest| rest.split('"').next())
         .unwrap_or_else(|| panic!("no key in {}", r.body))
         .to_owned();
-    let db = Database::open(&f.state.db_path).unwrap();
+    let db = Database::open(f.state.pool.path()).unwrap();
     let user = queries::api_keys::authenticate_api_key(&db.conn, &key)
         .unwrap()
         .unwrap();
