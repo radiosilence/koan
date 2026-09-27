@@ -4,6 +4,10 @@
 
 ### Added
 
+- **Subsonic token auth for koan accounts.** Most Subsonic clients (Play:Sub, and koan's own releases before this one) sign in with `t=md5(password + salt)`, which cannot be checked against an argon2 hash. Each account's password is now also kept sealed with AES-256-GCM under `auth/subsonic.key` (created on first use, 0600), bound to the username, and token auth opens it, compares the token, then checks the password against the hash as usual, so a password changed elsewhere stops working. The sealed copy is written whenever the password is proven: web sign-in, a `p=` sign-in, `koan auth create-user` and `koan auth reset-password`. An account without one still gets error 41, so clients can fall back.
+
+### Added
+
 - **OpenSubsonic.** Every `/rest/*` response carries `openSubsonic`, `type="koan"` and `serverVersion`, and `getOpenSubsonicExtensions` answers without sign-in. Extensions: `apiKeyAuthentication` (`apiKey=` and `tokenInfo`; keys made with `koan auth api-key create` or on the web UI's API keys page, stored as `sha256`, shown once, acting at their account's current role), `formPost` (parameters in an `application/x-www-form-urlencoded` body, merged with the query string, repeated keys included) and `songLyrics` (`getLyricsBySongId`, from the lyrics koan has cached, LRC split into timed lines). Token auth for a username other than the shared secret's is now error 41 rather than 40, which is what tells a client to fall back to a password or a key. Songs, albums and artists carry the OpenSubsonic fields koan has data for: MusicBrainz ids, sort names, display artists, genres as lists, the album date as `releaseDate`, record labels, last played, and bit depth, sample rate and channel count; albums also gain the `duration` and `created` Subsonic always required, and list fields are arrays in JSON even with one member.
 - **koan.rocks.** The project website, as hand-written static HTML and CSS in `site/` with no build step and no tracking. The Site workflow builds `ghcr.io/radiosilence/koan-site` (nano-web) on every push to main, tagged `sha-<commit>` and `latest`, and asks the jaritanet deployment to pick it up.
 

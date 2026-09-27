@@ -327,6 +327,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 /// `organize_log.size_bytes`/`mtime` are checked against the file before undo
 /// moves it back, so a file replaced since the organize is left alone.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    // The password sealed under the server's Subsonic key, since token auth
+    // needs the plaintext and `password_hash` cannot give it back.
+    ("users", "sealed_password", "BLOB"),
     ("tracks", "cache_size_bytes", "INTEGER"),
     ("tracks", "cache_download_date", "INTEGER"),
     (
