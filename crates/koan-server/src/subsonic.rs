@@ -3612,12 +3612,12 @@ mod tests {
         }
     }
 
-    /// A route that needs no database, timed while slow Subsonic requests hold
-    /// the runtime's two workers — argon2 on a wrong password, which is never
-    /// remembered. Ignored: a timing to read. `cargo test -p koan-server
-    /// --release -- --ignored --nocapture trivial_route_under_load`.
+    /// A route that needs no database stays fast while slow Subsonic requests
+    /// are in flight — argon2 on a wrong password, which is never remembered.
+    /// With that work on the runtime's two workers, the first probe waited
+    /// over a second; off them it takes milliseconds. The bound leaves room
+    /// for a loaded CI machine and still fails the regression.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore]
     async fn trivial_route_under_load() {
         const SLOW: usize = 8;
         const PROBES: usize = 20;
@@ -3665,6 +3665,11 @@ mod tests {
              slow requests done in {slow_total:?}",
             probes[PROBES / 2],
             probes[PROBES - 1],
+        );
+        assert!(
+            probes[PROBES - 1] < std::time::Duration::from_millis(750),
+            "a trivial route waited {:?} behind slow Subsonic requests",
+            probes[PROBES - 1]
         );
     }
 
