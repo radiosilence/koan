@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- **koan.rocks is styled with Tailwind.** The page keeps its hand-written HTML and takes blit's look: Geist Mono, lowercase thin headings and one red accent, dark by default. The stylesheet is compiled by the standalone Tailwind CLI (`mise run css` in `site/`), so the site has no package manifest; the Site workflow builds it before the image and it is not committed. The app screenshots are cropped to the window, so nothing behind it shows at the edges.
+
 ### Fixed
 
 - Web UI: the signed-in username gets a line of its own above API keys and Sign out, instead of being truncated beside them.

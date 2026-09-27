@@ -1,0 +1,109 @@
+@import "tailwindcss" source(none);
+@source "../public/*.html";
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("/geist-mono.woff2") format("woff2-variations");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Dark is the default; the light values apply only when the reader asks for them. */
+:root {
+  color-scheme: dark light;
+  --bg: #1e1e1e;
+  --surface: #2a2a2a;
+  --ink: #cccccc;
+  --muted: #8c8c8c;
+  --rule: #383838;
+  --brand: #e65e5e;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #ffffff;
+    --surface: #f2f2f2;
+    --ink: #333333;
+    --muted: #666666;
+    --rule: #e0e0e0;
+    /* blit's red is under 4.5:1 on white; this is the same hue, darker. */
+    --brand: #c43f3f;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-rule: var(--rule);
+  --color-brand: var(--brand);
+  --default-font-family: "Geist Mono", ui-monospace, monospace;
+}
+
+/*
+ * Element defaults, in `base` so a utility on the element still wins. The page is
+ * prose and code; styling the elements keeps the markup to the few classes that
+ * are about layout.
+ */
+@layer base {
+  html {
+    @apply scroll-smooth motion-reduce:scroll-auto;
+  }
+
+  body {
+    @apply bg-bg text-[15px]/relaxed text-ink;
+  }
+
+  a {
+    @apply text-brand underline underline-offset-3 hover:text-muted;
+  }
+
+  :focus-visible {
+    @apply rounded-xs outline-2 outline-offset-2 outline-brand;
+  }
+
+  h1,
+  h2 {
+    @apply lowercase;
+  }
+
+  h2 {
+    @apply mb-6 text-2xl font-thin;
+  }
+
+  h3 {
+    @apply mt-8 mb-2 text-sm font-semibold;
+  }
+
+  p {
+    @apply my-4;
+  }
+
+  strong {
+    @apply font-semibold;
+  }
+
+  ul {
+    @apply my-4 list-disc space-y-2 ps-5 marker:text-muted;
+  }
+
+  pre {
+    @apply my-4 overflow-x-auto rounded-md border border-rule bg-surface px-4 py-3 text-[13px]/relaxed;
+  }
+
+  :not(pre) > code,
+  kbd {
+    @apply rounded-sm bg-surface px-1 text-[0.9em];
+  }
+
+  kbd {
+    @apply border border-b-2 border-rule;
+  }
+
+  /* Comments inside the command listings. */
+  pre .c {
+    @apply text-muted;
+  }
+}
