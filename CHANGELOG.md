@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **koan.rocks.** The project website, as hand-written static HTML and CSS in `site/` with no build step and no tracking. The Site workflow builds `ghcr.io/radiosilence/koan-site` (nano-web) on every push to main, tagged `sha-<commit>` and `latest`, and asks the jaritanet deployment to pick it up.
+
 ### Changed
 
 - **Covers load fast in the web UI and on share pages.** They were served as embedded, often several hundred kilobytes each, re-read from the audio file on every request; an albums page pulled about 15 MB. They are now resized to the size shown (400 px tiles, 800 px headers and previews), encoded as JPEG, kept on disk under `covers/` in the config directory and in memory, and addressed by a URL that carries the album's file mtime so browsers cache them for good. An album with no art is remembered rather than re-read. The same albums page now fetches about 2.3 MB.
