@@ -44,7 +44,7 @@ fn meta(path: &std::path::Path, title: &str, n: i32) -> TrackMeta {
 }
 
 struct Fixture {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     app: axum::Router,
     state: AuthRouteState,
     album_id: i64,
@@ -75,8 +75,13 @@ fn setup(auth_enabled: bool) -> Fixture {
         login_limiter: Arc::new(LoginRateLimiter::default()),
     };
     Fixture {
-        app: super::router(db_path, state.clone(), auth_enabled),
-        _dir: dir,
+        app: super::router(
+            db_path,
+            state.clone(),
+            auth_enabled,
+            Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
+        ),
+        dir,
         state,
         album_id,
         track_id,
@@ -460,6 +465,40 @@ async fn live_fragments_are_datastar_events_and_posts_need_datastar() {
         .body(Body::empty())
         .unwrap();
     assert_eq!(send(&f.app, bare).await.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered() {
+    let f = setup(true);
+    let page = send(
+        &f.app,
+        authed(&f.state, "/albums").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let src = format!("src=\"/ui/cover/{}?size=400&amp;v=", f.album_id);
+    let src_raw = format!("src=\"/ui/cover/{}?size=400&v=", f.album_id);
+    assert!(
+        page.body.contains(&src) || page.body.contains(&src_raw),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains("loading=lazy decoding=async width=400 height=400")
+    );
+
+    let uri = format!("/ui/cover/{}?size=300&v=1", f.album_id);
+    for _ in 0..2 {
+        let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "the fake file has no art");
+    }
+    let kept: Vec<_> = std::fs::read_dir(f.dir.path().join("covers"))
+        .unwrap()
+        .map(|e| e.unwrap())
+        .collect();
+    assert_eq!(kept.len(), 1, "one remembered miss");
+    assert_eq!(kept[0].metadata().unwrap().len(), 0);
+    assert!(kept[0].file_name().to_string_lossy().ends_with("-400.jpg"));
 }
 
 #[tokio::test]

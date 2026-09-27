@@ -4,6 +4,7 @@
 //! Depends only on koan-core.
 
 pub mod auth;
+pub mod covers;
 pub mod graphql;
 pub mod mcp;
 pub mod share;

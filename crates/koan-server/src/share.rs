@@ -33,9 +33,10 @@ const PAGE_CSS: &str = include_str!("../assets/share.css");
 #[derive(Clone)]
 struct ShareState {
     db_path: PathBuf,
+    covers: std::sync::Arc<crate::covers::Covers>,
 }
 
-pub fn router(db_path: PathBuf) -> axum::Router {
+pub fn router(db_path: PathBuf, covers: std::sync::Arc<crate::covers::Covers>) -> axum::Router {
     axum::Router::new()
         .route(
             "/share/assets/share.js",
@@ -52,7 +53,7 @@ pub fn router(db_path: PathBuf) -> axum::Router {
         .route("/share/{id}", get(page))
         .route("/share/{id}/cover", get(cover))
         .route("/share/{id}/{n}", get(track))
-        .with_state(ShareState { db_path })
+        .with_state(ShareState { db_path, covers })
 }
 
 fn now() -> i64 {
@@ -260,32 +261,31 @@ async fn track(
     }
 }
 
+/// The cover at the size link previews and the page's header want.
 async fn cover(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
     let art = blocking(move || {
         let (_, _, tracks) = live(&s.db_path, &id)?;
-        tracks.iter().find_map(|t| {
-            let path = crate::subsonic::track_file_path(t)?;
-            koan_core::index::metadata::extract_cover_art(std::path::Path::new(path))
-        })
+        s.covers.cover(&tracks, crate::covers::LARGE)
     })
     .await;
-    image(art)
+    jpeg(art, false)
 }
 
-/// Embedded cover art as a response, typed by its magic number.
-pub(crate) fn image(art: Option<Vec<u8>>) -> Response {
+/// A cover from `Covers`. `immutable` when the URL carries the cover's
+/// version, so the same URL can never name different bytes.
+pub(crate) fn jpeg(art: Option<axum::body::Bytes>, immutable: bool) -> Response {
     let Some(bytes) = art else {
         return not_found();
     };
-    let kind = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-        "image/png"
+    let cache = if immutable {
+        "private, max-age=31536000, immutable"
     } else {
-        "image/jpeg"
+        "private, max-age=86400"
     };
     (
         [
-            (header::CONTENT_TYPE, kind),
-            (header::CACHE_CONTROL, "private, max-age=86400"),
+            (header::CONTENT_TYPE, "image/jpeg"),
+            (header::CACHE_CONTROL, cache),
         ],
         bytes,
     )
@@ -299,6 +299,10 @@ mod tests {
     use axum::http::Request;
     use koan_core::db::queries::TrackMeta;
     use tower::ServiceExt;
+
+    fn test_covers(dir: &tempfile::TempDir) -> std::sync::Arc<crate::covers::Covers> {
+        std::sync::Arc::new(crate::covers::Covers::new(dir.path().join("covers")))
+    }
 
     fn meta(path: &std::path::Path, title: &str, n: i32) -> TrackMeta {
         TrackMeta {
@@ -344,7 +348,8 @@ mod tests {
         let a = queries::upsert_track(&db.conn, &meta(&shared, "Wet <Moss> & Stone", 1)).unwrap();
         let b = queries::upsert_track(&db.conn, &meta(&other, "Unshared", 2)).unwrap();
         let share = queries::shares::create_share(&db.conn, &[a], None, 0, None).unwrap();
-        (dir, router(db_path), share.id, b)
+        let covers = test_covers(&dir);
+        (dir, router(db_path, covers), share.id, b)
     }
 
     async fn get(

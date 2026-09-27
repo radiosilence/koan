@@ -255,7 +255,13 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // The web UI checks its own session (a page load without one is sent
         // to sign in rather than refused), so it sits outside the GraphQL auth
         // layer. Built before the auth routes take their state.
-        let ui_routes = crate::ui::router(db_path.clone(), auth_route_state.clone(), auth_enabled);
+        let covers = Arc::new(crate::covers::Covers::in_config_dir());
+        let ui_routes = crate::ui::router(
+            db_path.clone(),
+            auth_route_state.clone(),
+            auth_enabled,
+            covers.clone(),
+        );
 
         // Auth routes — always accessible (no auth middleware).
         let auth_app = auth_router(auth_route_state);
@@ -291,7 +297,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // Built once and cloned: each build re-read the config from disk.
         // Public by design, so outside the auth layers: each route answers for
         // one share's own tracks and nothing else. The Host guard still applies.
-        let share_routes = crate::share::router(db_path.clone());
+        let share_routes = crate::share::router(db_path.clone(), covers);
         let subsonic_merged = crate::subsonic::subsonic_router(db_path);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();

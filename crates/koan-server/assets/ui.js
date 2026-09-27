@@ -55,7 +55,7 @@
     return {
       id: Number(d.id), src: `/ui/stream/${d.id}`, dur: Number(d.dur) || 0,
       title: d.title, artist: d.artist, album: d.album, albumId,
-      cover: albumId ? `/ui/cover/${albumId}` : null,
+      cover: d.cover || null,
     };
   }
 
