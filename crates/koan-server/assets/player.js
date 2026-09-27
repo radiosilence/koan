@@ -28,11 +28,13 @@ window.KoanPlayer = (opts = {}) => {
 
   const decodable = (t) => t && t.dur > 0 && t.dur <= LONG;
 
-  // Must run inside a user gesture: browsers only start audio from one.
+  // Runs synchronously at the top of every gesture handler, before any await:
+  // iOS only lets a context start from inside the gesture itself.
   function wake() {
-    if (!ctx && window.AudioContext) ctx = new AudioContext();
-    // iOS otherwise treats Web Audio as a sound effect, silenced by the mute switch.
+    // Without this iOS treats Web Audio as a sound effect, silenced by the mute switch.
     if (navigator.audioSession) { try { navigator.audioSession.type = "playback"; } catch {} }
+    if (!ctx && window.AudioContext) ctx = new AudioContext();
+    if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
   }
 
   function buffer(i) {
@@ -137,11 +139,13 @@ window.KoanPlayer = (opts = {}) => {
     cur = i;
     resumeAt = 0;
     setPlaying(true);
-    const buf = await buffer(i);
+    // A track that will stream starts without an await, so play() is still
+    // inside the gesture; a decode that fails falls back to it afterwards.
+    const buf = ctx && decodable(queue[i]) ? await buffer(i) : null;
     if (g !== gen) return;
     if (buf) {
       mode = "buffer";
-      if (ctx.state === "suspended") await ctx.resume();
+      if (ctx.state !== "running") await ctx.resume();
       const at = ctx.currentTime + 0.03;
       source = startBuffer(buf, from, at);
       startedAt = at - from;
