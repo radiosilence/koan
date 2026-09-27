@@ -414,9 +414,13 @@ ios-ffi platform="iphonesimulator":
     # compiled against the current SDK, and the link dies in a wall of "built
     # for newer iOS version". `macos-ffi` exports the macOS equivalent.
     export IPHONEOS_DEPLOYMENT_TARGET={{ios_deployment_target}}
-    cargo build --release -p koan-ffi --target "$triple"
+    # A target directory per deployment target, because cargo does not count
+    # that variable as a reason to rebuild: lowering it relinked objects built
+    # for the old version, and the linker warned about every one of them.
+    out=target/ios-{{ios_deployment_target}}
+    cargo build --release -p koan-ffi --target "$triple" --target-dir "$out"
     rm -rf "target/ios-link/{{platform}}" && mkdir -p "target/ios-link/{{platform}}"
-    cp "target/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
+    cp "$out/$triple/release/libkoan_ffi.a" "target/ios-link/{{platform}}/"
     echo "koan-ffi ready for {{platform}}"
 
 # Assemble koan.app for the iOS simulator.
@@ -587,7 +591,10 @@ ios-walk device="koan-dev": (ios-ffi "iphonesimulator") ios-project
 # Signed with the free personal team unless APPLE_TEAM_ID says otherwise: it
 # needs nothing but the Apple ID Xcode is signed in to, and installs expire
 # after seven days. Installing over the app keeps its library and sign-in.
-ios-phone config="Release": (ios-ffi "iphoneos")
+#
+# Debug by default, because it builds incrementally; the engine is a release
+# build either way, and the Swift is not where playback spends its time.
+ios-phone config="Debug": (ios-ffi "iphoneos")
     #!/usr/bin/env bash
     set -euo pipefail
     phone=$(xcrun devicectl list devices | awk '/physical/ && /connected|available/' \
