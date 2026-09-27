@@ -152,12 +152,15 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
     let playground_enabled = playground || cfg.graphql.playground;
     let auth_enabled = cfg.graphql.auth_enabled;
 
-    // Load or generate Ed25519 keypair for JWT signing.
+    // Load or generate Ed25519 keypair for JWT signing. A server's first start
+    // makes its own: it is this server's signing key and nothing else, a fresh
+    // one invalidates no token (there can be none yet), and a server in a
+    // container has no terminal to run `koan auth setup` in before it starts.
+    // Accounts are still created deliberately; until one exists, nothing signs in.
     let (private_pem, public_pem) = if auth_enabled {
-        let kp = auth::load_keypair().map_err(|e| {
+        let kp = auth::load_or_generate_keypair().map_err(|e| {
             format!(
-                "auth_enabled = true but the keypair could not be loaded: {}. \
-                 Run `koan auth setup`.",
+                "auth_enabled = true but the keypair could not be loaded or created: {}",
                 e
             )
         })?;
