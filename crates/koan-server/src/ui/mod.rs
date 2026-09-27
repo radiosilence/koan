@@ -12,6 +12,7 @@
 //! `/auth/resume`, which spends the refresh cookie (scoped to `/auth`, so only
 //! that route sees it) for fresh cookies, or on to the sign-in form.
 
+mod keys;
 mod pages;
 mod session;
 #[cfg(test)]
@@ -72,6 +73,8 @@ pub fn router(db_path: PathBuf, auth: AuthRouteState, auth_enabled: bool) -> axu
         .route("/search", get(pages::search))
         .route("/search/results", get(pages::search_results))
         .route("/queue", get(pages::queue))
+        .route("/keys", get(keys::page).post(keys::create))
+        .route("/keys/{id}/revoke", post(keys::revoke))
         .route("/ui/stream/{id}", get(stream))
         .route("/ui/cover/{id}", get(cover))
         .layer(from_fn(require_datastar_on_post))

@@ -149,6 +149,19 @@ pub fn random_token() -> Result<String, AuthError> {
     Ok(bytes.iter().map(|b| format!("{:02x}", b)).collect())
 }
 
+/// A new Subsonic API key: 32 random bytes, base64url without padding, so it
+/// travels in a query string unescaped.
+pub fn random_api_key() -> Result<String, AuthError> {
+    use base64::Engine as _;
+    use ring::rand::SecureRandom;
+
+    let mut bytes = [0u8; 32];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| AuthError::Hash("rng failure".into()))?;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes))
+}
+
 /// SHA-256 of `input`, hex encoded. Refresh tokens are stored under this so a
 /// database read does not yield usable credentials.
 pub fn sha256_hex(input: &str) -> String {

@@ -214,7 +214,7 @@ koan can also expose a Subsonic-compatible REST API for clients that speak the S
 koan --headless --subsonic 4040
 ```
 
-This runs on a separate port from the GraphQL API. Useful for connecting Subsonic clients (DSub, Ultrasonic, play:Sub) to a headless koan instance.
+This runs on a separate port from the GraphQL API. Useful for connecting Subsonic clients (DSub, Ultrasonic, play:Sub) to a headless koan instance. It speaks OpenSubsonic, including API-key sign-in and synced lyrics; see [Authentication](authentication.md#subsonic-api).
 
 ## MCP server
 

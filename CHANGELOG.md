@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **OpenSubsonic.** Every `/rest/*` response carries `openSubsonic`, `type="koan"` and `serverVersion`, and `getOpenSubsonicExtensions` answers without sign-in. Extensions: `apiKeyAuthentication` (`apiKey=` and `tokenInfo`; keys made with `koan auth api-key create` or on the web UI's API keys page, stored as `sha256`, shown once, acting at their account's current role), `formPost` (parameters in an `application/x-www-form-urlencoded` body, merged with the query string, repeated keys included) and `songLyrics` (`getLyricsBySongId`, from the lyrics koan has cached, LRC split into timed lines). Token auth for a username other than the shared secret's is now error 41 rather than 40, which is what tells a client to fall back to a password or a key. Songs, albums and artists carry the OpenSubsonic fields koan has data for: MusicBrainz ids, sort names, display artists, genres as lists, the album date as `releaseDate`, record labels, last played, and bit depth, sample rate and channel count; albums also gain the `duration` and `created` Subsonic always required, and list fields are arrays in JSON even with one member.
+
 ### Changed
 
 - **Subsonic clients sign in with koan accounts.** \`/rest/*\` accepts \`p=\` (plain or \`enc:\` hex) checked against the account's argon2 hash, so the web UI login works in Subsonic clients too; a successful check is remembered for ten minutes, keyed on the stored hash so a password change ends it. Token auth needs the plaintext on the server, so it remains only for the \`[subsonic]\` shared secret, which is now optional. \`readonly\` accounts get code 50 from every endpoint that writes (stars, scrobbles, playlists, shares) and \`getUser\` reports each account's real roles. koan's own client sends \`p=enc:\` over HTTPS and the salted token over HTTP.

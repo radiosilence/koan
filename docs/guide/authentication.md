@@ -196,14 +196,22 @@ Refresh tokens are stored in the database as `sha256(token)`, so a database read
 
 ## Subsonic API
 
-koan's Subsonic REST API has **its own credentials**, configured under `[subsonic]` and unrelated to the `users` table and to `[remote]`. See [Configuration](../reference/configuration.md#subsonic).
+`/rest/*` is koan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`). Clients sign in one of three ways:
+
+- **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
+- **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. The protocol sends the password with every request, so use it only over HTTPS.
+- **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret, for clients that only speak token auth. Token auth needs the plaintext on the server, which koan does not keep for accounts, so a token for any other username gets error 41 and a client falls back to a password or a key.
 
 ```bash
-koan subsonic setup           # generate a secret, enable /rest/*
+koan auth api-key create --username alice --name phone   # prints the key once
+koan auth api-key list [--username alice]
+koan auth api-key revoke 3
+
+koan subsonic setup           # generate the shared secret, enable /rest/*
 koan subsonic status
 koan subsonic disable
 ```
 
-Only token auth (`u` + `t` + `s`) is accepted. Plaintext `p=` — and its `enc:` hex form — is refused: the protocol offers no transport guarantee, so accepting it hands the secret to anyone watching the network. Every current client (play:Sub, DSub, Symfonium) uses token auth.
+Signed-in users manage their own keys in the web UI under **API keys**. `readonly` accounts, and their keys, get error 50 from every endpoint that writes.
 
-`koan play --server` is one of those clients: it streams audio over `/rest/stream` and signs those requests with the `[subsonic]` credentials from the machine it runs on, so they have to match the server's.
+`koan play --server` streams audio over `/rest/stream` and signs those requests with the `[subsonic]` credentials from the machine it runs on, so they have to match the server's.

@@ -1,9 +1,11 @@
-//! CLI auth commands: setup, create-user, delete-user, list-users, login, logout.
+//! CLI auth commands: setup, create-user, delete-user, list-users, login, logout,
+//! api-key.
 
 use std::io::{Write, stdin, stdout};
 
 use koan_core::auth::{self, Role};
 use koan_core::config::Config;
+use koan_core::db::queries::api_keys;
 use koan_core::db::queries::auth as auth_queries;
 use owo_colors::OwoColorize;
 
@@ -426,6 +428,111 @@ pub fn cmd_auth_list_users() {
         );
     }
     println!("\n{} user(s)", users.len());
+}
+
+/// `koan auth api-key create --username <u> --name <n>`
+pub fn cmd_auth_api_key_create(username: &str, name: &str) {
+    let db = open_db();
+    let name = name.trim();
+    if name.is_empty() {
+        eprintln!("{} Name cannot be empty", "✗".red().bold());
+        std::process::exit(1);
+    }
+    let user = match auth_queries::get_user_by_username(&db.conn, username) {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            eprintln!("{} No user '{}'", "✗".red().bold(), username);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("{} DB error: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    };
+    match api_keys::create_api_key(&db.conn, user.id, name) {
+        Ok((id, key)) => {
+            println!(
+                "{} API key {} '{}' created for '{}' ({})",
+                "✓".green().bold(),
+                id,
+                name,
+                username,
+                user.role
+            );
+            println!("\n  {}\n", key.bold());
+            println!(
+                "{}",
+                "Shown once. Subsonic clients send it as apiKey=, with no username.".dimmed()
+            );
+        }
+        Err(e) => {
+            eprintln!("{} Failed to create key: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
+}
+
+/// `koan auth api-key list [--username <u>]`
+pub fn cmd_auth_api_key_list(username: Option<&str>) {
+    let db = open_db();
+    let user_id = username.map(|u| match auth_queries::get_user_by_username(&db.conn, u) {
+        Ok(Some(user)) => user.id,
+        Ok(None) => {
+            eprintln!("{} No user '{}'", "✗".red().bold(), u);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("{} DB error: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    });
+    let keys = api_keys::list_api_keys(&db.conn, user_id).unwrap_or_else(|e| {
+        eprintln!("{} DB error: {}", "✗".red().bold(), e);
+        std::process::exit(1);
+    });
+    if keys.is_empty() {
+        println!("No API keys.");
+        return;
+    }
+    let when = |secs: i64| {
+        chrono::DateTime::from_timestamp(secs, 0)
+            .map(|t| t.format("%Y-%m-%d %H:%M").to_string())
+            .unwrap_or_default()
+    };
+    println!(
+        "{:<5} {:<20} {:<24} {:<17} {}",
+        "ID".bold(),
+        "Username".bold(),
+        "Name".bold(),
+        "Created".bold(),
+        "Last used".bold()
+    );
+    for key in &keys {
+        println!(
+            "{:<5} {:<20} {:<24} {:<17} {}",
+            key.id,
+            key.username,
+            key.name,
+            when(key.created_at),
+            key.last_used_at.map_or_else(|| "never".into(), when)
+        );
+    }
+}
+
+/// `koan auth api-key revoke <id>`
+pub fn cmd_auth_api_key_revoke(id: i64) {
+    let db = open_db();
+    match api_keys::revoke_api_key(&db.conn, id, None) {
+        Ok(true) => println!("{} API key {} revoked", "✓".green().bold(), id),
+        Ok(false) => {
+            eprintln!("{} No API key {}", "✗".red().bold(), id);
+            std::process::exit(1);
+        }
+        Err(e) => {
+            eprintln!("{} DB error: {}", "✗".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
 }
 
 /// `koan auth login --server <url> --username <u>`

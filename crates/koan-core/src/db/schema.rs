@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -275,6 +275,20 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+
+        -- Subsonic API keys. Only `sha256(key)` is kept: a key is 32 random
+        -- bytes, so a fast hash is enough, and a database read yields nothing
+        -- that signs in.
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id           INTEGER PRIMARY KEY,
+            user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name         TEXT NOT NULL,
+            key_hash     TEXT NOT NULL UNIQUE,
+            created_at   INTEGER NOT NULL,
+            last_used_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
 
         -- Share links this koan serves itself. The tracks are an explicit list,
         -- not a query: what a link names is all an anonymous visitor can play,

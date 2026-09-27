@@ -59,6 +59,16 @@ img.missing { visibility: hidden; }
 .list .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .list .d { color: var(--dim); font-size: 13px; }
 
+/* API keys. */
+.account a { padding: 4px 6px; font-size: 13px; white-space: nowrap; }
+.keyform { display: flex; gap: 8px; max-width: 520px; margin-bottom: 8px; }
+.keyform input { flex: 1; }
+.new-key p { margin: 12px 0 0; }
+.keys { margin-top: 16px; }
+.keys li { display: flex; gap: 12px; align-items: center; padding: 10px 4px; border-bottom: 1px solid var(--line); min-width: 0; }
+.keys .t { white-space: normal; overflow-wrap: anywhere; }
+.keys .t small { display: block; color: var(--dim); font-size: 13px; }
+
 /* Album header and track list. */
 .hero { display: flex; gap: 24px; align-items: flex-end; margin-bottom: 24px; }
 .hero .cover { width: 220px; height: 220px; flex: 0 0 auto; object-fit: cover; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); }
