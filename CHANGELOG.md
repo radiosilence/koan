@@ -1,10 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.36.3
 
 ### Changed
 
 - **Releases publish the container image as `latest` and `vX.Y.Z`.** The image was built by a workflow of its own and only ever tagged with the commit and `main`, so a release had no image of its version and `ghcr.io/radiosilence/koan` without a tag resolved to nothing. It is now a job in CI/CD, which knows when a commit is a release. Pull requests build the image only when the `Dockerfile` or `.dockerignore` changes; the Rust jobs already cover the code it compiles.
+
+### Fixed
+
+- **A koan server answers `download`.** It implemented only `stream`, and koan's download queue fetches through `download`, so every track from a koan server failed to load in the iOS and macOS apps (and in any Subsonic client that caches offline). `download` now serves the original file, as `stream` does.
 
 ## 0.36.2
 
