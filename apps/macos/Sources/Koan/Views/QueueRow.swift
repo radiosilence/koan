@@ -174,17 +174,25 @@ struct QueueRow: View {
                 Color.clear.frame(width: 16, height: 1)
             }
 
+            // A phone has no width to spare for it, and the album heading
+            // above already names the codec when the record has one.
+            #if !os(iOS)
             if let codec = item.codec {
                 Text(codec.uppercased())
                     .font(.caption2.monospaced())
                     .foregroundStyle(played ? .quaternary : .tertiary)
             }
+            #endif
 
             if let ms = item.durationMs {
+                // At least the width of "59:59", so durations line up down the
+                // queue, and wider on one line for anything an hour or more.
                 Text(Format.duration(ms))
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(played ? .tertiary : .secondary)
-                    .frame(width: 44, alignment: .trailing)
+                    .lineLimit(1)
+                    .frame(minWidth: 44, alignment: .trailing)
+                    .fixedSize()
             }
         }
         // Fixed height so a row doesn't grow when a download indicator appears
