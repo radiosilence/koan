@@ -304,13 +304,53 @@ impl SubsonicResponse {
             .attr_int("code", err.code as i64)
             .attr("message", &err.message)
             .attr_opt("helpUrl", err.help_url);
-        XmlBuilder {
+        let mut response = XmlBuilder {
             json,
             status: "failed",
             root: XmlNode::new("subsonic-response").child(error),
         }
-        .build()
+        .build();
+        if matches!(err.code, SubsonicErrorCode::WrongAuth) {
+            response.extensions_mut().insert(AuthFailed);
+        }
+        response
     }
+}
+
+/// Marks a response that refused a credential, for [`throttle_auth`] to count.
+#[derive(Clone, Copy)]
+struct AuthFailed;
+
+/// Refuse a client that has failed to sign in too often, and count its
+/// failures.
+///
+/// Every request carries its credential, so each is a sign-in: a password
+/// through argon2, or a token against an account's sealed password, which is
+/// only an MD5 and costs an attacker nothing to try. Only refusals count, so a
+/// client syncing a library at full tilt is never slowed.
+async fn throttle_auth(
+    State(limiter): State<Arc<crate::auth::routes::LoginRateLimiter>>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let ip = crate::auth::routes::client_ip(&request);
+    if limiter.exhausted(ip) {
+        let json = request.uri().query().is_some_and(|q| {
+            form_urlencoded::parse(q.as_bytes()).any(|(k, v)| k == "f" && v == "json")
+        });
+        return SubsonicResponse::error(
+            json,
+            &SubsonicError::new(
+                SubsonicErrorCode::Generic,
+                "Too many failed sign-ins from this address; try again in a minute",
+            ),
+        );
+    }
+    let response = next.run(request).await;
+    if response.extensions().get::<AuthFailed>().is_some() {
+        limiter.record(ip);
+    }
+    response
 }
 
 // ---------------------------------------------------------------------------
@@ -3250,7 +3290,14 @@ pub fn subsonic_router(pool: Arc<Pool>) -> Option<axum::Router> {
         )),
     });
 
-    Some(register_subsonic_routes(axum::Router::new()).with_state(state))
+    Some(
+        register_subsonic_routes(axum::Router::new())
+            .with_state(state)
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::new(crate::auth::routes::LoginRateLimiter::default()),
+                throttle_auth,
+            )),
+    )
 }
 
 // ===========================================================================
@@ -3293,6 +3340,32 @@ mod tests {
 
     fn build_test_router(state: Arc<AppState>) -> axum::Router {
         register_subsonic_routes(axum::Router::new()).with_state(state)
+    }
+
+    #[tokio::test]
+    async fn test_failed_sign_ins_lock_the_client_out() {
+        let (state, _dir) = test_state();
+        let app = register_subsonic_routes(axum::Router::new())
+            .with_state(state)
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::new(crate::auth::routes::LoginRateLimiter::default()),
+                throttle_auth,
+            ));
+
+        // Successes never count.
+        for _ in 0..20 {
+            let (_, body) =
+                get_response(app.clone(), &format!("/rest/ping?{}", auth_query(""))).await;
+            assert!(body.contains("status=\"ok\""), "{}", body);
+        }
+        for _ in 0..10 {
+            let (_, body) =
+                get_response(app.clone(), "/rest/ping?u=testuser&p=wrong&v=1.16.1&c=test").await;
+            assert!(body.contains("code=\"40\""), "{}", body);
+        }
+        // Spent: even the right credential is refused for the rest of the window.
+        let (_, body) = get_response(app, &format!("/rest/ping?{}", auth_query(""))).await;
+        assert!(body.contains("Too many failed sign-ins"), "{}", body);
     }
 
     fn auth_query(extra: &str) -> String {
