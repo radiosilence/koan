@@ -132,6 +132,12 @@ struct Cli {
     /// Enable GraphiQL web IDE at GET /graphql
     #[arg(long)]
     playground: bool,
+
+    /// Also serve MCP over HTTP at ADDR/mcp (e.g. 0.0.0.0:8081), for an
+    /// authenticating gateway in front of a headless server. It has no
+    /// credential check of its own, so only the gateway may reach it.
+    #[arg(long, env = "KOAN_MCP_BIND")]
+    mcp_bind: Option<std::net::SocketAddr>,
 }
 
 #[derive(Subcommand)]
@@ -371,11 +377,23 @@ fn main() {
 
     // Daemon/headless are root-level server modes — handle before subcommands.
     if cli.daemonize {
-        koan_server::graphql::cmd_serve_daemon(cli.port, cli.bind, cli.subsonic, cli.playground);
+        koan_server::graphql::cmd_serve_daemon(
+            cli.port,
+            cli.bind,
+            cli.subsonic,
+            cli.playground,
+            cli.mcp_bind,
+        );
         return;
     }
     if cli.headless {
-        koan_server::graphql::cmd_serve(cli.port, cli.bind, cli.subsonic, cli.playground);
+        koan_server::graphql::cmd_serve(
+            cli.port,
+            cli.bind,
+            cli.subsonic,
+            cli.playground,
+            cli.mcp_bind,
+        );
         return;
     }
 

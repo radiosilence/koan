@@ -22,6 +22,7 @@ pub fn cmd_serve(
     bind: Option<std::net::IpAddr>,
     subsonic_port: Option<u16>,
     playground: bool,
+    mcp_bind: Option<std::net::SocketAddr>,
 ) {
     use koan_core::player::Player;
 
@@ -30,6 +31,20 @@ pub fn cmd_serve(
     let db_path = koan_core::config::db_path();
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
+
+    // A server has no one to press "scan": index at start and whenever the
+    // library folders change, as the macOS app does.
+    koan_core::helpers::spawn_library_watch(db_path.clone(), |_| {});
+
+    if let Some(addr) = mcp_bind {
+        match crate::mcp::spawn_http(addr, state.clone(), cmd_tx.clone(), db_path.clone()) {
+            Ok(_) => log::info!("MCP over HTTP at http://{addr}/mcp"),
+            Err(e) => {
+                eprintln!("koan: MCP listener on {addr}: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
 
     if let Err(e) = run_api_blocking(ApiServerOpts {
         state,
@@ -597,6 +612,7 @@ pub fn cmd_serve_daemon(
     bind: Option<std::net::IpAddr>,
     subsonic_port: Option<u16>,
     playground: bool,
+    mcp_bind: Option<std::net::SocketAddr>,
 ) {
     use std::fs;
     use std::process::Command;
@@ -613,6 +629,9 @@ pub fn cmd_serve_daemon(
     cmd.arg("--bind").arg(bind_val.to_string());
     if let Some(sp) = subsonic_port {
         cmd.arg("--subsonic").arg(sp.to_string());
+    }
+    if let Some(addr) = mcp_bind {
+        cmd.arg("--mcp-bind").arg(addr.to_string());
     }
     if playground || cfg.graphql.playground {
         cmd.arg("--playground");

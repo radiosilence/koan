@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **MCP over HTTP for a headless server.** `--mcp-bind ADDR:PORT` (or `KOAN_MCP_BIND`) serves the same two MCP tools at `/mcp` over streamable HTTP, on a listener of its own, for an authenticating gateway to proxy. It carries no credential check, as stdio does not, so it stays off the public port.
+- **A headless server keeps its index current.** It scans the library folders at start and whenever they change, as the macOS app already did; new music needed `koan scan` or the `triggerScan` mutation before.
+- **Container image.** A `Dockerfile` for the headless server (Debian slim, non-root, state in `/config`), published to `ghcr.io/radiosilence/koan` from `main`, tagged with the commit.
+
 ## v0.35.5 (2026-09-26)
 
 ### Fixed

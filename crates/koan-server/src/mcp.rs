@@ -138,8 +138,13 @@ impl KoanMcpServer {
 #[rmcp::tool_handler]
 impl ServerHandler for KoanMcpServer {
     fn get_info(&self) -> ServerConfig {
-        ServerConfig::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "koan is a bit-perfect macOS music player. You control it entirely via GraphQL.\n\n\
+        ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
+            .with_server_info(rmcp::model::Implementation::new(
+                "koan",
+                env!("CARGO_PKG_VERSION"),
+            ))
+            .with_instructions(
+                "koan is a bit-perfect music player. You control it entirely via GraphQL.\n\n\
              ## How to use\n\
              1. Call `schema_sdl` to get the full GraphQL schema\n\
              2. Use the `graphql` tool for ALL queries and mutations\n\n\
@@ -164,8 +169,53 @@ impl ServerHandler for KoanMcpServer {
              ## ID conventions\n\
              - Track IDs: integers from the library database\n\
              - Queue item IDs: UUIDs assigned when tracks enter the queue",
-        )
+            )
     }
+}
+
+/// Serve MCP over streamable HTTP at `addr`/mcp, on a thread of its own.
+///
+/// This listener has no credential check of its own, like the stdio
+/// transport: it is for a gateway that authenticates callers and forwards to
+/// it, and must not be reachable from anywhere else. Bind it to an address
+/// only the gateway can reach, and keep it off the public GraphQL port.
+pub fn spawn_http(
+    addr: std::net::SocketAddr,
+    state: Arc<SharedPlayerState>,
+    cmd_tx: Sender<PlayerCommand>,
+    db_path: PathBuf,
+) -> std::io::Result<std::thread::JoinHandle<()>> {
+    use rmcp::transport::streamable_http_server::{
+        StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager,
+    };
+    let template = KoanMcpServer::new(state, cmd_tx, db_path);
+    // Bound here rather than on the thread, so a taken port fails the start.
+    let listener = std::net::TcpListener::bind(addr)?;
+    listener.set_nonblocking(true)?;
+    std::thread::Builder::new()
+        .name("koan-mcp-http".into())
+        .spawn(move || {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("failed to create tokio runtime");
+            rt.block_on(async move {
+                let service = StreamableHttpService::new(
+                    move || Ok(template.clone()),
+                    Arc::new(LocalSessionManager::default()),
+                    // The gateway forwards its own Host header, which rmcp's
+                    // DNS-rebinding allowlist would refuse; reachability is
+                    // what guards this listener.
+                    StreamableHttpServerConfig::default().disable_allowed_hosts(),
+                );
+                let app = axum::Router::new().nest_service("/mcp", service);
+                let listener =
+                    tokio::net::TcpListener::from_std(listener).expect("listener from std");
+                if let Err(e) = axum::serve(listener, app).await {
+                    log::error!("MCP HTTP server stopped: {e}");
+                }
+            });
+        })
 }
 
 /// Entry point for `koan mcp` — starts a headless player with an MCP server on stdio.

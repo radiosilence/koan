@@ -34,7 +34,10 @@ koan logs to `~/.config/koan/koan.log` in daemon mode. The GraphQL API is availa
 | `--subsonic PORT` | Serve the Subsonic REST API on its own port (requires `koan subsonic setup`) |
 | `--port PORT` | Custom GraphQL port (default: 4000) |
 | `--bind ADDR` | Bind address (default: 127.0.0.1) |
+| `--mcp-bind ADDR:PORT` | Also serve MCP over HTTP at `/mcp` (env `KOAN_MCP_BIND`). No credential check: only an authenticating gateway may reach it |
 | `-d` | Detach and run as background daemon |
+
+A headless server indexes the library folders when it starts and again whenever they change, as the macOS app does.
 
 ## Configuration
 
@@ -88,3 +91,9 @@ auth_enabled = false
 > you visit from being that "anything", but they are not a substitute for auth: any other machine on
 > the network still gets in. Only disable auth on a host you control, bound to `127.0.0.1`, and never
 > with the port forwarded.
+
+## In a container
+
+The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first user with `koan auth setup` inside the container, and `koan subsonic setup` to enable the Subsonic API.
+
+MCP over HTTP (`KOAN_MCP_BIND=0.0.0.0:8081`) carries no credential of its own, like the stdio transport: put an authenticating gateway in front of it and let nothing else reach that port.
