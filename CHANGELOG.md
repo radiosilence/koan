@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.36.7
 
 ### Fixed
 
+- **Failed Subsonic sign-ins are throttled.** Every Subsonic request carries a credential, and a wrong password (argon2 per guess) or a wrong token against an account's password (an MD5, and cheap) could be tried without limit. Ten failures in a minute for one account from one address now refuse that account's password sign-ins from there for the rest of the minute. Only refusals count. API keys and the `[subsonic]` shared secret's token are random and never throttled, so a flood of wrong passwords cannot lock out apps signed in with either. The web sign-in's limiter now takes the client's address from a trusted proxy's `X-Forwarded-For`, rather than counting everyone behind the proxy as one client.
 - **iOS: the queue is not in selection mode until asked.** Every row showed a selection circle and a drag handle all the time. Select, in the queue's menu, turns them on, and Done turns them off and clears the selection.
 - **A downloading MP4 or M4A starts playing before it has all arrived.** MP4 bounds its top-level boxes by the end of the file, and the fallback probe gave it the end of what had arrived, so a `moov` larger than the first 256 KB overran it and the track waited for the whole download: two hours of mix, over a phone connection. MP4 now gets the whole file's end, as Ogg does. The probe also read a download's extension as `part` (from `track.m4a.part`), so neither rule nor Symphonia's format hint applied to any download in progress.
 - **Sharing a whole album from a koan server shares that album.** koan numbers albums and songs separately and publishes album ids bare, and its `createShare` reads a bare id as a song, so album 46215 was shared as whichever song had that number. A client talking to a koan server now names the album `al-46215`. Other servers are sent their ids unchanged.

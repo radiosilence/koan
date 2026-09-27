@@ -61,6 +61,43 @@ impl LoginRateLimiter {
     }
 }
 
+/// The address a request came from.
+///
+/// Behind a reverse proxy the TCP peer is the proxy, for every client, so a
+/// limit keyed on it is one bucket for everyone. When the peer is on a private
+/// or loopback address — a proxy in the cluster or on the host — the last
+/// `X-Forwarded-For` entry is the one that proxy appended, and is the client.
+/// Earlier entries are whatever the client sent, and are ignored. A public
+/// peer is the client, and its header is not believed.
+pub(crate) fn client_ip(request: &axum::extract::Request) -> IpAddr {
+    let peer = request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ConnectInfo(addr)| addr.ip())
+        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    if !is_internal(peer) {
+        return peer;
+    }
+    request
+        .headers()
+        .get_all("x-forwarded-for")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .filter_map(|ip| ip.trim().parse::<IpAddr>().ok())
+        .next_back()
+        .unwrap_or(peer)
+}
+
+fn is_internal(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4.is_private() || v4.is_loopback() || v4.is_unspecified(),
+        IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Shared state
 // ---------------------------------------------------------------------------
@@ -168,11 +205,7 @@ pub(crate) async fn login_rate_limit(
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
-    let ip = request
-        .extensions()
-        .get::<ConnectInfo<SocketAddr>>()
-        .map(|ConnectInfo(addr)| addr.ip())
-        .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    let ip = client_ip(&request);
 
     if !state.login_limiter.allow(ip) {
         return (
@@ -606,6 +639,32 @@ mod tests {
 
         // Other callers are unaffected.
         assert!(limiter.allow("10.0.0.6".parse().unwrap()));
+    }
+
+    fn request_from(peer: &str, forwarded: Option<&str>) -> axum::extract::Request {
+        let mut request = axum::http::Request::new(axum::body::Body::empty());
+        request.extensions_mut().insert(ConnectInfo(
+            format!("{peer}:1234").parse::<SocketAddr>().unwrap(),
+        ));
+        if let Some(f) = forwarded {
+            request
+                .headers_mut()
+                .insert("x-forwarded-for", f.parse().unwrap());
+        }
+        request
+    }
+
+    #[test]
+    fn client_ip_believes_only_an_internal_proxy() {
+        // Behind the cluster's proxy: the entry it appended, not the client's.
+        let r = request_from("10.42.0.7", Some("6.6.6.6, 203.0.113.9"));
+        assert_eq!(client_ip(&r), "203.0.113.9".parse::<IpAddr>().unwrap());
+        // A public peer is the client, whatever it claims.
+        let r = request_from("198.51.100.4", Some("10.0.0.1"));
+        assert_eq!(client_ip(&r), "198.51.100.4".parse::<IpAddr>().unwrap());
+        // An internal peer with no header is itself.
+        let r = request_from("10.42.0.7", None);
+        assert_eq!(client_ip(&r), "10.42.0.7".parse::<IpAddr>().unwrap());
     }
 
     #[test]
