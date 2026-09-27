@@ -55,7 +55,7 @@
     return {
       id: Number(d.id), src: `/ui/stream/${d.id}`, dur: Number(d.dur) || 0,
       title: d.title, artist: d.artist, album: d.album, albumId,
-      cover: albumId ? `/ui/cover/${albumId}` : null,
+      cover: d.cover || null,
     };
   }
 
@@ -120,12 +120,23 @@
     });
   }
 
+  // The range being dragged, which the clock must not move under the finger.
+  // Focus is no guide: a clicked range keeps it long after the drag ends.
+  let dragging = null;
+  const isSeek = (t) => t && t.matches && t.matches("input[data-ctl=seek]");
+  for (const type of ["pointerdown", "touchstart"]) {
+    document.addEventListener(type, (e) => { if (isSeek(e.target)) dragging = e.target; }, { passive: true });
+  }
+  for (const type of ["pointerup", "pointercancel", "touchend", "touchcancel", "change", "focusout"]) {
+    document.addEventListener(type, () => { dragging = null; }, { passive: true });
+  }
+
   let lastSave = 0;
   function tick() {
     const { track } = player.state();
     const p = track ? player.position() : 0;
     for (const el of all("[data-np=pos]")) el.textContent = fmt(p);
-    for (const el of all("input[data-ctl=seek]")) if (document.activeElement !== el) el.value = p;
+    for (const el of all("input[data-ctl=seek]")) if (el !== dragging) el.value = p;
     for (const el of all("progress[data-np=progress]")) el.value = p;
     if (track && Date.now() - lastSave > 5000) { lastSave = Date.now(); save(p); }
   }

@@ -36,9 +36,14 @@ struct ShareState {
     db_path: PathBuf,
     /// `sharing.public_url`: link previews need absolute addresses.
     public_url: Option<String>,
+    covers: std::sync::Arc<crate::covers::Covers>,
 }
 
-pub fn router(db_path: PathBuf, public_url: Option<String>) -> axum::Router {
+pub fn router(
+    db_path: PathBuf,
+    public_url: Option<String>,
+    covers: std::sync::Arc<crate::covers::Covers>,
+) -> axum::Router {
     axum::Router::new()
         .route(
             "/share/assets/share.js",
@@ -59,6 +64,7 @@ pub fn router(db_path: PathBuf, public_url: Option<String>) -> axum::Router {
         .with_state(ShareState {
             db_path,
             public_url: public_url.filter(|u| !u.trim().is_empty()),
+            covers,
         })
 }
 
@@ -441,16 +447,14 @@ async fn track(
     }
 }
 
+/// The cover at the size link previews and the page's header want.
 async fn cover(State(s): State<ShareState>, Path(id): Path<String>) -> Response {
     let art = blocking(move || {
         let (_, _, tracks) = live(&s.db_path, &id)?;
-        tracks.iter().find_map(|t| {
-            let path = crate::subsonic::track_file_path(t)?;
-            koan_core::index::metadata::extract_cover_art(std::path::Path::new(path))
-        })
+        s.covers.cover(&tracks, crate::covers::LARGE)
     })
     .await;
-    image(art)
+    jpeg(art, false)
 }
 
 /// The cover of the album track `n` comes from: an artist page's headings.
@@ -461,47 +465,28 @@ async fn track_cover(
     let art = blocking(move || {
         let (_, _, tracks) = live(&s.db_path, &id)?;
         let t = tracks.get(n.checked_sub(1)?)?;
-        let path = crate::subsonic::track_file_path(t)?;
-        koan_core::index::metadata::extract_cover_art(std::path::Path::new(path))
+        s.covers
+            .cover(std::slice::from_ref(t), crate::covers::SIZES[0])
     })
     .await;
-    image(art)
+    jpeg(art, false)
 }
 
-/// Covers are served at most this many pixels on a side: enough for a link
-/// preview's large card, and a fraction of what some embedded art weighs.
-const COVER_MAX: u32 = 1200;
-
-/// Embedded art as a JPEG or PNG no larger than `COVER_MAX`, which is what
-/// messaging apps will unfurl. Art already within bounds is passed through.
-fn fit_cover(bytes: Vec<u8>) -> Vec<u8> {
-    let png = bytes.starts_with(&[0x89, b'P', b'N', b'G']);
-    let jpeg = bytes.starts_with(&[0xFF, 0xD8]);
-    let dims = image::ImageReader::new(std::io::Cursor::new(&bytes))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.into_dimensions().ok());
-    match dims {
-        Some((w, h)) if (png || jpeg) && w.max(h) <= COVER_MAX => bytes,
-        Some(_) => crate::subsonic::resized(&bytes, COVER_MAX, png).unwrap_or(bytes),
-        None => bytes,
-    }
-}
-
-/// Embedded cover art as a response, typed by its magic number.
-pub(crate) fn image(art: Option<Vec<u8>>) -> Response {
-    let Some(bytes) = art.map(fit_cover) else {
+/// A cover from `Covers`. `immutable` when the URL carries the cover's
+/// version, so the same URL can never name different bytes.
+pub(crate) fn jpeg(art: Option<axum::body::Bytes>, immutable: bool) -> Response {
+    let Some(bytes) = art else {
         return not_found();
     };
-    let kind = if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-        "image/png"
+    let cache = if immutable {
+        "private, max-age=31536000, immutable"
     } else {
-        "image/jpeg"
+        "private, max-age=86400"
     };
     (
         [
-            (header::CONTENT_TYPE, kind),
-            (header::CACHE_CONTROL, "private, max-age=86400"),
+            (header::CONTENT_TYPE, "image/jpeg"),
+            (header::CACHE_CONTROL, cache),
         ],
         bytes,
     )
@@ -517,6 +502,10 @@ mod tests {
     use koan_core::db::queries::shares::Slice;
     use koan_core::helpers::{ShareTarget, resolve_share};
     use tower::ServiceExt;
+
+    fn test_covers(dir: &tempfile::TempDir) -> std::sync::Arc<crate::covers::Covers> {
+        std::sync::Arc::new(crate::covers::Covers::new(dir.path().join("covers")))
+    }
 
     fn meta(path: &std::path::Path, title: &str, n: i32) -> TrackMeta {
         TrackMeta {
@@ -563,7 +552,8 @@ mod tests {
         let b = queries::upsert_track(&db.conn, &meta(&other, "Unshared", 2)).unwrap();
         let share =
             queries::shares::create_share(&db.conn, Slice::TRACKS, &[a], None, 0, None).unwrap();
-        (dir, router(db_path, None), share.id, b)
+        let covers = test_covers(&dir);
+        (dir, router(db_path, None, covers), share.id, b)
     }
 
     async fn get(
@@ -694,7 +684,11 @@ mod tests {
             .artist_id
             .unwrap();
         Library {
-            app: router(db_path, Some("https://koan.example/".into())),
+            app: router(
+                db_path,
+                Some("https://koan.example/".into()),
+                test_covers(&dir),
+            ),
             dir,
             db,
             tracks: [t1, t2, later],
@@ -808,30 +802,10 @@ mod tests {
         assert!(html.contains("<h1>2 tracks</h1>"));
         assert_eq!(html.matches("<section").count(), 0);
 
-        let bare = router(lib.dir.path().join("koan.db"), None);
+        let bare = router(lib.dir.path().join("koan.db"), None, test_covers(&lib.dir));
         let (_, _, body) = get(&bare, &format!("/share/{id}"), None).await;
         let html = String::from_utf8(body).unwrap();
         assert!(html.contains("property=\"og:title\""));
         assert!(!html.contains("og:image") && !html.contains("og:url"));
-    }
-
-    #[test]
-    fn covers_are_bounded_jpeg_or_png() {
-        use image::GenericImageView as _;
-        let encode = |w, h, format| {
-            let mut out = std::io::Cursor::new(Vec::new());
-            image::DynamicImage::new_rgb8(w, h)
-                .write_to(&mut out, format)
-                .unwrap();
-            out.into_inner()
-        };
-        let big = fit_cover(encode(2400, 1200, image::ImageFormat::Png));
-        assert!(big.starts_with(&[0x89, b'P', b'N', b'G']));
-        assert_eq!(
-            image::load_from_memory(&big).unwrap().dimensions(),
-            (1200, 600)
-        );
-        let small = encode(300, 300, image::ImageFormat::Jpeg);
-        assert_eq!(fit_cover(small.clone()), small, "left alone");
     }
 }

@@ -44,7 +44,7 @@ main { margin-left: var(--side-w); padding: 24px 28px 40px; padding-top: max(24p
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 20px 16px; }
 .cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--text); text-decoration: none; }
 .cell:hover { text-decoration: none; }
-.cell img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); margin-bottom: 6px; }
+.cell img { width: 100%; height: auto; aspect-ratio: 1; object-fit: cover; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); margin-bottom: 6px; }
 .cell:hover img { border-color: var(--hover); }
 .cell .ct, .cell .ca { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cell .ca { color: var(--dim); font-size: 13px; }

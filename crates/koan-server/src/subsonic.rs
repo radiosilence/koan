@@ -1614,12 +1614,6 @@ fn cover_source_path(
         .ok_or_else(|| SubsonicError::not_found("Track has no local file"))
 }
 
-/// `resize_image` for callers outside the Subsonic API, which have no use for
-/// its error.
-pub(crate) fn resized(data: &[u8], size: u32, output_png: bool) -> Option<Vec<u8>> {
-    resize_image(data, size, output_png).ok()
-}
-
 /// `image`'s `resize` upscales, and the allocation for the result is not fallible
 /// — an oversized `size=` would abort the process rather than return an error.
 /// Clamped, and never larger than the source.
