@@ -54,12 +54,11 @@ struct MiniPlayer: View {
             .buttonStyle(.plain)
             .disabled(entry == nil)
         }
-        // The sleeve sits as far in from the capsule's end as from its top
-        // and bottom, so it follows the curve rather than crowding it; the
-        // buttons' own targets give the other end its room.
-        .padding(.leading, Self.inset)
-        .padding(.trailing, Self.inset / 2)
-        .padding(.vertical, Self.inset)
+        // The bar is a capsule of fixed height, so its ends are half-circles:
+        // a square sleeve needs to sit well in from one to clear the curve,
+        // and the last button's glyph as far in from the other.
+        .padding(.leading, 12)
+        .padding(.trailing, 8)
         // The whole bar opens Now Playing; the buttons keep their own taps.
         .contentShape(Rectangle())
         .onTapGesture { if entry != nil { showingNowPlaying = true } }
@@ -69,15 +68,14 @@ struct MiniPlayer: View {
 
     /// A thumb's worth, rather than the glyph's own few points.
     private static let target = 40.0
-    private static let sleeveSide = 36.0
-    private static let inset = 6.0
+    private static let sleeveSide = 30.0
 
     @ViewBuilder private var sleeve: some View {
         if let source = player.currentArtwork {
-            AlbumArtwork(source: source, size: .thumb, cornerRadius: 6)
+            AlbumArtwork(source: source, size: .thumb, cornerRadius: 7)
                 .frame(width: Self.sleeveSide, height: Self.sleeveSide)
         } else {
-            RoundedRectangle(cornerRadius: 6)
+            RoundedRectangle(cornerRadius: 7)
                 .fill(.quaternary)
                 .frame(width: Self.sleeveSide, height: Self.sleeveSide)
                 .overlay { Image(systemName: "music.note").font(.caption) }
