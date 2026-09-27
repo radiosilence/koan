@@ -3612,12 +3612,12 @@ mod tests {
         }
     }
 
-    /// A route that needs no database, timed while slow Subsonic requests hold
-    /// the runtime's two workers — argon2 on a wrong password, which is never
-    /// remembered. Ignored: a timing to read. `cargo test -p koan-server
-    /// --release -- --ignored --nocapture trivial_route_under_load`.
+    /// A route that needs no database stays fast while slow Subsonic requests
+    /// are in flight — argon2 on a wrong password, which is never remembered.
+    /// With that work on the runtime's two workers, the first probe waited
+    /// over a second; off them it takes milliseconds. The bound leaves room
+    /// for a loaded CI machine and still fails the regression.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[ignore]
     async fn trivial_route_under_load() {
         const SLOW: usize = 8;
         const PROBES: usize = 20;
@@ -3626,9 +3626,14 @@ mod tests {
         let slow_uri = "/rest/getAlbum?u=mate&p=wrong&v=1.16.1&c=test&id=1";
         let probe_uri = "/rest/getOpenSubsonicExtensions";
 
-        let idle = std::time::Instant::now();
-        get_response(app.clone(), probe_uri).await;
-        let idle = idle.elapsed();
+        let probe = app.clone();
+        let idle = tokio::spawn(async move {
+            let t = std::time::Instant::now();
+            get_response(probe, probe_uri).await;
+            t.elapsed()
+        })
+        .await
+        .unwrap();
 
         let started = std::time::Instant::now();
         let slow: Vec<_> = (0..SLOW)
@@ -3637,10 +3642,16 @@ mod tests {
                 tokio::spawn(async move { get_response(app, slow_uri).await })
             })
             .collect();
+        // The test body does not run on a worker, so each probe is spawned and
+        // timed from the spawn, as an arriving request would be. A thread sleep
+        // lets the slow requests take the workers; a timer would need one to fire.
+        std::thread::sleep(std::time::Duration::from_millis(20));
         let mut probes = Vec::with_capacity(PROBES);
         for _ in 0..PROBES {
             let t = std::time::Instant::now();
-            let (status, _) = get_response(app.clone(), probe_uri).await;
+            let (status, _) = tokio::spawn(get_response(app.clone(), probe_uri))
+                .await
+                .unwrap();
             assert_eq!(status, StatusCode::OK);
             probes.push(t.elapsed());
         }
@@ -3654,6 +3665,11 @@ mod tests {
              slow requests done in {slow_total:?}",
             probes[PROBES / 2],
             probes[PROBES - 1],
+        );
+        assert!(
+            probes[PROBES - 1] < std::time::Duration::from_millis(250),
+            "a trivial route waited {:?} behind slow Subsonic requests",
+            probes[PROBES - 1]
         );
     }
 
