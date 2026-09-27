@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- **The share page plays gaplessly, and looks like the rest of the estate.** Tracks the browser can decode are decoded ahead and each is started on the sample the last one ends, so albums that run into each other play without a gap; a track too long to hold decoded (over fifteen minutes) streams instead. One player with previous, play and next, a seek bar, and lock-screen and headphone controls through the Media Session API. The script and stylesheet are served by koan (`/share/assets/*`) and the CSP allows those and nothing else; without script, each track is a plain link.
+
+## Unreleased
+
 ### Fixed
 
 - **A server with auth on starts without `koan auth setup` having run first.** It generates its signing keypair on first start, as the auth-disabled path already did; a server in a container has no terminal to run setup in before it starts, and crash-looped instead. Accounts are still created deliberately: until one exists, nothing signs in.
