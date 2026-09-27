@@ -302,13 +302,14 @@ enum Share {
         switch result {
         case .success(let share):
             Pasteboard.write(text: share.url)
+            // Done, so a notice rather than an error: reported as one, iOS
+            // titled the link "Something went wrong".
             if share.skipped > 0 {
-                player.report(
+                player.lastNotice =
                     "Share link copied — \(share.shared) of \(share.shared + share.skipped) tracks; "
-                        + "the rest aren't on your server."
-                )
+                    + "the rest aren't on your server."
             } else {
-                player.report("Share link copied: \(share.url)")
+                player.lastNotice = "Share link copied: \(share.url)"
             }
         case .failure(let error):
             player.report("Couldn't create a share link — \(reason(for: error))")
