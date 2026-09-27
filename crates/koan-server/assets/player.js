@@ -5,6 +5,12 @@
 // browser cannot decode, streams through an <audio> element instead, where a
 // gap at its end is moot. Used by the share page and the web UI.
 //
+// Decoded audio is scheduled on the AudioContext clock but heard through a
+// media element (a MediaStream destination played by <audio>): iOS mutes Web
+// Audio with the ring/silent switch and stops it in the background, and does
+// neither to a media element. Where MediaStream output is missing, the graph
+// plays to the context's own destination.
+//
 // A track is { src, dur (seconds), title, artist, album, cover }; any other
 // fields ride along untouched.
 window.KoanPlayer = (opts = {}) => {
@@ -25,6 +31,17 @@ window.KoanPlayer = (opts = {}) => {
   const buffers = new Map();                 // src -> Promise<AudioBuffer|null>
   const el = new Audio();                     // stream mode
   el.preload = "auto";
+  let dest = null;                            // MediaStream the graph plays into
+  const out = new Audio();                    // what is heard in buffer mode
+  out.setAttribute("playsinline", "");
+  // Paused or played from outside (lock screen, headphones, another app's
+  // audio): follow it, so the clock and what is heard agree.
+  out.addEventListener("pause", () => {
+    if (playing && mode === "buffer") { playing = false; ctx.suspend(); notify(); }
+  });
+  out.addEventListener("play", () => {
+    if (!playing && mode === "buffer") { playing = true; ctx.resume(); notify(); }
+  });
 
   const decodable = (t) => t && t.dur > 0 && t.dur <= LONG;
 
@@ -35,7 +52,12 @@ window.KoanPlayer = (opts = {}) => {
     // Without this iOS treats Web Audio as a sound effect, silenced by the mute switch.
     if (navigator.audioSession) { try { navigator.audioSession.type = "playback"; } catch {} }
     if (!ctx && window.AudioContext) ctx = new AudioContext();
+    if (ctx && !dest && ctx.createMediaStreamDestination) {
+      try { dest = ctx.createMediaStreamDestination(); out.srcObject = dest.stream; } catch { dest = null; }
+    }
     if (ctx && ctx.state !== "running") ctx.resume().catch(() => {});
+    // Started inside the tap, like the context, so iOS lets it run from here on.
+    if (dest && t) out.play().catch(() => {});
     // The streaming element needs the same blessing: once started in a gesture
     // it may start again later, after a fetch or at a track change.
     if (!elUnlocked && t) {
@@ -103,7 +125,7 @@ window.KoanPlayer = (opts = {}) => {
   function startBuffer(buf, from, at) {
     const s = ctx.createBufferSource();
     s.buffer = buf;
-    s.connect(ctx.destination);
+    s.connect(dest || ctx.destination);
     s.start(at, from);
     return s;
   }
@@ -143,7 +165,7 @@ window.KoanPlayer = (opts = {}) => {
 
   async function go(i, from) {
     stop();
-    if (i < 0 || i >= queue.length) { cur = -1; resumeAt = 0; setPlaying(false); return; }
+    if (i < 0 || i >= queue.length) { cur = -1; resumeAt = 0; setPlaying(false); out.pause(); return; }
     const g = gen;
     cur = i;
     resumeAt = 0;
@@ -154,6 +176,7 @@ window.KoanPlayer = (opts = {}) => {
     if (g !== gen) return;
     if (buf) {
       mode = "buffer";
+      if (dest) out.play().catch(() => {});
       if (ctx.state !== "running") await ctx.resume();
       const at = ctx.currentTime + 0.03;
       source = startBuffer(buf, from, at);
@@ -162,6 +185,7 @@ window.KoanPlayer = (opts = {}) => {
       queueNext(g);
     } else {
       mode = "stream";
+      out.pause();
       const t = queue[i];
       let retried = false;
       el.src = t.src;
@@ -196,13 +220,16 @@ window.KoanPlayer = (opts = {}) => {
     wake(playing ? null : queue[Math.max(cur, 0)]);
     if (!queue.length) return;
     if (mode === null) return go(Math.max(cur, 0), resumeAt);
+    // `playing` flips first, so the output element's own events see it and
+    // leave it alone.
     if (playing) {
-      if (mode === "buffer") await ctx.suspend(); else el.pause();
-      setPlaying(false);
+      playing = false;
+      if (mode === "buffer") { out.pause(); await ctx.suspend(); } else el.pause();
     } else {
-      if (mode === "buffer") await ctx.resume(); else await el.play().catch(() => {});
-      setPlaying(true);
+      playing = true;
+      if (mode === "buffer") { if (dest) out.play().catch(() => {}); await ctx.resume(); } else await el.play().catch(() => {});
     }
+    notify();
   }
 
   if ("mediaSession" in navigator) {

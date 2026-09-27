@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex};
 use crate::config::Config;
 use crate::db::connection::Database;
 use crate::db::queries;
+use crate::db::queries::shares::{ShareKind, Slice};
 use crate::player::commands::PlayerCommand;
 use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
 use crate::remote::client::{SubsonicAuth, SubsonicClient};
@@ -786,7 +787,91 @@ pub struct ShareOutcome {
     pub skipped: usize,
 }
 
-/// Create a public share link for these tracks.
+/// What a share link is asked to cover.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ShareTarget {
+    /// Loose tracks. A single track shares its album, cued to that track.
+    Tracks(Vec<i64>),
+    /// An album, optionally cued to one of its tracks.
+    Album {
+        album_id: i64,
+        start_track_id: Option<i64>,
+    },
+    /// An artist's albums, in release order.
+    Artist(i64),
+}
+
+/// The slice a target makes and the tracks it covers, in play order. Only
+/// tracks in the library are included; the list is fixed from here on.
+///
+/// A single track becomes its album cued to it: a song is heard in the
+/// record it belongs to, the way the app shows it.
+pub fn resolve_share(
+    conn: &rusqlite::Connection,
+    target: &ShareTarget,
+) -> Result<(Slice, Vec<i64>), ShareError> {
+    let album_tracks = |album_id| -> Result<Vec<i64>, ShareError> {
+        Ok(queries::tracks_for_album(conn, album_id)?
+            .into_iter()
+            .map(|t| t.id)
+            .collect())
+    };
+    let (slice, ids) = match target {
+        ShareTarget::Tracks(ids) => {
+            let rows = queries::tracks_by_ids(conn, ids)?;
+            match (ids.as_slice(), rows.first().and_then(|t| t.album_id)) {
+                ([one], Some(album_id)) => {
+                    return resolve_share(
+                        conn,
+                        &ShareTarget::Album {
+                            album_id,
+                            start_track_id: Some(*one),
+                        },
+                    );
+                }
+                _ => {
+                    // The order asked for, which is the order the page plays them in.
+                    let ids = ids
+                        .iter()
+                        .copied()
+                        .filter(|id| rows.iter().any(|t| t.id == *id))
+                        .collect();
+                    (Slice::TRACKS, ids)
+                }
+            }
+        }
+        ShareTarget::Album {
+            album_id,
+            start_track_id,
+        } => {
+            let ids = album_tracks(*album_id)?;
+            let slice = Slice {
+                kind: ShareKind::Album,
+                subject_id: Some(*album_id),
+                start_track_id: start_track_id.filter(|s| ids.contains(s)),
+            };
+            (slice, ids)
+        }
+        ShareTarget::Artist(artist_id) => {
+            let mut ids = Vec::new();
+            for album in queries::albums_for_artist(conn, *artist_id)? {
+                ids.extend(album_tracks(album.id)?);
+            }
+            let slice = Slice {
+                kind: ShareKind::Artist,
+                subject_id: Some(*artist_id),
+                start_track_id: None,
+            };
+            (slice, ids)
+        }
+    };
+    if ids.is_empty() {
+        return Err(ShareError::NothingToShare);
+    }
+    Ok((slice, ids))
+}
+
+/// Create a public share link for a slice of the library.
 ///
 /// With a remote Subsonic server configured, the link is made there: a laptop
 /// or phone shares through the server it plays from, which may be another
@@ -801,11 +886,21 @@ pub struct ShareOutcome {
 pub fn create_share(
     db: &Database,
     cfg: &Config,
-    track_ids: &[i64],
+    target: &ShareTarget,
     description: Option<&str>,
 ) -> Result<ShareOutcome, ShareError> {
     let Some(client) = subsonic_client(cfg) else {
-        return create_native_share(db, cfg, track_ids, description);
+        return create_native_share(db, cfg, target, description);
+    };
+    // A remote server makes its own kind of link from what it is given, so it
+    // is given exactly what was picked.
+    let resolved;
+    let track_ids = match target {
+        ShareTarget::Tracks(ids) => ids.as_slice(),
+        _ => {
+            resolved = resolve_share(&db.conn, target)?.1;
+            resolved.as_slice()
+        }
     };
 
     // One query, not one per track: sharing an artist is thousands of tracks.
@@ -852,7 +947,7 @@ pub fn create_share(
 fn create_native_share(
     db: &Database,
     cfg: &Config,
-    track_ids: &[i64],
+    target: &ShareTarget,
     description: Option<&str>,
 ) -> Result<ShareOutcome, ShareError> {
     let base = cfg
@@ -861,28 +956,20 @@ fn create_native_share(
         .as_deref()
         .filter(|u| !u.trim().is_empty())
         .ok_or(ShareError::NoPublicUrl)?;
-    let known: std::collections::HashSet<i64> = queries::tracks_by_ids(&db.conn, track_ids)?
-        .iter()
-        .map(|t| t.id)
-        .collect();
-    // The order asked for, which is the order the page plays them in.
-    let ids: Vec<i64> = track_ids
-        .iter()
-        .copied()
-        .filter(|id| known.contains(id))
-        .collect();
-    if ids.is_empty() {
-        return Err(ShareError::NothingToShare);
-    }
+    let (slice, ids) = resolve_share(&db.conn, target)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64);
-    let share = queries::shares::create_share(&db.conn, &ids, description, now, None)?;
+    let share = queries::shares::create_share(&db.conn, slice, &ids, description, now, None)?;
     Ok(ShareOutcome {
         url: share_url(base, &share.id),
         id: share.id,
         shared: ids.len(),
-        skipped: track_ids.len() - ids.len(),
+        // Only loose tracks are named one by one, so only they can be missing.
+        skipped: match (target, slice.kind) {
+            (ShareTarget::Tracks(asked), ShareKind::Tracks) => asked.len() - ids.len(),
+            _ => 0,
+        },
     })
 }
 
@@ -1701,11 +1788,17 @@ mod native_share_tests {
         let b = upsert_track(&db.conn, &sample_meta("B", "X", "Y")).unwrap();
         let mut cfg = Config::default();
         assert!(matches!(
-            create_share(&db, &cfg, &[a], None),
+            create_share(&db, &cfg, &ShareTarget::Tracks(vec![a]), None),
             Err(ShareError::NoPublicUrl)
         ));
         cfg.sharing.public_url = Some("https://koan.example/".into());
-        let out = create_share(&db, &cfg, &[b, 9999, a], Some("mix")).unwrap();
+        let out = create_share(
+            &db,
+            &cfg,
+            &ShareTarget::Tracks(vec![b, 9999, a]),
+            Some("mix"),
+        )
+        .unwrap();
         assert_eq!(out.url, format!("https://koan.example/share/{}", out.id));
         assert_eq!((out.shared, out.skipped), (2, 1));
         let share = queries::shares::get_share(&db.conn, &out.id)
@@ -1713,7 +1806,72 @@ mod native_share_tests {
             .unwrap();
         assert_eq!(share.track_ids, [b, a]);
         assert!(matches!(
-            create_share(&db, &cfg, &[9999], None),
+            create_share(&db, &cfg, &ShareTarget::Tracks(vec![9999]), None),
+            Err(ShareError::NothingToShare)
+        ));
+    }
+
+    fn album_track(db: &Database, title: &str, album: &str, n: i32, date: &str) -> i64 {
+        let mut meta = sample_meta(title, "Rrose", album);
+        meta.track_number = Some(n);
+        meta.date = Some(date.into());
+        upsert_track(&db.conn, &meta).unwrap()
+    }
+
+    #[test]
+    fn shares_are_slices_fixed_when_made() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let db = Database { conn };
+        let later = album_track(&db, "L1", "Later", 1, "2021");
+        let a1 = album_track(&db, "E1", "Earlier", 1, "2015");
+        let a2 = album_track(&db, "E2", "Earlier", 2, "2015");
+        let album_of = |t| {
+            queries::tracks_by_ids(&db.conn, &[t]).unwrap()[0]
+                .album_id
+                .unwrap()
+        };
+        let (earlier, later_album) = (album_of(a1), album_of(later));
+        let artist = queries::tracks_by_ids(&db.conn, &[a1]).unwrap()[0]
+            .artist_id
+            .unwrap();
+
+        // One track: its album, cued to it.
+        let (slice, ids) = resolve_share(&db.conn, &ShareTarget::Tracks(vec![a2])).unwrap();
+        assert_eq!(
+            (slice.kind, slice.subject_id, slice.start_track_id),
+            (ShareKind::Album, Some(earlier), Some(a2))
+        );
+        assert_eq!(ids, [a1, a2]);
+
+        // An album, with a cue that is not on it dropped.
+        let (slice, ids) = resolve_share(
+            &db.conn,
+            &ShareTarget::Album {
+                album_id: later_album,
+                start_track_id: Some(a1),
+            },
+        )
+        .unwrap();
+        assert_eq!((slice.kind, slice.start_track_id), (ShareKind::Album, None));
+        assert_eq!(ids, [later]);
+
+        // An artist: every album, in release order.
+        let (slice, ids) = resolve_share(&db.conn, &ShareTarget::Artist(artist)).unwrap();
+        assert_eq!(
+            (slice.kind, slice.subject_id),
+            (ShareKind::Artist, Some(artist))
+        );
+        assert_eq!(ids, [a1, a2, later]);
+
+        // Several tracks stay a list, in the order given.
+        let (slice, ids) = resolve_share(&db.conn, &ShareTarget::Tracks(vec![later, a1])).unwrap();
+        assert_eq!(slice, Slice::TRACKS);
+        assert_eq!(ids, [later, a1]);
+
+        assert!(matches!(
+            resolve_share(&db.conn, &ShareTarget::Artist(9999)),
             Err(ShareError::NothingToShare)
         ));
     }

@@ -44,7 +44,7 @@ fn meta(path: &std::path::Path, title: &str, n: i32) -> TrackMeta {
 }
 
 struct Fixture {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     app: axum::Router,
     state: AuthRouteState,
     album_id: i64,
@@ -75,8 +75,13 @@ fn setup(auth_enabled: bool) -> Fixture {
         login_limiter: Arc::new(LoginRateLimiter::default()),
     };
     Fixture {
-        app: super::router(db_path, state.clone(), auth_enabled),
-        _dir: dir,
+        app: super::router(
+            db_path,
+            state.clone(),
+            auth_enabled,
+            Arc::new(crate::covers::Covers::new(dir.path().join("covers"))),
+        ),
+        dir,
         state,
         album_id,
         track_id,
@@ -460,6 +465,87 @@ async fn live_fragments_are_datastar_events_and_posts_need_datastar() {
         .body(Body::empty())
         .unwrap();
     assert_eq!(send(&f.app, bare).await.status, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn pages_link_versioned_covers_and_a_missing_cover_is_remembered() {
+    let f = setup(true);
+    let page = send(
+        &f.app,
+        authed(&f.state, "/albums").body(Body::empty()).unwrap(),
+    )
+    .await;
+    let src = format!("src=\"/ui/cover/{}?size=400&amp;v=", f.album_id);
+    let src_raw = format!("src=\"/ui/cover/{}?size=400&v=", f.album_id);
+    assert!(
+        page.body.contains(&src) || page.body.contains(&src_raw),
+        "{}",
+        page.body
+    );
+    assert!(
+        page.body
+            .contains("loading=lazy decoding=async width=400 height=400")
+    );
+
+    let uri = format!("/ui/cover/{}?size=300&v=1", f.album_id);
+    for _ in 0..2 {
+        let r = send(&f.app, authed(&f.state, &uri).body(Body::empty()).unwrap()).await;
+        assert_eq!(r.status, StatusCode::NOT_FOUND, "the fake file has no art");
+    }
+    let kept: Vec<_> = std::fs::read_dir(f.dir.path().join("covers"))
+        .unwrap()
+        .map(|e| e.unwrap())
+        .collect();
+    assert_eq!(kept.len(), 1, "one remembered miss");
+    assert_eq!(kept[0].metadata().unwrap().len(), 0);
+    assert!(kept[0].file_name().to_string_lossy().ends_with("-400.jpg"));
+}
+
+#[tokio::test]
+async fn sorting_and_filtering_live_in_the_query_string() {
+    let f = setup(true);
+    let page = |uri: &str| {
+        let req = authed(&f.state, uri).body(Body::empty()).unwrap();
+        let app = f.app.clone();
+        async move { send(&app, req).await }
+    };
+    let r = page("/albums?sort=title&lossless=1&genre=").await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(
+        r.body.contains("Hymn &lt;to&gt; Moisture"),
+        "FLAC is lossless"
+    );
+    assert!(r.body.contains("<option value=\"title\" selected>"));
+    assert!(r.body.contains("name=lossless value=1 checked"));
+    assert!(r.body.contains("<span class=badge>1</span>"));
+
+    let r = page("/albums?codec=MP3").await;
+    assert!(r.body.contains("No albums match."));
+    let r = page("/albums?from=2020").await;
+    assert!(r.body.contains("No albums match."), "released 2019");
+    let r = page("/albums?from=2015&to=2019").await;
+    assert!(r.body.contains("Hymn &lt;to&gt; Moisture"));
+
+    // A value from a link, not among those offered, is still shown and kept.
+    let r = page("/albums?genre=%22%3E%3Cscript%3E").await;
+    assert!(
+        r.body
+            .contains("<option value=\"&quot;&gt;&lt;script&gt;\" selected>")
+    );
+    assert!(!r.body.contains("\"><script>"));
+
+    for uri in [
+        "/artists?sort=albums&fav=1",
+        "/artists?sort=recent&lossless=1",
+        "/albums?sort=random",
+    ] {
+        assert_eq!(page(uri).await.status, StatusCode::OK, "{uri}");
+    }
+    let r = page("/albums?sort=random").await;
+    assert!(
+        r.body.contains("<input type=hidden name=seed value="),
+        "the shuffle is pinned"
+    );
 }
 
 #[tokio::test]

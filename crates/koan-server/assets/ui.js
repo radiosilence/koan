@@ -2,6 +2,7 @@
 // player keeps playing, the transport and queue, and keeping the session alive.
 (() => {
   const main = document.getElementById("content");
+  document.documentElement.classList.add("js");
   const all = (sel, root = document) => [...root.querySelectorAll(sel)];
   const fmt = (s) => {
     s = Math.max(0, Math.floor(s || 0));
@@ -55,7 +56,7 @@
     return {
       id: Number(d.id), src: `/ui/stream/${d.id}`, dur: Number(d.dur) || 0,
       title: d.title, artist: d.artist, album: d.album, albumId,
-      cover: albumId ? `/ui/cover/${albumId}` : null,
+      cover: d.cover || null,
     };
   }
 
@@ -120,12 +121,23 @@
     });
   }
 
+  // The range being dragged, which the clock must not move under the finger.
+  // Focus is no guide: a clicked range keeps it long after the drag ends.
+  let dragging = null;
+  const isSeek = (t) => t && t.matches && t.matches("input[data-ctl=seek]");
+  for (const type of ["pointerdown", "touchstart"]) {
+    document.addEventListener(type, (e) => { if (isSeek(e.target)) dragging = e.target; }, { passive: true });
+  }
+  for (const type of ["pointerup", "pointercancel", "touchend", "touchcancel", "change", "focusout"]) {
+    document.addEventListener(type, () => { dragging = null; }, { passive: true });
+  }
+
   let lastSave = 0;
   function tick() {
     const { track } = player.state();
     const p = track ? player.position() : 0;
     for (const el of all("[data-np=pos]")) el.textContent = fmt(p);
-    for (const el of all("input[data-ctl=seek]")) if (document.activeElement !== el) el.value = p;
+    for (const el of all("input[data-ctl=seek]")) if (el !== dragging) el.value = p;
     for (const el of all("progress[data-np=progress]")) el.value = p;
     if (track && Date.now() - lastSave > 5000) { lastSave = Date.now(); save(p); }
   }
@@ -175,7 +187,7 @@
     const a = e.target.closest("[data-act]");
     if (a) { e.preventDefault(); act(a.dataset.act, a); return; }
     const li = e.target.closest("li[data-id], li[data-q]");
-    if (li && !e.target.closest("a")) pick(li);
+    if (li && !e.target.closest("a, button")) pick(li);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;
@@ -193,7 +205,10 @@
   document.addEventListener("focusin", (e) => { if (e.target.id === "share-url") e.target.select(); });
   // A cover that is not there leaves an empty tile rather than a broken image.
   document.addEventListener("error", (e) => {
-    if (e.target.tagName === "IMG") e.target.classList.add("missing");
+    if (e.target.tagName !== "IMG") return;
+    e.target.classList.add("missing");
+    // With no source the image draws as its own empty box, not a broken icon.
+    e.target.removeAttribute("src");
   }, true);
 
   // --- Navigation ------------------------------------------------------------
@@ -230,9 +245,38 @@
       else a.removeAttribute("aria-current");
     }
     const focus = main.querySelector("[autofocus]");
-    if (focus && matchMedia("(hover: hover)").matches) focus.focus();
+    if (focus) focus.focus();
+    // The sort and filter row stands open on a wide screen; on a phone it is
+    // one button that opens as a sheet.
+    for (const d of all("details.browse", main)) d.open = wide.matches;
     render(player.state());
   }
+
+  // --- Sort and filter ---------------------------------------------------------
+  // The toolbar is a GET form; its state is the URL. On a wide screen a change
+  // applies at once, on a phone the sheet's Apply does.
+  const wide = matchMedia("(min-width: 721px)");
+  function formUrl(form) {
+    const params = new URLSearchParams();
+    for (const [k, v] of new FormData(form)) if (String(v).trim()) params.append(k, v);
+    const q = params.toString();
+    return form.getAttribute("action") + (q ? `?${q}` : "");
+  }
+  document.addEventListener("change", (e) => {
+    const form = e.target.closest && e.target.closest("form.toolbar");
+    if (form && wide.matches) navigate(formUrl(form), true);
+  });
+  document.addEventListener("submit", (e) => {
+    if (!e.target.matches("form.toolbar")) return;
+    e.preventDefault();
+    navigate(formUrl(e.target), true);
+  });
+  // The search view's query lives in the URL too, so reload and back find it.
+  document.addEventListener("input", (e) => {
+    if (!e.target.matches(".search input[name=q]")) return;
+    const q = e.target.value.trim();
+    history.replaceState(null, "", q ? `/search?q=${encodeURIComponent(q)}` : "/search");
+  });
 
   document.addEventListener("click", (e) => {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;

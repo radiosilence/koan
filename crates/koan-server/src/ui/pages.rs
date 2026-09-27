@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use axum::Extension;
 use axum::extract::{Path, Query, State};
@@ -13,13 +14,16 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use koan_core::auth::Role;
 use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, ArtistQuery, TrackRow};
+use koan_core::helpers::ShareTarget;
 
+use super::browse::{self, Browse};
 use super::{PARTIAL, UiState, events, html, open, patch};
 use crate::auth::AuthUser;
 use crate::share::{blocking, duration, escape, not_found};
 
 const ALBUMS_PAGE: u32 = 60;
 const ARTISTS_PAGE: u32 = 100;
+const GENRES_OFFERED: u32 = 80;
 
 const ICON_PREV: &str =
     "<svg viewBox=\"0 0 24 24\" aria-hidden=true><path d=\"M6 5h2v14H6zM20 5v14L9 12z\"/></svg>";
@@ -131,13 +135,57 @@ fn year(date: Option<&str>) -> &str {
     date.and_then(|d| d.get(..4)).unwrap_or("")
 }
 
-fn cells(albums: &[AlbumRow]) -> String {
+/// Each album's cover version: when its files last changed. A cover URL
+/// carries it, so the URL changes whenever the art might have and the browser
+/// can keep each one for good. One query for a page of albums.
+type Versions = HashMap<i64, i64>;
+
+fn cover_versions(conn: &rusqlite::Connection, album_ids: &[i64]) -> Versions {
+    if album_ids.is_empty() {
+        return Versions::new();
+    }
+    let sql = format!(
+        "SELECT album_id, MAX(COALESCE(mtime, 0)) FROM tracks WHERE album_id IN ({}) GROUP BY album_id",
+        vec!["?"; album_ids.len()].join(",")
+    );
+    let Ok(mut stmt) = conn.prepare(&sql) else {
+        return Versions::new();
+    };
+    stmt.query_map(rusqlite::params_from_iter(album_ids), |r| {
+        Ok((r.get(0)?, r.get(1)?))
+    })
+    .map(|rows| rows.flatten().collect())
+    .unwrap_or_default()
+}
+
+fn cover_url(album_id: i64, size: u32, versions: &Versions) -> String {
+    format!(
+        "/ui/cover/{album_id}?size={size}&v={}",
+        versions.get(&album_id).copied().unwrap_or(0)
+    )
+}
+
+fn album_versions(conn: &rusqlite::Connection, albums: &[AlbumRow]) -> Versions {
+    cover_versions(conn, &albums.iter().map(|a| a.id).collect::<Vec<_>>())
+}
+
+fn track_versions(conn: &rusqlite::Connection, tracks: &[TrackRow]) -> Versions {
+    let mut ids: Vec<i64> = tracks.iter().filter_map(|t| t.album_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    cover_versions(conn, &ids)
+}
+
+fn cells(albums: &[AlbumRow], versions: &Versions) -> String {
     albums.iter().fold(String::new(), |mut out, a| {
         let _ = write!(
             out,
-            "<a class=cell href=\"/album/{id}\"><img loading=lazy src=\"/ui/cover/{id}\" alt=\"\">\
+            "<a class=cell href=\"/album/{id}\"><img loading=lazy decoding=async width={size} height={size} \
+src=\"{src}\" alt=\"\">\
 <span class=ct>{title}</span><span class=ca>{artist}</span></a>",
             id = a.id,
+            size = crate::covers::GRID,
+            src = cover_url(a.id, crate::covers::GRID, versions),
             title = escape(&a.title),
             artist = escape(&a.artist_name),
         );
@@ -145,19 +193,68 @@ fn cells(albums: &[AlbumRow]) -> String {
     })
 }
 
-fn more(path: &str, offset: Option<u32>) -> String {
-    match offset {
-        Some(offset) => format!(
+/// The "Load more" button, fetching `next` (a path with its query), or an
+/// empty placeholder at the end of the listing.
+fn more(next: Option<String>) -> String {
+    match next {
+        Some(next) => format!(
             "<div id=more class=more><button data-indicator:_more data-attr:disabled=\"$_more\" \
-data-class:busy=\"$_more\" data-on:click=\"@get('{path}?offset={offset}')\">Load more</button></div>"
+data-class:busy=\"$_more\" data-on:click=\"@get('{next}')\">Load more</button></div>"
         ),
         None => "<div id=more class=more></div>".into(),
     }
 }
 
+/// The codecs and genres the filters offer.
+pub(super) type Options = Arc<(Vec<String>, Vec<String>)>;
+
+/// How long the filter options are reused. Counting genres reads every track,
+/// and a library changes far more slowly than people page through it.
+const OPTIONS_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn filter_options(s: &UiState) -> Option<Options> {
+    let mut held = s.options.lock().ok()?;
+    if let Some((at, options)) = held.as_ref()
+        && at.elapsed() < OPTIONS_TTL
+    {
+        return Some(options.clone());
+    }
+    let db = open(&s.pool)?;
+    let options = Arc::new((
+        queries::album_codecs(&db.conn).unwrap_or_default(),
+        queries::genres(&db.conn, GENRES_OFFERED).unwrap_or_default(),
+    ));
+    *held = Some((std::time::Instant::now(), options.clone()));
+    Some(options)
+}
+
 /// A track row. `album` is set where the row stands alone (search) and names
 /// the record it comes from.
-fn track_row(t: &TrackRow, n: usize, show_artist: bool, album: bool) -> String {
+const ICON_SHARE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=true>\
+     <path d=\"M12 3l4.5 4.5h-3.5v7h-2v-7H7.5zM5 12h2v7h10v-7h2v9H5z\"/></svg>";
+
+/// Share this track: its album, cued to it. Only where the page has a
+/// `#share-result` to show the link in.
+fn share_track_button(t: &TrackRow) -> String {
+    match t.album_id {
+        Some(album) => format!(
+            "<button class=quiet data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+data-on:click=\"@post('/album/{album}/share?track={id}')\" aria-label=\"Share this track\" \
+title=\"Share this track\">{ICON_SHARE}</button>",
+            id = t.id
+        ),
+        None => String::new(),
+    }
+}
+
+fn track_row(
+    t: &TrackRow,
+    n: usize,
+    show_artist: bool,
+    album: bool,
+    versions: &Versions,
+    share: bool,
+) -> String {
     let mut sub = Vec::new();
     if show_artist {
         sub.push(escape(&t.artist_name));
@@ -172,8 +269,8 @@ fn track_row(t: &TrackRow, n: usize, show_artist: bool, album: bool) -> String {
     };
     format!(
         "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
-data-album=\"{album_title}\" data-album-id={album_id}><span class=n>{n}</span>\
-<span class=t>{title}{sub}</span><span class=d>{dur}</span>\
+data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><span class=n>{n}</span>\
+<span class=t>{title}{sub}</span><span class=d>{dur}</span>{share}\
 <button class=\"quiet add\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></li>",
         id = t.id,
         secs = t.duration_ms.unwrap_or(0) / 1000,
@@ -181,64 +278,71 @@ data-album=\"{album_title}\" data-album-id={album_id}><span class=n>{n}</span>\
         artist = escape(&t.artist_name),
         album_title = escape(&t.album_title),
         album_id = t.album_id.unwrap_or(0),
+        cover = t
+            .album_id
+            .map(|a| cover_url(a, crate::covers::LARGE, versions))
+            .unwrap_or_default(),
         dur = duration(t.duration_ms),
-    )
-}
-
-/// One page of albums, newest first, and the offset of the next if there is one.
-fn album_page(s: &UiState, offset: u32) -> Option<(Vec<AlbumRow>, Option<u32>)> {
-    let db = open(&s.pool)?;
-    let mut albums = queries::list_albums(
-        &db.conn,
-        &AlbumQuery {
-            order: AlbumOrder::RecentlyAdded,
-            limit: Some(ALBUMS_PAGE + 1),
-            offset,
-            ..Default::default()
+        share = if share {
+            share_track_button(t)
+        } else {
+            String::new()
         },
     )
-    .ok()?;
-    let next = (albums.len() > ALBUMS_PAGE as usize).then_some(offset + ALBUMS_PAGE);
-    albums.truncate(ALBUMS_PAGE as usize);
-    Some((albums, next))
 }
 
-#[derive(serde::Deserialize, Default)]
-#[serde(default)]
-pub(super) struct Offset {
-    offset: u32,
+/// One page of albums as `b` narrows and orders them, and the URL of the next
+/// page if there is one.
+fn album_page(s: &UiState, b: &Browse) -> Option<(Vec<AlbumRow>, Option<String>, Versions)> {
+    let db = open(&s.pool)?;
+    let mut albums = queries::list_albums(&db.conn, &b.albums(ALBUMS_PAGE + 1)).ok()?;
+    let next = (albums.len() > ALBUMS_PAGE as usize)
+        .then(|| format!("/albums/more?{}", b.query(b.offset + ALBUMS_PAGE)));
+    albums.truncate(ALBUMS_PAGE as usize);
+    let versions = album_versions(&db.conn, &albums);
+    Some((albums, next, versions))
 }
 
 pub(super) async fn albums(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
+    Query(b): Query<Browse>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
-    let Some((albums, next)) = blocking(move || album_page(&st, 0)).await else {
+    let b = b.seeded();
+    let (st, bb) = (s.clone(), b.clone());
+    let found = blocking(move || Some((album_page(&st, &bb)?, filter_options(&st)?))).await;
+    let Some(((albums, next, versions), options)) = found else {
         return unavailable();
     };
-    let inner = if albums.is_empty() {
-        "<h1>Albums</h1><p class=empty>The library is empty.</p>".to_owned()
+    let grid = if albums.is_empty() {
+        "<p class=empty>No albums match.</p>".to_owned()
     } else {
         format!(
-            "<h1>Albums</h1><div class=grid id=albums>{}</div>{}",
-            cells(&albums),
-            more("/albums/more", next)
+            "<div class=grid id=albums>{}</div>{}",
+            cells(&albums, &versions),
+            more(next)
         )
     };
+    let inner = format!(
+        "<h1>Albums</h1>{}{grid}",
+        browse::toolbar(&b, "/albums", false, &options.0, &options.1)
+    );
     respond(&s, &headers, &user, "Albums", "albums", &inner)
 }
 
-pub(super) async fn albums_more(State(s): State<UiState>, Query(q): Query<Offset>) -> Response {
-    let Some((albums, next)) = blocking(move || album_page(&s, q.offset)).await else {
+pub(super) async fn albums_more(State(s): State<UiState>, Query(b): Query<Browse>) -> Response {
+    let Some((albums, next, versions)) = blocking(move || album_page(&s, &b)).await else {
         return unavailable();
     };
     let mut out = Vec::new();
     if !albums.is_empty() {
-        out.push(patch(&cells(&albums), Some(("#albums", "append"))));
+        out.push(patch(
+            &cells(&albums, &versions),
+            Some(("#albums", "append")),
+        ));
     }
-    out.push(patch(&more("/albums/more", next), None));
+    out.push(patch(&more(next), None));
     events(out)
 }
 
@@ -253,12 +357,14 @@ pub(super) async fn album(
         let db = open(&st.pool)?;
         let album = queries::get_album(&db.conn, id).ok()??;
         let tracks = queries::tracks_for_album(&db.conn, id).ok()?;
-        Some((album, tracks))
+        let versions = cover_versions(&db.conn, &[id]);
+        Some((album, tracks, versions))
     })
     .await;
-    let Some((album, tracks)) = found else {
+    let Some((album, tracks, versions)) = found else {
         return not_found();
     };
+    let can_share = user.role.has_permission(Role::User);
     let discs = tracks
         .iter()
         .map(|t| t.disc.unwrap_or(1))
@@ -271,7 +377,14 @@ pub(super) async fn album(
             let _ = write!(rows, "<li class=disc>Disc {}</li>", t.disc.unwrap_or(1));
         }
         let n = t.track_number.map_or(i + 1, |n| n as usize);
-        rows.push_str(&track_row(t, n, t.artist_name != album.artist_name, false));
+        rows.push_str(&track_row(
+            t,
+            n,
+            t.artist_name != album.artist_name,
+            false,
+            &versions,
+            can_share,
+        ));
     }
     let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
     let mut sub = vec![format!(
@@ -292,7 +405,7 @@ pub(super) async fn album(
     if let Some(codec) = &album.codec {
         sub.push(escape(codec));
     }
-    let share = if user.role.has_permission(Role::User) {
+    let share = if can_share {
         format!(
             "<button data-indicator:_sharing data-attr:disabled=\"$_sharing\" data-class:busy=\"$_sharing\" \
 data-on:click=\"@post('/album/{}/share')\">Share</button>",
@@ -302,42 +415,61 @@ data-on:click=\"@post('/album/{}/share')\">Share</button>",
         String::new()
     };
     let inner = format!(
-        "<header class=hero><img class=cover src=\"/ui/cover/{id}\" alt=\"\"><div class=info>\
+        "<header class=hero><img class=cover src=\"{cover}\" width={large} height={large} alt=\"\"><div class=info>\
 <p class=kicker>Album</p><h1>{title}</h1><p class=sub>{sub}</p><div class=actions>\
 <button class=primary data-act=play>Play</button><button data-act=shuffle>Shuffle</button>\
 <button data-act=queue>Add to queue</button>{share}</div><div id=share-result></div></div></header>\
 <ol class=tracks data-context=album>{rows}</ol>",
-        id = album.id,
+        cover = cover_url(album.id, crate::covers::LARGE, &versions),
+        large = crate::covers::LARGE,
         title = escape(&album.title),
         sub = sub.join(" · "),
     );
     respond(&s, &headers, &user, &album.title, "album", &inner)
 }
 
-/// Make a share link for the album and show it where the button was.
-pub(super) async fn share(
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+pub(super) struct Cue {
+    track: Option<i64>,
+}
+
+/// Share the album, or with `?track=` the album cued to that track.
+pub(super) async fn share_album(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+    Query(cue): Query<Cue>,
+) -> Response {
+    let target = ShareTarget::Album {
+        album_id: id,
+        start_track_id: cue.track,
+    };
+    share(s, user, target).await
+}
+
+pub(super) async fn share_artist(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<i64>,
 ) -> Response {
+    share(s, user, ShareTarget::Artist(id)).await
+}
+
+/// Make a share link and show it in the page's `#share-result`.
+async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
     let result = if user.role.has_permission(Role::User) {
         blocking(move || {
             let db = open(&s.pool)?;
-            let album = queries::get_album(&db.conn, id).ok()??;
-            let ids: Vec<i64> = queries::tracks_for_album(&db.conn, id)
-                .ok()?
-                .iter()
-                .map(|t| t.id)
-                .collect();
             let cfg = koan_core::config::Config::load().unwrap_or_default();
             Some(
-                koan_core::helpers::create_share(&db, &cfg, &ids, Some(&album.title))
+                koan_core::helpers::create_share(&db, &cfg, &target, None)
                     .map(|o| o.url)
                     .map_err(|e| e.to_string()),
             )
         })
         .await
-        .unwrap_or_else(|| Err("That album is not in the library.".into()))
+        .unwrap_or_else(|| Err("The library is unavailable.".into()))
     } else {
         Err("This account cannot make share links.".into())
     };
@@ -369,18 +501,11 @@ fn artist_list(artists: &[queries::ArtistRow]) -> String {
     })
 }
 
-fn artist_page(s: &UiState, offset: u32) -> Option<(Vec<queries::ArtistRow>, Option<u32>)> {
+fn artist_page(s: &UiState, b: &Browse) -> Option<(Vec<queries::ArtistRow>, Option<String>)> {
     let db = open(&s.pool)?;
-    let mut artists = queries::list_artists(
-        &db.conn,
-        &ArtistQuery {
-            limit: Some(ARTISTS_PAGE + 1),
-            offset,
-            ..Default::default()
-        },
-    )
-    .ok()?;
-    let next = (artists.len() > ARTISTS_PAGE as usize).then_some(offset + ARTISTS_PAGE);
+    let mut artists = queries::list_artists(&db.conn, &b.artists(ARTISTS_PAGE + 1)).ok()?;
+    let next = (artists.len() > ARTISTS_PAGE as usize)
+        .then(|| format!("/artists/more?{}", b.query(b.offset + ARTISTS_PAGE)));
     artists.truncate(ARTISTS_PAGE as usize);
     Some((artists, next))
 }
@@ -388,29 +513,39 @@ fn artist_page(s: &UiState, offset: u32) -> Option<(Vec<queries::ArtistRow>, Opt
 pub(super) async fn artists(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
+    Query(b): Query<Browse>,
     headers: HeaderMap,
 ) -> Response {
-    let st = s.clone();
-    let Some((artists, next)) = blocking(move || artist_page(&st, 0)).await else {
+    let (st, bb) = (s.clone(), b.clone());
+    let found = blocking(move || Some((artist_page(&st, &bb)?, filter_options(&st)?))).await;
+    let Some(((artists, next), options)) = found else {
         return unavailable();
     };
+    let list = if artists.is_empty() {
+        "<p class=empty>No artists match.</p>".to_owned()
+    } else {
+        format!(
+            "<ul class=list id=artists>{}</ul>{}",
+            artist_list(&artists),
+            more(next)
+        )
+    };
     let inner = format!(
-        "<h1>Artists</h1><ul class=list id=artists>{}</ul>{}",
-        artist_list(&artists),
-        more("/artists/more", next)
+        "<h1>Artists</h1>{}{list}",
+        browse::toolbar(&b, "/artists", true, &options.0, &options.1)
     );
     respond(&s, &headers, &user, "Artists", "artists", &inner)
 }
 
-pub(super) async fn artists_more(State(s): State<UiState>, Query(q): Query<Offset>) -> Response {
-    let Some((artists, next)) = blocking(move || artist_page(&s, q.offset)).await else {
+pub(super) async fn artists_more(State(s): State<UiState>, Query(b): Query<Browse>) -> Response {
+    let Some((artists, next)) = blocking(move || artist_page(&s, &b)).await else {
         return unavailable();
     };
     let mut out = Vec::new();
     if !artists.is_empty() {
         out.push(patch(&artist_list(&artists), Some(("#artists", "append"))));
     }
-    out.push(patch(&more("/artists/more", next), None));
+    out.push(patch(&more(next), None));
     events(out)
 }
 
@@ -425,20 +560,31 @@ pub(super) async fn artist(
         let db = open(&st.pool)?;
         let artist = queries::get_artist(&db.conn, id).ok()??;
         let albums = queries::albums_for_artist(&db.conn, id).ok()?;
-        Some((artist, albums))
+        let versions = album_versions(&db.conn, &albums);
+        Some((artist, albums, versions))
     })
     .await;
-    let Some((artist, albums)) = found else {
+    let Some((artist, albums, versions)) = found else {
         return not_found();
     };
+    let share = if user.role.has_permission(Role::User) {
+        format!(
+            "<div class=actions><button data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{}/share')\">Share</button></div>\
+<div id=share-result></div>",
+            artist.id
+        )
+    } else {
+        String::new()
+    };
     let inner = format!(
-        "<p class=kicker>Artist</p><h1>{}</h1><p class=sub>{} album{} · {} tracks</p>\
+        "<p class=kicker>Artist</p><h1>{}</h1><p class=sub>{} album{} · {} tracks</p>{share}\
 <div class=grid>{}</div>",
         escape(&artist.name),
         artist.album_count,
         if artist.album_count == 1 { "" } else { "s" },
         artist.track_count,
-        cells(&albums)
+        cells(&albums, &versions)
     );
     respond(&s, &headers, &user, &artist.name, "artist", &inner)
 }
@@ -469,9 +615,11 @@ fn results(s: &UiState, q: &str) -> String {
         )
         .unwrap_or_default();
         let tracks = queries::search_tracks_paged(&db.conn, q, 50, 0).unwrap_or_default();
-        (albums, artists, tracks)
+        let mut versions = album_versions(&db.conn, &albums);
+        versions.extend(track_versions(&db.conn, &tracks));
+        (albums, artists, tracks, versions)
     });
-    let Some((albums, artists, tracks)) = found else {
+    let Some((albums, artists, tracks, versions)) = found else {
         return "<div id=results><p class=error>The library is unavailable.</p></div>".into();
     };
     if albums.is_empty() && artists.is_empty() && tracks.is_empty() {
@@ -492,14 +640,14 @@ fn results(s: &UiState, q: &str) -> String {
         let _ = write!(
             out,
             "<h2>Albums</h2><div class=grid>{}</div>",
-            cells(&albums)
+            cells(&albums, &versions)
         );
     }
     if !tracks.is_empty() {
         let rows: String = tracks
             .iter()
             .enumerate()
-            .map(|(i, t)| track_row(t, i + 1, true, true))
+            .map(|(i, t)| track_row(t, i + 1, true, true, &versions, false))
             .collect();
         let _ = write!(
             out,
