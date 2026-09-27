@@ -88,13 +88,25 @@ struct TabShell: View {
         .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
             Task { await player.saveSession() }
         }
+        // One alert for both, as the Mac has one toast slot: a failure
+        // outranks a notice, and only a failure is titled as one.
         .alert(
-            "Something went wrong",
+            player.lastError != nil ? "Something went wrong" : (player.lastNotice ?? ""),
             isPresented: Binding(
-                get: { player.lastError != nil },
-                set: { if !$0 { player.lastError = nil } }
+                get: { player.lastError != nil || player.lastNotice != nil },
+                set: {
+                    if !$0 {
+                        player.lastError = nil
+                        player.lastNotice = nil
+                    }
+                }
             ),
-            actions: { Button("OK") { player.lastError = nil } },
+            actions: {
+                Button("OK") {
+                    player.lastError = nil
+                    player.lastNotice = nil
+                }
+            },
             message: { Text(player.lastError ?? "") }
         )
     }

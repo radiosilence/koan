@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Sharing a whole album from a koan server shares that album.** koan numbers albums and songs separately and publishes album ids bare, and its `createShare` reads a bare id as a song, so album 46215 was shared as whichever song had that number. A client talking to a koan server now names the album `al-46215`. Other servers are sent their ids unchanged.
+- **iOS: a share link is reported as done, not as an error.** "Share link copied" appeared under "Something went wrong"; it is now a notice, as on the Mac.
 - **iOS: the queue header in selection mode fits a phone.** The count, Clear and Remove were squeezed by the rest of the header and wrapped a few letters to a line. Each now keeps its own width, and on iOS Clear and Remove are icons.
 
 ## 0.36.6

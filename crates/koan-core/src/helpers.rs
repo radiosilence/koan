@@ -931,7 +931,7 @@ pub fn create_share(
         .and_then(|album_id| album_remote_id(&db.conn, album_id, rows.len()));
 
     let remote_ids: Vec<String> = match one_album {
-        Some(rid) => vec![rid],
+        Some(rid) => vec![album_share_id(&client, rid)],
         None => rows.into_iter().filter_map(|t| t.remote_id).collect(),
     };
 
@@ -991,6 +991,25 @@ pub fn share_url(public_url: &str, id: &str) -> String {
 /// The album's own remote ID, but only when `selected` covers every track on
 /// it. Sharing an album link for half an album would hand out more than the
 /// user picked.
+/// An album's id as `createShare` should be given it.
+///
+/// koan numbers albums and songs separately, publishes album ids bare, and
+/// reads a bare id in `createShare` as a song, so album 5 would share song 5.
+/// Its `al-` prefix says which is meant. Other servers get the id as they
+/// issued it: some also number albums, and would not know the prefix.
+fn album_share_id(client: &crate::remote::client::SubsonicClient, remote_id: String) -> String {
+    let koan = matches!(client.server_type(), Ok(Some(t)) if t == "koan");
+    album_share_id_for(koan, remote_id)
+}
+
+fn album_share_id_for(koan: bool, remote_id: String) -> String {
+    if koan && remote_id.parse::<i64>().is_ok() {
+        format!("al-{remote_id}")
+    } else {
+        remote_id
+    }
+}
+
 fn album_remote_id(conn: &rusqlite::Connection, album_id: i64, selected: usize) -> Option<String> {
     let (remote_id, total): (Option<String>, i64) = conn
         .query_row(
@@ -1884,5 +1903,19 @@ mod native_share_tests {
             resolve_share(&db.conn, &ShareTarget::Artist(9999)),
             Err(ShareError::NothingToShare)
         ));
+    }
+}
+
+#[cfg(test)]
+mod album_share_id_tests {
+    use super::album_share_id_for;
+
+    #[test]
+    fn a_koan_album_is_named_as_an_album() {
+        assert_eq!(album_share_id_for(true, "46215".into()), "al-46215");
+        // Already prefixed, or not koan's numbering: left as issued.
+        assert_eq!(album_share_id_for(true, "al-7".into()), "al-7");
+        assert_eq!(album_share_id_for(false, "46215".into()), "46215");
+        assert_eq!(album_share_id_for(false, "3xJ9kQ2pZ".into()), "3xJ9kQ2pZ");
     }
 }

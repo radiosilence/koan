@@ -198,6 +198,11 @@ impl SubsonicClient {
         Ok(())
     }
 
+    /// Which server this is, by its OpenSubsonic `type`. One round trip.
+    pub fn server_type(&self) -> Result<Option<String>, SubsonicError> {
+        Ok(self.get("ping")?.server_type)
+    }
+
     /// Get all artists (indexed).
     pub fn get_artists(&self) -> Result<Vec<SubsonicArtist>, SubsonicError> {
         let resp = self.get("getArtists")?;
@@ -573,6 +578,10 @@ struct SubsonicResponseWrapper {
 #[serde(rename_all = "camelCase")]
 struct SubsonicResponse {
     status: String,
+    /// The OpenSubsonic server name ("navidrome", "koan"); absent on servers
+    /// that predate OpenSubsonic.
+    #[serde(rename = "type")]
+    server_type: Option<String>,
     error: Option<SubsonicApiError>,
     artists: Option<SubsonicArtists>,
     album: Option<SubsonicAlbumFull>,
