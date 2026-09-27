@@ -105,6 +105,12 @@ pub fn cmd_auth_create_user(username: &str, role_str: &str) {
                 id,
                 role
             );
+            if let Err(e) = auth_queries::remember_password(&db.conn, username, &password) {
+                eprintln!(
+                    "{} Subsonic token auth not set up: {e}",
+                    "!".yellow().bold()
+                );
+            }
             // Offer to save credentials to 1Password if `op` CLI is available.
             offer_save_to_1password(username, &password);
         }
@@ -127,6 +133,12 @@ pub fn cmd_auth_reset_password(username: &str) {
                 "✓".green().bold(),
                 username
             );
+            if let Err(e) = auth_queries::remember_password(&db.conn, username, &password) {
+                eprintln!(
+                    "{} Subsonic token auth not set up: {e}",
+                    "!".yellow().bold()
+                );
+            }
             offer_save_to_1password(username, &password);
         }
         Ok(false) => {

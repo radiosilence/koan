@@ -321,8 +321,8 @@ pub(crate) async fn authenticate(
     // Argon2 blocks for milliseconds at a time; on the async workers that stalls
     // every other request the server is handling.
     let hash = user.password_hash.clone();
-    let password = password.to_string();
-    let verified = tokio::task::spawn_blocking(move || auth::verify_password(&password, &hash))
+    let typed = password.to_string();
+    let verified = tokio::task::spawn_blocking(move || auth::verify_password(&typed, &hash))
         .await
         .map(|r| r.is_ok())
         .unwrap_or(false);
@@ -337,6 +337,11 @@ pub(crate) async fn authenticate(
             )
                 .into_response(),
         ));
+    }
+
+    // Lets the account use Subsonic token auth; see `auth::seal_password`.
+    if let Err(e) = auth_queries::remember_password(&db.conn, username, password) {
+        log::warn!("could not seal the password for Subsonic token auth: {e}");
     }
 
     // Mint access token.

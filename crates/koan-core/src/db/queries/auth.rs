@@ -30,6 +30,50 @@ pub struct RefreshTokenRow {
 // User CRUD
 // ---------------------------------------------------------------------------
 
+/// Store the password sealed for Subsonic token auth (see `auth::seal_password`).
+pub fn set_sealed_password(
+    conn: &Connection,
+    username: &str,
+    sealed: &[u8],
+) -> Result<(), rusqlite::Error> {
+    conn.execute(
+        "UPDATE users SET sealed_password = ?2 WHERE username = ?1",
+        params![username, sealed],
+    )?;
+    Ok(())
+}
+
+pub fn sealed_password(
+    conn: &Connection,
+    username: &str,
+) -> Result<Option<Vec<u8>>, rusqlite::Error> {
+    use rusqlite::OptionalExtension;
+    Ok(conn
+        .query_row(
+            "SELECT sealed_password FROM users WHERE username = ?1",
+            params![username],
+            |r| r.get::<_, Option<Vec<u8>>>(0),
+        )
+        .optional()?
+        .flatten())
+}
+
+/// Seal `password` under the server's key and store it, so the account can
+/// use Subsonic token auth. Call only with a password known to be the user's.
+pub fn remember_password(
+    conn: &Connection,
+    username: &str,
+    password: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let key = auth::subsonic_key()?;
+    set_sealed_password(
+        conn,
+        username,
+        &auth::seal_password(&key, username, password)?,
+    )?;
+    Ok(())
+}
+
 /// Create a new user. Returns the user ID.
 pub fn create_user(
     conn: &Connection,

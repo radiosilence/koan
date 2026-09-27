@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.36.0
+
+### Added
+
+- **Subsonic token auth for koan accounts.** Most Subsonic clients (Play:Sub, and koan's own releases before this one) sign in with `t=md5(password + salt)`, which cannot be checked against an argon2 hash. Each account's password is now also kept sealed with AES-256-GCM under `auth/subsonic.key` (created on first use, 0600), bound to the username, and token auth opens it, compares the token, then checks the password against the hash as usual, so a password changed elsewhere stops working. The sealed copy is written whenever the password is proven: web sign-in, a `p=` sign-in, `koan auth create-user` and `koan auth reset-password`. An account without one still gets error 41, so clients can fall back.
 
 ### Added
 

@@ -143,7 +143,7 @@ impl SubsonicError {
     fn token_auth_unsupported() -> Self {
         Self::auth(
             SubsonicErrorCode::TokenAuthUnsupported,
-            "Token authentication is not supported for accounts; use a password or an API key",
+            "Token authentication needs this account to have signed in by password once (the web UI, or p=); until then use a password or an API key",
         )
     }
 
@@ -628,16 +628,25 @@ fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Caller, Su
     };
 
     if let (Some(token), Some(salt)) = (params.t.as_deref(), params.s.as_deref()) {
-        let secret = state
+        if let Some(secret) = state
             .password
             .as_deref()
             .filter(|_| username == state.username)
-            .ok_or_else(SubsonicError::token_auth_unsupported)?;
-        let expected = format!("{:x}", md5::compute(format!("{secret}{salt}")));
-        return if bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
-            caller(Role::User)
-        } else {
-            Err(SubsonicError::wrong_auth())
+        {
+            let expected = format!("{:x}", md5::compute(format!("{secret}{salt}")));
+            return if bool::from(token.as_bytes().ct_eq(expected.as_bytes())) {
+                caller(Role::User)
+            } else {
+                Err(SubsonicError::wrong_auth())
+            };
+        }
+        // An account: checked against its sealed password. Without one (never
+        // signed in by password since this existed) token auth can't be
+        // checked, which 41 tells the client so it can fall back.
+        return match state.users.verify_token(username, token, salt) {
+            Some(role) => caller(role),
+            None if state.users.has_sealed(username) => Err(SubsonicError::wrong_auth()),
+            None => Err(SubsonicError::token_auth_unsupported()),
         };
     }
 
