@@ -2,7 +2,7 @@
 //!
 //! Implements a subset of the Subsonic/OpenSubsonic REST API backed by the
 //! local koan database.  Supports both XML (default) and JSON (`f=json`)
-//! responses.  Auth is `t=md5(password + s)` only, against a dedicated
+//! responses.  Clients sign in with a koan account, or with the dedicated
 //! `[subsonic]` secret — see `validate_auth`.
 
 use std::collections::BTreeMap;
@@ -16,6 +16,7 @@ use axum::extract::{Path as UrlPath, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
+use koan_core::auth::Role;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
@@ -47,7 +48,9 @@ const IGNORED_ARTICLES: &str = "The El La Los Las Le Les";
 struct AppState {
     db_path: PathBuf,
     username: String,
-    password: String,
+    /// The `[subsonic]` shared secret; without one, only accounts sign in.
+    password: Option<String>,
+    users: crate::auth::password::PasswordVerifier,
     /// Upstream Navidrome/Subsonic, used to build signed stream URLs for tracks
     /// with no local file. Resolved once at startup — resolving it per request
     /// re-read two TOML files. Credentials
@@ -83,6 +86,7 @@ enum SubsonicErrorCode {
     Generic = 0,
     MissingParameter = 10,
     WrongAuth = 40,
+    NotAuthorized = 50,
     NotFound = 70,
 }
 
@@ -97,6 +101,13 @@ impl SubsonicError {
         Self {
             code: SubsonicErrorCode::WrongAuth,
             message: "Wrong username or password".into(),
+        }
+    }
+
+    fn not_authorized() -> Self {
+        Self {
+            code: SubsonicErrorCode::NotAuthorized,
+            message: "User is not authorized for the given operation".into(),
         }
     }
 
@@ -497,41 +508,79 @@ fn xml_escape(s: &str) -> String {
 // Auth
 // ---------------------------------------------------------------------------
 
-/// Validate `u` + `t` + `s` against the configured `[subsonic]` credentials.
+/// Authenticate a request, returning the role it acts with.
 ///
-/// Token auth only. `p=` (plaintext, and its `enc:` hex dressing) is refused:
-/// the protocol offers no transport guarantee, so accepting it means handing the
-/// secret to anyone watching the wire. `t=md5(password + attacker-chosen salt)`
-/// leaks an offline-crackable digest, which is why the secret is a generated
-/// 256-bit value rather than something a human picked.
-fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<(), SubsonicError> {
+/// Two ways in:
+/// - `p=` (plain or `enc:` hex) with a koan account's password, checked
+///   against its argon2 hash. The protocol sends it with every request, so it
+///   is only as private as the transport; koan.blit.cc is HTTPS-only, and this
+///   is what the web login form sends too.
+/// - `t=md5(secret + s)` with the `[subsonic]` shared secret, for clients that
+///   only speak token auth. Token auth cannot work against a hash, which is
+///   why accounts need `p=`. The secret acts as `User`, and is also accepted
+///   as `p=`.
+fn validate_auth(params: &SubsonicParams, state: &AppState) -> Result<Role, SubsonicError> {
     use subtle::ConstantTimeEq;
 
     let username = params
         .u
         .as_deref()
         .ok_or_else(|| SubsonicError::missing_param("u"))?;
-
-    let user_ok: bool = username
-        .as_bytes()
-        .ct_eq(state.username.as_bytes())
-        .unwrap_u8()
-        == 1;
-
-    let (Some(token), Some(salt)) = (params.t.as_deref(), params.s.as_deref()) else {
-        if params.p.is_some() {
-            return Err(SubsonicError::wrong_auth());
-        }
-        return Err(SubsonicError::missing_param("t and s"));
+    let shared = |given: &str| {
+        let user_ok = username.as_bytes().ct_eq(state.username.as_bytes());
+        state
+            .password
+            .as_deref()
+            .is_some_and(|p| bool::from(user_ok & given.as_bytes().ct_eq(p.as_bytes())))
     };
 
-    let expected = format!("{:x}", md5::compute(format!("{}{}", state.password, salt)));
-    let token_ok: bool = token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() == 1;
+    if let (Some(token), Some(salt)) = (params.t.as_deref(), params.s.as_deref()) {
+        let Some(secret) = state.password.as_deref() else {
+            return Err(SubsonicError::wrong_auth());
+        };
+        let expected = format!("{:x}", md5::compute(format!("{secret}{salt}")));
+        let user_ok = username.as_bytes().ct_eq(state.username.as_bytes());
+        let token_ok = token.as_bytes().ct_eq(expected.as_bytes());
+        return if bool::from(user_ok & token_ok) {
+            Ok(Role::User)
+        } else {
+            Err(SubsonicError::wrong_auth())
+        };
+    }
 
-    if user_ok && token_ok {
+    let Some(p) = params.p.as_deref() else {
+        return Err(SubsonicError::missing_param("t and s"));
+    };
+    let password = match p.strip_prefix("enc:") {
+        Some(hex) => decode_hex(hex).ok_or_else(SubsonicError::wrong_auth)?,
+        None => p.to_string(),
+    };
+    if shared(&password) {
+        return Ok(Role::User);
+    }
+    state
+        .users
+        .verify(username, &password)
+        .ok_or_else(SubsonicError::wrong_auth)
+}
+
+fn decode_hex(hex: &str) -> Option<String> {
+    if !hex.len().is_multiple_of(2) {
+        return None;
+    }
+    let bytes = (0..hex.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    String::from_utf8(bytes).ok()
+}
+
+/// Refuse a readonly account the endpoints that change anything.
+fn require_write(role: Role) -> Result<(), SubsonicError> {
+    if role.has_permission(Role::User) {
         Ok(())
     } else {
-        Err(SubsonicError::wrong_auth())
+        Err(SubsonicError::not_authorized())
     }
 }
 
@@ -546,8 +595,25 @@ fn respond_db(
     auth: &SubsonicParams,
     f: impl FnOnce(&Database, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
 ) -> Response {
+    respond_db_as(state, auth, Role::Readonly, f)
+}
+
+/// As `respond_db`, for an endpoint needing at least `need`.
+fn respond_db_as(
+    state: &AppState,
+    auth: &SubsonicParams,
+    need: Role,
+    f: impl FnOnce(&Database, XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
+) -> Response {
     let json = auth.wants_json();
     let result = validate_auth(auth, state)
+        .and_then(|role| {
+            if need == Role::Readonly {
+                Ok(())
+            } else {
+                require_write(role)
+            }
+        })
         .and_then(|()| state.open_db())
         .and_then(|db| f(&db, SubsonicResponse::ok(json)));
     match result {
@@ -563,7 +629,7 @@ fn respond(
     f: impl FnOnce(XmlBuilder) -> Result<XmlBuilder, SubsonicError>,
 ) -> Response {
     let json = auth.wants_json();
-    match validate_auth(auth, state).and_then(|()| f(SubsonicResponse::ok(json))) {
+    match validate_auth(auth, state).and_then(|_| f(SubsonicResponse::ok(json))) {
         Ok(builder) => builder.build(),
         Err(e) => SubsonicResponse::error(json, &e),
     }
@@ -1576,14 +1642,14 @@ fn resize_image(data: &[u8], size: u32, output_png: bool) -> Result<Vec<u8>, Sub
 // ===========================================================================
 
 async fn star(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
+    respond_db_as(&state, &params.auth, Role::User, |db, b| {
         toggle_star(db, params.id.as_deref(), true)?;
         Ok(b)
     })
 }
 
 async fn unstar(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
+    respond_db_as(&state, &params.auth, Role::User, |db, b| {
         toggle_star(db, params.id.as_deref(), false)?;
         Ok(b)
     })
@@ -1635,7 +1701,7 @@ async fn scrobble(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ScrobbleParams>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
+    respond_db_as(&state, &params.auth, Role::User, |db, b| {
         let track_id = require_id(params.id.as_deref())?;
 
         queries::get_track_row(&db.conn, track_id)
@@ -1766,22 +1832,27 @@ async fn get_user(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
+    let role = match validate_auth(&params, &state) {
+        Ok(role) => role,
+        Err(e) => return SubsonicResponse::error(params.wants_json(), &e),
+    };
+    let writes = role.has_permission(Role::User);
     respond(&state, &params, |b| {
         Ok(b.child(
             XmlNode::new("user")
-                .attr("username", &state.username)
-                .attr_bool("scrobblingEnabled", true)
-                .attr_bool("adminRole", false)
+                .attr("username", params.u.as_deref().unwrap_or_default())
+                .attr_bool("scrobblingEnabled", writes)
+                .attr_bool("adminRole", role == Role::Admin)
                 .attr_bool("settingsRole", false)
                 .attr_bool("downloadRole", true)
                 .attr_bool("uploadRole", false)
-                .attr_bool("playlistRole", true)
+                .attr_bool("playlistRole", writes)
                 .attr_bool("coverArtRole", true)
                 .attr_bool("commentRole", false)
                 .attr_bool("podcastRole", false)
                 .attr_bool("streamRole", true)
                 .attr_bool("jukeboxRole", false)
-                .attr_bool("shareRole", true)
+                .attr_bool("shareRole", writes)
                 .attr_bool("videoConversionRole", false),
         ))
     })
@@ -1930,7 +2001,7 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
     let params = RawParams::parse(raw.as_deref());
     let auth = params.auth();
 
-    respond_db(&state, &auth, |db, b| {
+    respond_db_as(&state, &auth, Role::User, |db, b| {
         let track_ids: Vec<i64> = params
             .all("songId")
             .filter_map(|id| id.parse::<i64>().ok())
@@ -1973,7 +2044,7 @@ async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
     let params = RawParams::parse(raw.as_deref());
     let auth = params.auth();
 
-    respond_db(&state, &auth, |db, b| {
+    respond_db_as(&state, &auth, Role::User, |db, b| {
         let id = playlist_id(params.get("playlistId").or_else(|| params.get("id")))?;
         if queries::get_playlist(&db.conn, id)
             .map_err(|e| SubsonicError::internal(e.to_string()))?
@@ -2022,7 +2093,7 @@ async fn delete_playlist(
     State(state): State<Arc<AppState>>,
     Query(params): Query<IdParam>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
+    respond_db_as(&state, &params.auth, Role::User, |db, b| {
         let id = playlist_id(params.id.as_deref())?;
         match queries::delete_playlist(&db.conn, id) {
             Ok(true) => Ok(b),
@@ -2120,7 +2191,7 @@ fn expires_param(params: &RawParams) -> Option<i64> {
 async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     let params = RawParams::parse(raw.as_deref());
     let auth = params.auth();
-    respond_db(&state, &auth, |db, b| {
+    respond_db_as(&state, &auth, Role::User, |db, b| {
         let base = share_base()?;
         let mut track_ids = Vec::new();
         for raw_id in params.all("id") {
@@ -2177,7 +2248,7 @@ async fn get_shares(
 async fn update_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     let params = RawParams::parse(raw.as_deref());
     let auth = params.auth();
-    respond_db(&state, &auth, |db, b| {
+    respond_db_as(&state, &auth, Role::User, |db, b| {
         let id = params
             .get("id")
             .ok_or_else(|| SubsonicError::missing_param("id"))?;
@@ -2199,7 +2270,7 @@ async fn update_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuer
 async fn delete_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     let params = RawParams::parse(raw.as_deref());
     let auth = params.auth();
-    respond_db(&state, &auth, |db, b| {
+    respond_db_as(&state, &auth, Role::User, |db, b| {
         let id = params
             .get("id")
             .ok_or_else(|| SubsonicError::missing_param("id"))?;
@@ -2313,19 +2384,14 @@ pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
         return None;
     }
 
-    if cfg.subsonic.username.is_empty() {
-        log::warn!("Subsonic API disabled: subsonic.username is empty.");
-        return None;
+    let password = koan_core::helpers::get_subsonic_password(&cfg)
+        .filter(|_| !cfg.subsonic.username.is_empty());
+    if password.is_none() {
+        log::info!("Subsonic: no shared secret, so only koan accounts sign in (with p=).");
     }
 
-    let Some(password) = koan_core::helpers::get_subsonic_password(&cfg) else {
-        log::warn!(
-            "Subsonic API disabled: no secret configured. Run `koan subsonic setup` to generate one."
-        );
-        return None;
-    };
-
     let state = Arc::new(AppState {
+        users: crate::auth::password::PasswordVerifier::new(db_path.clone()),
         db_path,
         username: cfg.subsonic.username.clone(),
         password,
@@ -2362,10 +2428,16 @@ mod tests {
         let db = Database::open(&db_path).unwrap();
         koan_core::db::schema::create_tables(&db.conn).unwrap();
 
+        koan_core::db::queries::auth::create_user(&db.conn, "mate", "hunter22", Role::Readonly)
+            .unwrap();
+        koan_core::db::queries::auth::create_user(&db.conn, "owner", "sesame", Role::Admin)
+            .unwrap();
+
         let state = Arc::new(AppState {
+            users: crate::auth::password::PasswordVerifier::new(db_path.clone()),
             db_path,
             username: "testuser".into(),
-            password: "testpass".into(),
+            password: Some("testpass".into()),
             upstream: None,
             http: reqwest::Client::new(),
             cover_cache: Mutex::new(LruCache::new(
@@ -2640,24 +2712,57 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_legacy_password_auth_rejected() {
+    async fn test_account_password_auth() {
         let (state, _dir) = test_state();
-        let app = build_test_router(state);
-        let (_, body) = get_response(app, "/rest/ping?u=testuser&p=testpass&v=1.16.1&c=test").await;
-        assert!(body.contains("status=\"failed\""));
+        // "hunter22" as enc: hex.
+        for q in ["p=hunter22", "p=enc:68756e7465723232"] {
+            let (_, body) = get_response(
+                build_test_router(state.clone()),
+                &format!("/rest/ping?u=mate&{q}&v=1.16.1&c=test"),
+            )
+            .await;
+            assert!(body.contains("status=\"ok\""), "{q}: {body}");
+        }
+        let (_, body) = get_response(
+            build_test_router(state),
+            "/rest/ping?u=mate&p=wrong&v=1.16.1&c=test",
+        )
+        .await;
         assert!(body.contains("code=\"40\""));
     }
 
     #[tokio::test]
-    async fn test_enc_hex_password_auth_rejected() {
+    async fn test_shared_secret_as_password() {
         let (state, _dir) = test_state();
-        let app = build_test_router(state);
         let (_, body) = get_response(
-            app,
+            build_test_router(state),
             "/rest/ping?u=testuser&p=enc:7465737470617373&v=1.16.1&c=test",
         )
         .await;
-        assert!(body.contains("status=\"failed\""));
+        assert!(body.contains("status=\"ok\""));
+    }
+
+    #[tokio::test]
+    async fn test_readonly_account_cannot_write() {
+        let (state, _dir) = test_state();
+        let (_, body) = get_response(
+            build_test_router(state.clone()),
+            "/rest/star?id=mf-1&u=mate&p=hunter22&v=1.16.1&c=test",
+        )
+        .await;
+        assert!(body.contains("code=\"50\""), "{body}");
+        let (_, body) = get_response(
+            build_test_router(state.clone()),
+            "/rest/getUser?username=mate&u=mate&p=hunter22&v=1.16.1&c=test",
+        )
+        .await;
+        assert!(body.contains("shareRole=\"false\""), "{body}");
+        let (_, body) = get_response(
+            build_test_router(state),
+            "/rest/getUser?username=owner&u=owner&p=sesame&v=1.16.1&c=test",
+        )
+        .await;
+        assert!(body.contains("adminRole=\"true\""), "{body}");
     }
 
     #[tokio::test]
