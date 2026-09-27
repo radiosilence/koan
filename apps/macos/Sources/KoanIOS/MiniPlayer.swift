@@ -16,15 +16,7 @@ struct MiniPlayer: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            if let source = player.currentArtwork {
-                AlbumArtwork(source: source, size: .thumb, cornerRadius: 5)
-                    .frame(width: 32, height: 32)
-            } else {
-                RoundedRectangle(cornerRadius: 5)
-                    .fill(.quaternary)
-                    .frame(width: 32, height: 32)
-                    .overlay { Image(systemName: "music.note").font(.caption) }
-            }
+            sleeve
 
             VStack(alignment: .leading, spacing: 1) {
                 Text(entry?.title ?? "Nothing playing")
@@ -39,27 +31,56 @@ struct MiniPlayer: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Button {
-                player.togglePlayPause()
-            } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
-                    .font(.title3)
-                    .contentTransition(.symbolEffect(.replace))
-            }
-            .buttonStyle(.plain)
-            .disabled(entry == nil)
+            HStack(spacing: 0) {
+                Button {
+                    player.togglePlayPause()
+                } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : Icon.play)
+                        .font(.title3)
+                        .contentTransition(.symbolEffect(.replace))
+                        .frame(width: Self.target, height: Self.target)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
 
-            Button { player.next() } label: {
-                Image(systemName: Icon.next).font(.body)
+                Button { player.next() } label: {
+                    Image(systemName: Icon.next)
+                        .font(.body)
+                        .frame(width: Self.target, height: Self.target)
+                        .contentShape(Rectangle())
+                }
+                .accessibilityLabel("Next")
             }
             .buttonStyle(.plain)
             .disabled(entry == nil)
         }
-        .padding(.horizontal, 4)
+        // The sleeve sits as far in from the capsule's end as from its top
+        // and bottom, so it follows the curve rather than crowding it; the
+        // buttons' own targets give the other end its room.
+        .padding(.leading, Self.inset)
+        .padding(.trailing, Self.inset / 2)
+        .padding(.vertical, Self.inset)
         // The whole bar opens Now Playing; the buttons keep their own taps.
         .contentShape(Rectangle())
         .onTapGesture { if entry != nil { showingNowPlaying = true } }
         .accessibilityElement(children: .contain)
         .accessibilityHint("Opens Now Playing")
+    }
+
+    /// A thumb's worth, rather than the glyph's own few points.
+    private static let target = 40.0
+    private static let sleeveSide = 36.0
+    private static let inset = 6.0
+
+    @ViewBuilder private var sleeve: some View {
+        if let source = player.currentArtwork {
+            AlbumArtwork(source: source, size: .thumb, cornerRadius: 6)
+                .frame(width: Self.sleeveSide, height: Self.sleeveSide)
+        } else {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(.quaternary)
+                .frame(width: Self.sleeveSide, height: Self.sleeveSide)
+                .overlay { Image(systemName: "music.note").font(.caption) }
+        }
     }
 }
