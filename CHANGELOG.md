@@ -4,31 +4,23 @@
 
 ### Added
 
-- **koan runs on iOS.** Same engine, same models, same pages as the Mac app — the shell around them is a tab bar with the transport above it rather than a sidebar with it across the top. `just ios-run` builds it and puts it on a booted simulator.
+- **koan runs on iOS.** The same engine, models and pages as the Mac app, in a phone's shell: a tab bar (Queue, Library, Settings, Search), a mini player above it, and a full-screen Now Playing with the seek bar, lyrics in place of the sleeve, radio, the output format and an AirPlay picker. Every page stands in the playing record's wash, as the Mac's window does. An iPad with room for a sidebar gets the Mac's layout instead; the choice follows the width, not the device. `just ios-run` builds it for a simulator. iOS 27 or later.
 
-  Output goes through RemoteIO. AUHAL, which the Mac uses, is declared inside `#if !TARGET_OS_IPHONE`, and iOS ships no `AudioHardware.h` at all — so there is no device list, no nominal sample rate to set and no exclusive access. `engine.rs` is one implementation for both: the two platforms differ in which output component to instantiate and whether a device can be named, and nothing else. The decode pipeline, the timeline, the gapless cursor and the teardown order all stay exactly where they are, which is the point — iOS has no second set of those bugs to find.
+  Output goes through RemoteIO, from the same `engine.rs` the Mac uses; the two differ only in which output unit they open and whether a device can be named. The decode pipeline, timeline, gapless cursor and teardown are shared rather than rewritten. What iOS costs is the bit-perfect claim: everything crosses the system mixer, so koan plays at whatever rate the session settles on.
 
-  What that costs is the bit-perfect claim. `AVAudioSession.setPreferredSampleRate` is a request the system may decline and everything crosses the system mixer regardless, so on iOS koan asks for the source rate and takes what it is given.
+  Built for a battery. The spectrum analyser behind the playing bars stops while the app is in the background, runs at no more than 60fps on a phone, and at 30 in Low Power Mode, which also stills the wash's drift and the bars. RemoteIO is asked for a 93ms buffer, so the render thread wakes a twentieth as often as the default.
 
-  The session — category, activation, interruptions, route changes — is the app's, because it needs a run loop and a lifecycle. A phone call pauses playback; unplugging headphones pauses rather than announcing the record to the room.
+  A phone call pauses playback, and so does unplugging headphones. After an interruption koan resumes only when iOS recommends it.
 
-  The shell is a tab bar, not a drawer: a burger menu hides the thing koan is mostly about behind a tap. `.sidebarAdaptable` makes it one piece of code — an iPhone gets the tab bar with the overflow in More, an iPad gets the sidebar the Mac has, and the navigator stays authoritative either way. The transport is a mini player above the tab bar that opens the record full screen, rather than the Mac's bar squeezed onto a phone: at 400 points there is room for the sleeve, what is playing and one button.
+### Changed
 
-  Verified on the simulator by playing a file through the real `Player`: position only advances when the render callback drains the ring buffer, so a track that reaches its end has exercised decode, timeline and output together. Stopping mid-track survives too — that teardown is the one that used to double-free CoreAudio's buffer list, and it is shared with macOS rather than rewritten. `just ios-smoke <file>` runs both.
-
-  Three pieces of startup turned out to be living in the macOS scene root, where a second shell could not reach them: loading the library, scheduling a search, and acting on a submitted one. A phone that never called them had an empty library and a search that matched nothing. They belong to `AppState` and `SearchModel` now, so no shell can skip what it is owed.
-
-  Not yet: no Xcode project, so this is a simulator build only — a device needs a provisioning profile and the Apple Developer Program. No iPhone-shaped transport yet either; the Mac's is doing the job and it is cramped.
+- **The decode thread sleeps 10ms, not half a millisecond, while the ring buffer is full.** A full ring is where playback spends nearly all its time, so the old wait was two thousand wakes a second for the length of every track, on every platform. The ring holds a second or more of audio at any rate koan plays.
 
 ### Internal
 
-- **koan-core's test suite runs on the iOS simulator** — 719 of 719. Two things came out of it. `DestinationLedger` treated iOS as a case-sensitive filesystem when it is not, so `Rain.flac` and `rain.flac` would not have collided. And `case_only_rename_keeps_the_file` is now macOS-only: the simulator's sandbox answers `stat` for `Rain.flac` with ENOENT while `open(O_CREAT|O_EXCL)` on the same name in the same directory answers EEXIST, so the case-only rename `paths_equal` exists to catch cannot be detected there. Unverified on a device.
+- **koan-core's suite runs on the iOS simulator.** It found `DestinationLedger` treating iOS as a case-sensitive filesystem. `case_only_rename_keeps_the_file` is macOS-only: the simulator's sandbox answers `stat` and `open(O_EXCL)` inconsistently for a case-only rename, so it cannot be detected there.
 
-- **The macOS app's SwiftUI sources build for iOS.** Not an iOS app — there is no scene root, no audio backend and no project to build one with — but the shared half of the app now compiles against the iOS SDK, and `just ios-typecheck` fails the build if it stops. Seven files are the macOS shell (the scene root, the split view, the menu bar and the machinery that serves it) and are excluded; everything else crosses.
-
-  The work was smaller than the AppKit import count suggested. `NSImage` becomes a `PlatformImage` typealias — the art pipeline is `CGImageSource` end to end and only meets a platform image at the last step — the pasteboard and the accent colour get a UIKit half, and the modifiers iOS does not have (`.onDeleteCommand`, `.onExitCommand`, `.pointerStyle`, `.toggleStyle(.checkbox)`, `controlActiveState`) are fenced. The search field gets a plain `TextField` twin, since `UISearchBar` is built to sit at the top of a screen rather than inline above a list.
-
-  Nothing about the macOS app changes.
+- **The shared SwiftUI sources build for iOS, and CI checks it** (`just ios-typecheck`). Images go through a `PlatformImage` alias. The views that move layers in the render server (the wash, the playing bars, the seek bar) share a `LayerView` base and a `PlatformViewRepresentable` bridge, so AppKit and UIKit run the same code. Startup, search scheduling and search submission moved out of the macOS scene root into `AppState` and `SearchModel`, where any shell reaches them.
 
 ## Unreleased
 

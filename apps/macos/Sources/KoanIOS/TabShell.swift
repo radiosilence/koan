@@ -19,6 +19,7 @@ struct TabShell: View {
     @Environment(PlayerModel.self) private var player
     @Environment(LibraryModel.self) private var library
     @Environment(PlaylistsModel.self) private var playlists
+    @Environment(ActivityModel.self) private var activity
     @State private var showingNowPlaying = false
     /// Which tab is showing.
     ///
@@ -58,13 +59,18 @@ struct TabShell: View {
         // the one part of the screen that is the same wherever you are.
         // Absent when idle, so this is not furniture.
         .overlay(alignment: .bottom) {
-            ActivityList()
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(.regularMaterial, in: .rect(cornerRadius: 16))
-                .padding(.horizontal, 12)
-                // Clear of the mini player and the tab bar under it.
-                .padding(.bottom, 150)
+            // The card, not only its rows: an empty list inside a material
+            // still draws the material.
+            if !activity.tasks.isEmpty {
+                ActivityList()
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.regularMaterial, in: .rect(cornerRadius: 16))
+                    .padding(.horizontal, 12)
+                    // Clear of the mini player and the tab bar under it.
+                    .padding(.bottom, 150)
+                    .transition(.opacity)
+            }
         }
         // Something other than the tab bar can move the navigator —
         // submitting a search, or the queue being asked to show itself.
