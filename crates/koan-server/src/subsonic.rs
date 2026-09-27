@@ -20,6 +20,7 @@ use axum::routing::get;
 use koan_core::auth::Role;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
+use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries;
 use koan_core::index::metadata::extract_cover_art;
 use koan_core::remote::client::SubsonicAuth;
@@ -66,7 +67,7 @@ const IGNORED_ARTICLES: &str = "The El La Los Las Le Les";
 // ---------------------------------------------------------------------------
 
 struct AppState {
-    db_path: PathBuf,
+    pool: Arc<Pool>,
     username: String,
     /// The `[subsonic]` shared secret; without one, only accounts sign in.
     password: Option<String>,
@@ -92,8 +93,10 @@ struct CachedCover {
 }
 
 impl AppState {
-    fn open_db(&self) -> Result<Database, SubsonicError> {
-        Database::open(&self.db_path).map_err(|e| SubsonicError::from(e.to_string()))
+    fn open_db(&self) -> Result<Handle<'_>, SubsonicError> {
+        self.pool
+            .get()
+            .map_err(|e| SubsonicError::from(e.to_string()))
     }
 }
 
@@ -739,9 +742,28 @@ fn respond(
     }
 }
 
+/// Run a handler's synchronous work — authentication, SQLite, argon2, cover
+/// decoding — on the blocking pool. Done on a runtime worker it holds that
+/// worker until it finishes, and a few concurrent clients then stall every
+/// other route in the process, the web UI included.
+async fn offload_response(f: impl FnOnce() -> Response + Send + 'static) -> Response {
+    tokio::task::spawn_blocking(f)
+        .await
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+/// As [`offload_response`], for work whose result a handler goes on to use.
+async fn offload<T: Send + 'static>(
+    f: impl FnOnce() -> Result<T, SubsonicError> + Send + 'static,
+) -> Result<T, SubsonicError> {
+    tokio::task::spawn_blocking(f)
+        .await
+        .unwrap_or_else(|e| Err(SubsonicError::internal(e.to_string())))
+}
+
 /// Prologue for the two endpoints that answer with bytes rather than a
 /// document, and so cannot go through `respond_db`.
-fn authed_db(state: &AppState, auth: &SubsonicParams) -> Result<Database, SubsonicError> {
+fn authed_db<'a>(state: &'a AppState, auth: &SubsonicParams) -> Result<Handle<'a>, SubsonicError> {
     validate_auth(auth, state)?;
     state.open_db()
 }
@@ -1277,48 +1299,55 @@ async fn ping(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond(&state, &params, |_, b| Ok(b))
+    offload_response(move || respond(&state, &params, |_, b| Ok(b))).await
 }
 
 async fn get_license(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond(&state, &params, |_, b| {
-        Ok(b.child(
-            XmlNode::new("license")
-                .attr_bool("valid", true)
-                .attr("email", "koan@localhost"),
-        ))
+    offload_response(move || {
+        respond(&state, &params, |_, b| {
+            Ok(b.child(
+                XmlNode::new("license")
+                    .attr_bool("valid", true)
+                    .attr("email", "koan@localhost"),
+            ))
+        })
     })
+    .await
 }
 
 async fn get_artists(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond_db(&state, &params, |db, b| {
-        let (index_map, album_counts) = artist_index(db)?;
-        let extras = artist_extras(db, index_map.values().flatten().map(|a| a.id))?;
+    offload_response(move || {
+        respond_db(&state, &params, |db, b| {
+            let (index_map, album_counts) = artist_index(db)?;
+            let extras = artist_extras(db, index_map.values().flatten().map(|a| a.id))?;
 
-        let mut artists_node = XmlNode::new("artists")
-            .attr("ignoredArticles", IGNORED_ARTICLES)
-            .array_of("index");
-        for (letter, group) in &index_map {
-            let mut index_node = XmlNode::new("index")
-                .attr("name", letter)
-                .array_of("artist");
-            for artist in group {
-                let count = album_counts.get(&artist.id).copied().unwrap_or(0);
-                index_node = index_node.child(
-                    artist_id3_node(artist.id, &artist.name, &extras).attr_int("albumCount", count),
-                );
+            let mut artists_node = XmlNode::new("artists")
+                .attr("ignoredArticles", IGNORED_ARTICLES)
+                .array_of("index");
+            for (letter, group) in &index_map {
+                let mut index_node = XmlNode::new("index")
+                    .attr("name", letter)
+                    .array_of("artist");
+                for artist in group {
+                    let count = album_counts.get(&artist.id).copied().unwrap_or(0);
+                    index_node = index_node.child(
+                        artist_id3_node(artist.id, &artist.name, &extras)
+                            .attr_int("albumCount", count),
+                    );
+                }
+                artists_node = artists_node.child(index_node);
             }
-            artists_node = artists_node.child(index_node);
-        }
 
-        Ok(b.child(artists_node))
+            Ok(b.child(artists_node))
+        })
     })
+    .await
 }
 
 /// The file-browse counterpart of `getArtists`. DSub and every folder-oriented
@@ -1328,37 +1357,40 @@ async fn get_indexes(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond_db(&state, &params, |db, b| {
-        let (index_map, _) = artist_index(db)?;
-        let last_modified: i64 = db
-            .conn
-            .query_row(
-                "SELECT COALESCE(MAX(mtime), 0) * 1000 FROM tracks",
-                [],
-                |r| r.get(0),
-            )
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+    offload_response(move || {
+        respond_db(&state, &params, |db, b| {
+            let (index_map, _) = artist_index(db)?;
+            let last_modified: i64 = db
+                .conn
+                .query_row(
+                    "SELECT COALESCE(MAX(mtime), 0) * 1000 FROM tracks",
+                    [],
+                    |r| r.get(0),
+                )
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-        let mut indexes_node = XmlNode::new("indexes")
-            .attr_int("lastModified", last_modified)
-            .attr("ignoredArticles", IGNORED_ARTICLES)
-            .array_of("index");
-        for (letter, group) in &index_map {
-            let mut index_node = XmlNode::new("index")
-                .attr("name", letter)
-                .array_of("artist");
-            for artist in group {
-                index_node = index_node.child(
-                    XmlNode::new("artist")
-                        .attr("id", &format!("{}{}", ARTIST_PREFIX, artist.id))
-                        .attr("name", &artist.name),
-                );
+            let mut indexes_node = XmlNode::new("indexes")
+                .attr_int("lastModified", last_modified)
+                .attr("ignoredArticles", IGNORED_ARTICLES)
+                .array_of("index");
+            for (letter, group) in &index_map {
+                let mut index_node = XmlNode::new("index")
+                    .attr("name", letter)
+                    .array_of("artist");
+                for artist in group {
+                    index_node = index_node.child(
+                        XmlNode::new("artist")
+                            .attr("id", &format!("{}{}", ARTIST_PREFIX, artist.id))
+                            .attr("name", &artist.name),
+                    );
+                }
+                indexes_node = indexes_node.child(index_node);
             }
-            indexes_node = indexes_node.child(index_node);
-        }
 
-        Ok(b.child(indexes_node))
+            Ok(b.child(indexes_node))
+        })
     })
+    .await
 }
 
 /// One level of the browse tree: an artist directory lists its albums, an album
@@ -1367,92 +1399,101 @@ async fn get_music_directory(
     State(state): State<Arc<AppState>>,
     Query(params): Query<IdParam>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        let (kind, id) = require_entity(params.id.as_deref())?;
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            let (kind, id) = require_entity(params.id.as_deref())?;
 
-        // A bare id is ambiguous — artists and albums share the number space —
-        // so try the artist table first and fall through. Clients that arrived
-        // via `getIndexes` always send a prefix and never hit this.
-        if kind != Some(EntityKind::Album) {
-            let artists = queries::all_artists(&db.conn)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            if let Some(artist) = artists.into_iter().find(|a| a.id == id) {
-                let albums = queries::albums_for_artist(&db.conn, id)
+            // A bare id is ambiguous — artists and albums share the number space —
+            // so try the artist table first and fall through. Clients that arrived
+            // via `getIndexes` always send a prefix and never hit this.
+            if kind != Some(EntityKind::Album) {
+                let artists = queries::all_artists(&db.conn)
                     .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                let mut dir = XmlNode::new("directory")
-                    .attr("id", &format!("{}{}", ARTIST_PREFIX, artist.id))
-                    .attr("name", &artist.name)
-                    .array_of("child");
-                for album in &albums {
-                    dir = dir.child(album_child_node(album));
+                if let Some(artist) = artists.into_iter().find(|a| a.id == id) {
+                    let albums = queries::albums_for_artist(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                    let mut dir = XmlNode::new("directory")
+                        .attr("id", &format!("{}{}", ARTIST_PREFIX, artist.id))
+                        .attr("name", &artist.name)
+                        .array_of("child");
+                    for album in &albums {
+                        dir = dir.child(album_child_node(album));
+                    }
+                    return Ok(b.child(dir));
                 }
-                return Ok(b.child(dir));
             }
-        }
 
-        let album = queries::get_album(&db.conn, id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Directory"))?;
-        let tracks = queries::tracks_for_album(&db.conn, id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let album = queries::get_album(&db.conn, id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Directory"))?;
+            let tracks = queries::tracks_for_album(&db.conn, id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-        let mut dir = XmlNode::new("directory")
-            .attr("id", &format!("{}{}", ALBUM_PREFIX, album.id))
-            .attr("parent", &format!("{}{}", ARTIST_PREFIX, album.artist_id))
-            .attr("name", &album.title)
-            .array_of("child");
-        let extras = song_extras(db, &tracks)?;
-        for track in &tracks {
-            dir = dir.child(track_node(track, "child", &extras));
-        }
-        Ok(b.child(dir))
+            let mut dir = XmlNode::new("directory")
+                .attr("id", &format!("{}{}", ALBUM_PREFIX, album.id))
+                .attr("parent", &format!("{}{}", ARTIST_PREFIX, album.artist_id))
+                .attr("name", &album.title)
+                .array_of("child");
+            let extras = song_extras(db, &tracks)?;
+            for track in &tracks {
+                dir = dir.child(track_node(track, "child", &extras));
+            }
+            Ok(b.child(dir))
+        })
     })
+    .await
 }
 
 async fn get_artist(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        let artist_id = require_id(params.id.as_deref())?;
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            let artist_id = require_id(params.id.as_deref())?;
 
-        let all =
-            queries::all_artists(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
-        let artist = all
-            .into_iter()
-            .find(|a| a.id == artist_id)
-            .ok_or_else(|| SubsonicError::not_found("Artist"))?;
+            let all = queries::all_artists(&db.conn)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let artist = all
+                .into_iter()
+                .find(|a| a.id == artist_id)
+                .ok_or_else(|| SubsonicError::not_found("Artist"))?;
 
-        let albums = queries::albums_for_artist(&db.conn, artist_id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let albums = queries::albums_for_artist(&db.conn, artist_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-        let artists = artist_extras(db, [artist.id])?;
-        let extras = album_extras(db, &albums)?;
-        Ok(b.child(
-            artist_id3_node(artist.id, &artist.name, &artists)
-                .attr_int("albumCount", albums.len() as i64)
-                .list(
-                    "album",
-                    albums.iter().map(|album| album_to_xml_node(album, &extras)),
-                ),
-        ))
+            let artists = artist_extras(db, [artist.id])?;
+            let extras = album_extras(db, &albums)?;
+            Ok(b.child(
+                artist_id3_node(artist.id, &artist.name, &artists)
+                    .attr_int("albumCount", albums.len() as i64)
+                    .list(
+                        "album",
+                        albums.iter().map(|album| album_to_xml_node(album, &extras)),
+                    ),
+            ))
+        })
     })
+    .await
 }
 
 async fn get_album(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        let album_id = require_id(params.id.as_deref())?;
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            let album_id = require_id(params.id.as_deref())?;
 
-        let album = queries::get_album(&db.conn, album_id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Album"))?;
+            let album = queries::get_album(&db.conn, album_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Album"))?;
 
-        let tracks = queries::tracks_for_album(&db.conn, album_id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        let albums = album_extras(db, [&album])?;
-        let songs = song_extras(db, &tracks)?;
-        Ok(b.child(
-            album_to_xml_node(&album, &albums)
-                .list("song", tracks.iter().map(|t| track_to_xml_node(t, &songs))),
-        ))
+            let tracks = queries::tracks_for_album(&db.conn, album_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let albums = album_extras(db, [&album])?;
+            let songs = song_extras(db, &tracks)?;
+            Ok(b.child(
+                album_to_xml_node(&album, &albums)
+                    .list("song", tracks.iter().map(|t| track_to_xml_node(t, &songs))),
+            ))
+        })
     })
+    .await
 }
 
 /// Albums ordered by `type`, paged. Shared by `getAlbumList` and
@@ -1507,29 +1548,38 @@ async fn get_album_list(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AlbumListParams>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        Ok(b.child(album_list(db, &params, "albumList")?))
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            Ok(b.child(album_list(db, &params, "albumList")?))
+        })
     })
+    .await
 }
 
 async fn get_album_list2(
     State(state): State<Arc<AppState>>,
     Query(params): Query<AlbumListParams>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        Ok(b.child(album_list(db, &params, "albumList2")?))
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            Ok(b.child(album_list(db, &params, "albumList2")?))
+        })
     })
+    .await
 }
 
 async fn get_song(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        let track_id = require_id(params.id.as_deref())?;
-        let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Song"))?;
-        let extras = song_extras(db, [&track])?;
-        Ok(b.child(track_to_xml_node(&track, &extras)))
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            let track_id = require_id(params.id.as_deref())?;
+            let track = queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Song"))?;
+            let extras = song_extras(db, [&track])?;
+            Ok(b.child(track_to_xml_node(&track, &extras)))
+        })
     })
+    .await
 }
 
 /// The lyrics koan has cached for a song, as one `structuredLyrics` entry, or
@@ -1539,16 +1589,20 @@ async fn get_lyrics_by_song_id(
     State(state): State<Arc<AppState>>,
     Query(params): Query<IdParam>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        let track_id = require_id(params.id.as_deref())?;
-        let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Song"))?;
-        let cached = queries::get_cached_lyrics(&db.conn, track_id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        let entries = cached.map(|(content, synced)| structured_lyrics(&track, &content, synced));
-        Ok(b.child(XmlNode::new("lyricsList").list("structuredLyrics", entries)))
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            let track_id = require_id(params.id.as_deref())?;
+            let track = queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Song"))?;
+            let cached = queries::get_cached_lyrics(&db.conn, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let entries =
+                cached.map(|(content, synced)| structured_lyrics(&track, &content, synced));
+            Ok(b.child(XmlNode::new("lyricsList").list("structuredLyrics", entries)))
+        })
     })
+    .await
 }
 
 /// A lyrics text as `structuredLyrics`. Synced lyrics are LRC, whose lines
@@ -1586,64 +1640,67 @@ async fn search3(
     State(state): State<Arc<AppState>>,
     Query(params): Query<Search3Params>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        let query = params
-            .query
-            .as_deref()
-            .ok_or_else(|| SubsonicError::missing_param("query"))?;
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            let query = params
+                .query
+                .as_deref()
+                .ok_or_else(|| SubsonicError::missing_param("query"))?;
 
-        let artist_count = params.artist_count.unwrap_or(20);
-        let album_count = params.album_count.unwrap_or(20);
-        let song_count = params.song_count.unwrap_or(20);
+            let artist_count = params.artist_count.unwrap_or(20);
+            let album_count = params.album_count.unwrap_or(20);
+            let song_count = params.song_count.unwrap_or(20);
 
-        let total_needed = (artist_count + album_count + song_count).max(100);
-        let tracks = queries::search_tracks_paged(&db.conn, query, total_needed, 0)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let total_needed = (artist_count + album_count + song_count).max(100);
+            let tracks = queries::search_tracks_paged(&db.conn, query, total_needed, 0)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-        let artist_ids: Vec<(i64, &str)> = {
-            let mut seen = std::collections::HashSet::new();
-            tracks
-                .iter()
-                .filter_map(|t| Some((t.artist_id?, t.artist_name.as_str())))
-                .filter(|(id, _)| seen.insert(*id))
-                .take(artist_count as usize)
-                .collect()
-        };
-        let albums: Vec<queries::AlbumRow> = {
-            let mut seen = std::collections::HashSet::new();
-            tracks
-                .iter()
-                .filter_map(|t| t.album_id)
-                .filter(|id| seen.insert(*id))
-                .take(album_count as usize)
-                .map(|id| queries::get_album(&db.conn, id))
-                .filter_map(Result::transpose)
-                .collect::<Result<_, _>>()
-                .map_err(|e| SubsonicError::internal(e.to_string()))?
-        };
-        let songs: Vec<&queries::TrackRow> = tracks.iter().take(song_count as usize).collect();
-
-        let artist_extras = artist_extras(db, artist_ids.iter().map(|(id, _)| *id))?;
-        let album_extras = album_extras(db, &albums)?;
-        let song_extras = song_extras(db, songs.iter().copied())?;
-        let result_node = XmlNode::new("searchResult3")
-            .list(
-                "artist",
-                artist_ids
+            let artist_ids: Vec<(i64, &str)> = {
+                let mut seen = std::collections::HashSet::new();
+                tracks
                     .iter()
-                    .map(|(id, name)| artist_id3_node(*id, name, &artist_extras)),
-            )
-            .list(
-                "album",
-                albums.iter().map(|a| album_to_xml_node(a, &album_extras)),
-            )
-            .list(
-                "song",
-                songs.iter().map(|t| track_to_xml_node(t, &song_extras)),
-            );
+                    .filter_map(|t| Some((t.artist_id?, t.artist_name.as_str())))
+                    .filter(|(id, _)| seen.insert(*id))
+                    .take(artist_count as usize)
+                    .collect()
+            };
+            let albums: Vec<queries::AlbumRow> = {
+                let mut seen = std::collections::HashSet::new();
+                tracks
+                    .iter()
+                    .filter_map(|t| t.album_id)
+                    .filter(|id| seen.insert(*id))
+                    .take(album_count as usize)
+                    .map(|id| queries::get_album(&db.conn, id))
+                    .filter_map(Result::transpose)
+                    .collect::<Result<_, _>>()
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?
+            };
+            let songs: Vec<&queries::TrackRow> = tracks.iter().take(song_count as usize).collect();
 
-        Ok(b.child(result_node))
+            let artist_extras = artist_extras(db, artist_ids.iter().map(|(id, _)| *id))?;
+            let album_extras = album_extras(db, &albums)?;
+            let song_extras = song_extras(db, songs.iter().copied())?;
+            let result_node = XmlNode::new("searchResult3")
+                .list(
+                    "artist",
+                    artist_ids
+                        .iter()
+                        .map(|(id, name)| artist_id3_node(*id, name, &artist_extras)),
+                )
+                .list(
+                    "album",
+                    albums.iter().map(|a| album_to_xml_node(a, &album_extras)),
+                )
+                .list(
+                    "song",
+                    songs.iter().map(|t| track_to_xml_node(t, &song_extras)),
+                );
+
+            Ok(b.child(result_node))
+        })
     })
+    .await
 }
 
 // ===========================================================================
@@ -1666,23 +1723,26 @@ async fn stream(
     headers: HeaderMap,
 ) -> Response {
     let json = params.auth.wants_json();
-    match stream_inner(&state, &params, &headers).await {
+    match stream_inner(state, params, &headers).await {
         Ok(resp) => resp,
         Err(e) => SubsonicResponse::error(json, &e),
     }
 }
 
 async fn stream_inner(
-    state: &AppState,
-    params: &StreamParams,
+    state: Arc<AppState>,
+    params: StreamParams,
     headers: &HeaderMap,
 ) -> Result<Response, SubsonicError> {
-    let db = authed_db(state, &params.auth)?;
-    let track_id = require_id(params.id.as_deref())?;
-
-    let track = queries::get_track_row(&db.conn, track_id)
-        .map_err(|e| SubsonicError::internal(e.to_string()))?
-        .ok_or_else(|| SubsonicError::not_found("Track"))?;
+    let lookup = state.clone();
+    let track = offload(move || {
+        let db = authed_db(&lookup, &params.auth)?;
+        let track_id = require_id(params.id.as_deref())?;
+        queries::get_track_row(&db.conn, track_id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+            .ok_or_else(|| SubsonicError::not_found("Track"))
+    })
+    .await?;
 
     // Try local/cached file first; fall back to proxying from upstream.
     let local_path = track_file_path(&track).map(PathBuf::from);
@@ -1695,7 +1755,7 @@ async fn stream_inner(
     if !local_exists {
         // Proxy from upstream Navidrome/Subsonic server.
         if let Some(ref remote_id) = track.remote_id {
-            return proxy_stream_from_upstream(state, remote_id, &track, headers).await;
+            return proxy_stream_from_upstream(&state, remote_id, &track, headers).await;
         }
         return Err(SubsonicError::not_found(
             "Track has no local file and no remote source",
@@ -1889,11 +1949,14 @@ async fn get_cover_art(
     State(state): State<Arc<AppState>>,
     Query(params): Query<CoverArtParams>,
 ) -> Response {
-    let json = params.auth.wants_json();
-    match cover_art_inner(&state, &params) {
-        Ok(resp) => resp,
-        Err(e) => SubsonicResponse::error(json, &e),
-    }
+    offload_response(move || {
+        let json = params.auth.wants_json();
+        match cover_art_inner(&state, &params) {
+            Ok(resp) => resp,
+            Err(e) => SubsonicResponse::error(json, &e),
+        }
+    })
+    .await
 }
 
 fn cover_art_inner(state: &AppState, params: &CoverArtParams) -> Result<Response, SubsonicError> {
@@ -2017,17 +2080,23 @@ fn resize_image(data: &[u8], size: u32, output_png: bool) -> Result<Vec<u8>, Sub
 // ===========================================================================
 
 async fn star(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    respond_db_as(&state, &params.auth, Role::User, |db, b| {
-        toggle_star(db, params.id.as_deref(), true)?;
-        Ok(b)
+    offload_response(move || {
+        respond_db_as(&state, &params.auth, Role::User, |db, b| {
+            toggle_star(db, params.id.as_deref(), true)?;
+            Ok(b)
+        })
     })
+    .await
 }
 
 async fn unstar(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
-    respond_db_as(&state, &params.auth, Role::User, |db, b| {
-        toggle_star(db, params.id.as_deref(), false)?;
-        Ok(b)
+    offload_response(move || {
+        respond_db_as(&state, &params.auth, Role::User, |db, b| {
+            toggle_star(db, params.id.as_deref(), false)?;
+            Ok(b)
+        })
     })
+    .await
 }
 
 fn toggle_star(db: &Database, id: Option<&str>, star: bool) -> Result<(), SubsonicError> {
@@ -2054,123 +2123,135 @@ async fn get_starred2(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond_db(&state, &params, |db, b| {
-        let favourites = queries::load_favourites(&db.conn)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+    offload_response(move || {
+        respond_db(&state, &params, |db, b| {
+            let favourites = queries::load_favourites(&db.conn)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-        let tracks: Vec<queries::TrackRow> = favourites
-            .iter()
-            .filter_map(|fav_path| {
-                let track_id =
-                    queries::track_id_by_path(&db.conn, &fav_path.to_string_lossy()).ok()??;
-                queries::get_track_row(&db.conn, track_id).ok()?
-            })
-            .collect();
-        let extras = song_extras(db, &tracks)?;
-        Ok(b.child(
-            XmlNode::new("starred2")
-                .list("song", tracks.iter().map(|t| track_to_xml_node(t, &extras))),
-        ))
+            let tracks: Vec<queries::TrackRow> = favourites
+                .iter()
+                .filter_map(|fav_path| {
+                    let track_id =
+                        queries::track_id_by_path(&db.conn, &fav_path.to_string_lossy()).ok()??;
+                    queries::get_track_row(&db.conn, track_id).ok()?
+                })
+                .collect();
+            let extras = song_extras(db, &tracks)?;
+            Ok(b.child(
+                XmlNode::new("starred2")
+                    .list("song", tracks.iter().map(|t| track_to_xml_node(t, &extras))),
+            ))
+        })
     })
+    .await
 }
 
 async fn scrobble(
     State(state): State<Arc<AppState>>,
     Query(params): Query<ScrobbleParams>,
 ) -> Response {
-    respond_db_as(&state, &params.auth, Role::User, |db, b| {
-        let track_id = require_id(params.id.as_deref())?;
+    offload_response(move || {
+        respond_db_as(&state, &params.auth, Role::User, |db, b| {
+            let track_id = require_id(params.id.as_deref())?;
 
-        queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Track"))?;
+            queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Track"))?;
 
-        // `submission=false` is a now-playing notice, not a play.
-        if params.submission == Some(false) {
-            return Ok(b);
-        }
+            // `submission=false` is a now-playing notice, not a play.
+            if params.submission == Some(false) {
+                return Ok(b);
+            }
 
-        // `time` is when the client played it, which can be well in the past
-        // after an offline session.
-        let played_at = params.time.map_or_else(
-            || {
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs() as i64
-            },
-            |time_ms| time_ms / 1000,
-        );
+            // `time` is when the client played it, which can be well in the past
+            // after an offline session.
+            let played_at = params.time.map_or_else(
+                || {
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs() as i64
+                },
+                |time_ms| time_ms / 1000,
+            );
 
-        queries::record_play_at(
-            &db.conn,
-            track_id,
-            played_at,
-            None,
-            queries::SOURCE_SUBSONIC,
-        )
-        .map_err(|e| SubsonicError::from(format!("Database error: {}", e)))?;
-        Ok(b)
+            queries::record_play_at(
+                &db.conn,
+                track_id,
+                played_at,
+                None,
+                queries::SOURCE_SUBSONIC,
+            )
+            .map_err(|e| SubsonicError::from(format!("Database error: {}", e)))?;
+            Ok(b)
+        })
     })
+    .await
 }
 
 async fn get_random_songs(
     State(state): State<Arc<AppState>>,
     Query(params): Query<RandomSongsParams>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        let size = params.size.unwrap_or(10);
-        let genre = params.genre.as_deref();
-        let fetch_count = if genre.is_some() { size * 5 } else { size };
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            let size = params.size.unwrap_or(10);
+            let genre = params.genre.as_deref();
+            let fetch_count = if genre.is_some() { size * 5 } else { size };
 
-        let tracks = queries::random_tracks(&db.conn, fetch_count, None)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let tracks = queries::random_tracks(&db.conn, fetch_count, None)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-        let picked: Vec<&queries::TrackRow> = tracks
-            .iter()
-            .filter(|t| genre.is_none_or(|g| t.genre.as_deref() == Some(g)))
-            .take(size as usize)
-            .collect();
-        let extras = song_extras(db, picked.iter().copied())?;
-        Ok(b.child(
-            XmlNode::new("randomSongs")
-                .list("song", picked.iter().map(|t| track_to_xml_node(t, &extras))),
-        ))
+            let picked: Vec<&queries::TrackRow> = tracks
+                .iter()
+                .filter(|t| genre.is_none_or(|g| t.genre.as_deref() == Some(g)))
+                .take(size as usize)
+                .collect();
+            let extras = song_extras(db, picked.iter().copied())?;
+            Ok(b.child(
+                XmlNode::new("randomSongs")
+                    .list("song", picked.iter().map(|t| track_to_xml_node(t, &extras))),
+            ))
+        })
     })
+    .await
 }
 
 async fn get_similar_songs2(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SimilarSongs2Params>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        let track_id = require_id(params.id.as_deref())?;
-        let count = params.count.unwrap_or(50);
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            let track_id = require_id(params.id.as_deref())?;
+            let count = params.count.unwrap_or(50);
 
-        let track = queries::get_track_row(&db.conn, track_id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .ok_or_else(|| SubsonicError::not_found("Track"))?;
+            let track = queries::get_track_row(&db.conn, track_id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .ok_or_else(|| SubsonicError::not_found("Track"))?;
 
-        let similar = match track.artist_id {
-            Some(artist_id) => queries::get_similar_artists(&db.conn, artist_id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?,
-            None => Vec::new(),
-        };
+            let similar = match track.artist_id {
+                Some(artist_id) => queries::get_similar_artists(&db.conn, artist_id)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?,
+                None => Vec::new(),
+            };
 
-        let songs: Vec<queries::TrackRow> = similar
-            .iter()
-            .filter_map(|(artist_row, _score)| {
-                queries::tracks_for_artist(&db.conn, artist_row.id).ok()
-            })
-            .flatten()
-            .take(count)
-            .collect();
-        let extras = song_extras(db, &songs)?;
-        Ok(b.child(
-            XmlNode::new("similarSongs2")
-                .list("song", songs.iter().map(|t| track_to_xml_node(t, &extras))),
-        ))
+            let songs: Vec<queries::TrackRow> = similar
+                .iter()
+                .filter_map(|(artist_row, _score)| {
+                    queries::tracks_for_artist(&db.conn, artist_row.id).ok()
+                })
+                .flatten()
+                .take(count)
+                .collect();
+            let extras = song_extras(db, &songs)?;
+            Ok(b.child(
+                XmlNode::new("similarSongs2")
+                    .list("song", songs.iter().map(|t| track_to_xml_node(t, &extras))),
+            ))
+        })
     })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -2181,16 +2262,19 @@ async fn get_music_folders(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond(&state, &params, |_, b| {
-        Ok(b.child(
-            XmlNode::new("musicFolders").list(
-                "musicFolder",
-                [XmlNode::new("musicFolder")
-                    .attr_int("id", 1)
-                    .attr("name", "Music")],
-            ),
-        ))
+    offload_response(move || {
+        respond(&state, &params, |_, b| {
+            Ok(b.child(
+                XmlNode::new("musicFolders").list(
+                    "musicFolder",
+                    [XmlNode::new("musicFolder")
+                        .attr_int("id", 1)
+                        .attr("name", "Music")],
+                ),
+            ))
+        })
     })
+    .await
 }
 
 /// Clients call this during setup to decide which features to offer. It
@@ -2199,27 +2283,30 @@ async fn get_user(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond(&state, &params, |caller, b| {
-        let role = caller.role;
-        let writes = role.has_permission(Role::User);
-        Ok(b.child(
-            XmlNode::new("user")
-                .attr("username", &caller.username)
-                .attr_bool("scrobblingEnabled", writes)
-                .attr_bool("adminRole", role == Role::Admin)
-                .attr_bool("settingsRole", false)
-                .attr_bool("downloadRole", true)
-                .attr_bool("uploadRole", false)
-                .attr_bool("playlistRole", writes)
-                .attr_bool("coverArtRole", true)
-                .attr_bool("commentRole", false)
-                .attr_bool("podcastRole", false)
-                .attr_bool("streamRole", true)
-                .attr_bool("jukeboxRole", false)
-                .attr_bool("shareRole", writes)
-                .attr_bool("videoConversionRole", false),
-        ))
+    offload_response(move || {
+        respond(&state, &params, |caller, b| {
+            let role = caller.role;
+            let writes = role.has_permission(Role::User);
+            Ok(b.child(
+                XmlNode::new("user")
+                    .attr("username", &caller.username)
+                    .attr_bool("scrobblingEnabled", writes)
+                    .attr_bool("adminRole", role == Role::Admin)
+                    .attr_bool("settingsRole", false)
+                    .attr_bool("downloadRole", true)
+                    .attr_bool("uploadRole", false)
+                    .attr_bool("playlistRole", writes)
+                    .attr_bool("coverArtRole", true)
+                    .attr_bool("commentRole", false)
+                    .attr_bool("podcastRole", false)
+                    .attr_bool("streamRole", true)
+                    .attr_bool("jukeboxRole", false)
+                    .attr_bool("shareRole", writes)
+                    .attr_bool("videoConversionRole", false),
+            ))
+        })
     })
+    .await
 }
 
 /// Answered without authentication, as OpenSubsonic requires: a client asks
@@ -2247,9 +2334,12 @@ async fn token_info(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond(&state, &params, |caller, b| {
-        Ok(b.child(XmlNode::new("tokenInfo").attr("username", &caller.username)))
+    offload_response(move || {
+        respond(&state, &params, |caller, b| {
+            Ok(b.child(XmlNode::new("tokenInfo").attr("username", &caller.username)))
+        })
     })
+    .await
 }
 
 /// Scans are driven by `koan scan`, never by a client, so this only ever
@@ -2258,56 +2348,62 @@ async fn get_scan_status(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond_db(&state, &params, |db, b| {
-        let stats =
-            queries::library_stats(&db.conn).map_err(|e| SubsonicError::internal(e.to_string()))?;
-        Ok(b.child(
-            XmlNode::new("scanStatus")
-                .attr_bool("scanning", false)
-                .attr_int("count", stats.total_tracks),
-        ))
+    offload_response(move || {
+        respond_db(&state, &params, |db, b| {
+            let stats = queries::library_stats(&db.conn)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(b.child(
+                XmlNode::new("scanStatus")
+                    .attr_bool("scanning", false)
+                    .attr_int("count", stats.total_tracks),
+            ))
+        })
     })
+    .await
 }
 
 async fn get_genres(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond_db(&state, &params, |db, b| {
-        let mut stmt = db
-            .conn
-            .prepare(
-                "SELECT genre, COUNT(*), COUNT(DISTINCT album_id)
+    offload_response(move || {
+        respond_db(&state, &params, |db, b| {
+            let mut stmt = db
+                .conn
+                .prepare(
+                    "SELECT genre, COUNT(*), COUNT(DISTINCT album_id)
                  FROM tracks WHERE genre IS NOT NULL AND genre != ''
                  GROUP BY genre ORDER BY genre",
-            )
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, i64>(1)?,
-                    row.get::<_, i64>(2)?,
-                ))
-            })
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                )
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                })
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-        let mut genres_node = XmlNode::new("genres").array_of("genre");
-        for row in rows {
-            let (name, song_count, album_count) =
-                row.map_err(|e| SubsonicError::internal(e.to_string()))?;
-            genres_node = genres_node.child(
-                XmlNode::new("genre")
-                    .attr_int("songCount", song_count)
-                    .attr_int("albumCount", album_count)
-                    // The XSD carries the name as element text; `value` is the
-                    // JSON spelling of the same thing.
-                    .text(&name),
-            );
-        }
+            let mut genres_node = XmlNode::new("genres").array_of("genre");
+            for row in rows {
+                let (name, song_count, album_count) =
+                    row.map_err(|e| SubsonicError::internal(e.to_string()))?;
+                genres_node = genres_node.child(
+                    XmlNode::new("genre")
+                        .attr_int("songCount", song_count)
+                        .attr_int("albumCount", album_count)
+                        // The XSD carries the name as element text; `value` is the
+                        // JSON spelling of the same thing.
+                        .text(&name),
+                );
+            }
 
-        Ok(b.child(genres_node))
+            Ok(b.child(genres_node))
+        })
     })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -2318,21 +2414,24 @@ async fn get_playlists(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond_db(&state, &params, |db, b| {
-        let lists = queries::list_playlists(&db.conn)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+    offload_response(move || {
+        respond_db(&state, &params, |db, b| {
+            let lists = queries::list_playlists(&db.conn)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
 
-        let mut playlists_node = XmlNode::new("playlists").array_of("playlist");
-        for list in &lists {
-            playlists_node = playlists_node.child(playlist_attrs(
-                XmlNode::new("playlist"),
-                list,
-                &state.username,
-            ));
-        }
+            let mut playlists_node = XmlNode::new("playlists").array_of("playlist");
+            for list in &lists {
+                playlists_node = playlists_node.child(playlist_attrs(
+                    XmlNode::new("playlist"),
+                    list,
+                    &state.username,
+                ));
+            }
 
-        Ok(b.child(playlists_node))
+            Ok(b.child(playlists_node))
+        })
     })
+    .await
 }
 
 /// The attributes every `<playlist>` carries, list or detail.
@@ -2383,52 +2482,58 @@ async fn get_playlist(
     State(state): State<Arc<AppState>>,
     Query(params): Query<IdParam>,
 ) -> Response {
-    respond_db(&state, &params.auth, |db, b| {
-        let id = playlist_id(params.id.as_deref())?;
-        Ok(b.child(playlist_node(db, id, &state.username)?))
+    offload_response(move || {
+        respond_db(&state, &params.auth, |db, b| {
+            let id = playlist_id(params.id.as_deref())?;
+            Ok(b.child(playlist_node(db, id, &state.username)?))
+        })
     })
+    .await
 }
 
 /// `createPlaylist` — new when given a `name`, a wholesale replacement when
 /// given a `playlistId`. That second form is the only Subsonic call that can
 /// set a playlist's order, which is why koan's own pushes use it too.
 async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
-    let params = RawParams::parse(raw.as_deref());
-    let auth = params.auth();
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
 
-    respond_db_as(&state, &auth, Role::User, |db, b| {
-        let track_ids: Vec<i64> = params
-            .all("songId")
-            .filter_map(|id| id.parse::<i64>().ok())
-            .collect();
+        respond_db_as(&state, &auth, Role::User, |db, b| {
+            let track_ids: Vec<i64> = params
+                .all("songId")
+                .filter_map(|id| id.parse::<i64>().ok())
+                .collect();
 
-        let id = match params.get("playlistId") {
-            Some(existing) => {
-                let id = playlist_id(Some(existing))?;
-                if let Some(name) = params.get("name") {
-                    queries::rename_playlist(&db.conn, id, name)
+            let id = match params.get("playlistId") {
+                Some(existing) => {
+                    let id = playlist_id(Some(existing))?;
+                    if let Some(name) = params.get("name") {
+                        queries::rename_playlist(&db.conn, id, name)
+                            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                    }
+                    queries::set_playlist_tracks(&db.conn, id, &track_ids)
                         .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                    id
                 }
-                queries::set_playlist_tracks(&db.conn, id, &track_ids)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                id
-            }
-            None => {
-                let name = params
-                    .get("name")
-                    .ok_or_else(|| SubsonicError::missing_param("name"))?;
-                let id = queries::create_playlist(&db.conn, name, None)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                queries::add_tracks(&db.conn, id, &track_ids)
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                id
-            }
-        };
+                None => {
+                    let name = params
+                        .get("name")
+                        .ok_or_else(|| SubsonicError::missing_param("name"))?;
+                    let id = queries::create_playlist(&db.conn, name, None)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                    queries::add_tracks(&db.conn, id, &track_ids)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                    id
+                }
+            };
 
-        // Since 1.14.0 the response carries the playlist that was created;
-        // clients read the id back off it rather than guessing.
-        Ok(b.child(playlist_node(db, id, &state.username)?))
+            // Since 1.14.0 the response carries the playlist that was created;
+            // clients read the id back off it rather than guessing.
+            Ok(b.child(playlist_node(db, id, &state.username)?))
+        })
     })
+    .await
 }
 
 /// `updatePlaylist` — rename, re-comment, and add or remove members by index.
@@ -2436,66 +2541,72 @@ async fn create_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQ
 /// Removals are applied by descending index so each one does not shift the
 /// next; a client sends them against the list as it stood when it asked.
 async fn update_playlist(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
-    let params = RawParams::parse(raw.as_deref());
-    let auth = params.auth();
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
 
-    respond_db_as(&state, &auth, Role::User, |db, b| {
-        let id = playlist_id(params.get("playlistId").or_else(|| params.get("id")))?;
-        if queries::get_playlist(&db.conn, id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-            .is_none()
-        {
-            return Err(SubsonicError::not_found("Playlist"));
-        }
-
-        if let Some(name) = params.get("name") {
-            queries::rename_playlist(&db.conn, id, name)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        }
-
-        let mut doomed: Vec<usize> = params
-            .all("songIndexToRemove")
-            .filter_map(|i| i.parse::<usize>().ok())
-            .collect();
-        if !doomed.is_empty() {
-            doomed.sort_unstable();
-            doomed.dedup();
-            let mut ids = queries::playlist_track_ids(&db.conn, id)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-            for index in doomed.into_iter().rev() {
-                if index < ids.len() {
-                    ids.remove(index);
-                }
+        respond_db_as(&state, &auth, Role::User, |db, b| {
+            let id = playlist_id(params.get("playlistId").or_else(|| params.get("id")))?;
+            if queries::get_playlist(&db.conn, id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+                .is_none()
+            {
+                return Err(SubsonicError::not_found("Playlist"));
             }
-            queries::set_playlist_tracks(&db.conn, id, &ids)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        }
 
-        let added: Vec<i64> = params
-            .all("songIdToAdd")
-            .filter_map(|s| s.parse::<i64>().ok())
-            .collect();
-        if !added.is_empty() {
-            queries::add_tracks(&db.conn, id, &added)
-                .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        }
+            if let Some(name) = params.get("name") {
+                queries::rename_playlist(&db.conn, id, name)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            }
 
-        Ok(b)
+            let mut doomed: Vec<usize> = params
+                .all("songIndexToRemove")
+                .filter_map(|i| i.parse::<usize>().ok())
+                .collect();
+            if !doomed.is_empty() {
+                doomed.sort_unstable();
+                doomed.dedup();
+                let mut ids = queries::playlist_track_ids(&db.conn, id)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+                for index in doomed.into_iter().rev() {
+                    if index < ids.len() {
+                        ids.remove(index);
+                    }
+                }
+                queries::set_playlist_tracks(&db.conn, id, &ids)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            }
+
+            let added: Vec<i64> = params
+                .all("songIdToAdd")
+                .filter_map(|s| s.parse::<i64>().ok())
+                .collect();
+            if !added.is_empty() {
+                queries::add_tracks(&db.conn, id, &added)
+                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            }
+
+            Ok(b)
+        })
     })
+    .await
 }
 
 async fn delete_playlist(
     State(state): State<Arc<AppState>>,
     Query(params): Query<IdParam>,
 ) -> Response {
-    respond_db_as(&state, &params.auth, Role::User, |db, b| {
-        let id = playlist_id(params.id.as_deref())?;
-        match queries::delete_playlist(&db.conn, id) {
-            Ok(true) => Ok(b),
-            Ok(false) => Err(SubsonicError::not_found("Playlist")),
-            Err(e) => Err(SubsonicError::internal(e.to_string())),
-        }
+    offload_response(move || {
+        respond_db_as(&state, &params.auth, Role::User, |db, b| {
+            let id = playlist_id(params.id.as_deref())?;
+            match queries::delete_playlist(&db.conn, id) {
+                Ok(true) => Ok(b),
+                Ok(false) => Err(SubsonicError::not_found("Playlist")),
+                Err(e) => Err(SubsonicError::internal(e.to_string())),
+            }
+        })
     })
+    .await
 }
 
 // ---------------------------------------------------------------------------
@@ -2619,94 +2730,108 @@ fn share_target(
 
 /// `createShare`, as a slice of the library: see `share_target`.
 async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
-    let params = RawParams::parse(raw.as_deref());
-    let auth = params.auth();
-    respond_db_as(&state, &auth, Role::User, |db, b| {
-        let base = share_base()?;
-        let ids: Vec<_> = params
-            .all("id")
-            .map(|raw| parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param("id")))
-            .collect::<Result<_, _>>()?;
-        let target = share_target(db, &ids)?;
-        let (slice, track_ids) =
-            koan_core::helpers::resolve_share(&db.conn, &target).map_err(|e| match e {
-                koan_core::helpers::ShareError::NothingToShare => SubsonicError::not_found("Song"),
-                e => SubsonicError::internal(e.to_string()),
-            })?;
-        let now = chrono::Utc::now().timestamp();
-        let share = queries::shares::create_share(
-            &db.conn,
-            slice,
-            &track_ids,
-            params.get("description"),
-            now,
-            expires_param(&params),
-        )
-        .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        Ok(
-            b.child(XmlNode::new("shares").array_of("share").child(share_node(
-                db,
-                &share,
-                &base,
-                &state.username,
-            )?)),
-        )
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_as(&state, &auth, Role::User, |db, b| {
+            let base = share_base()?;
+            let ids: Vec<_> = params
+                .all("id")
+                .map(|raw| parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param("id")))
+                .collect::<Result<_, _>>()?;
+            let target = share_target(db, &ids)?;
+            let (slice, track_ids) =
+                koan_core::helpers::resolve_share(&db.conn, &target).map_err(|e| match e {
+                    koan_core::helpers::ShareError::NothingToShare => {
+                        SubsonicError::not_found("Song")
+                    }
+                    e => SubsonicError::internal(e.to_string()),
+                })?;
+            let now = chrono::Utc::now().timestamp();
+            let share = queries::shares::create_share(
+                &db.conn,
+                slice,
+                &track_ids,
+                params.get("description"),
+                now,
+                expires_param(&params),
+            )
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            Ok(
+                b.child(XmlNode::new("shares").array_of("share").child(share_node(
+                    db,
+                    &share,
+                    &base,
+                    &state.username,
+                )?)),
+            )
+        })
     })
+    .await
 }
 
 async fn get_shares(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SubsonicParams>,
 ) -> Response {
-    respond_db(&state, &params, |db, b| {
-        let base = share_base()?;
-        let mut node = XmlNode::new("shares").array_of("share");
-        for share in queries::shares::list_shares(&db.conn)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?
-        {
-            node = node.child(share_node(db, &share, &base, &state.username)?);
-        }
-        Ok(b.child(node))
+    offload_response(move || {
+        respond_db(&state, &params, |db, b| {
+            let base = share_base()?;
+            let mut node = XmlNode::new("shares").array_of("share");
+            for share in queries::shares::list_shares(&db.conn)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?
+            {
+                node = node.child(share_node(db, &share, &base, &state.username)?);
+            }
+            Ok(b.child(node))
+        })
     })
+    .await
 }
 
 async fn update_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
-    let params = RawParams::parse(raw.as_deref());
-    let auth = params.auth();
-    respond_db_as(&state, &auth, Role::User, |db, b| {
-        let id = params
-            .get("id")
-            .ok_or_else(|| SubsonicError::missing_param("id"))?;
-        let found = queries::shares::update_share(
-            &db.conn,
-            id,
-            params.get("description"),
-            expires_param(&params),
-        )
-        .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        if found {
-            Ok(b)
-        } else {
-            Err(SubsonicError::not_found("Share"))
-        }
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_as(&state, &auth, Role::User, |db, b| {
+            let id = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?;
+            let found = queries::shares::update_share(
+                &db.conn,
+                id,
+                params.get("description"),
+                expires_param(&params),
+            )
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            if found {
+                Ok(b)
+            } else {
+                Err(SubsonicError::not_found("Share"))
+            }
+        })
     })
+    .await
 }
 
 async fn delete_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
-    let params = RawParams::parse(raw.as_deref());
-    let auth = params.auth();
-    respond_db_as(&state, &auth, Role::User, |db, b| {
-        let id = params
-            .get("id")
-            .ok_or_else(|| SubsonicError::missing_param("id"))?;
-        let found = queries::shares::delete_share(&db.conn, id)
-            .map_err(|e| SubsonicError::internal(e.to_string()))?;
-        if found {
-            Ok(b)
-        } else {
-            Err(SubsonicError::not_found("Share"))
-        }
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond_db_as(&state, &auth, Role::User, |db, b| {
+            let id = params
+                .get("id")
+                .ok_or_else(|| SubsonicError::missing_param("id"))?;
+            let found = queries::shares::delete_share(&db.conn, id)
+                .map_err(|e| SubsonicError::internal(e.to_string()))?;
+            if found {
+                Ok(b)
+            } else {
+                Err(SubsonicError::not_found("Share"))
+            }
+        })
     })
+    .await
 }
 
 /// OpenSubsonic `formPost`: the parameters of an
@@ -2943,7 +3068,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 /// Returns `None` unless `[subsonic]` is enabled and has its own credentials.
 /// `/rest/*` carries no JWT layer, so these credentials alone guard every byte
 /// of the library — they must never be the upstream `[remote]` password.
-pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
+pub fn subsonic_router(pool: Arc<Pool>) -> Option<axum::Router> {
     let cfg = Config::load().unwrap_or_default();
 
     if !cfg.subsonic.enabled {
@@ -2957,8 +3082,8 @@ pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
     }
 
     let state = Arc::new(AppState {
-        users: crate::auth::password::PasswordVerifier::new(db_path.clone()),
-        db_path,
+        users: crate::auth::password::PasswordVerifier::new(pool.clone()),
+        pool,
         username: cfg.subsonic.username.clone(),
         password,
         upstream: koan_core::helpers::subsonic_auth(&cfg),
@@ -2999,9 +3124,10 @@ mod tests {
         koan_core::db::queries::auth::create_user(&db.conn, "owner", "sesame", Role::Admin)
             .unwrap();
 
+        let pool = Arc::new(Pool::new(db_path));
         let state = Arc::new(AppState {
-            users: crate::auth::password::PasswordVerifier::new(db_path.clone()),
-            db_path,
+            users: crate::auth::password::PasswordVerifier::new(pool.clone()),
+            pool,
             username: "testuser".into(),
             password: Some("testpass".into()),
             upstream: None,
@@ -3060,7 +3186,7 @@ mod tests {
     }
 
     fn seed_data(state: &AppState) {
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         queries::upsert_track(
             &db.conn,
             &track_meta("/music/test.flac", "Test Song", "Test Album", 1),
@@ -3073,7 +3199,7 @@ mod tests {
     fn seed_local_file(state: &AppState, dir: &std::path::Path, bytes: &[u8]) -> i64 {
         let path = dir.join("real.flac");
         std::fs::write(&path, bytes).unwrap();
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         queries::upsert_track(
             &db.conn,
             &track_meta(path.to_str().unwrap(), "Test Song", "Test Album", 1),
@@ -3125,7 +3251,7 @@ mod tests {
     fn create_share_picks_the_slice_from_what_was_picked() {
         use koan_core::helpers::ShareTarget;
         let (state, _dir) = test_state();
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let a = queries::upsert_track(&db.conn, &track_meta("/m/a.flac", "A", "One", 1)).unwrap();
         let b = queries::upsert_track(&db.conn, &track_meta("/m/b.flac", "B", "One", 2)).unwrap();
         let album = queries::tracks_by_ids(&db.conn, &[a]).unwrap()[0]
@@ -3419,7 +3545,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let artists = queries::all_artists(&db.conn).unwrap();
         let artist = &artists[0];
 
@@ -3438,7 +3564,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let albums = queries::all_albums(&db.conn).unwrap();
         let album = &albums[0];
 
@@ -3452,12 +3578,91 @@ mod tests {
         assert!(body.contains("Test Song"));
     }
 
+    /// Sequential requests, the shape of a client syncing a library. Ignored:
+    /// a timing to read, not an assertion. `cargo test -p koan-server --release
+    /// -- --ignored --nocapture sequential_request_timing`.
+    #[tokio::test]
+    #[ignore]
+    async fn sequential_request_timing() {
+        const N: usize = 500;
+        let (state, dir) = test_state();
+        seed_data(&state);
+        let db = Database::open(&dir.path().join("test.db")).unwrap();
+        let album = queries::all_albums(&db.conn).unwrap()[0].id;
+        drop(db);
+        let app = build_test_router(state);
+
+        for (label, auth) in [
+            ("shared secret", auth_query("")),
+            ("account", "u=mate&p=hunter22&v=1.16.1&c=test".to_string()),
+        ] {
+            let uri = format!("/rest/getAlbum?{auth}&id={album}");
+            let (status, body) = get_response(app.clone(), &uri).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(body.contains("Test Album"), "{body}");
+            let start = std::time::Instant::now();
+            for _ in 0..N {
+                get_response(app.clone(), &uri).await;
+            }
+            let elapsed = start.elapsed();
+            println!(
+                "{N} x getAlbum ({label}): {elapsed:?}, {:?} per request",
+                elapsed / N as u32
+            );
+        }
+    }
+
+    /// A route that needs no database, timed while slow Subsonic requests hold
+    /// the runtime's two workers — argon2 on a wrong password, which is never
+    /// remembered. Ignored: a timing to read. `cargo test -p koan-server
+    /// --release -- --ignored --nocapture trivial_route_under_load`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    #[ignore]
+    async fn trivial_route_under_load() {
+        const SLOW: usize = 8;
+        const PROBES: usize = 20;
+        let (state, _dir) = test_state();
+        let app = build_test_router(state);
+        let slow_uri = "/rest/getAlbum?u=mate&p=wrong&v=1.16.1&c=test&id=1";
+        let probe_uri = "/rest/getOpenSubsonicExtensions";
+
+        let idle = std::time::Instant::now();
+        get_response(app.clone(), probe_uri).await;
+        let idle = idle.elapsed();
+
+        let started = std::time::Instant::now();
+        let slow: Vec<_> = (0..SLOW)
+            .map(|_| {
+                let app = app.clone();
+                tokio::spawn(async move { get_response(app, slow_uri).await })
+            })
+            .collect();
+        let mut probes = Vec::with_capacity(PROBES);
+        for _ in 0..PROBES {
+            let t = std::time::Instant::now();
+            let (status, _) = get_response(app.clone(), probe_uri).await;
+            assert_eq!(status, StatusCode::OK);
+            probes.push(t.elapsed());
+        }
+        for s in slow {
+            s.await.unwrap();
+        }
+        let slow_total = started.elapsed();
+        probes.sort();
+        println!(
+            "idle probe {idle:?}; under {SLOW} slow requests: median {:?}, max {:?}; \
+             slow requests done in {slow_total:?}",
+            probes[PROBES / 2],
+            probes[PROBES - 1],
+        );
+    }
+
     #[tokio::test]
     async fn test_get_song_by_id() {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let albums = queries::all_albums(&db.conn).unwrap();
         let tracks = queries::tracks_for_album(&db.conn, albums[0].id).unwrap();
         let track = &tracks[0];
@@ -3479,7 +3684,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
 
         let app = build_test_router(state);
@@ -3534,7 +3739,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
 
         let app = build_test_router(state);
@@ -3564,7 +3769,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let album_id = queries::all_albums(&db.conn).unwrap()[0].id;
 
         let app = build_test_router(state);
@@ -3645,7 +3850,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let albums = queries::all_albums(&db.conn).unwrap();
 
         let app = build_test_router(state);
@@ -3728,7 +3933,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let artist_id = queries::all_artists(&db.conn).unwrap()[0].id;
         let album_id = queries::all_albums(&db.conn).unwrap()[0].id;
 
@@ -3805,7 +4010,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let tracks = queries::all_tracks(&db.conn).unwrap();
         let track_id = tracks[0].id;
 
@@ -3827,7 +4032,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
 
         // Two `songId` values — the shape every client sends, and the one
@@ -3930,7 +4135,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let a = queries::upsert_track(&db.conn, &track_meta("/music/a.flac", "A", "Test Album", 1))
             .unwrap();
         let b = queries::upsert_track(&db.conn, &track_meta("/music/b.flac", "B", "Test Album", 2))
@@ -3961,7 +4166,7 @@ mod tests {
         .await;
         assert!(body.contains("status=\"ok\""), "updatePlaylist: {}", body);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let left = queries::playlist_track_ids(&db.conn, id.parse().unwrap()).unwrap();
         assert_eq!(left, vec![c, a]);
     }
@@ -3971,7 +4176,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let tracks = queries::all_tracks(&db.conn).unwrap();
 
         let app = build_test_router(state);
@@ -3988,7 +4193,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
 
         let app = build_test_router(state);
@@ -4014,7 +4219,7 @@ mod tests {
         let (_, body) = get_response(app, &format!("/rest/star?{}&id=al-1", auth_query(""))).await;
         assert!(body.contains("status=\"failed\""), "{}", body);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         assert!(queries::load_favourites(&db.conn).unwrap().is_empty());
     }
 
@@ -4094,7 +4299,7 @@ mod tests {
     #[test]
     fn test_cover_art_id_namespacing() {
         let (state, dir) = test_state();
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         for (n, album) in [(1, "Album One"), (2, "Album One"), (3, "Album Two")] {
             let path = dir.path().join(format!("t{}.flac", n));
             queries::upsert_track(
@@ -4185,7 +4390,7 @@ mod tests {
     }
 
     fn api_key(state: &AppState, username: &str) -> String {
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let user = koan_core::db::queries::auth::get_user_by_username(&db.conn, username)
             .unwrap()
             .unwrap();
@@ -4278,7 +4483,7 @@ mod tests {
         seed_data(&state);
         let second = seed_local_file(&state, dir.path(), b"x");
         let first = {
-            let db = Database::open(&state.db_path).unwrap();
+            let db = Database::open(state.pool.path()).unwrap();
             queries::track_id_by_path(&db.conn, "/music/test.flac")
                 .unwrap()
                 .unwrap()
@@ -4348,7 +4553,7 @@ mod tests {
     async fn test_lyrics_by_song_id() {
         let (state, _dir) = test_state();
         seed_data(&state);
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let id = queries::all_tracks(&db.conn).unwrap()[0].id;
         let uri = format!("/rest/getLyricsBySongId?{}&id={id}", auth_query("f=json"));
 
@@ -4389,7 +4594,7 @@ mod tests {
     #[tokio::test]
     async fn test_opensubsonic_fields() {
         let (state, _dir) = test_state();
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let mut meta = track_meta("/music/a.flac", "Song", "Record", 1);
         meta.date = Some("2020-05-17".into());
         meta.mbid = Some("rec-mbid".into());

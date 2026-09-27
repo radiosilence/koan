@@ -5,6 +5,7 @@ use crossbeam_channel::Sender;
 use koan_core::audio::viz::VizSnapshot;
 use koan_core::auth::{self, parse_duration_secs};
 use koan_core::config::Config;
+use koan_core::db::pool::Pool;
 use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::SharedPlayerState;
 
@@ -29,15 +30,16 @@ pub fn cmd_serve(
     // Validate DB is accessible before starting the server.
     let _db = koan_core::db::connection::Database::open_default().expect("failed to open database");
     let db_path = koan_core::config::db_path();
+    let pool = Arc::new(Pool::new(db_path.clone()));
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
 
     // A server has no one to press "scan": index at start and whenever the
     // library folders change, as the macOS app does.
-    koan_core::helpers::spawn_library_watch(db_path.clone(), |_| {});
+    koan_core::helpers::spawn_library_watch(db_path, |_| {});
 
     if let Some(addr) = mcp_bind {
-        match crate::mcp::spawn_http(addr, state.clone(), cmd_tx.clone(), db_path.clone()) {
+        match crate::mcp::spawn_http(addr, state.clone(), cmd_tx.clone(), pool.clone()) {
             Ok(_) => log::info!("MCP over HTTP at http://{addr}/mcp"),
             Err(e) => {
                 eprintln!("koan: MCP listener on {addr}: {e}");
@@ -49,7 +51,7 @@ pub fn cmd_serve(
     if let Err(e) = run_api_blocking(ApiServerOpts {
         state,
         cmd_tx,
-        db_path,
+        pool,
         port,
         bind,
         subsonic_port,
@@ -119,7 +121,9 @@ where
 pub struct ApiServerOpts {
     pub state: Arc<SharedPlayerState>,
     pub cmd_tx: Sender<PlayerCommand>,
-    pub db_path: PathBuf,
+    /// Shared by every route that reads the library outside GraphQL, and by
+    /// the MCP listener when there is one.
+    pub pool: Arc<Pool>,
     pub port: Option<u16>,
     pub bind: Option<std::net::IpAddr>,
     pub subsonic_port: Option<u16>,
@@ -136,7 +140,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
     let ApiServerOpts {
         state,
         cmd_tx,
-        db_path,
+        pool,
         port,
         bind,
         subsonic_port,
@@ -199,7 +203,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
     };
 
     let auth_route_state = AuthRouteState {
-        db_path: db_path.clone(),
+        pool: pool.clone(),
         private_pem: Arc::new(private_pem),
         public_pem: Arc::new(public_pem),
         access_ttl_secs: access_ttl,
@@ -208,7 +212,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         login_limiter: Arc::new(LoginRateLimiter::default()),
     };
 
-    let schema = build_schema(state, cmd_tx, db_path.clone(), viz);
+    let schema = build_schema(state, cmd_tx, pool.path().to_path_buf(), viz);
 
     if auth_enabled {
         log::info!(
@@ -257,7 +261,7 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // layer. Built before the auth routes take their state.
         let covers = Arc::new(crate::covers::Covers::in_config_dir());
         let ui_routes = crate::ui::router(
-            db_path.clone(),
+            pool.clone(),
             auth_route_state.clone(),
             auth_enabled,
             covers.clone(),
@@ -298,11 +302,11 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // Public by design, so outside the auth layers: each route answers for
         // one share's own tracks and nothing else. The Host guard still applies.
         let share_routes = crate::share::router(
-            db_path.clone(),
+            pool.clone(),
             cfg.sharing.public_url.clone(),
             covers,
         );
-        let subsonic_merged = crate::subsonic::subsonic_router(db_path);
+        let subsonic_merged = crate::subsonic::subsonic_router(pool);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
 
@@ -425,7 +429,7 @@ pub fn start_api_background(
     if let Err(e) = run_api_blocking(ApiServerOpts {
         state,
         cmd_tx,
-        db_path,
+        pool: Arc::new(Pool::new(db_path)),
         port,
         bind,
         subsonic_port,

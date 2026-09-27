@@ -875,7 +875,7 @@ pub fn preview_for_paths(
     base_dir: Option<&Path>,
     check_disk: bool,
 ) -> Result<OrganizeResult, OrganizeError> {
-    let db = Database::open_default()?;
+    let db = crate::db::pool::shared().get()?;
     let base = resolve_base_dir(base_dir)?;
     plan(&db, Selection::Paths(paths), pattern, &base, check_disk)
 }
@@ -887,7 +887,7 @@ pub fn execute_for_paths(
     pattern: &str,
     base_dir: Option<&Path>,
 ) -> Result<OrganizeResult, OrganizeError> {
-    let db = Database::open_default()?;
+    let db = crate::db::pool::shared().get()?;
     let base = resolve_base_dir(base_dir)?;
     run(&db, Selection::Paths(paths), pattern, &base)
 }
