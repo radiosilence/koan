@@ -80,6 +80,21 @@ img.missing { visibility: hidden; }
 .tracks .d { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; flex: none; }
 .tracks button { flex: none; padding: 4px 10px; font-size: 16px; line-height: 1; }
 
+/* Sort and filter: a row above the grid, a sheet on a phone. */
+.browse { margin: -4px 0 20px; }
+.browse > summary { display: none; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; color: var(--dim); font-size: 13px; }
+.toolbar label { display: inline-flex; align-items: center; gap: 6px; }
+.toolbar select, .toolbar input:not([type]) , .toolbar input[inputmode] { font-size: 13px; padding: 5px 8px; background: var(--panel); }
+.toolbar select { color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: inherit; max-width: 12em; }
+.toolbar .years input { width: 4.5em; }
+.toolbar .check input { accent-color: var(--accent); }
+.toolbar-actions { display: inline-flex; gap: 10px; align-items: center; }
+.toolbar-actions .apply { padding: 5px 12px; }
+.js .toolbar .apply { display: none; }
+.reset, .reshuffle { color: var(--dim); }
+.badge { display: inline-block; min-width: 1.5em; padding: 0 5px; border-radius: 99px; background: var(--accent); color: #0b1a12; font-size: 11px; font-weight: 700; text-align: center; }
+
 /* Search. */
 .search input { width: 100%; max-width: 560px; font-size: 16px; padding: 10px 12px; }
 
@@ -134,6 +149,17 @@ body.playing .i-pause { display: inline; }
   .now-playing button.icon.primary { width: 60px; height: 60px; }
   .now-playing button.icon svg { width: 24px; height: 24px; }
   .now-playing .scrub { font-size: 13px; margin-top: 8px; }
+  .browse > summary { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; padding: 7px 12px;
+    border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); font-size: 14px; }
+  .browse > summary::-webkit-details-marker { display: none; }
+  .browse[open] > summary { border-color: var(--accent); }
+  .toolbar { flex-direction: column; align-items: stretch; gap: 12px; margin-top: 10px; padding: 14px; font-size: 15px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .toolbar label { justify-content: space-between; }
+  .toolbar select, .toolbar input[inputmode] { font-size: 16px; }
+  .toolbar .check { justify-content: flex-start; }
+  .js .toolbar .apply { display: inline-block; }
+  .toolbar-actions { justify-content: space-between; }
 }
 
 /* Sign-in. */
