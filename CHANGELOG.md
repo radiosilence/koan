@@ -23,9 +23,20 @@
 - **The shared SwiftUI sources build for iOS, and CI checks it** (`just ios-typecheck`). Images go through a `PlatformImage` alias. The views that move layers in the render server (the wash, the playing bars, the seek bar) share a `LayerView` base and a `PlatformViewRepresentable` bridge, so AppKit and UIKit run the same code. Startup, search scheduling and search submission moved out of the macOS scene root into `AppState` and `SearchModel`, where any shell reaches them.
 
 ## Unreleased
+### Changed
+
+- **Subsonic clients sign in with koan accounts.** \`/rest/*\` accepts \`p=\` (plain or \`enc:\` hex) checked against the account's argon2 hash, so the web UI login works in Subsonic clients too; a successful check is remembered for ten minutes, keyed on the stored hash so a password change ends it. Token auth needs the plaintext on the server, so it remains only for the \`[subsonic]\` shared secret, which is now optional. \`readonly\` accounts get code 50 from every endpoint that writes (stars, scrobbles, playlists, shares) and \`getUser\` reports each account's real roles. koan's own client sends \`p=enc:\` over HTTPS and the salted token over HTTP.
+- **Releases of the macOS app are signed with a Developer ID and notarised.** The release job imports the certificate into a keychain of its own, signs the app with the hardened runtime and a secure timestamp, signs the DMG, has Apple notarise it and staples the ticket, so a downloaded \`Koan.dmg\` opens without the quarantine workaround. \`just macos-notarize\` does the same locally. Without the signing secrets (a fork) the build is ad-hoc signed as before.
+
+## Unreleased
+
+### Added
+
+- **Web UI.** A server serves a small browser UI at `/`: sign in, browse albums (newest first), artists and search, and play in the browser. Tracks the browser can decode are decoded ahead and started on the sample the last one ends, the same engine as the share page, now one file both load. The queue lives in the browser and survives a reload; the transport has lock-screen controls through the Media Session API. Server-rendered HTML with Datastar for search, paging and the share button; navigation swaps only the page content, so playback continues across pages. Sign-in is koan's own session in `HttpOnly` cookies: a lapsed access cookie is renewed from the refresh cookie (`/auth/resume` for page loads, `/auth/renew` for an open page), so no token reaches page script.
 
 ### Fixed
 
+- **Browser sign-in set only one cookie.** `/auth/login`, `/auth/refresh` and `/auth/logout` sent their cookies as a header array, which keeps only the last value per name, so browsers received the stale-path clear and never the access or refresh cookie.
 - **The share page plays on iPhone.** iOS starts audio only inside the tap itself; the player created its audio context there but resumed it after fetching and decoding the first track, which iOS no longer counts as the tap, so nothing played. The context and the streaming element are now unlocked in the gesture, and the page declares itself a media player (`navigator.audioSession`), so the ring/silent switch no longer mutes Web Audio.
 
 ## Unreleased

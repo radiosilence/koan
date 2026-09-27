@@ -193,7 +193,18 @@ macos-bundle: macos-build
     # needs a paid developer account — a self-signed certificate is no more
     # trusted than ad-hoc. Direct downloads clear the quarantine flag by hand;
     # the Homebrew cask does it in a postflight.
-    codesign --force --deep --sign "${KOAN_SIGN_IDENTITY:--}" "$app"
+    # A Developer ID signature is for distribution: notarisation requires the
+    # hardened runtime and a secure timestamp, and only an Apple-issued
+    # identity can get the timestamp, so a self-signed dev certificate keeps
+    # the plain signature.
+    id="${KOAN_SIGN_IDENTITY:--}"
+    case "$id" in
+        "Developer ID Application"*)
+            codesign --force --options runtime --timestamp --sign "$id" "$app" ;;
+        *)
+            codesign --force --deep --sign "$id" "$app" ;;
+    esac
+    codesign --verify --strict --verbose=2 "$app"
     echo "built $app"
 
 # Create the self-signed certificate that dev builds sign with.
@@ -324,6 +335,24 @@ macos-dmg: macos-bundle
     rm -f "$out/Koan.dmg"
     hdiutil create -volname "koan" -srcfolder "$out/kōan.app" -ov -format UDZO "$out/Koan.dmg"
     echo "built $out/Koan.dmg"
+
+# Needs KOAN_SIGN_IDENTITY (a "Developer ID Application" identity in the
+# keychain) and an App Store Connect API key: APPLE_API_KEY_PATH (the .p8),
+# APPLE_API_KEY_ID and APPLE_API_ISSUER_ID. The stapled ticket lets Gatekeeper
+# open the DMG without asking and without the network.
+#
+# Sign the DMG with the Developer ID, notarise it with Apple, and staple the ticket.
+macos-notarize: macos-dmg
+    #!/usr/bin/env bash
+    set -euo pipefail
+    dmg={{app_dir}}/.build/pkg/Koan.dmg
+    codesign --force --timestamp --sign "$KOAN_SIGN_IDENTITY" "$dmg"
+    xcrun notarytool submit "$dmg" \
+        --key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY_ID" --issuer "$APPLE_API_ISSUER_ID" \
+        --wait --timeout 30m
+    xcrun stapler staple "$dmg"
+    xcrun stapler validate "$dmg"
+    spctl --assess --type open --context context:primary-signature --verbose=2 "$dmg"
 
 # Run the macOS app's tests.
 macos-test: macos-ffi
