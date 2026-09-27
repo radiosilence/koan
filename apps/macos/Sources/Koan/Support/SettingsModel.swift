@@ -171,12 +171,7 @@ final class SettingsModel {
     func syncNow(full: Bool) {
         let engine = self.engine
         Task {
-            // `runReporting` rather than `run`: the counts exist while the sync
-            // is running and used to be visible only in the log, so the row said
-            // "Syncing with server" for a minute and nothing more.
-            // Not cancellable: the sync loop never reads the cancel flag, and a
-            // stop button that does nothing is worse than none.
-            let result = await activity.runReporting(
+            let result = await activity.run(
                 full ? "Full sync with server" : "Syncing with server",
                 uses: [.remoteTracks],
                 followsSync: true
