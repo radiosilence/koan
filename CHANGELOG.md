@@ -4,7 +4,7 @@
 
 ### Added
 
-- **koan.rocks.** The project website, as hand-written static HTML and CSS in `site/` with no build step and no tracking. The Site workflow builds `ghcr.io/radiosilence/koan-site` (nano-web) on every push to main, tagged `sha-<commit>` and `latest`, and asks the jaritanet deployment to pick it up.
+- **koan.rocks.** The project website: one hand-written HTML page in `site/public/` styled with Tailwind, with no JavaScript and no tracking. The stylesheet is compiled by the standalone Tailwind CLI (`mise run css` in `site/`), so the site has no package manifest. The Site workflow builds `ghcr.io/radiosilence/koan-site` (nano-web) on every push to main, tagged `sha-<commit>` and `latest`, and asks the jaritanet deployment to pick it up.
 
 ### Changed
 
