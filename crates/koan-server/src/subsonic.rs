@@ -3045,6 +3045,10 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         // Streaming + media
         .route("/rest/stream", get(stream).post(stream))
         .route("/rest/stream.view", get(stream).post(stream))
+        // `download` is the untranscoded original, which is all `stream` ever
+        // serves here. koan's own download queue fetches through it.
+        .route("/rest/download", get(stream).post(stream))
+        .route("/rest/download.view", get(stream).post(stream))
         .route("/rest/getCoverArt", get(get_cover_art).post(get_cover_art))
         .route(
             "/rest/getCoverArt.view",
@@ -4507,6 +4511,23 @@ mod tests {
 
         assert_eq!(status, StatusCode::OK);
         assert_eq!(body.len(), 1000);
+    }
+
+    #[tokio::test]
+    async fn test_download_serves_the_file() {
+        let (state, dir) = test_state();
+        let track_id = seed_local_file(&state, dir.path(), &[7u8; 1000]);
+
+        let app = build_test_router(state);
+        let (status, _, body) = get_with_range(
+            app,
+            &format!("/rest/download?{}&id={}", auth_query(""), track_id),
+            "bytes=0-99",
+        )
+        .await;
+
+        assert_eq!(status, StatusCode::PARTIAL_CONTENT);
+        assert_eq!(body, vec![7u8; 100]);
     }
 
     // --- Cover art ---
