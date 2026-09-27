@@ -34,6 +34,18 @@ pub struct Config {
     pub graphql: GraphqlConfig,
     pub subsonic: SubsonicConfig,
     pub auth: AuthConfig,
+    pub sharing: SharingConfig,
+}
+
+/// Share links this koan serves itself.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SharingConfig {
+    /// Where this server is reached from outside, e.g. `https://koan.example.com`.
+    /// Share links are built on it; without it a server makes no links, since
+    /// it cannot know which of its addresses a stranger can reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

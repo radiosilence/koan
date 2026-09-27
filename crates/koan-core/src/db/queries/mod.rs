@@ -10,6 +10,7 @@ pub mod playlists;
 pub mod radio;
 mod scan_cache;
 mod search;
+pub mod shares;
 mod stats;
 pub mod tracks;
 pub mod vectors;

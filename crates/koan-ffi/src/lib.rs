@@ -1954,7 +1954,9 @@ impl KoanEngine {
         .await
     }
 
-    /// Create a public share link on the remote server for these tracks.
+    /// Create a public share link for these tracks, on the remote server when
+    /// one is configured (which may be a koan server) and served by this koan
+    /// otherwise.
     ///
     /// Only tracks the server knows about can go in it — the link points at the
     /// server, so a local-only file has nothing for it to point at. A mixed

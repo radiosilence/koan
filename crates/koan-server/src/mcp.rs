@@ -162,10 +162,14 @@ impl ServerHandler for KoanMcpServer {
                `deletePlaylist`, `playPlaylist`. Synced to Subsonic/Navidrome\n\
              - **Radio**: `enableRadio`, `disableRadio` — auto-queues similar tracks\n\
              - **Devices**: query `devices`; `setDevice`/`clearDevice` need `KOAN_MCP_ADMIN=1`\n\
-             - **History**: query `playHistory`, `similarArtists`\n\n\
+             - **History**: query `playHistory`, `similarArtists`\n\
+             - **Sharing**: `createShare(trackIds, description)` returns a public link anyone can \
+               open without an account; query `shares` to list them, `updateShare` to set an \
+               expiry, `deleteShare` to revoke one. A link is public, so confirm with the user \
+               before making one\n\n\
              ## Not available\n\
              Admin mutations — `organize*` (moves files on disk), `updateConfig`, \
-             `triggerScan`, `createShare` — are refused unless `KOAN_MCP_ADMIN=1` is set.\n\n\
+             `triggerScan` — are refused unless `KOAN_MCP_ADMIN=1` is set.\n\n\
              ## ID conventions\n\
              - Track IDs: integers from the library database\n\
              - Queue item IDs: UUIDs assigned when tracks enter the queue",

@@ -762,6 +762,10 @@ static SUBSONIC_CLIENT: std::sync::LazyLock<parking_lot::Mutex<CachedClient>> =
 pub enum ShareError {
     #[error("no remote server is configured")]
     NoRemote,
+    #[error("sharing.public_url is not set, so there is no address to give out")]
+    NoPublicUrl,
+    #[error("none of these tracks are in the library")]
+    NothingToShare,
     #[error("none of these tracks are on the server, so a link has nothing to point at")]
     NothingRemote,
     #[error("the server refused to share these: {0}")]
@@ -782,21 +786,27 @@ pub struct ShareOutcome {
     pub skipped: usize,
 }
 
-/// Create a public share link on the remote server for these tracks.
+/// Create a public share link for these tracks.
+///
+/// With a remote Subsonic server configured, the link is made there: a laptop
+/// or phone shares through the server it plays from, which may be another
+/// koan. Without one this koan is the server, and makes the link itself.
 ///
 /// A link points at the server, so only tracks the server knows about can go in
 /// it. A mixed selection shares the part that can be shared and reports the
 /// rest rather than failing whole — half a link beats none, as long as the
 /// caller says which half.
 ///
-/// Network-bound. Callers keep it off whatever thread draws.
+/// May be network-bound. Callers keep it off whatever thread draws.
 pub fn create_share(
     db: &Database,
     cfg: &Config,
     track_ids: &[i64],
     description: Option<&str>,
 ) -> Result<ShareOutcome, ShareError> {
-    let client = subsonic_client(cfg).ok_or(ShareError::NoRemote)?;
+    let Some(client) = subsonic_client(cfg) else {
+        return create_native_share(db, cfg, track_ids, description);
+    };
 
     // One query, not one per track: sharing an artist is thousands of tracks.
     let rows = queries::tracks_by_ids(&db.conn, track_ids)?;
@@ -836,6 +846,49 @@ pub fn create_share(
         shared,
         skipped: track_ids.len().saturating_sub(shared),
     })
+}
+
+/// A share this koan serves at `{sharing.public_url}/share/{id}`.
+fn create_native_share(
+    db: &Database,
+    cfg: &Config,
+    track_ids: &[i64],
+    description: Option<&str>,
+) -> Result<ShareOutcome, ShareError> {
+    let base = cfg
+        .sharing
+        .public_url
+        .as_deref()
+        .filter(|u| !u.trim().is_empty())
+        .ok_or(ShareError::NoPublicUrl)?;
+    let known: std::collections::HashSet<i64> = queries::tracks_by_ids(&db.conn, track_ids)?
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    // The order asked for, which is the order the page plays them in.
+    let ids: Vec<i64> = track_ids
+        .iter()
+        .copied()
+        .filter(|id| known.contains(id))
+        .collect();
+    if ids.is_empty() {
+        return Err(ShareError::NothingToShare);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let share = queries::shares::create_share(&db.conn, &ids, description, now, None)?;
+    Ok(ShareOutcome {
+        url: share_url(base, &share.id),
+        id: share.id,
+        shared: ids.len(),
+        skipped: track_ids.len() - ids.len(),
+    })
+}
+
+/// A native share's public address.
+pub fn share_url(public_url: &str, id: &str) -> String {
+    format!("{}/share/{id}", public_url.trim_end_matches('/'))
 }
 
 /// The album's own remote ID, but only when `selected` covers every track on
@@ -1630,5 +1683,38 @@ mod client_cache_tests {
             !Arc::ptr_eq(&first, &relogged),
             "new credentials must not keep serving the client signed with the old ones"
         );
+    }
+}
+
+#[cfg(test)]
+mod native_share_tests {
+    use super::*;
+    use crate::db::queries::{sample_meta, upsert_track};
+
+    #[test]
+    fn a_standalone_server_shares_natively_in_the_order_asked() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let db = Database { conn };
+        let a = upsert_track(&db.conn, &sample_meta("A", "X", "Y")).unwrap();
+        let b = upsert_track(&db.conn, &sample_meta("B", "X", "Y")).unwrap();
+        let mut cfg = Config::default();
+        assert!(matches!(
+            create_share(&db, &cfg, &[a], None),
+            Err(ShareError::NoPublicUrl)
+        ));
+        cfg.sharing.public_url = Some("https://koan.example/".into());
+        let out = create_share(&db, &cfg, &[b, 9999, a], Some("mix")).unwrap();
+        assert_eq!(out.url, format!("https://koan.example/share/{}", out.id));
+        assert_eq!((out.shared, out.skipped), (2, 1));
+        let share = queries::shares::get_share(&db.conn, &out.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(share.track_ids, [b, a]);
+        assert!(matches!(
+            create_share(&db, &cfg, &[9999], None),
+            Err(ShareError::NothingToShare)
+        ));
     }
 }

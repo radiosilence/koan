@@ -775,6 +775,55 @@ impl MutationRoot {
 
     // -- Sharing --
 
+    /// Revoke a share link served by this server. Its address then answers
+    /// exactly as one that never existed.
+    async fn delete_share(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        with_db(ctx, move |db| {
+            let found = queries::shares::delete_share(&db.conn, &id)
+                .map_err(|e| super::internal_error("db", e))?;
+            Ok(GqlStatus {
+                success: found,
+                message: if found {
+                    "revoked".into()
+                } else {
+                    "no such share".into()
+                },
+            })
+        })
+        .await
+    }
+
+    /// Change a share link's description and expiry (unix seconds; omit to
+    /// never expire).
+    async fn update_share(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+        description: Option<String>,
+        expires_at: Option<i64>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        with_db(ctx, move |db| {
+            let found =
+                queries::shares::update_share(&db.conn, &id, description.as_deref(), expires_at)
+                    .map_err(|e| super::internal_error("db", e))?;
+            Ok(GqlStatus {
+                success: found,
+                message: if found {
+                    "updated".into()
+                } else {
+                    "no such share".into()
+                },
+            })
+        })
+        .await
+    }
+
     async fn create_share(
         &self,
         ctx: &Context<'_>,

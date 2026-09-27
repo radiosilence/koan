@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -275,6 +275,25 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+
+        -- Share links this koan serves itself. The tracks are an explicit list,
+        -- not a query: what a link names is all an anonymous visitor can play,
+        -- so it must not grow when the library does.
+        CREATE TABLE IF NOT EXISTS shares (
+            id           TEXT PRIMARY KEY,
+            description  TEXT,
+            created_at   INTEGER NOT NULL,
+            expires_at   INTEGER,
+            visits       INTEGER NOT NULL DEFAULT 0,
+            last_visited INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS share_tracks (
+            share_id TEXT NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL,
+            track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            PRIMARY KEY (share_id, position)
+        );
         -- Expiry was indexed and never used: the only query that reads it is the
         -- cleanup sweep, whose `revoked = 1 OR expires_at <= ?` spans two columns
         -- and reads the table either way. An index nothing reads is a cost paid

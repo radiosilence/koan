@@ -6,6 +6,7 @@
 pub mod auth;
 pub mod graphql;
 pub mod mcp;
+pub mod share;
 pub mod subsonic;
 
 // Re-exports for downstream convenience.
