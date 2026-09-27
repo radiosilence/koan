@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Changed
+
+- **Releases of the macOS app are signed with a Developer ID and notarised.** The release job imports the certificate into a keychain of its own, signs the app with the hardened runtime and a secure timestamp, signs the DMG, has Apple notarise it and staples the ticket, so a downloaded \`Koan.dmg\` opens without the quarantine workaround. \`just macos-notarize\` does the same locally. Without the signing secrets (a fork) the build is ad-hoc signed as before.
+
+## Unreleased
+
 ### Added
 
 - **Web UI.** A server serves a small browser UI at `/`: sign in, browse albums (newest first), artists and search, and play in the browser. Tracks the browser can decode are decoded ahead and started on the sample the last one ends, the same engine as the share page, now one file both load. The queue lives in the browser and survives a reload; the transport has lock-screen controls through the Media Session API. Server-rendered HTML with Datastar for search, paging and the share button; navigation swaps only the page content, so playback continues across pages. Sign-in is koan's own session in `HttpOnly` cookies: a lapsed access cookie is renewed from the refresh cookie (`/auth/resume` for page loads, `/auth/renew` for an open page), so no token reaches page script.
