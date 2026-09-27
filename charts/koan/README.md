@@ -30,9 +30,11 @@ kubectl exec -it deploy/koan -- koan auth setup
 | `image.repository` | `ghcr.io/radiosilence/koan` | Container image. |
 | `image.tag` | `""` | Defaults to `v{{ .Chart.AppVersion }}`. |
 | `image.pullPolicy` | `IfNotPresent` | |
+| `service.name` | full name | The API Service's name, for routing that already expects one. |
 | `api.port` | `4000` | GraphQL/Subsonic port. |
 | `mcp.enabled` | `true` | Serve MCP over HTTP. |
 | `mcp.port` | `8081` | MCP port. Only a trusted gateway should ever reach it. |
+| `mcp.serviceName` | `<full name>-mcp` | The MCP Service's name. |
 | `library.hostPath` | `""` | Host path to the music library, mounted read-only at `/music`. |
 | `library.existingClaim` | `""` | PVC name to use instead of a host path. |
 | `state.hostPath` | `""` | Host path for config, index and auth keys, mounted at `/config`. |

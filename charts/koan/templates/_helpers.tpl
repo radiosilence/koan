@@ -41,3 +41,11 @@ publishes.
 {{- define "koan.image" -}}
 {{- printf "%s:%s" .Values.image.repository (.Values.image.tag | default (printf "v%s" .Chart.AppVersion)) -}}
 {{- end -}}
+
+{{- define "koan.apiServiceName" -}}
+{{- .Values.service.name | default (include "koan.fullname" .) -}}
+{{- end -}}
+
+{{- define "koan.mcpServiceName" -}}
+{{- .Values.mcp.serviceName | default (printf "%s-mcp" (include "koan.fullname" .)) -}}
+{{- end -}}

@@ -10,6 +10,11 @@ image:
   tag: ""
   pullPolicy: IfNotPresent
 
+service:
+  # -- The API Service's name. Defaults to the release's full name; set it
+  # when something routing to koan already expects another.
+  name: ""
+
 api:
   # -- Passed to the container as --port. The image already defaults to
   # 4000; this only matters if it needs to differ.
@@ -20,6 +25,8 @@ mcp:
   # networkPolicy.mcp.from admits can reach it.
   enabled: true
   port: 8081
+  # -- The MCP Service's name. Defaults to "<full name>-mcp".
+  serviceName: ""
 
 # The library is always mounted read-only; koan only ever reads it. Set
 # exactly one of hostPath or existingClaim.
