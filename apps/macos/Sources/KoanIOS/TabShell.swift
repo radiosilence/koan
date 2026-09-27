@@ -17,6 +17,8 @@ import SwiftUI
 struct TabShell: View {
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
+    @Environment(PlaylistsModel.self) private var playlists
     @State private var showingNowPlaying = false
     /// Which tab is showing.
     ///
@@ -77,6 +79,16 @@ struct TabShell: View {
             .sheet(isPresented: $showingNowPlaying) {
                 NowPlayingSheet()
                     .presentationDetents([.large])
+            }
+            // What `RootView` does for the wide layout: the one place a library
+            // change reaches the app's own lists, and the last dependable
+            // moment to save the queue before iOS suspends the app.
+            .reloading(on: 0) {
+                library.libraryChanged()
+                playlists.load()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
+                Task { await player.saveSession() }
             }
             .alert(
                 "Something went wrong",
@@ -141,7 +153,7 @@ struct TabShell: View {
     /// from and must not move the selection.
     private static func tab(for section: Navigator.Section?) -> TabID? {
         switch section {
-        case .albums, .artists, .favourites, .playHistory, .playlist: .library
+        case .albums, .artists, .favourites, .playHistory, .downloads, .playlist: .library
         case .searchResults: .search
         case .queue: .queue
         case .none: nil

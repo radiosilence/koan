@@ -9,6 +9,7 @@ use thiserror::Error;
 
 #[cfg(target_os = "macos")]
 use super::device;
+use super::fade::{FadeControl, Fader};
 
 #[derive(Debug, Error)]
 pub enum EngineError {
@@ -41,6 +42,7 @@ struct CallbackData {
     /// Set true while the render callback is executing.
     /// Drop spins on this to avoid tearing down while a callback is in flight.
     in_callback: Arc<AtomicBool>,
+    fader: Fader,
 }
 
 // SAFETY: `rtrb::Consumer` is `!Send` due to internal raw pointers, but our usage is
@@ -65,6 +67,7 @@ pub struct AudioEngine {
     callback_data: *mut CallbackData,
     running: Arc<AtomicBool>,
     in_callback: Arc<AtomicBool>,
+    fade: Arc<FadeControl>,
 }
 
 // SAFETY: AudioEngine contains an AudioUnit (opaque C pointer) and a *mut CallbackData.
@@ -89,6 +92,7 @@ impl AudioEngine {
     ) -> Result<Self> {
         let running = Arc::new(AtomicBool::new(false));
         let in_callback = Arc::new(AtomicBool::new(false));
+        let fade = FadeControl::new();
 
         let desc = AudioComponentDescription {
             componentType: kAudioUnitType_Output,
@@ -164,6 +168,7 @@ impl AudioEngine {
             running: running.clone(),
             samples_played,
             in_callback: in_callback.clone(),
+            fader: Fader::new(fade.clone(), sample_rate),
         }));
 
         let render_cb = AURenderCallbackStruct {
@@ -189,6 +194,7 @@ impl AudioEngine {
             callback_data,
             running,
             in_callback,
+            fade,
         })
     }
 
@@ -210,6 +216,10 @@ impl AudioEngine {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+
+    pub fn fade(&self) -> &FadeControl {
+        &self.fade
     }
 }
 
@@ -350,23 +360,14 @@ unsafe extern "C" fn render_callback(
     // happens to free that block, which is why this read as a double free in
     // `AudioUnitUninitialize` and, before that, in `AudioUnitSetProperty`.
     let capacity = buf.mDataByteSize as usize / mem::size_of::<f32>();
-    let wanted = (in_number_frames * channels) as usize;
-    if wanted > capacity {
-        log::warn!(
-            "CoreAudio buffer holds {} samples but {} frames x {} channels were asked for",
-            capacity,
-            in_number_frames,
-            channels
-        );
-    }
-    let total_samples = wanted.min(capacity);
+    let total_samples = ((in_number_frames * channels) as usize).min(capacity);
     if buf.mData.is_null() || total_samples == 0 {
         data.in_callback.store(false, Ordering::Release);
         return 0;
     }
     if !(buf.mData as usize).is_multiple_of(mem::align_of::<f32>()) {
-        log::error!("CoreAudio buffer not aligned for f32");
-        // Fill silence rather than risking UB from an unaligned cast.
+        // Fill silence rather than risking UB from an unaligned cast. No log:
+        // this is the render thread.
         for i in 0..buffer_list.mNumberBuffers as usize {
             let b = unsafe { &mut *buffer_list.mBuffers.as_mut_ptr().add(i) };
             if !b.mData.is_null() {
@@ -380,8 +381,9 @@ unsafe extern "C" fn render_callback(
     }
     let out_ptr = buf.mData as *mut f32;
 
+    let channels = channels as usize;
     let available = data.consumer.slots();
-    let to_read = available.min(total_samples);
+    let to_read = available.min(data.fader.readable(total_samples, channels));
 
     if to_read > 0
         && let Ok(chunk) = data.consumer.read_chunk(to_read)
@@ -400,6 +402,9 @@ unsafe extern "C" fn render_callback(
         chunk.commit_all();
         data.samples_played
             .fetch_add(copy_total as u64, Ordering::AcqRel);
+        // SAFETY: the first `copy_total` samples were just written above.
+        let written = unsafe { std::slice::from_raw_parts_mut(out_ptr, copy_total) };
+        data.fader.apply(written, channels);
     }
 
     // Zero remaining frames on underrun — silence > glitches.

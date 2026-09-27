@@ -1,3 +1,6 @@
+#if canImport(AppKit)
+import AppKit
+#endif
 import KoanFFI
 import SwiftUI
 
@@ -39,78 +42,45 @@ struct RootView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
     @Environment(SearchModel.self) private var search
-    @Environment(PlayerModel.self) private var player
-    /// Read here only to hand back to the window background — see below.
-    @Environment(CoverArtCache.self) private var art
-    /// Read for the wash a playlist page sits in: its colour is the first
-    /// record in it, since a playlist has no cover of its own.
+    /// Held for `reloading` below; nothing on it is read in this body.
     @Environment(PlaylistsModel.self) private var playlists
+    /// Held for the closures below — the artwork sheet, the session save.
+    /// Nothing on it is read in this body: what is playing is read by the
+    /// views that draw it, and by `RecordRoom` for the colour of the window.
+    @Environment(PlayerModel.self) private var player
 
-    @AppStorage("showLyrics") private var showLyrics = false
+    /// Read for the window's own glass — the toolbar and the transport's soft
+    /// edge, which are the platform's rather than koan's and which no step of
+    /// this setting used to reach.
+    @AppStorage("graphics") private var graphics = Graphics.full
     @State private var transportHeight: CGFloat = 0
-    /// The colour of the record playing. The app's own accent is a neutral, so
-    /// the only colour in the chrome is the one the music brought.
-    @State private var recordTint: Color?
     /// Watched rather than inferred from the measured width: a collapsed
     /// sidebar still reports its last width, so the transport kept a gap where
     /// it used to be.
     @State private var columns: NavigationSplitViewVisibility = .automatic
 
-    /// The record the room takes its colour from — both the wash on the window
-    /// and the tint on the controls, which are the same answer and were once
-    /// two.
-    ///
-    /// A page about one record answers with it: an album with its own sleeve, a
-    /// playlist with the first of its records, the same one that leads its
-    /// mosaic. Every other page — a grid, a list of artists, favourites,
-    /// history — is not about any record in particular, so it answers with the
-    /// one playing. The room is coloured by the music wherever you have
-    /// wandered off to, and only a page that disagrees says otherwise.
-    private var colourSource: AlbumArtwork.Source? {
-        switch nav.current {
-        case .album(let id): .album(id)
-        case .section(.playlist(let id)): playlists.covers[id]?.first ?? player.currentArtwork
-        default: player.currentArtwork
-        }
-    }
-
     var body: some View {
-        @Bindable var library = library
-        @Bindable var search = search
         @Bindable var ui = ui
-
-        // The window background is evaluated by the *scene*, outside every
-        // environment `RootView` was handed, so anything it needs is captured
-        // here. Reading an `@Environment` inside that closure — including to
-        // put one back — traps, and the app dies on launch.
-        let wash = colourSource
-        let washDrifts = player.isPlaying
-        let artCache = art
-        // Bound here rather than built in the modifier below, because the
-        // container it goes in differs by platform and `#if` cannot straddle a
-        // closure's braces. The scene evaluates it outside every environment
-        // this view was handed, so it is handed them back explicitly.
-        let washLayer = ZStack {
-            Rectangle().fill(.background)
-            ArtworkBleed(source: wash, drifts: washDrifts)
-                .environment(artCache)
-        }
 
         NavigationSplitView(columnVisibility: $columns) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 190, ideal: 215, max: 290)
         } detail: {
             StageView()
-                .clearsTransport(transportHeight)
+                .clearsTransport(transportHeight, glass: graphics.usesWindowGlass)
                 // A page fills the column whether or not it has anything in it
                 // to fill it with. Results while the query is still running
                 // measure nothing, and an unfilled page leaves the transport
                 // and the scroll edges sized to it.
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .inspector(isPresented: $showLyrics) {
+        .inspector(isPresented: $ui.showLyrics) {
             LyricsPanel()
                 .inspectorColumnWidth(min: 260, ideal: 320, max: 460)
+                // The column animates on its own; its contents do not come
+                // with it. Without this the stage slides over and the pane
+                // then appears whole in one frame, a fifth of a second later.
+                .transition(.move(edge: .trailing))
                 // The toggle belongs to the inspector rather than the window, so
                 // it sits at the pane's leading edge and moves with it. In the
                 // window's trailing group the pane opened out from underneath
@@ -118,7 +88,7 @@ struct RootView: View {
                 .toolbar {
                     ToolbarItem(placement: .primaryAction) {
                         Button {
-                            showLyrics.toggle()
+                            ui.toggleLyrics()
                         } label: {
                             Label("Lyrics", systemImage: Icon.lyrics)
                         }
@@ -126,66 +96,49 @@ struct RootView: View {
                     }
                 }
         }
-        // The queue is a list of names, and the record playing is the only
-        // thing in it with a colour. On the *window* rather than behind the
-        // queue: nothing inside a split view column reaches past the toolbar's
-        // inset, and a wash that stops in a line under the toolbar is worse
-        // than none. An album page washes its own header, so the window stays
-        // out of its way.
-        // A window on the Mac, the navigation container on iOS: the same
-        // intent, and neither platform has the other's container.
-        #if os(macOS)
-        .containerBackground(for: .window) { washLayer }
-        #else
-        .containerBackground(for: .navigation) { washLayer }
-        #endif
-        .task(id: colourSource) {
-            // Animated at the point the colour changes rather than by an
-            // `.animation(_:value:)` on the view. That modifier animates *every*
-            // animatable change in the subtree it is attached to whenever its
-            // value moves — and attached here that subtree is the whole split
-            // view, so a navigation push that happened to coincide with a new
-            // record was dragged out over two seconds along with it.
-            // A thumbnail: the dominant colour of a sleeve is the same at 128
-            // pixels as at 512, and this is a size the grid already holds.
-            guard let colourSource, let cover = await art.image(for: colourSource, size: .thumb)
-            else {
-                withAnimation(.easeInOut(duration: 2)) { recordTint = nil }
-                return
-            }
-            let colour = Color.dominant(of: cover)
-            withAnimation(.easeInOut(duration: 2)) { recordTint = colour }
+        // The wash and the tint, both the colour of one record. Its own
+        // modifier because what it reads moves per track, and a read here
+        // re-runs the window — see `RecordRoom`.
+        .modifier(RecordRoom())
+        // The one place a library change reaches the app's own lists. Every
+        // page showing something asked for on demand reloads where it is
+        // drawn — see `View.reloading(on:)` — so nothing here decides which
+        // model hears what.
+        .reloading(on: 0) {
+            library.libraryChanged()
+            playlists.load()
         }
-        // Overrides the app-wide tint for everything below, which is every
-        // control koan draws itself. What AppKit draws — list selection, focus
-        // rings — keeps the declared accent, and that is deliberately a neutral
-        // so the two never argue.
-        .tint(recordTint ?? .koanAccent)
         // The toolbar paints its own ground over whatever is behind it, which
         // put a hard grey strip across the top of a queue washed in the colour
         // of the record. Hidden, the glass controls sit in that colour — which
         // is the whole point of them being glass — and the scroll edge effect
         // keeps rows legible as they pass under.
+        // Restored at `bare`: the ground it paints is opaque, so nothing behind
+        // it is sampled and a page switch does not redraw it.
         #if os(macOS)
-        .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        .toolbarBackgroundVisibility(
+            graphics.usesWindowGlass ? .hidden : .automatic, for: .windowToolbar
+        )
         #else
-        .toolbarBackgroundVisibility(.hidden, for: .navigationBar)
+        .toolbarBackgroundVisibility(
+            graphics.usesWindowGlass ? .hidden : .automatic, for: .navigationBar
+        )
         #endif
         .onSubmit(of: .search) { search.submit() }
+        // Backgrounding is the last dependable moment before termination. A
+        // notification rather than `scenePhase`: reading that re-ran whatever
+        // read it — it was the whole Scene — each time the app lost focus.
+        .onReceive(
+            NotificationCenter.default.publisher(for: .appResignsActive)
+        ) { _ in
+            Task { await player.saveSession() }
+        }
         // On the window rather than inside the detail column, padded clear of
-        // the sidebar: glass floating on glass reads as neither. The page makes
-        // its own room with `clearsTransport`.
+        // both columns: glass floating on glass reads as neither, and over the
+        // lyrics it hides the last lines of the song. The page makes its own
+        // room with `clearsTransport`.
         .overlay(alignment: .bottom) {
-            TransportBar()
-                .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
-                .background(
-                    GeometryReader { proxy in
-                        Color.clear.preference(
-                            key: TransportHeightKey.self,
-                            value: proxy.size.height
-                        )
-                    }
-                )
+            TransportOverlay(columns: columns)
         }
         .onPreferenceChange(TransportHeightKey.self) { transportHeight = $0 }
         .onGeometryChange(for: CGSize.self) { $0.size } action: { ui.windowSize = $0 }
@@ -215,12 +168,8 @@ struct RootView: View {
             // search, which navigates away instead of narrowing.
             if let placeholder = nav.section?.filterPlaceholder {
                 ToolbarItem(placement: .primaryAction) {
-                    FilterField(
-                        placeholder: placeholder,
-                        text: $library.filter,
-                        focusToken: ui.filterFocusToken
-                    )
-                    .frame(width: 180)
+                    LibraryFilter(placeholder: placeholder)
+                        .frame(width: 180)
                 }
             }
 
@@ -263,11 +212,22 @@ struct RootView: View {
                         Button {
                             library.reshuffleAlbums()
                         } label: {
-                            Label("Shuffle", systemImage: "shuffle")
+                            Label("Shuffle", systemImage: Icon.reshuffle)
                         }
                         .tint(.primary)
                         .help("Shuffle again")
                     }
+                }
+
+                // Last, and apart from the filter: what you do with a pick is
+                // not part of narrowing the grid, and next to the field the two
+                // read as one control. Always here, whatever it is showing, so
+                // starting or finishing a selection changes one item rather
+                // than the toolbar.
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+
+                ToolbarItem(placement: .primaryAction) {
+                    AlbumSelectionControls()
                 }
             }
 
@@ -284,8 +244,8 @@ struct RootView: View {
             if let sleeve = player.currentArtwork {
                 ArtworkViewer(
                     source: sleeve,
-                    title: player.nowPlaying.entry?.title ?? "",
-                    subtitle: player.nowPlaying.entry.map { "\($0.artist) — \($0.album)" }
+                    title: player.currentEntry?.title ?? "",
+                    subtitle: player.currentEntry.map { "\($0.artist) — \($0.album)" }
                 )
             }
         }
@@ -295,11 +255,246 @@ struct RootView: View {
         }
         #endif
         .overlay(alignment: .bottom) {
-            if let error = player.lastError {
-                ErrorToast(message: error) { player.lastError = nil }
-                    // Above the transport, not behind it.
-                    .padding(.bottom, transportHeight + 10)
+            // Above the transport, not behind it.
+            Toasts().padding(.bottom, transportHeight + 10)
+        }
+    }
+}
+
+/// The filter field, and the only reader of what is typed into it.
+///
+/// Its own view because the field reads the filter back on every update, and
+/// SwiftUI charges that read to whichever body the field sits in. Placed in
+/// `RootView` directly, that was the root: every keystroke re-ran the window
+/// and rebuilt the toolbar, field and focus with it.
+private struct LibraryFilter: View {
+    let placeholder: String
+    @Environment(LibraryModel.self) private var library
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        @Bindable var library = library
+        FilterField(placeholder: placeholder, text: $library.filter, focusToken: ui.filterFocusToken)
+    }
+}
+
+extension EnvironmentValues {
+    /// The colour the room is wearing — what `.tint` was set to, readable.
+    ///
+    /// SwiftUI offers no way to read a tint back, and an AppKit-backed view
+    /// drawing in it has to be handed the colour. Set beside the tint, by the
+    /// same modifier, so the two cannot disagree.
+    @Entry var roomTint: Color = .koanAccent
+}
+
+/// The room around the page: the wash on the window and the tint on the
+/// controls, which are the same answer and were once two.
+///
+/// A modifier rather than lines in `RootView.body`, because what it reads
+/// moves per track — the record playing, the page you are on — and a read in
+/// the root body is charged to the root, which re-runs the window and rebuilds
+/// the toolbar with it, throwing away the filter field and the focus in it. A
+/// modifier's body is its own. `content` is the window already built, and the
+/// tint reaches it as an environment change that only what draws in it sees.
+///
+/// The record the room takes its colour from: a page about one record answers
+/// with it — an album with its own sleeve, a playlist with the first of its
+/// records, the same one that leads its mosaic. Every other page — a grid, a
+/// list of artists, favourites, history — is not about any record in
+/// particular, so it answers with the one playing. The room is coloured by the
+/// music wherever you have wandered off to, and only a page that disagrees
+/// says otherwise.
+private struct RecordRoom: ViewModifier {
+    @Environment(Navigator.self) private var nav
+    @Environment(PlayerModel.self) private var player
+    @Environment(CoverArtCache.self) private var art
+    /// Read for the wash a playlist page sits in: its colour is the first
+    /// record in it, since a playlist has no cover of its own.
+    @Environment(PlaylistsModel.self) private var playlists
+
+    /// The colour of a record the cache could not already answer for, and which
+    /// record it was worked out for. Only consulted when the cache cannot.
+    @State private var fetchedTint: (source: AlbumArtwork.Source, colour: Color?)?
+
+    /// Only for a colour that had to be worked out, which arrives after the page
+    /// and would otherwise cut. A colour already in hand needs no ease: it lands
+    /// in the same frame as the record it belongs to, which is what an ease was
+    /// standing in for.
+    ///
+    /// It is deliberately not on the common path. A tint is a value every
+    /// control reads rather than a property of a layer, so the compositor
+    /// cannot take this one — easing it over two seconds is a hundred and
+    /// twenty renders of the whole window, each one a commit, and each commit a
+    /// synchronous round trip to the render server. That was half of what
+    /// opening a record cost.
+    private static let tintEase = Animation.easeInOut(duration: 2)
+
+    /// Read straight through the cache on every pass, the way `AlbumArtwork`
+    /// reads its bitmap: a colour the app already holds lands in the same commit
+    /// as the page that wanted it. Held in `@State` and written by a task, it
+    /// was a second commit every time — the page, and then the room around it.
+    private var recordTint: Color? {
+        guard let colourSource else { return nil }
+        if let held = art.cachedColour(for: colourSource) { return held }
+        guard let fetchedTint, fetchedTint.source == colourSource else { return nil }
+        return fetchedTint.colour
+    }
+
+    private var colourSource: AlbumArtwork.Source? {
+        switch nav.current {
+        case .album(let id): .album(id)
+        case .section(.playlist(let id)): playlists.covers[id]?.first ?? player.currentArtwork
+        default: player.currentArtwork
+        }
+    }
+
+    func body(content: Content) -> some View {
+        // The window background is evaluated by the *scene*, outside every
+        // environment this was handed, so anything it needs is captured here.
+        // Reading an `@Environment` inside that closure — including to put one
+        // back — traps, and the app dies on launch.
+        let wash = colourSource
+        let player = player
+        let artCache = art
+        let tint = recordTint ?? .koanAccent
+        // Over an opaque ground, because this *replaces* the window's own
+        // background rather than sitting on it — a half-transparent wash on its
+        // own leaves you looking through the app at the desktop.
+        let washLayer = ZStack {
+            Rectangle().fill(.background)
+            WindowWash(source: wash, player: player)
+                .environment(artCache)
+        }
+
+        content
+            // The queue is a list of names, and the record playing is the only
+            // thing in it with a colour. On the *window* rather than behind
+            // the queue: nothing inside a split view column reaches past the
+            // toolbar's inset, and a wash that stops in a line under the
+            // toolbar is worse than none. An album page washes its own header,
+            // so the window stays out of its way.
+            // A window on the Mac, the navigation container on iOS: the same
+            // intent, and neither platform has the other's container.
+            #if os(macOS)
+            .containerBackground(for: .window) { washLayer }
+            #else
+            .containerBackground(for: .navigation) { washLayer }
+            #endif
+            // Only for a record whose colour is not already known. The usual
+            // path is answered above, in the same pass as the page —
+            // navigating warms this alongside the rows, see
+            // `LibraryModel.prepare(album:)`.
+            .task(id: colourSource) {
+                guard let colourSource, art.cachedColour(for: colourSource) == nil else { return }
+                // Nobody is waiting on a slow ease into the background, so it
+                // stands aside until the page in front of it has drawn rather
+                // than racing it for artwork, threads and a slot on the main
+                // actor.
+                try? await Task.sleep(for: .milliseconds(150))
+                let colour = await art.dominantColour(for: colourSource)
+                guard !Task.isCancelled else { return }
+                withAnimation(Self.tintEase) { fetchedTint = (colourSource, colour) }
             }
+            // Overrides the app-wide tint for everything below, which is every
+            // control koan draws itself. What AppKit draws — list selection,
+            // focus rings — keeps the declared accent, and that is deliberately
+            // a neutral so the two never argue.
+            .tint(tint)
+            .environment(\.roomTint, tint)
+    }
+}
+
+/// The transport, padded clear of the columns.
+///
+/// Its own view because the widths it reads move while the sidebar is being
+/// dragged and on every frame the lyrics panel slides — read in the root, each
+/// of those frames re-ran the window.
+private struct TransportOverlay: View {
+    let columns: NavigationSplitViewVisibility
+
+    @Environment(UIState.self) private var ui
+
+    var body: some View {
+        TransportBar()
+            .padding(.leading, columns == .detailOnly ? 0 : ui.sidebarWidth)
+            .padding(.trailing, ui.showLyrics ? ui.lyricsWidth : 0)
+            .background(
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: TransportHeightKey.self,
+                        value: proxy.size.height
+                    )
+                }
+            )
+    }
+}
+
+/// Select, or what to do with what has been selected. The only reader of the
+/// selection outside the tiles, so a tick re-runs this and not the root.
+private struct AlbumSelectionControls: View {
+    @Environment(LibraryModel.self) private var library
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        let selection = library.selection
+        if selection.isActive {
+            let count = selection.ids.count
+            HStack(spacing: 2) {
+                Button {
+                    selection.commit(engine: library.engine, player: player, play: true)
+                } label: {
+                    Label(count > 0 ? "Play \(count)" : "Play", systemImage: Icon.play)
+                        .labelStyle(.titleAndIcon)
+                }
+                .disabled(count == 0)
+                .help("Play the selected albums, replacing the queue")
+                Button {
+                    selection.commit(engine: library.engine, player: player, play: false)
+                } label: {
+                    Label(count > 0 ? "Add \(count) to Queue" : "Add to Queue", systemImage: Icon.queue)
+                        .labelStyle(.titleAndIcon)
+                }
+                .disabled(count == 0)
+                .help("Add the selected albums to the end of the queue")
+                Button("Done") { selection.end() }
+                    .help("Stop selecting (Esc)")
+            }
+        } else {
+            Button {
+                selection.begin()
+            } label: {
+                Label("Select", systemImage: Icon.selectAll)
+            }
+            .help("Pick several albums to play or queue (⌘-click a cover, or ⌘A)")
+        }
+    }
+}
+
+/// The wash behind the window, reading whether anything is playing itself —
+/// play and pause change how it breathes and nothing else about the window.
+///
+/// Handed the model rather than a value taken from it: taken in `RootView`, the
+/// read was the root's, and every pause re-ran the whole window.
+private struct WindowWash: View {
+    let source: AlbumArtwork.Source?
+    let player: PlayerModel
+
+    var body: some View {
+        ArtworkBleed(source: source, drifts: player.isPlaying)
+    }
+}
+
+/// Its own view so that a toast coming and going is read here, not by the root.
+private struct Toasts: View {
+    @Environment(PlayerModel.self) private var player
+
+    var body: some View {
+        // One slot, and a failure outranks a remark about something that has
+        // not finished yet.
+        if let error = player.lastError {
+            ErrorToast(message: error) { player.lastError = nil }
+        } else if let notice = player.lastNotice {
+            ErrorToast(message: notice, kind: .notice) { player.lastNotice = nil }
         }
     }
 }
@@ -310,48 +505,141 @@ private struct StageView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
 
-    private var onQueue: Bool { nav.current == .section(.queue) }
-
-    /// The queue is never torn down; every other page is built when you arrive
-    /// and thrown away when you leave.
+    /// The queue is never torn down, and nor are the album and artist browsers
+    /// once visited; every other page is built when you arrive and thrown away
+    /// when you leave.
     ///
     /// That asymmetry buys the one thing a `List` cannot be given back: where it
     /// was scrolled to. On macOS a `List` is AppKit's table, and every SwiftUI
     /// way of asking one to go to an offset — `scrollPosition`, `scrollTo(y:)`,
-    /// `scrollPosition(id:)` — is inert on it, so a queue rebuilt on the way
-    /// back always starts at the top. Keeping it mounted means it never left.
+    /// `scrollPosition(id:)` — is inert on it, so a page rebuilt on the way
+    /// back always starts at the top. Keeping it mounted means it never left:
+    /// scroll down the artists, open one, go Back, and the list is where it
+    /// was. The browsers are the pages you leave to look at one thing and come
+    /// back to; a record or an artist is the thing, and starts at its top.
     ///
-    /// Off stage it is invisible, untouchable, unfocusable and told so, which
-    /// is what stops the row that is playing animating behind a page you are
-    /// actually looking at.
+    /// Off stage a page is invisible, untouchable, unfocusable and told so,
+    /// which is what stops the row that is playing animating behind a page you
+    /// are actually looking at.
     var body: some View {
         ZStack {
             QueueView()
-                .opacity(onQueue ? 1 : 0)
-                .allowsHitTesting(onQueue)
-                .disabled(!onQueue)
-                .accessibilityHidden(!onQueue)
-                .environment(\.onStage, onQueue)
+                .staged(nav.current == .section(.queue))
 
-            if !onQueue { page }
+            ForEach(kept) { section in
+                browser(section)
+                    .id(nav.rewinds[section, default: 0])
+                    .staged(nav.current == .section(section))
+            }
+
+            if let page = unkeptPage {
+                page
+            }
+        }
+        .onChange(of: nav.current, initial: true) { _, now in
+            if let section = now.section, Self.keepable.contains(section), !visited.contains(section) {
+                visited.append(section)
+            }
         }
     }
 
-    @ViewBuilder private var page: some View {
-        PageView()
+    private static let keepable: [Navigator.Section] = [.albums, .artists]
+
+    /// Browsers mounted so far, in the order first visited. Held rather than
+    /// derived so that leaving one keeps it.
+    @State private var visited: [Navigator.Section] = []
+
+    /// What stays mounted: everything visited, and the browser being arrived at
+    /// now. Including the current one here rather than waiting for `visited`
+    /// means the first frame builds it where it will stay, instead of building
+    /// it once as a page and again when it is recorded.
+    private var kept: [Navigator.Section] {
+        guard let section = nav.current.section, Self.keepable.contains(section),
+              !visited.contains(section)
+        else { return visited }
+        return visited + [section]
+    }
+
+    @ViewBuilder private func browser(_ section: Navigator.Section) -> some View {
+        switch section {
+        case .albums: AlbumBrowser()
+        case .artists: ArtistBrowser()
+        default: EmptyView()
+        }
+    }
+
+    /// The page on screen when it is neither the queue nor a kept browser.
+    private var unkeptPage: AnyView? {
+        switch nav.current {
+        case .section(.queue):
+            return nil
+        case .section(let section) where Self.keepable.contains(section):
+            return nil
+        case .section(let section):
+            return AnyView(page(section).id(nav.rewinds[section, default: 0]))
+        case .album(let id):
+            return AnyView(AlbumDetailView(albumId: id))
+        case .artist(let id):
+            return AnyView(ArtistDetailView(artistId: id))
+        }
+    }
+
+    @ViewBuilder private func page(_ section: Navigator.Section) -> some View {
+        switch section {
+        case .searchResults: SearchResultsView()
+        case .favourites: FavouritesView()
+        case .playHistory: HistoryView()
+        case .downloads: DownloadsView()
+        case .playlist(let id): PlaylistView(playlistId: id)
+        case .queue, .albums, .artists: EmptyView()
+        }
+    }
+}
+
+private extension View {
+    /// On stage, or kept mounted behind whatever is.
+    func staged(_ onStage: Bool) -> some View {
+        opacity(onStage ? 1 : 0)
+            .allowsHitTesting(onStage)
+            .disabled(!onStage)
+            .accessibilityHidden(!onStage)
+            .environment(\.onStage, onStage)
     }
 }
 
 /// Engine errors are informational — a device disappearing shouldn't take a
 /// modal to dismiss.
 private struct ErrorToast: View {
+    /// Whether something went wrong, or something is merely not available yet.
+    /// The second is not a warning and does not get the colour of one — a
+    /// track that is still downloading is working exactly as intended.
+    enum Kind {
+        case warning
+        case notice
+
+        var symbol: String {
+            switch self {
+            case .warning: "exclamationmark.circle.fill"
+            case .notice: "arrow.down.circle.fill"
+            }
+        }
+
+        var tint: Color {
+            switch self {
+            case .warning: .orange
+            case .notice: .secondary
+            }
+        }
+    }
+
     let message: String
+    var kind: Kind = .warning
     let dismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .foregroundStyle(.orange)
+            Image(systemName: kind.symbol)
+                .foregroundStyle(kind.tint)
             Text(message)
                 .font(.callout)
                 .lineLimit(2)
@@ -365,9 +653,14 @@ private struct ErrorToast: View {
         .padding(.vertical, 11)
         // Tinted glass rather than a material and a border: the tint carries
         // the warning without a second colour, and glass already has an edge.
-        .glassEffect(.regular.tint(.orange.opacity(0.22)), in: .capsule)
-        .task {
-            try? await Task.sleep(for: .seconds(6))
+        .glass(
+            .regular.tint(kind.tint.opacity(0.22)),
+            fallback: kind.tint.opacity(0.22),
+            in: .capsule
+        )
+        // Restarted by a new message; a cancelled sleep is not a timeout.
+        .task(id: message) {
+            guard (try? await Task.sleep(for: .seconds(6))) != nil else { return }
             dismiss()
         }
     }
@@ -390,11 +683,12 @@ private extension View {
     /// and a control size, so any number written here would be right until one
     /// of them changed and then be a gap, or a row clipped by a bar with
     /// nothing to say why.
-    func clearsTransport(_ height: CGFloat) -> some View {
+    func clearsTransport(_ height: CGFloat, glass: Bool) -> some View {
         // Content passing under the glass is what makes it glass. The soft edge
         // fades a row out as it goes, so one half under the bar reads as behind
-        // it rather than cut off.
+        // it rather than cut off — and it is a live blur of a window-wide strip,
+        // which is why `bare` does without it and takes the hard edge instead.
         safeAreaPadding(.bottom, height)
-            .scrollEdgeEffectStyle(.soft, for: .bottom)
+            .scrollEdgeEffectStyle(glass ? .soft : .hard, for: .bottom)
     }
 }

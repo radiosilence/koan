@@ -20,8 +20,14 @@ pub enum MetadataError {
 }
 
 /// Audio file extensions we care about.
+///
+/// Only what koan can actually decode. WavPack and Monkey's Audio are absent
+/// on purpose: symphonia has no reader for either — there is no `wavpack`
+/// feature to turn on, and its `ape` feature is APE *tags*, not the codec — so
+/// indexing them produced library rows that scanned, listed, and refused to
+/// play. Better not to claim them.
 const AUDIO_EXTENSIONS: &[&str] = &[
-    "flac", "mp3", "m4a", "aac", "ogg", "opus", "wv", "wav", "aiff", "aif", "alac", "ape",
+    "flac", "mp3", "m4a", "aac", "ogg", "opus", "wav", "aiff", "aif", "alac",
 ];
 
 /// Check if a path has a supported audio extension.
@@ -124,6 +130,15 @@ fn read_metadata_lofty(
         .primary_tag()
         .or_else(|| tagged_file.first_tag());
 
+    let musicbrainz = |key| {
+        tag.and_then(|tag| tag.get_string(key))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    };
+    let mbid = musicbrainz(ItemKey::MusicBrainzRecordingId);
+    let album_mbid = musicbrainz(ItemKey::MusicBrainzReleaseId);
+
     let (title, artist, album_artist, album, date, disc, track_number, genre, label) =
         if let Some(tag) = tag {
             (
@@ -190,7 +205,8 @@ fn read_metadata_lofty(
         remote_id: None,
         album_remote_id: None,
         artist_remote_id: None,
-        mbid: None,
+        mbid,
+        album_mbid,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
     })
@@ -252,6 +268,7 @@ fn read_metadata_fallback(path: &Path) -> Result<TrackMeta, MetadataError> {
         album_remote_id: None,
         artist_remote_id: None,
         mbid: None,
+        album_mbid: None,
         remote_url: None,
         album_added_at: mtime.and_then(iso8601_utc),
     })
@@ -365,7 +382,6 @@ fn symphonia_codec_name(codec: symphonia::core::codecs::audio::AudioCodecId) -> 
         ids::CODEC_ID_ALAC => "ALAC".to_string(),
         ids::CODEC_ID_VORBIS => "Vorbis".to_string(),
         ids::CODEC_ID_OPUS => "Opus".to_string(),
-        ids::CODEC_ID_WAVPACK => "WavPack".to_string(),
         ids::CODEC_ID_PCM_S16LE
         | ids::CODEC_ID_PCM_S24LE
         | ids::CODEC_ID_PCM_S32LE
@@ -485,10 +501,8 @@ pub fn codec_string(ft: lofty::file::FileType) -> &'static str {
         lofty::file::FileType::Mp4 => "AAC",
         lofty::file::FileType::Opus => "Opus",
         lofty::file::FileType::Vorbis => "Vorbis",
-        lofty::file::FileType::WavPack => "WavPack",
         lofty::file::FileType::Wav => "WAV",
         lofty::file::FileType::Aiff => "AIFF",
-        lofty::file::FileType::Ape => "APE",
         _ => "Unknown",
     }
 }
@@ -601,6 +615,7 @@ pub fn metadata_from_probe_result(meta: &MetadataRevision, fallback_title: &str)
         album_remote_id: None,
         artist_remote_id: None,
         mbid: None,
+        album_mbid: None,
         remote_url: None,
         album_added_at: None,
     }
@@ -643,10 +658,13 @@ mod tests {
         assert!(is_audio_file(Path::new("track.m4a")));
         assert!(is_audio_file(Path::new("track.ogg")));
         assert!(is_audio_file(Path::new("track.opus")));
-        assert!(is_audio_file(Path::new("track.wv")));
         assert!(is_audio_file(Path::new("track.wav")));
         assert!(is_audio_file(Path::new("track.aiff")));
-        assert!(is_audio_file(Path::new("track.ape")));
+
+        // Nothing koan cannot decode. Both of these were indexed and neither
+        // could be opened, so a library held rows that refused to play.
+        assert!(!is_audio_file(Path::new("track.wv")));
+        assert!(!is_audio_file(Path::new("track.ape")));
 
         assert!(!is_audio_file(Path::new("cover.jpg")));
         assert!(!is_audio_file(Path::new("notes.txt")));

@@ -129,6 +129,10 @@ pub fn tracks_for_albums(
 ///
 /// A track matches on either its own artist or its album artist, so one row can
 /// land under two keys — the map is built by re-checking each requested ID.
+///
+/// The album-artist half goes through a subquery on `albums` rather than
+/// `al.artist_id IN (...)` on the join: an `OR` spanning two tables cannot use
+/// an index, and the join form read the whole library for it.
 pub fn tracks_for_artists(
     conn: &Connection,
     artist_ids: &[i64],
@@ -138,8 +142,10 @@ pub fn tracks_for_artists(
     }
     let ph = placeholders(artist_ids.len());
     let sql = format!(
-        "SELECT {}, al.artist_id {} WHERE t.artist_id IN {} OR al.artist_id IN {}
-         ORDER BY al.date, al.title, t.disc, t.track_number",
+        "SELECT {}, al.artist_id {}
+          WHERE t.artist_id IN {}
+             OR t.album_id IN (SELECT id FROM albums WHERE artist_id IN {})
+          ORDER BY al.date, al.title, t.disc, t.track_number",
         TRACK_COLUMNS, TRACK_JOINS, ph, ph
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -294,6 +300,35 @@ pub fn album_ids_for_tracks(
     let mut stmt = conn.prepare(&sql)?;
     let rows = stmt.query_map(params_from_iter(track_ids), |row| {
         Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+    })?;
+    rows.collect::<Result<HashMap<_, _>, _>>()
+        .map_err(Into::into)
+}
+
+/// Where each track's bytes are: on the server, on this machine, or both.
+///
+/// One query for a whole queue. The same reading `Track` gives, so a row in the
+/// queue and the same row in an album agree about what they are — asked here
+/// per queue rather than per row, which is what a list of a thousand would
+/// otherwise cost.
+pub fn sources_for_tracks(
+    conn: &Connection,
+    track_ids: &[i64],
+) -> Result<HashMap<i64, (bool, bool)>, DbError> {
+    if track_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let sql = format!(
+        "SELECT id, remote_id IS NOT NULL, COALESCE(cached_path, path) IS NOT NULL \
+         FROM tracks WHERE id IN {}",
+        placeholders(track_ids.len())
+    );
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt.query_map(params_from_iter(track_ids), |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            (row.get::<_, bool>(1)?, row.get::<_, bool>(2)?),
+        ))
     })?;
     rows.collect::<Result<HashMap<_, _>, _>>()
         .map_err(Into::into)

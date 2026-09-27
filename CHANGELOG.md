@@ -30,6 +30,424 @@
 
   Nothing about the macOS app changes.
 
+## Unreleased
+
+### Fixed
+
+- **The share page plays on iPhone.** iOS starts audio only inside the tap itself; the player created its audio context there but resumed it after fetching and decoding the first track, which iOS no longer counts as the tap, so nothing played. The context and the streaming element are now unlocked in the gesture, and the page declares itself a media player (`navigator.audioSession`), so the ring/silent switch no longer mutes Web Audio.
+
+## Unreleased
+
+### Changed
+
+- **The share page plays gaplessly, and looks like the rest of the estate.** Tracks the browser can decode are decoded ahead and each is started on the sample the last one ends, so albums that run into each other play without a gap; a track too long to hold decoded (over fifteen minutes) streams instead. One player with previous, play and next, a seek bar, and lock-screen and headphone controls through the Media Session API. The script and stylesheet are served by koan (`/share/assets/*`) and the CSP allows those and nothing else; without script, each track is a plain link.
+
+## Unreleased
+
+### Fixed
+
+- **A server with auth on starts without `koan auth setup` having run first.** It generates its signing keypair on first start, as the auth-disabled path already did; a server in a container has no terminal to run setup in before it starts, and crash-looped instead. Accounts are still created deliberately: until one exists, nothing signs in.
+
+## Unreleased
+
+### Added
+
+- **Native sharing.** A koan with no remote Subsonic server makes share links itself, at `{sharing.public_url}/share/{id}`: a page anyone can open without an account, with cover art, the track list and a player per track, and no script at all. The page and its audio serve the share's own tracks and nothing else, by position rather than library id, and an expired, revoked or unknown id is the same 404. Shares are listed with `shares`, renewed with `updateShare` and revoked with `deleteShare` (GraphQL and MCP), and koan's Subsonic API implements `createShare`, `getShares`, `updateShare` and `deleteShare` with `shareRole` on, so Subsonic clients' own share buttons and a koan app pointed at a koan server create native shares. Sharing no longer needs Navidrome behind it.
+
+## Unreleased
+
+### Added
+
+- **MCP over HTTP for a headless server.** `--mcp-bind ADDR:PORT` (or `KOAN_MCP_BIND`) serves the same two MCP tools at `/mcp` over streamable HTTP, on a listener of its own, for an authenticating gateway to proxy. It carries no credential check, as stdio does not, so it stays off the public port.
+- **A headless server keeps its index current.** It scans the library folders at start and whenever they change, as the macOS app already did; new music needed `koan scan` or the `triggerScan` mutation before.
+- **Container image.** A `Dockerfile` for the headless server (Debian slim, non-root, state in `/config`), published to `ghcr.io/radiosilence/koan` from `main`, tagged with the commit.
+
+## v0.35.5 (2026-09-26)
+
+### Fixed
+
+- **Clear Index no longer leaves albums showing another album's cover.** Artwork is cached on disk by album, track and artist id, and a cleared library hands those ids out again from 1, so the cache served each new album the cover of whichever old one had held its number. Clearing the index now clears the artwork cache too. A library already affected needs Clear Artwork Cache once.
+
+## v0.35.4 (2026-09-26)
+
+### Fixed
+
+- **A full sync also clears what the server's renumbering left behind.** An entry that exists only on the server, still under an id the server has dropped, cannot be streamed, and it sat beside the entry that replaced it. It is now folded into that entry, with its play history and favourite. Files without a track number are paired with their server entry in the same sync, where before they needed a second one.
+
+## v0.35.3 (2026-09-26)
+
+### Fixed
+
+- **A full sync relinks files after the server renumbers its tracks.** When a Navidrome rescan gave every track a new id, the local file kept the old one. The sync added the recording again under the new id, and the two were never merged because both carried a server id, so the library listed each affected track twice. After a complete full sync, a file whose id the server no longer has is unlinked and merged into the entry carrying the current id, keeping its play history and favourites. ([#445](https://github.com/radiosilence/koan/pull/445))
+- **The album grid's reshuffle button is a die.** It used the shuffle symbol, the same one as playing an artist or a record shuffled, for an action that plays nothing. ([#441](https://github.com/radiosilence/koan/pull/441))
+
+### Changed
+
+- `dirs` 7.0.0 ([#444](https://github.com/radiosilence/koan/pull/444)) and `lru` 0.18.5 ([#443](https://github.com/radiosilence/koan/pull/443)). Neither changes behaviour; `dirs` 7 resolves the home and music folders exactly as 6 did.
+
+## v0.35.2 (2026-09-25)
+
+### Fixed
+
+- **The log is written on a first launch.** The logger opened `koan.log` before anything had created `~/.config/koan`, failed, and stayed silent for the rest of the run, so a first launch of the macOS app, or of the CLI on a fresh machine, left nothing to diagnose. It now creates the directory itself and retries the open on a later message if one fails.
+
+## v0.35.1 (2026-09-24)
+
+### Fixed
+
+- **Back returns to where the album grid and the artist list were scrolled.** Both were rebuilt on the way back, and a macOS `List` cannot be told to scroll, so they always came back at the top. Once visited they now stay mounted behind the other pages, as the queue already did. Clicking a sidebar row for the page already showing sends it back to the top instead, the way a browser tab's own link does. ([#440](https://github.com/radiosilence/koan/pull/440))
+- **The `koan-app` cask uses `postflight_steps`.** Homebrew deprecated the block form of `postflight` and warns about it on every `brew update`.
+
+## v0.35.0 (2026-09-24)
+
+### Added
+
+- **An artist page carries a photograph and a biography.** The photograph sits beside the name; the opening of the artist's Wikipedia article sits below the albums, with a link to the rest and the photographer's credit. Both are found through the artist's MusicBrainz id and the Wikidata item it links to, never by name alone, since a name search picks the wrong one of several bands sharing a name. An artist without an id on record is identified through one of their releases first, and only then by an exact, unique name match. Answers are cached, misses included, so the page draws from the database and is refreshed after a month. No API key is needed. ([#436](https://github.com/radiosilence/koan/pull/436))
+
+### Fixed
+
+- **MusicBrainz artist searches match the whole name.** A name of several words was searched word by word, so "Azure Ray" found Ray Charles. This also sharpens radio's relationship lookups.
+- **Shuffle sits in the artist page's button row**, beside Play Next and Queue, rather than on a line of its own below them. ([#437](https://github.com/radiosilence/koan/pull/437))
+
+## v0.34.3 (2026-09-24)
+
+### Added
+
+- **Pause and resume fade.** The volume ramps over 150ms instead of cutting, and the play head stops on the last sample heard. `playback.fade_on_pause`, on by default; Settings → Playback. Outside the ramp samples pass through untouched, so playback stays bit-perfect.
+
+## v0.34.2 (2026-09-24)
+
+### Fixed
+
+- **Organize could jam on "Moving…" for good.** Changing the pattern or destination while a run was going invalidated the run's result before it cleared its own running flag, so the sheet never came back until relaunch.
+- **A slow load no longer lands on the page you moved to.** A cover still loading when the track changed, lyrics still reading when you skipped, a playlist still opening when you clicked another: each finished late and painted over what was now on screen.
+- **Back and Forward after deleting a playlist could crash.** The history entry was pruned while the move was loading, and the arrival set the cursor past the end.
+- **Opening several covers of one record at once fetches and decodes it once.** Concurrent tiles each started their own fetch and decode — the sharing checked and claimed in two separate steps.
+- **A seek the engine clamps no longer pins the seek bar.** It gave up after twenty playhead updates, which were once a timer's ticks and now arrive only on a seek or pause, so it could wait until the track ended. It gives up after two seconds. A Control Center scrub past what has downloaded is clamped like one in the app.
+- **The wash and the seek bar hold their place across page switches.** Each re-laid itself out from its last anchor on any layout pass, snapping the drift to its start and the bar backwards.
+- **The cache limit saves what you typed, not each keystroke.** Typing "50GB" wrote "5", "50", "50G" on the way. The discovery slider saves when you let go.
+- **Playlist runs group by record.** Two neighbouring "Greatest Hits" by different artists merged under one heading, named after the first track's artist.
+- **Go to Album highlights the track** when the album is already open, or has as many tracks as the one before.
+- **Add & Play in the picker waits for the queue** rather than a guessed 120ms.
+- **With several artists selected, the menu and double-click no longer act on one at random.**
+- Smaller: an error toast replaced by another keeps its own six seconds; a drop highlight on one playlist is no longer cleared by the row it left; "New Playlist…" is a button to VoiceOver; a filter field created after ⌘F was used no longer steals focus; the frame timer's settle check compared ticks the wrong way round and stopped early; the Plain graphics description had holes in it; the output device menu no longer asks for a symbol named "".
+- **A pause no longer re-runs the whole transport bar, and a seek no longer re-diffs every lyric line.** The reads moved into the views that draw them.
+- **Signing out of the web client revokes the session.** The refresh cookie was scoped to `/auth/refresh`, so the browser never sent it to `/auth/logout`: the cookies were cleared and the token stayed valid for its full thirty days. It is scoped to `/auth`, and the old narrower one is cleared wherever the cookie is set.
+- **Login takes as long for a username that doesn't exist as for one that does.** An unknown name returned at once, while a known one paid for an Argon2 verify — enough to list who has an account.
+- **Long tracks proxied through the Subsonic API no longer cut off at thirty seconds.** The upstream client's timeout covered the whole body, so any stream that took longer to drain than that was ended mid-track. It bounds connecting and stalls instead.
+- **Subsonic "now playing" is no longer recorded as a play.** Clients scrobble with `submission=false` when a track starts and `true` when it ends; both were recorded, so every listen was two plays and a skip was one.
+- **Starring a remote-only track over Subsonic or GraphQL stars that track.** Subsonic keyed it by an empty path, so every remote track shared one favourite; GraphQL refused them. Both use the same key the app does now, and Subsonic stars sync back to the server. An album or artist id is refused rather than read as a track id.
+- **`koan config` no longer prints passwords and tokens.**
+- **Generated admin passwords come from the system RNG.** They were hashed from the clock a character at a time.
+- **A file dropped into the TUI with an accent in its path opens.** Percent-escapes were decoded as Latin-1.
+- **The TUI no longer rewrites the whole queue ten times a second while playing.** It saves the queue when it changes and the position about once a second.
+- **A restored TUI session resumes the track it saved, the way it saved it.** The saved position went to whichever track became ready first, and always paused.
+- **Deleting a playlist that was never on a server removes it from the sidebar.**
+- **Playing a playlist over GraphQL keeps the queue following the playlist**, as it does in the app, and is one queue change rather than three.
+- **`koan --headless` exits non-zero if its port is taken**, and the `[subsonic] port` from config is used on every path, not only the TUI.
+- **`updateConfig` refuses out-of-range numbers** instead of wrapping them — a port of 70000 was saved as 4464.
+- **A record whose files say disc 0 no longer shows every track twice.** Taggers write disc 0 for a single-disc release; Navidrome leaves the field out. Dedup compares the disc, so 0 against nothing read as two different tracks — the local copy and the server's, side by side on one album page, the server's failing whenever it was unreachable. Disc 0 is stored as no disc now, whichever source sends it. Pairs already split are folded on the next launch; the local row keeps its file and history and takes the server's id.
+- **Skipping, seeking or stopping a track that is still downloading no longer freezes the player.** The decoder waits at the download's write head for the next bytes, and stopping it only asked it to stop — it did not wake it. On a slow or stalled transfer the player thread sat in that join for as long as the network took, up to thirty seconds, answering nothing.
+- **A stream no longer stalls for thirty seconds when its download ends.** The reader was woken before the track was marked finished or failed, looked, saw a download still running, and went back to sleep with nothing left to wake it. It is woken after, now.
+- **A download that retries no longer kills the stream playing from it.** Each attempt deleted the `.part` file and created a new one; a stream reading it held the deleted one and waited on bytes that would never land there. A retry now rewrites the same file. A server answering 5xx with a JSON body is also retried now — it was taken for a Subsonic error document and given up on.
+- **Previous on a track not yet downloaded goes to it.** The cursor moved and the old track kept playing, so the next track boundary replayed the same song.
+- **A front end could miss a pause, a track change or a radio toggle.** The change was announced a moment before it was written, so a client woken by it could read the old value and go back to sleep.
+- **An album date starting with a non-ASCII character no longer crashes koan.** Years were cut out of dates by byte, which panics mid-character — full-width digits, a leading `〜`.
+- **Undoing a very large batched edit undoes all of it**, not the first 500 steps.
+- **The download queue no longer looks at the cursor every 30ms for the life of the process.** It waits for the engine to say something moved, like every other watcher.
+- **A refresh token in a git-tracked config refuses to start**, the same as a password does.
+- **The CoreAudio render callback no longer logs.** Two warnings on rare paths formatted and took the logger's lock on the real-time thread.
+- **A file on disk and the server's copy of it are one track, whatever the server calls the album.** Navidrome appends a release's MusicBrainz disambiguation to its name — "(deluxe)", "(Bandcamp)", "(Unmixed)" — and dedup matched on the album name, so thousands of tracks sat twice on two album pages: one playing from disk, one streaming, and dead whenever the server was unreachable. koan now reads the recording and release ids from local tags (Picard's `MUSICBRAINZ_TRACKID` / `MUSICBRAINZ_ALBUMID`) and matches on the pair. The recording alone would fold an album track into every compilation it is on; the release is what keeps those apart. The next scan after upgrading re-reads the files indexed without an id, once, and folds what it finds. ([#422](https://github.com/radiosilence/koan/issues/422))
+- **The test suite no longer opens the library of whoever runs it.** The TUI's `App` and `LibraryState` took a database path and ignored it, reading through the shared pool, which opens the configured library. A render test that browsed the library therefore opened the developer's own — and opening it runs the checked-out branch's migrations against it. The dead parameters are gone, the test isolates its config like the others, and `just check` runs the suite against a throwaway config dir and fails if anything writes there. ([#423](https://github.com/radiosilence/koan/issues/423))
+
+## v0.34.1 (2026-09-23)
+
+### Changed
+
+- **Every change on screen now does only the work that change needs.** A pass over what each view reads, following the rule the last release set for the filter field: a read is a subscription, and a read high in the tree re-runs everything below it.
+
+  The room's colour — the wash and the tint — was read by the root, so every track change re-ran the whole window and rebuilt the toolbar, which is the same thing that used to throw you out of the filter field. It is a modifier of its own now. The queue and every track list read what was playing and which rows were selected in the list's body, so a pause, a click or a queue edit re-diffed every row; the rows read those themselves, and selection comes from the List through `backgroundProminence`. A playlist page found each row's position by searching the list per row per evaluation, quadratic on every click. The seek bar read the download figures, so while anything was downloading it re-anchored its animation ten times a second — the animation the anchor exists to hand over once. Every row and tile read the favourite sets, so one heart flipping re-ran every visible row; the hearts read them now. Favourites laid out every record you had ever favourited the moment the page opened and fetched all their sleeves at once; the grid is cut into list rows, which the list recycles.
+
+  The playing indicator is no longer SwiftUI. The analyser published each frame through observation, which made every frame a body, a canvas raster and a commit at the display's rate for as long as music played. The bars are layers now, moved directly, at the same rate — and detach when off stage or held still, which lets the analyser park.
+
+- **A click outside a text field ends the editing.** Filter the albums, click a cover to play it, and every key after that went into the filter — a cover is a SwiftUI gesture and takes no focus, so the field kept it. It used to be let go by accident, when the toolbar rebuilt itself on the next track change. The hotkey monitor now ends editing on any click that is not inside the field being edited.
+
+- **A queue edit is no longer a playback change.** The queue version rode in the same slice as what is playing, so every edit re-ran the transport bar and every list that knew what was playing. It rides with the queue rows now.
+
+- **Downloads landing one after another are one library change, not one each.** A record fetched a track at a time made every page reload its rows per track. The engine says so once the batch is down, or every couple of seconds while it is still coming.
+
+### Fixed
+
+- **A file dropped from Finder no longer doubles on the next rescan if its name has an accent.** Foundation hands over file paths with accents precomposed, and a Mac-written disk holds them decomposed; both open the same file, but `tracks.path` is compared bytewise, so a rescan saw a file it had no row for and added a second one. Only the accented names on an album doubled, which is what made it look like nothing in particular. Paths from outside — a drop, a configured folder, a folder being forgotten — are now resolved against the directory that holds them and stored as it spells them. Pairs already split are folded on the next launch: the older row keeps its history and sync link and takes the disk's spelling; favourites follow. ([#418](https://github.com/radiosilence/koan/issues/418))
+
+## v0.34.0 (2026-09-22)
+
+### Added
+
+- **Pick several albums and play or queue them together.** Select in the Albums toolbar, ⌘-click a cover, or ⌘A turns the grid into a selection: a click ticks a record, ⇧-click ticks a range, and Play or Add to Queue takes the lot and puts the grid back. A mode rather than list-style clicking, because a click on a tile already plays the record and its title already opens it.
+
+  Ticks survive the filter changing, so a pick can be gathered across several searches, and they play in the order they were made — the grid has no order for a record it is no longer showing. Dragging a ticked tile carries every tick to the queue or a playlist; an unticked one still carries only itself. Escape, Done or leaving the page ends it.
+
+### Security
+
+- **rustls accepted TLS 1.3 handshake messages across a key change (RUSTSEC-2026-0285)** — a Subsonic/Navidrome server, or anyone between koan and one, could send handshake messages in plaintext that should have been encrypted without the connection being refused. The transcript is still authenticated, so a handshake could not be altered or completed this way. rustls is now 0.23.45.
+
+### Fixed
+
+- **Typing in the filter field no longer throws you out of it.** The first keystroke re-ran the whole window, and the toolbar rebuilt the field with it — so the filter applied and focus went with the old field. Two reads caused it: the menus asked whether anyone was typing from the Scene body, which is the whole window, and the field read the filter back in `RootView`, where SwiftUI charged it to the root.
+
+  The same mistake ran through the rest of the window. Every letter typed into the search box re-ran the root and the whole sidebar, and a pause, a toast or a download ticking over re-ran one or the other. Each is now read by the view that draws it — the menu items, the filter field, the sidebar's Queue and Downloads rows, its footer, the toasts, the wash behind the window — and a keystroke reaches the field and what shows the results, nothing else.
+
+- **A recording two sources credit differently is no longer two tracks.** Cross-source dedup matched on the artist alongside album, disc, track number and title, so a local file tagged `Petrol Girls` and the same recording arriving from Navidrome as `Petrol Girls • Ren Aldridge` resolved to two artists and therefore two tracks — drawn one after the other on the same album page, each with its own source icon. A server that merely disagrees about case did it too: `Polysics` against `POLYSICS`, `War Of Ages` against `War of Ages`.
+
+  Album, disc, track number and title already name one position on a release, so the artist is the thing the sources disagree about rather than the thing telling two recordings apart. A fourth matching step drops it. It requires a track number on both sides: with no slot to match on, the artist is all that separates two same-titled recordings on one release, and the step declines rather than guess. The cross-source rule is untouched — two files on disk are two tracks however identical their tags, and so are two entries on one server.
+
+  Pairs already split are folded together on the next launch. A sync could never do it: it matches a remote row by the id the server gave it, long before any content match runs, so the two would have stayed apart for good. The local row wins — it holds the path and the properties read from the file, and playback prefers it — and inherits the id the server knows it by. Only a clean pair is touched: one row with a path and no remote id, one with a remote id and no path, sharing an album, a title, a disc and a track number. Anything else is left where it is rather than guessed at.
+
+## v0.33.2 (2026-08-29)
+
+### Changed
+
+- **The playing indicator is a spectrum analyser, three columns wide.** It was a pair of sine waves the music modulated — the bands set how far the bars swung, never how high they stood — which meant a track that opens on ten seconds of silence got the full dance, because a carrier with nothing to scale it is still a carrier. The bars are the low, mid and high bands now, drawn at the height the analyser reports. Silence is flat. Pausing lets them fall away rather than freezing them mid-swing, which is what the TUI's spectrum has always done.
+
+  Bands are still measured against their own recent ceiling, so a quiet master is not a limp indicator, and the fall is the law the TUI's bars draw on: up on the frame it happens, down on a half-life so nothing snaps to zero between beats.
+
+- **The analyser runs at the refresh rate of the display it is drawn on.** Its rate was a config figure and the macOS indicator sampled it on a timer of its own, so a 120Hz panel got 60 analyses drawn at 30, and two clocks decided between them which frames a bar was allowed to move on. The window knows what it is drawn on: koan sets the rate from the screen the window is on and again when it is dragged to another one or a display is reconfigured under it. The indicators read on the frame they draw, so a frame is one new set of numbers and there is no timer anywhere in it — nothing on screen means nothing read, and the analyser stands itself down a second later. The TUI is unchanged: its rate is still `visualizer.fps`, which is what the analyser starts at.
+
+- **The spectrum is published, not polled.** The playing indicator asked the engine for levels on a clock — a timer at first, then the display link — because there was no event to react to. There is one now: the analyser sends a frame when it has one, the app wakes on it, and the bars are drawn from what arrived. No timer, no tick, and no frame read twice or missed.
+
+  What falls out of that is the idle cost. The analyser decays the bars to flat when the play head stops rather than holding the last chord, and once they are flat it publishes nothing at all — so a paused koan wakes nothing. The thread itself parks on a wait instead of standing down to a quarter-second look-again loop: with no reader and nothing playing it is not scheduled at all, until a reader arrives or playback starts. That last one cannot be signalled from the play head, which the audio render callback writes and which may never take a lock, so the player says so on the two edges where silence ends.
+
+  `koan-core` takes `tokio` for `sync` only — `watch` is the analyser telling its subscribers a frame is ready. No runtime, no reactor.
+
+- **The playhead is an anchor, not a reading.** Position was published ten times a second, which is a stream that can never go quiet while music plays and a seek bar redrawn ten times a second to move it a pixel. It is the one number in koan that changes without anything happening — and a playhead advancing at one second per second is exactly what a client can work out for itself. The engine now says where the playhead is when your own reckoning would go wrong: a seek, a pause, a track boundary, a stall. Nothing in between.
+
+  What draws it derives it. The seek bar is handed to Core Animation once per anchor with the rest of the track as its duration, so it moves without this process being woken at all; the elapsed figure is a system-drawn timer for the same reason; the lyrics panel sleeps until the next line's timestamp rather than checking where the song is. Media Remote gets told exactly when the system's own extrapolation would drift, which is what its elapsed-and-rate pair was always asking for.
+
+- **The engine stops polling itself.** A thread woke ten times a second for as long as koan was open, rebuilt what is playing, sampled every transfer's byte count, compared three version counters and published whatever had moved. The interface was reactive — the app has read events rather than asking since v0.32 — but the events were manufactured by a clock.
+
+  The writers say so now. Every setter on the player's shared state, the download store and the library version bump a wake; the watcher waits on it and reads the versions when it comes round, so a burst is still one pass and one message per slice. A koan with nothing happening does not schedule that thread at all.
+
+  Transfer rates go the same way: a reading is taken as the bytes land, held to one every 250ms, rather than by whoever happened to be watching. A transfer that settles zeroes its own figure rather than waiting to be sampled again — a row that finished used to keep the rate it managed on its last chunk until something looked.
+
+- **The last three clocks go.** The activity rows asked the engine whether a scan or a sync was running, once a second, for the whole life of the app, to notice something that happens twice a day — the engine says so now, in the same stream as everything else. The session autosave woke every second whether or not there was anything to save; it runs while the music does and writes on the edge when it stops. And a decode thread reading a track that is still downloading looked at the byte count every ten milliseconds: it waits on the count itself now, woken by the bytes as they land and by whatever ends the transfer.
+
+- **The GraphQL subscriptions are pushed, not polled.** `nowPlaying` and `queueUpdated` looked at the engine every 200ms and 500ms and yielded when something had moved; `vizFrame` resampled the analyser at whatever rate the client asked for, sending frames twice or skipping them depending on how the two clocks lined up. All three wait on a signal now. `vizFrame` is one message per analysed frame, and its `fps` sets the rate the analyser itself runs at rather than a rate to resample it at — one analyser, so a second client asking for a different figure moves it for both.
+
+  `nowPlaying` sends an anchor, the way the native client already receives one: `positionMs` is where the playhead was when the message was sent, and a client that knows it is playing can work out the rest. It arrives on a seek, a pause, a track boundary or a stall — not on a clock — so a paused koan sends nothing at all. **A client drawing a moving position must derive it rather than waiting to be told.** The `intervalMs` arguments remain in the schema and are ignored, so existing queries still parse.
+
+- **The app waits to be told rather than looking.** Restoring a session and jumping to the queue after an enqueue both watched a value every five milliseconds until it moved. They wait on the mirror now, with the deadline as one sleep for the whole wait rather than one per look.
+
+### Fixed
+
+- **The transport sheds what will not fit rather than squashing it.** The centre zone held `maxWidth: 560` at the highest layout priority, so it claimed 560 points of any bar wide enough to offer them and left the two sides to share the remainder — about thirty points each at the smallest window. The format badge and the output device were drawn a few points wide, and the track's name got three letters. The centre is handed a share of the bar now and the sides split what is left equally, which is what keeps the transport centred; a side that runs short drops things in order — the radio toggle's word, then the sleeve, then the format badge — instead of compressing all of them.
+
+- **The window is wide enough for the columns it has.** `NavigationSplitView` does not refuse to go below a column's declared minimum: it lays the column out at its *ideal* width and clips whatever does not fit. With the lyrics panel open there was nothing left to take, so the sidebar's rows and half the lyrics hung outside their own panes — and with no slack to move through, the split view stopped animating and started clamping, which is why the panel arrived whole in one frame instead of sliding. The floor is now the sum of what the columns actually draw at: the widest page's stage, the sidebar, and the panel. It is one number rather than one per column count, because a floor that moved when the panel opened resized the window under you.
+
+- **The lyrics panel slides open.** Its state was `@AppStorage`, and a `UserDefaults` write publishes on its own after the transaction that caused it has gone — so the pane had no animation to expand with while everything around it was still moving. It is observable state that writes through to defaults now, so the change happens inside the transaction and the pane and the stage move together.
+
+- **A clean security audit no longer reports itself as a failed build.** The audit job reports through a GitHub check run, which is an API write, and this repository hands workflows a read-only token by default — so the job found nothing, tried to say so, and failed with "Resource not accessible by integration" on every push to main. It asks for the one permission it needs now.
+
+- **Dependencies refreshed.** Seventeen packages moved to their latest compatible release — `h2`, `hyper`, `flate2`, `log`, `uuid`, `rand` and the rest — with no version requirement changed and nothing to see from outside.
+
+- **`chacha20` moves off a yanked release.** 0.10.0 and 0.10.1 called an SSE4.1 intrinsic from inside the SSE2 backend, so on an x86 processor with SSE2 and not SSE4.1 the instruction is illegal and the process dies. Upstream yanked both and shipped 0.10.2. Not a weakness in the cipher — a crash, and only on hardware old enough to matter to the Linux builds.
+
+## v0.33.1 (2026-08-28)
+
+### Added
+
+- **A graphics step below Plain.** The setting reached koan's own chrome and nothing else: the toolbar floated over live content and the transport kept its soft scroll edge at every step, including the one whose description says it is "the only step that stands the glass down". `Bare` stands both down — an opaque toolbar ground and a hard scroll edge. Measured no faster on an M1 Pro, and it is here because what the setting said and what it did disagreed, not as a speed-up.
+
+### Changed
+
+- **A record opens in one commit rather than three.** The page was one; the wash was a second and the tint a third, both landing after it because both were held in view state written by a task, which cannot run until the body already has. The tint's was the worse of the two — it eased over two seconds, and a tint is a value every control reads rather than a property of a layer, so that is a hundred and twenty renders of the whole window for one colour. Both are read straight through the artwork cache now, the way a cover has been read since koan#284, so a colour and a sleeve the app already holds land in the same frame as the record that wanted them. Tap to first frame goes from 144–432ms to 101–208ms on a large library, and the spread goes with it — much of what looked like a slow database was the read's answer queued behind that animation.
+
+- **Opening a record says how long it took.** A signpost in a view says when SwiftUI worked out what to draw, which on this gesture is a few milliseconds and nowhere near when you see anything — layout, the CoreAnimation commit and the render server all come after the last line any view gets to run. `FrameTimer` times the tap against the display link instead, and reports the body, the frame that could carry it, and every stall after that. See CONTRIBUTING.
+
+- **Every page arrives complete.** A record already loaded before it navigated; everywhere else arrived empty and filled in a query later — an artist's records, a playlist's rows, favourites, history, search results, and the queue you left behind when koan reopened. `Navigator` now loads whatever a page draws and only then moves to it, so the first frame of a page is the finished page. There is no partial render to see and no second render a frame later putting the rows under a heading that was already up.
+
+  A page about one thing holds what it is about as one value, read whole and stamped with the library version it was read at — so asking again for the page on screen costs nothing, and asking after a scan is a real read. Sections hand their rows to the navigator, which adopts the page and its rows in one change rather than two. Typing in the search field no longer jumps to an empty results page on the first keystroke: it stays where you are until there is something to show.
+
+- **A browse listing is only redrawn when it has actually changed.** Albums, artists, favourites and history are each read whole and handed to SwiftUI whole — 5,610 records and 7,138 artists on a large library — and assigning that array again is a mutation whether or not a single row moved, so the grid was diffed end to end, laid out and committed for it. It was assigned again on every library version bump, which is every download landing and every playlist edit, and on every return to a section already visited. The rows are now compared before they are published, and the same answer as last time is dropped. The favourite id sets get the same treatment, for the sharper version of the same problem: every cell and every row reads them to draw its heart.
+
+  Nothing about how a listing is read has changed. It still arrives whole, so the scrollbar still tells the truth about how long the library is and one flick still reaches the end of it.
+
+- **A track row no longer copies the whole track list to itself.** Each row carries the ids of the list it belongs to, so playing it keeps the rest queued behind it — and that list was rebuilt inside the row's own body, once per row. It is built once per pass now.
+
+### Fixed
+
+- **The room changes colour by fading again, not by cutting.** The wash installs a two second dissolve when the record changes, and the drift installs itself by clearing every animation on the same layers first — which took the dissolve with it. The drift is reinstalled from `layout()`, which a page switch triggers, so the fade was wiped a frame or two after it started and the new cover snapped in. The drift is removed by name now, and leaves alone what it did not put there.
+
+- **Back moves on the first press.** The cursor stepped on the click and left the page to catch up, so pressing Back while a record was still being read cancelled that record — which then never applied and never recorded — and stepped off a page nobody had arrived at. The screen stayed where it was and it took a second press to go anywhere. Where you are now changes beside the page rather than ahead of it.
+
+- **The transport no longer sits on the lyrics.** It floats over the window rather than inside the stage, and it already stepped aside for the sidebar — but not for the lyrics panel, so the last few lines of a song were behind the glass whenever the panel was open. The panel measures itself the way the sidebar does and the bar stops at its edge, tracking it as it is dragged.
+
+- **Organize no longer offers to move files into nowhere.** With no library folder configured the macOS sheet took the empty string as its destination, so every path the pattern produced was relative — and a relative path resolves against whatever directory the process happens to be sitting in, which for an app bundle is `/`. The preview was flawless: nothing occupied those destinations, so every file came back as a clean move. Pressing the button then failed on the first `mkdir` of every single file, and because a failed move comes back as a failed *row* rather than a thrown error, and the sheet re-read the library afterwards instead of reading its own result, the table came back identical and the button re-armed. It could be pressed all afternoon.
+
+  An empty destination is now refused where it is resolved, so the CLI and TUI get the same answer. The sheet says there is no library folder instead of drawing a plan, a move that fails is written to the log with its reason, and a run that fails keeps its own report — every row that did not make it says why, where its destination used to be.
+
+- **A track no longer leaves its album when its download finishes.** A track that streams starts on the partial tags symphonia can read, so when the file lands koan re-reads it properly and fills the queue item in. It filled in tracks that needed nothing — ones that came out of the library and already carried the record's own title. Where a file's tags disagree with the server's, and on a rip they often do, the item quietly changed album halfway down the queue and its record split in two: ten tracks under one heading, the one that had played under another. The file's word now only counts for a queue item with no library row behind it. Its duration still counts for everything, because that is the file's to know.
+
+## v0.33.0 (2026-08-26)
+
+### Removed
+
+- **WavPack and Monkey's Audio are no longer indexed.** koan could not play either: symphonia has no WavPack reader at all — there is no feature to turn on — and its `ape` feature is APE *tags*, not the codec. Both extensions were scanned all the same, so a library holding them showed rows that listed, searched, sorted, and then refused to play. A format koan cannot open is better left out than claimed.
+
+  Anything already indexed disappears on the next scan.
+
+### Fixed
+
+- **A large Opus file plays while it downloads again.** koan#375 taught a partial file to answer "where does this end?" with what had arrived rather than with the length the server advertised, which is what FLAC needs — it bisects between its first frame and the end it is given, and an end it cannot reach sends every probe into bytes that are not on disk.
+
+  Ogg needs the opposite. It takes the end it is handed as the end of the *stream*, so told the file stops at the write head it reported a track that was already over: nought milliseconds, and the decode thread reached the end of it in a second and moved on to the next, over and over. A large Opus download never played at all. The answer now depends on the container — Ogg, Opus, Speex and Ogg-FLAC keep the whole file's end, everything else keeps what has arrived. Neither can seek mid-download; for Ogg this is the difference between playing and not.
+
+- **Long tracks streamed from a server no longer break when the download lands.** Playback of a track that started mid-download held on to the name of the temporary file it started from. Finishing a download renames that file, so from then on the track named nothing: the next seek failed to open it and stopped playback outright. A nine-hour recording made it easy to hit, because there was a lot of track left to seek in.
+
+- **Seeking a track that is still downloading stays in the stream.** It used to reopen the partial file as an ordinary file, decoding whatever bytes happened to be on disk and ending the track early. Seeking now stays inside the download and lands anywhere already fetched, forwards or back.
+
+- **The seek bar shows how far a track can actually be reached, and stops there.** The limit was derived from the download's own byte count and quietly did nothing when a server sent no `Content-Length`, or when under five seconds had arrived — so a scrub could land somewhere the track had not got to. koan works it out once now, from bytes where a length is known and from the measured bitrate where it is not, and the bar draws the same figure the engine enforces.
+
+- **A large track no longer holds the player deaf while it opens.** Reading a container to find out what it is happened on the thread that answers play, pause and seek. Ogg states its duration in its last page, so opening one mid-download waited for the entire remaining transfer first — twenty-two seconds of an unresponsive player, on a fast connection. That reading now happens on its own thread and comes back as a message like anything else.
+
+- **A long Opus starts playing straight away rather than waiting for the whole download.** It used to wait because of that last page. koan now opens a partial file without stating a length, which is what stops a container going looking for its tail — and is how every format opens mid-download, not only Ogg, because stating a length also sends the reader looking for metadata at the end of a file that is not all there. The track starts in milliseconds and plays. What each format gives up is whatever only its tail could tell it: for Ogg that is the duration, and with it seeking, until the transfer lands. Ones that describe their frames from the front — FLAC, MP3, MP4 — stay seekable throughout, as far into the track as the bytes reach.
+
+  The transport says which of the two it is rather than leaving you to find out: the bar fills as the file arrives, the playhead moves against the duration the library knows, and reaching for a position it cannot reach yet gets an answer instead of silence.
+
+  When the transfer lands, seeking comes back on its own. Playback is not interrupted to do it — the decoder is reading a file, and a file being renamed underneath an open descriptor is not something it notices. The finished file is picked up the next time the track is seeked, which is the first moment it matters.
+
+- **A track whose downloaded copy was thrown away plays again.** Clearing downloads deleted the files but left the queue pointing at them and still saying they were ready, so afterwards nothing in the queue would play at all. Anything whose copy has gone is put back to waiting and fetched again.
+
+- **A track still downloading can be played by asking for it.** Double-clicking one opened the path the transfer will be renamed to rather than the one it is writing, and found nothing there — so it waited for the whole download rather than starting. Where a transfer is writing is now part of what says a transfer is running, so there is no longer an order for two threads to get wrong.
+
+- **The seek bar's downloaded extent moves while the download does.** The transport keeps its own copy of what is playing, refreshed when the playback state or the cursor moves — and neither moves during a download, so the mark sat wherever it had been when playback started. It follows the progress it is drawing now.
+
+- **A finished download's bar does not read as an empty one.** The downloads page lit the part that had arrived, so a transfer completing took the highlight away and the bar dropped back to looking untouched. The quiet end is the part still missing, the same way round as the seek bar.
+
+- **The bar no longer darkens when a download finishes.** It lit the downloaded part rather than dimming the part that had not arrived, so completing a transfer took the highlight away and the whole bar dropped a shade. The quiet end is the one that is missing, and a track already on disk looks like the ordinary bar it is.
+
+- **The playhead is visible on a very long track.** A third of a minute into nine hours is a tenth of a percent of the bar — narrower than the bar is thick, and so drawn as nothing at all. It has a head that does not shrink with the fraction.
+
+- **A download landing shows up on the page you are looking at.** A track fetched while its record was on screen kept an empty cloud until you navigated away and back — the page showing the row was not among the things a library change refreshed. A playlist had it twice over: nothing told it a library change had happened at all, and its progress rings never moved, because progress was patched into the queue index keyed by track and not the one keyed by playlist entry, which is the one a playlist row reads.
+
+- **The cloud and the heart sit in the same order everywhere.** The queue and a playlist had them the other way round from a record's own track list.
+
+- **Playing a track twice before it arrives fetches it once.** Downloads were deduplicated by queue entry rather than by track, and playing something again makes a new entry — so nothing matched and a second transfer started over the first. Both wrote the same file, and whichever finished renamed it out from under the other, which is where the failed downloads in the log came from. One transfer now, with every entry waiting on it told when it lands.
+
+- **FLACs start before their whole file has arrived.** A FLAC keeps a padding block after its tags — space reserved so tags can be edited without rewriting the file, and often several hundred kilobytes of it — which puts the first audio frame further in than the point streaming begins looking. koan gave up rather than reading on, so a FLAC played only once fully downloaded while an MP3 started at once.
+
+- **Finding what is favourited no longer reads the whole library.** Matching favourites to tracks joined on three columns at once, which no index can serve, so it read every track to find the hundred that were starred — fifty milliseconds, on every listing that shows a heart, which is all of them. One millisecond now, on a library of forty-eight thousand.
+
+- **Reaching for a position in a track that has not arrived says so.** A track whose container cannot state a duration until the last of its bytes lands — Ogg — is reachable nowhere at all while it downloads, and every seek into one was sent unclamped and taken as a seek to zero, so the arrow keys threw playback back to the start. The TUI now says how far the transfer has got instead of moving.
+
+- **Clicking the TUI's seek bar lands where it was aimed on a track still downloading.** The click was mapped against the duration the container reported, which on a partial file reads short, while the bar was drawn against the one the library knows. Both use the library's now.
+
+- **Half-finished downloads are cleaned up.** koan writes a download straight through and renames it at the end, so a `.part` file still on disk is from a run that did not finish — bytes nothing knows about, since only finished downloads are tracked for eviction. An interrupted nine-hour recording was half a gigabyte that never came back. They are swept at startup, which is the run after the one that left them.
+
+### Changed
+
+- **Opening a record takes seven milliseconds.** Measured end to end in Instruments, from the click to the finished page: the two database reads are 7.4ms, switching the page is 19µs, and the first frame carries the whole record. It was about half a second.
+
+  Most of that half-second was the page loading itself *twice*. The navigator reads a record before it moves to it, and the page then asked again the moment it appeared — the same two queries, but landing while the artwork they had kicked off was still in flight, so the second one took twenty times what the first did and re-rendered a page that was already correct. A record now carries the library version it was read at, which makes asking for what is already on screen free and asking for it after the rows moved a real read.
+
+- **Opening a record is instant, and nothing draws before it has something to draw.** A page used to arrive empty, fetch, and fill in: the word "Album" over an empty list, then a header, then rows, then artwork fading in over a placeholder. Each step was a frame you could see. The record and its tracks are now read *before* the page is shown, in parallel and as one value, so the first frame is the finished page.
+
+  What made that possible was finding where the time actually went. The engine answers in about 300µs — but every `await` in a view or a view's `.task` inherits main-actor isolation, so the *answer* had to queue for a slot on the main actor before it could be delivered. Behind the state mirror's batch, which lands ten times a second, that was a hundred milliseconds and change, on every read, whatever the record. Off the main actor it comes back in one. The artwork cache was the same mistake at greater scale: it was main-actor bound with eight awaits in its fetch path, so a grid of twenty tiles queued a hundred and sixty jobs there. It is neither main-actor bound nor observable any more, which also lets a view read a cover it already holds during `body` — a record opened from the grid it was showing draws its sleeve in the same frame instead of dissolving one in from a placeholder.
+
+- **The wash behind the window runs on the GPU.** Its drift was three `repeatForever` SwiftUI animations on `offset` and `scaleEffect` — and `.offset` is a *layout* modifier, so animating it meant the attribute graph re-evaluated a window-sized layout pass every display frame, forever. It cost about a tenth of the main thread with nothing happening, and the app was unresponsive for the whole two seconds a record change took to dissolve. The drift, the blur, the saturation and the dissolve are `CABasicAnimation` and `CALayer.filters` now: committed once, run by the compositor, never touching the main thread again.
+
+  Blocking file reads and image decoding also came off Swift's cooperative pool, which has one thread per core and was being emptied by a screenful of tiles — the same starvation, one layer down. Both now have lanes of their own, the CPU one bounded.
+
+- **Artwork is one call per record rather than a listing thrown away.** Asking for an album's cover fetched the album's *tracks* to find an id to ask with — a query built and carried across the boundary for one integer, once per tile. The engine resolves it in SQL now, in the same call that returns the bytes.
+
+- **The macOS app follows one state stream instead of six events.** Every model held its own copy of engine state and refreshed it by a rule someone had to remember to write, wired up by six closures deciding which model heard what. Three bugs in one afternoon were the same shape: an album page kept an empty cloud after a download landed, a playlist page heard nothing at all, and a playlist's progress rings never moved because progress was patched into one index of the queue and not the other. The engine was right every time.
+
+  The engine now publishes whole slices — what is playing, where the playhead is, the queue, what the queue still *is*, the transfers, their figures, and whether the library moved — and the app holds one mirror of them. Views read properties and are invalidated by SwiftUI as normal; a page showing something asked for on demand, like a record's tracks, reloads where it is drawn rather than waiting for a model to remember it exists. A snapshot cannot be applied wrongly, which is what a delta can do and did.
+
+  Slices are cut by rate of change rather than by subject, because replacing one invalidates everyone reading it. A transfer's byte count is no longer a field on a queue row and the seekable extent is no longer a field beside a track's title: both moved ten times a second while riding on something that changes when you press a button, so both dragged every reader along with them. Nothing is dropped either — each client keeps a cursor, so falling behind costs the intermediate values of a slice and never the fact that it changed, and a fresh cursor reads the whole state, which is how the app seeds itself with no separate call.
+
+- **A library task now only greys out the ones it would actually collide with.** Any of them running disabled all of them, on the grounds that they queue behind SQLite's single writer — so a twenty-minute sync of a large server locked out rescanning a folder, clearing downloads and the organize sheet along with it. Each task says what it holds instead: the files on disk, the rows for your local tracks, the rows mirrored from the server, the downloaded copies. A sync and a scan write different rows and now run together; a scan and a file move over the same files still do not. Clearing the index waits for everything, because it empties everything.
+
+- **Every query the library answers now goes through an index.** `EXPLAIN QUERY PLAN` was run over every statement koan issues, against a 47,944-track library, and each full table read was either fixed or established as a query that genuinely means all of them. The costs were invisible because nothing ever failed — they only grow with the size of somebody's library:
+
+  - Listing an artist's tracks read the whole library. A track counts as theirs by its own credit or its album's, and SQLite cannot use an index for an `OR` spanning two tables; asking `albums` in a subquery instead makes both halves indexed lookups. 10 ms → 2 ms for one artist, and the same shape in the API's batched artist load and in radio's artist picker.
+
+  - Listing favourites read the whole library, in the one place koan#363 did not reach — a track is favourited by any of its three paths, and joining on an `OR` across the three cannot use an index. Written as a union, as the id lookup next to it already was: 27 ms → 0.7 ms.
+
+  - A remote sync read every album and every artist once per record it enriched, matching on the server's id, which was not indexed. That is quadratic in the size of the library: 1.6 s of pure scanning for 5,510 albums, 44 ms once indexed. Starring albums and artists from the server was the same lookup and got the same fix.
+
+  - Radio resolves the artists a recommender names back to local rows, by MusicBrainz id and then by name. Neither could use an index — nothing indexed `mbid`, and `UNIQUE(name)` is case-sensitive while the lookup is not — so every candidate read all 7,138 artists.
+
+  - Forgetting a folder, and the stale-file check every scan runs, matched paths with `LIKE 'folder/%'`, which no index can serve. Now a range over the indexed path column. It also takes the pattern out of the path: `LIKE` reads `_` as "any character" and folds ASCII case, so a folder named `My_Music` matched `My Music` too.
+
+  - Deleting a track's scan-cache entry, and reading one back during organize, searched by track id where the key is the path. Undo read the whole organize log to find one batch.
+
+  - The download cache's eviction pass read all 47,944 tracks to find the ten that were downloaded, despite an index on exactly that. koan never ran `ANALYZE`, so the planner had no statistics and picked an index that merely supplied the `ORDER BY`. It now runs `PRAGMA optimize` on open and after a scan or a sync: 5.3 ms → 0.1 ms, with no query change at all.
+
+  One index went the other way: `refresh_tokens(expires_at)` was read by nothing and cost every sign-in, so it is dropped.
+  
+- **The TUI opens the database once rather than per query.** Every read opened its own connection: a `create_dir_all`, a permissions syscall, the whole schema DDL and a WAL checkpoint before a single row came back — and while downloads were writing, that checkpoint contended with them. The TUI's reads are user-triggered rather than per-frame so it never cost what it cost the macOS app, but autosave ran one on a timer. It shares the pool the app uses, which now applies the schema itself so a first run on a fresh machine works the same way.
+
+- **What koan is downloading is kept in one place.** Whether a track was arriving was recorded twice — once against the queue entry and once by the downloader — and the two had to be told separately, so they could and did disagree: a queue entry pointed at the file a transfer had just been renamed away from, and anything the TUI fetched was invisible to everything else. A queue entry now says only whether its own file can be played, and whether bytes are arriving is asked of the downloader.
+
+- **A download in progress is played from disk rather than copied into memory.** The decoder used to read from a growing in-memory copy that a second thread filled from the file: a 451 MB recording cost 451 MB of RAM for as long as it played. It reads the file directly now, which costs nothing, seeks backwards for free, and carries on across the rename that ends a download.
+
+### Added
+
+- **A Downloads section, and a store behind it.** What koan is fetching had no home: it could only be inferred from the queue, which knows about transfers for tracks that are in it and forgets each one the moment it lands — which is when you want to see that it did. There is one account of it now, kept by the downloader itself, and every surface reads it.
+
+  The page lists what is arriving with its rate, how much of how much, and where each row came from. A transfer that has stopped moving says so rather than sitting at a figure that looks like progress, which is the first thing worth knowing when something will not play.
+
+- **Where a track's bytes are, wherever a track is listed.** One mark, in one column, meaning the same thing in the queue as in a record: an empty cloud for something on the server, a ring filling as it arrives, a solid cloud once it is here. The queue drew a ring while a track was fetching and nothing at all afterwards — the one list where you watch a download happen was the one that could not say it had.
+
+- **Fetching and removing downloads, wholesale or a track at a time.** Library → Clear Downloaded Files throws away everything cached from the server. Right-clicking offers whichever of the two applies: a track already downloaded can be removed, one that is not can be fetched without queueing it — for going somewhere without a server, mostly. Either way the library rows stay and fetch again on demand.
+
+- **A graphics level, in Settings -> Appearance.** One slider from `Plain` to `Full`, so koan can be told how much of the machine it may spend on looking like itself. `Full` is what it has always done and stays the default.
+
+  | | Wash | Indicators | Chrome |
+  |---|---|---|---|
+  | `Full` | drifts | dance | glass |
+  | `Reduced` | held still | dance | glass |
+  | `Plain` | none | held still | flat materials |
+
+  The steps are ordered by what they were measured to cost rather than by how much they look like they cost. On an M1 Pro, playing, window frontmost: `Full` is 15-18% of a core, `Reduced` around 9%, `Plain` around 6%.
+
+  `Reduced` is where it is because of what the wash's cost actually is. The blur is rasterised once at 360 points and magnified as a texture, so it is close to free -- what is expensive is the *drift*: three animations of incommensurate period running forever on scale, rotation and offset, which is the only thing making the wash's composited output differ frame to frame, so the copy mirrored out under the sidebar and toolbar and the glass sampling it are redone for as long as the music runs. Held still, the wash measures the same as no wash at all. The record's colour is free; only the breathing is billed.
+
+  Below that, `Plain` is for machines where drawing a blurred backdrop is dear at all. Most of what it saves over `Reduced` is the playing indicators standing still, which stops a 30fps timeline and the analyser poll behind it. It also swaps the glass chrome for flat materials, which measured about a point of a core on top -- close enough to the noise floor that it is there on the reasoning rather than on the evidence, for GPUs and display sizes unlike this one.
+
+  The setting lives in macOS defaults (`defaults write cc.blit.koan graphics -int 0`) rather than `config.toml`: how much this app draws is this machine's business, and the TUI has none of it to draw.
+
+### Fixed
+
+- **A rate something else changed now reaches the macOS app.** koan has watched the device's nominal sample rate since #323 and the watch fires -- the log has been saying so all along. What never moved was the app. The FFI announces a playback change only when its snapshot differs from the last one, and that comparison was a signature of named fields: playback state, cursor, and, since #359, how far the download had got. The output rate is none of them, so retuning the interface under a playing track left the badge claiming the rate the device held when the track started, until the next track happened to move the cursor.
+
+  The snapshot is compared whole now, with the position held out because it has an event of its own. A signature has to be remembered to be widened, and had already been widened twice. The same omission was swallowing a stream's duration correction, which lands after playback starts and moves nothing else.
+
+- **A playlist's tile asked for its covers by track, so the placeholder never got caught.** Artwork is stored and cached per record, and the mosaic named a track off each album instead of the album. Every piece was a second fetch of a sleeve the grid already had, under a key of its own, held twice in memory and twice on disk -- and it sat outside the check that recognises Navidrome's stock blue vinyl, which only ever learns from album lookups. A playlist of records with no artwork drew four vinyls where the library drew four ensōs. It asks for albums now.
+
+- **The wash's drift is far enough to see.** It has moved by the same amounts since it landed in #330, and those amounts were too small to register: blurred at 14 points and magnified about five times, the wash has no feature on screen narrower than eighty points, and the drift carried it about one and a half of those over twenty-three seconds. Slow movement that small does not read as movement -- it reads as a still image. The thing was running, and costing six to nine percent of a core to run, and there was nothing to see.
+
+  The excursions now reach about four of those instead: 12% of the window sideways against 4%, 10% down against 6%, and the scale swinging 1.38 to 1.58 rather than 1.19 to 1.31. The periods are untouched at 13, 19 and 23 seconds, so it is exactly as unhurried as it was -- it simply arrives somewhere.
+
+  The wider scale is not decoration. It is the floor that keeps the texture's own edge out of frame once the offset carries it 12% of the window sideways and the rotation eats another three and a half percent. The scale is also taken off the longer edge of the window now rather than its width: the texture is square, so on a window taller than it is wide the width alone never covered it.
+
+- **The wash honours Reduce Motion.** It never did. The playing indicators already went still when the system asked for less motion and the room behind them kept breathing.
+
+### Changed
+
+- **The macOS app queries the library instead of copying it.** It used to load every album and every artist at launch, narrow those copies in Swift and index them so search could resolve ids against them -- three shapes of the same five thousand rows, held to serve views that read none of them directly. Now a section asks the engine what it should be showing and shows exactly that; narrowing and sorting happen in SQL.
+
+  Nothing is paged. This is an in-process call rather than a wire, so a listing arrives whole: the scrollbar tells the truth about how long the library is, and one flick reaches the end of it.
+
+  The bugs this closes are the ones that came from the copy existing: a section showing a library the database no longer has, and a cold launch showing an empty one because the load lived somewhere the second window never reached. There is no load to have forgotten to do.
+
+  `AlbumSort::Random` now takes a seed, so narrowing a shuffled listing narrows the shuffle you are looking at instead of dealing a new one on every keystroke. A new seed is a new shuffle, which is what the reshuffle button asks for.
+
+- **The engine says when the library changed.** A new `LibraryChanged` event rides the same channel as `QueueChanged` and `DownloadsChanged`, raised by anything that writes library rows -- scan, sync, import, organize, forget, rebuild -- including the automatic sync and the watched-folder scan that nothing was announcing at all. A background scan finishing now reaches the browser the same way one you asked for does, and the app no longer refreshes itself by guessing from whatever it happened to start.
+
+- **`koan-core` narrows and orders albums and artists itself.** `list_albums` and `list_artists` take a search term, an order, a favourites-only flag and an optional limit, replacing the several near-identical queries that answered one shape of the question each. Play history and favourite tracks take a search term too, and fuzzy album and artist search hands back rows rather than ids for a caller to resolve.
+
 ## v0.31.2 (2026-08-25)
 
 ### Changed

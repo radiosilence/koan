@@ -106,6 +106,7 @@ struct PlayableMenu: View {
             } label: {
                 Label("Organize Files…", systemImage: Icon.organize)
             }
+            cacheActions
         }
 
         if case .track(let track) = playable, let albumId = track.albumId {
@@ -126,6 +127,34 @@ struct PlayableMenu: View {
             }
             Button { nav.open(artist: album.artistId) } label: {
                 Label("Go to Artist", systemImage: Icon.artist)
+            }
+        }
+    }
+
+    /// Fetching and throwing away, offered according to what is actually here.
+    ///
+    /// A single track knows whether its bytes are on the machine, so it is
+    /// offered one verb rather than two with one of them inert. A record or an
+    /// artist is usually part of the way there, and both apply: fetching skips
+    /// what is already down, and removing skips what is not.
+    @ViewBuilder
+    private var cacheActions: some View {
+        if case .track(let track) = playable {
+            if track.onDisk {
+                Button { act { library.clearDownloads(trackIds: $0) } } label: {
+                    Label("Remove Downloaded File", systemImage: Icon.clear)
+                }
+            } else {
+                Button { act { library.downloadToCache(trackIds: $0) } } label: {
+                    Label("Download to Cache", systemImage: Icon.downloads)
+                }
+            }
+        } else {
+            Button { act { library.downloadToCache(trackIds: $0) } } label: {
+                Label("Download All to Cache", systemImage: Icon.downloads)
+            }
+            Button { act { library.clearDownloads(trackIds: $0) } } label: {
+                Label("Remove Downloaded Files", systemImage: Icon.clear)
             }
         }
     }
@@ -187,6 +216,7 @@ struct QueueActions: View {
     let trackIds: [Int64]
 
     @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
 
     var body: some View {
         Button { player.playNow(trackIds: trackIds) } label: {
@@ -197,6 +227,15 @@ struct QueueActions: View {
         }
         Button { player.enqueue(trackIds: trackIds) } label: {
             Label("Add to Queue", systemImage: Icon.queue)
+        }
+        Divider()
+        // A selection is usually mixed, so both apply: fetching skips what is
+        // already down and removing skips what is not.
+        Button { library.downloadToCache(trackIds: trackIds) } label: {
+            Label("Download to Cache", systemImage: Icon.downloads)
+        }
+        Button { library.clearDownloads(trackIds: trackIds) } label: {
+            Label("Remove Downloaded Files", systemImage: Icon.clear)
         }
     }
 }

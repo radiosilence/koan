@@ -10,6 +10,7 @@ pub mod device;
 // AUHAL on macOS, RemoteIO on iOS — one engine, two output components.
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub mod engine;
+pub mod fade;
 #[cfg(target_os = "ios")]
 pub mod ios_backend;
 pub mod opus;

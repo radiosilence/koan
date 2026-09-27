@@ -7,6 +7,11 @@
 # both rand entries.
 [advisories]
 ignore = [
-    "RUSTSEC-2024-0436", # paste, unmaintained; transitive, no upgrade path
-    "RUSTSEC-2026-0253", # lru, panic safety in LruCache::pop; transitive
+    # paste, unmaintained. Held by lofty; nothing here can move it.
+    "RUSTSEC-2024-0436",
+    # lru, panic safety in `LruCache::pop`. Patched in 0.18.2, and koan and
+    # ratatui are both past that — the affected 0.16.4 is held by
+    # async-graphql 7.2.1, which is its own latest release. Drop this the
+    # moment async-graphql ships one that has moved.
+    "RUSTSEC-2026-0253",
 ]

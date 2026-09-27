@@ -85,6 +85,7 @@ final class OrganizeModel {
         plan = nil
         error = nil
         editing = false
+        running = false
         patterns = await engine.organizePatterns()
         folders = await engine.libraryFolders()
         baseDir = folders.first ?? ""
@@ -92,8 +93,16 @@ final class OrganizeModel {
         patternName = patterns.first(where: \.isDefault)?.name ?? patterns.first?.name
         draft = stored(patternName) ?? ""
         configuring = false
+        // Without a library folder the pattern's relative paths hang off
+        // nothing, and a preview of them would look entirely convincing right
+        // up to the point where every move fails. Say so instead.
+        guard hasDestination else { return }
         resolveSelection(trackIds: trackIds)
     }
+
+    /// Whether there is anywhere to move files *to*. A library folder is the
+    /// only thing that makes a destination out of a pattern.
+    var hasDestination: Bool { !baseDir.isEmpty }
 
     func dismiss() {
         subject = nil
@@ -233,14 +242,24 @@ final class OrganizeModel {
         running = true
         error = nil
         Task {
-            // Exclusive: the moves and the row rewrites share a transaction, so
-            // this contends for the writer the way a scan does.
-            let result = await activity?.run("Moving files", exclusive: true) {
+            // Holds the local library: the files move and their rows are
+            // rewritten in one transaction, which is exactly what a scan reads
+            // and writes.
+            let result = await activity?.run("Moving files", uses: .localLibrary) {
                 try await engine.organizeExecute(pattern: pattern, trackIds: ids, baseDir: base)
             } ?? .failure(OrganizeFailure.noEngine)
-            guard requested == generation else { return }
             running = false
+            guard requested == generation else { return }
             switch result {
+            case .success(let report) where report.errorCount > 0:
+                // A move that fails comes back as a failed *row*, not a thrown
+                // error, so a run where nothing moved otherwise looks exactly
+                // like a run that never happened — press the button, see the
+                // same table, press it again. Keep the run's own plan: every
+                // row that didn't make it says why, where the destination was.
+                previewing = false
+                error = nil
+                self.plan = report
             case .success:
                 // Re-*resolve*, not just re-generate. The selection was read
                 // when the sheet opened and still holds the paths the files had

@@ -10,6 +10,7 @@ pub mod playlists;
 pub mod radio;
 mod scan_cache;
 mod search;
+pub mod shares;
 mod stats;
 pub mod tracks;
 pub mod vectors;
@@ -31,6 +32,30 @@ pub use search::*;
 pub use stats::*;
 pub use tracks::*;
 pub use vectors::*;
+
+/// The half-open range of paths under a folder, for `path >= .0 AND path < .1`.
+///
+/// A prefix match on an indexed column, rather than `LIKE 'folder/%'` — which
+/// SQLite answers by reading every row, because a pattern is opaque to an
+/// index until it has been evaluated. It also takes the pattern out of the
+/// path: `LIKE` reads `_` as "any character" and folds ASCII case, so
+/// `/Volumes/My_Music` matched `/Volumes/My Music` and `/volumes/my_music`
+/// alike.
+///
+/// The trailing separator is what keeps `/Volumes/Music` out of
+/// `/Volumes/Music Backup`; the upper bound is the highest code point, so
+/// every path under the folder sorts below it.
+pub fn folder_prefix_range(folder: &std::path::Path) -> (String, String) {
+    let prefix = format!(
+        "{}{}",
+        folder
+            .to_string_lossy()
+            .trim_end_matches(std::path::MAIN_SEPARATOR),
+        std::path::MAIN_SEPARATOR
+    );
+    let upper = format!("{prefix}\u{10FFFF}");
+    (prefix, upper)
+}
 
 // --- Row types ---
 
@@ -137,9 +162,12 @@ pub struct TrackMeta {
     /// albums and artists it can name but cannot refer to.
     pub album_remote_id: Option<String>,
     pub artist_remote_id: Option<String>,
-    /// MusicBrainz recording id. From the server today; a local scan could
-    /// read it from `MUSICBRAINZ_TRACKID` too.
+    /// MusicBrainz recording and release ids — `MUSICBRAINZ_TRACKID` and
+    /// `MUSICBRAINZ_ALBUMID` in a file's tags, `musicBrainzId` on a server's
+    /// song and album. Together they name one track whatever each source calls
+    /// the album; the recording alone recurs on every compilation it is on.
     pub mbid: Option<String>,
+    pub album_mbid: Option<String>,
     /// When the album this track belongs to entered the library. Remote sync
     /// supplies the server's `created`; anything else leaves it and the album
     /// is stamped with the time it was first seen.
@@ -173,6 +201,7 @@ pub fn sample_meta(title: &str, artist: &str, album: &str) -> TrackMeta {
         album_remote_id: None,
         artist_remote_id: None,
         mbid: None,
+        album_mbid: None,
         remote_url: None,
         album_added_at: None,
     }

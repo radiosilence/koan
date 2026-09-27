@@ -6,49 +6,39 @@ import SwiftUI
 /// The Mac puts all of this in a bar because it has a bar's worth of width to
 /// put it in. A phone does not, so the sleeve gets the screen and the controls
 /// sit under it — which is also the only place a seek bar is usable with a
-/// thumb.
+/// thumb. The seek bar is the Mac's own: animated from the engine's anchor
+/// rather than told the position, so an open sheet costs nothing between one
+/// anchor and the next.
 struct NowPlayingSheet: View {
     @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
-    @Environment(\.dismiss) private var dismiss
-
-    /// Where the thumb is while it is down. The clock keeps ticking underneath,
-    /// and a bar that jumps back to it mid-drag is unusable.
-    @State private var scrubbing: Double?
-
-    private var entry: QueueItem? { player.nowPlaying.entry }
 
     var body: some View {
         VStack(spacing: 24) {
-            Capsule()
-                .fill(.quaternary)
-                .frame(width: 36, height: 5)
-                .padding(.top, 8)
-
             sleeve
                 .padding(.horizontal, 32)
+                .padding(.top, 32)
 
             VStack(spacing: 4) {
-                Text(entry?.title ?? "Nothing playing")
+                Text(player.currentEntry?.title ?? "Nothing playing")
                     .font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
-                Text(entry?.artist ?? "")
+                Text(player.currentEntry?.artist ?? "")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
             .padding(.horizontal, 32)
 
-            seekBar.padding(.horizontal, 32)
+            SeekBar().padding(.horizontal, 24)
             transport
             Spacer(minLength: 0)
         }
-        .presentationDragIndicator(.hidden)
+        .presentationDragIndicator(.visible)
     }
 
     @ViewBuilder private var sleeve: some View {
-        if let source {
+        if let source = player.currentArtwork {
             AlbumArtwork(source: source, size: .tile, cornerRadius: 12)
                 .shadow(color: .black.opacity(0.25), radius: 24, y: 12)
         } else {
@@ -57,37 +47,6 @@ struct NowPlayingSheet: View {
                 .aspectRatio(1, contentMode: .fit)
                 .overlay { Image(systemName: "music.note").font(.largeTitle) }
         }
-    }
-
-    private var seekBar: some View {
-        VStack(spacing: 4) {
-            Slider(
-                value: Binding(
-                    get: { scrubbing ?? player.progress },
-                    set: { scrubbing = $0 }
-                ),
-                in: 0...1,
-                onEditingChanged: { editing in
-                    guard !editing, let target = scrubbing else { return }
-                    player.seek(fraction: target)
-                    scrubbing = nil
-                }
-            )
-            .disabled(player.clock.durationMs == 0)
-
-            HStack {
-                Text(Format.duration(displayedMs))
-                Spacer()
-                Text(Format.duration(player.clock.durationMs))
-            }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-        }
-    }
-
-    private var displayedMs: UInt64 {
-        guard let scrubbing else { return player.clock.positionMs }
-        return UInt64(scrubbing * Double(player.clock.durationMs))
     }
 
     private var transport: some View {
@@ -105,13 +64,6 @@ struct NowPlayingSheet: View {
             }
         }
         .buttonStyle(.plain)
-        .disabled(entry == nil)
-    }
-
-    private var source: AlbumArtwork.Source? {
-        guard let entry else { return nil }
-        if let albumId = entry.albumId { return .album(albumId) }
-        if let trackId = entry.trackId { return .track(trackId) }
-        return nil
+        .disabled(player.currentEntry == nil)
     }
 }

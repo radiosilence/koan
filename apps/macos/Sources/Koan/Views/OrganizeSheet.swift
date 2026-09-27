@@ -122,7 +122,7 @@ struct OrganizeSheet: View {
 
                 // Destinations are relative to this, so it has to be visible
                 // even when there was nothing to choose.
-                Text("relative to \(organize.baseDir)")
+                Text(organize.hasDestination ? "relative to \(organize.baseDir)" : "no destination")
                 // An edited pattern previews and moves without being saved, so
                 // say which state you are looking at.
                 if organize.isModified {
@@ -145,7 +145,14 @@ struct OrganizeSheet: View {
 
     @ViewBuilder
     private var table: some View {
-        if let error = organize.error {
+        if !organize.hasDestination {
+            EmptyState(
+                icon: "folder.badge.questionmark",
+                title: "No library folder",
+                detail: "koan has nowhere to move these to. Add a folder in Settings › Library."
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let error = organize.error {
             EmptyState(
                 icon: "exclamationmark.triangle",
                 title: "That pattern won't work",
@@ -224,12 +231,12 @@ struct OrganizeSheet: View {
     }
 
     /// Armed only when pressing it will actually move something: a plan with
-    /// moves in it, nothing already in flight, and no other library task
-    /// holding the database writer.
+    /// moves in it, nothing already in flight, and nothing else reading the
+    /// files this is about to move out from under it.
     private var canRun: Bool {
         !organize.running
             && !organize.previewing
-            && !activity.isLibraryBusy
+            && !activity.conflicts(with: .localLibrary)
             && (organize.plan?.movedCount ?? 0) > 0
     }
 }

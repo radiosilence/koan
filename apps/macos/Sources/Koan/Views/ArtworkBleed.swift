@@ -23,121 +23,76 @@ struct ArtworkBleed: View {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
     let source: AlbumArtwork.Source?
-    /// Whether the wash drifts. The room breathes while something is playing
-    /// and settles when it stops.
+    /// Whether there is anything to breathe to. The room breathes while
+    /// something is playing and settles when it stops.
     var drifts = false
 
     @Environment(CoverArtCache.self) private var cache
-    /// Held rather than drawn through `AlbumArtwork`, which shows a placeholder
-    /// while it loads. Over a five second dissolve that placeholder is a long
-    /// grey wipe between two records, so the old cover stays up until the new
-    /// one is actually in hand.
-    @State private var image: PlatformImage?
-    /// Bumped when the cover changes, which is what the dissolve keys on. The
-    /// image itself cannot: it is a reference, and identity is not enough to
-    /// drive a transition.
-    @State private var generation = 0
-    /// Both ends of the drift. Flipped once, then left alone — the animations
-    /// below repeat forever off it, which is what keeps this off the main
-    /// thread.
-    @State private var drifted = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("graphics") private var graphics = Graphics.full
+    /// The last cover that had to be fetched, and the record it was for. Only
+    /// consulted when the cache cannot answer.
+    @State private var fetched: (source: AlbumArtwork.Source, image: PlatformImage?)?
 
-    /// The cover is blurred to mush, so it is rendered small and scaled up
-    /// afterwards. Blurring a 360pt layer and magnifying the result costs a
-    /// fraction of blurring one the width of the window.
-    private static let side: CGFloat = 360
-
-    /// Three incommensurate periods, so the drift never arrives back where it
-    /// started and never reads as a loop. Settling is a plain ease: playback
-    /// stopping should let the room come to rest, not stop it mid-breath.
-    private func drift(_ period: Double) -> Animation {
-        drifts
-            ? .easeInOut(duration: period).repeatForever(autoreverses: true)
-            : .easeInOut(duration: 2)
+    /// What this record's sleeve is — read straight through the cache on every
+    /// pass, the way `AlbumArtwork` reads its bitmap. Held in `@State` and
+    /// written by a task, the wash was a second commit after every navigation,
+    /// and a commit that dirties a drawn layer is a synchronous round trip to
+    /// the render server whatever it is carrying.
+    ///
+    /// Doubly optional on purpose. The outer `nil` means *nobody has answered
+    /// yet*, which is not the same as a record having no cover: the first keeps
+    /// the room as it is until the sleeve arrives, the second empties it. Told
+    /// apart, a record whose art is still being fetched no longer wipes the
+    /// wash grey and then fades the new one in over two seconds.
+    private var answered: PlatformImage?? {
+        guard let source else { return .some(nil) }
+        if let held = cache.cached(source, size: .tile) { return .some(held) }
+        guard let fetched, fetched.source == source else { return nil }
+        return .some(fetched.image)
     }
+
+    /// Whether the wash is actually moving: something to breathe to, a setting
+    /// that allows it, and a system that has not asked for less motion.
+    private var breathes: Bool { drifts && graphics.drifts && !reduceMotion }
 
     var body: some View {
-        GeometryReader { geo in
-            // The transforms live on this container rather than on the image,
-            // so a record change swaps what is inside without interrupting the
-            // drift. On the image they went with it, and each new cover
-            // arrived parked at the end of a motion that never restarted.
-            ZStack {
-                if let image {
-                    Image(platform: image)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                        .id(generation)
-                        .transition(.opacity)
-                }
-            }
-            .frame(width: Self.side, height: Self.side)
-            .blur(radius: 14)
-            .saturation(1.6)
-            // Rasterised here, once, and magnified as a texture from this point
-            // down. Without it the blur and the saturation were recomputed on
-            // every frame of the drift below — the transforms were never the
-            // expensive part, re-blurring behind them was, and it cost about a
-            // tenth of a core for as long as anything was playing. The wash is
-            // already blurred to mush at 360 points, so there is no detail left
-            // for the magnification to lose.
-            .drawingGroup()
-            // Driven by animation rather than by a `TimelineView` re-rendering
-            // at 20fps. Every tick of that invalidated layout through the
-            // geometry modifiers below, and a full window Auto Layout pass
-            // twenty times a second was a quarter of a core with nothing
-            // happening. These hand the interpolation to CoreAnimation, which
-            // runs them off the main thread and smoother for it.
-            .scaleEffect(geo.size.width / Self.side * (drifted ? 1.31 : 1.19))
-            .animation(drift(13), value: drifted)
-            .rotationEffect(.degrees(drifted ? 3 : -3))
-            .animation(drift(19), value: drifted)
-            .offset(
-                x: geo.size.width * (drifted ? 0.04 : -0.04),
-                y: geo.size.height * (drifted ? -0.06 : 0.06)
-            )
-            .animation(drift(23), value: drifted)
-            .frame(width: geo.size.width, height: geo.size.height)
+        // Below `reduced` this is nothing at all rather than a transparent
+        // wash: no cover fetched, no blur, no mirrored copy under the glass.
+        if graphics.showsWash {
+            bleed
         }
-        .clipped()
-        .opacity(0.5)
-        .mask(
-            LinearGradient(
-                colors: [.black, .black, .clear],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        )
-        .backgroundExtensionEffect()
-        .allowsHitTesting(false)
-        // One record dissolving into the next over long enough that you notice
-        // the room has changed colour without ever catching it changing.
-        .animation(.easeInOut(duration: 2), value: generation)
-        .task(id: source) { await load() }
-        .onAppear { drifted = drifts }
-        .onChange(of: drifts) { _, now in drifted = now }
     }
 
+    /// Everything that moves is in `DriftingWash`, and everything left here is
+    /// static — a mask, an opacity and a mirror, committed once. Nothing in
+    /// this view is animated, which is the whole point: the drift, the blur and
+    /// the dissolve between records all belong to the compositor now, and this
+    /// view's body runs when a record changes and at no other time.
+    private var bleed: some View {
+        DriftingWash(image: answered ?? nil, pending: answered == nil, drifts: breathes)
+            .opacity(0.5)
+            .mask(
+                LinearGradient(
+                    colors: [.black, .black, .clear],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            .backgroundExtensionEffect()
+            .allowsHitTesting(false)
+            .task(id: source) { await load() }
+    }
+
+    /// Only for a cover the cache could not already answer for. The usual path
+    /// is read through in `cover`, in the same pass as the page that changed it.
     private func load() async {
-        guard let source else {
-            show(nil)
-            return
-        }
-        if let cached = cache.cached(source, size: .tile) {
-            show(cached)
-            return
-        }
+        guard let source, cache.cached(source, size: .tile) == nil else { return }
         let loaded = await cache.image(for: source, size: .tile)
         // A cancelled load means the record moved on again; whatever came back
         // is for the wrong one.
         guard !Task.isCancelled else { return }
-        show(loaded)
-    }
-
-    private func show(_ new: PlatformImage?) {
-        guard new !== image else { return }
-        image = new
-        generation += 1
+        fetched = (source, loaded)
     }
 }
 

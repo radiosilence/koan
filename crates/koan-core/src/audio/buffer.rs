@@ -6,7 +6,7 @@ use std::thread;
 
 use symphonia::core::codecs::audio::well_known::{
     CODEC_ID_AAC, CODEC_ID_ALAC, CODEC_ID_FLAC, CODEC_ID_MP3, CODEC_ID_OPUS, CODEC_ID_PCM_F32LE,
-    CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32LE, CODEC_ID_VORBIS, CODEC_ID_WAVPACK,
+    CODEC_ID_PCM_S16LE, CODEC_ID_PCM_S24LE, CODEC_ID_PCM_S32LE, CODEC_ID_VORBIS,
 };
 use symphonia::core::codecs::audio::{AudioCodecId, AudioCodecParameters, AudioDecoderOptions};
 use symphonia::core::formats::probe::Hint;
@@ -353,7 +353,13 @@ fn probe_mss(mss: MediaSourceStream<'_>, hint: &Hint) -> Result<StreamInfo, Deco
             FormatOptions::default(),
             MetadataOptions::default(),
         )
-        .map_err(|e| DecodeError::Decode(e.to_string()))?;
+        .map_err(|e| match e {
+            // Kept whole rather than flattened to a string: a probe against a
+            // partial file fails by running out of bytes, and the caller has to
+            // tell that apart from a file it cannot make sense of.
+            symphonia::core::errors::Error::IoError(io) => DecodeError::Io(io),
+            other => DecodeError::Decode(other.to_string()),
+        })?;
 
     let track = reader
         .default_track(TrackType::Audio)
@@ -613,6 +619,11 @@ fn decode_queue_loop<N>(
                     break;
                 }
             }
+        }
+        // A stop ends the session wherever it lands; looking ahead would peek
+        // the playlist and log a transition that never happens.
+        if stop.load(Ordering::Relaxed) || !timeline.is_current() {
+            break;
         }
 
         seek_ms = 0;
@@ -1033,7 +1044,6 @@ pub fn codec_name(codec: AudioCodecId) -> String {
         CODEC_ID_VORBIS => "Vorbis",
         CODEC_ID_OPUS => "Opus",
         CODEC_ID_ALAC => "ALAC",
-        CODEC_ID_WAVPACK => "WavPack",
         CODEC_ID_PCM_S16LE => "PCM/16",
         CODEC_ID_PCM_S24LE => "PCM/24",
         CODEC_ID_PCM_S32LE => "PCM/32",

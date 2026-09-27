@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Which page the navigator is pointing at.
+/// Which page the navigator is pointing at, for a tab to push.
 ///
-/// The shell around it differs per platform — a split view on the Mac, a stack
-/// under a tab bar on a phone — but what a section means does not.
+/// The Mac's `RootView` does the same switch but keeps the browsers mounted
+/// behind the stage; a phone's navigation stack already keeps what it pushed,
+/// so here each page is simply built.
 struct PageView: View {
     @Environment(Navigator.self) private var nav
 
@@ -22,6 +23,8 @@ struct PageView: View {
             FavouritesView()
         case .section(.playHistory):
             HistoryView()
+        case .section(.downloads):
+            DownloadsView()
         case .section(.playlist(let id)):
             PlaylistView(playlistId: id)
         case .album(let id):

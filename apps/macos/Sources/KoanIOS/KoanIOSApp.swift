@@ -29,6 +29,7 @@ struct KoanIOSApp: App {
                         .environment(state.activity)
                         .environment(state.levels)
                         .environment(state.ui)
+                        .environment(state.mirror)
                         .tint(.koanAccent)
                 } else if let startupError {
                     ContentUnavailableView(

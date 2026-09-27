@@ -426,6 +426,39 @@ impl QueryRoot {
         ))
     }
 
+    /// Share links this server serves, newest first, expired ones included
+    /// so they can be renewed or removed.
+    async fn shares(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlShareLink>> {
+        super::require_role(ctx, koan_core::auth::Role::User)?;
+        with_db(ctx, |db| {
+            let cfg = Config::load().unwrap_or_default();
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs() as i64);
+            let list = queries::shares::list_shares(&db.conn)
+                .map_err(|e| super::internal_error("db", e))?;
+            Ok(list
+                .into_iter()
+                .map(|s| GqlShareLink {
+                    url: cfg
+                        .sharing
+                        .public_url
+                        .as_deref()
+                        .map(|base| koan_core::helpers::share_url(base, &s.id)),
+                    expired: !s.is_live(now),
+                    id: s.id,
+                    description: s.description,
+                    created_at: s.created_at,
+                    expires_at: s.expires_at,
+                    visits: s.visits,
+                    last_visited: s.last_visited,
+                    track_ids: s.track_ids,
+                })
+                .collect())
+        })
+        .await
+    }
+
     /// Every playlist, in the order the owner arranged them.
     async fn playlists(&self, ctx: &Context<'_>) -> async_graphql::Result<Vec<GqlPlaylist>> {
         with_db(ctx, |db| {

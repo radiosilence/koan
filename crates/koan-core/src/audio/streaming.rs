@@ -1,306 +1,450 @@
-//! StreamingSource — a Read+Seek adapter over a shared, incrementally-filled byte buffer.
+//! `PartialFileSource` — a Read+Seek adapter over a file that is still downloading.
 //!
-//! The download thread writes chunks into a `StreamBuffer` while the Symphonia decoder
-//! reads from a `StreamingSource` backed by the same buffer. The source blocks briefly
-//! when the read position catches up to the write head, enabling true streaming decode
-//! without waiting for the full download to complete.
+//! The download thread writes the track to a `.part` file and publishes how far
+//! it has got in an `AtomicU64`; the Symphonia decoder reads the same file
+//! through a `PartialFileSource`, which blocks when the read position catches
+//! up to the write head. Playback starts long before the transfer finishes and
+//! seeking anywhere below the write head costs a `lseek`.
+//!
+//! Nothing is copied. An earlier design pumped the file into a shared `Vec<u8>`
+//! so the decoder could read from memory, which cost as much RAM as the track
+//! was long — half a gigabyte for a nine-hour recording, held for as long as it
+//! played. The bytes are already on disk; the page cache is better at this.
+//!
+//! The open descriptor survives the download's final rename from `.part` to its
+//! cache path, so a transfer landing mid-playback changes nothing for a reader.
 
+use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
-use std::sync::{Arc, Condvar, Mutex};
-use std::time::Duration;
+use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
-/// Longest a read may block waiting for bytes before the stream counts as dead.
-/// A download that stops advancing must surface as an error, not park the decode
-/// thread forever holding the ring buffer producer and the whole buffered track.
-const READ_TIMEOUT: Duration = Duration::from_secs(30);
+/// Longest a read may block waiting for bytes before the transfer counts as
+/// dead. A download that stops advancing must surface as an error, not park the
+/// decode thread forever holding the ring buffer producer.
+const STALL_LIMIT: Duration = Duration::from_secs(30);
 
-/// State shared between the download writer and the decoder reader.
-struct Inner {
-    data: Vec<u8>,
-    /// Total expected byte length. `None` if not yet known (no Content-Length).
-    total_len: Option<u64>,
-    /// Set to true when the download thread has finished cleanly — the buffer
-    /// holds the whole source and readers see EOF past its end.
-    done: bool,
-    /// Set to true when the download died before delivering everything.
-    /// Reads past the buffered bytes fail rather than reporting EOF.
-    failed: bool,
-    /// How long a read blocks for new bytes before giving up.
-    read_timeout: Duration,
+/// Where a download has got to, as the source needs to know it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamStatus {
+    /// Bytes are still arriving.
+    Downloading,
+    /// Every byte landed. Reads past the end are a clean EOF.
+    Complete,
+    /// The transfer died before delivering everything. Reads past the written
+    /// bytes fail rather than reporting EOF, which would silently truncate the
+    /// track and look like a short file.
+    Failed,
 }
 
-/// A shared, growable byte buffer that the download thread writes into.
-///
-/// Clone it to get additional handles; all clones share the same underlying data.
-#[derive(Clone)]
-pub struct StreamBuffer {
-    inner: Arc<(Mutex<Inner>, Condvar)>,
-}
-
-impl StreamBuffer {
-    /// Create a new empty buffer. `total_len` may be provided once Content-Length is known.
-    pub fn new(total_len: Option<u64>) -> Self {
-        Self::with_read_timeout(total_len, READ_TIMEOUT)
-    }
-
-    fn with_read_timeout(total_len: Option<u64>, read_timeout: Duration) -> Self {
-        Self {
-            inner: Arc::new((
-                Mutex::new(Inner {
-                    data: Vec::new(),
-                    total_len,
-                    done: false,
-                    failed: false,
-                    read_timeout,
-                }),
-                Condvar::new(),
-            )),
-        }
-    }
-
-    /// Append downloaded bytes. Called by the download thread.
-    pub fn push(&self, chunk: &[u8]) {
-        let (lock, cvar) = &*self.inner;
-        let mut inner = lock.lock().unwrap();
-        inner.data.extend_from_slice(chunk);
-        cvar.notify_all();
-    }
-
-    /// Signal that the download delivered everything. Readers see EOF past the
-    /// buffered bytes.
-    pub fn finish(&self) {
-        let (lock, cvar) = &*self.inner;
-        let mut inner = lock.lock().unwrap();
-        inner.done = true;
-        cvar.notify_all();
-    }
-
-    /// Signal that the download died. Readers past the buffered bytes get a
-    /// broken-pipe error — reporting EOF here would silently truncate the track.
-    pub fn fail(&self) {
-        let (lock, cvar) = &*self.inner;
-        let mut inner = lock.lock().unwrap();
-        inner.failed = true;
-        cvar.notify_all();
-    }
-
-    /// True when this is the last handle: nothing can read what is written from
-    /// here on, so a writer holding it has no reason to keep going.
-    pub fn is_abandoned(&self) -> bool {
-        Arc::strong_count(&self.inner) == 1
-    }
-
-    /// Total bytes received so far.
-    pub fn bytes_downloaded(&self) -> u64 {
-        let (lock, _) = &*self.inner;
-        lock.lock().unwrap().data.len() as u64
-    }
-
-    /// Total expected length (from Content-Length), if known.
-    pub fn total_len(&self) -> Option<u64> {
-        let (lock, _) = &*self.inner;
-        lock.lock().unwrap().total_len
-    }
-
-    /// Create a `StreamingSource` that reads from this buffer starting at offset 0.
-    pub fn reader(&self) -> StreamingSource {
-        StreamingSource {
-            inner: self.inner.clone(),
-            pos: 0,
-        }
-    }
-}
-
-/// A `Read + Seek` view into a `StreamBuffer`.
-///
-/// Blocks on `read` when the read position is at or beyond the write head,
-/// until more bytes arrive or the download finishes.
-pub struct StreamingSource {
-    inner: Arc<(Mutex<Inner>, Condvar)>,
+/// A `Read + Seek` view of a file that is still being written.
+pub struct PartialFileSource {
+    file: File,
     pos: u64,
+    /// How many bytes the download has committed to disk so far.
+    bytes_written: Arc<crate::remote::downloads::ByteFeed>,
+    /// Total expected length, or 0 when the server sent no Content-Length.
+    total: u64,
+    status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
+    stall_limit: Duration,
+    /// Whether a read may wait at the write head for more of the download.
+    ///
+    /// Playback waits; probing does not. A container asked to describe itself
+    /// reads whatever it needs to, and Ogg needs its last page — so a probe
+    /// that waits waits for the whole transfer. Refusing instead turns that
+    /// into an immediate answer of "not from what has arrived", which is
+    /// something the caller can act on.
+    wait_for_bytes: bool,
+    /// Whether to state the advertised length.
+    ///
+    /// Saying nothing is what stops a container going looking for its tail:
+    /// Ogg reads its final page only when the source claims both a length and
+    /// seekability, and Symphonia scans for trailing metadata on the same
+    /// terms — which no partial file can satisfy. So this is what every
+    /// container mid-download ends up opened with, not only Ogg.
+    ///
+    /// It governs the end of the stream as well as the length, because they
+    /// have to be the same end. See `Seek`.
+    advertise_len: bool,
+    /// Whether `SeekFrom::End` answers for the whole file or for what has
+    /// arrived. Separate from `advertise_len` because Ogg needs the first
+    /// without the second — see `ProbeMode`.
+    whole_file_end: bool,
 }
 
-impl Read for StreamingSource {
+/// How much a probe may claim, and how far it may read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeMode {
+    /// State the length. A container that can describe itself from the bytes
+    /// already downloaded does, and the result is fully seekable.
+    Full,
+    /// State no length, so a container that would go looking for its tail
+    /// settles for what it can read from the front. Opens immediately, and
+    /// stays seekable within what has arrived for anything that describes its
+    /// frames from the front. What it gives up is whatever only the tail could
+    /// give — for Ogg that is the duration, and with it seeking at all.
+    ///
+    /// The end is what has arrived. FLAC bisects between its first frame and
+    /// the end it is given, so an end it cannot reach sends every probe into
+    /// bytes that are not on disk.
+    Lengthless,
+    /// The same, except that the end stays the whole file's.
+    ///
+    /// Ogg takes the end it is handed as the end of the *stream*. Handed the
+    /// write head it reports a track that is already over — nought
+    /// milliseconds — and the decode thread reaches the end of it in a second
+    /// and moves on to the next, over and over, so a large Opus file
+    /// downloading never plays at all. It cannot seek mid-download under either
+    /// answer; this is the difference between playing and not.
+    LengthlessWholeEnd,
+}
+
+impl PartialFileSource {
+    /// Open `path` for playback: reads wait at the write head for the download
+    /// to catch up. `bytes_written` is the download's own counter and `total`
+    /// its advertised length, 0 when it sent none.
+    ///
+    /// `mode` must be whatever the probe settled on. A container opened without
+    /// a length to describe itself has to be decoded without one too — given a
+    /// length it goes looking for its tail all over again, and this time on the
+    /// decode thread, where the cost is silence rather than a busy player.
+    pub fn open(
+        path: &Path,
+        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
+        total: u64,
+        status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
+        mode: ProbeMode,
+    ) -> io::Result<Self> {
+        let mut source = Self::with_stall_limit(path, bytes_written, total, status, STALL_LIMIT)?;
+        source.advertise_len = mode == ProbeMode::Full;
+        source.whole_file_end = mode != ProbeMode::Lengthless;
+        Ok(source)
+    }
+
+    /// Open for a probe: never waits at the write head, so a container that
+    /// cannot describe itself from what has arrived says so at once.
+    pub fn open_for_probe(
+        path: &Path,
+        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
+        total: u64,
+        status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
+        mode: ProbeMode,
+    ) -> io::Result<Self> {
+        let mut source = Self::with_stall_limit(path, bytes_written, total, status, STALL_LIMIT)?;
+        source.wait_for_bytes = false;
+        source.advertise_len = mode == ProbeMode::Full;
+        source.whole_file_end = mode != ProbeMode::Lengthless;
+        Ok(source)
+    }
+
+    fn with_stall_limit(
+        path: &Path,
+        bytes_written: Arc<crate::remote::downloads::ByteFeed>,
+        total: u64,
+        status: Arc<dyn Fn() -> StreamStatus + Send + Sync>,
+        stall_limit: Duration,
+    ) -> io::Result<Self> {
+        Ok(Self {
+            file: File::open(path)?,
+            pos: 0,
+            bytes_written,
+            total,
+            status,
+            stall_limit,
+            wait_for_bytes: true,
+            advertise_len: true,
+            whole_file_end: true,
+        })
+    }
+
+    /// Bytes known to be readable — what the download has written, or the whole
+    /// file once it has landed.
+    fn available(&self) -> u64 {
+        let written = self.bytes_written.load(Ordering::Acquire);
+        match (self.status)() {
+            StreamStatus::Complete => self.file.metadata().map(|m| m.len()).unwrap_or(written),
+            _ => written,
+        }
+    }
+
+    /// Read straight from the file, tolerating a short read at the write head:
+    /// Whatever ends a transfer must call `ByteFeed::done` when it sets the
+    /// status: a read waiting for bytes is parked on the feed, and a download
+    /// that failed has no more bytes to wake it with.
+    ///
+    /// `bytes_written` is published by the downloader as it goes and the data
+    /// behind it can lag by a moment.
+    fn read_available(&mut self, buf: &mut [u8], limit: u64) -> io::Result<usize> {
+        let to_read = (limit as usize).min(buf.len());
+        self.file.read(&mut buf[..to_read]).inspect(|n| {
+            self.pos += *n as u64;
+        })
+    }
+}
+
+impl Read for PartialFileSource {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if buf.is_empty() {
             return Ok(0);
         }
 
-        let (lock, cvar) = &*self.inner;
+        let deadline = Instant::now() + self.stall_limit;
+        loop {
+            let available = self.available();
+            if available > self.pos {
+                let n = self.read_available(buf, available - self.pos)?;
+                if n > 0 {
+                    return Ok(n);
+                }
+                // The counter ran ahead of what is visible on disk. Fall
+                // through and wait rather than reporting a false EOF.
+            }
 
-        // Wait until there is data at `pos`, or the download ends one way or another.
-        let guard = lock.lock().unwrap();
-        let timeout = guard.read_timeout;
-        let (inner, wait) = cvar
-            .wait_timeout_while(guard, timeout, |s| {
-                s.data.len() as u64 <= self.pos && !s.done && !s.failed
-            })
-            .unwrap();
+            match (self.status)() {
+                StreamStatus::Failed => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "stream download failed before delivering the whole track",
+                    ));
+                }
+                // Everything landed and there is nothing past `pos`: real EOF.
+                StreamStatus::Complete if available <= self.pos => return Ok(0),
+                StreamStatus::Complete => {}
+                StreamStatus::Downloading => {
+                    // A server that sent a Content-Length has delivered it all.
+                    if self.total > 0 && available >= self.total && self.pos >= self.total {
+                        return Ok(0);
+                    }
+                }
+            }
 
-        let available = inner.data.len() as u64;
-        if available <= self.pos {
-            if inner.failed {
+            if !self.wait_for_bytes {
                 return Err(io::Error::new(
-                    io::ErrorKind::BrokenPipe,
-                    "stream download failed before delivering the whole track",
+                    io::ErrorKind::UnexpectedEof,
+                    "past what the download has delivered",
                 ));
             }
-            if wait.timed_out() {
+            if Instant::now() >= deadline {
                 return Err(io::Error::new(
                     io::ErrorKind::TimedOut,
                     "stream download stalled",
                 ));
             }
-            // Done and no more data — EOF.
-            return Ok(0);
+            // Woken by the download itself, and by it finishing or failing.
+            // The deadline is the giving-up clock rather than a look-again
+            // one: this thread is not scheduled between one chunk and the next.
+            self.bytes_written.wait_past(available, deadline);
         }
-
-        let start = self.pos as usize;
-        let end = (start + buf.len()).min(inner.data.len());
-        let n = end - start;
-        buf[..n].copy_from_slice(&inner.data[start..end]);
-        self.pos += n as u64;
-        Ok(n)
     }
 }
 
-impl Seek for StreamingSource {
+impl Seek for PartialFileSource {
     fn seek(&mut self, pos: SeekFrom) -> io::Result<u64> {
-        let (lock, _) = &*self.inner;
-        let inner = lock.lock().unwrap();
-
-        let new_pos: i64 = match pos {
+        let target: i64 = match pos {
             SeekFrom::Start(n) => n as i64,
             SeekFrom::Current(n) => self.pos as i64 + n,
+            // The end has to be the same end `byte_len` describes. A source
+            // that states a length is asked about the whole file and answers
+            // for it; one that states none has only what has arrived, and
+            // answering with the advertised total there sends a reader
+            // bisecting into bytes that are not on disk yet — which is the
+            // whole file's worth of waiting for a FLAC seeked mid-download.
             SeekFrom::End(n) => {
-                // For End seeks we need total_len. If not known yet, use current data len.
-                let len = inner.total_len.unwrap_or(inner.data.len() as u64) as i64;
-                len + n
+                let len = if self.whole_file_end && self.total > 0 {
+                    self.total
+                } else {
+                    self.available()
+                };
+                len as i64 + n
             }
         };
 
-        if new_pos < 0 {
+        if target < 0 {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "seek before beginning of stream",
             ));
         }
 
-        self.pos = new_pos as u64;
+        self.pos = self.file.seek(SeekFrom::Start(target as u64))?;
         Ok(self.pos)
     }
 }
 
 // Symphonia requires MediaSource: Read + Seek + Send + Any
-impl symphonia::core::io::MediaSource for StreamingSource {
+impl symphonia::core::io::MediaSource for PartialFileSource {
     fn is_seekable(&self) -> bool {
-        // Seekable only if the total length is known (needed for seek-to-end math).
-        // Forward seeks always work; backward seeks require buffered data already present.
-        // We advertise seekable=true and handle backward seeks via the buffered Vec.
+        // Backward seeks and forward seeks below the write head are a `lseek`
+        // on a file that is already there. A forward seek past it lands on a
+        // read that blocks until the bytes arrive, which is the honest
+        // behaviour — callers clamp to `seekable_ms` to avoid asking.
+        //
+        // Saying no would cost more than it saved: a reader told a stream is
+        // unseekable does not stop seeking, it walks the whole file to the
+        // target instead, and cannot go backwards at all.
         true
     }
 
     fn byte_len(&self) -> Option<u64> {
-        let (lock, _) = &*self.inner;
-        lock.lock().unwrap().total_len
+        (self.advertise_len && self.total > 0).then_some(self.total)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io::{self, Read, Seek, SeekFrom};
+    use std::io::Write;
+    use std::sync::atomic::AtomicU8;
+
+    use symphonia::core::io::MediaSource;
 
     use super::*;
 
-    fn filled_buffer(data: &[u8]) -> StreamBuffer {
-        let buf = StreamBuffer::new(Some(data.len() as u64));
-        buf.push(data);
-        buf.finish();
-        buf
+    /// A file plus the counter and status a download would publish, so a test
+    /// can advance either independently.
+    struct Fixture {
+        _dir: tempfile::TempDir,
+        path: std::path::PathBuf,
+        written: Arc<crate::remote::downloads::ByteFeed>,
+        status: Arc<AtomicU8>,
+    }
+
+    const DOWNLOADING: u8 = 0;
+    const COMPLETE: u8 = 1;
+    const FAILED: u8 = 2;
+
+    impl Fixture {
+        fn new() -> Self {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("track.opus.part");
+            File::create(&path).unwrap();
+            Self {
+                _dir: dir,
+                path,
+                written: crate::remote::downloads::ByteFeed::new(),
+                status: Arc::new(AtomicU8::new(DOWNLOADING)),
+            }
+        }
+
+        /// Append bytes and publish them, as the downloader does per chunk.
+        fn push(&self, chunk: &[u8]) {
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&self.path)
+                .unwrap();
+            f.write_all(chunk).unwrap();
+            f.flush().unwrap();
+            self.written.advance(chunk.len() as u64);
+        }
+
+        fn set(&self, status: u8) {
+            self.status.store(status, Ordering::Release);
+            // What ends a transfer says so, the way the downloader does — a
+            // reader blocked for bytes that will never come is waiting on the
+            // feed, not on the status.
+            self.written.done();
+        }
+
+        fn status_fn(&self) -> Arc<dyn Fn() -> StreamStatus + Send + Sync> {
+            let status = self.status.clone();
+            Arc::new(move || match status.load(Ordering::Acquire) {
+                COMPLETE => StreamStatus::Complete,
+                FAILED => StreamStatus::Failed,
+                _ => StreamStatus::Downloading,
+            })
+        }
+
+        fn source(&self, total: u64) -> PartialFileSource {
+            self.source_with_stall(total, STALL_LIMIT)
+        }
+
+        fn source_with_stall(&self, total: u64, stall: Duration) -> PartialFileSource {
+            let status = self.status.clone();
+            PartialFileSource::with_stall_limit(
+                &self.path,
+                self.written.clone(),
+                total,
+                Arc::new(move || match status.load(Ordering::Acquire) {
+                    COMPLETE => StreamStatus::Complete,
+                    FAILED => StreamStatus::Failed,
+                    _ => StreamStatus::Downloading,
+                }),
+                stall,
+            )
+            .unwrap()
+        }
     }
 
     #[test]
-    fn new_buffer_starts_empty() {
-        let buf = StreamBuffer::new(Some(1024));
-        assert_eq!(buf.bytes_downloaded(), 0);
-        assert_eq!(buf.total_len(), Some(1024));
-    }
-
-    #[test]
-    fn new_buffer_unknown_total() {
-        let buf = StreamBuffer::new(None);
-        assert_eq!(buf.total_len(), None);
-    }
-
-    #[test]
-    fn read_all_data_available() {
-        let data = b"hello streaming world";
-        let buf = filled_buffer(data);
-        let mut src = buf.reader();
+    fn reads_what_has_landed() {
+        let fx = Fixture::new();
+        fx.push(b"hello streaming world");
+        fx.set(COMPLETE);
 
         let mut out = Vec::new();
-        src.read_to_end(&mut out).unwrap();
-        assert_eq!(out, data);
+        fx.source(21).read_to_end(&mut out).unwrap();
+        assert_eq!(out, b"hello streaming world");
     }
 
     #[test]
-    fn read_partial_then_rest() {
-        let data = b"abcdefghij";
-        let buf = filled_buffer(data);
-        let mut src = buf.reader();
+    fn read_stops_at_the_write_head_then_resumes() {
+        let fx = Fixture::new();
+        fx.push(b"abcd");
+        let mut src = fx.source(10);
 
-        let mut first = [0u8; 4];
-        let n = src.read(&mut first).unwrap();
-        assert_eq!(n, 4);
-        assert_eq!(&first, b"abcd");
+        let mut first = [0u8; 8];
+        assert_eq!(src.read(&mut first).unwrap(), 4);
+        assert_eq!(&first[..4], b"abcd");
 
-        let mut rest = Vec::new();
-        src.read_to_end(&mut rest).unwrap();
-        assert_eq!(rest, b"efghij");
+        // The rest arrives while the reader is blocked on it.
+        std::thread::spawn({
+            let path = fx.path.clone();
+            let written = fx.written.clone();
+            move || {
+                std::thread::sleep(Duration::from_millis(20));
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .unwrap();
+                f.write_all(b"efghij").unwrap();
+                f.flush().unwrap();
+                written.advance(6);
+            }
+        });
+
+        let mut rest = [0u8; 8];
+        let n = src.read(&mut rest).unwrap();
+        assert_eq!(&rest[..n], b"efghij");
     }
 
     #[test]
-    fn seek_from_start() {
-        let data = b"0123456789";
-        let buf = filled_buffer(data);
-        let mut src = buf.reader();
+    fn seeks_freely_below_the_write_head() {
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        let mut src = fx.source(1_000_000);
 
-        let pos = src.seek(SeekFrom::Start(5)).unwrap();
-        assert_eq!(pos, 5);
-
+        assert_eq!(src.seek(SeekFrom::Start(5)).unwrap(), 5);
         let mut out = [0u8; 3];
         src.read_exact(&mut out).unwrap();
         assert_eq!(&out, b"567");
-    }
 
-    #[test]
-    fn seek_from_current() {
-        let data = b"0123456789";
-        let buf = filled_buffer(data);
-        let mut src = buf.reader();
-
-        src.seek(SeekFrom::Start(2)).unwrap();
-        let pos = src.seek(SeekFrom::Current(3)).unwrap();
-        assert_eq!(pos, 5);
-
-        let mut out = [0u8; 2];
+        // Backwards, into bytes already read — no re-download, no buffer.
+        assert_eq!(src.seek(SeekFrom::Start(1)).unwrap(), 1);
         src.read_exact(&mut out).unwrap();
-        assert_eq!(&out, b"56");
+        assert_eq!(&out, b"123");
+
+        assert_eq!(src.seek(SeekFrom::Current(-2)).unwrap(), 2);
     }
 
     #[test]
-    fn seek_from_end() {
-        let data = b"0123456789";
-        let buf = filled_buffer(data);
-        let mut src = buf.reader();
+    fn seek_from_end_uses_the_advertised_length() {
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        let mut src = fx.source(10);
 
-        // SeekFrom::End(0) should position at total_len (EOF).
-        let pos = src.seek(SeekFrom::End(0)).unwrap();
-        assert_eq!(pos, 10);
-
-        // SeekFrom::End(-3) should position at offset 7.
-        let pos = src.seek(SeekFrom::End(-3)).unwrap();
-        assert_eq!(pos, 7);
+        assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 10);
+        assert_eq!(src.seek(SeekFrom::End(-3)).unwrap(), 7);
 
         let mut out = [0u8; 3];
         src.read_exact(&mut out).unwrap();
@@ -308,151 +452,248 @@ mod tests {
     }
 
     #[test]
+    fn a_lengthless_source_ends_where_the_download_does() {
+        // The end has to agree with `byte_len`. FLAC seeks by bisecting
+        // between its first frame and `SeekFrom::End(0)`, so answering with the
+        // advertised total aims the search at bytes that are not on disk yet:
+        // every probe of the range waits at the write head, and a seek into a
+        // half-downloaded track spends the stall limit before failing.
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::Lengthless,
+        )
+        .unwrap();
+        assert_eq!(src.byte_len(), None);
+        assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 10);
+
+        // Stating a length means answering for the whole of it.
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::Full,
+        )
+        .unwrap();
+        assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 1_000);
+    }
+
+    /// Ogg's half of the same question, and the opposite answer.
+    ///
+    /// Handed the write head as the end, Ogg reports a stream that is already
+    /// over: a large Opus file downloading opened, said nought milliseconds,
+    /// and the decode thread finished it and moved on, over and over, so it
+    /// never played at all.
+    #[test]
+    fn an_ogg_source_still_ends_at_the_whole_file() {
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::LengthlessWholeEnd,
+        )
+        .unwrap();
+        // Still no length: the point of opening this way is that Ogg does not
+        // go looking for a tail that has not arrived.
+        assert_eq!(src.byte_len(), None);
+        // But the end it is told about is the file's, not the download's.
+        assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 1_000);
+    }
+
+    #[test]
+    fn a_landed_download_ends_at_the_whole_file() {
+        // The bound moves with the transfer, so it stops bounding anything
+        // once every byte is there.
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        fx.set(COMPLETE);
+
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            10,
+            fx.status_fn(),
+            ProbeMode::Lengthless,
+        )
+        .unwrap();
+        assert_eq!(src.seek(SeekFrom::End(0)).unwrap(), 10);
+    }
+
+    #[test]
     fn seek_before_start_errors() {
-        let data = b"hello";
-        let buf = filled_buffer(data);
-        let mut src = buf.reader();
-
-        let result = src.seek(SeekFrom::Current(-1));
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn is_complete_when_done() {
-        let buf = StreamBuffer::new(Some(5));
-        buf.push(b"hello");
-        // Not yet finished.
-        assert!(buf.bytes_downloaded() != 0); // just check bytes_downloaded works
-        buf.finish();
-        // After finish, a reader should see EOF immediately.
-        let mut src = buf.reader();
-        let mut out = Vec::new();
-        src.read_to_end(&mut out).unwrap();
-        assert_eq!(out, b"hello");
-    }
-
-    #[test]
-    fn byte_len_returns_total() {
-        use symphonia::core::io::MediaSource;
-        let buf = StreamBuffer::new(Some(42));
-        let src = buf.reader();
-        assert_eq!(src.byte_len(), Some(42));
-    }
-
-    #[test]
-    fn is_seekable_true() {
-        use symphonia::core::io::MediaSource;
-        let buf = StreamBuffer::new(None);
-        let src = buf.reader();
-        assert!(src.is_seekable());
-    }
-
-    #[test]
-    fn push_increments_bytes_downloaded() {
-        let buf = StreamBuffer::new(Some(10));
-        buf.push(b"hello");
-        assert_eq!(buf.bytes_downloaded(), 5);
-        buf.push(b"world");
-        assert_eq!(buf.bytes_downloaded(), 10);
-    }
-
-    #[test]
-    fn multiple_readers_independent_positions() {
-        let data = b"0123456789";
-        let buf = filled_buffer(data);
-
-        let mut r1 = buf.reader();
-        let mut r2 = buf.reader();
-
-        r1.seek(SeekFrom::Start(7)).unwrap();
-
-        let mut out1 = [0u8; 3];
-        r1.read_exact(&mut out1).unwrap();
-        assert_eq!(&out1, b"789");
-
-        let mut out2 = [0u8; 3];
-        r2.read_exact(&mut out2).unwrap();
-        assert_eq!(&out2, b"012");
+        let fx = Fixture::new();
+        fx.push(b"hello");
+        assert!(fx.source(5).seek(SeekFrom::Current(-1)).is_err());
     }
 
     #[test]
     fn failed_download_errors_instead_of_reporting_eof() {
-        let buf = StreamBuffer::new(Some(1000));
-        buf.push(b"partial");
-        buf.fail();
+        let fx = Fixture::new();
+        fx.push(b"partial");
+        fx.set(FAILED);
+        let mut src = fx.source(1000);
 
-        let mut src = buf.reader();
         let mut out = [0u8; 7];
         src.read_exact(&mut out).unwrap();
         assert_eq!(&out, b"partial");
 
-        // Past the buffered bytes: an error, never a clean EOF — Ok(0) here
+        // Past the written bytes: an error, never a clean EOF — Ok(0) here
         // would end the track early and look like a short file.
-        let err = src.read(&mut out).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::BrokenPipe);
+        assert_eq!(
+            src.read(&mut out).unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
     }
 
     #[test]
-    fn failed_download_wakes_a_blocked_reader() {
-        let buf = StreamBuffer::new(Some(1000));
-        let mut src = buf.reader();
+    fn failure_wakes_a_blocked_reader() {
+        let fx = Fixture::new();
+        let mut src = fx.source(1000);
 
-        let writer = buf.clone();
-        let waiter = std::thread::spawn(move || {
-            let mut out = [0u8; 8];
-            src.read(&mut out).map(|_| ()).map_err(|e| e.kind())
+        let (status, written) = (fx.status.clone(), fx.written.clone());
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            status.store(FAILED, Ordering::Release);
+            written.done();
         });
 
-        std::thread::sleep(std::time::Duration::from_millis(20));
-        writer.fail();
+        let mut out = [0u8; 8];
+        assert_eq!(
+            src.read(&mut out).unwrap_err().kind(),
+            io::ErrorKind::BrokenPipe
+        );
+    }
 
-        assert_eq!(waiter.join().unwrap(), Err(io::ErrorKind::BrokenPipe));
+    #[test]
+    fn a_probe_reads_only_what_has_arrived() {
+        // The first attempt must fail at the write head rather than wait: a
+        // container that would go looking for its tail has to be detected, not
+        // waited for.
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        let mut src = PartialFileSource::open_for_probe(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::Full,
+        )
+        .unwrap();
+
+        let mut out = [0u8; 10];
+        src.read_exact(&mut out).unwrap();
+        assert_eq!(
+            src.read(&mut out).unwrap_err().kind(),
+            io::ErrorKind::UnexpectedEof,
+            "past the write head is an answer, not a wait"
+        );
+    }
+
+    #[test]
+    fn playback_reads_wait_for_what_has_not_arrived() {
+        // And the second attempt does wait, which is what lets a container
+        // whose audio starts further in than the streaming threshold — a FLAC
+        // with a large padding block, most of them — be opened at all.
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        let mut src = PartialFileSource::open(
+            &fx.path,
+            fx.written.clone(),
+            1_000,
+            fx.status_fn(),
+            ProbeMode::Lengthless,
+        )
+        .unwrap();
+
+        let mut out = [0u8; 10];
+        src.read_exact(&mut out).unwrap();
+
+        std::thread::spawn({
+            let path = fx.path.clone();
+            let written = fx.written.clone();
+            move || {
+                std::thread::sleep(Duration::from_millis(20));
+                let mut f = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&path)
+                    .unwrap();
+                f.write_all(b"abcde").unwrap();
+                f.flush().unwrap();
+                written.advance(5);
+            }
+        });
+
+        let n = src.read(&mut out).unwrap();
+        assert_eq!(&out[..n], b"abcde", "it waited rather than giving up");
     }
 
     #[test]
     fn stalled_download_times_out() {
         // A download with a Content-Length that never arrives: the read must
         // give up rather than park the decode thread forever.
-        let buf = StreamBuffer::with_read_timeout(Some(1000), std::time::Duration::from_millis(20));
-        let mut src = buf.reader();
+        let fx = Fixture::new();
+        let mut src = fx.source_with_stall(1000, Duration::from_millis(20));
         let mut out = [0u8; 8];
-        let err = src.read(&mut out).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        assert_eq!(
+            src.read(&mut out).unwrap_err().kind(),
+            io::ErrorKind::TimedOut
+        );
     }
 
     #[test]
-    fn abandoned_when_no_other_handles_remain() {
-        let buf = StreamBuffer::new(None);
-        assert!(buf.is_abandoned());
+    fn completion_ends_the_read_at_the_true_length() {
+        // A chunked transfer reports no total; completion is what says the file
+        // is whole, and its length on disk is what is readable.
+        let fx = Fixture::new();
+        fx.push(b"chunked");
+        fx.set(COMPLETE);
 
-        let reader = buf.reader();
-        assert!(!buf.is_abandoned());
-
-        drop(reader);
-        assert!(buf.is_abandoned());
-    }
-
-    #[test]
-    fn test_partial_availability() {
-        // Push only 500 bytes without finish() — simulates in-progress download.
-        let data: Vec<u8> = (0u8..=255).cycle().take(1000).collect();
-        let buf = StreamBuffer::new(Some(1000));
-        buf.push(&data[..500]);
-
-        assert_eq!(buf.bytes_downloaded(), 500);
-        assert_eq!(buf.total_len(), Some(1000));
-
-        // Spawn thread to call finish() after brief delay so reader doesn't block forever.
-        let buf2 = buf.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_millis(10));
-            buf2.finish();
-        });
-
-        let mut src = buf.reader();
         let mut out = Vec::new();
-        src.read_to_end(&mut out).unwrap();
-        assert_eq!(out.len(), 500);
-        assert_eq!(out, &data[..500]);
+        fx.source(0).read_to_end(&mut out).unwrap();
+        assert_eq!(out, b"chunked");
+    }
+
+    #[test]
+    fn survives_the_part_file_being_renamed() {
+        // The download's final act is a rename. A reader that already has the
+        // file open must not notice.
+        let fx = Fixture::new();
+        fx.push(b"0123456789");
+        let mut src = fx.source(10);
+
+        let mut out = [0u8; 4];
+        src.read_exact(&mut out).unwrap();
+        assert_eq!(&out, b"0123");
+
+        std::fs::rename(&fx.path, fx.path.with_extension("")).unwrap();
+        fx.set(COMPLETE);
+
+        let mut rest = Vec::new();
+        src.read_to_end(&mut rest).unwrap();
+        assert_eq!(rest, b"456789");
+    }
+
+    #[test]
+    fn byte_len_is_the_advertised_length_only() {
+        let fx = Fixture::new();
+        assert_eq!(fx.source(42).byte_len(), Some(42));
+        // No Content-Length: the length is genuinely unknown, and claiming one
+        // would have Symphonia compute a duration from it.
+        assert_eq!(fx.source(0).byte_len(), None);
+    }
+
+    #[test]
+    fn is_seekable_true() {
+        let fx = Fixture::new();
+        assert!(fx.source(0).is_seekable());
     }
 }

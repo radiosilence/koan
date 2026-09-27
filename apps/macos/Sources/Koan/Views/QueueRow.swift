@@ -28,9 +28,14 @@ struct QueueRowContent {
     /// What the queue is doing about this track, or `nil` when the queue has
     /// never heard of it — which is most of a playlist, most of the time.
     var status: EntryStatus?
-    var downloadProgress: Double?
+    /// The transfer this row is waiting on, when it is waiting on one. See
+    /// `SourceBadges` for why it is an id and not a figure.
+    var transferring: String?
     var failureReason: String?
-
+    /// Where this track's bytes are. Both false for an item with no library
+    /// row behind it, which draws no mark rather than a guessed one.
+    var onServer = false
+    var onDisk = false
     init(item: QueueItem) {
         trackId = item.trackId
         title = item.title
@@ -41,8 +46,10 @@ struct QueueRowContent {
         durationMs = item.durationMs.map(Int64.init)
         sleeve = item.sleeve
         status = item.status
-        downloadProgress = item.downloadProgress
+        transferring = SourceBadges.transfer(of: item)
         failureReason = item.failureReason
+        onServer = item.onServer
+        onDisk = item.onDisk
     }
 
     /// A playlist row, wearing whatever the queue currently thinks of it.
@@ -66,8 +73,10 @@ struct QueueRowContent {
         codec = track.codec
         durationMs = track.durationMs
         sleeve = track.albumId.map { .album($0) } ?? .track(track.id)
-        downloadProgress = queued?.downloadProgress
+        transferring = SourceBadges.transfer(of: queued)
         failureReason = queued?.failureReason
+        onServer = track.onServer
+        onDisk = track.onDisk
         status =
             if isCurrent { .playing }
             else if let live = queued?.status, live == .downloading || live == .priorityPending
@@ -79,13 +88,15 @@ struct QueueRowContent {
 struct QueueRow: View {
     let item: QueueRowContent
     let isCurrent: Bool
-    let isSelected: Bool
     let showArtist: Bool
     /// Its own sleeve, for when there is no album heading above carrying one.
     var artwork = false
 
     @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
+    /// Whether the List has this row selected. The List says so through the
+    /// environment, which is what lets the list above never read its own
+    /// selection: passed down as a value, every click re-ran the whole list.
+    @Environment(\.backgroundProminence) private var prominence
     @State private var hovering = false
 
     var body: some View {
@@ -143,15 +154,20 @@ struct QueueRow: View {
 
             Spacer(minLength: 8)
 
+            // Where the bytes are, in the same mark and the same order as a
+            // record's own track list: the cloud, then the heart. Its own slot
+            // rather than the status column's — a track can be playing and
+            // still arriving at once, and one slot could only ever show
+            // whichever of the two it was told to.
+            SourceBadges(
+                onServer: item.onServer,
+                onDisk: item.onDisk,
+                transferring: item.transferring
+            )
+
             if let trackId = item.trackId {
-                FavouriteButton(
-                    isOn: library.isFavourite(track: trackId),
-                    showing: hovering,
-                    size: .caption
-                ) {
-                    library.toggleFavourite(track: trackId)
-                }
-                .frame(width: 16)
+                TrackHeart(trackId: trackId, showing: hovering, size: .caption)
+                    .frame(width: 16)
             } else {
                 // Keeps the column even for an item with no library row, so
                 // the durations stay in line down the queue.
@@ -207,7 +223,7 @@ struct QueueRow: View {
     /// where accent-on-accent is unreadable. A played row is never the current
     /// one, so the two never contend.
     private var titleStyle: AnyShapeStyle {
-        if isCurrent && !isSelected { return AnyShapeStyle(.tint) }
+        if isCurrent && prominence != .increased { return AnyShapeStyle(.tint) }
         return AnyShapeStyle(played ? HierarchicalShapeStyle.secondary : .primary)
     }
 
@@ -221,21 +237,9 @@ struct QueueRow: View {
         case .playing:
             PlayingIndicator(isPlaying: player.isPlaying)
         case .downloading:
-            // The ring is the whole indicator — a static arrow beside a
-            // separate bar said the same thing twice, in two places, and the
-            // column the eye already reads for state was the mute one.
-            if let progress = item.downloadProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-                    .frame(width: 14, height: 14)
-                    .help("Downloading — \(Int(progress * 100))%")
-            } else {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-                    .help("Downloading")
-            }
+            // Said by the badge in its own column, which can show it at the
+            // same time as this column shows the track playing.
+            Color.clear
         case .priorityPending:
             Image(systemName: "arrow.down.circle")
                 .foregroundStyle(.tint)

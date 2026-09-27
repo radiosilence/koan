@@ -81,7 +81,7 @@ struct HistoryView: View {
                 .foregroundStyle(.secondary)
             Spacer(minLength: 0)
             Button("Clear…") { confirmingClear = true }
-                .disabled(library.playHistory.isEmpty)
+                .disabled(library.visiblePlayHistory.isEmpty)
         }
     }
 
@@ -205,7 +205,7 @@ private struct HistoryRow: View {
             // A play recorded by another client scrobbling in did not happen
             // here, and saying so stops it reading as a phantom.
             if entry.source != "local" {
-                Image(systemName: "arrow.down.circle")
+                Image(systemName: "antenna.radiowaves.left.and.right")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
                     .help("Scrobbled by another client")

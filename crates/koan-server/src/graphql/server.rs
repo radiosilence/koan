@@ -22,6 +22,7 @@ pub fn cmd_serve(
     bind: Option<std::net::IpAddr>,
     subsonic_port: Option<u16>,
     playground: bool,
+    mcp_bind: Option<std::net::SocketAddr>,
 ) {
     use koan_core::player::Player;
 
@@ -30,6 +31,20 @@ pub fn cmd_serve(
     let db_path = koan_core::config::db_path();
 
     let (state, _timeline, _viz, cmd_tx) = Player::spawn();
+
+    // A server has no one to press "scan": index at start and whenever the
+    // library folders change, as the macOS app does.
+    koan_core::helpers::spawn_library_watch(db_path.clone(), |_| {});
+
+    if let Some(addr) = mcp_bind {
+        match crate::mcp::spawn_http(addr, state.clone(), cmd_tx.clone(), db_path.clone()) {
+            Ok(_) => log::info!("MCP over HTTP at http://{addr}/mcp"),
+            Err(e) => {
+                eprintln!("koan: MCP listener on {addr}: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
 
     if let Err(e) = run_api_blocking(ApiServerOpts {
         state,
@@ -133,15 +148,19 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
     let cfg = Config::load().unwrap_or_default();
     let port = port.unwrap_or(cfg.graphql.port);
     let bind = bind.unwrap_or(cfg.graphql.bind);
+    let subsonic_port = subsonic_port.or(cfg.subsonic.port);
     let playground_enabled = playground || cfg.graphql.playground;
     let auth_enabled = cfg.graphql.auth_enabled;
 
-    // Load or generate Ed25519 keypair for JWT signing.
+    // Load or generate Ed25519 keypair for JWT signing. A server's first start
+    // makes its own: it is this server's signing key and nothing else, a fresh
+    // one invalidates no token (there can be none yet), and a server in a
+    // container has no terminal to run `koan auth setup` in before it starts.
+    // Accounts are still created deliberately; until one exists, nothing signs in.
     let (private_pem, public_pem) = if auth_enabled {
-        let kp = auth::load_keypair().map_err(|e| {
+        let kp = auth::load_or_generate_keypair().map_err(|e| {
             format!(
-                "auth_enabled = true but the keypair could not be loaded: {}. \
-                 Run `koan auth setup`.",
+                "auth_enabled = true but the keypair could not be loaded or created: {}",
                 e
             )
         })?;
@@ -265,11 +284,14 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
         // --server <url>` because the remote TUI bridge builds its stream
         // URL off the GraphQL base.
         // Built once and cloned: each build re-read the config from disk.
+        // Public by design, so outside the auth layers: each route answers for
+        // one share's own tracks and nothing else. The Host guard still applies.
+        let share_routes = crate::share::router(db_path.clone());
         let subsonic_merged = crate::subsonic::subsonic_router(db_path);
         let subsonic_on_main = subsonic_merged.is_some();
         let subsonic_dedicated = subsonic_merged.clone();
 
-        let mut app = auth_app.merge(gql_app);
+        let mut app = auth_app.merge(gql_app).merge(share_routes);
         if let Some(sub) = subsonic_merged {
             app = app.merge(sub);
         }
@@ -317,12 +339,9 @@ fn run_api_blocking(opts: ApiServerOpts) -> Result<(), String> {
                 l
             }
             Err(e) => {
-                log::warn!(
-                    "API disabled: failed to bind GraphQL port {} — {} (another instance running?)",
-                    port,
-                    e,
-                );
-                return Ok(());
+                return Err(format!(
+                    "failed to bind GraphQL port {port} — {e} (another instance running?)"
+                ));
             }
         };
         let gql_server = axum::serve(
@@ -599,6 +618,7 @@ pub fn cmd_serve_daemon(
     bind: Option<std::net::IpAddr>,
     subsonic_port: Option<u16>,
     playground: bool,
+    mcp_bind: Option<std::net::SocketAddr>,
 ) {
     use std::fs;
     use std::process::Command;
@@ -615,6 +635,9 @@ pub fn cmd_serve_daemon(
     cmd.arg("--bind").arg(bind_val.to_string());
     if let Some(sp) = subsonic_port {
         cmd.arg("--subsonic").arg(sp.to_string());
+    }
+    if let Some(addr) = mcp_bind {
+        cmd.arg("--mcp-bind").arg(addr.to_string());
     }
     if playground || cfg.graphql.playground {
         cmd.arg("--playground");

@@ -770,13 +770,12 @@ fn codec_to_mime(codec: &str) -> (&str, &str) {
         "VORBIS" | "OGG" => ("ogg", "audio/ogg"),
         "WAV" => ("wav", "audio/wav"),
         "AIFF" => ("aiff", "audio/aiff"),
-        "WAVPACK" | "WV" => ("wv", "audio/x-wavpack"),
         "APE" => ("ape", "audio/x-ape"),
         _ => ("bin", "application/octet-stream"),
     }
 }
 
-fn extension_to_mime(ext: &str) -> &str {
+pub(crate) fn extension_to_mime(ext: &str) -> &str {
     match ext.to_lowercase().as_str() {
         "flac" => "audio/flac",
         "mp3" => "audio/mpeg",
@@ -785,14 +784,13 @@ fn extension_to_mime(ext: &str) -> &str {
         "ogg" => "audio/ogg",
         "wav" => "audio/wav",
         "aiff" | "aif" => "audio/aiff",
-        "wv" => "audio/x-wavpack",
         "ape" => "audio/x-ape",
         _ => "application/octet-stream",
     }
 }
 
 /// Resolve a track's file path (local preferred, then cached).
-fn track_file_path(track: &queries::TrackRow) -> Option<&str> {
+pub(crate) fn track_file_path(track: &queries::TrackRow) -> Option<&str> {
     track.path.as_deref().or(track.cached_path.as_deref())
 }
 
@@ -844,6 +842,7 @@ struct ScrobbleParams {
     auth: SubsonicParams,
     id: Option<String>,
     time: Option<i64>,
+    submission: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1263,80 +1262,74 @@ async fn stream_inner(
     }
 
     let path = local_path.unwrap();
-    let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
+    serve_local_file(&path, headers).await.map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             SubsonicError::not_found("File not found on disk")
         } else {
             SubsonicError::internal(e.to_string())
         }
-    })?;
-    let total_size = metadata.len();
+    })
+}
 
+/// A file from disk, honouring a Range header so players can seek. Shared by
+/// Subsonic's `stream` and the public share pages.
+pub(crate) async fn serve_local_file(
+    path: &std::path::Path,
+    headers: &HeaderMap,
+) -> std::io::Result<Response> {
+    let total_size = tokio::fs::metadata(path).await?.len();
     let content_type = path
         .extension()
         .and_then(|e| e.to_str())
         .map(extension_to_mime)
         .unwrap_or("application/octet-stream");
+    let built = |r: Result<Response, axum::http::Error>| r.map_err(std::io::Error::other);
 
-    // Parse Range header for seeking support.
-    if let Some(range_header) = headers.get(header::RANGE) {
-        let range_str = range_header
-            .to_str()
-            .map_err(|_| SubsonicError::internal("invalid range header"))?;
-
+    if let Some(range_str) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
         match parse_range(range_str, total_size) {
             RangeRequest::Satisfiable { start, end } => {
                 let length = end - start + 1;
-
-                let mut file = tokio::fs::File::open(&path)
-                    .await
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-                tokio::io::AsyncSeekExt::seek(&mut file, std::io::SeekFrom::Start(start))
-                    .await
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?;
-
+                let mut file = tokio::fs::File::open(path).await?;
+                tokio::io::AsyncSeekExt::seek(&mut file, std::io::SeekFrom::Start(start)).await?;
                 let stream = tokio_util::io::ReaderStream::new(file.take(length));
-                let body = axum::body::Body::from_stream(stream);
-
-                return Response::builder()
-                    .status(StatusCode::PARTIAL_CONTENT)
-                    .header(header::CONTENT_TYPE, content_type)
-                    .header(header::CONTENT_LENGTH, length)
-                    .header(
-                        header::CONTENT_RANGE,
-                        format!("bytes {}-{}/{}", start, end, total_size),
-                    )
-                    .header(header::ACCEPT_RANGES, "bytes")
-                    .body(body)
-                    .map_err(|e| SubsonicError::internal(e.to_string()));
+                return built(
+                    Response::builder()
+                        .status(StatusCode::PARTIAL_CONTENT)
+                        .header(header::CONTENT_TYPE, content_type)
+                        .header(header::CONTENT_LENGTH, length)
+                        .header(
+                            header::CONTENT_RANGE,
+                            format!("bytes {}-{}/{}", start, end, total_size),
+                        )
+                        .header(header::ACCEPT_RANGES, "bytes")
+                        .body(axum::body::Body::from_stream(stream)),
+                );
             }
             RangeRequest::Unsatisfiable => {
-                return Response::builder()
-                    .status(StatusCode::RANGE_NOT_SATISFIABLE)
-                    .header(header::CONTENT_RANGE, format!("bytes */{}", total_size))
-                    .header(header::ACCEPT_RANGES, "bytes")
-                    .body(axum::body::Body::empty())
-                    .map_err(|e| SubsonicError::internal(e.to_string()));
+                return built(
+                    Response::builder()
+                        .status(StatusCode::RANGE_NOT_SATISFIABLE)
+                        .header(header::CONTENT_RANGE, format!("bytes */{}", total_size))
+                        .header(header::ACCEPT_RANGES, "bytes")
+                        .body(axum::body::Body::empty()),
+                );
             }
             // A header that does not parse is ignored and the whole body sent.
             RangeRequest::Malformed => {}
         }
     }
 
-    // No range — serve full file.
-    let file = tokio::fs::File::open(&path)
-        .await
-        .map_err(|e| SubsonicError::internal(e.to_string()))?;
-    let stream = tokio_util::io::ReaderStream::new(file);
-    let body = axum::body::Body::from_stream(stream);
-
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, content_type)
-        .header(header::CONTENT_LENGTH, total_size)
-        .header(header::ACCEPT_RANGES, "bytes")
-        .body(body)
-        .map_err(|e| SubsonicError::internal(e.to_string()))
+    let file = tokio::fs::File::open(path).await?;
+    built(
+        Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, content_type)
+            .header(header::CONTENT_LENGTH, total_size)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .body(axum::body::Body::from_stream(
+                tokio_util::io::ReaderStream::new(file),
+            )),
+    )
 }
 
 /// Proxy a stream from the upstream Navidrome/Subsonic server.
@@ -1584,31 +1577,36 @@ fn resize_image(data: &[u8], size: u32, output_png: bool) -> Result<Vec<u8>, Sub
 
 async fn star(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     respond_db(&state, &params.auth, |db, b| {
-        toggle_star(db, params.id.as_deref(), queries::add_favourite)?;
+        toggle_star(db, params.id.as_deref(), true)?;
         Ok(b)
     })
 }
 
 async fn unstar(State(state): State<Arc<AppState>>, Query(params): Query<IdParam>) -> Response {
     respond_db(&state, &params.auth, |db, b| {
-        toggle_star(db, params.id.as_deref(), queries::remove_favourite)?;
+        toggle_star(db, params.id.as_deref(), false)?;
         Ok(b)
     })
 }
 
-fn toggle_star(
-    db: &Database,
-    id: Option<&str>,
-    op: fn(&rusqlite::Connection, &std::path::Path) -> rusqlite::Result<()>,
-) -> Result<(), SubsonicError> {
-    let track_id = require_id(id)?;
+fn toggle_star(db: &Database, id: Option<&str>, star: bool) -> Result<(), SubsonicError> {
+    let op = if star {
+        queries::add_favourite
+    } else {
+        queries::remove_favourite
+    };
+    let track_id = match require_entity(id)? {
+        (Some(EntityKind::Song) | None, id) => id,
+        _ => return Err(SubsonicError::not_found("Track")),
+    };
 
-    let track = queries::get_track_row(&db.conn, track_id)
+    let key = queries::track_favourite_key(&db.conn, track_id)
         .map_err(|e| SubsonicError::internal(e.to_string()))?
         .ok_or_else(|| SubsonicError::not_found("Track"))?;
-
-    let path_str = track_file_path(&track).unwrap_or("");
-    op(&db.conn, std::path::Path::new(path_str)).map_err(|e| SubsonicError::internal(e.to_string()))
+    let path = std::path::Path::new(&key);
+    op(&db.conn, path).map_err(|e| SubsonicError::internal(e.to_string()))?;
+    koan_core::helpers::sync_favourite_to_remote(db, path, star);
+    Ok(())
 }
 
 async fn get_starred2(
@@ -1643,6 +1641,11 @@ async fn scrobble(
         queries::get_track_row(&db.conn, track_id)
             .map_err(|e| SubsonicError::internal(e.to_string()))?
             .ok_or_else(|| SubsonicError::not_found("Track"))?;
+
+        // `submission=false` is a now-playing notice, not a play.
+        if params.submission == Some(false) {
+            return Ok(b);
+        }
 
         // `time` is when the client played it, which can be well in the past
         // after an offline session.
@@ -1778,7 +1781,7 @@ async fn get_user(
                 .attr_bool("podcastRole", false)
                 .attr_bool("streamRole", true)
                 .attr_bool("jukeboxRole", false)
-                .attr_bool("shareRole", false)
+                .attr_bool("shareRole", true)
                 .attr_bool("videoConversionRole", false),
         ))
     })
@@ -2052,12 +2055,188 @@ async fn unsupported_endpoint(UrlPath(path): UrlPath<String>, RawQuery(raw): Raw
 // Public router
 // ===========================================================================
 
+// ---------------------------------------------------------------------------
+// Sharing: links this server serves itself at /share/{id}
+// ---------------------------------------------------------------------------
+
+fn iso(secs: i64) -> String {
+    chrono::DateTime::from_timestamp(secs, 0)
+        .unwrap_or_default()
+        .format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        .to_string()
+}
+
+fn share_node(
+    db: &Database,
+    share: &queries::shares::ShareRow,
+    base: &str,
+    username: &str,
+) -> Result<XmlNode, SubsonicError> {
+    let rows = queries::tracks_by_ids(&db.conn, &share.track_ids)
+        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+    let mut node = XmlNode::new("share")
+        .array_of("entry")
+        .attr("id", &share.id)
+        .attr("url", &koan_core::helpers::share_url(base, &share.id))
+        .attr("username", username)
+        .attr("created", &iso(share.created_at))
+        .attr_int("visitCount", share.visits)
+        .attr_opt("description", share.description.as_deref());
+    if let Some(e) = share.expires_at {
+        node = node.attr("expires", &iso(e));
+    }
+    if let Some(v) = share.last_visited {
+        node = node.attr("lastVisited", &iso(v));
+    }
+    for id in &share.track_ids {
+        if let Some(t) = rows.iter().find(|t| t.id == *id) {
+            node = node.child(track_node(t, "entry"));
+        }
+    }
+    Ok(node)
+}
+
+/// Where share links point; sharing is refused without it rather than
+/// handing out an address that may not be reachable.
+fn share_base() -> Result<String, SubsonicError> {
+    Config::load()
+        .unwrap_or_default()
+        .sharing
+        .public_url
+        .filter(|u| !u.trim().is_empty())
+        .ok_or_else(|| SubsonicError::internal("sharing.public_url is not set on this server"))
+}
+
+/// `expires` is milliseconds since the epoch; 0 or absent never expires.
+fn expires_param(params: &RawParams) -> Option<i64> {
+    params
+        .get("expires")
+        .and_then(|v| v.parse::<i64>().ok())
+        .filter(|ms| *ms > 0)
+        .map(|ms| ms / 1000)
+}
+
+/// `createShare` — songs and albums, in the order given.
+async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    let params = RawParams::parse(raw.as_deref());
+    let auth = params.auth();
+    respond_db(&state, &auth, |db, b| {
+        let base = share_base()?;
+        let mut track_ids = Vec::new();
+        for raw_id in params.all("id") {
+            match parse_entity_id(raw_id) {
+                Some((Some(EntityKind::Album), id)) => track_ids.extend(
+                    queries::tracks_for_album(&db.conn, id)
+                        .map_err(|e| SubsonicError::internal(e.to_string()))?
+                        .into_iter()
+                        .map(|t| t.id),
+                ),
+                Some((Some(EntityKind::Song) | None, id)) => track_ids.push(id),
+                _ => return Err(SubsonicError::bad_param("id")),
+            }
+        }
+        if track_ids.is_empty() {
+            return Err(SubsonicError::missing_param("id"));
+        }
+        let now = chrono::Utc::now().timestamp();
+        let share = queries::shares::create_share(
+            &db.conn,
+            &track_ids,
+            params.get("description"),
+            now,
+            expires_param(&params),
+        )
+        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        Ok(
+            b.child(XmlNode::new("shares").array_of("share").child(share_node(
+                db,
+                &share,
+                &base,
+                &state.username,
+            )?)),
+        )
+    })
+}
+
+async fn get_shares(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<SubsonicParams>,
+) -> Response {
+    respond_db(&state, &params, |db, b| {
+        let base = share_base()?;
+        let mut node = XmlNode::new("shares").array_of("share");
+        for share in queries::shares::list_shares(&db.conn)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?
+        {
+            node = node.child(share_node(db, &share, &base, &state.username)?);
+        }
+        Ok(b.child(node))
+    })
+}
+
+async fn update_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    let params = RawParams::parse(raw.as_deref());
+    let auth = params.auth();
+    respond_db(&state, &auth, |db, b| {
+        let id = params
+            .get("id")
+            .ok_or_else(|| SubsonicError::missing_param("id"))?;
+        let found = queries::shares::update_share(
+            &db.conn,
+            id,
+            params.get("description"),
+            expires_param(&params),
+        )
+        .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        if found {
+            Ok(b)
+        } else {
+            Err(SubsonicError::not_found("Share"))
+        }
+    })
+}
+
+async fn delete_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    let params = RawParams::parse(raw.as_deref());
+    let auth = params.auth();
+    respond_db(&state, &auth, |db, b| {
+        let id = params
+            .get("id")
+            .ok_or_else(|| SubsonicError::missing_param("id"))?;
+        let found = queries::shares::delete_share(&db.conn, id)
+            .map_err(|e| SubsonicError::internal(e.to_string()))?;
+        if found {
+            Ok(b)
+        } else {
+            Err(SubsonicError::not_found("Share"))
+        }
+    })
+}
+
 /// Register all Subsonic REST routes on the given router.
 fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router<Arc<AppState>> {
     router
         // Browsing (ID3)
         .route("/rest/ping", get(ping))
         .route("/rest/ping.view", get(ping))
+        // Sharing
+        .route("/rest/createShare", get(create_share).post(create_share))
+        .route(
+            "/rest/createShare.view",
+            get(create_share).post(create_share),
+        )
+        .route("/rest/getShares", get(get_shares).post(get_shares))
+        .route("/rest/getShares.view", get(get_shares).post(get_shares))
+        .route("/rest/updateShare", get(update_share).post(update_share))
+        .route(
+            "/rest/updateShare.view",
+            get(update_share).post(update_share),
+        )
+        .route("/rest/deleteShare", get(delete_share).post(delete_share))
+        .route(
+            "/rest/deleteShare.view",
+            get(delete_share).post(delete_share),
+        )
         .route("/rest/getLicense", get(get_license))
         .route("/rest/getLicense.view", get(get_license))
         .route("/rest/getArtists", get(get_artists))
@@ -2152,7 +2331,9 @@ pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
         password,
         upstream: koan_core::helpers::subsonic_auth(&cfg),
         http: reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
+            // A whole-request deadline would cut off long proxied streams.
+            .connect_timeout(Duration::from_secs(10))
+            .read_timeout(Duration::from_secs(30))
             .build()
             .unwrap_or_default(),
         cover_cache: Mutex::new(LruCache::new(
@@ -2235,6 +2416,7 @@ mod tests {
             album_remote_id: None,
             artist_remote_id: None,
             mbid: None,
+            album_mbid: None,
             album_added_at: None,
         }
     }
@@ -3085,6 +3267,41 @@ mod tests {
         )
         .await;
         assert!(body.contains("status=\"ok\""));
+    }
+
+    #[tokio::test]
+    async fn test_now_playing_scrobble_records_no_play() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let db = Database::open(&state.db_path).unwrap();
+        let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
+
+        let app = build_test_router(state);
+        let (_, body) = get_response(
+            app,
+            &format!(
+                "/rest/scrobble?{}&id={}&submission=false",
+                auth_query(""),
+                track_id
+            ),
+        )
+        .await;
+        assert!(body.contains("status=\"ok\""));
+        assert_eq!(queries::play_count(&db.conn, track_id).unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_star_rejects_album_id() {
+        let (state, _dir) = test_state();
+        seed_data(&state);
+
+        let app = build_test_router(state.clone());
+        let (_, body) = get_response(app, &format!("/rest/star?{}&id=al-1", auth_query(""))).await;
+        assert!(body.contains("status=\"failed\""), "{}", body);
+
+        let db = Database::open(&state.db_path).unwrap();
+        assert!(queries::load_favourites(&db.conn).unwrap().is_empty());
     }
 
     #[tokio::test]

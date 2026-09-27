@@ -5,15 +5,7 @@ import SwiftUI
 struct KoanApp: App {
     @State private var state: AppState?
 
-    /// Someone is in a text field, so every shortcut whose key also means
-    /// something while typing stands down. Read in the Scene body, so flipping
-    /// it re-evaluates the menus — which is the point: a *disabled* menu item
-    /// releases its key equivalent to the responder chain, and that is the only
-    /// thing that hands the keystroke back to macOS.
-    private var isTyping: Bool { state?.textFocus.isEditing == true }
-    @Environment(\.scenePhase) private var scenePhase
     @State private var startupError: String?
-    @AppStorage("showLyrics") private var showLyrics = false
 
     var body: some Scene {
         Window("koan", id: MainWindow.id) {
@@ -31,6 +23,7 @@ struct KoanApp: App {
                         .environment(state.playlists)
                         .environment(state.activity)
                         .environment(state.levels)
+                        .environment(state.mirror)
                         // One accent for the whole app, from the icon. Without
                         // this everything inherits the system blue.
                         .tint(.koanAccent)
@@ -40,7 +33,23 @@ struct KoanApp: App {
                     ProgressView().controlSize(.small)
                 }
             }
-            .frame(minWidth: 940, minHeight: 620)
+            // Room for all three columns at the width each one draws itself
+            // at, whether or not the third is open.
+            //
+            // `NavigationSplitView` does not refuse to go below a column's
+            // declared minimum. It lays the column out at its *ideal* width and
+            // clips whatever does not fit, and with no slack left it stops
+            // animating and starts clamping — which is one cause behind two
+            // symptoms: the sidebar's rows hanging off the side of the window,
+            // and the lyrics panel arriving in a single frame instead of
+            // sliding. So the floor is the sum of what the columns draw at:
+            // the widest page's stage (the record and playlist headers, ~760)
+            // plus the sidebar's 215 and the inspector's 320.
+            //
+            // One number rather than one per column count: a floor that moved
+            // when the lyrics panel opened resized the window under you, and a
+            // window that jumps is worse than a window that is wide.
+            .frame(minWidth: 1320, minHeight: 620)
             .task {
                 guard state == nil, startupError == nil else { return }
                 do {
@@ -50,12 +59,6 @@ struct KoanApp: App {
                 } catch {
                     startupError = String(describing: error)
                 }
-            }
-        }
-        .onChange(of: scenePhase) { _, phase in
-            // Backgrounding is the last dependable moment before termination.
-            if phase != .active {
-                Task { await state?.player.saveSession() }
             }
         }
         .windowToolbarStyle(.unified(showsTitle: false))
@@ -74,11 +77,11 @@ struct KoanApp: App {
                 }
                 Divider()
                 ShortcutButton(.back) { state?.nav.goBack() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 ShortcutButton(.forward) { state?.nav.goForward() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 Divider()
-                ShortcutButton(.lyrics) { showLyrics.toggle() }
+                ShortcutButton(.lyrics) { state?.ui.toggleLyrics() }
                 Divider()
             }
 
@@ -94,14 +97,14 @@ struct KoanApp: App {
                 // declined — a disabled item releases its key equivalent, and
                 // that is the only way the field ever sees it.
                 ShortcutButton(.next) { state?.player.next() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 ShortcutButton(.previous) { state?.player.previous() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 Divider()
                 ShortcutButton(.skipForward) { state?.player.seek(bySeconds: 10) }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 ShortcutButton(.skipBack) { state?.player.seek(bySeconds: -10) }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 Divider()
                 // Through the library, which is what every heart in the app
                 // reads. Going straight to the engine flipped the row and left
@@ -119,9 +122,9 @@ struct KoanApp: App {
                 // ⌘Z while typing is undoing the typing, not the queue — and
                 // the field editor has its own undo stack to do it with.
                 ShortcutButton(.undo) { state?.player.undo() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
                 ShortcutButton(.redo) { state?.player.redo() }
-                    .disabled(isTyping)
+                    .disabledWhileTyping(state?.textFocus)
             }
 
             // The queue borrows these, but they must still mean the ordinary
@@ -174,16 +177,19 @@ struct KoanApp: App {
             }
 
             CommandMenu("Library") {
-                // Disabled while one is running: they all queue behind the same
-                // database writer, so a second only makes both slower. Reads
-                // `isLibraryBusy` rather than the task list, which changes on
-                // every progress tick and would rebuild the menus with it.
+                // Each item is disabled only while something holding what it
+                // needs is running — a sync does not grey out a rescan. Reads
+                // `busy` rather than the task list, which changes on every
+                // progress tick and would rebuild the menus with it.
                 Group {
                     ShortcutButton(.rescan) { state?.library.scan() }
                     Button { state?.library.scan(force: true) } label: {
                         Label("Force Rescan", systemImage: Icon.rescanAll)
                     }
-                    Divider()
+                }
+                .disabled(state?.activity.conflicts(with: .localLibrary) ?? false)
+                Divider()
+                Group {
                     Button { state?.library.syncRemote() } label: {
                         Label("Sync Remote Library", systemImage: Icon.sync)
                     }
@@ -191,11 +197,15 @@ struct KoanApp: App {
                         Label("Full Remote Sync", systemImage: Icon.syncAll)
                     }
                 }
-                .disabled(state?.activity.isLibraryBusy ?? false)
+                .disabled(state?.activity.conflicts(with: [.remoteTracks]) ?? false)
                 Divider()
                 Button { state?.art.purge() } label: {
                     Label("Clear Artwork Cache", systemImage: Icon.clear)
                 }
+                Button { state?.library.clearDownloads() } label: {
+                    Label("Clear Downloaded Files", systemImage: Icon.clear)
+                }
+                .disabled(state?.activity.conflicts(with: [.downloads]) ?? false)
             }
         }
 

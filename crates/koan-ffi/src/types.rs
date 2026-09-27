@@ -72,7 +72,7 @@ impl From<ArtistRow> for Artist {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct Album {
     pub id: i64,
     pub title: String,
@@ -183,7 +183,7 @@ impl Track {
 
 /// Audio format of the track on the wire right now — what the DAC is actually
 /// being fed, as opposed to what the database claims.
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct StreamFormat {
     pub codec: String,
     pub sample_rate: u32,
@@ -211,7 +211,7 @@ impl StreamFormat {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct NowPlaying {
     pub state: PlayState,
     pub position_ms: u64,
@@ -225,7 +225,7 @@ pub struct NowPlaying {
     pub radio_enabled: bool,
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct QueueItem {
     pub queue_item_id: String,
     pub track_id: Option<i64>,
@@ -247,21 +247,97 @@ pub struct QueueItem {
     /// queue being shuffled or cut about — the queue is a view onto the
     /// playlist, not a copy of it.
     pub playlist_entry_id: Option<i64>,
-    /// 0.0–1.0 while downloading, `None` otherwise.
-    pub download_progress: Option<f64>,
     /// Why this item cannot play, when `status` is `Failed`.
+    pub failure_reason: Option<String>,
+    /// The server knows about this track. False for a queue item with no
+    /// library row behind it, which has nowhere to have come from.
+    pub on_server: bool,
+    /// The bytes are on this machine — an indexed file or a finished download.
+    pub on_disk: bool,
+}
+
+/// One transfer, as the download store has it — everything about it that does
+/// not move while the bytes land.
+///
+/// The numbers are in `TransferFigure`, deliberately. A transfer appears,
+/// changes state a handful of times and settles; its byte count moves ten times
+/// a second for as long as it runs. Carrying both in one value would mean a
+/// list rebuilding at the rate a download writes.
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
+pub struct Transfer {
+    pub queue_item_id: String,
+    pub track_id: i64,
+    pub title: String,
+    pub artist: String,
+    pub state: TransferState,
+    /// Why it stopped, when it failed.
     pub failure_reason: Option<String>,
 }
 
-/// How far one in-flight download has got.
+/// What one transfer is doing right now.
 ///
-/// Its own record rather than a queue refetch: progress moves several times a
-/// second and the queue does not, so the two travel separately.
+/// The volatile half of a `Transfer`, split out so the two travel at their own
+/// rates. Serves both the figure on a queue row and the row on the downloads
+/// page — one reading of one fact, so they cannot disagree.
 #[derive(uniffi::Record, Debug, Clone, PartialEq)]
-pub struct DownloadProgress {
+pub struct TransferFigure {
     pub queue_item_id: String,
-    /// 0.0–1.0, or `None` when the server sent no Content-Length.
+    /// 0.0–1.0, or `None` when the server sent no Content-Length — a bar drawn
+    /// at zero for a transfer that is going fine reads as stuck.
     pub progress: Option<f64>,
+    pub bytes_written: u64,
+    pub total_bytes: u64,
+    /// Smoothed. Zero for a transfer that has settled, and for one that has
+    /// stopped moving — which is the case worth seeing.
+    pub bytes_per_second: u64,
+}
+
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferState {
+    Queued,
+    Running,
+    Done,
+    Failed,
+}
+
+impl TransferState {
+    pub fn is_settled(self) -> bool {
+        matches!(self, Self::Done | Self::Failed)
+    }
+}
+
+impl From<&koan_core::remote::downloads::Download> for Transfer {
+    fn from(d: &koan_core::remote::downloads::Download) -> Self {
+        use koan_core::remote::downloads::DownloadState;
+        Self {
+            queue_item_id: d.id.0.to_string(),
+            track_id: d.track_id,
+            title: d.title.clone(),
+            artist: d.artist.clone(),
+            state: match &d.state {
+                DownloadState::Queued => TransferState::Queued,
+                DownloadState::Running => TransferState::Running,
+                DownloadState::Done => TransferState::Done,
+                DownloadState::Failed(_) => TransferState::Failed,
+            },
+            failure_reason: match &d.state {
+                DownloadState::Failed(reason) => Some(reason.clone()),
+                _ => None,
+            },
+        }
+    }
+}
+
+impl From<&koan_core::remote::downloads::Download> for TransferFigure {
+    fn from(d: &koan_core::remote::downloads::Download) -> Self {
+        Self {
+            queue_item_id: d.id.0.to_string(),
+            progress: d.fraction(),
+            bytes_written: d.bytes_written(),
+            total_bytes: d.total,
+            bytes_per_second: d.bytes_per_second,
+        }
+    }
 }
 
 impl QueueItem {
@@ -269,23 +345,14 @@ impl QueueItem {
     /// The transport bar polls several times a second and only ever wants the
     /// item under the cursor — deriving the whole queue for that is waste.
     pub(crate) fn from_cursor_item(item: &PlaylistItem, state: PlaybackState) -> Self {
-        let status = match (&item.load_state, state) {
+        // The item's own state and any transfer against it, as one answer.
+        let load = LoadState::of(item);
+        let status = match (&load, state) {
             (LoadState::Failed(_), _) => EntryStatus::Failed,
             (LoadState::Downloading { .. }, _) => EntryStatus::Downloading,
             (_, PlaybackState::Playing) => EntryStatus::Playing,
             (_, PlaybackState::Paused) => EntryStatus::Playing,
             (_, PlaybackState::Stopped) => EntryStatus::Queued,
-        };
-        let download_progress = match &item.load_state {
-            LoadState::Downloading {
-                total,
-                bytes_written,
-                ..
-            } if *total > 0 => {
-                let done = bytes_written.load(std::sync::atomic::Ordering::Relaxed);
-                Some((done as f64 / *total as f64).clamp(0.0, 1.0))
-            }
-            _ => None,
         };
         Self {
             queue_item_id: item.id.0.to_string(),
@@ -304,11 +371,15 @@ impl QueueItem {
             disc: item.disc,
             duration_ms: item.duration_ms,
             status,
-            download_progress,
-            failure_reason: match &item.load_state {
+            failure_reason: match &load {
                 LoadState::Failed(reason) => Some(reason.clone()),
                 _ => None,
             },
+            // The transport polls this and there is no connection here to ask.
+            // Nothing it draws needs them; the queue's own rows carry the real
+            // reading.
+            on_server: false,
+            on_disk: false,
         }
     }
 }
@@ -317,10 +388,16 @@ impl QueueItem {
     /// Build from a derived queue entry, taking album IDs from a map resolved
     /// for the whole queue in one query — one statement per queue read rather
     /// than one per row.
-    pub(crate) fn from_entry(e: &QueueEntry, album_ids: &HashMap<i64, i64>) -> Self {
-        let download_progress = e.download_progress.and_then(|(done, total)| {
-            (total > 0).then(|| (done as f64 / total as f64).clamp(0.0, 1.0))
-        });
+    pub(crate) fn from_entry(
+        e: &QueueEntry,
+        album_ids: &HashMap<i64, i64>,
+        sources: &HashMap<i64, (bool, bool)>,
+    ) -> Self {
+        let (on_server, on_disk) = e
+            .db_id
+            .and_then(|id| sources.get(&id))
+            .copied()
+            .unwrap_or((false, false));
         Self {
             queue_item_id: e.id.0.to_string(),
             track_id: e.db_id,
@@ -336,10 +413,22 @@ impl QueueItem {
             disc: e.disc,
             duration_ms: e.duration_ms,
             status: e.status.into(),
-            download_progress,
             failure_reason: e.error.clone(),
+            on_server,
+            on_disk,
         }
     }
+}
+
+/// A record and its tracks, as one answer.
+///
+/// The page wants both and wants them together, so they are one call: one hop
+/// across the boundary, one connection out of the pool, one lock taken. As two
+/// they were two of each, racing on the same click.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct AlbumPage {
+    pub album: Option<Album>,
+    pub tracks: Vec<Track>,
 }
 
 /// A created share link, and how much of the request it actually covers.
@@ -437,7 +526,7 @@ impl From<koan_core::lyrics::Lyrics> for Lyrics {
     }
 }
 
-#[derive(uniffi::Record, Debug, Clone)]
+#[derive(uniffi::Record, Debug, Clone, PartialEq)]
 pub struct Playlist {
     pub id: i64,
     pub name: String,
@@ -479,7 +568,7 @@ impl From<queries::PlaylistRow> for Playlist {
 /// is still that thing, and saying so is what makes following legible — you can
 /// see why an edit to the playlist moved something in the queue, and you can
 /// see the moment it stops.
-#[derive(uniffi::Enum, Debug, Clone)]
+#[derive(uniffi::Enum, Debug, Clone, PartialEq)]
 pub enum QueueLock {
     Playlist { playlist: Playlist },
     Album { album: Album },
@@ -643,6 +732,29 @@ pub struct ImportSummary {
     pub errors: Vec<String>,
 }
 
+/// An artist beyond the library: the opening of their Wikipedia article and
+/// whether there is a photograph to ask for.
+#[derive(uniffi::Record, Debug, Clone)]
+pub struct ArtistInfo {
+    pub bio: Option<String>,
+    /// The article the biography opens, for reading on and for credit.
+    pub bio_url: Option<String>,
+    pub has_image: bool,
+    /// Photographer and licence.
+    pub image_credit: Option<String>,
+}
+
+impl From<koan_core::artist_info::ArtistInfo> for ArtistInfo {
+    fn from(info: koan_core::artist_info::ArtistInfo) -> Self {
+        Self {
+            bio: info.bio,
+            bio_url: info.bio_url,
+            has_image: info.image_url.is_some(),
+            image_credit: info.image_credit,
+        }
+    }
+}
+
 #[derive(uniffi::Record, Debug, Clone)]
 pub struct SimilarArtist {
     pub artist_id: i64,
@@ -651,8 +763,8 @@ pub struct SimilarArtist {
     pub source: String,
 }
 
-/// Sort orders the library browser offers. Applied after the DB read, so it
-/// works uniformly across every listing regardless of which query produced it.
+/// Sort orders the library browser offers. Applied by the database, because a
+/// listing that is read a page at a time has to be ordered before it is cut.
 #[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AlbumSort {
     /// Newest first. What a library browser should open on — the thing you
@@ -661,8 +773,9 @@ pub enum AlbumSort {
     Title,
     Artist,
     Year,
-    /// Reshuffled on every call, so asking again gives a different order —
-    /// which is the point: it's for turning up records you'd forgotten.
+    /// Shuffled by the seed passed alongside it. The same seed is the same
+    /// order, page after page; a new seed is a new order — which is the point,
+    /// it's for turning up records you'd forgotten.
     Random,
 }
 
@@ -727,6 +840,7 @@ pub struct Settings {
     /// `off`, `track` or `album`.
     pub replaygain: String,
     pub pre_amp_db: f64,
+    pub fade_on_pause: bool,
 
     pub radio_lookahead: u32,
     pub radio_batch_size: u32,

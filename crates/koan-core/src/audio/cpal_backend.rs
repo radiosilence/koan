@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use super::backend::{AudioBackend, AudioEngineHandle, BackendError, DeviceInfo};
+use super::fade::{FadeControl, Fader};
 
 /// Temporarily redirect stderr to /dev/null while running a closure.
 /// ALSA/JACK/PipeWire C libraries spam stderr when probing unavailable
@@ -186,6 +187,9 @@ impl AudioBackend for CpalBackend {
 
         let running = Arc::new(AtomicBool::new(false));
         let running_cb = running.clone();
+        let fade = FadeControl::new();
+        let mut fader = Fader::new(fade.clone(), sample_rate);
+        let channels = channels as usize;
 
         // The consumer is owned outright by the callback: rtrb::Consumer is Send,
         // and cpal's data callback is FnMut, so a by-value capture is enough.
@@ -202,7 +206,7 @@ impl AudioBackend for CpalBackend {
 
                     let total_samples = data.len();
                     let available = consumer.slots();
-                    let to_read = available.min(total_samples);
+                    let to_read = available.min(fader.readable(total_samples, channels));
 
                     if to_read > 0
                         && let Ok(chunk) = consumer.read_chunk(to_read)
@@ -224,6 +228,7 @@ impl AudioBackend for CpalBackend {
                         }
                         chunk.commit_all();
                         samples_played.fetch_add(copy_total as u64, Ordering::AcqRel);
+                        fader.apply(&mut data[..copy_total], channels);
                     }
 
                     // Zero-pad remainder on underrun — silence > glitches.
@@ -239,7 +244,11 @@ impl AudioBackend for CpalBackend {
             .map_err(|e| BackendError::StreamCreation(e.to_string()))
         })?;
 
-        Ok(Box::new(CpalEngineHandle { stream, running }))
+        Ok(Box::new(CpalEngineHandle {
+            stream,
+            running,
+            fade,
+        }))
     }
 }
 
@@ -247,6 +256,7 @@ impl AudioBackend for CpalBackend {
 struct CpalEngineHandle {
     stream: cpal::Stream,
     running: Arc<AtomicBool>,
+    fade: Arc<FadeControl>,
 }
 
 // SAFETY: cpal::Stream is Send on all platforms cpal supports.
@@ -270,6 +280,23 @@ impl AudioEngineHandle for CpalEngineHandle {
 
     fn is_running(&self) -> bool {
         self.running.load(Ordering::Acquire)
+    }
+
+    fn fade_out(&self) {
+        self.fade.fade_out();
+    }
+
+    fn fade_in(&self) -> Result<(), BackendError> {
+        if self.is_running() {
+            self.fade.fade_in(false);
+            return Ok(());
+        }
+        self.fade.fade_in(true);
+        self.start()
+    }
+
+    fn is_silent(&self) -> bool {
+        self.fade.is_silent()
     }
 }
 

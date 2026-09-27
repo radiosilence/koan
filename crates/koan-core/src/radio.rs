@@ -156,7 +156,7 @@ impl RadioContext {
                 && let Some(album_id) = track.album_id
                 && let Ok(Some(album)) = queries::get_album(conn, album_id)
                 && let Some(ref date) = album.date
-                && let Ok(year) = date[..4.min(date.len())].parse::<i32>()
+                && let Some(Ok(year)) = crate::helpers::year_of(date).map(str::parse::<i32>)
             {
                 years.push(year);
             }
@@ -678,7 +678,7 @@ fn gather_genre_era_candidates(
                     .and_then(|a| {
                         a.date
                             .as_ref()
-                            .and_then(|d| d[..4.min(d.len())].parse().ok())
+                            .and_then(|d| crate::helpers::year_of(d)?.parse().ok())
                     });
 
                 // Score higher if both genre AND era match.
@@ -1012,7 +1012,7 @@ pub fn spawn_autoqueue(
     db_path: std::path::PathBuf,
 ) {
     use crate::player::commands::PlayerCommand;
-    use crate::player::state::{LoadState, QueueEntryStatus, QueueItemId};
+    use crate::player::state::{QueueEntryStatus, QueueItemId};
 
     std::thread::Builder::new()
         .name("koan-radio".into())
@@ -1143,7 +1143,7 @@ pub fn spawn_autoqueue(
                 let new_items = crate::helpers::playlist_items_for_tracks(&db, &rows);
                 let pending: Vec<(i64, QueueItemId)> = new_items
                     .iter()
-                    .filter(|i| matches!(i.load_state, LoadState::Pending))
+                    .filter(|i| matches!(i.state, crate::player::state::ItemState::Pending))
                     .filter_map(|i| i.db_id.map(|id| (id, i.id)))
                     .collect();
 

@@ -18,18 +18,24 @@ use tokio::runtime::Runtime;
 
 type Job = Box<dyn FnOnce() + Send + 'static>;
 
-/// Owns the blocking pool. Current-thread because the async half is never
-/// used: uniffi polls exported futures from Swift, so there is no driver to
-/// run and no worker threads beyond the ones jobs are handed to.
+/// Owns the blocking pool.
+///
+/// One worker thread, and it matters that there is one at all. On a
+/// current-thread runtime nobody ever calls `block_on`, so the scheduler is
+/// never driven — and `spawn_blocking`'s completion has to travel through it to
+/// wake the caller. The work still ran in microseconds; the *answer* took tens
+/// of milliseconds to come back, on every call the app made. A worker thread is
+/// a driver, and the answer arrives when the work finishes.
 static RUNTIME: LazyLock<Runtime> = LazyLock::new(|| {
-    tokio::runtime::Builder::new_current_thread()
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
         // A tripwire, not a target. Threads are spawned on demand and parked
         // when idle, so a GUI sits at a handful; reaching this many blocked at
         // once is a runaway, and failing there beats failing at the OS thread
         // limit, where `spawn` starts erroring somewhere unrelated.
         .max_blocking_threads(512)
         .build()
-        .expect("a runtime with no driver to start")
+        .expect("a runtime to start")
 });
 
 /// Run `f` off the calling thread.

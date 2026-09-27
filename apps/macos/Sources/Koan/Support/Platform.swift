@@ -146,3 +146,155 @@ private struct IconOnlyWhenTight: ViewModifier {
 extension View {
     func iconOnlyWhenTight() -> some View { modifier(IconOnlyWhenTight()) }
 }
+
+extension Notification.Name {
+    /// The app giving up the foreground — on iOS the last dependable moment
+    /// before it is suspended and perhaps killed without another word.
+    static var appResignsActive: Notification.Name {
+        #if canImport(AppKit)
+        NSApplication.didResignActiveNotification
+        #else
+        UIApplication.willResignActiveNotification
+        #endif
+    }
+}
+
+#if canImport(AppKit)
+typealias PlatformColor = NSColor
+#else
+typealias PlatformColor = UIColor
+#endif
+
+/// A view whose drawing is its own sublayers, which is how koan keeps motion in
+/// the render server rather than on the main thread.
+///
+/// AppKit and UIKit agree on the layers and disagree on everything around them:
+/// whether there is a layer at all, which method is the layout pass, and how a
+/// change of light or dark is announced. Subclasses override `layoutLayers` and
+/// `appearanceChanged` and never meet the difference.
+class LayerView: PlatformView {
+    /// Never nil: an AppKit view is made layer-backed here, a UIKit one always is.
+    var hostLayer: CALayer {
+        #if canImport(AppKit)
+        layer!
+        #else
+        layer
+        #endif
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        #if canImport(AppKit)
+        wantsLayer = true
+        #else
+        registerForTraitChanges([UITraitUserInterfaceStyle.self]) { (view: LayerView, _) in
+            view.appearanceChanged()
+        }
+        #endif
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not from a nib") }
+
+    /// The size may have changed.
+    func layoutLayers() {}
+
+    /// Light and dark swapped; anything holding a resolved `CGColor` repaints.
+    func appearanceChanged() {}
+
+    /// A dynamic colour pinned to this view's current appearance.
+    func resolved(_ colour: PlatformColor) -> CGColor {
+        #if canImport(AppKit)
+        var resolved = colour.cgColor
+        effectiveAppearance.performAsCurrentDrawingAppearance { resolved = colour.cgColor }
+        return resolved
+        #else
+        colour.resolvedColor(with: traitCollection).cgColor
+        #endif
+    }
+
+    #if canImport(AppKit)
+    override func layout() {
+        super.layout()
+        layoutLayers()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        appearanceChanged()
+    }
+    #else
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        layoutLayers()
+    }
+    #endif
+}
+
+#if canImport(AppKit)
+typealias PlatformView = NSView
+#else
+typealias PlatformView = UIView
+#endif
+
+/// `NSViewRepresentable` and `UIViewRepresentable` under one set of names.
+///
+/// Conformers name `PlatformViewType` outright. Inferring it through the
+/// platform's own associated type works for some and not others, depending on
+/// the order the compiler happens to meet them in.
+#if canImport(AppKit)
+protocol PlatformViewRepresentable: NSViewRepresentable where NSViewType == PlatformViewType {
+    associatedtype PlatformViewType: NSView
+    func makeView(context: Context) -> PlatformViewType
+    func updateView(_ view: PlatformViewType, context: Context)
+    static func dismantleView(_ view: PlatformViewType, coordinator: Coordinator)
+}
+
+extension PlatformViewRepresentable {
+    func makeNSView(context: Context) -> PlatformViewType { makeView(context: context) }
+    func updateNSView(_ view: PlatformViewType, context: Context) {
+        updateView(view, context: context)
+    }
+    static func dismantleNSView(_ view: PlatformViewType, coordinator: Coordinator) {
+        dismantleView(view, coordinator: coordinator)
+    }
+    static func dismantleView(_ view: PlatformViewType, coordinator: Coordinator) {}
+}
+#else
+protocol PlatformViewRepresentable: UIViewRepresentable where UIViewType == PlatformViewType {
+    associatedtype PlatformViewType: UIView
+    func makeView(context: Context) -> PlatformViewType
+    func updateView(_ view: PlatformViewType, context: Context)
+    static func dismantleView(_ view: PlatformViewType, coordinator: Coordinator)
+}
+
+extension PlatformViewRepresentable {
+    func makeUIView(context: Context) -> PlatformViewType { makeView(context: context) }
+    func updateUIView(_ view: PlatformViewType, context: Context) {
+        updateView(view, context: context)
+    }
+    static func dismantleUIView(_ view: PlatformViewType, coordinator: Coordinator) {
+        dismantleView(view, coordinator: coordinator)
+    }
+    static func dismantleView(_ view: PlatformViewType, coordinator: Coordinator) {}
+}
+#endif
+
+#if canImport(AppKit)
+extension NSColor {
+    /// UIKit's name for it, so shared code can say one thing.
+    static var label: NSColor { labelColor }
+}
+#endif
+
+extension View {
+    /// A button that reads as a link. iOS has no link style; a borderless
+    /// button in the tint is what it uses for the same job.
+    func linkButton() -> some View {
+        #if os(macOS)
+        buttonStyle(.link)
+        #else
+        buttonStyle(.borderless)
+        #endif
+    }
+}

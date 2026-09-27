@@ -13,6 +13,8 @@ enum Icon {
     static let playNext = "text.line.first.and.arrowtriangle.forward"
     static let queue = "text.append"
     static let shuffle = "shuffle"
+    /// Deal the album grid in a new random order. Playback is `shuffle`.
+    static let reshuffle = "dice"
     static let next = "forward.fill"
     static let previous = "backward.fill"
     static let skipForward = "goforward.10"
@@ -34,6 +36,7 @@ enum Icon {
     /// Put the queue back on the row that is playing.
     static let jumpToPlaying = "scope"
     static let history = "clock.arrow.circlepath"
+    static let downloads = "arrow.down.circle"
     static let playlist = "music.note.list"
     static let search = "magnifyingglass"
     static let add = "plus"

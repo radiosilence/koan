@@ -50,7 +50,13 @@ Five crates, one workspace. `koan-core` is the engine; `koan-tui`, `koan-server`
 
 GraphQL earns its keep for clients that genuinely *cannot* link the core -- a browser, or a phone controlling playback on a different machine.
 
-When you add a capability, ask whether both doors need it. `koan-ffi` returns cover art as raw bytes where GraphQL has to base64 it, and hands out changes by awaiting `next_event` where GraphQL subscribes; otherwise the two mirror each other closely enough that a gap in one is usually a gap in both.
+**State goes out as whole slices, never as deltas.** The engine publishes what each corner of its state *is* — what is playing, where the playhead is, the queue, the transfers and their figures, whether the library moved — and a client reads a batch of whatever changed since it last asked. A snapshot cannot be applied wrongly, which a delta can: three bugs in one afternoon were all a client-side copy patched by a rule someone had to remember to write.
+
+Slices are cut by **rate of change, not by subject**. The playhead and the transfer figures move ten times a second; the queue and the set of transfers move when someone does something. A client subscribes per slice, so a fast field sitting next to a slow one wakes every reader of the slow one at the fast one's rate — which is why a transfer's byte count is not a field on a queue row, and the seekable extent is not a field beside a track's title. See `koan-ffi/src/state.rs`.
+
+Nothing is dropped. Each slice carries a sequence number and each client keeps a cursor, so falling behind costs the intermediate values of a slice and never the fact that it changed. A cursor that has seen nothing reads the whole state, which is how a client seeds itself — there is no separate call for that.
+
+When you add a capability, ask whether both doors need it. `koan-ffi` returns cover art as raw bytes where GraphQL has to base64 it, and hands out changes as state slices where GraphQL subscribes; otherwise the two mirror each other closely enough that a gap in one is usually a gap in both.
 
 ## Threading model
 
@@ -85,8 +91,10 @@ Five threads at steady state during playback:
 ┌─────────────────────────────────────────────────┐
 │ Analyzer Thread ("viz-analyzer")               │
 │ Always spawned. Reads VizBuffer, runs FFT,      │
-│ writes VizSnapshot. Configurable fps (default   │
-│ 60). Never blocks audio or UI.                  │
+│ publishes VizSnapshot. Runs at the rate a       │
+│ client asks for — the macOS app sets its        │
+│ display's. Parks when nothing reads and nothing │
+│ plays. Never blocks audio or UI.                │
 └─────────────────────────────────────────────────┘
 ```
 
@@ -104,7 +112,7 @@ Five threads at steady state during playback:
 | Track boundaries | Decode | TUI, Player | `parking_lot::RwLock` |
 | `running` flag | Player (start/stop) | Audio RT | `AtomicBool` (Relaxed) |
 | Viz samples | Decode | Analyzer | `VizBuffer` (`parking_lot::Mutex` ring) |
-| Analysis output | Analyzer | TUI | `VizSnapshot` (`parking_lot::Mutex`) |
+| Analysis output | Analyzer | TUI, FFI clients | `VizSnapshot` (`parking_lot::RwLock` + `tokio::sync::watch` for subscribers) |
 
 **The golden rule: nothing on the audio render thread may allocate or lock.** It only touches atomics and the ring buffer consumer. This applies to both the CoreAudio callback (macOS) and the cpal callback (Linux).
 
@@ -208,9 +216,10 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `device.rs` | CoreAudio device enumeration, sample rate get/set/watch (macOS only) |
 | `buffer.rs` | `PlaybackTimeline` — track boundaries, `current_playback()` position query (binary search), decode thread entry points (`start_decode`, `decode_single`, `decode_queue_loop`) |
 | `replaygain.rs` | EBU R128 loudness scanning, gain application, tag read/write via lofty |
+| `signal.rs` | `Wake` — a generation counter a reader can wait on, and the process-wide one every front end waits on. What lets koan hold state in versions and atomics without anyone having to look again |
 | `viz.rs` | `VizBuffer` (lock-protected ring of f32 samples for analyzer), `VizSnapshot` (atomic snapshot for UI thread), `VizLevels` (spectrum reduced to low/mid/high, cloning no waveform) |
-| `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold, beat detection (low-band transient). Configurable fps. Writes to `VizSnapshot`. |
-| `streaming.rs` | Progressive download with `Condvar`-based ready signaling for streaming playback |
+| `analyzer.rs` | FFT analysis thread — 48-band spectrum, VU meters, peak hold, beat detection (low-band transient). Runs at whatever rate a client sets, decays to flat when the play head stops, and parks when nothing is reading. Publishes to `VizSnapshot`. |
+| `streaming.rs` | `PartialFileSource` — reads a download in progress off disk, blocking at the write head |
 
 ### `player/`
 
@@ -239,7 +248,11 @@ A download that gives up sends `TrackFailed` instead, and the parked cursor adva
 | `queries/history.rs` | Play history — one row per play, written when a track starts |
 | `queries/playback_state.rs` | Queue and playback position persistence across sessions |
 
-**Track dedup:** `upsert_track` tries three match strategies in order: (1) exact path match, (2) remote_id match, (3) content match (artist + album + disc + track# + title, and only where one side has no local path and one side has no remote_id). First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows, while keeping two files on disk as two tracks however identical their tags: multi-disc releases repeat title and track number across discs. A merge fills gaps only — it never overwrites a populated column with NULL, so a remote sync that knows nothing about sample rate cannot erase what the local scan measured.
+**Indexes and the planner.** Every question the library is asked about a handful of rows is answerable from an index, so a query plan that says `SCAN` is a defect unless the query genuinely means "all of them". Two shapes defeat an index and neither one fails, so both only ever show up as cost: an `OR` spanning different columns or different tables — a track is reachable by `path`, `cached_path` or `remote_url`, and an artist by their own credit or their album's — and a `LIKE` pattern or a collation the index was not built with. The first is written as a union of indexed lookups; the second as a range over the indexed column. `db/schema.rs::tests::hot_queries_do_not_scan` asserts the plans, because a rewrite that quietly loses its index reads the same.
+
+Statistics matter as much as the indexes: with none, the planner guesses the same row count for every index and will pick one that merely supplies the `ORDER BY` over the partial index on the column being filtered. `PRAGMA optimize` runs on open and after anything that changes the library in bulk — a scan, a remote sync — bounded by `analysis_limit` so it stays a fraction of a second at any library size.
+
+**Track dedup:** `upsert_track` tries its match strategies in order: (1) exact path match, (2) remote_id match, (3) content match (artist + album + disc + track# + title, then the same without the artist), (4) MusicBrainz recording + release ids, which match however each source names the album. Every cross-source step applies only where one side has no local path and one side has no remote_id. First match wins — the row is updated rather than duplicated. This merges local files with remote library entries into single rows, while keeping two files on disk as two tracks however identical their tags: multi-disc releases repeat title and track number across discs. A merge fills gaps only — it never overwrites a populated column with NULL, so a remote sync that knows nothing about sample rate cannot erase what the local scan measured.
 
 A row matched by path or remote_id is then asked the content-match question a second time, against the corrected metadata. Strategies 1 and 2 pin a row to the source it was first seen from, so a file indexed with bad tags could never merge with its remote copy however good the tags later became — the path kept matching, and the merge that should have happened never got asked. If the counterpart turns up, `merge_track_rows` folds it in: play history concatenates, lyrics and the embedding fill a gap or are dropped, favourites need no move because they are keyed by path. An album left with nothing in it goes too, since a corrected tag usually strands a misreading nobody wants in the browser.
 

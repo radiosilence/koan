@@ -3,6 +3,9 @@ import SwiftUI
 
 struct AlbumBrowser: View {
     @Environment(LibraryModel.self) private var library
+    @Environment(UIState.self) private var ui
+    /// Kept mounted behind other pages once visited — see `StageView`.
+    @Environment(\.onStage) private var onStage
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
 
@@ -20,12 +23,41 @@ struct AlbumBrowser: View {
                 } else {
                     LazyVGrid(columns: columns, spacing: 22) {
                         ForEach(library.visibleAlbums, id: \.id) { album in
-                            AlbumGridCell(album: album)
+                            AlbumGridCell(album: album, selectable: true)
                         }
                     }
                     .padding(20)
+                    // Dragging a ticked tile carries every tick, in the order
+                    // they were made; an unticked one carries itself.
+                    //
+                    // Worked out here, at drag time, rather than handed to the
+                    // container as its selection: that was a read of the ticks
+                    // in the grid's body, and every tick re-diffed the grid.
+                    // What it costs is the preview — a stack of ticks drags as
+                    // the one tile under the pointer.
+                    .dragContainer(for: PlayableTransfer.self, itemID: \.id) { grabbed in
+                        let selection = library.selection
+                        let ids = grabbed.contains(where: selection.contains)
+                            ? selection.ids
+                            : Array(grabbed)
+                        return ids.map { id in
+                            let name = library.visibleAlbums.first { $0.id == id }?.title ?? ""
+                            return PlayableTransfer(kind: .album, id: id, name: name)
+                        }
+                    }
                 }
             }
+            // ⌘A picks everything the filter is showing, starting a selection
+            // if there was none — only while this is the page on screen, since
+            // it stays mounted behind the others. Escape and leaving the page
+            // drop it.
+            .onChange(of: ui.selectAllToken) { _, _ in
+                guard onStage else { return }
+                library.selection.selectAll(library.visibleAlbums)
+            }
+            .onChange(of: ui.clearSelectionToken) { _, _ in library.selection.end() }
+            .onChange(of: onStage) { _, now in if !now { library.selection.end() } }
+            .onDisappear { library.selection.end() }
     }
 }
 
@@ -35,28 +67,36 @@ struct AlbumDetailView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(PlayerModel.self) private var player
 
-    private var album: Album? { library.album(id: albumId) }
+    /// Whatever the navigator loaded before it brought us here, so the first
+    /// body evaluation already has the whole page. Guarded on the id because
+    /// history can move faster than a read.
+    private var record: LibraryModel.AlbumRecord? {
+        let held = library.detailRecord
+        return held?.albumId == albumId ? held : nil
+    }
 
     var body: some View {
-        TrackListView(
-            title: album?.title ?? "Album",
+        Trace.event("album-body")
+        FrameTimer.shared.evaluated()
+        return TrackListView(
+            title: record?.album?.title ?? "Album",
             subtitle: subtitle,
-            tracks: library.detailTracks,
+            tracks: record?.tracks ?? [],
             artwork: .album(albumId),
-            artistLink: album?.artistId,
-            playable: album.map { Playable.album($0) }
+            artistLink: record?.album?.artistId,
+            playable: record?.album.map { Playable.album($0) }
         )
-        .task(id: albumId) {
-            library.loadTracks(albumId: albumId)
-        }
+        // Only for a library change — the record itself arrived before the page
+        // did. A download landing writes a cached path onto one of these rows.
+        .reloading(on: albumId) { await library.prepare(album: albumId) }
     }
 
     private var subtitle: String {
-        guard let album else { return "" }
+        guard let record, let album = record.album else { return "" }
         var parts = [album.artistName]
         if let year = album.year { parts.append(String(year)) }
         if let codec = album.codec { parts.append(codec.uppercased()) }
-        let total = library.detailTracks.compactMap(\.durationMs).reduce(0, +)
+        let total = record.tracks.compactMap(\.durationMs).reduce(0, +)
         if total > 0 {
             parts.append(Format.duration(total))
         }

@@ -160,7 +160,7 @@ struct PickerSheet: View {
         .disabled(resolving || (picked.isEmpty && highlighted == nil))
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .glassEffect(.regular, in: .rect(cornerRadius: 20))
+        .glass(.regular, fallback: .regularMaterial, in: .rect(cornerRadius: 20))
         .padding(.horizontal, 12)
         .padding(.bottom, 12)
     }
@@ -196,13 +196,9 @@ struct PickerSheet: View {
                 case .track:
                     trackIds.append(row.id)
                 case .album:
-                    trackIds += ((try? await engine.tracks(
-                        albumId: row.id, artistId: nil, sort: .album, limit: 500, offset: 0
-                    )) ?? []).map(\.id)
+                    trackIds += (try? await engine.trackIds(albumId: row.id, artistId: nil)) ?? []
                 case .artist:
-                    trackIds += ((try? await engine.tracks(
-                        albumId: nil, artistId: row.id, sort: .album, limit: 2000, offset: 0
-                    )) ?? []).map(\.id)
+                    trackIds += (try? await engine.trackIds(albumId: nil, artistId: row.id)) ?? []
                 }
             }
 
@@ -217,7 +213,7 @@ struct PickerSheet: View {
                 player.enqueue(trackIds: trackIds)
                 // Jump to the first thing just added rather than the queue head.
                 if existing > 0 {
-                    try? await Task.sleep(for: .milliseconds(120))
+                    await player.settle(within: .milliseconds(500)) { player.queue.count > existing }
                     if player.queue.indices.contains(existing) {
                         player.play(itemId: player.queue[existing].queueItemId)
                     }

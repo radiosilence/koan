@@ -43,6 +43,14 @@ struct Hotkey {
 /// A focused List eats space for scrolling and letters for type-select, so the
 /// monitor also wins the keys a menu would have lost anyway. The cost is that
 /// type-select in lists is gone; koan's browsers filter through their own field.
+///
+/// The monitor also watches clicks, because a field keeps its focus until
+/// something else takes it, and most of koan takes nothing: a cover, a link, a
+/// tile are SwiftUI gestures, not AppKit responders. Filter the albums, click
+/// one to play it, and every key you press afterwards is still going into the
+/// filter. A click anywhere outside the field ends the editing, the way it
+/// reads as doing. It used to happen by accident — the toolbar rebuilt itself
+/// on every track change and threw the field's focus away with it.
 @MainActor
 final class Hotkeys {
     private var monitor: Any?
@@ -56,10 +64,48 @@ final class Hotkeys {
         self.bindings = Dictionary(
             uniqueKeysWithValues: all.flatMap { hotkey in hotkey.keys.map { ($0, hotkey) } }
         )
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .leftMouseDown, .rightMouseDown]
+        ) { [weak self] event in
             guard let self else { return event }
-            return self.handle(event) ? nil : event
+            if event.type == .keyDown {
+                return self.handle(event) ? nil : event
+            }
+            self.endEditing(unlessUnder: event)
+            return event
         }
+    }
+
+    /// A click somewhere other than the field being edited ends the editing.
+    ///
+    /// Before the click is delivered, so whatever it lands on can take focus
+    /// for itself afterwards — a List does, a cover does not, and either way
+    /// the keys are live again. The field's own frame, clear button and search
+    /// button are all part of it, so a click inside it changes nothing.
+    private func endEditing(unlessUnder event: NSEvent) {
+        guard let window = event.window, window === ownWindow,
+              EditCommands.isEditingText,
+              let responder = window.firstResponder as? NSView,
+              // The frame view rather than the content view: the filter field
+              // lives in the toolbar, which is outside the content.
+              let frame = window.contentView?.superview,
+              let hit = frame.hitTest(event.locationInWindow)
+        else { return }
+        guard !hit.isDescendant(of: Self.owningField(of: responder)) else { return }
+        window.makeFirstResponder(nil)
+    }
+
+    /// The control a field editor belongs to. A focused text field is
+    /// represented by its field editor, a text view sitting inside it, so a
+    /// click on the field's own chrome is a click outside the responder and
+    /// inside the field.
+    private static func owningField(of responder: NSView) -> NSView {
+        var view = responder
+        while let parent = view.superview {
+            if parent is NSTextField { return parent }
+            view = parent
+        }
+        return responder
     }
 
     /// The monitor outlives this object only if the app is tearing down anyway,

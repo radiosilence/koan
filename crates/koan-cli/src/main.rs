@@ -1,4 +1,3 @@
-use std::fs::OpenOptions;
 use std::io::{self, Write as _};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,16 +24,9 @@ struct BufferedLogger {
 
 impl BufferedLogger {
     fn init() {
-        let log_path = config::config_dir().join("koan.log");
-        let log_file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&log_path)
-            .ok();
-
         let logger = LOGGER.get_or_init(|| BufferedLogger {
             buffer: Mutex::new(None),
-            log_file: Mutex::new(log_file),
+            log_file: Mutex::new(config::open_log()),
         });
         log::set_logger(logger).expect("failed to set logger");
         log::set_max_level(log::LevelFilter::Info);
@@ -69,10 +61,15 @@ impl log::Log for BufferedLogger {
         );
 
         // Always write to log file (including noisy library warnings).
-        if let Some(file) = self.log_file.lock().unwrap().as_mut() {
+        let mut log_file = self.log_file.lock().unwrap();
+        if log_file.is_none() {
+            *log_file = config::open_log();
+        }
+        if let Some(file) = log_file.as_mut() {
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             let _ = writeln!(file, "[{}] {}", now, msg);
         }
+        drop(log_file);
 
         // Suppress warn-level noise from lofty/symphonia internals on stderr/buffer.
         // Our own fallback warnings (from koan_core) still come through.
@@ -135,6 +132,12 @@ struct Cli {
     /// Enable GraphiQL web IDE at GET /graphql
     #[arg(long)]
     playground: bool,
+
+    /// Also serve MCP over HTTP at ADDR/mcp (e.g. 0.0.0.0:8081), for an
+    /// authenticating gateway in front of a headless server. It has no
+    /// credential check of its own, so only the gateway may reach it.
+    #[arg(long, env = "KOAN_MCP_BIND")]
+    mcp_bind: Option<std::net::SocketAddr>,
 }
 
 #[derive(Subcommand)]
@@ -374,11 +377,23 @@ fn main() {
 
     // Daemon/headless are root-level server modes — handle before subcommands.
     if cli.daemonize {
-        koan_server::graphql::cmd_serve_daemon(cli.port, cli.bind, cli.subsonic, cli.playground);
+        koan_server::graphql::cmd_serve_daemon(
+            cli.port,
+            cli.bind,
+            cli.subsonic,
+            cli.playground,
+            cli.mcp_bind,
+        );
         return;
     }
     if cli.headless {
-        koan_server::graphql::cmd_serve(cli.port, cli.bind, cli.subsonic, cli.playground);
+        koan_server::graphql::cmd_serve(
+            cli.port,
+            cli.bind,
+            cli.subsonic,
+            cli.playground,
+            cli.mcp_bind,
+        );
         return;
     }
 
@@ -493,7 +508,7 @@ fn start_player(
             Some(commands::ApiOptions {
                 port: cli.port.or(Some(cfg.graphql.port)),
                 bind: cli.bind.or(Some(cfg.graphql.bind)),
-                subsonic: cli.subsonic.or(cfg.subsonic.port),
+                subsonic: cli.subsonic,
                 playground: cli.playground || cfg.graphql.playground,
             })
         } else {

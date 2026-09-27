@@ -34,6 +34,18 @@ pub struct Config {
     pub graphql: GraphqlConfig,
     pub subsonic: SubsonicConfig,
     pub auth: AuthConfig,
+    pub sharing: SharingConfig,
+}
+
+/// Share links this koan serves itself.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SharingConfig {
+    /// Where this server is reached from outside, e.g. `https://koan.example.com`.
+    /// Share links are built on it; without it a server makes no links, since
+    /// it cannot know which of its addresses a stranger can reach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +69,8 @@ pub struct PlaybackConfig {
     /// ReplayGain pre-amplification in dB. Applied on top of track/album gain.
     /// Positive values boost, negative values attenuate. Default: 0.0.
     pub pre_amp_db: f64,
+    /// Fade out on pause and back in on resume, rather than cutting.
+    pub fade_on_pause: bool,
     /// Output audio device name. None = system default.
     /// Persisted by name (not ID) since IDs can change across reboots.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -122,6 +136,7 @@ impl Default for PlaybackConfig {
             target_fps: 60,
             show_fps: false,
             pre_amp_db: 0.0,
+            fade_on_pause: true,
             output_device: None,
             art_size: 24,
         }
@@ -838,6 +853,20 @@ pub fn db_path() -> PathBuf {
     config_dir().join("koan.db")
 }
 
+/// Open `koan.log` for appending, creating the configuration directory first.
+///
+/// A logger starts before anything else has had reason to create the
+/// directory, so on a first launch it would otherwise find nowhere to write.
+pub fn open_log() -> Option<fs::File> {
+    let dir = config_dir();
+    fs::create_dir_all(&dir).ok()?;
+    fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(dir.join("koan.log"))
+        .ok()
+}
+
 /// Refuse to start when credentials are sitting in version control, which is a
 /// security incident rather than a warning anyone would act on.
 ///
@@ -851,7 +880,7 @@ fn check_secrets_in_git() {
 }
 
 fn scan_for_tracked_secrets() {
-    let sensitive_fields = ["password"];
+    let sensitive_fields = ["password", "refresh_token"];
 
     for (label, path) in [
         ("config.toml", config_file_path()),

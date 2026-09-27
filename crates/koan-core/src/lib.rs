@@ -1,3 +1,4 @@
+pub mod artist_info;
 pub mod audio;
 pub mod auth;
 pub mod config;
@@ -12,6 +13,7 @@ pub mod player;
 pub mod playlists;
 pub mod radio;
 pub mod remote;
+pub mod signal;
 
 #[cfg(test)]
 pub mod test_utils;

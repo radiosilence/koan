@@ -46,7 +46,16 @@ pub fn cmd_config() {
     println!();
 
     println!("{}", "resolved".bold());
-    let cfg = config::Config::load().unwrap_or_default();
+    let mut cfg = config::Config::load().unwrap_or_default();
+    for secret in [
+        &mut cfg.remote.password,
+        &mut cfg.subsonic.password,
+        &mut cfg.auth.refresh_token,
+    ] {
+        if !secret.is_empty() {
+            *secret = "••••".into();
+        }
+    }
     match toml::to_string_pretty(&cfg) {
         Ok(s) => print!("{}", s),
         Err(e) => eprintln!("{} {}", "error:".red().bold(), e),

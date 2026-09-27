@@ -16,12 +16,13 @@ struct ArtistBrowser: View {
         .clearsSelection($selection)
         .washedGround()
         .contextMenu(forSelectionType: Int64.self) { ids in
-            if let id = ids.first,
+            // A set has no first; with several picked, no one artist is meant.
+            if ids.count == 1, let id = ids.first,
                let artist = library.visibleArtists.first(where: { $0.id == id }) {
                 PlayableMenu(playable: .artist(id: artist.id, name: artist.name))
             }
         } primaryAction: { ids in
-            if let id = ids.first { nav.open(artist: id) }
+            if ids.count == 1, let id = ids.first { nav.open(artist: id) }
         }
         .overlay {
             if library.visibleArtists.isEmpty {
@@ -39,7 +40,6 @@ struct ArtistBrowser: View {
 private struct ArtistRow: View {
     let artist: Artist
 
-    @Environment(LibraryModel.self) private var library
     @State private var hovered = false
 
     var body: some View {
@@ -62,14 +62,8 @@ private struct ArtistRow: View {
                 font: .body,
                 prominent: true
             )
-            FavouriteButton(
-                isOn: library.isFavourite(artist: artist.id),
-                showing: hovered,
-                size: .caption
-            ) {
-                library.toggleFavourite(artist: artist.id)
-            }
-            .frame(width: 16)
+            ArtistHeart(artistId: artist.id, showing: hovered, size: .caption)
+                .frame(width: 16)
             Spacer(minLength: 12)
             Text(Format.count(artist.albumCount, "album"))
                 .font(.caption.monospacedDigit())
@@ -97,12 +91,20 @@ struct ArtistDetailView: View {
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
 
-    @State private var albums: [Album] = []
-    @State private var similar: [SimilarArtist] = []
+    /// Whatever the navigator loaded before it brought us here, so the first
+    /// body evaluation already has the whole page. Guarded on the id because
+    /// history can move faster than a read.
+    private var record: LibraryModel.ArtistRecord? {
+        let held = library.detailArtist
+        return held?.artistId == artistId ? held : nil
+    }
+
+    private var artist: Artist? { record?.artist }
+    private var albums: [Album] { record?.albums ?? [] }
+    private var similar: [SimilarArtist] { record?.similar ?? [] }
+    private var info: ArtistInfo? { record?.info }
 
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
-
-    private var artist: Artist? { library.artist(id: artistId) }
 
     var body: some View {
         ScrollView {
@@ -110,37 +112,44 @@ struct ArtistDetailView: View {
                 // The play button reads as part of the title, so it sits on the
                 // title's line. Everything below is full width rather than
                 // indented into a column beside it.
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(alignment: .firstTextBaseline, spacing: 14) {
-                        if let artist {
-                            PlayableHeaderButton(
-                                playable: .artist(id: artist.id, name: artist.name)
-                            )
-                            .alignmentGuide(.firstTextBaseline) { $0[.bottom] * 0.78 }
+                HStack(alignment: .center, spacing: 20) {
+                    if info?.hasImage == true {
+                        AlbumArtwork(source: .artist(artistId), size: .tile, cornerRadius: 56)
+                            .frame(width: 112, height: 112)
+                            .transition(.opacity)
+                    }
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .firstTextBaseline, spacing: 14) {
+                            if let artist {
+                                PlayableHeaderButton(
+                                    playable: .artist(id: artist.id, name: artist.name)
+                                )
+                                .alignmentGuide(.firstTextBaseline) { $0[.bottom] * 0.78 }
+                            }
+                            Text(artist?.name ?? "Artist")
+                                .font(.system(size: 26, weight: .semibold))
                         }
-                        Text(artist?.name ?? "Artist")
-                            .font(.system(size: 26, weight: .semibold))
-                    }
-                    Text(Format.count(Int64(albums.count), "album"))
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    if let artist {
-                        let playable = Playable.artist(id: artist.id, name: artist.name)
-                        HeaderActions(playable: playable)
-                            .padding(.top, 4)
-                    }
-                    Spacer()
-                    Button {
-                        shufflePlay()
-                    } label: {
-                        Label("Shuffle", systemImage: Icon.shuffle)
+                        Text(Format.count(Int64(albums.count), "album"))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        if let artist {
+                            let playable = Playable.artist(id: artist.id, name: artist.name)
+                            HeaderActions(playable: playable, shuffle: shufflePlay)
+                                .padding(.top, 4)
+                        }
                     }
                 }
+                .animation(.easeOut(duration: 0.2), value: info?.hasImage)
 
                 LazyVGrid(columns: columns, spacing: 22) {
                     ForEach(albums, id: \.id) { album in
                         AlbumGridCell(album: album, showArtist: false)
                     }
+                }
+
+                if let info, let bio = info.bio {
+                    Divider()
+                    ArtistBio(bio: bio, source: info.bioUrl, imageCredit: info.imageCredit)
                 }
 
                 if !similar.isEmpty {
@@ -157,14 +166,8 @@ struct ArtistDetailView: View {
             }
             .padding(22)
         }
-        .task(id: artistId) { await load() }
-    }
-
-    private func load() async {
-        let engine = library.engine
-        let id = artistId
-        albums = (try? await engine.albums(artistId: id, sort: .year, search: nil)) ?? []
-        similar = (try? await engine.similarArtists(artistId: id)) ?? []
+        // Only for a library change — the artist arrived before the page did.
+        .reloading(on: artistId) { await library.prepare(artist: artistId) }
     }
 
     private func shufflePlay() {
@@ -174,6 +177,36 @@ struct ArtistDetailView: View {
             let ids = ((try? await engine.randomTracks(count: 50, artistId: id)) ?? []).map(\.id)
             player.playNow(trackIds: ids)
             nav.showQueueWhenReady(watching: player)
+        }
+    }
+}
+
+/// The opening of the artist's Wikipedia article, credited as its licence asks.
+private struct ArtistBio: View {
+    let bio: String
+    let source: String?
+    let imageCredit: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("About")
+                .font(.headline)
+            // The extract separates paragraphs with a single newline.
+            Text(bio.replacingOccurrences(of: "\n", with: "\n\n"))
+                .foregroundStyle(.secondary)
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .frame(maxWidth: 680, alignment: .leading)
+            HStack(spacing: 12) {
+                if let url = source.flatMap(URL.init(string:)) {
+                    Link("From Wikipedia", destination: url)
+                }
+                if let imageCredit {
+                    Text("Photo: \(imageCredit)")
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .font(.caption)
         }
     }
 }

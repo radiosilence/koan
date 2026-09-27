@@ -32,7 +32,7 @@ use std::path::{Path, PathBuf};
 
 use koan_core::db::connection::Database;
 use koan_core::db::queries;
-use koan_core::player::state::{LoadState, PlaylistItem, QueueItemId};
+use koan_core::player::state::{ItemState, PlaylistItem, QueueItemId};
 use owo_colors::OwoColorize;
 
 pub(crate) fn open_db() -> Database {
@@ -181,27 +181,25 @@ fn shell_split_paths(text: &str) -> Vec<String> {
 }
 
 fn percent_decode(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut chars = input.bytes();
-    while let Some(b) = chars.next() {
+    let mut out = Vec::with_capacity(input.len());
+    let mut bytes = input.bytes();
+    while let Some(b) = bytes.next() {
         if b == b'%' {
-            let hi = chars.next().unwrap_or(b'0');
-            let lo = chars.next().unwrap_or(b'0');
+            let hi = bytes.next().unwrap_or(b'0');
+            let lo = bytes.next().unwrap_or(b'0');
             let hex = [hi, lo];
             if let Ok(s) = std::str::from_utf8(&hex)
                 && let Ok(val) = u8::from_str_radix(s, 16)
             {
-                out.push(val as char);
+                out.push(val);
                 continue;
             }
-            out.push('%');
-            out.push(hi as char);
-            out.push(lo as char);
+            out.extend_from_slice(&[b'%', hi, lo]);
         } else {
-            out.push(b as char);
+            out.push(b);
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Build PlaylistItems from file paths. Checks the DB first for already-scanned
@@ -277,7 +275,7 @@ fn playlist_item_from_track_row(track: &queries::TrackRow, path: &Path) -> Playl
         track_number: track.track_number.map(|n| n as i64),
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
-        load_state: LoadState::Ready,
+        state: ItemState::Ready,
     }
 }
 
@@ -292,18 +290,14 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
             artist: meta.artist,
             album_artist: meta.album_artist.unwrap_or_default(),
             album: meta.album,
-            year: meta.date.and_then(|d| {
-                if d.len() >= 4 {
-                    Some(d[..4].to_string())
-                } else {
-                    None
-                }
-            }),
+            year: meta
+                .date
+                .and_then(|d| koan_core::helpers::year_of(&d).map(str::to_string)),
             codec: meta.codec,
             track_number: meta.track_number.map(|n| n as i64),
             disc: meta.disc.map(|n| n as i64),
             duration_ms: meta.duration_ms.map(|d| d as u64),
-            load_state: LoadState::Ready,
+            state: ItemState::Ready,
         },
         Err(_) => {
             let title = p
@@ -325,7 +319,7 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
                 track_number: None,
                 disc: None,
                 duration_ms: None,
-                load_state: LoadState::Ready,
+                state: ItemState::Ready,
             }
         }
     }
@@ -334,6 +328,12 @@ fn read_metadata_to_item(p: &Path) -> PlaylistItem {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_percent_decode_utf8() {
+        assert_eq!(percent_decode("/music/Bj%C3%B6rk"), "/music/Björk");
+        assert_eq!(percent_decode("/music/Björk%20Live"), "/music/Björk Live");
+    }
 
     #[test]
     fn test_shell_split_backslash_spaces() {

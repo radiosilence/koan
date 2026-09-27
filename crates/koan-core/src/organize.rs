@@ -39,6 +39,8 @@ pub enum OrganizeError {
     Io(#[from] std::io::Error),
     #[error("no tracks with local paths found")]
     NoLocalTracks,
+    #[error("no destination folder: add a library folder, or pass --base-dir")]
+    NoDestination,
     #[error("no organize batches to undo")]
     NothingToUndo,
     #[error("destination already exists: {0}")]
@@ -390,7 +392,11 @@ impl DestinationLedger {
     /// `Rain.flac` and `RAIN.flac` are one file there and must collide here too.
     fn key(path: &Path) -> String {
         let key = path.to_string_lossy().into_owned();
-        if cfg!(any(target_os = "macos", target_os = "ios", target_os = "windows")) {
+        if cfg!(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "windows"
+        )) {
             key.to_lowercase()
         } else {
             key
@@ -793,6 +799,11 @@ fn run(
             Err(e) => Some(e.to_string()),
         };
         let Some(reason) = failure else { continue };
+        log::warn!(
+            "organize: {} → {} failed: {reason}",
+            file_move.from.display(),
+            file_move.to.display()
+        );
         if let Some(entry) = result.entries.iter_mut().find(|e| e.from == file_move.from) {
             entry.outcome = PlanOutcome::Error(reason);
         }
@@ -1442,20 +1453,29 @@ fn available_bytes(_path: &Path) -> Option<u64> {
     None
 }
 
+/// Where the pattern's relative paths hang off. `None` uses the first
+/// configured library folder.
+///
+/// An empty path is refused rather than accepted as "here". It makes every
+/// destination relative to the process's working directory — `/` for an app
+/// bundle — so the plan formats and previews perfectly and every single move
+/// then fails at `create_dir_all`.
 fn resolve_base_dir(base_dir: Option<&Path>) -> Result<PathBuf, OrganizeError> {
-    if let Some(dir) = base_dir {
-        return Ok(dir.to_path_buf());
+    let dir = match base_dir {
+        Some(dir) => dir.to_path_buf(),
+        None => crate::config::Config::load()
+            .map_err(|e| OrganizeError::Io(std::io::Error::other(e.to_string())))?
+            .library
+            .folders
+            .into_iter()
+            .find(|folder| !folder.as_os_str().is_empty())
+            .ok_or(OrganizeError::NoDestination)?,
+    };
+
+    if dir.as_os_str().is_empty() {
+        return Err(OrganizeError::NoDestination);
     }
-
-    // Use first configured library folder.
-    let config = crate::config::Config::load()
-        .map_err(|e| OrganizeError::Io(std::io::Error::other(e.to_string())))?;
-
-    config.library.folders.into_iter().next().ok_or_else(|| {
-        OrganizeError::Io(std::io::Error::other(
-            "no library folders configured; use --base-dir",
-        ))
-    })
+    Ok(dir)
 }
 
 /// Whether cover art and cue sheets travel with the music. A preference, so it
@@ -1513,6 +1533,7 @@ mod tests {
             album_remote_id: None,
             artist_remote_id: None,
             mbid: None,
+            album_mbid: None,
             album_added_at: None,
         }
     }
@@ -1846,6 +1867,22 @@ mod tests {
         assert_eq!(result.moved_count(), 0);
         assert_eq!(result.conflicts().count(), 1);
         assert_eq!(result.conflicts().next().unwrap().dest(), occupied);
+    }
+
+    /// A caller with no library folder configured passes an empty base dir.
+    /// Taken literally it means "relative to wherever this process happens to
+    /// be", which plans and previews cleanly and then fails on every file, so
+    /// it is refused before a plan exists to confirm.
+    #[test]
+    fn an_empty_base_dir_is_not_a_destination() {
+        let db = test_db();
+        add_track(&db, Path::new("/tmp/src/a.flac"), "Airbag", 1);
+
+        let err = preview(&db, "%title%", Some(Path::new("")), false).unwrap_err();
+        assert!(matches!(err, OrganizeError::NoDestination));
+
+        let err = execute(&db, "%title%", Some(Path::new(""))).unwrap_err();
+        assert!(matches!(err, OrganizeError::NoDestination));
     }
 
     /// Resolving once and generating many times must agree with planning from
@@ -2555,4 +2592,3 @@ mod tests {
         );
     }
 }
-

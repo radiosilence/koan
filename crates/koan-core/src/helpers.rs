@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::db::connection::Database;
 use crate::db::queries;
 use crate::player::commands::PlayerCommand;
-use crate::player::state::{LoadState, PlaylistItem, QueueItemId, SharedPlayerState};
+use crate::player::state::{ItemState, PlaylistItem, QueueItemId, SharedPlayerState};
 use crate::remote::client::{SubsonicAuth, SubsonicClient};
 
 // ---------------------------------------------------------------------------
@@ -229,17 +229,11 @@ pub fn cache_size_bytes(cfg: &Config) -> u64 {
 /// The trailing separator matters: without it `/Volumes/Music` also counts
 /// `/Volumes/Music Backup`.
 pub fn tracks_under(db: &Database, folder: &Path) -> u64 {
-    let prefix = format!(
-        "{}{}%",
-        folder
-            .to_string_lossy()
-            .trim_end_matches(std::path::MAIN_SEPARATOR),
-        std::path::MAIN_SEPARATOR
-    );
+    let (lower, upper) = queries::folder_prefix_range(folder);
     db.conn
         .query_row(
-            "SELECT COUNT(*) FROM tracks WHERE path LIKE ?1",
-            [&prefix],
+            "SELECT COUNT(*) FROM tracks WHERE path >= ?1 AND path < ?2",
+            [&lower, &upper],
             |r| r.get::<_, i64>(0),
         )
         .unwrap_or(0) as u64
@@ -269,26 +263,21 @@ pub fn tracks_from_server(db: &Database) -> u64 {
 /// Albums and artists left holding nothing go too, or the browser fills with
 /// empty shelves.
 pub fn forget_folder(db: &Database, folder: &Path) -> Result<u64, crate::db::connection::DbError> {
-    // Trailing separator, or `/Volumes/Music` also matches `/Volumes/Music Backup`.
-    let prefix = format!(
-        "{}{}%",
-        folder
-            .to_string_lossy()
-            .trim_end_matches(std::path::MAIN_SEPARATOR),
-        std::path::MAIN_SEPARATOR
-    );
+    // Rows are keyed by the disk's spelling; a folder named the other way would forget nothing.
+    let folder = &crate::index::spelling::on_disk(folder);
+    let (lower, upper) = queries::folder_prefix_range(folder);
 
     let tx = db.conn.unchecked_transaction()?;
     // Still on the server: keep the row, drop the local file.
     tx.execute(
         "UPDATE tracks SET path = NULL, source = 'remote'
-          WHERE path LIKE ?1 AND remote_id IS NOT NULL",
-        [&prefix],
+          WHERE path >= ?1 AND path < ?2 AND remote_id IS NOT NULL",
+        [&lower, &upper],
     )?;
 
     let ids: Vec<i64> = {
-        let mut stmt = tx.prepare("SELECT id FROM tracks WHERE path LIKE ?1")?;
-        let rows = stmt.query_map([&prefix], |r| r.get(0))?;
+        let mut stmt = tx.prepare("SELECT id FROM tracks WHERE path >= ?1 AND path < ?2")?;
+        let rows = stmt.query_map([&lower, &upper], |r| r.get(0))?;
         rows.filter_map(Result::ok).collect()
     };
     for id in &ids {
@@ -392,6 +381,99 @@ pub fn clear_download_cache(db: &Database, cfg: &Config) -> CacheCleared {
     cleared
 }
 
+/// Delete the downloaded copies of just these tracks.
+///
+/// The per-track counterpart of `clear_download_cache`, for throwing away one
+/// record rather than the lot. A track playing from a copy being removed keeps
+/// playing — the decoder holds the file open, and unlinking it only takes the
+/// name away — but the next play fetches it again.
+pub fn clear_downloads_for(db: &Database, track_ids: &[i64]) -> CacheCleared {
+    let mut cleared = CacheCleared::default();
+    let paths = match queries::cached_paths_for(&db.conn, track_ids) {
+        Ok(paths) => paths,
+        Err(e) => {
+            log::warn!("could not read cached paths: {e}");
+            return cleared;
+        }
+    };
+    for path in &paths {
+        let size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        match std::fs::remove_file(path) {
+            Ok(()) => {
+                cleared.files += 1;
+                cleared.bytes += size;
+            }
+            // Already gone is the outcome asked for, so it is not a failure.
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("could not remove {path}: {e}"),
+        }
+    }
+    if let Err(e) = queries::clear_cached_paths_for(&db.conn, track_ids) {
+        log::warn!("removed downloads but failed to forget them ({e})");
+    }
+    cleared
+}
+
+/// Throw away half-finished downloads left behind by a previous run.
+///
+/// A `.part` file only means something to the transfer writing it. koan does
+/// not resume — the file is written straight through and renamed at the end —
+/// so one still on disk at startup is from a run that did not finish, and it
+/// will be truncated and rewritten the next time that track is wanted anyway.
+/// Until then it is bytes nothing knows about: cache eviction only tracks what
+/// finished, so an interrupted download of a nine-hour recording is half a
+/// gigabyte that never gets reclaimed.
+///
+/// At startup rather than at exit, because a run that ends without getting to
+/// its own cleanup is exactly the run that leaves these behind.
+pub fn sweep_partial_downloads(cfg: &Config) -> CacheCleared {
+    let mut swept = CacheCleared::default();
+    for entry in walkdir::WalkDir::new(cfg.cache_dir())
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "part"))
+    {
+        let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+        match std::fs::remove_file(entry.path()) {
+            Ok(()) => {
+                swept.files += 1;
+                swept.bytes += size;
+            }
+            Err(e) => log::warn!("could not remove {}: {e}", entry.path().display()),
+        }
+    }
+    if swept.files > 0 {
+        log::info!(
+            "swept {} unfinished download(s), {} bytes",
+            swept.files,
+            swept.bytes
+        );
+    }
+    swept
+}
+
+/// Fetch again anything in the queue whose downloaded copy has just been
+/// removed.
+///
+/// Clearing downloads deletes files the queue is still pointing at, and an item
+/// that goes on claiming to be ready plays nothing at all. Call this after
+/// either clearing function, from anywhere with a player attached.
+pub fn requeue_cleared_downloads(
+    state: &Arc<SharedPlayerState>,
+    tx: &crossbeam_channel::Sender<PlayerCommand>,
+) {
+    let stale = state.reset_items_with_missing_files();
+    if stale.is_empty() {
+        return;
+    }
+    log::info!(
+        "{} queued tracks lost their copy — fetching again",
+        stale.len()
+    );
+    spawn_downloads(stale, tx.clone(), state.clone());
+}
+
 /// Push a favourite to the remote server, if this track came from one.
 ///
 /// Fire and forget on its own thread: starring is a courtesy to the server, and
@@ -472,9 +554,8 @@ pub fn sync_remote_reporting(
     username: &str,
     on_progress: Option<&(dyn Fn(u64, u64) + Send + Sync)>,
 ) -> Result<FullSync, crate::remote::sync::SyncError> {
-    let library = crate::remote::sync::sync_library_reporting(
-        db, client, full, url, username, on_progress,
-    )?;
+    let library =
+        crate::remote::sync::sync_library_reporting(db, client, full, url, username, on_progress)?;
     Ok(FullSync {
         library,
         favourites: reconcile_favourites(db, client),
@@ -697,6 +778,10 @@ static SUBSONIC_CLIENT: std::sync::LazyLock<parking_lot::Mutex<CachedClient>> =
 pub enum ShareError {
     #[error("no remote server is configured")]
     NoRemote,
+    #[error("sharing.public_url is not set, so there is no address to give out")]
+    NoPublicUrl,
+    #[error("none of these tracks are in the library")]
+    NothingToShare,
     #[error("none of these tracks are on the server, so a link has nothing to point at")]
     NothingRemote,
     #[error("the server refused to share these: {0}")]
@@ -717,21 +802,27 @@ pub struct ShareOutcome {
     pub skipped: usize,
 }
 
-/// Create a public share link on the remote server for these tracks.
+/// Create a public share link for these tracks.
+///
+/// With a remote Subsonic server configured, the link is made there: a laptop
+/// or phone shares through the server it plays from, which may be another
+/// koan. Without one this koan is the server, and makes the link itself.
 ///
 /// A link points at the server, so only tracks the server knows about can go in
 /// it. A mixed selection shares the part that can be shared and reports the
 /// rest rather than failing whole — half a link beats none, as long as the
 /// caller says which half.
 ///
-/// Network-bound. Callers keep it off whatever thread draws.
+/// May be network-bound. Callers keep it off whatever thread draws.
 pub fn create_share(
     db: &Database,
     cfg: &Config,
     track_ids: &[i64],
     description: Option<&str>,
 ) -> Result<ShareOutcome, ShareError> {
-    let client = subsonic_client(cfg).ok_or(ShareError::NoRemote)?;
+    let Some(client) = subsonic_client(cfg) else {
+        return create_native_share(db, cfg, track_ids, description);
+    };
 
     // One query, not one per track: sharing an artist is thousands of tracks.
     let rows = queries::tracks_by_ids(&db.conn, track_ids)?;
@@ -771,6 +862,49 @@ pub fn create_share(
         shared,
         skipped: track_ids.len().saturating_sub(shared),
     })
+}
+
+/// A share this koan serves at `{sharing.public_url}/share/{id}`.
+fn create_native_share(
+    db: &Database,
+    cfg: &Config,
+    track_ids: &[i64],
+    description: Option<&str>,
+) -> Result<ShareOutcome, ShareError> {
+    let base = cfg
+        .sharing
+        .public_url
+        .as_deref()
+        .filter(|u| !u.trim().is_empty())
+        .ok_or(ShareError::NoPublicUrl)?;
+    let known: std::collections::HashSet<i64> = queries::tracks_by_ids(&db.conn, track_ids)?
+        .iter()
+        .map(|t| t.id)
+        .collect();
+    // The order asked for, which is the order the page plays them in.
+    let ids: Vec<i64> = track_ids
+        .iter()
+        .copied()
+        .filter(|id| known.contains(id))
+        .collect();
+    if ids.is_empty() {
+        return Err(ShareError::NothingToShare);
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64);
+    let share = queries::shares::create_share(&db.conn, &ids, description, now, None)?;
+    Ok(ShareOutcome {
+        url: share_url(base, &share.id),
+        id: share.id,
+        shared: ids.len(),
+        skipped: track_ids.len() - ids.len(),
+    })
+}
+
+/// A native share's public address.
+pub fn share_url(public_url: &str, id: &str) -> String {
+    format!("{}/share/{id}", public_url.trim_end_matches('/'))
 }
 
 /// The album's own remote ID, but only when `selected` covers every track on
@@ -839,6 +973,12 @@ pub fn sanitise_filename(s: &str) -> String {
     truncate_bytes(&cleaned, 240).trim_end().to_string()
 }
 
+/// The year a tag date starts with. `get`, not a slice: a date is free text,
+/// and a multibyte character in its first four bytes would panic a slice.
+pub fn year_of(date: &str) -> Option<&str> {
+    date.get(..4)
+}
+
 /// Build a structured cache path for a track:
 ///   cache_dir/Album Artist/(Year) Album [Codec]/01. Track Artist - Title.ext
 pub fn cache_path_for_track(
@@ -849,7 +989,7 @@ pub fn cache_path_for_track(
     let artist_dir = sanitise_filename(&track.artist_name);
 
     let year = album_date
-        .and_then(|d| if d.len() >= 4 { Some(&d[..4]) } else { None })
+        .and_then(year_of)
         .map(|y| format!("({}) ", y))
         .unwrap_or_default();
     let codec = track
@@ -890,40 +1030,41 @@ pub fn cache_path_for_track(
 // ---------------------------------------------------------------------------
 
 /// Resolve a track to its path + load state (without downloading).
-/// Returns (path, LoadState::Ready) for local/cached, (cache_path, LoadState::Pending) for remote.
+/// Returns (path, `ItemState::Ready`) for local/cached, (cache path, `ItemState::Pending`)
+/// for remote — a track with no copy here yet has to be fetched before it plays.
 pub fn resolve_item_path(
     db: &Database,
     cfg: &Config,
     id: i64,
     track: &queries::TrackRow,
     album_date: Option<&str>,
-) -> (PathBuf, LoadState) {
+) -> (PathBuf, ItemState) {
     match queries::resolve_playback_path(&db.conn, id) {
-        Ok(Some(queries::PlaybackSource::Local(p))) => (p, LoadState::Ready),
+        Ok(Some(queries::PlaybackSource::Local(p))) => (p, ItemState::Ready),
         // A cache entry is only as good as its contents. Older builds could
         // store a Subsonic error body here, which reports Ready and then fails
         // to decode forever; treating it as Pending sends it back through the
         // download path, which discards it and re-fetches.
         Ok(Some(queries::PlaybackSource::Cached(p))) => {
             let state = if is_cached_audio(&p) {
-                LoadState::Ready
+                ItemState::Ready
             } else {
-                LoadState::Pending
+                ItemState::Pending
             };
             (p, state)
         }
         Ok(Some(queries::PlaybackSource::Remote(_))) => {
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
             if dest.exists() && is_cached_audio(&dest) {
-                (dest, LoadState::Ready)
+                (dest, ItemState::Ready)
             } else {
-                (dest, LoadState::Pending)
+                (dest, ItemState::Pending)
             }
         }
         _ => {
             // Fallback: construct a cache path and mark pending.
             let dest = cache_path_for_track(&cfg.cache_dir(), track, album_date);
-            (dest, LoadState::Pending)
+            (dest, ItemState::Pending)
         }
     }
 }
@@ -933,15 +1074,9 @@ pub fn playlist_item_from_track(
     track: &queries::TrackRow,
     album_date: Option<&str>,
     dest: PathBuf,
-    load_state: LoadState,
+    state: ItemState,
 ) -> PlaylistItem {
-    let year = album_date.and_then(|d| {
-        if d.len() >= 4 {
-            Some(d[..4].to_string())
-        } else {
-            None
-        }
-    });
+    let year = album_date.and_then(year_of).map(str::to_string);
     PlaylistItem {
         playlist_entry_id: None,
         id: QueueItemId::new(),
@@ -956,7 +1091,7 @@ pub fn playlist_item_from_track(
         track_number: track.track_number.map(|n| n as i64),
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
-        load_state,
+        state,
     }
 }
 
@@ -982,9 +1117,8 @@ pub fn playlist_items_for_tracks(db: &Database, tracks: &[queries::TrackRow]) ->
                     .clone(),
                 None => None,
             };
-            let (path, load_state) =
-                resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
-            playlist_item_from_track(track, album_date.as_deref(), path, load_state)
+            let (path, state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
+            playlist_item_from_track(track, album_date.as_deref(), path, state)
         })
         .collect()
 }
@@ -996,15 +1130,9 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
         .and_then(|aid| queries::album_date(&db.conn, aid).ok().flatten());
 
     let cfg = Config::load().unwrap_or_default();
-    let (path, load_state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
+    let (path, state) = resolve_item_path(db, &cfg, track.id, track, album_date.as_deref());
 
-    let year = album_date.as_deref().and_then(|d| {
-        if d.len() >= 4 {
-            Some(d[..4].to_string())
-        } else {
-            None
-        }
-    });
+    let year = album_date.as_deref().and_then(year_of).map(str::to_string);
 
     PlaylistItem {
         playlist_entry_id: None,
@@ -1020,7 +1148,7 @@ pub fn track_to_playlist_item(track: &queries::TrackRow, db: &Database) -> Playl
         track_number: track.track_number.map(|n| n as i64),
         disc: track.disc.map(|n| n as i64),
         duration_ms: track.duration_ms.map(|d| d as u64),
-        load_state,
+        state,
     }
 }
 
@@ -1065,7 +1193,11 @@ pub fn download_track(
     cfg: &Config,
     client: &SubsonicClient,
 ) {
-    let db = match Database::open_default() {
+    // From the pool. This runs once per track fetched, and opening a
+    // connection here re-ran the schema DDL and attempted a WAL checkpoint —
+    // with several transfers going, several init cycles contending with each
+    // other and with whatever the library was trying to read.
+    let db = match crate::db::pool::shared().get() {
         Ok(db) => db,
         Err(e) => {
             fail_track(state, tx, queue_id, format!("db error: {}", e));
@@ -1088,7 +1220,7 @@ pub fn download_track(
                 let p = std::path::PathBuf::from(path);
                 if p.exists() {
                     state.update_paths(&[(queue_id, p)]);
-                    state.update_load_state(queue_id, LoadState::Ready);
+                    state.update_item_state(queue_id, ItemState::Ready);
                     if state.is_cursor(queue_id) {
                         tx.send(PlayerCommand::TrackReady(queue_id)).ok();
                     }
@@ -1111,7 +1243,7 @@ pub fn download_track(
         if p.exists() {
             log::info!("download_track: local file exists, using {}", p.display());
             state.update_paths(&[(queue_id, p)]);
-            state.update_load_state(queue_id, LoadState::Ready);
+            state.update_item_state(queue_id, ItemState::Ready);
             if state.is_cursor(queue_id) {
                 tx.send(PlayerCommand::TrackReady(queue_id)).ok();
             }
@@ -1139,7 +1271,7 @@ pub fn download_track(
     }
     if dest.exists() {
         state.update_paths(&[(queue_id, dest)]);
-        state.update_load_state(queue_id, LoadState::Ready);
+        state.update_item_state(queue_id, ItemState::Ready);
         if state.is_cursor(queue_id) {
             tx.send(PlayerCommand::TrackReady(queue_id)).ok();
         }
@@ -1147,35 +1279,43 @@ pub fn download_track(
     }
 
     // 3. Download from remote. The queue item points at the in-progress file so
-    // the streaming pump reads bytes as they land; it flips to `dest` on success.
+    // the decoder reads bytes as they land; it flips to `dest` on success.
     state.update_paths(&[(queue_id, crate::remote::download::part_path(&dest))]);
 
-    let bytes_written: Arc<AtomicU64> = Arc::new(AtomicU64::new(0));
+    let bytes_written = crate::remote::downloads::ByteFeed::new();
 
-    let progress_state = state.clone();
+    // Announce it before a byte moves, so a queue of six shows six rows rather
+    // than one row and five tracks that look like nothing is happening to them.
+    let store = crate::remote::downloads::store();
+    store.queued(crate::remote::downloads::Download {
+        id: queue_id,
+        track_id: db_id,
+        title: track.title.clone(),
+        artist: track.artist_name.clone(),
+        source: crate::remote::download::part_path(&dest),
+        dest: dest.clone(),
+        total: 0,
+        written: bytes_written.clone(),
+        state: crate::remote::downloads::DownloadState::Queued,
+        bytes_per_second: 0,
+    });
+
     let progress_qid = queue_id;
     let bytes_written_progress = bytes_written.clone();
     let progress_tx = tx.clone();
     let stream_ready_sent = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let stream_ready_flag = stream_ready_sent.clone();
-    // Announced once, not per chunk. The load state says *that* a download is
-    // running and hands out the counter; the counter itself is where progress
-    // lives. Rewriting the state every 64KB took the playlist write lock and
-    // bumped the queue version a thousand times a transfer, and every front end
-    // reads that version as "the queue changed" and rebuilds it.
-    //
     // A retry restarts the byte count from zero, so a changed total re-announces.
     let announced_total = AtomicU64::new(u64::MAX);
     let result = client.download_with_progress(&remote_id, &dest, move |downloaded, total| {
-        bytes_written_progress.store(downloaded, Ordering::Release);
+        bytes_written_progress.set(downloaded);
+        // What knows a transfer moved is the code moving it. Held to a reading
+        // every 250ms inside, so a chunk landing costs an atomic and a compare.
+        store.progressed();
         if announced_total.swap(total, Ordering::Relaxed) != total {
-            progress_state.update_load_state(
-                progress_qid,
-                LoadState::Downloading {
-                    total,
-                    bytes_written: bytes_written_progress.clone(),
-                },
-            );
+            // The store, and only the store. The item's state says whether its
+            // file can be played, which a transfer in flight has not changed.
+            store.started(progress_qid, total, bytes_written_progress.clone());
         }
         if !stream_ready_flag.load(Ordering::Relaxed)
             && downloaded >= crate::player::state::STREAM_THRESHOLD
@@ -1187,15 +1327,22 @@ pub fn download_track(
         }
     });
 
+    // However it ended, a decoder reading the `.part` file may be parked at the
+    // write head. It waits on the feed, so the feed has to wake it — and only
+    // once the item says how it ended, or it looks, sees a download, and parks
+    // again with nothing left to wake it.
     if let Err(e) = result {
+        store.failed(queue_id, e.to_string());
         fail_track(state, tx, queue_id, e.to_string());
+        bytes_written.done();
         push_log(log_buf, format!("x {} — {}", track.title, e));
         return;
     }
+    store.finished(queue_id);
 
-    // Download succeeded.
     state.update_paths(&[(queue_id, dest.clone())]);
-    state.update_load_state(queue_id, LoadState::Ready);
+    state.update_item_state(queue_id, ItemState::Ready);
+    bytes_written.done();
     // Without this row the file is invisible to cache eviction and never reclaimed.
     if let Err(e) = queries::set_cached_path(&db.conn, db_id, &dest.to_string_lossy()) {
         log::warn!(
@@ -1217,7 +1364,7 @@ pub fn download_track(
 
 /// Mark a queue item unplayable and tell the player, if it is waiting on it.
 ///
-/// Setting `LoadState::Failed` alone is not enough: the player only wakes for
+/// Setting `ItemState::Failed` alone is not enough: the player only wakes for
 /// `TrackReady`, so a cursor parked on the item would wait for a download that
 /// has already given up.
 pub(crate) fn fail_track(
@@ -1226,7 +1373,7 @@ pub(crate) fn fail_track(
     queue_id: QueueItemId,
     reason: String,
 ) {
-    state.update_load_state(queue_id, LoadState::Failed(reason));
+    state.update_item_state(queue_id, ItemState::Failed(reason));
     if state.is_cursor(queue_id) {
         tx.send(PlayerCommand::TrackFailed(queue_id)).ok();
     }
@@ -1261,7 +1408,7 @@ pub fn remote_unavailable(cfg: &Config) -> String {
     "the remote server could not be reached".into()
 }
 
-/// Spawn background downloads for remote tracks with LoadState::Pending.
+/// Spawn background downloads for remote tracks with ItemState::Pending.
 /// Submit tracks for download.
 ///
 /// Everything that is not the TUI reaches downloads through here — the FFI, the
@@ -1282,6 +1429,19 @@ pub fn spawn_downloads(
 }
 
 #[cfg(test)]
+mod year_tests {
+    use super::year_of;
+
+    #[test]
+    fn a_year_is_the_first_four_characters_when_they_are_bytes_too() {
+        assert_eq!(year_of("1997-05-21"), Some("1997"));
+        assert_eq!(year_of("199"), None);
+        // Full-width digits: four bytes in is mid-character.
+        assert_eq!(year_of("１９９７"), None);
+    }
+}
+
+#[cfg(test)]
 mod rebuild_tests {
     use super::*;
     use crate::db::queries::sample_meta;
@@ -1291,6 +1451,106 @@ mod rebuild_tests {
         conn.pragma_update(None, "foreign_keys", "on").unwrap();
         crate::db::schema::create_tables(&conn).unwrap();
         Database { conn }
+    }
+
+    #[test]
+    fn clearing_one_download_leaves_the_others_and_the_library_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = test_db();
+
+        let mut cached = Vec::new();
+        for name in ["one", "two"] {
+            let mut meta = sample_meta(name, "Artist", "Album");
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(name.into());
+            let id = queries::upsert_track(&db.conn, &meta).unwrap();
+            let file = dir.path().join(format!("{name}.opus"));
+            std::fs::write(&file, vec![0u8; 2048]).unwrap();
+            queries::set_cached_path(&db.conn, id, &file.to_string_lossy()).unwrap();
+            cached.push((id, file));
+        }
+
+        let cleared = clear_downloads_for(&db, &[cached[0].0]);
+        assert_eq!(cleared.files, 1);
+        assert_eq!(cleared.bytes, 2048);
+        assert!(!cached[0].1.exists(), "the copy asked for is gone");
+        assert!(cached[1].1.exists(), "the other one is untouched");
+
+        // The row survives — a remote track is still in the library, it just
+        // has to be fetched again.
+        assert_eq!(queries::library_stats(&db.conn).unwrap().remote_tracks, 2);
+        assert_eq!(queries::library_stats(&db.conn).unwrap().cached_tracks, 1);
+        assert!(
+            queries::cached_paths_for(&db.conn, &[cached[0].0])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn clearing_a_download_that_is_already_gone_is_not_a_failure() {
+        let db = test_db();
+        let mut meta = sample_meta("ghost", "Artist", "Album");
+        meta.source = "remote".into();
+        meta.path = None;
+        meta.remote_id = Some("ghost".into());
+        let id = queries::upsert_track(&db.conn, &meta).unwrap();
+        queries::set_cached_path(&db.conn, id, "/nowhere/at/all.opus").unwrap();
+
+        let cleared = clear_downloads_for(&db, &[id]);
+        assert_eq!(cleared.files, 0, "nothing was there to remove");
+        // Forgotten regardless: the row claimed a copy that does not exist.
+        assert!(
+            queries::cached_paths_for(&db.conn, &[id])
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn sweeping_removes_half_finished_downloads_and_nothing_else() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(cache.join("Artist")).unwrap();
+
+        let finished = cache.join("Artist/whole.opus");
+        let half = cache.join("Artist/half.opus.part");
+        std::fs::write(&finished, vec![0u8; 1024]).unwrap();
+        std::fs::write(&half, vec![0u8; 4096]).unwrap();
+
+        let cfg = Config {
+            remote: crate::config::RemoteConfig {
+                cache_dir: Some(cache.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let swept = sweep_partial_downloads(&cfg);
+        assert_eq!(swept.files, 1);
+        assert_eq!(swept.bytes, 4096);
+        assert!(!half.exists(), "the unfinished one is gone");
+        assert!(finished.exists(), "a downloaded track is not touched");
+    }
+
+    #[test]
+    fn sweeping_an_empty_cache_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = Config {
+            remote: crate::config::RemoteConfig {
+                cache_dir: Some(dir.path().join("nothing-here")),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert_eq!(sweep_partial_downloads(&cfg).files, 0);
+    }
+
+    #[test]
+    fn clearing_no_tracks_does_nothing() {
+        let db = test_db();
+        assert_eq!(clear_downloads_for(&db, &[]).files, 0);
     }
 
     #[test]
@@ -1439,5 +1699,38 @@ mod client_cache_tests {
             !Arc::ptr_eq(&first, &relogged),
             "new credentials must not keep serving the client signed with the old ones"
         );
+    }
+}
+
+#[cfg(test)]
+mod native_share_tests {
+    use super::*;
+    use crate::db::queries::{sample_meta, upsert_track};
+
+    #[test]
+    fn a_standalone_server_shares_natively_in_the_order_asked() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.pragma_update(None, "foreign_keys", "on").unwrap();
+        crate::db::schema::create_tables(&conn).unwrap();
+        let db = Database { conn };
+        let a = upsert_track(&db.conn, &sample_meta("A", "X", "Y")).unwrap();
+        let b = upsert_track(&db.conn, &sample_meta("B", "X", "Y")).unwrap();
+        let mut cfg = Config::default();
+        assert!(matches!(
+            create_share(&db, &cfg, &[a], None),
+            Err(ShareError::NoPublicUrl)
+        ));
+        cfg.sharing.public_url = Some("https://koan.example/".into());
+        let out = create_share(&db, &cfg, &[b, 9999, a], Some("mix")).unwrap();
+        assert_eq!(out.url, format!("https://koan.example/share/{}", out.id));
+        assert_eq!((out.shared, out.skipped), (2, 1));
+        let share = queries::shares::get_share(&db.conn, &out.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(share.track_ids, [b, a]);
+        assert!(matches!(
+            create_share(&db, &cfg, &[9999], None),
+            Err(ShareError::NothingToShare)
+        ));
     }
 }

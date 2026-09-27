@@ -7,7 +7,7 @@ use koan_core::config;
 use koan_core::db::queries;
 use koan_core::helpers::{playlist_item_from_track, resolve_item_path};
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::{LoadState, QueueItemId};
+use koan_core::player::state::{ItemState, QueueItemId};
 
 use crate::app::PickerAction;
 use koan_core::remote::queue::DownloadQueue;
@@ -24,7 +24,7 @@ pub fn enqueue_playlist(
     tx: crossbeam_channel::Sender<PlayerCommand>,
     download_queue: DownloadQueue,
 ) {
-    let db = match koan_core::db::connection::Database::open_default() {
+    let db = match koan_core::db::pool::shared().get() {
         Ok(db) => db,
         Err(e) => {
             log::error!("db error: {}", e);
@@ -47,7 +47,7 @@ pub fn enqueue_playlist(
         let (dest, load_state) = resolve_item_path(&db, &cfg, id, &track, album_date.as_deref());
 
         let item = playlist_item_from_track(&track, album_date.as_deref(), dest, load_state);
-        if matches!(item.load_state, LoadState::Pending) {
+        if matches!(item.state, ItemState::Pending) {
             pending_downloads.push((id, item.id));
         }
         items.push(item);

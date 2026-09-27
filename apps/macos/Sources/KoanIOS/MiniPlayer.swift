@@ -12,11 +12,11 @@ struct MiniPlayer: View {
     @Environment(PlayerModel.self) private var player
     @Binding var showingNowPlaying: Bool
 
-    private var entry: QueueItem? { player.nowPlaying.entry }
+    private var entry: QueueItem? { player.currentEntry }
 
     var body: some View {
         HStack(spacing: 10) {
-            if let source {
+            if let source = player.currentArtwork {
                 AlbumArtwork(source: source, size: .thumb, cornerRadius: 5)
                     .frame(width: 32, height: 32)
             } else {
@@ -61,12 +61,5 @@ struct MiniPlayer: View {
         .onTapGesture { if entry != nil { showingNowPlaying = true } }
         .accessibilityElement(children: .contain)
         .accessibilityHint("Opens Now Playing")
-    }
-
-    private var source: AlbumArtwork.Source? {
-        guard let entry else { return nil }
-        if let albumId = entry.albumId { return .album(albumId) }
-        if let trackId = entry.trackId { return .track(trackId) }
-        return nil
     }
 }

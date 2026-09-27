@@ -26,6 +26,10 @@ final class UIState {
     /// only place a `NavigationStack` push cannot drop it — so it needs to know
     /// where the sidebar ends in order not to sit on it.
     var sidebarWidth: CGFloat = 0
+    /// How far in from the trailing edge the lyrics panel starts, for the same
+    /// reason — zero while it is closed. Floating over it would cut off the
+    /// last lines of a song, which is the part you are usually reading.
+    var lyricsWidth: CGFloat = 0
 
     /// Where the queue can be sent. Two ends and the row the music is on.
     enum Jump { case top, bottom, playing }
@@ -58,11 +62,28 @@ final class UIState {
         queueJumpToken += 1
     }
 
-    /// The panel's state is `@AppStorage`, so it survives a launch and there is
-    /// no second copy of it here to disagree with.
+    /// Whether the lyrics panel is open.
+    ///
+    /// Observable state that writes through to defaults, rather than
+    /// `@AppStorage` on each view that reads it. A `UserDefaults` write
+    /// publishes on its own, after the transaction that caused it has gone —
+    /// so the inspector had no animation to expand with and arrived at full
+    /// width in a single frame while everything around it was still sliding.
+    /// An observed property changes *inside* the transaction, which is what
+    /// hands the pane AppKit's own slide.
+    ///
+    /// Still one copy, and still where you left it across a launch.
+    var showLyrics: Bool = UserDefaults.standard.bool(forKey: UIState.lyricsKey) {
+        didSet { UserDefaults.standard.set(showLyrics, forKey: UIState.lyricsKey) }
+    }
+
+    private static let lyricsKey = "showLyrics"
+
+    /// Explicitly animated, because that is now possible: the transaction this
+    /// opens reaches the inspector's split view, so the pane slides and the
+    /// stage and transport resize with it instead of after it.
     func toggleLyrics() {
-        let defaults = UserDefaults.standard
-        defaults.set(!defaults.bool(forKey: "showLyrics"), forKey: "showLyrics")
+        withAnimation(.smooth(duration: 0.28)) { showLyrics.toggle() }
     }
 }
 

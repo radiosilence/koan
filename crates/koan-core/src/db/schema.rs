@@ -3,12 +3,13 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 4;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
     // connection without it fails them rather than sorting differently.
     super::connection::register_library_collation(conn)?;
+    super::connection::register_shuffle_function(conn)?;
     let found: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
     if found > SCHEMA_VERSION {
         return Err(rusqlite::Error::SqliteFailure(
@@ -75,6 +76,31 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_tracks_remote_id ON tracks(remote_id);
         CREATE INDEX IF NOT EXISTS idx_albums_artist ON albums(artist_id);
         CREATE INDEX IF NOT EXISTS idx_tracks_album_order ON tracks(album_id, disc, track_number);
+        -- Favourites are keyed by path, and a track can be reached by three of
+        -- them. Without these, matching a favourite to its track means reading
+        -- every row in the library: the query planner said SCAN, and finding
+        -- a hundred favourites among fifty thousand tracks took fifty
+        -- milliseconds, on every listing that wanted to know what was starred.
+        -- Partial, because both columns are null for anything purely local.
+        CREATE INDEX IF NOT EXISTS idx_tracks_cached_path ON tracks(cached_path)
+            WHERE cached_path IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_tracks_remote_url ON tracks(remote_url)
+            WHERE remote_url IS NOT NULL;
+        -- A remote sync enriches every album and every artist it paged through,
+        -- matched on the server's id. Without these that is one full table read
+        -- per record, so a library twice the size costs four times as much to
+        -- sync. Partial, because a locally-scanned record has no remote id.
+        CREATE INDEX IF NOT EXISTS idx_albums_remote_id ON albums(remote_id)
+            WHERE remote_id IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_artists_remote_id ON artists(remote_id)
+            WHERE remote_id IS NOT NULL;
+        -- Radio resolves the artists a recommender names back to local rows,
+        -- by MusicBrainz id and then by name. `UNIQUE(name)` is a binary index
+        -- and the name lookup is case-insensitive, so it could not use it.
+        CREATE INDEX IF NOT EXISTS idx_artists_mbid ON artists(mbid)
+            WHERE mbid IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_artists_name_nocase
+            ON artists(name COLLATE NOCASE);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS tracks_fts USING fts5(
             title,
@@ -96,6 +122,10 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             track_id  INTEGER REFERENCES tracks(id)
         );
 
+        -- Forgetting a track deletes its scan cache entry by track id, and the
+        -- primary key is the path.
+        CREATE INDEX IF NOT EXISTS idx_scan_cache_track ON scan_cache(track_id);
+
         CREATE TABLE IF NOT EXISTS remote_servers (
             id        INTEGER PRIMARY KEY,
             url       TEXT NOT NULL UNIQUE,
@@ -114,6 +144,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             created_at TEXT DEFAULT (datetime('now'))
         );
 
+        -- Undo reads back one batch at a time.
+        CREATE INDEX IF NOT EXISTS idx_organize_log_batch ON organize_log(batch_id);
+
         CREATE TABLE IF NOT EXISTS lyrics_cache (
             id          INTEGER PRIMARY KEY,
             track_id    INTEGER REFERENCES tracks(id),
@@ -122,6 +155,17 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             content     TEXT NOT NULL,
             fetched_at  INTEGER NOT NULL,
             UNIQUE(track_id)
+        );
+
+        -- One row per artist looked up, misses included: an empty row is the
+        -- answer that nothing was found, which stops a page asking again.
+        CREATE TABLE IF NOT EXISTS artist_info (
+            artist_id     INTEGER PRIMARY KEY REFERENCES artists(id) ON DELETE CASCADE,
+            bio           TEXT,
+            bio_url       TEXT,
+            image_url     TEXT,
+            image_credit  TEXT,
+            fetched_at    INTEGER NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS favourites (
@@ -231,10 +275,33 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
         );
 
         CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
-        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_expires ON refresh_tokens(expires_at);
+
+        -- Share links this koan serves itself. The tracks are an explicit list,
+        -- not a query: what a link names is all an anonymous visitor can play,
+        -- so it must not grow when the library does.
+        CREATE TABLE IF NOT EXISTS shares (
+            id           TEXT PRIMARY KEY,
+            description  TEXT,
+            created_at   INTEGER NOT NULL,
+            expires_at   INTEGER,
+            visits       INTEGER NOT NULL DEFAULT 0,
+            last_visited INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS share_tracks (
+            share_id TEXT NOT NULL REFERENCES shares(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL,
+            track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE,
+            PRIMARY KEY (share_id, position)
+        );
+        -- Expiry was indexed and never used: the only query that reads it is the
+        -- cleanup sweep, whose `revoked = 1 OR expires_at <= ?` spans two columns
+        -- and reads the table either way. An index nothing reads is a cost paid
+        -- on every sign-in.
+        DROP INDEX IF EXISTS idx_refresh_tokens_expires;
         ",
     )?;
-    apply_migrations(conn)?;
+    apply_migrations(conn, found)?;
     conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
 
     Ok(())
@@ -283,11 +350,29 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     ("albums", "sort_name", "TEXT"),
 ];
 
-fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
+fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     for (table, column, ty) in ADDED_COLUMNS {
         if !column_exists(conn, table, column)? {
             conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {ty}"), [])?;
         }
+    }
+
+    // Cross-source dedup looks tracks up by recording id.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_tracks_mbid ON tracks(mbid) WHERE mbid IS NOT NULL",
+        [],
+    )?;
+
+    // Scans before version 3 never read MusicBrainz ids from tags. Forgetting
+    // the files that came through without one has the next scan read them
+    // again, which is what pairs them with the server's copy by id. Files that
+    // have none are read once more and then left alone.
+    if found < 3 {
+        conn.execute(
+            "DELETE FROM scan_cache WHERE track_id IN
+               (SELECT id FROM tracks WHERE path IS NOT NULL AND mbid IS NULL)",
+            [],
+        )?;
     }
 
     // Locally-scanned albums were briefly stamped with the time the scan ran,
@@ -303,6 +388,12 @@ fn apply_migrations(conn: &Connection) -> rusqlite::Result<()> {
 
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
+    // Once: `upsert_track` stores no new zeros, and the sweep reads every track.
+    if found < 3 {
+        crate::db::queries::tracks::clear_zero_discs(conn)?;
+    }
+    crate::db::queries::tracks::merge_split_cross_source_tracks(conn)?;
+    crate::db::queries::tracks::merge_spelling_twins(conn)?;
 
     Ok(())
 }
@@ -461,6 +552,87 @@ mod tests {
     use super::*;
     use crate::db::connection::Database;
 
+    /// Queries that answer a question about a handful of rows, and must not
+    /// read the library to do it.
+    ///
+    /// The planner will happily fall back to a full scan when a query is
+    /// written in a shape no index can serve — an `OR` spanning two columns, a
+    /// `LIKE` pattern, a collation the index does not use — and nothing about
+    /// the result says it happened. It costs, it does not fail, and it gets
+    /// worse with the size of somebody's library. So the plans are asserted.
+    #[test]
+    fn hot_queries_do_not_scan() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+
+        let plan = |sql: &str| -> Vec<String> {
+            let mut stmt = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let nulls = vec![rusqlite::types::Null; stmt.parameter_count()];
+            stmt.query_map(rusqlite::params_from_iter(nulls), |r| r.get::<_, String>(3))
+                .unwrap()
+                .map(Result::unwrap)
+                .collect()
+        };
+
+        let cases: &[(&str, &str)] = &[
+            (
+                "a track by any of its three paths",
+                "SELECT id FROM tracks WHERE path = ?1 OR cached_path = ?1 OR remote_url = ?1",
+            ),
+            (
+                "an artist's tracks, own or album credit",
+                "SELECT t.id FROM tracks t LEFT JOIN albums al ON t.album_id = al.id
+                  WHERE t.artist_id = ?1
+                     OR t.album_id IN (SELECT id FROM albums WHERE artist_id = ?1)",
+            ),
+            (
+                "every favourited track",
+                "SELECT id FROM tracks WHERE path IN (SELECT track_path FROM favourites)
+                 UNION
+                 SELECT id FROM tracks WHERE cached_path IN (SELECT track_path FROM favourites)
+                 UNION
+                 SELECT id FROM tracks WHERE remote_url IN (SELECT track_path FROM favourites)",
+            ),
+            (
+                "tracks under a folder",
+                "SELECT id FROM tracks WHERE path >= ?1 AND path < ?2",
+            ),
+            (
+                "an album by the server's id",
+                "SELECT id FROM albums WHERE remote_id = ?1",
+            ),
+            (
+                "an artist by the server's id",
+                "SELECT id FROM artists WHERE remote_id = ?1",
+            ),
+            (
+                "an artist by MusicBrainz id",
+                "SELECT id FROM artists WHERE mbid = ?1",
+            ),
+            (
+                "an artist by name, however it is capitalised",
+                "SELECT id FROM artists WHERE name = ?1 COLLATE NOCASE",
+            ),
+            (
+                "a scan cache entry by track",
+                "SELECT path FROM scan_cache WHERE track_id = ?1",
+            ),
+            (
+                "one organize batch",
+                "SELECT id FROM organize_log WHERE batch_id = ?1",
+            ),
+        ];
+
+        for (what, sql) in cases {
+            let steps = plan(sql);
+            assert!(
+                !steps.iter().any(|s| s.starts_with("SCAN")),
+                "{what}: reads the whole table\n  {}",
+                steps.join("\n  ")
+            );
+        }
+    }
+
     #[test]
     fn clears_scan_time_added_at_but_keeps_the_servers() {
         let conn = Connection::open_in_memory().unwrap();
@@ -550,7 +722,13 @@ mod tests {
     fn migrates_similar_artists_relationship_column() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch(
-            "CREATE TABLE artists (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE);
+            "CREATE TABLE artists (
+                 id        INTEGER PRIMARY KEY,
+                 name      TEXT NOT NULL UNIQUE,
+                 sort_name TEXT,
+                 mbid      TEXT,
+                 remote_id TEXT
+             );
              CREATE TABLE similar_artists (
                  artist_id  INTEGER NOT NULL REFERENCES artists(id),
                  similar_id INTEGER NOT NULL REFERENCES artists(id),
@@ -722,7 +900,7 @@ mod tests {
         .unwrap();
         assert!(!fk_cascades(&conn, "play_history").unwrap());
 
-        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn, SCHEMA_VERSION).unwrap();
 
         assert!(fk_cascades(&conn, "play_history").unwrap());
         let kept: Vec<(i64, i64, Option<i64>)> = conn
@@ -811,8 +989,8 @@ mod tests {
         // already present must now be a no-op decided by schema inspection.
         let conn = Connection::open_in_memory().unwrap();
         create_tables(&conn).unwrap();
-        apply_migrations(&conn).unwrap();
-        apply_migrations(&conn).unwrap();
+        apply_migrations(&conn, SCHEMA_VERSION).unwrap();
+        apply_migrations(&conn, SCHEMA_VERSION).unwrap();
     }
 
     #[test]

@@ -50,6 +50,8 @@ struct SettingsView: View {
                         .tabItem { Label("Playback", systemImage: "hifispeaker") }
                     RadioSettings(model: model)
                         .tabItem { Label("Radio", systemImage: "dot.radiowaves.left.and.right") }
+                    AppearanceSettings()
+                        .tabItem { Label("Appearance", systemImage: "paintpalette") }
                 }
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
                 #else
@@ -78,9 +80,7 @@ struct SettingsView: View {
         #endif
         .task {
             if model == nil {
-                let created = await SettingsModel(engine: library.engine, activity: activity)
-                created.library = library
-                model = created
+                model = await SettingsModel(engine: library.engine, activity: activity, art: library.art)
             }
         }
         // The CLI and TUI write the same file; coming back to this window is
@@ -160,8 +160,9 @@ private struct LibrarySettings: View {
                         .help("Stop scanning this folder")
                     }
                 }
+                // Adding a folder starts a scan, so it waits for the one running.
                 Button("Add Folder…") { choosingFolder = true }
-                    .disabled(activity.isLibraryBusy)
+                    .disabled(activity.conflicts(with: .localLibrary))
             } header: {
                 Text("Folders")
             } footer: {
@@ -177,24 +178,26 @@ private struct LibrarySettings: View {
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
                 .rowButtons()
-                // One library task at a time: they all queue behind the same
-                // database writer, so starting a second only makes both slower.
-                .disabled(activity.isLibraryBusy)
+                // One pass over your files at a time. A sync or a download
+                // clear is welcome to run alongside; another scan, a drop or a
+                // file move would be reading and writing the same things.
+                .disabled(activity.conflicts(with: .localLibrary))
             } header: {
                 Text("Scan")
             } footer: {
-                if activity.isLibraryBusy {
-                    Text("Waiting for the running task to finish.")
+                if activity.conflicts(with: .localLibrary) {
+                    Text("Waiting for the task that is reading your files to finish.")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
             }
 
             Section {
+                // Empties every table, so it waits for everything.
                 Button("Clear Library Index…", role: .destructive) {
                     confirmingRebuild = true
                 }
-                .disabled(activity.isLibraryBusy)
+                .disabled(activity.conflicts(with: .wholeLibrary))
             } header: {
                 Text("Rebuild")
             } footer: {
@@ -255,6 +258,10 @@ private struct RemoteSettings: View {
     @State private var url = ""
     @State private var username = ""
     @State private var confirmingSignOut = false
+    /// The cache limit as typed, committed whole: "5" on the way to "50GB" is
+    /// not a limit anyone set.
+    @State private var cacheLimit: String?
+    @FocusState private var cacheLimitFocused: Bool
 
     var body: some View {
         Form {
@@ -276,7 +283,7 @@ private struct RemoteSettings: View {
                             Button("Full Sync") { model.syncNow(full: true) }
                                 .help("Walk the whole library rather than only what changed")
                         }
-                        .disabled(activity.isLibraryBusy)
+                        .disabled(activity.conflicts(with: [.remoteTracks]))
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     }
@@ -342,15 +349,21 @@ private struct RemoteSettings: View {
                     in: 1...16
                 )
                 TextField("Cache limit, e.g. 50GB — blank for no limit", text: Binding(
-                    get: { model.settings.cacheLimit },
-                    set: { v in model.edit { $0.cacheLimit = v } }
+                    get: { cacheLimit ?? model.settings.cacheLimit },
+                    set: { cacheLimit = $0 }
                 ))
                 .verbatimEntry()
+                .focused($cacheLimitFocused)
+                .onSubmit(commitCacheLimit)
+                .onChange(of: cacheLimitFocused) { _, focused in
+                    if !focused { commitCacheLimit() }
+                }
                 LabeledContent("Using") {
                     HStack {
                         Text(Format.bytes(Int64(model.settings.cacheBytes)))
                         Button("Clear") { model.clearCache() }
                             .buttonStyle(.borderless)
+                            .disabled(activity.conflicts(with: [.downloads]))
                     }
                 }
             }
@@ -376,6 +389,12 @@ private struct RemoteSettings: View {
             Text("Tracks you also have as local files are kept either way. Keeping the rest leaves records in the library that cannot be played until you sign in again.")
         }
     }
+
+    private func commitCacheLimit() {
+        guard let draft = cacheLimit else { return }
+        cacheLimit = nil
+        if draft != model.settings.cacheLimit { model.edit { $0.cacheLimit = draft } }
+    }
 }
 
 // MARK: - Playback
@@ -400,6 +419,19 @@ private struct PlaybackSettings: View {
                 Text("Device")
             } footer: {
                 Text("koan switches the device sample rate to match the source. No resampling.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Section {
+                Toggle("Fade on pause", isOn: Binding(
+                    get: { model.settings.fadeOnPause },
+                    set: { v in model.edit { $0.fadeOnPause = v } }
+                ))
+            } header: {
+                Text("Transport")
+            } footer: {
+                Text("Pause and resume ramp the volume over a moment instead of cutting.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
@@ -436,10 +468,57 @@ private struct PlaybackSettings: View {
     }
 }
 
+// MARK: - Appearance
+
+/// Not part of `config.toml`. How much the app draws is this machine's
+/// business, and the TUI has none of it to draw, so it sits in defaults beside
+/// the other view state rather than in the file the CLI shares.
+private struct AppearanceSettings: View {
+    @AppStorage("graphics") private var graphics = Graphics.full
+
+    var body: some View {
+        Form {
+            Section {
+                // Positioned by where a step sits in the list, not by its raw
+                // value: the raw values are what is on disk and cannot be
+                // reordered, and the cheapest step was added last.
+                Slider(
+                    value: Binding(
+                        get: { Double(Graphics.allCases.firstIndex(of: graphics) ?? 0) },
+                        set: { graphics = Graphics.allCases[Int($0.rounded())] }
+                    ),
+                    in: 0...Double(Graphics.allCases.count - 1),
+                    step: 1
+                ) {
+                    Text("Level")
+                } minimumValueLabel: {
+                    Text(Graphics.allCases.first?.label ?? "").font(.caption)
+                } maximumValueLabel: {
+                    Text(Graphics.allCases.last?.label ?? "").font(.caption)
+                }
+                Text("**\(graphics.label)** — \(graphics.detail)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } header: {
+                Text("Graphics")
+            } footer: {
+                Text("How much koan spends on looking like itself. Every step down removes something that costs while the music plays — the colour drifting behind the window first, since it costs the most.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
 // MARK: - Radio
 
 private struct RadioSettings: View {
     @Bindable var model: SettingsModel
+    /// Held while the slider is dragged, so the drag commits once on release.
+    @State private var discovery: Double?
 
     var body: some View {
         Form {
@@ -471,8 +550,14 @@ private struct RadioSettings: View {
             Section {
                 Slider(
                     value: Binding(
-                        get: { model.settings.radioDiscoveryWeight },
-                        set: { v in model.edit { $0.radioDiscoveryWeight = v } }
+                        get: { discovery ?? model.settings.radioDiscoveryWeight },
+                        set: { v in
+                            if discovery != nil {
+                                discovery = v
+                            } else {
+                                model.edit { $0.radioDiscoveryWeight = v }
+                            }
+                        }
                     ),
                     in: 0...1
                 ) {
@@ -481,6 +566,13 @@ private struct RadioSettings: View {
                     Text("Familiar").font(.caption)
                 } maximumValueLabel: {
                     Text("New").font(.caption)
+                } onEditingChanged: { editing in
+                    if editing {
+                        discovery = model.settings.radioDiscoveryWeight
+                    } else if let settled = discovery {
+                        discovery = nil
+                        model.edit { $0.radioDiscoveryWeight = settled }
+                    }
                 }
             } header: {
                 Text("What it picks")

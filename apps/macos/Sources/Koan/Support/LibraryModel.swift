@@ -2,51 +2,91 @@ import Foundation
 import KoanFFI
 import SwiftUI
 
-/// How much history to hold. Enough to scroll back through an evening's
-/// listening without paging; the whole table would be unbounded.
-private let historyPageSize: UInt32 = 500
-
 /// Library browsing state.
 ///
-/// The full album and artist lists are loaded once, because search and the
-/// detail views resolve ids against them. Narrowing them is the database's job:
-/// filtering a few thousand rows in Swift cost sixteen milliseconds of main
-/// thread per keystroke, which is a filter field that visibly lags the typing.
-/// Tracks are never loaded wholesale; there are tens of thousands of them and
-/// you only ever look at one album's worth at a time.
+/// Nothing here is derived, indexed or narrowed. A section asks koan-core what
+/// it should be showing and shows exactly that; narrowing and sorting happen in
+/// SQL, because the database is the only thing that knows the answer and asking
+/// it is cheaper than keeping one.
+///
+/// Nothing is paged either. This is an in-process call, not a wire: a listing
+/// arrives whole, so the scrollbar tells the truth about how long the library
+/// is and one flick reaches the end of it.
+///
+/// The consequence worth knowing: there is no load to have forgotten to do. A
+/// section that has never been visited shows the library the first time it is,
+/// and one whose rows changed underneath it asks again rather than merging.
 @MainActor
 @Observable
 final class LibraryModel {
     typealias Section = Navigator.Section
 
     let engine: KoanEngine
+    /// A constant, so reaching it subscribes nothing; what it holds is
+    /// observed where it is drawn.
+    let selection = AlbumSelection()
 
     /// What is on screen. Written only by the navigator, which owns it — the
     /// library follows where you are, it does not decide it.
     private(set) var section: Section = .queue
 
-    /// The navigator moved. Catch up.
-    func showing(_ section: Section) {
-        guard section != self.section else { return }
-        self.section = section
-        // A filter you left behind on another view is invisible here, and an
-        // apparently empty library is the result.
-        filter = ""
-        load()
+    /// A section and everything it shows, as one value.
+    ///
+    /// Read before the navigator moves — see `prepare(section:)`. A section
+    /// that arrives first and asks afterwards draws itself empty, and the empty
+    /// state of a listing is the word "No albums yet" over a page that has
+    /// albums.
+    struct Listing {
+        let section: Section
+        fileprivate let rows: Rows
     }
 
-    /// Substring filter over whatever the current section is showing.
+    /// What a section will be showing, without touching what is on screen.
+    ///
+    /// `nil` when it is already showing: the rows are in hand and the filter
+    /// over them is somebody's, so a move back onto a section is not a reason
+    /// to re-read it or to throw their narrowing away. A library change reloads
+    /// it where it is drawn instead.
+    func prepare(section: Section) async -> Listing? {
+        guard section != self.section else { return nil }
+        // Nothing carries over: a filter you left behind on another view is
+        // invisible here, and an apparently empty library is the result.
+        return await Listing(
+            section: section,
+            rows: Request(
+                section: section, filter: "", sort: albumSort, seed: shuffleSeed, engine: engine
+            ).detached()
+        )
+    }
+
+    /// Adopt a listing, at the moment the navigator moves to it.
+    func show(_ listing: Listing) {
+        loading?.cancel()
+        section = listing.section
+        // Quietly: the rows for this section are already in hand, so emptying
+        // the filter it arrives with is not a reason to ask for them again.
+        adopting = true
+        filter = ""
+        adopting = false
+        show(listing.rows)
+        isLoading = false
+    }
+
+    /// Substring filter over whatever the current section is showing. It
+    /// narrows the query, not the answer.
     var filter: String = "" {
         didSet {
-            guard filter != oldValue else { return }
-            refilter()
+            guard filter != oldValue, !adopting else { return }
+            reload(debounced: true)
         }
     }
 
-    /// In flight for the sections whose filter is a query. Long enough that a
-    /// burst of typing is one round trip, short enough not to read as lag.
-    private var filterQuery: Task<Void, Never>?
-    private static let filterDebounce = Duration.milliseconds(120)
+    /// True while a prepared listing is being adopted — see `show(_:)`.
+    private var adopting = false
+
+    /// Long enough that a burst of typing is one round trip, short enough not
+    /// to read as lag.
+    private static let filterDebounce = Duration.milliseconds(80)
 
     /// Newest first by default: the record you just added is the one you're
     /// looking for. Persisted so it survives a relaunch.
@@ -54,13 +94,34 @@ final class LibraryModel {
         didSet {
             guard albumSort != oldValue else { return }
             UserDefaults.standard.set(albumSort.storageKey, forKey: "albumSort")
-            reloadAlbums()
+            reload()
         }
     }
 
-    private(set) var albums: [Album] = [] { didSet { refilter() } }
-    private(set) var artists: [Artist] = [] { didSet { refilter() } }
-    private(set) var favourites: [Track] = [] { didSet { refilter() } }
+    /// Which shuffle Random means right now. Held rather than dealt afresh on
+    /// every read, so typing in the filter narrows the shuffle you are looking
+    /// at instead of dealing a new one on each keystroke.
+    private var shuffleSeed = Int64.random(in: .min ... .max)
+
+    /// Deal again. Only visibly different under Random, which is what the
+    /// button is for.
+    func reshuffleAlbums() {
+        shuffleSeed = Int64.random(in: .min ... .max)
+        reload()
+    }
+
+    // MARK: - What each section is showing
+
+    /// What the section on screen is showing, as the database handed it over.
+    /// Stored rather than computed because a `List` reads its collection far
+    /// more than once per update, and anything derived on read is derived a few
+    /// hundred times a frame.
+    private(set) var visibleAlbums: [Album] = []
+    private(set) var visibleArtists: [Artist] = []
+    private(set) var visibleFavourites: [Track] = []
+    private(set) var visibleFavouriteAlbums: [Album] = []
+    private(set) var visibleFavouriteArtists: [Artist] = []
+    private(set) var visiblePlayHistory: [PlayHistoryEntry] = []
 
     // Favourite state is read from here rather than from the copy baked into
     // each Track when it was fetched. A track appears in the album view, the
@@ -69,24 +130,24 @@ final class LibraryModel {
     // it left the album view showing an unfilled heart on a track that was
     // already favourited.
     private(set) var favouriteTrackIds: Set<Int64> = []
-    private(set) var favouriteAlbumIds: Set<Int64> = [] { didSet { refilter() } }
-    private(set) var favouriteArtistIds: Set<Int64> = [] { didSet { refilter() } }
+    private(set) var favouriteAlbumIds: Set<Int64> = []
+    private(set) var favouriteArtistIds: Set<Int64> = []
 
     func isFavourite(track id: Int64) -> Bool { favouriteTrackIds.contains(id) }
     func isFavourite(album id: Int64) -> Bool { favouriteAlbumIds.contains(id) }
     func isFavourite(artist id: Int64) -> Bool { favouriteArtistIds.contains(id) }
-    private(set) var playHistory: [PlayHistoryEntry] = [] { didSet { refilter() } }
+
     private(set) var stats: Stats?
     private(set) var isLoading = false
 
-    private(set) var detailTracks: [Track] = []
-
-    /// Set while a scan runs so the UI can show progress and refuse a second one.
-    /// Set by `AppState`. Long tasks register here so one place can say what is
-    /// happening — see `ActivityModel`.
+    /// Where long tasks register, so one place can say what is happening and
+    /// refuse a second task that would collide with a running one. Set by
+    /// `AppState` — see `ActivityModel`.
     weak var activity: ActivityModel?
+    /// Set by `AppState`, so a record's sleeve can be warmed as its rows are
+    /// read rather than after the page is already up.
+    var art: CoverArtCache?
 
-    private(set) var isScanning = false
     var scanSummary: ScanSummary?
 
     init(engine: KoanEngine) {
@@ -98,176 +159,64 @@ final class LibraryModel {
         }
     }
 
-    /// Re-runs the current sort. Only visibly different under Random, which is
-    /// reshuffled server-side on every call — that's what the button is for.
-    func reshuffleAlbums() { reloadAlbums() }
-
-    private func reloadAlbums() {
-        let engine = self.engine
-        let sort = albumSort
-        Task {
-            albums = (try? await engine.albums(artistId: nil, sort: sort, search: nil)) ?? []
-            reindex()
-        }
-    }
-
-    // MARK: - Filtered views
-
-    /// Stored rather than computed. A `List` reads its collection far more than
-    /// once per update, and narrowing it on every read froze the artist list for
-    /// a second or two whenever the filter changed. The album grid is lazy and
-    /// never noticed, which is what made it look like a bug in the artist view
-    /// specifically.
-    private(set) var visibleAlbums: [Album] = []
-    private(set) var visibleArtists: [Artist] = []
-    private(set) var visibleFavourites: [Track] = []
-    /// Favourited records and artists, resolved out of the catalogue already in
-    /// memory — the engine hands back ids, and `prefetchCatalogue` holds the
-    /// rows. Taken in the catalogue's order rather than the set's, which has
-    /// none, so the grid does not reshuffle itself on every toggle.
-    private(set) var visibleFavouriteAlbums: [Album] = []
-    private(set) var visibleFavouriteArtists: [Artist] = []
-    private(set) var visiblePlayHistory: [PlayHistoryEntry] = []
-
-    /// Recompute what each section shows. Called whenever the filter or any of
-    /// the underlying collections change.
-    ///
-    /// Switching section clears the filter, so only the section on screen can
-    /// hold one and every other collection is handed over whole. Albums and
-    /// artists are unbounded and go to the database; favourites and a page of
-    /// history are small enough to narrow here.
-    private func refilter() {
-        visibleFavourites = section == .favourites
-            ? matching(favourites) { [$0.title, $0.artistName, $0.albumTitle] }
-            : favourites
-        // Only ever built for the page that shows them: this walks the whole
-        // catalogue, and every other section would be paying for it on each
-        // keystroke of its own filter.
-        if section == .favourites {
-            visibleFavouriteAlbums = matching(
-                albums.filter { favouriteAlbumIds.contains($0.id) }
-            ) { [$0.title, $0.artistName] }
-            visibleFavouriteArtists = matching(
-                artists.filter { favouriteArtistIds.contains($0.id) }
-            ) { [$0.name] }
-        } else {
-            visibleFavouriteAlbums = []
-            visibleFavouriteArtists = []
-        }
-        visiblePlayHistory = section == .playHistory
-            ? matching(playHistory) { [$0.track.title, $0.track.artistName, $0.track.albumTitle] }
-            : playHistory
-
-        guard section == .albums || section == .artists, !filter.isEmpty else {
-            filterQuery?.cancel()
-            visibleAlbums = albums
-            visibleArtists = artists
-            return
-        }
-        runFilterQuery()
-    }
-
-    /// Ask the database for the matches.
-    ///
-    /// Debounced and cancellable, so holding a key down is one query rather than
-    /// one per character and an answer to a filter you have already typed past
-    /// never lands.
-    private func runFilterQuery() {
-        filterQuery?.cancel()
-        let engine = self.engine
-        let wantsAlbums = section == .albums
-        let sort = albumSort
-        let query = filter
-        filterQuery = Task {
-            try? await Task.sleep(for: Self.filterDebounce)
-            guard !Task.isCancelled else { return }
-            if wantsAlbums {
-                let rows = try? await engine.albums(
-                    artistId: nil, sort: sort, search: query
-                )
-                guard !Task.isCancelled else { return }
-                visibleAlbums = rows ?? []
-            } else {
-                let rows = try? await engine.artists(search: query)
-                guard !Task.isCancelled else { return }
-                visibleArtists = rows ?? []
-            }
-        }
-    }
-
-    private func matching<T>(_ rows: [T], _ fields: (T) -> [String]) -> [T] {
-        guard !filter.isEmpty else { return rows }
-        return rows.filter { row in
-            fields(row).contains { $0.localizedCaseInsensitiveContains(filter) }
-        }
-    }
-
     // MARK: - Loading
 
-    func loadInitial() {
-        loadStats()
-        load()
-        // Search resolves fuzzy match ids against these, so they cannot wait
-        // until their section is first visited.
-        prefetchCatalogue()
-    }
+    private var loading: Task<Void, Never>?
 
-    private var albumsById: [Int64: Album] = [:]
-    private var artistsById: [Int64: Artist] = [:]
+    /// Ask for whatever is on screen.
+    ///
+    /// Cancellable, so an answer to a filter you have already typed past never
+    /// lands, and debounced when a keystroke caused it, so holding a key down
+    /// is one query rather than one per character.
+    func reload(debounced: Bool = false) {
+        isLoading = true
+        loading?.cancel()
 
-    func album(id: Int64) -> Album? { albumsById[id] }
-    func artist(id: Int64) -> Artist? { artistsById[id] }
-
-    private func prefetchCatalogue() {
-        let engine = self.engine
-        let sort = albumSort
-        Task {
-            if albums.isEmpty {
-                albums = (try? await engine.albums(artistId: nil, sort: sort, search: nil)) ?? []
+        let request = self.request
+        loading = Task {
+            if debounced {
+                try? await Task.sleep(for: Self.filterDebounce)
+                guard !Task.isCancelled else { return }
             }
-            if artists.isEmpty {
-                artists = (try? await engine.artists(search: nil)) ?? []
-            }
-            reindex()
+            let rows = await request.detached()
+            guard !Task.isCancelled else { return }
+            show(rows)
+            isLoading = false
         }
     }
 
-    private func reindex() {
-        albumsById = Dictionary(albums.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        artistsById = Dictionary(artists.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+    private var request: Request {
+        Request(
+            section: section, filter: filter, sort: albumSort, seed: shuffleSeed, engine: engine
+        )
     }
 
-    /// Loads whatever the current section needs. Everything heavy happens off
-    /// the main actor; only the assignment comes back.
-    func load() {
-        let engine = self.engine
-        let section = self.section
-        let sort = albumSort
-        isLoading = true
-
-        Task {
-            switch section {
-            case .queue, .searchResults:
-                break  // owned by the player and search models respectively
-            case .albums:
-                if albums.isEmpty {
-                    albums = (try? await engine.albums(artistId: nil, sort: sort, search: nil)) ?? []
-                    reindex()
-                }
-            case .artists:
-                if artists.isEmpty {
-                    artists = (try? await engine.artists(search: nil)) ?? []
-                    reindex()
-                }
-            case .favourites:
-                favourites = (try? await engine.favourites()) ?? []
-            case .playHistory:
-                // Always refetched: it changes underneath you as you listen.
-                playHistory = (try? await engine.playHistory(limit: historyPageSize, offset: 0)) ?? []
-            case .playlist:
-                break  // owned by PlaylistsModel
-            }
-            isLoading = false
+    /// Publish what came back, and only where it differs from what is already
+    /// on screen.
+    ///
+    /// `@Observable` has no opinion about equality: assigning the same rows
+    /// again is still a mutation, and a mutation of a listing is a `ForEach`
+    /// diff over every id in it, a layout pass and a commit — 5,610 records and
+    /// 7,138 artists on a large library. The same answer as last time is the
+    /// common case, not the rare one: every library version bump reloads, so a
+    /// download landing or a playlist edit asks again, and so does every return
+    /// to a section already visited. Comparing the rows is one walk over them.
+    /// Publishing them is thousands of views' worth of work that changes
+    /// nothing on screen.
+    private func show(_ rows: Rows) {
+        switch rows {
+        case .none:
+            break
+        case .albums(let rows):
+            if rows != visibleAlbums { visibleAlbums = rows }
+        case .artists(let rows):
+            if rows != visibleArtists { visibleArtists = rows }
+        case .favourites(let tracks, let albums, let artists):
+            if tracks != visibleFavourites { visibleFavourites = tracks }
+            if albums != visibleFavouriteAlbums { visibleFavouriteAlbums = albums }
+            if artists != visibleFavouriteArtists { visibleFavouriteArtists = artists }
+        case .history(let rows):
+            if rows != visiblePlayHistory { visiblePlayHistory = rows }
         }
     }
 
@@ -277,7 +226,7 @@ final class LibraryModel {
         let engine = self.engine
         let doomed = Array(ids)
         // Dropped locally first so the list does not visibly lag the keystroke.
-        playHistory.removeAll { ids.contains($0.id) }
+        visiblePlayHistory.removeAll { ids.contains($0.id) }
         Task { _ = try? await engine.deletePlays(ids: doomed) }
     }
 
@@ -286,7 +235,7 @@ final class LibraryModel {
         let engine = self.engine
         Task {
             _ = try? await engine.clearPlayHistory()
-            playHistory = []
+            visiblePlayHistory = []
         }
     }
 
@@ -297,14 +246,143 @@ final class LibraryModel {
         }
     }
 
-    /// Tracks for the album detail pane.
-    func loadTracks(albumId: Int64) {
+    /// The record a page is showing, and its tracks, as one value.
+    ///
+    /// Loaded *before* the page appears — see `Navigator.open(album:)`. A page
+    /// that fetches once it is already on screen has to draw itself empty
+    /// first, and the empty state of a record page is the word "Album" over
+    /// nothing. Both halves land together or not at all, so the header can
+    /// never arrive ahead of the rows either.
+    private(set) var detailRecord: AlbumRecord?
+
+    struct AlbumRecord: Sendable {
+        let albumId: Int64
+        /// The library version it was read at. What makes asking for the record
+        /// already on screen free, and asking for it after the rows moved a
+        /// real read.
+        let stamp: UInt64
+        var album: Album?
+        var tracks: [Track]
+    }
+
+    /// Set by `AppState`. Read for the library version a record was loaded at.
+    weak var mirror: EngineMirror?
+
+    /// Read the record and its tracks, off the main actor and both at once.
+    ///
+    /// `.task` and every view callback are main-actor isolated, and isolation
+    /// is inherited by every suspension point — so awaiting the engine from one
+    /// means the *answer* waits for a main-actor slot to be delivered. It queued
+    /// behind the state mirror's batch, which lands every hundred milliseconds:
+    /// the engine answered in 300µs and the page saw it a tenth of a second
+    /// later, every time, whatever the record. Detached, it comes back in one.
+    func prepare(album id: Int64) async {
+        let stamp = mirror?.libraryVersion ?? 0
+        // Already in hand, and nothing has changed under it. The navigator loads
+        // a record before it moves to it, so the page's own `.reloading` asks
+        // again the moment it appears — and that second read is identical, lands
+        // while the artwork it kicked off is still competing, and takes twenty
+        // times what the first one did. A fast page followed by a slow redraw of
+        // the same page reads worse than a slow page.
+        if let held = detailRecord, held.albumId == id, held.stamp == stamp { return }
+
+        // The sleeve and the colour the room takes from it. Coming from the grid
+        // both are already decoded, and the page, its cover and the room's
+        // colour go up in one change — see `ArtworkBleed.answered`, which reads
+        // them straight through rather than waiting to be handed them.
+        //
+        // Never waited on. Arriving cold this is an HTTP round trip, and every
+        // millisecond spent here is a millisecond the click looks ignored: the
+        // navigator holds the page you are leaving on screen until this returns.
+        // The room catches up on its own a moment later, which costs a second
+        // commit and is the right trade — a page you are already reading.
+        warm(album: id)
         let engine = self.engine
-        detailTracks = []
+        let loaded = await Trace.region("engine-reads") {
+            await Task.detached(priority: .userInitiated) {
+                let page = try? await engine.albumPage(albumId: id)
+                return AlbumRecord(
+                    albumId: id,
+                    stamp: stamp,
+                    album: page?.album,
+                    tracks: page?.tracks ?? []
+                )
+            }.value
+        }
+        detailRecord = loaded
+    }
+
+    /// An artist, their records and who they sound like, as one value.
+    ///
+    /// The record's shape, for the other page that is about one thing. Loaded
+    /// before the page appears — see `Navigator.open(artist:)`.
+    private(set) var detailArtist: ArtistRecord?
+
+    struct ArtistRecord: Sendable {
+        let artistId: Int64
+        /// The library version it was read at, so asking again for the artist
+        /// already on screen is free and asking after a scan is a real read.
+        let stamp: UInt64
+        var artist: Artist?
+        var albums: [Album]
+        var similar: [SimilarArtist]
+        /// Biography and photograph, as cached. Filled in from the network
+        /// after the page is up — see `enrich(artist:)`.
+        var info: ArtistInfo?
+    }
+
+    /// Read an artist and everything their page draws, at once and off the main
+    /// actor. Independent queries, so all at once: one after another each
+    /// waited on the one before for no reason.
+    func prepare(artist id: Int64) async {
+        let stamp = mirror?.libraryVersion ?? 0
+        if let held = detailArtist, held.artistId == id, held.stamp == stamp { return }
+
+        let engine = self.engine
+        detailArtist = await Trace.region("engine-reads") {
+            await Task.detached(priority: .userInitiated) {
+                async let artist = try? await engine.artist(artistId: id)
+                async let albums = try? await engine.albums(
+                    artistId: id, sort: .year, seed: 0, search: nil
+                )
+                async let similar = try? await engine.similarArtists(artistId: id)
+                async let info = try? await engine.artistInfo(artistId: id)
+                return ArtistRecord(
+                    artistId: id,
+                    stamp: stamp,
+                    artist: await artist ?? nil,
+                    albums: await albums ?? [],
+                    similar: await similar ?? [],
+                    info: await info ?? nil
+                )
+            }.value
+        }
+        enrich(artist: id)
+    }
+
+    /// Ask for the artist's biography and photograph, and fold them into the
+    /// page when they land.
+    ///
+    /// Never waited on: a miss is several seconds of MusicBrainz and Wikipedia,
+    /// and the page is already drawn from the cache. A fresh cache answers at
+    /// once and changes nothing.
+    private func enrich(artist id: Int64) {
+        let engine = self.engine
         Task {
-            detailTracks = (try? await engine.tracks(
-                albumId: albumId, artistId: nil, sort: .album, limit: 500, offset: 0
-            )) ?? []
+            let fetched = try? await engine.fetchArtistInfo(artistId: id)
+            guard let fetched, detailArtist?.artistId == id, detailArtist?.info != fetched
+            else { return }
+            detailArtist?.info = fetched
+        }
+    }
+
+    /// Put this record's sleeve and its colour in the cache, if they are not
+    /// there already. Detached and never waited on — see the call site.
+    private func warm(album id: Int64) {
+        guard let art, art.cached(.album(id), size: .tile) == nil else { return }
+        Task.detached {
+            _ = await art.image(for: .album(id), size: .tile)
+            _ = await art.dominantColour(for: .album(id))
         }
     }
 
@@ -321,7 +399,7 @@ final class LibraryModel {
             let now = (try? await engine.toggleFavourite(trackId: id))
             guard let now else { return }
             if now { favouriteTrackIds.insert(id) } else { favouriteTrackIds.remove(id) }
-            reloadFavouritesList()
+            reloadFavourites()
         }
     }
 
@@ -331,6 +409,7 @@ final class LibraryModel {
             let now = (try? await engine.toggleFavouriteAlbum(albumId: id))
             guard let now else { return }
             if now { favouriteAlbumIds.insert(id) } else { favouriteAlbumIds.remove(id) }
+            reloadFavourites()
         }
     }
 
@@ -340,6 +419,7 @@ final class LibraryModel {
             let now = (try? await engine.toggleFavouriteArtist(artistId: id))
             guard let now else { return }
             if now { favouriteArtistIds.insert(id) } else { favouriteArtistIds.remove(id) }
+            reloadFavourites()
         }
     }
 
@@ -348,59 +428,100 @@ final class LibraryModel {
     func refreshFavourites() {
         let engine = self.engine
         Task {
-            let sets = (
-                Set((try? await engine.favouriteTrackIds()) ?? []),
-                Set((try? await engine.favouriteAlbumIds()) ?? []),
-                Set((try? await engine.favouriteArtistIds()) ?? [])
-            )
-            favouriteTrackIds = sets.0
-            favouriteAlbumIds = sets.1
-            favouriteArtistIds = sets.2
-            reloadFavouritesList()
+            // Three independent reads, so three at once. Written as a tuple of
+            // awaits they ran one after another, and the second waited on the
+            // first for no reason at all.
+            async let tracks = engine.favouriteTrackIds()
+            async let albums = engine.favouriteAlbumIds()
+            async let artists = engine.favouriteArtistIds()
+            let trackIds = Set((try? await tracks) ?? [])
+            let albumIds = Set((try? await albums) ?? [])
+            let artistIds = Set((try? await artists) ?? [])
+            // Guarded for the same reason a listing is. Every grid cell and
+            // every row reads these to draw its heart, so republishing a set
+            // that has not moved redraws the whole page for nothing — and a
+            // sync reconciling favourites usually finds them all the same.
+            if trackIds != favouriteTrackIds { favouriteTrackIds = trackIds }
+            if albumIds != favouriteAlbumIds { favouriteAlbumIds = albumIds }
+            if artistIds != favouriteArtistIds { favouriteArtistIds = artistIds }
+            reloadFavourites()
         }
     }
 
-    private func reloadFavouritesList() {
+    /// The favourites page lists what the hearts say, so a toggle changes it.
+    private func reloadFavourites() {
         guard section == .favourites else { return }
-        let engine = self.engine
-        Task {
-            favourites = (try? await engine.favourites()) ?? []
-        }
+        reload()
     }
 
-    /// Pull the remote library. Minutes on a large server, so it runs detached
-    /// and the caches are dropped afterwards rather than during.
+    /// Pull the remote library. Minutes on a large server, so it runs detached.
+    /// Nothing here refreshes anything: the engine announces the rows it wrote,
+    /// and `libraryChanged()` runs off that.
     func syncRemote(full: Bool = false) {
-        guard !isScanning else { return }
-        isScanning = true
+        guard activity?.conflicts(with: [.remoteTracks]) != true else { return }
         let engine = self.engine
         let job = activity?.begin(
             full ? "Full sync with server" : "Syncing with server",
-            exclusive: true
+            uses: [.remoteTracks]
         )
         Task {
             _ = try? await engine.syncRemote(full: full)
             if let job { activity?.end(job) }
-            isScanning = false
-            albums = []
-            artists = []
-            loadStats()
-            prefetchCatalogue()
-            load()
         }
+    }
+
+    /// Throw away every file cached from the server.
+    ///
+    /// The library rows stay — they are what the server said exists — so the
+    /// tracks remain playable and simply download again on demand. It holds the
+    /// cached copies and nothing else, so a scan or a sync can carry on beside
+    /// it: neither has an opinion about what is on disk in the cache directory.
+    func clearDownloads() {
+        guard activity?.conflicts(with: [.downloads]) != true else { return }
+        let engine = self.engine
+        let job = activity?.begin("Clearing downloaded files", uses: [.downloads])
+        Task {
+            _ = try? await engine.clearDownloadCache()
+            if let job { activity?.end(job) }
+            loadStats()
+        }
+    }
+
+    /// Throw away the downloaded copies of these tracks.
+    ///
+    /// Claims nothing, unlike the library-wide tasks: it touches only the rows
+    /// named, and someone clearing one record should not have to wait behind a
+    /// scan. Anything playing from a copy being removed keeps playing — the
+    /// decoder has the file open, and unlinking it only takes the name away.
+    func clearDownloads(trackIds: [Int64]) {
+        guard !trackIds.isEmpty else { return }
+        let engine = self.engine
+        Task {
+            _ = try? await engine.clearDownloads(trackIds: trackIds)
+            loadStats()
+        }
+    }
+
+    /// Fetch these tracks into the cache without queueing them.
+    ///
+    /// Tracks already downloaded are skipped, so asking for a record you have
+    /// most of costs only the rest of it.
+    func downloadToCache(trackIds: [Int64]) {
+        guard !trackIds.isEmpty else { return }
+        let engine = self.engine
+        Task { try? await engine.downloadToCache(trackIds: trackIds) }
     }
 
     /// Full rescan of every configured folder. Minutes on a big library, so it
     /// runs detached and the UI stays live throughout.
     func scan(force: Bool = false) {
-        guard !isScanning else { return }
-        isScanning = true
+        guard activity?.conflicts(with: .localLibrary) != true else { return }
         scanSummary = nil
 
         let engine = self.engine
         let job = activity?.begin(
             force ? "Rescanning every file" : "Scanning library",
-            exclusive: true,
+            uses: .localLibrary,
             cancellable: true
         )
         let progress = job.flatMap { activity?.reporter(for: $0) }
@@ -408,19 +529,85 @@ final class LibraryModel {
             let result = try? await engine.scanReporting(force: force, reporter: progress)
             if let job { activity?.end(job) }
             scanSummary = result
-            isScanning = false
-            libraryChanged()
         }
     }
 
-    /// Rows appeared or vanished underneath us. Albums and artists are loaded
-    /// once and filtered in memory, so they have to be dropped rather than
-    /// merged — anything else leaves the browser showing a library that no
-    /// longer exists.
+    /// Rows appeared or vanished underneath us — a scan, a sync, an import, a
+    /// playlist edit, a download landing, a folder being forgotten. Whether
+    /// this app asked for it or the engine did it on its own makes no
+    /// difference here: nothing to merge, nothing to invalidate, just ask
+    /// again.
+    ///
+    /// Favourites too, because a sync reconciles them with the server and the
+    /// hearts on screen are stale the moment it lands.
+    ///
+    /// The section's rows only. What a *page* is showing reloads where it is
+    /// drawn — see `View.reloading(on:)`.
     func libraryChanged() {
-        albums = []
-        artists = []
         loadStats()
-        load()
+        refreshFavourites()
+        reload()
     }
+}
+
+/// Everything a section's query depends on, captured off the model so the
+/// answer that lands belongs to the question that was asked. Anything that
+/// changes one cancels the task holding it.
+private struct Request: Sendable {
+    let section: Navigator.Section
+    let filter: String
+    let sort: AlbumSort
+    let seed: Int64
+    let engine: KoanEngine
+
+    var search: String? { filter.isEmpty ? nil : filter }
+
+    /// Everything this section is showing, read off the main actor.
+    ///
+    /// Detached because isolation is inherited by every suspension point: await
+    /// the engine from a main-actor task and the *answer* waits for a
+    /// main-actor slot to be delivered, behind whatever the state mirror is
+    /// applying. The read is microseconds; the wait for the hop was not.
+    func detached() async -> Rows {
+        await Task.detached(priority: .userInitiated) { await self.rows() }.value
+    }
+
+    /// Everything this section is showing.
+    private func rows() async -> Rows {
+        switch section {
+        case .queue, .searchResults, .playlist, .downloads:
+            // Owned by the player, search, playlist and downloads models
+            // respectively.
+            return .none
+        case .albums:
+            return .albums(
+                (try? await engine.albums(
+                    artistId: nil, sort: sort, seed: seed, search: search
+                )) ?? []
+            )
+        case .artists:
+            return .artists((try? await engine.artists(search: search)) ?? [])
+        case .favourites:
+            // Three questions, asked at once — they are answers to the same
+            // one and the page shows them together.
+            async let tracks = engine.favourites(search: search)
+            async let albums = engine.favouriteAlbums(search: search)
+            async let artists = engine.favouriteArtists(search: search)
+            return .favourites(
+                tracks: (try? await tracks) ?? [],
+                albums: (try? await albums) ?? [],
+                artists: (try? await artists) ?? []
+            )
+        case .playHistory:
+            return .history((try? await engine.playHistory(search: search)) ?? [])
+        }
+    }
+}
+
+private enum Rows: Sendable {
+    case none
+    case albums([Album])
+    case artists([Artist])
+    case favourites(tracks: [Track], albums: [Album], artists: [Artist])
+    case history([PlayHistoryEntry])
 }

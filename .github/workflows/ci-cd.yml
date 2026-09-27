@@ -65,7 +65,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all -- --check
 
   clippy:
@@ -96,7 +96,7 @@ jobs:
         with:
           toolchain: stable
       - if: env.RUN == 'true'
-        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - if: env.RUN == 'true'
         run: cargo clippy --all-targets -- -D warnings
 
@@ -128,7 +128,7 @@ jobs:
         with:
           toolchain: stable
       - if: env.RUN == 'true'
-        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - if: env.RUN == 'true'
         run: cargo test --all-targets
       - if: env.RUN == 'true'
@@ -162,7 +162,7 @@ jobs:
         with:
           toolchain: stable
       - if: env.RUN == 'true'
-        uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - if: env.RUN == 'true'
         run: cargo build --release
 
@@ -180,9 +180,14 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        # One cache for both macOS app builds. rust-cache mixes the job name
+        # into the key unless `shared-key` is given, so `macos-app` and
+        # `create-macos-app` kept separate caches of the same
+        # `cargo build --release -p koan-ffi`. The release job only runs on a
+        # release commit, so its own cache was always cold.
         with:
-          key: macos-app
+          shared-key: macos-app
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       # Builds koan-ffi, regenerates the Swift bindings from it, then compiles
       # the app. The bindings are generated, so this catches drift between the
@@ -208,7 +213,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772
         with:
           toolchain: "1.89"
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: msrv
       # koan-ffi is excluded deliberately: it is unpublished, built only as part
@@ -224,6 +229,16 @@ jobs:
     timeout-minutes: 15
     # Blocking. The advisories already in the lockfile are acknowledged in
     # .cargo/audit.toml so this fails on anything new.
+    #
+    # The action reports through a GitHub check run, which is an API write, and
+    # this repository hands workflows a read-only token by default. Without this
+    # the job failed with "Resource not accessible by integration" *after* a
+    # clean audit — a green audit reported as a red build, on every push to
+    # main. `contents: read` is spelled out because naming any permission drops
+    # the rest to none.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: rustsec/audit-check@858dc40f52ca2b8570b7a997c1c4e35c6fc9a432 # main, post-v2.0.0: node24 runtime
@@ -299,7 +314,7 @@ jobs:
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: release-${{ matrix.target }}
       - run: cargo build --release --target ${{ matrix.target }}
@@ -315,6 +330,7 @@ jobs:
   create-macos-app:
     name: Release (kōan.app)
     runs-on: macos-latest
+    timeout-minutes: 45
     needs: [check-version]
     if: needs.check-version.outputs.should_release == 'true'
     steps:
@@ -322,9 +338,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: macos-app
+          shared-key: macos-app
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
       # Bundle, check, then package. `macos-verify` inspects the assembled
       # kōan.app, so it has to come after something that assembles one —
@@ -366,7 +382,7 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -a "v${{ needs.check-version.outputs.version }}" -m "Release v${{ needs.check-version.outputs.version }}"
           git push origin "v${{ needs.check-version.outputs.version }}"
-      - uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: v${{ needs.check-version.outputs.version }}
           name: v${{ needs.check-version.outputs.version }}
@@ -524,8 +540,8 @@ jobs:
             app "kōan.app"
 
             # Ad-hoc signed, not notarised — without this Gatekeeper quarantines it.
-            postflight do
-              system_command "/usr/bin/xattr", args: ["-cr", "#{appdir}/kōan.app"]
+            postflight_steps do
+              run "/usr/bin/xattr", args: ["-cr", "{{appdir}}/kōan.app"], writable_paths: ["kōan.app"], writable_base: :appdir
             end
 
             zap trash: "~/.config/koan"

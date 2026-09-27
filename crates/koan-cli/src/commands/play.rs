@@ -6,7 +6,7 @@ use koan_core::config;
 use koan_core::db::queries;
 use koan_core::player::Player;
 use koan_core::player::commands::PlayerCommand;
-use koan_core::player::state::LoadState;
+use koan_core::player::state::ItemState;
 use owo_colors::OwoColorize;
 
 use koan_tui::app::PickerAction;
@@ -95,12 +95,12 @@ pub fn cmd_play(
             .expect("failed to spawn API server thread");
     }
 
-    if clear_queue && let Ok(db) = koan_core::db::connection::Database::open(&config::db_path()) {
+    if clear_queue && let Ok(db) = koan_core::db::pool::shared().get() {
         let _ = queries::clear_playback_state(&db.conn);
     }
 
     let mut expects_playback = track_ids.is_some() || !paths.is_empty();
-    let mut restored_position_ms: Option<u64> = None;
+    let mut restored: Option<koan_tui::play::RestoredPosition> = None;
 
     if let Some(ids) = track_ids {
         let tx_bg = tx.clone();
@@ -152,7 +152,7 @@ pub fn cmd_play(
             })
             .expect("failed to spawn resolve thread");
     } else if !clear_queue
-        && let Ok(db) = koan_core::db::connection::Database::open(&config::db_path())
+        && let Ok(db) = koan_core::db::pool::shared().get()
         && let Ok(Some(persisted)) = queries::load_playback_state(&db.conn)
     {
         let items: Vec<_> = persisted
@@ -163,7 +163,7 @@ pub fn cmd_play(
         if !items.is_empty() {
             let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = items
                 .iter()
-                .filter(|i| matches!(i.load_state, LoadState::Pending))
+                .filter(|i| matches!(i.state, ItemState::Pending))
                 .filter_map(|i| i.db_id.map(|db_id| (db_id, i.id)))
                 .collect();
 
@@ -177,7 +177,11 @@ pub fn cmd_play(
                 .expect("player thread died");
             if let Some(cid) = cursor_id {
                 state.set_cursor(Some(cid));
-                restored_position_ms = Some(persisted.position_ms);
+                restored = Some(koan_tui::play::RestoredPosition {
+                    item: cid,
+                    position_ms: persisted.position_ms,
+                    was_playing: persisted.was_playing,
+                });
             }
             expects_playback = true;
 
@@ -196,7 +200,6 @@ pub fn cmd_play(
         install_panic_hook: install_terminal_panic_hook,
         parse_dropped_paths: |text| parse_dropped_paths(text),
         playlist_items_from_paths: |paths, progress| playlist_items_from_paths(paths, progress),
-        open_db,
     };
 
     if let Err(e) = koan_tui::play::run_tui(
@@ -206,7 +209,7 @@ pub fn cmd_play(
         log_buffer,
         start_in_library,
         expects_playback,
-        restored_position_ms,
+        restored,
         download_queue,
         callbacks,
     ) {
@@ -261,7 +264,6 @@ pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
         install_panic_hook: install_terminal_panic_hook,
         parse_dropped_paths: |text| parse_dropped_paths(text),
         playlist_items_from_paths: |paths, progress| playlist_items_from_paths(paths, progress),
-        open_db,
     };
 
     if let Err(e) = koan_tui::play::run_tui(

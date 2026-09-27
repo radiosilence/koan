@@ -1,11 +1,8 @@
-use std::path::{Path, PathBuf};
-
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Widget};
 
-use koan_core::db::connection::Database;
 use koan_core::db::queries;
 
 use super::theme::Theme;
@@ -44,7 +41,6 @@ pub struct LibraryState {
     pub nodes: Vec<LibraryNode>,
     pub cursor: usize,
     pub scroll_offset: usize,
-    pub db_path: PathBuf,
     /// Active filter text. When non-empty, only matching nodes are shown.
     pub filter: String,
     /// Whether the filter input box is focused (typing mode).
@@ -54,12 +50,11 @@ pub struct LibraryState {
 }
 
 impl LibraryState {
-    pub fn new(db_path: &Path) -> Self {
+    pub fn load() -> Self {
         let mut state = Self {
             nodes: Vec::new(),
             cursor: 0,
             scroll_offset: 0,
-            db_path: db_path.to_path_buf(),
             filter: String::new(),
             filter_active: false,
             all_artists: Vec::new(),
@@ -68,8 +63,8 @@ impl LibraryState {
         state
     }
 
-    fn open_db(&self) -> Option<Database> {
-        Database::open(&self.db_path).ok()
+    fn open_db(&self) -> Option<koan_core::db::pool::Handle<'static>> {
+        koan_core::db::pool::shared().get().ok()
     }
 
     fn load_artists(&mut self) {

@@ -9,8 +9,20 @@ cli *ARGS:
     cargo run --release -p koan-cli -- {{ARGS}}
 
 # Run tests + clippy
+# Tests run against a config dir of their own. One that reaches past
+# `isolate_config_for_tests` would otherwise open the real library and run the
+# branch's migrations on it; here it writes into the canary and fails the check.
 check:
-    cargo test --all-targets
+    #!/usr/bin/env bash
+    set -euo pipefail
+    canary=$(mktemp -d)
+    trap 'rm -rf "$canary"' EXIT
+    KOAN_CONFIG_DIR="$canary" cargo test --all-targets
+    if [ -n "$(ls -A "$canary")" ]; then
+        echo "a test wrote to the config dir instead of isolating it:" >&2
+        ls -A "$canary" >&2
+        exit 1
+    fi
     cargo clippy --all-targets -- -D warnings
 
 # Format
@@ -320,7 +332,7 @@ macos-test: macos-ffi
 # --- iOS --------------------------------------------------------------------
 # There is no iOS app yet — this proves the shared sources still cross.
 
-ios_deployment_target := "26.0"
+ios_deployment_target := "27.0"
 
 # Type-check the shared SwiftUI sources against the iOS SDK.
 #
@@ -460,8 +472,11 @@ ios-bundle: macos-ffi ios-ffi
 ios-run: ios-bundle
     #!/usr/bin/env bash
     set -euo pipefail
+    # A booted simulator if there is one, otherwise the first that can run the
+    # deployment target — an older runtime installs the app and refuses to
+    # launch it.
     device=$(xcrun simctl list devices available -j \
-        | python3 -c 'import json,sys; ds=[d for v in json.load(sys.stdin)["devices"].values() for d in v if d["isAvailable"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"]))')
+        | python3 -c 'import json,sys; want=int("{{ios_deployment_target}}".split(".")[0]); ds=[d for k,v in json.load(sys.stdin)["devices"].items() if "iOS-" in k and int(k.split("iOS-")[1].split("-")[0])>=want for d in v if d["isAvailable"]]; print(next((d["udid"] for d in ds if d["state"]=="Booted"), ds[0]["udid"]))')
     xcrun simctl boot "$device" 2>/dev/null || true
     xcrun simctl bootstatus "$device" -b
     xcrun simctl install "$device" target/ios-app/koan.app

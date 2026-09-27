@@ -5,7 +5,7 @@
 //! terminal is degenerately small.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -224,14 +224,18 @@ fn seek_bar_metrics_match_rendered_bar() {
         assert_eq!(&prefix[..1], " ", "width={width}");
         assert_eq!(bar_start, 4, "width={width}");
 
-        // Every cell inside the reported bar span is a bar glyph, filled or empty.
+        // Every cell inside the reported bar span is a bar glyph — filled,
+        // empty, or the one that marks the playhead.
+        let mut heads = 0;
         for x in bar_start..bar_start + bar_width {
             let sym = buf[(x, 0)].symbol();
+            heads += usize::from(sym == "\u{25CF}");
             assert!(
-                sym == "\u{2501}" || sym == "\u{2500}",
+                sym == "\u{2501}" || sym == "\u{2500}" || sym == "\u{25CF}",
                 "width={width} col={x} is {sym:?}, not a bar glyph"
             );
         }
+        assert_eq!(heads, 1, "width={width}");
         // The cell just past the bar is the separating space, not a bar glyph.
         if bar_start + bar_width < width {
             assert_eq!(
@@ -258,7 +262,7 @@ fn transport_survives_every_size_and_title() {
                 render_widget(
                     TransportBar::new(Some(&info), Some(&e), state, 107_500, &theme)
                         .with_ticker_offset(7)
-                        .with_download_fraction(Some(0.4)),
+                        .with_seekable_ms(Some(86_000)),
                     w,
                     h,
                 );
@@ -351,8 +355,9 @@ fn empty_queue_panics_with_no_inner_row() {
 // ---------------------------------------------------------------------------
 
 fn library_state() -> LibraryState {
-    // Path whose parent does not exist — no DB is opened, nodes stay empty.
-    let mut st = LibraryState::new(Path::new("/koan-render-test-no-such-dir/none.db"));
+    // Loading reads the library, so it has to be this process's own.
+    koan_core::config::isolate_config_for_tests();
+    let mut st = LibraryState::load();
     for (i, name) in NASTY.iter().enumerate() {
         st.nodes.push(LibraryNode::Artist {
             id: i as i64,

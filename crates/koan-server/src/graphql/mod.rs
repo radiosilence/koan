@@ -437,6 +437,7 @@ mod tests {
                         album_remote_id: None,
                         artist_remote_id: None,
                         mbid: None,
+                        album_mbid: None,
                         album_added_at: None,
                         label: None,
                     };
@@ -475,6 +476,7 @@ mod tests {
             album_remote_id: None,
             artist_remote_id: None,
             mbid: None,
+            album_mbid: None,
             album_added_at: None,
             label: None,
         };
@@ -798,15 +800,15 @@ mod tests {
             .execute(&format!("mutation {{ playPlaylist(id: {id}) {{ ok }} }}"))
             .await;
         assert!(resp.errors.is_empty(), "errors: {:?}", resp.errors);
-        assert!(matches!(
-            rx.try_recv().unwrap(),
-            PlayerCommand::ClearPlaylist
-        ));
         match rx.try_recv().unwrap() {
-            PlayerCommand::AddToPlaylist(items) => assert_eq!(items.len(), 2),
-            other => panic!("expected AddToPlaylist, got {:?}", other),
+            PlayerCommand::ReplacePlaylist { items, start } => {
+                assert_eq!(items.len(), 2);
+                assert_eq!(start, 0);
+                assert!(items.iter().all(|i| i.playlist_entry_id.is_some()));
+            }
+            other => panic!("expected ReplacePlaylist, got {:?}", other),
         }
-        assert!(matches!(rx.try_recv().unwrap(), PlayerCommand::Play(_)));
+        assert!(rx.try_recv().is_err());
 
         let resp = schema
             .execute(&format!("mutation {{ deletePlaylist(id: {id}) {{ ok }} }}"))
@@ -821,7 +823,7 @@ mod tests {
     /// playlist points at rows, not at paths.
     #[tokio::test]
     async fn saving_the_queue_keeps_only_what_the_library_knows() {
-        use koan_core::player::state::{LoadState, PlaylistItem};
+        use koan_core::player::state::{ItemState, PlaylistItem};
 
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("test.db");
@@ -848,7 +850,7 @@ mod tests {
             track_number: None,
             disc: None,
             duration_ms: None,
-            load_state: LoadState::Ready,
+            state: ItemState::Ready,
         };
         state.add_items(vec![
             item("Known", "/music/known.flac", Some(known)),
@@ -885,7 +887,7 @@ mod tests {
 
     #[tokio::test]
     async fn queue_entries_have_status_and_download_progress() {
-        use koan_core::player::state::{LoadState, PlaylistItem};
+        use koan_core::player::state::{ItemState, PlaylistItem};
 
         // Build schema with a shared state we can manipulate directly.
         let tmp = TempDir::new().unwrap();
@@ -912,7 +914,7 @@ mod tests {
             track_number: Some(1),
             disc: Some(1),
             duration_ms: Some(240000),
-            load_state: LoadState::Ready,
+            state: ItemState::Ready,
         };
         state.add_items(vec![item]);
 

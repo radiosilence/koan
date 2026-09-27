@@ -29,6 +29,7 @@ final class Navigator {
         case artists
         case favourites
         case playHistory
+        case downloads
         /// One playlist. A sidebar row like any other — which is what makes
         /// clicking it light it up, and what lets Back return to it.
         case playlist(Int64)
@@ -44,6 +45,8 @@ final class Navigator {
             case .artists: "Filter artists"
             case .favourites: "Filter favourites"
             case .playHistory: "Filter history"
+            // Short, and ordered by what is happening rather than by name.
+            case .downloads: nil
             // A playlist is a sequence someone chose, and narrowing it hides
             // part of that sequence rather than telling you anything.
             case .queue, .searchResults, .playlist: nil
@@ -78,8 +81,13 @@ final class Navigator {
     /// levels of anything.
     private var history: [Page] = [.section(.queue)]
     private var cursor = 0
+    /// The move being loaded, if there is one.
+    private var moving: Task<Void, Never>?
 
     private let library: LibraryModel
+    /// Set by `AppState`. A playlist is a page like any other, and its rows are
+    /// read before the move like any other page's.
+    weak var playlists: PlaylistsModel?
 
     init(library: LibraryModel) {
         self.library = library
@@ -95,7 +103,24 @@ final class Navigator {
         go(to: .section(section))
     }
 
+    /// How many times each section has been sent back to its top. The stage
+    /// keys a section's page on it, so a bump rebuilds the page: on macOS a
+    /// `List` cannot be told to scroll, and starting over is the one way to
+    /// put it at the top. See `StageView`.
+    private(set) var rewinds: [Section: Int] = [:]
+
+    /// A click on the sidebar row for the page already showing: back to the
+    /// top, the way a browser tab's own link reloads it. A click from anywhere
+    /// else is an ordinary move, and a page kept alive keeps its place.
+    func rewind(_ section: Section) {
+        guard current == .section(section) else { return }
+        rewinds[section, default: 0] += 1
+    }
+
     func open(album id: Int64, highlighting trackId: Int64? = nil) {
+        FrameTimer.shared.begin()
+        // Set before the move rather than on arrival: the page that reads it is
+        // not on screen yet, and this is the same click.
         highlightedTrackId = trackId
         go(to: .album(id))
     }
@@ -110,25 +135,94 @@ final class Navigator {
 
     func goBack() {
         guard canGoBack else { return }
-        cursor -= 1
-        apply(history[cursor])
+        let landing = cursor - 1
+        let page = history[landing]
+        move(to: page) { [weak self] in self?.arrive(at: page, near: landing) }
     }
 
     func goForward() {
         guard canGoForward else { return }
-        cursor += 1
-        apply(history[cursor])
+        let landing = cursor + 1
+        let page = history[landing]
+        move(to: page) { [weak self] in self?.arrive(at: page, near: landing) }
+    }
+
+    /// `forget` can prune history while a move loads, so the index captured
+    /// before it may no longer name the page, or exist.
+    private func arrive(at page: Page, near landing: Int) {
+        if history.indices.contains(landing), history[landing] == page {
+            cursor = landing
+        } else {
+            cursor = history.lastIndex(of: page) ?? min(landing, history.count - 1)
+        }
     }
 
     /// Go to a page, recording it. The only way anything moves.
     func go(to next: Page) {
         guard next != current else { return }
-        apply(next)
+        move(to: next) { [weak self] in self?.record(next) }
+    }
+
+    /// Load the page, *then* move to it.
+    ///
+    /// Nothing draws until there is something to draw. Arriving first and
+    /// fetching afterwards means a frame of the word "Album" over an empty
+    /// list, and then the real page flickering in underneath it — the same
+    /// partial render a web page does, and it reads exactly as badly. These are
+    /// indexed queries answered in-process; there is no reason to show anybody
+    /// the gap.
+    ///
+    /// One task at a time, so a second click while the first page is still
+    /// being read wins: the older move is cancelled before it can apply, rather
+    /// than landing on top of the newer one.
+    ///
+    /// `arriving` is where the history moves, and it runs beside the page
+    /// rather than before it. Back used to step the cursor on the click and
+    /// leave the move to catch up, so a Back pressed while a record was still
+    /// being read cancelled that record — which then never applied and never
+    /// recorded — and stepped off a page nobody had arrived at. The screen did
+    /// not move, and it took a second press to go anywhere. Nothing about where
+    /// you are changes until there is a page to be there.
+    private func move(to next: Page, arriving: @escaping @MainActor () -> Void) {
+        moving?.cancel()
+        moving = Task {
+            await Trace.region("click-to-page") {
+                let listing = await Trace.region("prepare") { await prepared(for: next) }
+                guard !Task.isCancelled else { return }
+                Trace.region("apply") {
+                    apply(next, showing: listing)
+                    arriving()
+                }
+            }
+        }
+    }
+
+    /// Everything the page draws, in hand before it is shown. A listing when
+    /// the page is a section that has rows of its own; the pages about one
+    /// thing hold theirs on the model that read them.
+    private func prepared(for page: Page) async -> LibraryModel.Listing? {
+        switch page {
+        case .album(let id):
+            await library.prepare(album: id)
+            return nil
+        case .artist(let id):
+            await library.prepare(artist: id)
+            return nil
+        case .section(.playlist(let id)):
+            await playlists?.prepare(id: id)
+            return await library.prepare(section: .playlist(id))
+        case .section(let section):
+            return await library.prepare(section: section)
+        }
+    }
+
+    /// Record where we just went, the way a browser does.
+    private func record(_ next: Page) {
         // The cursor can already point here: `forget` prunes history without
         // moving the screen, and what follows is usually a move back onto the
         // entry it left the cursor on.
         guard history[cursor] != next else { return }
-        // A new move discards anything ahead, the way a browser does.
+        // A new move discards anything ahead.
         if cursor < history.count - 1 {
             history.removeSubrange((cursor + 1)...)
         }
@@ -150,13 +244,14 @@ final class Navigator {
         cursor = min(surviving, history.count - 1)
     }
 
-    private func apply(_ next: Page) {
+    /// The move itself: the page and the rows it draws, in one change. Two
+    /// changes would be two renders, and the first of them would be the page
+    /// without its rows.
+    private func apply(_ next: Page, showing listing: LibraryModel.Listing?) {
         current = next
-        // Only a section decides what the library loads; arriving at a record
+        // Only a section decides what the library shows; arriving at a record
         // is not a reason to throw away the filter behind it.
-        if let section = next.section, section != library.section {
-            library.showing(section)
-        }
+        if let listing { library.show(listing) }
     }
 
     // MARK: - Bindings
@@ -194,14 +289,8 @@ final class Navigator {
     func showQueueWhenReady(watching player: PlayerModel) {
         let before = player.queueVersion
         Task {
-            let deadline = ContinuousClock.now + .milliseconds(50)
-            while ContinuousClock.now < deadline {
-                if player.queueVersion != before {
-                    show(.queue)
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(5))
-            }
+            await player.settle(within: .milliseconds(50)) { player.queueVersion != before }
+            if player.queueVersion != before { show(.queue) }
         }
     }
 }

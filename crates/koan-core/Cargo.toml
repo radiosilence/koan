@@ -13,14 +13,14 @@ categories = ["multimedia::audio"]
 # Acoustic analysis
 bliss-audio = { version = "0.13", default-features = false, features = ["symphonia-all"] }
 # Auth
-argon2 = "0.5"
+argon2 = "0.6"
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
 pem = "4"
 ring = "0.17"
 crossbeam-channel = "0.5"
 chrono = "0.4"
 # Config
-dirs = "6"
+dirs = "7"
 figment = { version = "0.10", features = ["toml", "env"] }
 # Credentials (cross-platform: macOS Keychain, Linux secret-service)
 # Metadata
@@ -32,12 +32,15 @@ getrandom = "0.4"
 md5 = "0.8"
 # Async/threading
 parking_lot = "0.12"
+# Only `sync`: `watch` is the analyser telling its subscribers a frame is
+# ready. No runtime, no reactor — koan-core stays threads and channels.
+tokio = { version = "1", default-features = false, features = ["sync"] }
 rayon = "1"
 reqwest = { workspace = true }
 realfft = "3"
 rtrb = "0.4"
 # Database
-rusqlite = { workspace = true, features = ["collation"] }
+rusqlite = { workspace = true, features = ["collation", "functions"] }
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

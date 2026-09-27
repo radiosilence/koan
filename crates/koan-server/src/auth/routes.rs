@@ -17,10 +17,15 @@ use koan_core::auth;
 use koan_core::db::connection::Database;
 use koan_core::db::queries::auth as auth_queries;
 
-/// Name of the cookie carrying the refresh token. Scoped to `/auth/refresh` so
-/// it is never attached to an API call, and `HttpOnly` so script cannot read it.
+/// Name of the cookie carrying the refresh token. Scoped to `/auth` so it
+/// reaches refresh and logout but is never attached to an API call, and
+/// `HttpOnly` so script cannot read it.
 const REFRESH_COOKIE: &str = "koan_refresh";
-const REFRESH_COOKIE_PATH: &str = "/auth/refresh";
+const REFRESH_COOKIE_PATH: &str = "/auth";
+/// A cookie left at this narrower path is sent ahead of the one at
+/// `REFRESH_COOKIE_PATH` and shadows it, so every response that sets or clears
+/// the refresh cookie clears this one too.
+const STALE_REFRESH_COOKIE_PATH: &str = "/auth/refresh";
 
 /// Fixed-window per-IP cap on login attempts.
 ///
@@ -95,6 +100,17 @@ impl AuthRouteState {
             self.refresh_ttl_secs,
         )
     }
+
+    fn stale_refresh_cookie(&self) -> String {
+        self.cookie(REFRESH_COOKIE, "", STALE_REFRESH_COOKIE_PATH, 0)
+    }
+}
+
+/// A hash with the same parameters as a real one, to verify unknown usernames
+/// against.
+fn dummy_password_hash() -> &'static str {
+    static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    HASH.get_or_init(|| auth::hash_password("koan-dummy-password").unwrap_or_default())
 }
 
 /// Read the refresh token from the request body, falling back to the cookie so a
@@ -241,6 +257,13 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
     let user = match auth_queries::get_user_by_username(&db.conn, &req.username) {
         Ok(Some(u)) => u,
         Ok(None) => {
+            // Pay for a verify anyway, so response time doesn't say which
+            // usernames exist.
+            let password = req.password.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                auth::verify_password(&password, dummy_password_hash())
+            })
+            .await;
             return (
                 StatusCode::UNAUTHORIZED,
                 Json(MessageResponse {
@@ -311,6 +334,7 @@ async fn login(State(state): State<AuthRouteState>, Json(req): Json<LoginRequest
     let cookies = [
         (SET_COOKIE, state.access_cookie(&access_token)),
         (SET_COOKIE, state.refresh_cookie(&refresh_token_id)),
+        (SET_COOKIE, state.stale_refresh_cookie()),
     ];
 
     let resp = LoginResponse {
@@ -422,6 +446,7 @@ async fn refresh(
     let cookies = [
         (SET_COOKIE, state.access_cookie(&access_token)),
         (SET_COOKIE, state.refresh_cookie(&new_refresh_id)),
+        (SET_COOKIE, state.stale_refresh_cookie()),
     ];
 
     let resp = RefreshResponse {
@@ -455,6 +480,7 @@ async fn logout(
             SET_COOKIE,
             state.cookie(REFRESH_COOKIE, "", REFRESH_COOKIE_PATH, 0),
         ),
+        (SET_COOKIE, state.stale_refresh_cookie()),
     ];
 
     (
@@ -533,7 +559,7 @@ mod tests {
 
         // The refresh cookie never rides along on an API call.
         let refresh = state(false).refresh_cookie("tok");
-        assert!(refresh.contains("Path=/auth/refresh"));
+        assert!(refresh.contains("Path=/auth;"));
         assert!(refresh.contains("HttpOnly"));
     }
 }

@@ -15,21 +15,24 @@ import KoanFFI
 @Observable
 final class SearchModel {
     private let engine: KoanEngine
-    private let library: LibraryModel
     private let nav: Navigator
 
-    /// Typing schedules the search itself.
-    ///
-    /// This used to be an `.onChange` in the macOS scene root, which meant a
-    /// second shell could bind a field to `query` and get a search that never
-    /// ran. Anything that can set the query is entitled to the debounce that
-    /// goes with it.
+    /// Searching follows from the query changing, here rather than in an
+    /// `onChange` on a view: a view that watches the query is a view that is
+    /// rebuilt on every keystroke.
     var query: String = "" {
         didSet {
             guard query != oldValue else { return }
+            let has = !query.trimmingCharacters(in: .whitespaces).isEmpty
+            if has != hasQuery { hasQuery = has }
             schedule()
         }
     }
+
+    /// Stored, and only written when it flips. Computed from `query`, it made
+    /// everything that asked — the sidebar, for its Results row — a reader of
+    /// every keystroke.
+    private(set) var hasQuery = false
 
     private(set) var artists: [Artist] = []
     private(set) var albums: [Album] = []
@@ -41,14 +44,12 @@ final class SearchModel {
     /// location, so a detail view you searched from is still there afterwards.
     private var locationBeforeSearch: Navigator.Page?
 
-    init(engine: KoanEngine, library: LibraryModel, nav: Navigator) {
+    init(engine: KoanEngine, nav: Navigator) {
         self.engine = engine
-        self.library = library
         self.nav = nav
     }
 
     var isEmpty: Bool { artists.isEmpty && albums.isEmpty && tracks.isEmpty }
-    var hasQuery: Bool { !query.trimmingCharacters(in: .whitespaces).isEmpty }
 
     /// What a suggestion row completes to.
     ///
@@ -110,30 +111,38 @@ final class SearchModel {
             return
         }
 
+        // Where to put them back, captured now — the move itself waits for
+        // results, and by then this is no longer where they were.
         if nav.section != .searchResults {
             locationBeforeSearch = nav.current
-            nav.show(.searchResults)
         }
 
-        isSearching = true
+        // Only on the edge: written per keystroke, the results page re-ran per
+        // keystroke for a flag that had not moved.
+        if !isSearching { isSearching = true }
         let engine = self.engine
         task = Task {
             try? await Task.sleep(for: .milliseconds(160))
             guard !Task.isCancelled else { return }
 
+            // Rows, not ids: the engine already read them to rank them, and
+            // resolving ids would mean holding a catalogue to resolve against.
             let found = (
                 (try? await engine.search(query: text, limit: 60)) ?? [],
-                (try? await engine.fuzzySearch(query: text, kind: .album, limit: 30)) ?? [],
-                (try? await engine.fuzzySearch(query: text, kind: .artist, limit: 30)) ?? []
+                (try? await engine.fuzzyAlbums(query: text, limit: 30)) ?? [],
+                (try? await engine.fuzzyArtists(query: text, limit: 30)) ?? []
             )
 
             guard !Task.isCancelled else { return }
             tracks = found.0
-            // Fuzzy matching answers with ids; the objects come from the
-            // library caches, which are loaded once at launch.
-            albums = found.1.compactMap { library.album(id: $0.id) }
-            artists = found.2.compactMap { library.artist(id: $0.id) }
+            albums = found.1
+            artists = found.2
             isSearching = false
+            // Moved once there is something to show. Navigating on the first
+            // keystroke put an empty results page up and filled it in a query
+            // later — the page you were on is a better thing to look at while
+            // the answer is being read than a page with nothing on it.
+            nav.show(.searchResults)
         }
     }
 
@@ -151,9 +160,11 @@ final class SearchModel {
     /// Clearing after acting on a result: the field empties but the user has
     /// already been sent somewhere, so don't drag them back.
     func reset() {
+        // Forgotten first: emptying the query runs `schedule`, which would
+        // otherwise take them back to where they searched from.
+        locationBeforeSearch = nil
         query = ""
         clear()
-        locationBeforeSearch = nil
     }
     /// Return either picks a suggestion — in which case the field holds a token
     /// naming exactly what was chosen — or it means "show me everything".

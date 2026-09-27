@@ -18,7 +18,8 @@
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
+use std::time::Instant;
 
 use crossbeam_channel::Sender;
 use koan_core::audio::viz::VizSnapshot;
@@ -35,7 +36,9 @@ use koan_core::remote::client::SubsonicError;
 use uuid::Uuid;
 
 mod offload;
+mod state;
 mod types;
+pub use state::*;
 pub use types::*;
 
 uniffi::setup_scaffolding!();
@@ -54,40 +57,6 @@ pub struct FuzzyMatch {
     /// Pre-joined display text — the same string that was matched against.
     pub name: String,
     pub kind: SearchKind,
-}
-
-/// Something the engine changed, delivered by awaiting `next_event`.
-///
-/// A pull surface rather than a callback interface: a client writes a loop
-/// instead of an object, and the loop's lifetime is the subscription's, so
-/// there is nothing to unregister and nothing to leak across a reload.
-///
-/// Every variant carries an absolute value, never a delta, which is what makes
-/// it safe to drop the older ones when a client falls behind — the next one
-/// tells the whole truth on its own.
-// One variant carries a snapshot and two carry a u64. Boxing is what clippy
-// wants and is not on offer across the FFI, and the saving would be nothing:
-// these are built a handful of times a second, not held in a collection.
-#[allow(clippy::large_enum_variant)]
-#[derive(uniffi::Enum, Debug, Clone)]
-pub enum PlayerEvent {
-    /// State, track, or format changed — anything a transport bar displays
-    /// other than the position.
-    PlaybackChanged { now_playing: NowPlaying },
-    /// The queue was mutated. Carries the version so a client can skip a
-    /// refetch it has already done.
-    QueueChanged { version: u64 },
-    /// Playback position, while playing.
-    PositionChanged { position_ms: u64 },
-    /// What is downloading, and how far each has got.
-    ///
-    /// Separate from `QueueChanged` because progress moves several times a
-    /// second while the queue itself does not — announcing it as a queue change
-    /// makes every client refetch the whole list for a byte counter, which is
-    /// the thing the version guard exists to avoid. An empty list means nothing
-    /// is in flight any more, which is also how a client learns a download
-    /// finished.
-    DownloadsChanged { downloads: Vec<DownloadProgress> },
 }
 
 /// Reports how far a long task has got.
@@ -129,6 +98,9 @@ fn init_logging() {
                 return;
             }
             let Ok(mut guard) = self.0.lock() else { return };
+            if guard.is_none() {
+                *guard = config::open_log();
+            }
             let Some(file) = guard.as_mut() else { return };
             let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             let _ = writeln!(
@@ -151,17 +123,63 @@ fn init_logging() {
 
     static LOGGER: std::sync::OnceLock<FileLogger> = std::sync::OnceLock::new();
 
-    let logger = LOGGER.get_or_init(|| {
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(config::config_dir().join("koan.log"))
-            .ok();
-        FileLogger(Mutex::new(file))
-    });
+    let logger = LOGGER.get_or_init(|| FileLogger(Mutex::new(config::open_log())));
     // A second engine in one process is not an error worth failing over.
     if log::set_logger(logger).is_ok() {
         log::set_max_level(log::LevelFilter::Info);
+    }
+}
+
+impl Drop for KoanEngine {
+    /// Wake the state watcher so it notices there is nothing left to watch.
+    ///
+    /// It waits with no timeout, holding a weak reference precisely so it does
+    /// not keep the engine alive — and a thread parked for ever would never
+    /// find out that it had gone.
+    fn drop(&mut self) {
+        koan_core::signal::engine_changed().bump();
+    }
+}
+
+/// One client's subscription to the analyser.
+///
+/// A cursor over the published frame, in the shape `StateStream` already uses:
+/// the value is a whole snapshot, so a subscriber that slept through two
+/// publishes wants the newest frame rather than the two it missed.
+#[derive(uniffi::Object)]
+pub struct VizStream {
+    /// Weak, so a client's loop ends when the engine goes rather than holding
+    /// the analyser up. The loop *is* the subscription.
+    viz: Weak<VizSnapshot>,
+    inner: tokio::sync::Mutex<tokio::sync::watch::Receiver<u64>>,
+}
+
+impl VizStream {
+    fn new(viz: &Arc<VizSnapshot>) -> Arc<Self> {
+        // Counted as a reader from here rather than at the first frame: an
+        // analyser parked for want of one would otherwise never publish the
+        // frame this is about to wait for.
+        viz.touch();
+        Arc::new(Self {
+            viz: Arc::downgrade(viz),
+            inner: tokio::sync::Mutex::new(viz.subscribe()),
+        })
+    }
+}
+
+#[uniffi::export]
+impl VizStream {
+    /// The next frame, as three band energies. Waits until there is one.
+    ///
+    /// `None` once the engine is gone, which ends the caller's loop.
+    pub async fn next(&self) -> Option<VizLevels> {
+        let mut cursor = self.inner.lock().await;
+        // Marked seen *before* the wait, so a frame published between the last
+        // answer and this call is returned rather than slept through.
+        cursor.borrow_and_update();
+        cursor.changed().await.ok()?;
+        let viz = self.viz.upgrade()?;
+        Some(viz.levels().into())
     }
 }
 
@@ -172,8 +190,8 @@ pub struct KoanEngine {
     /// The analyser's latest frame. Only the three-band summary crosses the
     /// boundary — see `viz_levels`.
     viz: Arc<VizSnapshot>,
-    db_path: PathBuf,
-    events: tokio::sync::broadcast::Sender<PlayerEvent>,
+    /// What the engine publishes and clients read. See `state`.
+    out: Arc<state::EngineState>,
     /// Set while the automatic sync is running, so a UI can say so rather than
     /// appearing to do nothing for the minute it takes.
     auto_syncing: Arc<std::sync::atomic::AtomicBool>,
@@ -183,7 +201,25 @@ pub struct KoanEngine {
     /// one per task, because only one runs at a time — they all contend for the
     /// same single database writer.
     cancel_library_task: Arc<std::sync::atomic::AtomicBool>,
+    /// Bumped by anything that writes library rows. The watcher turns a change
+    /// here into a `Library` slice, so a background scan finishing looks the
+    /// same to a client as one it asked for itself.
+    library_version: Arc<std::sync::atomic::AtomicU64>,
 }
+
+/// How far a client's own reckoning of the playhead may drift before it is
+/// told again. Two frames of a 60Hz seek bar: below this there is nothing on
+/// screen to correct.
+const PLAYHEAD_TOLERANCE_MS: u64 = 32;
+
+/// The same, for how far a download reaches. The bar it draws is one bar wide
+/// and a fifth of a second of audio does not move it.
+const SEEKABLE_TOLERANCE_MS: u64 = 200;
+
+/// How long a run of downloads landing is allowed to go before the library
+/// says so again. A record is fetched a track at a time a few seconds apart;
+/// one reload per track is a reload per few seconds for the length of it.
+const LANDING_COALESCE: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[uniffi::export]
 impl KoanEngine {
@@ -234,35 +270,37 @@ impl KoanEngine {
 
     // --- Observable state --------------------------------------------------
 
-    /// One consistent read of everything the transport bar needs. The UI polls
-    /// this; `playlist_version` tells it whether the queue also needs refetching.
-    pub async fn now_playing(self: Arc<Self>) -> NowPlaying {
-        offload::offload(move || self.now_playing_blocking()).await
-    }
-    /// Wait for the next thing to change.
+    /// Follow the engine's state.
     ///
-    /// `None` once the engine is gone, which ends the caller's loop. A client
-    /// that falls behind loses the events it missed rather than delaying the
-    /// engine — every variant carries an absolute value, so the one that does
-    /// arrive is still correct.
-    pub async fn next_event(self: Arc<Self>) -> Option<PlayerEvent> {
-        let mut rx = self.events.subscribe();
-        loop {
-            match rx.recv().await {
-                Ok(event) => return Some(event),
-                // Fell behind. The next event supersedes whatever was dropped.
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    log::debug!("client missed {n} events");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => return None,
-            }
-        }
+    /// The one way a client learns anything changed. Each answer is a batch of
+    /// whole slices — see `state` for why they are snapshots and why the
+    /// cursor cannot lose one. A fresh stream's first answer is the entire
+    /// state, so there is nothing to seed from separately.
+    pub fn observe(&self) -> Arc<state::StateStream> {
+        state::StateStream::new(&self.out)
+    }
+
+    /// Forget the transfers that have already settled. Running ones are left
+    /// alone — stopping one is a different verb.
+    pub fn clear_settled_downloads(&self) {
+        koan_core::remote::downloads::store().clear_settled();
     }
 
     /// Cheap enough to poll every frame — use it to decide whether to call
     /// `queue()`, which allocates the whole list.
     pub fn playlist_version(&self) -> u64 {
         self.state.playlist_version()
+    }
+
+    /// Follow the spectrum, one message per analysed frame.
+    ///
+    /// The analyser is the clock. It runs at the rate the display asks for
+    /// (see `set_viz_fps`), publishes a frame when it has one, and publishes
+    /// nothing at all when the play head has stopped and the bars have fallen
+    /// — so a paused koan delivers no messages, wakes nothing, and the thread
+    /// that would have produced them is parked rather than looping.
+    pub fn viz_stream(&self) -> Arc<VizStream> {
+        VizStream::new(&self.viz)
     }
 
     /// What is coming out of the speakers right now, as three band energies.
@@ -275,27 +313,14 @@ impl KoanEngine {
         self.viz.levels().into()
     }
 
-    pub async fn queue(self: Arc<Self>) -> Vec<QueueItem> {
-        offload::offload(move || {
-            let entries = self.state.derive_visible_queue().entries;
-            // One query for the whole queue. A client draws one sleeve per
-            // album, and without an ID to group by it asks for artwork per
-            // track — the same image fetched once for every track on the
-            // record. A queue with no database behind it simply has no album
-            // IDs; the art falls back to the per-track lookup as before.
-            let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
-            let album_ids = self
-                .db()
-                .ok()
-                .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
-                .unwrap_or_default();
-
-            entries
-                .iter()
-                .map(|e| QueueItem::from_entry(e, &album_ids))
-                .collect()
-        })
-        .await
+    /// Run the analyser at the refresh rate of the display it is drawn on.
+    ///
+    /// koan cannot know that rate and a window can: 60 on one panel, 120 on
+    /// another, and it changes when the window is dragged between them. One
+    /// atomic store — the analyser picks it up on its next pass, and nothing
+    /// wakes for it.
+    pub fn set_viz_fps(&self, fps: u8) {
+        self.viz.set_fps(fps);
     }
 
     // --- Queue mutation ----------------------------------------------------
@@ -424,63 +449,72 @@ impl KoanEngine {
 
     // --- Library -----------------------------------------------------------
 
+    /// The library's artists, narrowed by `search`.
+    ///
+    /// Whole, not paged. This is an in-process call, and a library's artists
+    /// are a bounded set — a few thousand records marshalled once beats a
+    /// client that has to know how far it has scrolled.
     pub async fn artists(
         self: Arc<Self>,
         search: Option<String>,
     ) -> Result<Vec<Artist>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows = match search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                Some(q) => queries::find_artists(&db.conn, q),
-                None => queries::all_artists(&db.conn),
-            }
+            let rows = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    search: trimmed(&search),
+                    ..Default::default()
+                },
+            )
             .map_err(db_err)?;
             Ok(rows.into_iter().map(Artist::from).collect())
         })
         .await
     }
 
-    /// The library's albums, narrowed by `search` if given.
+    pub async fn artist(self: Arc<Self>, artist_id: i64) -> Result<Option<Artist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(queries::get_artist(&db.conn, artist_id)
+                .map_err(db_err)?
+                .map(Artist::from))
+        })
+        .await
+    }
+
+    /// The library's albums, narrowed by `search` and ordered by `sort`.
     ///
-    /// The search runs in SQL rather than over the returned list: a client that
-    /// filters what it has already been handed still pays to read and marshal
-    /// every album in the library on each keystroke.
+    /// Both run in SQL. A client that narrows or sorts what it has already been
+    /// handed pays to read and marshal every album in the library on each
+    /// keystroke, and has to reimplement in its own language an answer the
+    /// database already knows.
+    ///
+    /// Whole, not paged, for the reason [`Self::artists`] gives.
+    ///
+    /// `seed` fixes the shuffle under [`AlbumSort::Random`] and is ignored by
+    /// every other sort, so that narrowing a shuffled listing does not deal it
+    /// again. A new seed is a new shuffle, which is what a reshuffle asks for.
     pub async fn albums(
         self: Arc<Self>,
         artist_id: Option<i64>,
         sort: AlbumSort,
+        seed: i64,
         search: Option<String>,
     ) -> Result<Vec<Album>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let query = search.as_deref().map(str::trim).filter(|s| !s.is_empty());
-            let rows = match (artist_id, query) {
-                (Some(id), _) => queries::albums_for_artist(&db.conn, id),
-                (None, Some(q)) => queries::find_albums(&db.conn, q),
-                (None, None) => queries::all_albums(&db.conn),
-            }
+            let rows = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    artist_id,
+                    search: trimmed(&search),
+                    order: album_order(sort, seed),
+                    ..Default::default()
+                },
+            )
             .map_err(db_err)?;
-
-            let mut albums: Vec<Album> = rows.into_iter().map(Album::from).collect();
-            match sort {
-                // Albums predating the added_at column sort last rather than first,
-                // which is what an empty string would do.
-                AlbumSort::RecentlyAdded => albums.sort_by(|a, b| {
-                    b.added_at
-                        .as_deref()
-                        .unwrap_or("")
-                        .cmp(a.added_at.as_deref().unwrap_or(""))
-                }),
-                // Cached: `sort_by_key` recomputes the key on every
-                // comparison, so a plain sort lowercases each title a couple of
-                // dozen times over.
-                AlbumSort::Title => albums.sort_by_cached_key(|a| a.title.to_lowercase()),
-                AlbumSort::Artist => albums
-                    .sort_by_cached_key(|a| (a.artist_name.to_lowercase(), a.year.unwrap_or(0))),
-                AlbumSort::Year => albums.sort_by_key(|a| std::cmp::Reverse(a.year.unwrap_or(0))),
-                AlbumSort::Random => koan_core::helpers::shuffle(&mut albums),
-            }
-            Ok(albums)
+            Ok(rows.into_iter().map(Album::from).collect())
         })
         .await
     }
@@ -491,6 +525,39 @@ impl KoanEngine {
             Ok(queries::get_album(&db.conn, album_id)
                 .map_err(db_err)?
                 .map(Album::from))
+        })
+        .await
+    }
+
+    /// Everything a record's page shows, in one call.
+    ///
+    /// The two halves were two exported calls made in parallel, which is two
+    /// round trips and two connections out of the pool for one click. Most of
+    /// the time that cost nothing — and about one click in six it cost three
+    /// hundred milliseconds, because the pool had to open a connection, and
+    /// opening one runs the schema and a WAL checkpoint.
+    pub async fn album_page(self: Arc<Self>, album_id: i64) -> Result<AlbumPage, KoanError> {
+        offload::offload(move || {
+            let waited = std::time::Instant::now();
+            let db = self.db()?;
+            let pool = waited.elapsed();
+
+            let queried = std::time::Instant::now();
+            let album = queries::get_album(&db.conn, album_id)
+                .map_err(db_err)?
+                .map(Album::from);
+            let rows = queries::tracks_for_album(&db.conn, album_id).map_err(db_err)?;
+            let tracks = self.decorate(&db, rows);
+            let query = queried.elapsed();
+
+            // A canary, not tracing. These are two indexed reads and they take
+            // well under a millisecond; anything near a frame means something
+            // else had the database, and which half stalled is the whole
+            // question when it happens.
+            if pool + query > std::time::Duration::from_millis(50) {
+                log::warn!("slow album page {album_id}: pool {pool:?}, query {query:?}");
+            }
+            Ok(AlbumPage { album, tracks })
         })
         .await
     }
@@ -542,9 +609,6 @@ impl KoanEngine {
         limit: u32,
     ) -> Result<Vec<FuzzyMatch>, KoanError> {
         offload::offload(move || {
-            use nucleo::pattern::{CaseMatching, Normalization};
-            use nucleo::{Config as NucleoConfig, Nucleo};
-
             let db = self.db()?;
             let items: Vec<(i64, String)> = match kind {
                 SearchKind::Track => queries::all_tracks(&db.conn)
@@ -569,38 +633,59 @@ impl KoanEngine {
                     .collect(),
             };
 
-            let mut nucleo: Nucleo<u32> =
-                Nucleo::new(NucleoConfig::DEFAULT, Arc::new(|| {}), None, 1);
-            let injector = nucleo.injector();
-            for (i, (_, text)) in items.iter().enumerate() {
-                let text = text.clone();
-                injector.push(i as u32, |_val, cols| {
-                    cols[0] = text.into();
-                });
-            }
+            let texts: Vec<&str> = items.iter().map(|(_, t)| t.as_str()).collect();
+            Ok(fuzzy_rank(&texts, &query, limit)
+                .into_iter()
+                .map(|i| FuzzyMatch {
+                    id: items[i].0,
+                    name: items[i].1.clone(),
+                    kind,
+                })
+                .collect())
+        })
+        .await
+    }
 
-            nucleo
-                .pattern
-                .reparse(0, &query, CaseMatching::Smart, Normalization::Smart, false);
-            for _ in 0..20 {
-                nucleo.tick(10);
-            }
+    /// Fuzzy-matched albums, as rows.
+    ///
+    /// Rows rather than ids: the match already read them to build its corpus,
+    /// and a caller handed ids can only resolve them against a catalogue of its
+    /// own — which is the copy this exists to make unnecessary.
+    pub async fn fuzzy_albums(
+        self: Arc<Self>,
+        query: String,
+        limit: u32,
+    ) -> Result<Vec<Album>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::all_albums(&db.conn).map_err(db_err)?;
+            let texts: Vec<String> = rows
+                .iter()
+                .map(|a| format!("{} — {}", a.artist_name, a.title))
+                .collect();
+            let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
+            Ok(fuzzy_rank(&texts, &query, limit)
+                .into_iter()
+                .map(|i| Album::from(rows[i].clone()))
+                .collect())
+        })
+        .await
+    }
 
-            let snap = nucleo.snapshot();
-            let count = (snap.matched_item_count() as usize).min(limit as usize);
-            let mut out = Vec::with_capacity(count);
-            for i in 0..count as u32 {
-                if let Some(item) = snap.get_matched_item(i)
-                    && let Some((id, name)) = items.get(*item.data as usize)
-                {
-                    out.push(FuzzyMatch {
-                        id: *id,
-                        name: name.clone(),
-                        kind,
-                    });
-                }
-            }
-            Ok(out)
+    /// Fuzzy-matched artists, as rows. See [`Self::fuzzy_albums`].
+    pub async fn fuzzy_artists(
+        self: Arc<Self>,
+        query: String,
+        limit: u32,
+    ) -> Result<Vec<Artist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::all_artists(&db.conn).map_err(db_err)?;
+            let texts: Vec<&str> = rows.iter().map(|a| a.name.as_str()).collect();
+            Ok(fuzzy_rank(&texts, &query, limit)
+                .into_iter()
+                .map(|i| Artist::from(rows[i].clone()))
+                .collect())
         })
         .await
     }
@@ -662,55 +747,30 @@ impl KoanEngine {
     ) -> Result<Option<CoverArt>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let Some(row) = queries::get_track_row(&db.conn, track_id).map_err(db_err)? else {
-                return Ok(None);
-            };
+            let row = queries::get_track_row(&db.conn, track_id).map_err(db_err)?;
+            self.cover_art_of(row, size)
+        })
+        .await
+    }
 
-            if let Some(path) = row.path.as_ref().or(row.cached_path.as_ref())
-                && let Some(data) = koan_core::index::metadata::extract_cover_art(Path::new(path))
-            {
-                let mime = sniff_mime(&data).to_string();
-                return Ok(Some(CoverArt { data, mime }));
-            }
-
-            let Some(remote_id) = row.remote_id else {
-                return Ok(None);
-            };
-            let cfg = Config::cached();
-            // No server configured: this record simply has no art.
-            if !cfg.remote.enabled {
-                return Ok(None);
-            }
-            // Configured but unusable — signed out, or the password cannot be
-            // read. Reported rather than shrugged off: answering "no art" for
-            // every record makes a signed-out client look like a library that
-            // has no covers, which is a long way from where the problem is.
-            let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
-                return Err(KoanError::Remote {
-                    message: koan_core::helpers::remote_unavailable(&cfg),
-                });
-            };
-            match client.get_cover_art(&remote_id, size) {
-                Ok(data) if !data.is_empty() => {
-                    let mime = sniff_mime(&data).to_string();
-                    Ok(Some(CoverArt { data, mime }))
-                }
-                // The server answered and it has nothing. Normal, and worth
-                // remembering: this record has no art and never will.
-                Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => {
-                    Ok(None)
-                }
-                // A timeout or a dropped connection says nothing about whether
-                // art exists. Reported rather than swallowed, so the caller can
-                // ask again instead of recording "this album has none" for the
-                // rest of the session — and so it appears in the log at all.
-                Err(e) => {
-                    log::warn!("cover art for track {track_id} failed: {e}");
-                    Err(KoanError::Remote {
-                        message: e.to_string(),
-                    })
-                }
-            }
+    /// The record's artwork, asked for by the record.
+    ///
+    /// Every track on an album shares its cover, so a client only needs one of
+    /// them — and it used to *fetch the album's tracks* to find one, which is a
+    /// listing built, carried across the boundary and thrown away for a single
+    /// id. A grid of tiles did that once per tile: twenty-two calls, twenty-two
+    /// queries, and the two the page actually wanted queued behind them.
+    ///
+    /// Resolved in SQL here instead, in the same call that returns the bytes.
+    pub async fn album_cover_art(
+        self: Arc<Self>,
+        album_id: i64,
+        size: Option<u32>,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let row = queries::cover_track_for_album(&db.conn, album_id).map_err(db_err)?;
+            self.cover_art_of(row, size)
         })
         .await
     }
@@ -789,21 +849,73 @@ impl KoanEngine {
         .await
     }
 
+    // --- Artist info -------------------------------------------------------
+
+    /// Cached only — never the network, so a page can ask on every draw.
+    pub async fn artist_info(
+        self: Arc<Self>,
+        artist_id: i64,
+    ) -> Result<Option<ArtistInfo>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(koan_core::artist_info::cached(&db.conn, artist_id)
+                .map_err(db_err)?
+                .map(ArtistInfo::from))
+        })
+        .await
+    }
+
+    /// The cache while fresh, otherwise MusicBrainz, Wikidata and Wikipedia.
+    /// Seconds on a miss; an artist nothing can be found for is the normal
+    /// case, not an error.
+    pub async fn fetch_artist_info(
+        self: Arc<Self>,
+        artist_id: i64,
+    ) -> Result<Option<ArtistInfo>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(koan_core::artist_info::fetch(&db.conn, artist_id)
+                .ok()
+                .flatten()
+                .map(ArtistInfo::from))
+        })
+        .await
+    }
+
+    /// The artist's photograph. Hits the network; the caller caches it.
+    pub async fn artist_image(
+        self: Arc<Self>,
+        artist_id: i64,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            Ok(koan_core::artist_info::image(&db.conn, artist_id)
+                .ok()
+                .flatten()
+                .map(|data| CoverArt {
+                    mime: sniff_mime(&data).to_string(),
+                    data,
+                }))
+        })
+        .await
+    }
+
     // --- Play history ------------------------------------------------------
 
-    /// Recent plays, most recent first.
+    /// Every play, most recent first, narrowed by `search`.
     ///
     /// A list of events, not of tracks: a track played three times is three
     /// entries. Entries whose track has left the library are already gone.
+    ///
+    /// Whole, not paged, for the reason [`Self::artists`] gives.
     pub async fn play_history(
         self: Arc<Self>,
-        limit: u32,
-        offset: u32,
+        search: Option<String>,
     ) -> Result<Vec<PlayHistoryEntry>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let rows =
-                queries::play_history_with_tracks(&db.conn, limit, offset).map_err(db_err)?;
+            let rows = queries::play_history_with_tracks(&db.conn, trimmed(&search), None, 0)
+                .map_err(db_err)?;
             let (plays, tracks): (Vec<_>, Vec<_>) = rows
                 .into_iter()
                 .map(|r| ((r.id, r.played_at, r.listened_ms, r.source), r.track))
@@ -857,25 +969,57 @@ impl KoanEngine {
 
     // --- Favourites --------------------------------------------------------
 
-    pub async fn favourites(self: Arc<Self>) -> Result<Vec<Track>, KoanError> {
+    /// Favourited tracks, narrowed by `search`.
+    pub async fn favourites(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<Vec<Track>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            let ids = queries::favourite_track_ids_batch(&db.conn).map_err(db_err)?;
-            let mut rows = Vec::new();
-            for id in ids {
-                if let Ok(Some(row)) = queries::get_track_row(&db.conn, id) {
-                    rows.push(row);
-                }
-            }
-            rows.sort_by(|a, b| {
-                (&a.artist_name, &a.album_title, a.disc, a.track_number).cmp(&(
-                    &b.artist_name,
-                    &b.album_title,
-                    b.disc,
-                    b.track_number,
-                ))
-            });
+            let rows = queries::favourite_tracks(&db.conn, trimmed(&search)).map_err(db_err)?;
             Ok(self.decorate(&db, rows))
+        })
+        .await
+    }
+
+    /// Favourited records, as rows, narrowed by `search`.
+    pub async fn favourite_albums(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<Vec<Album>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::list_albums(
+                &db.conn,
+                &queries::AlbumQuery {
+                    search: trimmed(&search),
+                    favourites_only: true,
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(rows.into_iter().map(Album::from).collect())
+        })
+        .await
+    }
+
+    /// Favourited artists, as rows, narrowed by `search`.
+    pub async fn favourite_artists(
+        self: Arc<Self>,
+        search: Option<String>,
+    ) -> Result<Vec<Artist>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows = queries::list_artists(
+                &db.conn,
+                &queries::ArtistQuery {
+                    search: trimmed(&search),
+                    favourites_only: true,
+                    ..Default::default()
+                },
+            )
+            .map_err(db_err)?;
+            Ok(rows.into_iter().map(Artist::from).collect())
         })
         .await
     }
@@ -1032,44 +1176,15 @@ impl KoanEngine {
         .await
     }
 
-    /// The playlist the queue is still exactly, if it is one.
-    ///
-    /// While this answers, the queue follows that playlist: an edit there lands
-    /// here too. It stops answering the moment the queue is rearranged, added
-    /// to, or extended by radio — which is also when the following stops.
-    pub async fn queue_lock(self: Arc<Self>) -> Result<Option<QueueLock>, KoanError> {
-        offload::offload(move || {
-            let db = self.db()?;
-            Ok(match koan_core::playlists::queue_lock(&db, &self.state) {
-                Some(koan_core::playlists::QueueLock::Playlist(id)) => {
-                    queries::get_playlist(&db.conn, id)
-                        .map_err(db_err)?
-                        .map(|p| QueueLock::Playlist {
-                            playlist: Playlist::from(p),
-                        })
-                }
-                Some(koan_core::playlists::QueueLock::Album(id)) => {
-                    queries::get_album(&db.conn, id)
-                        .map_err(db_err)?
-                        .map(|a| QueueLock::Album {
-                            album: Album::from(a),
-                        })
-                }
-                None => None,
-            })
-        })
-        .await
-    }
-
-    /// Up to four tracks whose covers make the playlist's tile — one per album,
-    /// in playlist order.
-    pub async fn playlist_cover_track_ids(
+    /// Up to four albums whose covers make the playlist's tile, in playlist
+    /// order.
+    pub async fn playlist_cover_album_ids(
         self: Arc<Self>,
         playlist_id: i64,
     ) -> Result<Vec<i64>, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            queries::playlist_cover_track_ids(&db.conn, playlist_id).map_err(db_err)
+            queries::playlist_cover_album_ids(&db.conn, playlist_id).map_err(db_err)
         })
         .await
     }
@@ -1085,6 +1200,7 @@ impl KoanEngine {
             if !track_ids.is_empty() {
                 queries::add_tracks(&db.conn, id, &track_ids).map_err(db_err)?;
             }
+            self.bump_library();
             koan_core::playlists::push_to_remote(id);
             queries::get_playlist(&db.conn, id)
                 .map_err(db_err)?
@@ -1121,6 +1237,7 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             queries::rename_playlist(&db.conn, playlist_id, &name).map_err(db_err)?;
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
@@ -1137,8 +1254,11 @@ impl KoanEngine {
                 .flatten()
                 .and_then(|p| p.remote_id);
             let deleted = queries::delete_playlist(&db.conn, playlist_id).map_err(db_err)?;
-            if deleted && let Some(remote_id) = remote_id {
-                koan_core::playlists::delete_on_remote(remote_id);
+            if deleted {
+                self.bump_library();
+                if let Some(remote_id) = remote_id {
+                    koan_core::playlists::delete_on_remote(remote_id);
+                }
             }
             Ok(deleted)
         })
@@ -1156,6 +1276,7 @@ impl KoanEngine {
             let locked = self.locked_to(&db, playlist_id);
             let added = queries::add_tracks(&db.conn, playlist_id, &track_ids).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(added.len() as u32)
         })
@@ -1191,6 +1312,7 @@ impl KoanEngine {
                 queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
             }
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(added.len() as u32)
         })
@@ -1209,6 +1331,7 @@ impl KoanEngine {
             let locked = self.locked_to(&db, playlist_id);
             queries::reorder_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
@@ -1227,6 +1350,7 @@ impl KoanEngine {
             let removed =
                 queries::remove_entries(&db.conn, playlist_id, &entry_ids).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(removed as u32)
         })
@@ -1244,6 +1368,7 @@ impl KoanEngine {
             let locked = self.locked_to(&db, playlist_id);
             queries::reorder_entries(&db.conn, playlist_id, &order).map_err(db_err)?;
             self.follow_playlist(&db, playlist_id, locked);
+            self.bump_library();
             koan_core::playlists::push_to_remote(playlist_id);
             Ok(())
         })
@@ -1255,7 +1380,9 @@ impl KoanEngine {
     pub async fn reorder_playlists(self: Arc<Self>, ids: Vec<i64>) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            queries::reorder_playlists(&db.conn, &ids).map_err(db_err)
+            queries::reorder_playlists(&db.conn, &ids).map_err(db_err)?;
+            self.bump_library();
+            Ok(())
         })
         .await
     }
@@ -1270,7 +1397,9 @@ impl KoanEngine {
     ) -> Result<(), KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            queries::set_playlist_grouped(&db.conn, playlist_id, grouped).map_err(db_err)
+            queries::set_playlist_grouped(&db.conn, playlist_id, grouped).map_err(db_err)?;
+            self.bump_library();
+            Ok(())
         })
         .await
     }
@@ -1534,7 +1663,7 @@ impl KoanEngine {
                 remote_signed_in: koan_core::helpers::get_remote_password(&cfg).is_some(),
                 remote_tracks: db
                     .as_ref()
-                    .map(koan_core::helpers::tracks_from_server)
+                    .map(|db| koan_core::helpers::tracks_from_server(db))
                     .unwrap_or(0),
                 download_workers: cfg.remote.download_workers as u32,
                 cache_limit: cfg.remote.cache_limit.clone().unwrap_or_default(),
@@ -1549,6 +1678,7 @@ impl KoanEngine {
                     config::ReplayGainMode::Album => "album".into(),
                 },
                 pre_amp_db: cfg.playback.pre_amp_db,
+                fade_on_pause: cfg.playback.fade_on_pause,
 
                 radio_lookahead: cfg.radio.lookahead as u32,
                 radio_batch_size: cfg.radio.batch_size as u32,
@@ -1587,6 +1717,7 @@ impl KoanEngine {
                     _ => config::ReplayGainMode::Off,
                 };
                 cfg.playback.pre_amp_db = s.pre_amp_db;
+                cfg.playback.fade_on_pause = s.fade_on_pause;
 
                 cfg.radio.lookahead = s.radio_lookahead as usize;
                 cfg.radio.batch_size = (s.radio_batch_size.max(1)) as usize;
@@ -1661,7 +1792,10 @@ impl KoanEngine {
     pub async fn forget_folder(self: Arc<Self>, path: String) -> Result<u64, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            koan_core::helpers::forget_folder(&db, Path::new(&path)).map_err(db_err)
+            let removed =
+                koan_core::helpers::forget_folder(&db, Path::new(&path)).map_err(db_err)?;
+            self.bump_library();
+            Ok(removed)
         })
         .await
     }
@@ -1672,7 +1806,9 @@ impl KoanEngine {
     pub async fn forget_remote(self: Arc<Self>) -> Result<u64, KoanError> {
         offload::offload(move || {
             let db = self.db()?;
-            koan_core::helpers::forget_remote(&db).map_err(db_err)
+            let removed = koan_core::helpers::forget_remote(&db).map_err(db_err)?;
+            self.bump_library();
+            Ok(removed)
         })
         .await
     }
@@ -1686,6 +1822,7 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let summary = koan_core::helpers::rebuild_index(&db).map_err(db_err)?;
+            self.bump_library();
             Ok(RebuildSummary {
                 tracks: summary.tracks,
                 albums: summary.albums,
@@ -1701,10 +1838,66 @@ impl KoanEngine {
             let db = self.db()?;
             let cfg = Config::load().unwrap_or_default();
             let cleared = koan_core::helpers::clear_download_cache(&db, &cfg);
+            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            self.bump_library();
             Ok(CacheCleared {
                 files: cleared.files,
                 bytes: cleared.bytes,
             })
+        })
+        .await
+    }
+
+    /// Delete the downloaded copies of just these tracks. The library rows
+    /// stay, and they fetch again on demand.
+    pub async fn clear_downloads(
+        self: Arc<Self>,
+        track_ids: Vec<i64>,
+    ) -> Result<CacheCleared, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let cleared = koan_core::helpers::clear_downloads_for(&db, &track_ids);
+            koan_core::helpers::requeue_cleared_downloads(&self.state, &self.tx);
+            self.bump_library();
+            Ok(CacheCleared {
+                files: cleared.files,
+                bytes: cleared.bytes,
+            })
+        })
+        .await
+    }
+
+    /// Fetch these tracks into the cache now, without queueing them.
+    ///
+    /// Downloads are normally a side effect of wanting to play something; this
+    /// is for wanting the bytes on the machine and nothing else — before going
+    /// somewhere without a server, most obviously. Tracks already downloaded
+    /// are skipped, so asking twice costs nothing.
+    ///
+    /// The transfers get identities of their own rather than borrowing a queue
+    /// item's, because there is no queue item: they appear in the download
+    /// store and nowhere else.
+    pub async fn download_to_cache(self: Arc<Self>, track_ids: Vec<i64>) -> Result<(), KoanError> {
+        offload::offload(move || {
+            let pending: Vec<(i64, koan_core::player::state::QueueItemId)> = track_ids
+                .into_iter()
+                .map(|id| (id, koan_core::player::state::QueueItemId::new()))
+                .collect();
+            koan_core::helpers::spawn_downloads(pending, self.tx.clone(), self.state.clone());
+            Ok(())
+        })
+        .await
+    }
+
+    /// Which of these tracks have a downloaded copy. What a menu asks before
+    /// deciding whether it is offering to fetch or to throw away.
+    pub async fn downloaded_track_ids(
+        self: Arc<Self>,
+        track_ids: Vec<i64>,
+    ) -> Result<Vec<i64>, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            queries::downloaded_of(&db.conn, &track_ids).map_err(db_err)
         })
         .await
     }
@@ -1774,6 +1967,7 @@ impl KoanEngine {
                 message: e.to_string(),
             })?;
 
+            self.bump_library();
             Ok(SyncSummary {
                 artists: synced.library.artists_synced as u32,
                 albums: synced.library.albums_synced as u32,
@@ -1788,7 +1982,9 @@ impl KoanEngine {
         .await
     }
 
-    /// Create a public share link on the remote server for these tracks.
+    /// Create a public share link for these tracks, on the remote server when
+    /// one is configured (which may be a koan server) and served by this koan
+    /// otherwise.
     ///
     /// Only tracks the server knows about can go in it — the link points at the
     /// server, so a local-only file has nothing for it to point at. A mixed
@@ -1983,6 +2179,7 @@ impl KoanEngine {
             }
             .map_err(organize_err)?;
             self.follow_moved_files(&result);
+            self.bump_library();
             Ok(OrganizePlan::build(
                 result,
                 track_ids.as_ref().map(Vec::len),
@@ -2006,6 +2203,7 @@ impl KoanEngine {
             let db = self.db()?;
             let paths: Vec<PathBuf> = paths.into_iter().map(PathBuf::from).collect();
             let result = koan_core::index::scanner::import_paths(&db, &paths);
+            self.bump_library();
             Ok(ImportSummary {
                 track_ids: result.track_ids,
                 added: result.added as u32,
@@ -2090,81 +2288,318 @@ impl OrganizeSelection {
 // --- Internals -------------------------------------------------------------
 
 impl KoanEngine {
-    /// Watch shared state and publish what changes.
+    /// Watch shared state and publish what changed.
     ///
-    /// Polls, but in Rust and over atomics, which is nothing — and the client
-    /// sees events. The alternative, notifying from the player's own mutation
-    /// points, would put foreign calls on the decode thread.
+    /// Woken rather than timed. It used to look at every version and atomic in
+    /// the engine ten times a second for as long as koan was open, which is a
+    /// scheduled thread and a rebuilt `NowPlaying` per tick to find, nearly
+    /// always, that nothing had moved. The writers say so now — every setter on
+    /// `SharedPlayerState`, the download store, the library version — and this
+    /// waits in between. A koan with nothing happening does not run this thread
+    /// at all.
+    ///
+    /// What the wake does *not* say is which of them moved: that is still read
+    /// off the versions here, on waking, because they are cheap and because a
+    /// single wake covers a burst. So a pass batches: whatever moved between
+    /// two wakes leaves as at most one message per slice, and a client's cost
+    /// is set by how many slices changed and never by how many times they
+    /// changed. The expensive snapshots are built only when the version behind
+    /// them moved — deriving the whole queue to find it unchanged is the waste
+    /// that guard exists to avoid.
+    ///
+    /// The playhead is the one thing no writer can announce, because it moves
+    /// on its own. It is published as an anchor instead: see `state::Anchor`.
     fn spawn_watcher(self: &Arc<Self>) {
         let engine = Arc::downgrade(self);
         std::thread::Builder::new()
-            .name("koan-events".into())
+            .name("koan-state".into())
             .spawn(move || {
-                let mut last_version = u64::MAX;
-                let mut last_position = u64::MAX;
-                let mut last_signature: Option<(PlaybackState, Option<String>)> = None;
-                let mut last_downloads: Vec<DownloadProgress> = Vec::new();
+                let mut last_queue = u64::MAX;
+                let mut last_store = u64::MAX;
+                let mut last_figures = u64::MAX;
+                let mut last_library = u64::MAX;
+                // The playhead as a client last heard it, and when. What it
+                // would believe now is derived from these two, which is what
+                // makes publishing again unnecessary until it would be wrong.
+                let mut anchor: Option<state::Anchor> = None;
+                let mut last_seekable = u64::MAX;
+                // Which transfers were running last pass. A transfer leaving
+                // this set has landed on disk, which wrote a cached path onto a
+                // library row — and nothing else says so, because the download
+                // ran in koan-core, which has no notion of that version.
+                let mut running: HashSet<String> = HashSet::new();
+                // A transfer landed since the library last said so.
+                let mut landed = false;
+                let mut last_landing = Instant::now();
 
+                // Where this thread spends the whole of a quiet koan. Every
+                // slice below is derived from a version or an atomic, all of
+                // them cheap to read and none of them able to say when they
+                // moved — so this used to look at the lot of them ten times a
+                // second for as long as the app was open. The writers say so
+                // now, and this is not scheduled at all in between.
+                let wake = koan_core::signal::engine_changed();
+                // Read before the first pass, not after it: anything that moves
+                // while a pass is publishing leaves the generation past this,
+                // and the wait at the foot of the loop returns at once rather
+                // than sleeping through it.
+                let mut seen = wake.generation();
                 loop {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
                     let Some(engine) = engine.upgrade() else {
                         return; // Engine dropped; so is the app.
                     };
-                    // Nobody listening is not a reason to stop watching: a
-                    // client can start a loop at any point and expects the
-                    // next change, not the next change after it re-subscribes.
-                    let publish = |event| {
-                        let _ = engine.events.send(event);
-                    };
+                    let out = &engine.out;
 
-                    let state = engine.state.playback_state();
-                    let cursor = engine.state.cursor().map(|c| c.0.to_string());
-                    let signature = (state, cursor);
-                    if last_signature.as_ref() != Some(&signature) {
-                        last_signature = Some(signature);
-                        publish(PlayerEvent::PlaybackChanged {
-                            now_playing: engine.now_playing_blocking(),
+                    // Compared whole rather than on a signature of a few named
+                    // fields: the output sample rate moves when another client
+                    // retunes the device, a stream's duration is corrected once
+                    // the download lands, and the seekable extent grows for as
+                    // long as the bytes are arriving — none of them moving the
+                    // state or the cursor. A signature has to be remembered to
+                    // be widened, and had already been widened twice.
+                    let snapshot = engine.now_playing_blocking();
+                    out.publish(StateSlice::Playback {
+                        now_playing: NowPlaying {
+                            // Position has a slice of its own; leaving it here
+                            // would make every tick a change to this one. The
+                            // queue version likewise: it rides with the queue,
+                            // so an edit there is not a change to what is
+                            // playing.
+                            position_ms: 0,
+                            playlist_version: 0,
+                            ..snapshot.clone()
+                        },
+                    });
+                    // Published when a client's own reckoning would be wrong,
+                    // not when the number changed — it changes continuously, by
+                    // definition, and saying so ten times a second is a stream
+                    // that can never go quiet while music plays. A playhead
+                    // advancing at one second per second is the one thing a
+                    // client can work out for itself; a seek, a pause, a track
+                    // boundary and a stall are not, and each of them breaks the
+                    // prediction by more than the tolerance below.
+                    let playing = snapshot.state == types::PlayState::Playing;
+                    let seekable = engine.state.seekable_ms();
+                    let now = Instant::now();
+                    let adrift = anchor.is_none_or(|held: state::Anchor| {
+                        held.stale(snapshot.position_ms, playing, now, PLAYHEAD_TOLERANCE_MS)
+                    });
+                    // The extent a download reaches grows with every chunk, and
+                    // a bar drawn 200ms of audio short of the truth is a bar
+                    // nobody can tell from a correct one.
+                    let stretched = last_seekable.abs_diff(seekable) > SEEKABLE_TOLERANCE_MS;
+                    if adrift || stretched {
+                        anchor = Some(state::Anchor {
+                            position_ms: snapshot.position_ms,
+                            playing,
+                            at: now,
+                        });
+                        last_seekable = seekable;
+                        out.publish(StateSlice::Playhead {
+                            position_ms: snapshot.position_ms,
+                            seekable_ms: seekable,
+                            playing,
                         });
                     }
 
-                    let version = engine.state.playlist_version();
-                    if version != last_version {
-                        last_version = version;
-                        publish(PlayerEvent::QueueChanged { version });
-                    }
-
-                    // Progress moves without the version moving, so it gets its
-                    // own event — one per tick while bytes are landing, and one
-                    // empty list when the last transfer ends.
-                    let downloads: Vec<DownloadProgress> = engine
-                        .state
-                        .downloads_in_flight()
-                        .into_iter()
-                        .map(|(id, done, total)| DownloadProgress {
-                            queue_item_id: id.0.to_string(),
-                            progress: (total > 0)
-                                .then(|| (done as f64 / total as f64).clamp(0.0, 1.0)),
-                        })
-                        .collect();
-                    if downloads != last_downloads {
-                        last_downloads = downloads.clone();
-                        publish(PlayerEvent::DownloadsChanged { downloads });
-                    }
-
-                    // Only while playing: a paused position doesn't move, and
-                    // re-sending it would keep a transport bar redrawing.
-                    if state == PlaybackState::Playing {
-                        let position = engine.state.position_ms();
-                        if position != last_position {
-                            last_position = position;
-                            publish(PlayerEvent::PositionChanged {
-                                position_ms: position,
+                    // Taken as the bytes land rather than here — see
+                    // `DownloadStore::progressed`. This asks whether a reading
+                    // has been taken since the last one it published, which for
+                    // a koan with nothing downloading is never.
+                    // Readings are taken as the bytes land rather than here —
+                    // see `DownloadStore::progressed` — so this asks whether
+                    // one has been taken since the last it published, which for
+                    // a koan with nothing downloading is never. The list is
+                    // read once and only when one of the two has moved: it is a
+                    // clone of every transfer koan knows about.
+                    let store = koan_core::remote::downloads::store();
+                    let store_version = store.version();
+                    let figures_version = store.figures();
+                    if figures_version != last_figures || store_version != last_store {
+                        // Structural and volatile from one reading of one list,
+                        // so a row and its figure can never describe different
+                        // moments.
+                        let transfers = store.all();
+                        if figures_version != last_figures {
+                            last_figures = figures_version;
+                            out.publish(StateSlice::Figures {
+                                figures: transfers.iter().map(TransferFigure::from).collect(),
                             });
                         }
+                        if store_version != last_store {
+                            last_store = store_version;
+                            out.publish(StateSlice::Transfers {
+                                transfers: transfers.iter().map(Transfer::from).collect(),
+                            });
+                        }
+                        let now_running: HashSet<String> = transfers
+                            .iter()
+                            .filter(|d| !d.state.is_settled())
+                            .map(|d| d.id.0.to_string())
+                            .collect();
+                        if running.difference(&now_running).next().is_some() {
+                            landed = true;
+                        }
+                        running = now_running;
                     }
+                    // A landing is a library change, but a record arriving is
+                    // a dozen of them a few seconds apart, and every client
+                    // answers each one by asking for everything again. Said
+                    // once the batch is down, or every couple of seconds while
+                    // it is still coming — the row for the track that just
+                    // landed is not worth a full reload per track.
+                    if landed && (running.is_empty() || last_landing.elapsed() > LANDING_COALESCE) {
+                        landed = false;
+                        last_landing = Instant::now();
+                        engine.bump_library();
+                    }
+
+                    let library = engine
+                        .library_version
+                        .load(std::sync::atomic::Ordering::Relaxed);
+                    out.publish(StateSlice::Library { version: library });
+
+                    // Both of the heavy reads, and both guarded. The queue is
+                    // derived and joined against the library; the lock is two
+                    // indexed reads. Neither can change without one of these
+                    // two versions moving.
+                    let queue_version = engine.state.playlist_version();
+                    let queue_moved = queue_version != last_queue;
+                    let library_moved = library != last_library;
+                    last_queue = queue_version;
+                    last_library = library;
+                    if queue_moved {
+                        out.publish(StateSlice::Queue {
+                            items: engine.queue_blocking(),
+                            version: queue_version,
+                        });
+                    }
+                    // A playlist edit moves the library version, and following
+                    // means an edit there is an edit to what is playing — so
+                    // the lock has to be re-asked on either.
+                    if queue_moved || library_moved {
+                        out.publish(StateSlice::Lock {
+                            lock: engine.queue_lock_blocking(),
+                        });
+                    }
+
+                    // Dropped before the wait: this thread holds the engine
+                    // only for as long as it is reading it, so parking here
+                    // cannot be what keeps koan open.
+                    drop(engine);
+                    seen = wake.wait(seen);
                 }
             })
             .ok();
+    }
+
+    fn cover_art_of(
+        &self,
+        row: Option<queries::TrackRow>,
+        size: Option<u32>,
+    ) -> Result<Option<CoverArt>, KoanError> {
+        {
+            let Some(row) = row else {
+                return Ok(None);
+            };
+            let track_id = row.id;
+
+            if let Some(path) = row.path.as_ref().or(row.cached_path.as_ref())
+                && let Some(data) = koan_core::index::metadata::extract_cover_art(Path::new(path))
+            {
+                let mime = sniff_mime(&data).to_string();
+                return Ok(Some(CoverArt { data, mime }));
+            }
+
+            let Some(remote_id) = row.remote_id else {
+                return Ok(None);
+            };
+            let cfg = Config::cached();
+            // No server configured: this record simply has no art.
+            if !cfg.remote.enabled {
+                return Ok(None);
+            }
+            // Configured but unusable — signed out, or the password cannot be
+            // read. Reported rather than shrugged off: answering "no art" for
+            // every record makes a signed-out client look like a library that
+            // has no covers, which is a long way from where the problem is.
+            let Some(client) = koan_core::helpers::subsonic_client(&cfg) else {
+                return Err(KoanError::Remote {
+                    message: koan_core::helpers::remote_unavailable(&cfg),
+                });
+            };
+            match client.get_cover_art(&remote_id, size) {
+                Ok(data) if !data.is_empty() => {
+                    let mime = sniff_mime(&data).to_string();
+                    Ok(Some(CoverArt { data, mime }))
+                }
+                // The server answered and it has nothing. Normal, and worth
+                // remembering: this record has no art and never will.
+                Ok(_) | Err(SubsonicError::Api { .. }) | Err(SubsonicError::BadResponse) => {
+                    Ok(None)
+                }
+                // A timeout or a dropped connection says nothing about whether
+                // art exists. Reported rather than swallowed, so the caller can
+                // ask again instead of recording "this album has none" for the
+                // rest of the session — and so it appears in the log at all.
+                Err(e) => {
+                    log::warn!("cover art for track {track_id} failed: {e}");
+                    Err(KoanError::Remote {
+                        message: e.to_string(),
+                    })
+                }
+            }
+        }
+    }
+
+    /// The queue as a client sees it: derived, then joined against the library
+    /// in two statements rather than one per row.
+    ///
+    /// A client draws one sleeve per album, and without an ID to group by it
+    /// asks for artwork per track — the same image fetched once for every track
+    /// on the record. A queue with no database behind it simply has no album
+    /// IDs; the art falls back to the per-track lookup.
+    fn queue_blocking(&self) -> Vec<QueueItem> {
+        let entries = self.state.derive_visible_queue().entries;
+        let track_ids: Vec<i64> = entries.iter().filter_map(|e| e.db_id).collect();
+        let db = self.db().ok();
+        let album_ids = db
+            .as_ref()
+            .and_then(|db| queries::batch::album_ids_for_tracks(&db.conn, &track_ids).ok())
+            .unwrap_or_default();
+        let sources = db
+            .as_ref()
+            .and_then(|db| queries::batch::sources_for_tracks(&db.conn, &track_ids).ok())
+            .unwrap_or_default();
+
+        entries
+            .iter()
+            .map(|e| QueueItem::from_entry(e, &album_ids, &sources))
+            .collect()
+    }
+
+    /// What the queue still is, if it is still something.
+    ///
+    /// While this answers, the queue follows that playlist or record: an edit
+    /// there lands here too. It stops answering the moment the queue is
+    /// rearranged, added to, or extended by radio — which is also when the
+    /// following stops.
+    fn queue_lock_blocking(&self) -> Option<QueueLock> {
+        let db = self.db().ok()?;
+        match koan_core::playlists::queue_lock(&db, &self.state)? {
+            koan_core::playlists::QueueLock::Playlist(id) => queries::get_playlist(&db.conn, id)
+                .ok()
+                .flatten()
+                .map(|p| QueueLock::Playlist {
+                    playlist: Playlist::from(p),
+                }),
+            koan_core::playlists::QueueLock::Album(id) => queries::get_album(&db.conn, id)
+                .ok()
+                .flatten()
+                .map(|a| QueueLock::Album {
+                    album: Album::from(a),
+                }),
+        }
     }
 
     /// Rewrite the queue to point at where organize put the files.
@@ -2212,6 +2647,18 @@ impl KoanEngine {
         }
         .map_err(db_err)?;
         Ok(self.decorate(&db, sort_rows(rows, sort)))
+    }
+
+    /// Say that the library's rows changed. The watcher turns this into a
+    /// `Library` slice on its next tick.
+    ///
+    /// Playlists count. They are rows in the same database and a page showing
+    /// one has the same problem a page showing a record has — a second signal
+    /// for them would be a second thing to remember to send.
+    fn bump_library(&self) {
+        self.library_version
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        koan_core::signal::engine_changed().bump();
     }
 
     fn scan_blocking(
@@ -2271,6 +2718,7 @@ impl KoanEngine {
                     .map(|(p, e)| format!("{}: {e}", p.display())),
             );
         }
+        self.bump_library();
         Ok(summary)
     }
 
@@ -2282,14 +2730,39 @@ impl KoanEngine {
             message: e.to_string(),
         })?;
 
+        // Before anything can start a download of its own, so this only ever
+        // sees files left by a previous run.
+        koan_core::helpers::sweep_partial_downloads(&Config::load().unwrap_or_default());
+
         let (state, _timeline, viz, tx) = Player::spawn();
         koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
+
+        // Bumped by the background tasks below as well as by everything the UI
+        // asks for, so a sync nobody asked for reaches a client the same way.
+        let library_version = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+        // Finishing is the interesting edge: rows landed while it ran, and the
+        // moment it stops is the moment they are all there.
+        let finished = {
+            let version = library_version.clone();
+            move |flag: &std::sync::atomic::AtomicBool, running: bool| {
+                if !running && flag.swap(running, std::sync::atomic::Ordering::Relaxed) {
+                    version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    flag.store(running, std::sync::atomic::Ordering::Relaxed);
+                }
+                // Either way something a client draws has moved: the row for
+                // this task, or the library the task just wrote to.
+                koan_core::signal::engine_changed().bump();
+            }
+        };
 
         let auto_syncing = Arc::new(std::sync::atomic::AtomicBool::new(false));
         {
             let flag = auto_syncing.clone();
+            let finished = finished.clone();
             koan_core::helpers::spawn_auto_sync(db_path.clone(), move |running| {
-                flag.store(running, std::sync::atomic::Ordering::Relaxed);
+                finished(&flag, running);
             });
         }
 
@@ -2300,22 +2773,19 @@ impl KoanEngine {
         {
             let flag = auto_scanning.clone();
             koan_core::helpers::spawn_library_watch(db_path.clone(), move |running| {
-                flag.store(running, std::sync::atomic::Ordering::Relaxed);
+                finished(&flag, running);
             });
         }
 
-        // Capacity, not a queue to drain: a client that falls behind drops the
-        // events it missed, and the next one it does get is a complete answer.
-        let (events, _) = tokio::sync::broadcast::channel(64);
         let engine = Arc::new(Self {
             state,
             tx,
             viz,
-            db_path,
-            events,
+            out: state::EngineState::new(),
             auto_syncing,
             auto_scanning,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            library_version: library_version.clone(),
         });
         engine.spawn_watcher();
         Ok(engine)
@@ -2332,7 +2802,7 @@ impl KoanEngine {
         NowPlaying {
             state: play_state.into(),
             position_ms: self.state.position_ms(),
-            duration_ms: info.as_ref().map(|i| i.duration_ms).unwrap_or(0),
+            duration_ms: self.state.duration_ms(),
             queue_item_id: cursor.map(|c| c.0.to_string()),
             entry,
             format: info
@@ -2343,8 +2813,14 @@ impl KoanEngine {
         }
     }
 
-    fn db(&self) -> Result<Database, KoanError> {
-        Database::open(&self.db_path).map_err(db_err)
+    /// A connection for one piece of work, borrowed from the pool.
+    ///
+    /// This used to open one: a connection, a permissions syscall, the whole
+    /// schema DDL and a WAL checkpoint, every time, before a row came back.
+    /// Clicking an album paid all of it, and while downloads were writing the
+    /// checkpoint contended with them and it took seconds.
+    fn db(&self) -> Result<koan_core::db::pool::Handle<'static>, KoanError> {
+        koan_core::db::pool::shared().get().map_err(db_err)
     }
 
     fn send(&self, cmd: PlayerCommand) -> Result<(), KoanError> {
@@ -2368,7 +2844,7 @@ impl KoanEngine {
         let items = koan_core::helpers::playlist_items_for_tracks(db, &rows);
         let pending = items
             .iter()
-            .filter(|item| matches!(item.load_state, LoadState::Pending))
+            .filter(|item| matches!(item.state, koan_core::player::state::ItemState::Pending))
             .filter_map(|item| item.db_id.map(|id| (id, item.id)))
             .collect();
         (items, pending)
@@ -2390,7 +2866,10 @@ impl KoanEngine {
         std::thread::Builder::new()
             .name("koan-session-restore".into())
             .spawn(move || {
-                for _ in 0..600 {
+                let wake = koan_core::signal::engine_changed();
+                let mut seen = wake.generation();
+                let deadline = Instant::now() + std::time::Duration::from_secs(60);
+                loop {
                     // The user may have started playing something in the
                     // meantime; restoring a position over that would be rude.
                     if state.playback_state() != PlaybackState::Stopped
@@ -2415,7 +2894,13 @@ impl KoanEngine {
                         }
                         return;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                        break;
+                    };
+                    // A track becoming ready moves the queue, which is a change
+                    // like any other. The timeout is the giving-up clock rather
+                    // than a look-again one: this wakes when the item does.
+                    seen = wake.wait_until(seen, left);
                 }
                 log::info!("session restore: track never became ready, leaving position at 0");
             })
@@ -2540,7 +3025,7 @@ fn restore_items(
     for (saved_item, id) in saved.iter().zip(ids) {
         match id.and_then(|_| resolved.next()) {
             Some(item) => {
-                if matches!(item.load_state, LoadState::Pending)
+                if matches!(item.state, koan_core::player::state::ItemState::Pending)
                     && let Some(db_id) = item.db_id
                 {
                     pending.push((db_id, item.id));
@@ -2590,6 +3075,52 @@ fn parse_qid(s: &str) -> Result<QueueItemId, KoanError> {
 
 fn parse_qids(ids: &[String]) -> Result<Vec<QueueItemId>, KoanError> {
     ids.iter().map(|s| parse_qid(s)).collect()
+}
+
+/// A search term the user actually typed, or nothing. Whitespace is not a
+/// filter, and neither is an empty box.
+fn trimmed(search: &Option<String>) -> Option<&str> {
+    search.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// The browser's sort as an order the database can apply.
+fn album_order(sort: AlbumSort, seed: i64) -> queries::AlbumOrder {
+    match sort {
+        AlbumSort::RecentlyAdded => queries::AlbumOrder::RecentlyAdded,
+        AlbumSort::Title => queries::AlbumOrder::Title,
+        AlbumSort::Artist => queries::AlbumOrder::ArtistThenDate,
+        AlbumSort::Year => queries::AlbumOrder::YearDesc,
+        AlbumSort::Random => queries::AlbumOrder::Random(seed),
+    }
+}
+
+/// Rank `texts` against `query`, best first, and return the indices of the top
+/// `limit`. Shared by every fuzzy listing so they rank identically.
+fn fuzzy_rank(texts: &[&str], query: &str, limit: u32) -> Vec<usize> {
+    use nucleo::pattern::{CaseMatching, Normalization};
+    use nucleo::{Config as NucleoConfig, Nucleo};
+
+    let mut nucleo: Nucleo<u32> = Nucleo::new(NucleoConfig::DEFAULT, Arc::new(|| {}), None, 1);
+    let injector = nucleo.injector();
+    for (i, text) in texts.iter().enumerate() {
+        let text = text.to_string();
+        injector.push(i as u32, |_val, cols| {
+            cols[0] = text.into();
+        });
+    }
+
+    nucleo
+        .pattern
+        .reparse(0, query, CaseMatching::Smart, Normalization::Smart, false);
+    for _ in 0..20 {
+        nucleo.tick(10);
+    }
+
+    let snap = nucleo.snapshot();
+    let count = (snap.matched_item_count() as usize).min(limit as usize);
+    (0..count as u32)
+        .filter_map(|i| snap.get_matched_item(i).map(|item| *item.data as usize))
+        .collect()
 }
 
 fn db_err(e: impl std::fmt::Display) -> KoanError {

@@ -156,17 +156,17 @@ impl PersistedQueueItem {
 
     /// Convert back to a PlaylistItem with fresh ID.
     /// Verifies the file path still exists on disk — missing cache files
-    /// get `LoadState::Pending` so the player re-triggers their download.
+    /// get `ItemState::Pending` so the player re-triggers their download.
     pub fn to_playlist_item(&self) -> crate::player::state::PlaylistItem {
         let path = PathBuf::from(&self.path);
-        let load_state = if path.exists() {
-            crate::player::state::LoadState::Ready
+        let state = if path.exists() {
+            crate::player::state::ItemState::Ready
         } else {
             log::debug!(
                 "session restore: path missing, marking pending: {}",
                 self.path,
             );
-            crate::player::state::LoadState::Pending
+            crate::player::state::ItemState::Pending
         };
         crate::player::state::PlaylistItem {
             id: crate::player::state::QueueItemId::new(),
@@ -184,7 +184,7 @@ impl PersistedQueueItem {
             track_number: self.track_number,
             disc: self.disc,
             duration_ms: self.duration_ms,
-            load_state,
+            state,
         }
     }
 }
@@ -339,11 +339,11 @@ mod tests {
         let playlist_item = item.to_playlist_item();
         assert!(
             matches!(
-                playlist_item.load_state,
-                crate::player::state::LoadState::Pending
+                playlist_item.state,
+                crate::player::state::ItemState::Pending
             ),
             "missing file should be Pending, got {:?}",
-            playlist_item.load_state,
+            playlist_item.state,
         );
         assert_eq!(playlist_item.db_id, Some(42), "db_id should be preserved");
     }
@@ -368,12 +368,9 @@ mod tests {
         };
         let playlist_item = item.to_playlist_item();
         assert!(
-            matches!(
-                playlist_item.load_state,
-                crate::player::state::LoadState::Ready
-            ),
+            matches!(playlist_item.state, crate::player::state::ItemState::Ready),
             "existing file should be Ready, got {:?}",
-            playlist_item.load_state,
+            playlist_item.state,
         );
     }
 
@@ -578,7 +575,7 @@ mod tests {
         assert_eq!(playlist_items.len(), 3);
         for pi in &playlist_items {
             assert!(
-                matches!(pi.load_state, crate::player::state::LoadState::Pending),
+                matches!(pi.state, crate::player::state::ItemState::Pending),
                 "non-existent paths should be Pending"
             );
         }

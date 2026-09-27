@@ -21,6 +21,59 @@ just check
 just fmt
 ```
 
+### Measuring the macOS app
+
+The app emits signposts on the Points of Interest timeline, so a recording lines
+its own regions up against what the CPU profiler and the SwiftUI instrument saw:
+
+```bash
+xcrun xctrace record --template 'SwiftUI' --attach koan-app --output t.trace
+```
+
+Opening a record also reports itself in plain text, because the interesting part
+of that gesture is not in any view's body — it is the layout, the CoreAnimation
+commit and the render server that follow it, and nothing a view can run reaches
+them. `FrameTimer` times the tap against the display link instead:
+
+```bash
+log stream --level info --predicate 'subsystem == "cc.blit.koan"'
+# tap-to-frame 155.1ms (body 16.8ms, draw 138.3ms) then 114.7ms, 70.1ms
+```
+
+`body` is koan working out what to draw, `draw` is everything between that and
+the first frame that could carry it, and what follows is each further stall
+before the run loop is back at cadence — a page does not arrive in one commit,
+and the later ones are still time spent looking at the old page.
+
+### A body reads only what it draws
+
+`@Observable` subscribes a body to every property it reads while running, and
+nothing else — so a read is a subscription, and a read high in the tree re-runs
+everything below it when that property moves. Keep reads in the leaf that draws
+them:
+
+- Something that changes often gets its own small view that reads it. A toast,
+  a spinner, a count on a sidebar row.
+- A reaction to a model changing belongs in the model's `didSet`, not in an
+  `.onChange(of:)` on a view: the `onChange` makes that view a reader.
+- Pass a model into a view rather than a value taken from it, so the read
+  happens in the view that uses it.
+- Nothing in the Scene body reads state that changes. The Scene body is the
+  whole window.
+- An `NSViewRepresentable` reads its bindings in `updateNSView`, and that read
+  is charged to the body it sits in. Wrap it in a view of its own.
+- A `List`'s selection is `@State` its body must not read. Rows learn they are
+  selected from `@Environment(\.backgroundProminence)`; anything else that
+  needs the set — a count, a mirror to a model — takes the binding into a
+  child and reads it there.
+- Something that moves every frame — a level meter, a position — does not go
+  through observation at all. Hand it to a layer.
+
+A re-run is not free even where nothing changes: the toolbar rebuilds its
+AppKit-backed items when the body declaring them re-runs, which throws away the
+filter field and the focus in it. `let _ = Self._printChanges()` at the top of
+a body prints what made it run.
+
 ## Submitting a PR
 
 1. Fork the repo and create a feature branch.

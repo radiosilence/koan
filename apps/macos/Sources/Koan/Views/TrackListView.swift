@@ -18,6 +18,7 @@ struct TrackListView: View {
     var mixedAlbums = false
 
     @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
     @Environment(LibraryModel.self) private var library
     @Environment(\.horizontalSizeClass) private var width
@@ -39,15 +40,18 @@ struct TrackListView: View {
                 // clicks resolve against each other and drop; List gives native
                 // selection, shift/⌘ range select and keyboard navigation.
                 ScrollViewReader { proxy in
+                    // Built once per pass rather than once per row. Every row
+                    // carries the list it belongs to so playing it keeps the
+                    // rest behind it, and mapping inside the `ForEach` body
+                    // allocated a fresh copy of the whole thing for each one.
+                    let allTrackIds = tracks.map(\.id)
                     List(selection: $selection) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
                             TrackRow(
                                 track: track,
                                 position: index + 1,
-                                isCurrent: player.currentTrackId == track.id,
-                                isSelected: selection.contains(track.id),
                                 showsAlbum: mixedAlbums,
-                                allTrackIds: tracks.map(\.id)
+                                allTrackIds: allTrackIds
                             )
                             .rowBehaviour(playable: .track(track))
                             .primaryTap { play([track.id]) }
@@ -70,7 +74,7 @@ struct TrackListView: View {
                     }
                     // Arriving from search: single out the matched track rather
                     // than dropping the user at the top of a 20-track record.
-                    .task(id: tracks.count) {
+                    .task(id: HighlightKey(target: nav.highlightedTrackId, count: tracks.count)) {
                         guard let target = nav.highlightedTrackId,
                               tracks.contains(where: { $0.id == target })
                         else { return }
@@ -190,24 +194,36 @@ struct TrackListView: View {
     private var actions: some View {
         HeaderActions(playable: playable)
     }
+
+    /// The same record can be opened again highlighting a different track.
+    private struct HighlightKey: Equatable {
+        let target: Int64?
+        let count: Int
+    }
 }
 
 struct TrackRow: View {
     let track: Track
     let position: Int
-    let isCurrent: Bool
-    let isSelected: Bool
     /// Draws the cover and names the album — see `TrackListView.mixedAlbums`.
     let showsAlbum: Bool
     /// The whole list, so playing this row keeps the rest queued behind it.
     let allTrackIds: [Int64]
 
     @Environment(PlayerModel.self) private var player
-    @Environment(LibraryModel.self) private var library
+    /// Whether the List has this row selected — see `QueueRow.prominence`.
+    @Environment(\.backgroundProminence) private var prominence
     @Environment(\.horizontalSizeClass) private var width
     @State private var hovering = false
 
     var body: some View {
+        // Read here, in the row, rather than handed down by the list: what is
+        // playing moves on every pause and every queue edit, and a list that
+        // read it re-diffed every row for each. Only the rows on screen exist,
+        // so this is thirty small bodies rather than one large one.
+        let isCurrent = player.currentTrackId == track.id
+        let isSelected = prominence == .increased
+
         HStack(spacing: 12) {
             // The row number becomes bars for whatever is playing —
             // same width either way so the column doesn't twitch.
@@ -276,14 +292,9 @@ struct TrackRow: View {
 
             TrackAvailability(track: track)
 
-            FavouriteButton(
-                isOn: library.isFavourite(track: track.id),
-                // There is no hover on a phone, so a heart that appears on it
-                // is a heart that never appears.
-                showing: hovering || width == .compact
-            ) {
-                library.toggleFavourite(track: track.id)
-            }
+            // There is no hover on a phone, so a heart that appears on it is a
+            // heart that never appears.
+            TrackHeart(trackId: track.id, showing: hovering || width == .compact)
 
             // 92pt of codec and sample rate is worth having on a window and
             // not worth a truncated title on a phone. The format is on the
@@ -318,40 +329,31 @@ struct TrackRow: View {
 private struct TrackAvailability: View {
     let track: Track
 
-    @Environment(PlayerModel.self) private var player
+    @Environment(EngineMirror.self) private var mirror
 
     var body: some View {
         Group {
-            if let queued = player.queuedByTrack[track.id], isLive(queued.status) {
+            // Only the states the badge cannot say itself. Downloading is one
+            // it can — the ring belongs in the same slot as the cloud it is
+            // filling, not in a column of its own.
+            if let queued = mirror.queuedByTrack[track.id], isBlocking(queued.status) {
                 queueState(queued)
             } else {
-                SourceBadges(track: track)
+                SourceBadges(track: track, queued: mirror.queuedByTrack[track.id])
             }
         }
         .font(.caption)
         .frame(width: 30, height: 16, alignment: .trailing)
     }
 
-    /// Only these say something the library row doesn't already know.
-    private func isLive(_ status: EntryStatus) -> Bool {
-        status == .downloading || status == .priorityPending || status == .failed
+    /// Only these say something neither the library row nor the badge can.
+    private func isBlocking(_ status: EntryStatus) -> Bool {
+        status == .priorityPending || status == .failed
     }
 
     @ViewBuilder
     private func queueState(_ item: QueueItem) -> some View {
         switch item.status {
-        case .downloading:
-            if let progress = item.downloadProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-                    .frame(width: 14, height: 14)
-                    .help("Downloading — \(Int(progress * 100))%")
-            } else {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .controlSize(.mini)
-            }
         case .priorityPending:
             Image(systemName: "arrow.down.circle")
                 .foregroundStyle(.tint)

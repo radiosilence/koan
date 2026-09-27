@@ -9,6 +9,8 @@ import SwiftUI
 @Observable
 final class AppState {
     let engine: KoanEngine
+    /// The engine's state, mirrored. Everything that reads it reads this.
+    let mirror: EngineMirror
     let player: PlayerModel
     let library: LibraryModel
     let nav: Navigator
@@ -30,13 +32,18 @@ final class AppState {
     init() async throws {
         let engine = try await KoanEngine()
         self.engine = engine
-        let player = PlayerModel(engine: engine)
+        let mirror = EngineMirror()
+        self.mirror = mirror
+        // Before anything else asks the engine a question: the first batch is
+        // the whole state, so the first frame draws against something real.
+        mirror.start(engine: engine)
+        let player = PlayerModel(engine: engine, mirror: mirror)
         self.player = player
         let library = LibraryModel(engine: engine)
         self.library = library
         let nav = Navigator(library: library)
         self.nav = nav
-        self.search = SearchModel(engine: engine, library: library, nav: nav)
+        self.search = SearchModel(engine: engine, nav: nav)
         let art = CoverArtCache(engine: engine)
         self.art = art
         self.organize = OrganizeModel(engine: engine)
@@ -46,6 +53,10 @@ final class AppState {
         self.activity = activity
         self.levels = PlayingLevels(engine: engine)
         library.activity = activity
+        library.art = art
+        library.mirror = mirror
+        playlists.mirror = mirror
+        nav.playlists = playlists
         player.activity = activity
         organize.activity = activity
         playlists.activity = activity
@@ -53,28 +64,29 @@ final class AppState {
         // than into a modal of their own.
         playlists.report = { [weak player] message in player?.lastError = message }
 
+        activity.cancelLibraryTask = { engine.cancelLibraryTask() }
+
         // The engine syncs and scans on its own — on startup, on a timer, and
         // when the library folders change. Those are the slow things a user is
         // most likely to notice and least likely to have asked for, so they get
-        // a row like anything else.
-        activity.mirror("Syncing with server", onFinish: { [weak library, weak playlists] in
-            library?.loadInitial()
-            playlists?.load()
-        }) { engine.isAutoSyncing() }
-        activity.mirror("Scanning library", onFinish: { [weak library] in
-            library?.loadInitial()
-        }) { engine.isAutoScanning() }
-        activity.cancelLibraryTask = { engine.cancelLibraryTask() }
+        // a row like anything else. Followed rather than polled: the engine
+        // says whether each is running, in the same stream as everything else.
+        mirror.follow { [weak activity, weak mirror] in
+            guard let activity, let mirror else { return }
+            activity.mirror("Syncing with server", uses: [.remoteTracks], running: mirror.tasks.syncing)
+            activity.mirror(
+                "Scanning library", uses: .localLibrary, cancellable: true,
+                running: mirror.tasks.scanning)
+        }
 
-        // A finished download changes the library's cached count and nothing
-        // else would say so — the count is a database read, and the download
-        // ran in the engine.
-        player.onDownloadsLanded = { [weak library] in library?.loadStats() }
-
-        // Control Center and the media keys ride the player's existing poll.
-        let centre = NowPlayingCentre(player: player, art: art)
+        // Nothing wires an event to a model here any more. The engine
+        // publishes state, `EngineMirror` holds it and views read it; what is
+        // asked for on demand — a record's tracks, a playlist's rows, the
+        // library's counts — reloads off `mirror.libraryVersion` where it is
+        // drawn. Six closures deciding which model heard what is what let a
+        // page be forgotten, three times.
+        let centre = NowPlayingCentre(player: player, mirror: mirror, art: art)
         self.nowPlaying = centre
-        player.onTick = { [weak centre] in centre?.refresh() }
 
         // Single-key shortcuts, caught before the focused list eats them.
         #if os(macOS)
@@ -92,23 +104,13 @@ final class AppState {
             }
         }
     }
+
     /// Everything that has to happen once, after the engine is up.
     ///
-    /// This used to live in the macOS scene root, which is why the phone had an
-    /// empty library and a search that matched nothing: none of it is about a
-    /// window, and the second shell had no way to know it was owed.
+    /// Here rather than in a scene root, so that every shell gets it: none of it
+    /// is about a window.
     func start() async {
         await player.start()
-        player.restoreSession()
-        library.loadInitial()
-        playlists.load()
-        playlists.refreshLock()
-        // The queue changing is the other half of what makes a lock — playing a
-        // playlist creates one, touching the queue ends one, and neither goes
-        // through the playlist model.
-        player.onQueueChanged = { [weak self] in
-            self?.playlists.refreshLock()
-        }
+        await player.restoreSession()
     }
-
 }

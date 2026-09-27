@@ -112,12 +112,19 @@ pub fn download_with_retries(
 
         match attempt_download(dest, &request, &on_progress) {
             Ok(bytes) => return Ok(bytes),
-            Err(e) if e.is_retryable() => last_err = Some(e),
-            Err(e) => return Err(e),
+            Err(e) if e.is_retryable() && attempt + 1 < attempts => last_err = Some(e),
+            Err(e) => {
+                last_err = Some(e);
+                break;
+            }
         }
     }
 
-    Err(last_err.expect("loop runs at least once and only continues on error"))
+    // Only once every attempt is spent. Between attempts the `.part` stays, and
+    // the next one truncates it in place: a stream already reading it holds that
+    // inode, and picks up again as the retry rewrites the same bytes.
+    let _ = std::fs::remove_file(part_path(dest));
+    Err(last_err.expect("loop runs at least once and only exits here on error"))
 }
 
 fn attempt_download(
@@ -127,6 +134,10 @@ fn attempt_download(
 ) -> Result<u64, DownloadError> {
     let resp = request()?.send()?;
     let status = resp.status();
+    // Status first: a 503 with a JSON body is transient and worth retrying.
+    if !status.is_success() {
+        return Err(DownloadError::Status(status));
+    }
     // Subsonic reports failure with HTTP 200 and a JSON or XML error body, so a
     // success status proves nothing on a binary endpoint. Without this, an error
     // response gets written to disk and cached as if it were audio — it then
@@ -141,15 +152,12 @@ fn attempt_download(
             "server returned an error document where audio was expected".into(),
         ));
     }
-    if !status.is_success() {
-        return Err(DownloadError::Status(status));
-    }
     stream_to_file(resp, dest, on_progress)
 }
 
 /// Stream a response body into `dest` via a `.part` sibling, renaming only once
 /// the transfer completes. A read error or a body shorter than the advertised
-/// Content-Length removes the temp file and errors.
+/// Content-Length errors, leaving the temp file for the caller to retry into.
 fn stream_to_file(
     mut resp: reqwest::blocking::Response,
     dest: &Path,
@@ -196,11 +204,7 @@ fn stream_to_file(
             }
         });
 
-    if let Err(e) = outcome {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(e);
-    }
-
+    outcome?;
     std::fs::rename(&tmp, dest)?;
     Ok(downloaded)
 }
@@ -433,6 +437,40 @@ mod tests {
         assert_eq!(written, body.len() as u64);
         assert_eq!(server.hits(), 3, "should have used all three attempts");
         assert_eq!(std::fs::read(&dest).unwrap(), body);
+    }
+
+    /// A stream reading the `.part` holds its inode, so a retry has to write
+    /// into that same file rather than a new one beside it.
+    #[cfg(unix)]
+    #[test]
+    fn retry_rewrites_the_same_part_file() {
+        use std::os::unix::fs::MetadataExt;
+
+        let server = StubServer::start(vec![
+            Reply::Truncated {
+                claimed: 50_000,
+                body: vec![3u8; 10],
+            },
+            Reply::Complete(vec![3u8; 50_000]),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let dest = tmp_dest(&dir);
+        let client = download_client().unwrap();
+
+        let inodes = std::sync::Mutex::new(std::collections::HashSet::new());
+        download_with_retries(
+            &dest,
+            2,
+            || Ok(client.get(server.url())),
+            |_, _| {
+                if let Ok(meta) = std::fs::metadata(part_path(&dest)) {
+                    inodes.lock().unwrap().insert(meta.ino());
+                }
+            },
+        )
+        .unwrap();
+
+        assert_eq!(inodes.lock().unwrap().len(), 1);
     }
 
     #[test]

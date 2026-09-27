@@ -16,11 +16,7 @@ import Observation
 final class SettingsModel {
     private let engine: KoanEngine
     private let activity: ActivityModel
-
-    /// A sync changes favourites and the library listing, and the browser is
-    /// the thing that has to show it. Weak so the settings window does not keep
-    /// the browse state alive.
-    weak var library: LibraryModel?
+    private let art: CoverArtCache?
 
     private(set) var settings: Settings
     private(set) var lastError: String?
@@ -30,9 +26,10 @@ final class SettingsModel {
     /// the engine — the credential store is write-only from this side.
     var password = ""
 
-    init(engine: KoanEngine, activity: ActivityModel) async {
+    init(engine: KoanEngine, activity: ActivityModel, art: CoverArtCache?) async {
         self.engine = engine
         self.activity = activity
+        self.art = art
         self.settings = await engine.settings()
     }
 
@@ -86,7 +83,10 @@ final class SettingsModel {
         guard forgetTracks else { return }
         let engine = self.engine
         Task {
-            let result = await activity.run("Forgetting \(URL(fileURLWithPath: path).lastPathComponent)", exclusive: true) {
+            let result = await activity.run(
+                "Forgetting \(URL(fileURLWithPath: path).lastPathComponent)",
+                uses: [.localTracks]
+            ) {
                 try await engine.forgetFolder(path: path)
             }
             switch result {
@@ -103,7 +103,8 @@ final class SettingsModel {
         let engine = self.engine
         Task {
             let result = await activity.runReporting(
-                force ? "Rescanning every file" : "Scanning library"
+                force ? "Rescanning every file" : "Scanning library",
+                uses: .localLibrary
             ) { progress in
                 try await engine.scanReporting(force: force, reporter: progress)
             }
@@ -151,7 +152,12 @@ final class SettingsModel {
                 reload()
                 return
             }
-            let result = await activity.run("Forgetting the server's tracks", exclusive: true) {
+            // Local rows too: it takes the server off the ones that were on
+            // both, so a scan writing them would be writing the same rows.
+            let result = await activity.run(
+                "Forgetting the server's tracks",
+                uses: [.remoteTracks, .localTracks]
+            ) {
                 try await self.engine.forgetRemote()
             }
             switch result {
@@ -169,18 +175,13 @@ final class SettingsModel {
             // is running and used to be visible only in the log, so the row said
             // "Syncing with server" for a minute and nothing more.
             let result = await activity.runReporting(
-                full ? "Full sync with server" : "Syncing with server"
+                full ? "Full sync with server" : "Syncing with server",
+                uses: [.remoteTracks]
             ) { progress in
                 try await engine.syncRemoteReporting(full: full, reporter: progress)
             }
             switch result {
             case .success(let s):
-                // A sync reconciles favourites too, so the hearts on screen are
-                // out of date the moment it finishes.
-                library?.refreshFavourites()
-                // And the library itself: a sync that wrote thousands of rows
-                // has changed what there is to show.
-                library?.loadInitial()
                 // Zero is the normal answer for an incremental sync with nothing
                 // new, and "0 tracks across 0 albums" reads as a failure.
                 lastResult = s.tracks == 0 && s.favouritesImported == 0
@@ -196,7 +197,7 @@ final class SettingsModel {
     func clearCache() {
         let engine = self.engine
         Task {
-            let result = await activity.run("Clearing downloads") {
+            let result = await activity.run("Clearing downloads", uses: [.downloads]) {
                 try await engine.clearDownloadCache()
             }
             switch result {
@@ -212,11 +213,14 @@ final class SettingsModel {
     func rebuildIndex() {
         let engine = self.engine
         Task {
-            let result = await activity.run("Clearing the library index") {
+            let result = await activity.run("Clearing the library index", uses: .wholeLibrary) {
                 try await engine.rebuildIndex()
             }
             switch result {
             case .success(let s):
+                // Artwork is cached by album, track and artist id, and the
+                // rebuilt library hands those ids out again from 1.
+                art?.purge()
                 lastResult = "Removed \(s.tracks) tracks — scan or sync to rebuild"
             case .failure(let e):
                 lastError = Self.describe(e)
