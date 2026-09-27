@@ -77,14 +77,13 @@ href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">koan {v}</a></di
 </head><body><nav class=side aria-label=Library><a class=brand href=\"/\">koan</a>\
 <a href=\"/albums\" data-nav=albums>Albums</a><a href=\"/artists\" data-nav=artists>Artists</a>\
 <a href=\"/search\" data-nav=search>Search</a><a href=\"/queue\" data-nav=queue>Queue</a>{account}</nav>\
-<main id=content>{content}</main>{account_foot}\
+<main id=content>{content}</main><div class=account-foot>{account}</div>\
 <footer class=bar><progress class=progress data-np=progress max=1 value=0></progress>\
 <a class=now href=\"/queue\"><img class=thumb data-np=cover alt=\"\" hidden>\
 <span class=np><span class=np-title data-np=title>Nothing playing</span>\
 <span class=np-artist data-np=artist></span></span></a>\
 <div class=transport>{buttons}{SCRUB}</div></footer></body></html>",
         head = head(title),
-        account_foot = format!("<div class=account-foot>{account}</div>"),
         buttons = buttons(),
     )
 }
