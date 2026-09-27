@@ -1,3 +1,4 @@
+import KoanFFI
 import SwiftUI
 
 /// Somewhere a tab's stack can go.
@@ -50,6 +51,11 @@ private struct SectionPage: View {
         page
             .navigationTitle(title)
             .modifier(SectionFilter(placeholder: section.filterPlaceholder))
+            .toolbar {
+                if section == .albums {
+                    AlbumSortControls()
+                }
+            }
     }
 
     @ViewBuilder private var page: some View {
@@ -91,6 +97,38 @@ private struct SectionFilter: ViewModifier {
             content.searchable(text: $library.filter, prompt: placeholder)
         } else {
             content
+        }
+    }
+}
+
+/// The Mac's album sort, in the navigation bar. Reshuffle is its own button
+/// for the same reason as there: it is pressed repeatedly.
+private struct AlbumSortControls: ToolbarContent {
+    @Environment(LibraryModel.self) private var library
+
+    var body: some ToolbarContent {
+        if library.albumSort == .random {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    library.reshuffleAlbums()
+                } label: {
+                    Label("Shuffle", systemImage: Icon.reshuffle)
+                }
+            }
+        }
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                Picker("Sort", selection: Binding(
+                    get: { library.albumSort },
+                    set: { library.albumSort = $0 }
+                )) {
+                    ForEach(AlbumSort.all, id: \.self) { sort in
+                        Text(sort.label).tag(sort)
+                    }
+                }
+            } label: {
+                Label("Sort", systemImage: "arrow.up.arrow.down")
+            }
         }
     }
 }
