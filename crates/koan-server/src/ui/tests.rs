@@ -561,3 +561,67 @@ async fn with_auth_off_everything_is_open() {
     .await;
     assert_eq!(r.location(), "/queue");
 }
+
+#[tokio::test]
+async fn api_keys_are_shown_once_listed_and_revoked() {
+    let f = setup(true);
+    let post = |uri: &str, body: &str, datastar: bool| {
+        let mut req = Request::post(uri)
+            .header(header::HOST, HOST)
+            .header(
+                header::COOKIE,
+                format!("koan_access={}", access_token(&f.state)),
+            )
+            .header(header::CONTENT_TYPE, "application/json");
+        if datastar {
+            req = req.header("datastar-request", "true");
+        }
+        req.body(Body::from(body.to_owned())).unwrap()
+    };
+
+    let r = send(
+        &f.app,
+        authed(&f.state, "/keys").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK);
+    assert!(r.body.contains("No keys yet."), "{}", r.body);
+
+    let r = send(&f.app, post("/keys", r#"{"keyname":"phone"}"#, false)).await;
+    assert_eq!(r.status, StatusCode::FORBIDDEN);
+
+    let r = send(&f.app, post("/keys", r#"{"keyname":"phone"}"#, true)).await;
+    let key = r
+        .body
+        .split("id=new-key readonly value=\"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("no key in {}", r.body))
+        .to_owned();
+    let db = Database::open(&f.state.db_path).unwrap();
+    let user = queries::api_keys::authenticate_api_key(&db.conn, &key)
+        .unwrap()
+        .unwrap();
+    assert_eq!(user.username, "alice");
+
+    let r = send(
+        &f.app,
+        authed(&f.state, "/keys").body(Body::empty()).unwrap(),
+    )
+    .await;
+    assert!(
+        r.body.contains("phone") && r.body.contains("last used"),
+        "{}",
+        r.body
+    );
+    assert!(!r.body.contains(&key));
+
+    let id = queries::api_keys::list_api_keys(&db.conn, Some(user.id)).unwrap()[0].id;
+    let r = send(&f.app, post(&format!("/keys/{id}/revoke"), "{}", true)).await;
+    assert!(r.body.contains("No keys yet."), "{}", r.body);
+    assert!(
+        queries::api_keys::authenticate_api_key(&db.conn, &key)
+            .unwrap()
+            .is_none()
+    );
+}

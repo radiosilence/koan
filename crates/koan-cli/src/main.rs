@@ -333,10 +333,36 @@ enum AuthCommands {
         /// New role (admin, user, readonly)
         role: String,
     },
+    /// Manage Subsonic API keys
+    #[command(subcommand)]
+    ApiKey(ApiKeyCommands),
     /// Regenerate Ed25519 keypair (invalidates all existing tokens)
     RegenerateKeys,
     /// Delete all auth state (keys, users, tokens) — nuclear option
     Reset,
+}
+
+#[derive(Subcommand)]
+enum ApiKeyCommands {
+    /// Make a key for a user; it is printed once
+    Create {
+        /// The user the key signs in as
+        #[arg(long)]
+        username: String,
+        /// What the key is for, to tell keys apart when revoking
+        #[arg(long)]
+        name: String,
+    },
+    /// List keys, for every user or one
+    List {
+        #[arg(long)]
+        username: Option<String>,
+    },
+    /// Revoke a key by id
+    Revoke {
+        /// Key id, from `koan auth api-key list`
+        id: i64,
+    },
 }
 
 /// Global flag set by SIGINT handler for graceful Ctrl+C shutdown.
@@ -466,6 +492,15 @@ fn main() {
             AuthCommands::SetRole { username, role } => {
                 commands::cmd_auth_set_role(&username, &role);
             }
+            AuthCommands::ApiKey(sub) => match sub {
+                ApiKeyCommands::Create { username, name } => {
+                    commands::cmd_auth_api_key_create(&username, &name);
+                }
+                ApiKeyCommands::List { username } => {
+                    commands::cmd_auth_api_key_list(username.as_deref());
+                }
+                ApiKeyCommands::Revoke { id } => commands::cmd_auth_api_key_revoke(id),
+            },
             AuthCommands::RegenerateKeys => commands::cmd_auth_regenerate_keys(),
             AuthCommands::Reset => commands::cmd_auth_reset(),
         },

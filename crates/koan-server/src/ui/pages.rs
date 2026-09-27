@@ -60,7 +60,7 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> Str
     let account = if auth_enabled {
         format!(
             "<form class=account method=post action=\"/auth/signout\"><span>{}</span>\
-<button class=quiet>Sign out</button></form>",
+<a href=\"/keys\" data-nav=keys>API keys</a><button class=quiet>Sign out</button></form>",
             escape(&user.username)
         )
     } else {
@@ -89,7 +89,7 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> Str
 }
 
 /// The whole page, or only its content when the UI's script asked for that.
-fn respond(
+pub(super) fn respond(
     s: &UiState,
     headers: &HeaderMap,
     user: &AuthUser,

@@ -2577,6 +2577,7 @@ name = "koan-core"
 version = "0.35.5"
 dependencies = [
  "argon2",
+ "base64 0.23.1",
  "bliss-audio",
  "chrono",
  "core-foundation 0.10.1",
@@ -2604,6 +2605,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "subtle",
  "symphonia",
  "tempfile",
  "thiserror 2.0.20",

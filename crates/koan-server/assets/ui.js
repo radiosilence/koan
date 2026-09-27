@@ -212,7 +212,7 @@
   }, true);
 
   // --- Navigation ------------------------------------------------------------
-  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue)?$/;
+  const INTERNAL = /^\/(albums|album\/\d+|artists|artist\/\d+|search|queue|keys)?$/;
   let navigating = 0;
 
   async function navigate(url, push) {
