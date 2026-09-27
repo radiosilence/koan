@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.36.1
+
+### Added
+
+- The web UI shows the server's version under the account controls (the sidebar on a desktop, the footer on a phone), linked to its release notes.
 
 ### Changed
 
