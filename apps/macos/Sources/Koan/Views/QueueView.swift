@@ -45,6 +45,13 @@ struct QueueView: View {
     /// `QueueSelectionHeader`, which holds the binding and re-runs alone.
     @State private var selection: Set<String> = []
 
+    #if os(iOS)
+    /// A List with a selection binding shows its selection circles and drag
+    /// handles unless told otherwise, which on a phone is a queue permanently
+    /// in the middle of being edited. Selecting is asked for, from the menu.
+    @State private var editMode: EditMode = .inactive
+    #endif
+
     /// Album headings are rows in their own right, not decoration attached to
     /// the first track. That is what lets an album be selected and dragged as a
     /// unit — and stops selecting a track from lighting up the heading above it,
@@ -77,6 +84,12 @@ struct QueueView: View {
                         .onMove(perform: move)
                     }
                     .listStyle(.inset)
+                    #if os(iOS)
+                    .environment(\.editMode, $editMode)
+                    .onChange(of: editMode) { _, mode in
+                        if !mode.isEditing { selection = [] }
+                    }
+                    #endif
                     .washedGround()
                     // `g` / `G`. Watches the token rather than the edge: jumping
                     // to where you already are still has to scroll, because the
@@ -160,6 +173,13 @@ struct QueueView: View {
 
             QueueSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
 
+            #if os(iOS)
+            if editMode.isEditing {
+                Button("Done") { editMode = .inactive }
+                    .fixedSize()
+            }
+            #endif
+
             JumpToPlayingButton()
 
             // Both modes shown with the active one lit, the way Finder switches
@@ -185,6 +205,12 @@ struct QueueView: View {
             #endif
 
             Menu {
+                #if os(iOS)
+                Button { editMode = .active } label: {
+                    Label("Select", systemImage: Icon.selectAll)
+                }
+                .disabled(player.queue.isEmpty)
+                #endif
                 Button {
                     playlists.naming = player.queue.compactMap(\.trackId)
                 } label: {
