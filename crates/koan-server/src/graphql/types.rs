@@ -705,6 +705,10 @@ pub(super) struct GqlJob {
     pub state: JobState,
     /// Human-readable progress or outcome.
     pub message: String,
+    /// Items done so far, while the job counts them — tracks, for a sync.
+    pub done: Option<u64>,
+    /// Items there are in all, where known.
+    pub total: Option<u64>,
 }
 
 impl From<Job> for GqlJob {
@@ -714,6 +718,8 @@ impl From<Job> for GqlJob {
             kind: job.kind,
             state: job.state,
             message: job.message,
+            done: job.done,
+            total: job.total,
         }
     }
 }

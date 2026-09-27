@@ -73,7 +73,10 @@ final class AppState {
         // says whether each is running, in the same stream as everything else.
         mirror.follow { [weak activity, weak mirror] in
             guard let activity, let mirror else { return }
-            activity.mirror("Syncing with server", uses: [.remoteTracks], running: mirror.tasks.syncing)
+            activity.mirror(
+                "Syncing with server", uses: [.remoteTracks], followsSync: true,
+                running: mirror.tasks.syncing)
+            activity.showSync(mirror.syncProgress)
             activity.mirror(
                 "Scanning library", uses: .localLibrary, cancellable: true,
                 running: mirror.tasks.scanning)

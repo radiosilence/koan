@@ -2549,7 +2549,7 @@ dependencies = [
 
 [[package]]
 name = "koan-cli"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "chrono",
  "clap",
@@ -2574,7 +2574,7 @@ dependencies = [
 
 [[package]]
 name = "koan-core"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "argon2",
  "base64 0.23.1",
@@ -2619,7 +2619,7 @@ dependencies = [
 
 [[package]]
 name = "koan-ffi"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "chrono",
  "crossbeam-channel",
@@ -2639,7 +2639,7 @@ dependencies = [
 
 [[package]]
 name = "koan-server"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "async-graphql",
  "async-graphql-axum",
@@ -2674,7 +2674,7 @@ dependencies = [
 
 [[package]]
 name = "koan-tui"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "core-foundation 0.10.1",
  "crossbeam-channel",

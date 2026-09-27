@@ -610,10 +610,50 @@ pub struct SyncSummary {
     /// Non-zero means the run was incomplete and the next one will retry those
     /// albums — worth saying so rather than reporting a clean sync.
     pub albums_failed: u32,
+    /// Pages of tracks that could not be fetched. Non-zero means the same.
+    pub pages_failed: u32,
     pub favourites_pushed: u32,
     pub favourites_imported: u32,
     pub playlists_pulled: u32,
     pub playlists_pushed: u32,
+}
+
+/// Which part of a remote sync is running.
+#[derive(uniffi::Enum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncPhase {
+    /// Paging through the server's album list. `done` counts albums.
+    Albums,
+    /// Fetching and writing tracks. `done` counts tracks.
+    Tracks,
+    /// Recording artist metadata. `total` is the number of artists.
+    Artists,
+    /// Relinking and tidying up. No counts.
+    Finishing,
+}
+
+/// How far a remote sync has got. `total` is absent where the server gives no
+/// way to know it in advance.
+#[derive(uniffi::Record, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SyncProgress {
+    pub phase: SyncPhase,
+    pub done: u64,
+    pub total: Option<u64>,
+}
+
+impl From<koan_core::remote::sync::SyncProgress> for SyncProgress {
+    fn from(p: koan_core::remote::sync::SyncProgress) -> Self {
+        use koan_core::remote::sync::SyncPhase as Core;
+        Self {
+            phase: match p.phase {
+                Core::Albums => SyncPhase::Albums,
+                Core::Tracks => SyncPhase::Tracks,
+                Core::Artists => SyncPhase::Artists,
+                Core::Finishing => SyncPhase::Finishing,
+            },
+            done: p.done,
+            total: p.total,
+        }
+    }
 }
 
 /// A named pattern from `[organize.patterns]`.

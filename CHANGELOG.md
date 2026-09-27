@@ -1,30 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.36.2
 
 ### Added
 
 - The web UI and share pages have a favicon and home-screen icon: the app icon, as on koan.rocks.
 - The web UI spells its name kōan in the sidebar, the tab title, the sign-in page and the version label.
-
-### Changed
-
-- **koan.rocks is styled with Tailwind.** The page keeps its hand-written HTML and takes blit's look: Geist Mono, lowercase thin headings and one red accent, dark by default. The stylesheet is compiled by the standalone Tailwind CLI (`mise run css` in `site/`), so the site has no package manifest; the Site workflow builds it before the image and it is not committed. The app screenshots are cropped to the window, so nothing behind it shows at the edges.
-
-- **The product is spelled kōan wherever a person reads it:** the README and guides, the macOS and iOS apps (window title, settings, errors, the iOS home-screen name), CLI help, and the messages the CLI, daemon and MCP endpoint print. The command, crates, paths, URLs, environment variables and config keys stay `koan`.
-
-### Fixed
-
-- Web UI: the signed-in username gets a line of its own above API keys and Sign out, instead of being truncated beside them.
-
-## 0.36.1
-
-### Added
-
-- The web UI shows the server's version under the account controls (the sidebar on a desktop, the footer on a phone), linked to its release notes.
-
-### Added
-
 - **koan runs on iOS.** The same engine, models and pages as the Mac app, in a phone's shell: a tab bar (Queue, Library, Settings, Search), a mini player above it, and a full-screen Now Playing with the seek bar, lyrics in place of the sleeve, radio, the output format and an AirPlay picker. Every page stands in the playing record's wash, as the Mac's window does. An iPad with room for a sidebar gets the Mac's layout instead; the choice follows the width, not the device. `just ios-run` builds it for a simulator. iOS 26 or later.
 
   Output goes through RemoteIO, from the same `engine.rs` the Mac uses; the two differ only in which output unit they open and whether a device can be named. The decode pipeline, timeline, gapless cursor and teardown are shared rather than rewritten. What iOS costs is the bit-perfect claim: everything crosses the system mixer, so koan plays at whatever rate the session settles on.
@@ -35,19 +16,35 @@
 
 ### Changed
 
+- **koan.rocks is styled with Tailwind.** The page keeps its hand-written HTML and takes blit's look: Geist Mono, lowercase thin headings and one red accent, dark by default. The stylesheet is compiled by the standalone Tailwind CLI (`mise run css` in `site/`), so the site has no package manifest; the Site workflow builds it before the image and it is not committed. The app screenshots are cropped to the window, so nothing behind it shows at the edges.
+- **The product is spelled kōan wherever a person reads it:** the README and guides, the macOS and iOS apps (window title, settings, errors, the iOS home-screen name), CLI help, and the messages the CLI, daemon and MCP endpoint print. The command, crates, paths, URLs, environment variables and config keys stay `koan`.
 - **The decode thread sleeps 10ms, not half a millisecond, while the ring buffer is full.** A full ring is where playback spends nearly all its time, so the old wait was two thousand wakes a second for the length of every track, on every platform. The ring holds a second or more of audio at any rate koan plays.
+- **The Subsonic API, share pages, sign-in and token refresh reuse database connections.** Each request opened its own, which applied the schema DDL and ran a WAL checkpoint first, and a Subsonic client syncing a library makes thousands of requests. They now share one connection pool per server, as GraphQL and the web UI already did; account password and token checks for Subsonic and MCP over HTTP use it too. The radio's top-ups, background playlist pushes and organize by path use pooled connections as well.
+- **Subsonic, sign-in, token refresh and sign-out no longer run on the server's async workers.** Their SQLite queries and argon2 checks ran inline, so a few concurrent Subsonic calls could occupy every worker and stall unrelated routes, the web UI included. They now run on the blocking pool, as GraphQL, the web UI and share pages already did.
+- **A first or full remote sync pages songs instead of fetching every album.** It fetched each album with its own `getAlbum`, one round trip per album, which for about 5,500 albums over a phone's link took minutes. It now reads album metadata from `getAlbumList2` and every song from `search3` with an empty query, 500 per page and four pages in flight, joining the two and writing each page in one transaction: about 110 requests for 50,000 tracks. A server that answers an empty query with no songs gets the per-album walk, as before; an incremental sync still fetches only its new albums. A page that fails after three attempts leaves the run incomplete, so `last_sync` stays put and the next sync walks the library again.
+- **Syncs report progress.** `sync_library` takes a callback carrying the phase (albums, tracks, artists, finishing) and done/total counts, the total from the albums' `songCount` sum or `getScanStatus`. The CLI draws it on one line; GraphQL jobs gain `done` and `total`, with the phase in `message`; the FFI publishes it as a `Sync` state slice for automatic and requested syncs alike, and the macOS activity row shows "12,400 of 49,700 tracks" with a determinate bar.
+
+### Fixed
+
+- Web UI: the signed-in username gets a line of its own above API keys and Sign out, instead of being truncated beside them.
+- **Subsonic `search3` pages.** `artistOffset`, `albumOffset` and `songOffset` were ignored, so every page repeated the first. An empty query (`query=` or `query=""`) lists the whole library in id order, straight off the primary keys, so an offset walk neither skips nor repeats. Counts are capped at 1,000 per kind.
+- **Empty OpenSubsonic ids no longer pair unrelated tracks.** A koan server sends `musicBrainzId: ""` and `sortName: ""` where it has no value, and the client kept them as present. Every untagged remote track then matched every other on the MusicBrainz dedup (recording `""` on release `""`), which could fold a remote track into an unrelated local file with the same track number and made each insert scan the whole table, so a 50,000-track sync slowed as it went. The client now reads empty ids as absent, and the dedup ignores an empty id.
+- **The macOS app shows the automatic sync and the startup scan.** The engine never published the `Tasks` slice, so neither row ever appeared.
+- **iOS launches to the icon's ensō rather than a blank screen and a spinner.** The launch screen was empty; it now draws the ensō on its ground, and the app draws the same image in the same place until the engine is up. The mini player's sleeve and buttons also clear the capsule's curved ends.
 
 ### Internal
 
 - **koan-core's suite runs on the iOS simulator.** It found `DestinationLedger` treating iOS as a case-sensitive filesystem. `case_only_rename_keeps_the_file` is macOS-only: the simulator's sandbox answers `stat` and `open(O_EXCL)` inconsistently for a case-only rename, so it cannot be detected there.
-
 - **The shared SwiftUI sources build for iOS, and CI checks it** (`just ios-typecheck`). Images go through a `PlatformImage` alias. The views that move layers in the render server (the wash, the playing bars, the seek bar) share a `LayerView` base and a `PlatformViewRepresentable` bridge, so AppKit and UIKit run the same code. Startup, search scheduling and search submission moved out of the macOS scene root into `AppState` and `SearchModel`, where any shell reaches them.
 
-## Unreleased
+## 0.36.1
+
+### Added
+
+- The web UI shows the server's version under the account controls (the sidebar on a desktop, the footer on a phone), linked to its release notes.
+
 ### Changed
 
-- **The Subsonic API, share pages, sign-in and token refresh reuse database connections.** Each request opened its own, which applied the schema DDL and ran a WAL checkpoint first, and a Subsonic client syncing a library makes thousands of requests. They now share one connection pool per server, as GraphQL and the web UI already did; account password and token checks for Subsonic and MCP over HTTP use it too. The radio's top-ups, background playlist pushes and organize by path use pooled connections as well.
-- **Subsonic, sign-in, token refresh and sign-out no longer run on the server's async workers.** Their SQLite queries and argon2 checks ran inline, so a few concurrent Subsonic calls could occupy every worker and stall unrelated routes, the web UI included. They now run on the blocking pool, as GraphQL, the web UI and share pages already did.
 - The README and koan.rocks describe koan as a server: web UI, share links, OpenSubsonic, accounts and API keys, MCP over HTTP.
 
 ## 0.36.0

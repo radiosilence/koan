@@ -54,6 +54,8 @@ pub enum ArtistOrder {
     AlbumCount,
     /// The artist whose newest album arrived most recently first.
     RecentlyAdded,
+    /// Insertion order, for an offset walk that must not skip or repeat.
+    Id,
 }
 
 impl ArtistOrder {
@@ -66,6 +68,7 @@ impl ArtistOrder {
             Self::RecentlyAdded => {
                 "COALESCE(MAX(al.added_at), '') DESC, COALESCE(a.sort_name, a.name) COLLATE LIBRARY"
             }
+            Self::Id => "a.id",
         }
     }
 }
