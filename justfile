@@ -496,7 +496,10 @@ ios-bundle: macos-ffi ios-ffi
         <key>LSRequiresIPhoneOS</key><true/>
         <key>MinimumOSVersion</key><string>{{ios_deployment_target}}</string>
         <key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array>
-        <key>UILaunchScreen</key><dict/>
+        <key>UILaunchScreen</key><dict>
+            <key>UIImageName</key><string>LaunchEnso</string>
+            <key>UIColorName</key><string>LaunchBackground</string>
+        </dict>
         <!-- Without this the process is suspended when the screen locks, and
              the audio thread with it. -->
         <key>UIBackgroundModes</key><array><string>audio</string></array>

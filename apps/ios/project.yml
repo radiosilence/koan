@@ -67,7 +67,11 @@ targets:
       properties:
         CFBundleDisplayName: koan
         LSRequiresIPhoneOS: true
-        UILaunchScreen: {}
+        # The ensō on the icon's ground, drawn by the system before koan has
+        # run a line. `Splash` repeats it exactly, so the handoff is invisible.
+        UILaunchScreen:
+          UIImageName: LaunchEnso
+          UIColorName: LaunchBackground
         # Without this the process is suspended when the screen locks, and the
         # audio thread with it.
         UIBackgroundModes: [audio]

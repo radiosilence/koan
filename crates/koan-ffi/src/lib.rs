@@ -2728,19 +2728,23 @@ impl KoanEngine {
     }
 
     fn build() -> Result<Arc<Self>, KoanError> {
+        let t0 = std::time::Instant::now();
         init_logging();
         let db_path = config::db_path();
         // Fail fast on a broken library rather than after the audio threads exist.
         Database::open(&db_path).map_err(|e| KoanError::Database {
             message: e.to_string(),
         })?;
+        let t_db = t0.elapsed();
 
         // Before anything can start a download of its own, so this only ever
         // sees files left by a previous run.
         koan_core::helpers::sweep_partial_downloads(&Config::load().unwrap_or_default());
+        let t_sweep = t0.elapsed();
 
         let (state, _timeline, viz, tx) = Player::spawn();
         koan_core::radio::spawn_autoqueue(state.clone(), tx.clone(), db_path.clone());
+        let t_player = t0.elapsed();
 
         // Bumped by the background tasks below as well as by everything the UI
         // asks for, so a sync nobody asked for reaches a client the same way.
@@ -2793,6 +2797,13 @@ impl KoanEngine {
             library_version: library_version.clone(),
         });
         engine.spawn_watcher();
+        log::info!(
+            "startup: db {:?}, sweep {:?}, player {:?}, built {:?}",
+            t_db,
+            t_sweep,
+            t_player,
+            t0.elapsed()
+        );
         Ok(engine)
     }
 

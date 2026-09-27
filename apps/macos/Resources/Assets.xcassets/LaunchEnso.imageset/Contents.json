@@ -1,0 +1,15 @@
+{
+  "images": [
+    {
+      "filename": "LaunchEnso.svg",
+      "idiom": "universal"
+    }
+  ],
+  "info": {
+    "author": "koan",
+    "version": 1
+  },
+  "properties": {
+    "preserves-vector-representation": true
+  }
+}
