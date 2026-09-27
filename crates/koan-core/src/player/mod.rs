@@ -48,36 +48,39 @@ struct StreamSource {
     mode: streaming::ProbeMode,
 }
 
+/// A file's own extension, lowercased. A download in progress is named
+/// `track.m4a.part`, and its extension is the track's, not `part`.
+fn media_extension(path: &Path) -> Option<String> {
+    crate::remote::download::strip_part_suffix(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+}
+
 /// Symphonia's format hint for a path — its extension, where it has one.
 fn hint_for(path: &Path) -> symphonia::core::formats::probe::Hint {
     let mut hint = symphonia::core::formats::probe::Hint::new();
-    if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-        hint.with_extension(ext);
+    if let Some(ext) = media_extension(path) {
+        hint.with_extension(&ext);
     }
     hint
 }
 
 /// How to open a partial file once the whole description has failed.
 ///
-/// Ogg is the odd one out: it takes the end it is handed as the end of the
-/// stream, so telling it the file stops at the write head makes it report a
-/// track that is already over. Everything else describes its frames from the
-/// front and needs the opposite — an end it can actually reach. See
-/// `ProbeMode`.
+/// Most containers describe their frames from the front and need an end they
+/// can actually reach: FLAC bisects towards the end it is given. Two need the
+/// whole file's end instead. Ogg takes the end it is handed as the end of the
+/// stream, so a file ending at the write head is a track already over. MP4
+/// bounds its top-level boxes by the end, so a `moov` larger than what has
+/// arrived overruns it and the file will not open until it has all landed.
+/// See `ProbeMode`.
 fn lengthless_mode_for(path: &Path) -> streaming::ProbeMode {
-    let ogg = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .is_some_and(|ext| {
-            matches!(
-                ext.to_ascii_lowercase().as_str(),
-                "ogg" | "oga" | "opus" | "spx"
-            )
-        });
-    if ogg {
-        streaming::ProbeMode::LengthlessWholeEnd
-    } else {
-        streaming::ProbeMode::Lengthless
+    match media_extension(path).as_deref() {
+        Some("ogg" | "oga" | "opus" | "spx" | "m4a" | "m4b" | "mp4" | "mov") => {
+            streaming::ProbeMode::LengthlessWholeEnd
+        }
+        _ => streaming::ProbeMode::Lengthless,
     }
 }
 
@@ -1655,6 +1658,32 @@ impl Player {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_download_in_progress_is_known_by_its_own_extension() {
+        use std::path::Path;
+        // `.part` is the transfer's, not the track's.
+        assert_eq!(
+            lengthless_mode_for(Path::new("/c/t.m4a.part")),
+            streaming::ProbeMode::LengthlessWholeEnd
+        );
+        assert_eq!(
+            lengthless_mode_for(Path::new("/c/t.OPUS.part")),
+            streaming::ProbeMode::LengthlessWholeEnd
+        );
+        assert_eq!(
+            lengthless_mode_for(Path::new("/c/t.flac.part")),
+            streaming::ProbeMode::Lengthless
+        );
+        assert_eq!(
+            media_extension(Path::new("/c/t.m4a.part")).as_deref(),
+            Some("m4a")
+        );
+        assert_eq!(
+            media_extension(Path::new("/c/t.mp3")).as_deref(),
+            Some("mp3")
+        );
+    }
+
     use super::*;
     use state::PlaylistItem;
     use std::path::PathBuf;
