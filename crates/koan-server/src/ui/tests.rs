@@ -554,6 +554,11 @@ async fn with_auth_off_everything_is_open() {
     let r = send(&f.app, get("/albums").body(Body::empty()).unwrap()).await;
     assert_eq!(r.status, StatusCode::OK);
     assert!(!r.body.contains("Sign out"));
+    assert!(
+        r.body
+            .contains(concat!("koan ", env!("CARGO_PKG_VERSION"), "</a>")),
+        "the version shows without an account too"
+    );
     let r = send(
         &f.app,
         get("/login?next=%2Fqueue").body(Body::empty()).unwrap(),

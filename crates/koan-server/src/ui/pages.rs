@@ -57,7 +57,7 @@ fn head(title: &str) -> String {
 }
 
 fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> String {
-    let account = if auth_enabled {
+    let signout = if auth_enabled {
         format!(
             "<form class=account method=post action=\"/auth/signout\"><span>{}</span>\
 <a href=\"/keys\" data-nav=keys>API keys</a><button class=quiet>Sign out</button></form>",
@@ -66,6 +66,11 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> Str
     } else {
         String::new()
     };
+    let account = format!(
+        "<div class=side-foot>{signout}<a class=version \
+href=\"https://github.com/radiosilence/koan/releases/tag/v{v}\">koan {v}</a></div>",
+        v = env!("CARGO_PKG_VERSION")
+    );
     format!(
         "{head}<script type=module src=\"/ui/assets/datastar.js\"></script>\
 <script src=\"/ui/assets/player.js\" defer></script><script src=\"/ui/assets/ui.js\" defer></script>\
@@ -79,11 +84,7 @@ fn shell(title: &str, content: &str, user: &AuthUser, auth_enabled: bool) -> Str
 <span class=np-artist data-np=artist></span></span></a>\
 <div class=transport>{buttons}{SCRUB}</div></footer></body></html>",
         head = head(title),
-        account_foot = if auth_enabled {
-            format!("<div class=account-foot>{account}</div>")
-        } else {
-            String::new()
-        },
+        account_foot = format!("<div class=account-foot>{account}</div>"),
         buttons = buttons(),
     )
 }

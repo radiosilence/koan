@@ -34,7 +34,10 @@ h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: v
 .side a:hover { color: var(--text); }
 .side a[aria-current=page] { color: var(--text); background: var(--line); }
 .side .brand { color: var(--accent); font-weight: 700; letter-spacing: .04em; font-size: 18px; margin-bottom: 12px; background: none; }
-.account { margin-top: auto; display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; padding: 0 4px; min-width: 0; }
+.side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.side .version, .version { color: var(--dim); font-size: 12px; padding: 2px 4px; text-decoration: none; font-variant-numeric: tabular-nums; }
+.version:hover { color: var(--text); }
+.account { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 13px; padding: 0 4px; min-width: 0; }
 .account span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .account button { padding: 4px 8px; font-size: 13px; }
 .account-foot { display: none; }
@@ -143,7 +146,7 @@ body.playing .i-pause { display: inline; }
     padding: 0 0 env(safe-area-inset-bottom); border-right: 0; border-top: 1px solid var(--line); }
   .side a { flex: 1; display: flex; align-items: center; justify-content: center; border-radius: 0; font-size: 14px; }
   .side a[aria-current=page] { background: none; color: var(--accent); }
-  .side .brand, .side .account { display: none; }
+  .side .brand, .side .side-foot { display: none; }
   .account-foot { display: block; padding: 8px 16px 24px; }
   .bar { height: var(--bar-h); padding: 0 8px 0 12px; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; bottom: calc(var(--tabs-h) + env(safe-area-inset-bottom)); }
   .bar .scrub, .bar [data-ctl=prev] { display: none; }
