@@ -19,8 +19,13 @@ use axum::routing::get;
 use koan_core::db::connection::Database;
 use koan_core::db::queries::{self, TrackRow, shares::ShareRow};
 
-const PAGE_CSP: &str = "default-src 'none'; img-src 'self'; media-src 'self'; \
-     style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+/// The page's own script and stylesheet, from this server and nowhere else;
+/// `connect-src` is for the player fetching the tracks it decodes.
+const PAGE_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; \
+     media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+const PLAYER_JS: &str = include_str!("../assets/share.js");
+const PAGE_CSS: &str = include_str!("../assets/share.css");
 
 #[derive(Clone)]
 struct ShareState {
@@ -29,6 +34,14 @@ struct ShareState {
 
 pub fn router(db_path: PathBuf) -> axum::Router {
     axum::Router::new()
+        .route(
+            "/share/assets/share.js",
+            get(|| async { asset(PLAYER_JS, "text/javascript; charset=utf-8") }),
+        )
+        .route(
+            "/share/assets/share.css",
+            get(|| async { asset(PAGE_CSS, "text/css; charset=utf-8") }),
+        )
         .route("/share/{id}", get(page))
         .route("/share/{id}/cover", get(cover))
         .route("/share/{id}/{n}", get(track))
@@ -60,6 +73,17 @@ fn live(db_path: &std::path::Path, id: &str) -> Option<(Database, ShareRow, Vec<
         .filter_map(|id| rows.iter().find(|t| t.id == *id).cloned())
         .collect();
     Some((db, share, tracks))
+}
+
+fn asset(body: &'static str, kind: &'static str) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, kind),
+            (header::CACHE_CONTROL, "public, max-age=3600"),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 fn not_found() -> Response {
@@ -95,7 +119,8 @@ fn duration(ms: Option<i64>) -> String {
         .unwrap_or_default()
 }
 
-/// The page: what was shared, and a player for each track.
+/// The page: what was shared, and the player. The track list carries what
+/// the player needs in data attributes; without script, each row is a link.
 fn render(id: &str, share: &ShareRow, tracks: &[TrackRow]) -> String {
     let album = tracks
         .first()
@@ -107,10 +132,17 @@ fn render(id: &str, share: &ShareRow, tracks: &[TrackRow]) -> String {
         .filter(|d| !d.trim().is_empty())
         .or_else(|| album.as_ref().map(|(a, _)| a.clone()))
         .unwrap_or_else(|| format!("{} tracks", tracks.len()));
-    let subtitle = album
-        .as_ref()
-        .map(|(_, artist)| artist.clone())
-        .unwrap_or_default();
+    let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
+    let mut sub = Vec::new();
+    if let Some((_, artist)) = &album {
+        sub.push(escape(artist));
+    }
+    sub.push(format!(
+        "{} track{}",
+        tracks.len(),
+        if tracks.len() == 1 { "" } else { "s" }
+    ));
+    sub.push(duration(Some(total)));
     let rows: String = tracks
         .iter()
         .enumerate()
@@ -118,37 +150,46 @@ fn render(id: &str, share: &ShareRow, tracks: &[TrackRow]) -> String {
             let artist = if album.is_some() && t.artist_name == t.album_artist_name {
                 String::new()
             } else {
-                format!("<span class=a>{}</span>", escape(&t.artist_name))
+                format!("<small>{}</small>", escape(&t.artist_name))
             };
             format!(
-                "<li><div class=t><span>{}</span>{artist}<span class=d>{}</span></div>\
-                 <audio controls preload=none src=\"/share/{id}/{}\"></audio></li>",
-                escape(&t.title),
-                duration(t.duration_ms),
-                i + 1
+                "<li tabindex=0 data-src=\"/share/{id}/{n}\" data-dur=\"{secs}\" data-title=\"{title}\" \
+                 data-artist=\"{art}\"><span class=n>{n}</span><span class=t>{title}{artist}</span>\
+                 <span class=d>{dur}</span></li>",
+                n = i + 1,
+                secs = t.duration_ms.unwrap_or(0) / 1000,
+                title = escape(&t.title),
+                art = escape(&t.artist_name),
+                dur = duration(t.duration_ms),
+            )
+        })
+        .collect();
+    let links: String = tracks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            format!(
+                "<a href=\"/share/{id}/{}\">{}</a><br>",
+                i + 1,
+                escape(&t.title)
             )
         })
         .collect();
     format!(
         "<!doctype html><html lang=en><head><meta charset=utf-8>\
-<meta name=viewport content=\"width=device-width,initial-scale=1\">\
+<meta name=viewport content=\"width=device-width,initial-scale=1,viewport-fit=cover\">\
 <meta name=robots content=\"noindex,nofollow\"><title>{title}</title>\
-<style>\
-:root{{color-scheme:light dark;--bg:#fafaf8;--fg:#1a1a1a;--dim:#6b6b6b;--line:#e4e4e0}}\
-@media(prefers-color-scheme:dark){{:root{{--bg:#131313;--fg:#ececec;--dim:#8f8f8f;--line:#262626}}}}\
-body{{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,sans-serif}}\
-main{{max-width:40rem;margin:0 auto;padding:2rem 1rem}}\
-header{{display:flex;gap:1.25rem;align-items:flex-end;margin-bottom:1.5rem}}\
-img{{width:9rem;height:9rem;object-fit:cover;border-radius:6px;background:var(--line)}}\
-h1{{font-size:1.5rem;margin:0}}p{{margin:.25rem 0 0;color:var(--dim)}}\
-ol{{list-style:none;padding:0;margin:0}}li{{padding:.75rem 0;border-top:1px solid var(--line)}}\
-.t{{display:flex;gap:.5rem;align-items:baseline}}.a,.d{{color:var(--dim)}}.d{{margin-left:auto;font-variant-numeric:tabular-nums}}\
-audio{{width:100%;margin-top:.5rem;height:2rem}}\
-@media(max-width:30rem){{header{{flex-direction:column;align-items:flex-start}}}}\
-</style></head><body><main><header><img src=\"/share/{id}/cover\" alt=\"\">\
-<div><h1>{title}</h1><p>{subtitle}</p></div></header><ol>{rows}</ol></main></body></html>",
+<link rel=stylesheet href=\"/share/assets/share.css\"></head><body><main>\
+<header class=hero><img id=cover class=cover src=\"/share/{id}/cover\" alt=\"\">\
+<div class=info><p class=kicker>Shared from koan</p><h1>{title}</h1><p class=sub>{sub}</p>\
+<div class=controls><button id=prev class=quiet aria-label=Previous>&#9198;</button>\
+<button id=play class=primary>Play</button><button id=next class=quiet aria-label=Next>&#9197;</button></div>\
+<div class=scrub><span id=pos>0:00</span><input id=seek type=range min=0 max=0 step=0.1 value=0 aria-label=Position>\
+<span id=len>0:00</span></div></div></header>\
+<ol id=tracks>{rows}</ol><noscript><p>{links}</p></noscript></main>\
+<script src=\"/share/assets/share.js\" defer></script></body></html>",
         title = escape(&title),
-        subtitle = escape(&subtitle),
+        sub = sub.join(" · "),
     )
 }
 
@@ -322,9 +363,14 @@ mod tests {
         assert!(html.contains("Wet &lt;Moss&gt; &amp; Stone"));
         assert!(!html.contains("<Moss>"));
         assert!(!html.contains("Unshared"));
-        assert!(html.contains(&format!("src=\"/share/{id}/1\"")));
+        assert!(html.contains(&format!("data-src=\"/share/{id}/1\"")));
         let csp = headers[header::CONTENT_SECURITY_POLICY].to_str().unwrap();
-        assert!(csp.starts_with("default-src 'none'") && !csp.contains("script-src"));
+        assert!(csp.starts_with("default-src 'none'"));
+        assert!(
+            csp.contains("script-src 'self'") && !csp.contains("unsafe"),
+            "{csp}"
+        );
+        assert!(!html.contains("<script>"), "no inline script");
     }
 
     #[tokio::test]
