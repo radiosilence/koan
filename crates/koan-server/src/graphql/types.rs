@@ -744,6 +744,12 @@ pub(super) struct GqlShareLink {
     pub expired: bool,
     pub visits: i64,
     pub last_visited: Option<i64>,
+    /// What the share is a slice of: `tracks`, `album` or `artist`.
+    pub kind: String,
+    /// The album or artist id, for an album or artist share.
+    pub subject_id: Option<i64>,
+    /// The track playback is cued to.
+    pub start_track_id: Option<i64>,
     /// In shared order.
     pub track_ids: Vec<i64>,
 }

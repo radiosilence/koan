@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -348,6 +348,12 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     // The server's own sort key, which is what it orders by. Artists already
     // had this column and nothing ever filled it.
     ("albums", "sort_name", "TEXT"),
+    // What a share is a slice of, so its page shows an album or an artist as
+    // one. The track list stays authoritative; shares made before are loose
+    // tracks.
+    ("shares", "kind", "TEXT NOT NULL DEFAULT 'tracks'"),
+    ("shares", "subject_id", "INTEGER"),
+    ("shares", "start_track_id", "INTEGER"),
 ];
 
 fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
@@ -812,7 +818,10 @@ mod tests {
                 .execute_batch(
                     "ALTER TABLE tracks DROP COLUMN cache_size_bytes;
                      ALTER TABLE tracks DROP COLUMN cache_download_date;
-                     ALTER TABLE similar_artists DROP COLUMN relationship;",
+                     ALTER TABLE similar_artists DROP COLUMN relationship;
+                     ALTER TABLE shares DROP COLUMN kind;
+                     ALTER TABLE shares DROP COLUMN subject_id;
+                     ALTER TABLE shares DROP COLUMN start_track_id;",
                 )
                 .unwrap();
         }
@@ -822,6 +831,9 @@ mod tests {
             ("tracks", "cache_size_bytes"),
             ("tracks", "cache_download_date"),
             ("similar_artists", "relationship"),
+            ("shares", "kind"),
+            ("shares", "subject_id"),
+            ("shares", "start_track_id"),
         ] {
             let found: i64 = db
                 .conn

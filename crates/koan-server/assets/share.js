@@ -1,20 +1,23 @@
-// The share page: the shared tracks as one queue on koan's gapless player.
+// The share page: the shared tracks as one queue on koan's gapless player,
+// cued to the track the share starts on.
 (() => {
   const $ = (id) => document.getElementById(id);
-  const rows = [...document.querySelectorAll("#tracks li")];
+  const rows = [...document.querySelectorAll("#tracks li[data-src]")];
+  const start = Number($("tracks").dataset.start);
   const play = $("play"), prev = $("prev"), next = $("next");
   const seek = $("seek"), pos = $("pos"), len = $("len"), cover = $("cover");
-  const album = document.querySelector("h1").textContent;
-  let hasCover = true;
-  cover.addEventListener("error", () => { cover.hidden = true; hasCover = false; });
+  cover.addEventListener("error", () => { cover.hidden = true; });
+  for (const img of document.querySelectorAll("img.art")) {
+    img.addEventListener("error", () => img.classList.add("missing"));
+  }
 
   const tracks = rows.map((li) => ({
     src: li.dataset.src,
     dur: Number(li.dataset.dur) || 0,
     title: li.dataset.title,
     artist: li.dataset.artist,
-    album,
-    get cover() { return hasCover ? cover.src : null; },
+    album: li.dataset.album,
+    cover: `${li.dataset.src}/cover`,
   }));
 
   const fmt = (s) => {
@@ -44,7 +47,7 @@
       show();
     },
   });
-  player.set(tracks);
+  player.set(tracks, start >= 0 ? start : -1);
 
   play.addEventListener("click", () => player.toggle());
   prev.addEventListener("click", () => player.prev());

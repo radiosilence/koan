@@ -14,6 +14,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use koan_core::auth::Role;
 use koan_core::db::queries::{self, AlbumOrder, AlbumQuery, AlbumRow, ArtistQuery, TrackRow};
+use koan_core::helpers::ShareTarget;
 
 use super::browse::{self, Browse};
 use super::{PARTIAL, UiState, events, html, open, patch};
@@ -229,12 +230,30 @@ fn filter_options(s: &UiState) -> Option<Options> {
 
 /// A track row. `album` is set where the row stands alone (search) and names
 /// the record it comes from.
+const ICON_SHARE: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=true>\
+     <path d=\"M12 3l4.5 4.5h-3.5v7h-2v-7H7.5zM5 12h2v7h10v-7h2v9H5z\"/></svg>";
+
+/// Share this track: its album, cued to it. Only where the page has a
+/// `#share-result` to show the link in.
+fn share_track_button(t: &TrackRow) -> String {
+    match t.album_id {
+        Some(album) => format!(
+            "<button class=quiet data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+data-on:click=\"@post('/album/{album}/share?track={id}')\" aria-label=\"Share this track\" \
+title=\"Share this track\">{ICON_SHARE}</button>",
+            id = t.id
+        ),
+        None => String::new(),
+    }
+}
+
 fn track_row(
     t: &TrackRow,
     n: usize,
     show_artist: bool,
     album: bool,
     versions: &Versions,
+    share: bool,
 ) -> String {
     let mut sub = Vec::new();
     if show_artist {
@@ -251,7 +270,7 @@ fn track_row(
     format!(
         "<li tabindex=0 data-id={id} data-dur={secs} data-title=\"{title}\" data-artist=\"{artist}\" \
 data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><span class=n>{n}</span>\
-<span class=t>{title}{sub}</span><span class=d>{dur}</span>\
+<span class=t>{title}{sub}</span><span class=d>{dur}</span>{share}\
 <button class=\"quiet add\" data-act=add aria-label=\"Add to queue\" title=\"Add to queue\">+</button></li>",
         id = t.id,
         secs = t.duration_ms.unwrap_or(0) / 1000,
@@ -264,6 +283,11 @@ data-album=\"{album_title}\" data-album-id={album_id} data-cover=\"{cover}\"><sp
             .map(|a| cover_url(a, crate::covers::LARGE, versions))
             .unwrap_or_default(),
         dur = duration(t.duration_ms),
+        share = if share {
+            share_track_button(t)
+        } else {
+            String::new()
+        },
     )
 }
 
@@ -340,6 +364,7 @@ pub(super) async fn album(
     let Some((album, tracks, versions)) = found else {
         return not_found();
     };
+    let can_share = user.role.has_permission(Role::User);
     let discs = tracks
         .iter()
         .map(|t| t.disc.unwrap_or(1))
@@ -358,6 +383,7 @@ pub(super) async fn album(
             t.artist_name != album.artist_name,
             false,
             &versions,
+            can_share,
         ));
     }
     let total: i64 = tracks.iter().filter_map(|t| t.duration_ms).sum();
@@ -379,7 +405,7 @@ pub(super) async fn album(
     if let Some(codec) = &album.codec {
         sub.push(escape(codec));
     }
-    let share = if user.role.has_permission(Role::User) {
+    let share = if can_share {
         format!(
             "<button data-indicator:_sharing data-attr:disabled=\"$_sharing\" data-class:busy=\"$_sharing\" \
 data-on:click=\"@post('/album/{}/share')\">Share</button>",
@@ -402,30 +428,48 @@ data-on:click=\"@post('/album/{}/share')\">Share</button>",
     respond(&s, &headers, &user, &album.title, "album", &inner)
 }
 
-/// Make a share link for the album and show it where the button was.
-pub(super) async fn share(
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+pub(super) struct Cue {
+    track: Option<i64>,
+}
+
+/// Share the album, or with `?track=` the album cued to that track.
+pub(super) async fn share_album(
+    State(s): State<UiState>,
+    Extension(user): Extension<AuthUser>,
+    Path(id): Path<i64>,
+    Query(cue): Query<Cue>,
+) -> Response {
+    let target = ShareTarget::Album {
+        album_id: id,
+        start_track_id: cue.track,
+    };
+    share(s, user, target).await
+}
+
+pub(super) async fn share_artist(
     State(s): State<UiState>,
     Extension(user): Extension<AuthUser>,
     Path(id): Path<i64>,
 ) -> Response {
+    share(s, user, ShareTarget::Artist(id)).await
+}
+
+/// Make a share link and show it in the page's `#share-result`.
+async fn share(s: UiState, user: AuthUser, target: ShareTarget) -> Response {
     let result = if user.role.has_permission(Role::User) {
         blocking(move || {
             let db = open(&s.pool)?;
-            let album = queries::get_album(&db.conn, id).ok()??;
-            let ids: Vec<i64> = queries::tracks_for_album(&db.conn, id)
-                .ok()?
-                .iter()
-                .map(|t| t.id)
-                .collect();
             let cfg = koan_core::config::Config::load().unwrap_or_default();
             Some(
-                koan_core::helpers::create_share(&db, &cfg, &ids, Some(&album.title))
+                koan_core::helpers::create_share(&db, &cfg, &target, None)
                     .map(|o| o.url)
                     .map_err(|e| e.to_string()),
             )
         })
         .await
-        .unwrap_or_else(|| Err("That album is not in the library.".into()))
+        .unwrap_or_else(|| Err("The library is unavailable.".into()))
     } else {
         Err("This account cannot make share links.".into())
     };
@@ -523,8 +567,18 @@ pub(super) async fn artist(
     let Some((artist, albums, versions)) = found else {
         return not_found();
     };
+    let share = if user.role.has_permission(Role::User) {
+        format!(
+            "<div class=actions><button data-indicator:_sharing data-attr:disabled=\"$_sharing\" \
+data-class:busy=\"$_sharing\" data-on:click=\"@post('/artist/{}/share')\">Share</button></div>\
+<div id=share-result></div>",
+            artist.id
+        )
+    } else {
+        String::new()
+    };
     let inner = format!(
-        "<p class=kicker>Artist</p><h1>{}</h1><p class=sub>{} album{} · {} tracks</p>\
+        "<p class=kicker>Artist</p><h1>{}</h1><p class=sub>{} album{} · {} tracks</p>{share}\
 <div class=grid>{}</div>",
         escape(&artist.name),
         artist.album_count,
@@ -593,7 +647,7 @@ fn results(s: &UiState, q: &str) -> String {
         let rows: String = tracks
             .iter()
             .enumerate()
-            .map(|(i, t)| track_row(t, i + 1, true, true, &versions))
+            .map(|(i, t)| track_row(t, i + 1, true, true, &versions, false))
             .collect();
         let _ = write!(
             out,

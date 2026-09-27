@@ -452,6 +452,9 @@ impl QueryRoot {
                     expires_at: s.expires_at,
                     visits: s.visits,
                     last_visited: s.last_visited,
+                    kind: s.slice.kind.as_str().into(),
+                    subject_id: s.slice.subject_id,
+                    start_track_id: s.slice.start_track_id,
                     track_ids: s.track_ids,
                 })
                 .collect())

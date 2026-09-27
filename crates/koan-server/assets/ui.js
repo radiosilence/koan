@@ -187,7 +187,7 @@
     const a = e.target.closest("[data-act]");
     if (a) { e.preventDefault(); act(a.dataset.act, a); return; }
     const li = e.target.closest("li[data-id], li[data-q]");
-    if (li && !e.target.closest("a")) pick(li);
+    if (li && !e.target.closest("a, button")) pick(li);
   });
   document.addEventListener("keydown", (e) => {
     if (e.key !== "Enter" && e.key !== " ") return;

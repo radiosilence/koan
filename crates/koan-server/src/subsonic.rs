@@ -2187,31 +2187,60 @@ fn expires_param(params: &RawParams) -> Option<i64> {
         .map(|ms| ms / 1000)
 }
 
-/// `createShare` — songs and albums, in the order given.
+/// What a `createShare` asks for. One song shares its album cued to it, an
+/// album the album, an artist their albums; several ids stay a track list,
+/// albums among them expanded in place.
+fn share_target(
+    db: &Database,
+    ids: &[(Option<EntityKind>, i64)],
+) -> Result<koan_core::helpers::ShareTarget, SubsonicError> {
+    use koan_core::helpers::ShareTarget;
+    Ok(match ids {
+        [] => return Err(SubsonicError::missing_param("id")),
+        [(Some(EntityKind::Artist), id)] => ShareTarget::Artist(*id),
+        [(Some(EntityKind::Album), id)] => ShareTarget::Album {
+            album_id: *id,
+            start_track_id: None,
+        },
+        _ => {
+            let mut track_ids = Vec::new();
+            for (kind, id) in ids {
+                match kind {
+                    Some(EntityKind::Album) => track_ids.extend(
+                        queries::tracks_for_album(&db.conn, *id)
+                            .map_err(|e| SubsonicError::internal(e.to_string()))?
+                            .into_iter()
+                            .map(|t| t.id),
+                    ),
+                    Some(EntityKind::Song) | None => track_ids.push(*id),
+                    Some(EntityKind::Artist) => return Err(SubsonicError::bad_param("id")),
+                }
+            }
+            ShareTarget::Tracks(track_ids)
+        }
+    })
+}
+
+/// `createShare`, as a slice of the library: see `share_target`.
 async fn create_share(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
     let params = RawParams::parse(raw.as_deref());
     let auth = params.auth();
     respond_db_as(&state, &auth, Role::User, |db, b| {
         let base = share_base()?;
-        let mut track_ids = Vec::new();
-        for raw_id in params.all("id") {
-            match parse_entity_id(raw_id) {
-                Some((Some(EntityKind::Album), id)) => track_ids.extend(
-                    queries::tracks_for_album(&db.conn, id)
-                        .map_err(|e| SubsonicError::internal(e.to_string()))?
-                        .into_iter()
-                        .map(|t| t.id),
-                ),
-                Some((Some(EntityKind::Song) | None, id)) => track_ids.push(id),
-                _ => return Err(SubsonicError::bad_param("id")),
-            }
-        }
-        if track_ids.is_empty() {
-            return Err(SubsonicError::missing_param("id"));
-        }
+        let ids: Vec<_> = params
+            .all("id")
+            .map(|raw| parse_entity_id(raw).ok_or_else(|| SubsonicError::bad_param("id")))
+            .collect::<Result<_, _>>()?;
+        let target = share_target(db, &ids)?;
+        let (slice, track_ids) =
+            koan_core::helpers::resolve_share(&db.conn, &target).map_err(|e| match e {
+                koan_core::helpers::ShareError::NothingToShare => SubsonicError::not_found("Song"),
+                e => SubsonicError::internal(e.to_string()),
+            })?;
         let now = chrono::Utc::now().timestamp();
         let share = queries::shares::create_share(
             &db.conn,
+            slice,
             &track_ids,
             params.get("description"),
             now,
@@ -2554,6 +2583,40 @@ mod tests {
     }
 
     // --- Unit tests ---
+
+    #[test]
+    fn create_share_picks_the_slice_from_what_was_picked() {
+        use koan_core::helpers::ShareTarget;
+        let (state, _dir) = test_state();
+        let db = Database::open(&state.db_path).unwrap();
+        let a = queries::upsert_track(&db.conn, &track_meta("/m/a.flac", "A", "One", 1)).unwrap();
+        let b = queries::upsert_track(&db.conn, &track_meta("/m/b.flac", "B", "One", 2)).unwrap();
+        let album = queries::tracks_by_ids(&db.conn, &[a]).unwrap()[0]
+            .album_id
+            .unwrap();
+        let target = |raw: &[&str]| {
+            let ids: Vec<_> = raw.iter().map(|r| parse_entity_id(r).unwrap()).collect();
+            share_target(&db, &ids).ok()
+        };
+        assert_eq!(
+            target(&[&format!("mf-{a}")]),
+            Some(ShareTarget::Tracks(vec![a]))
+        );
+        assert_eq!(
+            target(&[&format!("al-{album}")]),
+            Some(ShareTarget::Album {
+                album_id: album,
+                start_track_id: None
+            })
+        );
+        assert_eq!(target(&["ar-7"]), Some(ShareTarget::Artist(7)));
+        assert_eq!(
+            target(&[&format!("al-{album}"), &b.to_string()]),
+            Some(ShareTarget::Tracks(vec![a, b, b]))
+        );
+        assert_eq!(target(&["ar-7", "ar-8"]), None);
+        assert_eq!(target(&[]), None);
+    }
 
     #[test]
     fn test_xml_escape() {

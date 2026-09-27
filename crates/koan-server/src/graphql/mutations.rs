@@ -824,13 +824,33 @@ impl MutationRoot {
         .await
     }
 
+    /// Share a slice of the library. `artistId` shares the artist's albums,
+    /// `albumId` an album (cued to `startTrackId` if given), and `trackIds`
+    /// the tracks; a single track shares its album, cued to that track.
     async fn create_share(
         &self,
         ctx: &Context<'_>,
-        track_ids: Vec<i64>,
+        track_ids: Option<Vec<i64>>,
+        album_id: Option<i64>,
+        artist_id: Option<i64>,
+        start_track_id: Option<i64>,
         description: Option<String>,
     ) -> async_graphql::Result<GqlShare> {
+        use koan_core::helpers::ShareTarget;
         require_role(ctx, Role::User)?;
+        let target = match (artist_id, album_id, track_ids) {
+            (Some(artist), _, _) => ShareTarget::Artist(artist),
+            (None, Some(album_id), _) => ShareTarget::Album {
+                album_id,
+                start_track_id,
+            },
+            (None, None, Some(ids)) if !ids.is_empty() => ShareTarget::Tracks(ids),
+            _ => {
+                return Err(async_graphql::Error::new(
+                    "give trackIds, albumId or artistId",
+                ));
+            }
+        };
         with_db(ctx, move |db| {
             let cfg = Config::load().unwrap_or_default();
             // One query for the remote ids rather than one per track, a link
@@ -838,7 +858,7 @@ impl MutationRoot {
             // distinct error for each way this can fail — all shared with the
             // FFI and the TUI so the three cannot drift.
             let outcome =
-                koan_core::helpers::create_share(db, &cfg, &track_ids, description.as_deref())
+                koan_core::helpers::create_share(db, &cfg, &target, description.as_deref())
                     .map_err(|e| async_graphql::Error::new(e.to_string()))?;
 
             Ok(GqlShare {
