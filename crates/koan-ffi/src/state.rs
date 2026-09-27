@@ -20,7 +20,7 @@
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
-use crate::types::{NowPlaying, QueueItem, QueueLock, Transfer, TransferFigure};
+use crate::types::{NowPlaying, QueueItem, QueueLock, SyncProgress, Transfer, TransferFigure};
 
 /// One slice of engine state, whole.
 // Boxing is what clippy wants for the size spread and is not on offer across
@@ -82,6 +82,13 @@ pub enum StateSlice {
     /// task and nothing else. They flip twice per task, which is why they can
     /// be published rather than asked after.
     Tasks { scanning: bool, syncing: bool },
+    /// How far the running remote sync has got, automatic or asked for.
+    /// `None` when no sync is running.
+    ///
+    /// Apart from `Tasks` because it moves once per page of a sync — a few
+    /// hundred times in a first sync of a large library — and a reader that
+    /// only draws whether a task is running should not wake for each.
+    Sync { progress: Option<SyncProgress> },
 }
 
 /// Which slot a slice occupies. One per variant, in apply order.
@@ -95,9 +102,10 @@ enum Slot {
     Figures,
     Library,
     Tasks,
+    Sync,
 }
 
-const SLOTS: usize = 8;
+const SLOTS: usize = 9;
 
 impl StateSlice {
     fn slot(&self) -> Slot {
@@ -110,6 +118,7 @@ impl StateSlice {
             Self::Figures { .. } => Slot::Figures,
             Self::Library { .. } => Slot::Library,
             Self::Tasks { .. } => Slot::Tasks,
+            Self::Sync { .. } => Slot::Sync,
         }
     }
 }

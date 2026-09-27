@@ -25,6 +25,20 @@ struct ActivityList: View {
     }
 }
 
+extension ActivityModel.Task {
+    /// "12,400 of 49,700 tracks" where the task says what it counts,
+    /// "12,345 / 48,087" where it does not.
+    var counts: String? {
+        guard let done else { return nil }
+        let unit = unit.map { " \($0)" } ?? ""
+        if let total, total > 0 {
+            let separator = self.unit == nil ? " / " : " of "
+            return "\(done.formatted(.number))\(separator)\(total.formatted(.number))\(unit)"
+        }
+        return "\(done.formatted(.number))\(unit)"
+    }
+}
+
 private struct ActivityRow: View {
     let task: ActivityModel.Task
     let cancel: () -> Void
@@ -38,12 +52,8 @@ private struct ActivityRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 4)
-                if let done = task.done, let total = task.total, total > 0 {
-                    Text("\(done.formatted(.number)) / \(total.formatted(.number))")
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(.tertiary)
-                } else if let done = task.done {
-                    Text(done.formatted(.number))
+                if let counts = task.counts {
+                    Text(counts)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.tertiary)
                 }

@@ -93,6 +93,9 @@ pub enum AlbumOrder {
     /// Seeded, so every page of one shuffle belongs to the same shuffle. A new
     /// seed is a new order — that is what the reshuffle button asks for.
     Random(i64),
+    /// Insertion order. The one order a new album cannot land in the middle
+    /// of, which is what makes an offset walk over the whole list exact.
+    Id,
 }
 
 impl AlbumOrder {
@@ -111,6 +114,7 @@ impl AlbumOrder {
                                a.name COLLATE LIBRARY, al.title COLLATE LIBRARY"
             }
             Self::Random(_) => "koan_shuffle(al.id, ?)",
+            Self::Id => "al.id",
         }
     }
 }

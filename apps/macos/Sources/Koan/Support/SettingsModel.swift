@@ -173,7 +173,8 @@ final class SettingsModel {
         Task {
             let result = await activity.run(
                 full ? "Full sync with server" : "Syncing with server",
-                uses: [.remoteTracks]
+                uses: [.remoteTracks],
+                followsSync: true
             ) {
                 try await engine.syncRemote(full: full)
             }

@@ -509,7 +509,9 @@ fn musicbrainz_twin(
     have_path: bool,
     have_remote: bool,
 ) -> Option<i64> {
-    let (recording, release) = (meta.mbid.as_ref()?, meta.album_mbid.as_ref()?);
+    // An empty id names nothing, and matches every other empty one.
+    let recording = meta.mbid.as_deref().filter(|id| !id.is_empty())?;
+    let release = meta.album_mbid.as_deref().filter(|id| !id.is_empty())?;
     let mut stmt = conn
         .prepare_cached(
             "SELECT t.id,
@@ -1526,6 +1528,31 @@ pub fn resolve_playback_path(
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
         Err(e) => Err(e.into()),
     }
+}
+
+/// One page of every track, in id order.
+///
+/// What a client walking the whole library pages through. Ordered by the
+/// primary key, so the page is a range scan rather than a sort, and a track
+/// added mid-walk lands after the offset rather than shifting every page past
+/// it.
+pub fn tracks_page(conn: &Connection, limit: u32, offset: u32) -> Result<Vec<TrackRow>, DbError> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT t.id, t.album_id, t.artist_id, a.name, aa.name, al.title,
+                t.disc, t.track_number, t.title, t.duration_ms, t.path,
+                t.codec, t.sample_rate, t.bit_depth, t.channels, t.bitrate,
+                t.genre, t.source, t.remote_id, t.cached_path
+         FROM tracks t
+         LEFT JOIN artists a ON t.artist_id = a.id
+         LEFT JOIN albums al ON t.album_id = al.id
+         LEFT JOIN artists aa ON al.artist_id = aa.id
+         ORDER BY t.id
+         LIMIT ?1 OFFSET ?2",
+    )?;
+    let rows = stmt
+        .query_map(params![limit, offset], row_to_track_row)?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 /// Get tracks for a specific album, ordered by disc/track number.

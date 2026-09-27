@@ -49,6 +49,12 @@ final class ActivityModel {
         var uses: Resources = []
         /// Whether asking it to stop does anything.
         var cancellable = false
+        /// A remote sync, whose counts come from the engine's sync progress
+        /// rather than a reporter of its own.
+        var followsSync = false
+        /// What `done` and `total` count, when saying so reads better than a
+        /// bare pair of numbers: "12,400 of 49,700 tracks".
+        var unit: String?
         /// How many done and how many there are, where the engine counts them.
         /// Shown as "12,345 / 48,087" — a percentage alone hides whether the
         /// remaining work is ten items or ten thousand.
@@ -112,9 +118,10 @@ final class ActivityModel {
         _ label: String,
         uses: Resources = [],
         cancellable: Bool = false,
+        followsSync: Bool = false,
         _ work: @escaping @Sendable () async throws -> T
     ) async -> Result<T, Error> {
-        let id = begin(label, uses: uses, cancellable: cancellable)
+        let id = begin(label, uses: uses, cancellable: cancellable, followsSync: followsSync)
         defer { end(id) }
         do {
             return .success(try await work())
@@ -145,8 +152,13 @@ final class ActivityModel {
     /// For work that does not fit the closure shape — a long-lived poller, or
     /// something whose lifetime is owned elsewhere. Pair every `begin` with an
     /// `end`.
-    func begin(_ label: String, uses: Resources = [], cancellable: Bool = false) -> UUID {
-        let task = Task(label: label, uses: uses, cancellable: cancellable)
+    func begin(
+        _ label: String,
+        uses: Resources = [],
+        cancellable: Bool = false,
+        followsSync: Bool = false
+    ) -> UUID {
+        let task = Task(label: label, uses: uses, cancellable: cancellable, followsSync: followsSync)
         tasks.append(task)
         refreshBusy()
         return task.id
@@ -181,17 +193,51 @@ final class ActivityModel {
         _ label: String,
         uses: Resources = [],
         cancellable: Bool = false,
+        followsSync: Bool = false,
         running: Bool
     ) {
         let existing = mirrored[label]
         switch (running, existing) {
         case (true, nil):
-            mirrored[label] = begin(label, uses: uses, cancellable: cancellable)
+            mirrored[label] = begin(
+                label, uses: uses, cancellable: cancellable, followsSync: followsSync)
         case (false, let some?):
             end(some)
             mirrored[label] = nil
         default:
             break
+        }
+    }
+
+    /// Put the engine's sync progress on every sync row. There is one sync
+    /// progress however the sync was started, so the row for a sync asked for
+    /// and the row for the automatic one read the same thing. `nil` between
+    /// syncs leaves the rows as they are; they end on their own.
+    func showSync(_ progress: SyncProgress?) {
+        guard let progress else { return }
+        for index in tasks.indices where tasks[index].followsSync {
+            switch progress.phase {
+            case .albums:
+                tasks[index].done = progress.done
+                tasks[index].total = nil
+                tasks[index].unit = "albums"
+                tasks[index].detail = "Listing albums"
+            case .tracks:
+                tasks[index].done = progress.done
+                tasks[index].total = progress.total
+                tasks[index].unit = "tracks"
+                tasks[index].detail = nil
+            case .artists:
+                tasks[index].done = nil
+                tasks[index].total = nil
+                tasks[index].unit = nil
+                tasks[index].detail = "Recording artists"
+            case .finishing:
+                tasks[index].done = nil
+                tasks[index].total = nil
+                tasks[index].unit = nil
+                tasks[index].detail = "Finishing"
+            }
         }
     }
 

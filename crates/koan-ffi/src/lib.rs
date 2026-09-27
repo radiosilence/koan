@@ -59,6 +59,26 @@ pub struct FuzzyMatch {
     pub kind: SearchKind,
 }
 
+/// The running sync's progress, written by the sync and read by the watcher.
+#[derive(Clone, Default)]
+struct SyncMeter(Arc<parking_lot::Mutex<Option<SyncProgress>>>);
+
+impl SyncMeter {
+    fn set(&self, p: koan_core::remote::sync::SyncProgress) {
+        *self.0.lock() = Some(p.into());
+        koan_core::signal::engine_changed().bump();
+    }
+
+    fn clear(&self) {
+        *self.0.lock() = None;
+        koan_core::signal::engine_changed().bump();
+    }
+
+    fn get(&self) -> Option<SyncProgress> {
+        *self.0.lock()
+    }
+}
+
 /// Reports how far a long task has got.
 ///
 /// Scans and syncs take anywhere up to a minute, and a spinner that cannot say
@@ -197,6 +217,9 @@ pub struct KoanEngine {
     auto_syncing: Arc<std::sync::atomic::AtomicBool>,
     /// Set while the startup or watched-folder scan is running.
     auto_scanning: Arc<std::sync::atomic::AtomicBool>,
+    /// How far the running sync has got, automatic or asked for. Published as
+    /// the `Sync` slice.
+    sync_progress: SyncMeter,
     /// Raised to stop whichever library task is running. One flag rather than
     /// one per task, because only one runs at a time — they all contend for the
     /// same single database writer.
@@ -1928,14 +1951,17 @@ impl KoanEngine {
                 }
             })?;
 
+            let meter = &self.sync_progress;
             let synced = koan_core::helpers::sync_remote(
                 &db,
                 &client,
                 full,
                 &cfg.remote.url,
                 &cfg.remote.username,
-            )
-            .map_err(|e| KoanError::Database {
+                &|p| meter.set(p),
+            );
+            meter.clear();
+            let synced = synced.map_err(|e| KoanError::Database {
                 message: e.to_string(),
             })?;
 
@@ -1945,6 +1971,7 @@ impl KoanEngine {
                 albums: synced.library.albums_synced as u32,
                 tracks: synced.library.tracks_synced as u32,
                 albums_failed: synced.library.albums_failed as u32,
+                pages_failed: synced.library.pages_failed as u32,
                 favourites_pushed: synced.favourites.pushed as u32,
                 favourites_imported: synced.favourites.imported as u32,
                 playlists_pulled: synced.playlists.pulled as u32,
@@ -2436,6 +2463,18 @@ impl KoanEngine {
                         .load(std::sync::atomic::Ordering::Relaxed);
                     out.publish(StateSlice::Library { version: library });
 
+                    out.publish(StateSlice::Tasks {
+                        scanning: engine
+                            .auto_scanning
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                        syncing: engine
+                            .auto_syncing
+                            .load(std::sync::atomic::Ordering::Relaxed),
+                    });
+                    out.publish(StateSlice::Sync {
+                        progress: engine.sync_progress.get(),
+                    });
+
                     // Both of the heavy reads, and both guarded. The queue is
                     // derived and joined against the library; the lock is two
                     // indexed reads. Neither can change without one of these
@@ -2735,12 +2774,21 @@ impl KoanEngine {
         };
 
         let auto_syncing = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sync_progress = SyncMeter::default();
         {
             let flag = auto_syncing.clone();
             let finished = finished.clone();
-            koan_core::helpers::spawn_auto_sync(db_path.clone(), move |running| {
-                finished(&flag, running);
-            });
+            let (meter, reading) = (sync_progress.clone(), sync_progress.clone());
+            koan_core::helpers::spawn_auto_sync(
+                db_path.clone(),
+                move |running| {
+                    if !running {
+                        meter.clear();
+                    }
+                    finished(&flag, running);
+                },
+                move |p| reading.set(p),
+            );
         }
 
         // Local files are watched rather than synced on a timer: a folder that
@@ -2761,6 +2809,7 @@ impl KoanEngine {
             out: state::EngineState::new(),
             auto_syncing,
             auto_scanning,
+            sync_progress,
             cancel_library_task: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             library_version: library_version.clone(),
         });

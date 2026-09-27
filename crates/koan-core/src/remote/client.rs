@@ -302,6 +302,38 @@ impl SubsonicClient {
         Ok(())
     }
 
+    /// One page of every song on the server, `size` from `offset`.
+    ///
+    /// An empty `search3` query lists the whole library on OpenSubsonic
+    /// servers (Navidrome, koan). Older servers answer it with nothing or an
+    /// error, which is the caller's cue to walk albums one at a time instead.
+    pub fn all_songs_page(
+        &self,
+        size: u32,
+        offset: u32,
+    ) -> Result<Vec<SubsonicSong>, SubsonicError> {
+        let size = size.to_string();
+        let offset = offset.to_string();
+        let resp = self.get_with_params(
+            "search3",
+            &[
+                ("query", ""),
+                ("artistCount", "0"),
+                ("albumCount", "0"),
+                ("songCount", &size),
+                ("songOffset", &offset),
+            ],
+        )?;
+        Ok(resp.search_result3.map(|r| r.song).unwrap_or_default())
+    }
+
+    /// How many songs the server says it has, from `getScanStatus`. `None`
+    /// where the server does not count.
+    pub fn song_count(&self) -> Result<Option<u64>, SubsonicError> {
+        let resp = self.get("getScanStatus")?;
+        Ok(resp.scan_status.and_then(|s| s.count))
+    }
+
     /// Search for tracks/albums/artists.
     pub fn search(&self, query: &str) -> Result<SubsonicSearchResult, SubsonicError> {
         let resp = self.get_with_params("search3", &[("query", query)])?;
@@ -552,6 +584,12 @@ struct SubsonicResponse {
     top_songs: Option<SubsonicTopSongs>,
     playlists: Option<SubsonicPlaylists>,
     playlist: Option<SubsonicPlaylistFull>,
+    scan_status: Option<SubsonicScanStatus>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SubsonicScanStatus {
+    count: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -578,7 +616,9 @@ pub struct SubsonicArtist {
     pub album_count: Option<i32>,
     // OpenSubsonic. Both arrive in `getArtists`, so keeping them costs no
     // extra request.
+    #[serde(default, deserialize_with = "non_empty")]
     pub music_brainz_id: Option<String>,
+    #[serde(default, deserialize_with = "non_empty")]
     pub sort_name: Option<String>,
 }
 
@@ -595,7 +635,9 @@ pub struct SubsonicAlbum {
     pub created: Option<String>,
     // OpenSubsonic. All of these arrive in `getAlbumList2`, which the sync
     // already pages through.
+    #[serde(default, deserialize_with = "non_empty")]
     pub music_brainz_id: Option<String>,
+    #[serde(default, deserialize_with = "non_empty")]
     pub sort_name: Option<String>,
     #[serde(default)]
     pub record_labels: Vec<SubsonicName>,
@@ -619,7 +661,9 @@ pub struct SubsonicAlbumFull {
     pub genre: Option<String>,
     pub song_count: Option<i32>,
     pub created: Option<String>,
+    #[serde(default, deserialize_with = "non_empty")]
     pub music_brainz_id: Option<String>,
+    #[serde(default, deserialize_with = "non_empty")]
     pub sort_name: Option<String>,
     #[serde(default)]
     pub record_labels: Vec<SubsonicName>,
@@ -649,6 +693,7 @@ pub struct SubsonicSong {
     pub sampling_rate: Option<i32>,
     pub bit_depth: Option<i32>,
     pub channel_count: Option<i32>,
+    #[serde(default, deserialize_with = "non_empty")]
     pub music_brainz_id: Option<String>,
 }
 
@@ -735,6 +780,16 @@ pub struct SubsonicShare {
     pub created: Option<String>,
     pub expires: Option<String>,
     pub visit_count: Option<i64>,
+}
+
+/// An empty string as absent. OpenSubsonic servers send every field they
+/// support, empty where there is no value — koan's own sends
+/// `musicBrainzId: ""` for an untagged track. Kept as `Some("")`, that id
+/// matches every other untagged track: the MusicBrainz dedup paired unrelated
+/// tracks on it and scanned the whole table per insert doing so, and the album
+/// enrichment wrote `""` over the missing id.
+fn non_empty<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.filter(|s| !s.is_empty()))
 }
 
 /// Generate a random hex salt string for Subsonic auth.
@@ -1057,6 +1112,30 @@ mod tests {
         assert_eq!(result.album[0].name, "Album One");
         assert_eq!(result.song.len(), 1);
         assert_eq!(result.song[0].title, "Song One");
+    }
+
+    #[test]
+    fn empty_opensubsonic_ids_are_absent() {
+        let json = r#"{"id": "1", "title": "T", "musicBrainzId": ""}"#;
+        let song: SubsonicSong = serde_json::from_str(json).unwrap();
+        assert_eq!(song.music_brainz_id, None);
+
+        let json = r#"{"id": "2", "name": "A", "musicBrainzId": "", "sortName": ""}"#;
+        let album: SubsonicAlbum = serde_json::from_str(json).unwrap();
+        assert_eq!((album.music_brainz_id, album.sort_name), (None, None));
+
+        let json = r#"{"id": "3", "name": "A", "musicBrainzId": "mb-1"}"#;
+        let album: SubsonicAlbumFull = serde_json::from_str(json).unwrap();
+        assert_eq!(album.music_brainz_id.as_deref(), Some("mb-1"));
+        assert_eq!(album.sort_name, None);
+    }
+
+    #[test]
+    fn test_deserialize_scan_status_count() {
+        let json = r#"{"subsonic-response":{"status":"ok","scanStatus":{"scanning":false,"count":49700}}}"#;
+        let wrapper: SubsonicResponseWrapper = serde_json::from_str(json).unwrap();
+        let status = wrapper.subsonic_response.scan_status.unwrap();
+        assert_eq!(status.count, Some(49_700));
     }
 
     #[test]

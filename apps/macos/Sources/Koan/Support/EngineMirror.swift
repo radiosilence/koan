@@ -60,6 +60,7 @@ final class EngineMirror: Observable {
     private var _libraryVersion: UInt64 = 0
     private var _scanning = false
     private var _syncing = false
+    private var _syncProgress: SyncProgress?
 
     /// Everything a transport bar shows other than the position. Changes per
     /// track, per state, per format — not per tick.
@@ -96,6 +97,13 @@ final class EngineMirror: Observable {
     var tasks: EngineTasks {
         access(\.tasks)
         return EngineTasks(scanning: _scanning, syncing: _syncing)
+    }
+
+    /// How far the running remote sync has got, whoever started it. Apart from
+    /// `tasks` because it moves once per page of the sync.
+    var syncProgress: SyncProgress? {
+        access(\.syncProgress)
+        return _syncProgress
     }
 
     var queue: [QueueItem] {
@@ -264,6 +272,8 @@ final class EngineMirror: Observable {
                     _syncing = syncing
                 }
             }
+        case .sync(let progress):
+            mutate(\.syncProgress) { _syncProgress = progress }
         }
     }
 

@@ -115,10 +115,12 @@ pub fn spawn_library_watch(
 /// first frame and the first track for the disk.
 ///
 /// `on_state` reports whether a sync is running, so a UI can say so rather than
-/// appearing to do nothing.
+/// appearing to do nothing, and `on_progress` how far it has got. The first
+/// sync against a server has no watermark and walks the whole library.
 pub fn spawn_auto_sync(
     db_path: std::path::PathBuf,
     on_state: impl Fn(bool) + Send + 'static,
+    on_progress: impl Fn(crate::remote::sync::SyncProgress) + Send + Sync + 'static,
 ) -> Option<std::thread::JoinHandle<()>> {
     std::thread::Builder::new()
         .name("koan-auto-sync".into())
@@ -137,7 +139,14 @@ pub fn spawn_auto_sync(
                     && let Ok(db) = Database::open(&db_path)
                 {
                     on_state(true);
-                    match sync_remote(&db, &client, false, &cfg.remote.url, &cfg.remote.username) {
+                    match sync_remote(
+                        &db,
+                        &client,
+                        false,
+                        &cfg.remote.url,
+                        &cfg.remote.username,
+                        &on_progress,
+                    ) {
                         Ok(s) => log::info!(
                             "auto sync: {} artists, {} albums, {} tracks ({} albums failed); \
                              favourites {}↑ {}↓; playlists {}↓ {}↑",
@@ -539,8 +548,9 @@ pub fn sync_remote(
     full: bool,
     url: &str,
     username: &str,
+    progress: &(dyn Fn(crate::remote::sync::SyncProgress) + Sync),
 ) -> Result<FullSync, crate::remote::sync::SyncError> {
-    let library = crate::remote::sync::sync_library(db, client, full, url, username)?;
+    let library = crate::remote::sync::sync_library(db, client, full, url, username, progress)?;
     Ok(FullSync {
         library,
         favourites: reconcile_favourites(db, client),

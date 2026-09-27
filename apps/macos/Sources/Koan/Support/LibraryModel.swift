@@ -462,7 +462,8 @@ final class LibraryModel {
         let engine = self.engine
         let job = activity?.begin(
             full ? "Full sync with server" : "Syncing with server",
-            uses: [.remoteTracks]
+            uses: [.remoteTracks],
+            followsSync: true
         )
         Task {
             _ = try? await engine.syncRemote(full: full)
