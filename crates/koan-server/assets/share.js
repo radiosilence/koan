@@ -22,12 +22,26 @@
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
   };
 
+  // Set while the range is dragged; focus stays on a clicked range, so it is
+  // no guide to whether the clock may move it.
+  let dragging = false;
+  for (const type of ["pointerdown", "touchstart"]) seek.addEventListener(type, () => { dragging = true; }, { passive: true });
+  for (const type of ["pointerup", "pointercancel", "touchend", "touchcancel", "change", "blur"]) {
+    seek.addEventListener(type, () => { dragging = false; }, { passive: true });
+  }
+  const show = () => {
+    const p = player.position();
+    pos.textContent = fmt(p);
+    if (!dragging) seek.value = p;
+  };
+
   const player = window.KoanPlayer({
     onChange({ cur, playing, track }) {
       rows.forEach((li, k) => li.classList.toggle("playing", k === cur));
       play.textContent = playing ? "Pause" : "Play";
       len.textContent = fmt(track ? track.dur : 0);
       seek.max = track ? track.dur : 0;
+      show();
     },
   });
   player.set(tracks);
@@ -43,9 +57,6 @@
     });
   });
   setInterval(() => {
-    if (player.state().cur < 0) return;
-    const p = player.position();
-    pos.textContent = fmt(p);
-    if (document.activeElement !== seek) seek.value = p;
+    if (player.state().cur >= 0) show();
   }, 250);
 })();
