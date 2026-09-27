@@ -49,6 +49,7 @@ struct PickerSheet: View {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(.secondary)
             TextField(prompt, text: $query)
+                .verbatimEntry()
                 .textFieldStyle(.plain)
                 .font(.title3)
                 .focused($fieldFocused)

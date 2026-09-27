@@ -25,6 +25,7 @@ struct DownloadsView: View {
                 List {
                     ForEach(mirror.transfers, id: \.queueItemId) { transfer in
                         DownloadRow(transfer: transfer)
+                            .washedRow()
                     }
                 }
                 .listStyle(.inset)
@@ -49,6 +50,7 @@ private struct DownloadRow: View {
     @Environment(LibraryModel.self) private var library
     @Environment(EngineMirror.self) private var mirror
     @State private var hovering = false
+    @Environment(\.horizontalSizeClass) private var width
 
     /// The numbers, read here rather than carried on the row. They move ten
     /// times a second while this row is going and not at all once it has
@@ -122,9 +124,10 @@ private struct DownloadRow: View {
                         transfer.state == .failed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary)
                     )
                 Spacer(minLength: 8)
-                if hovering {
+                // No hover on a phone: a link that waits for one never shows.
+                if hovering || width == .compact {
                     Button("Show in Library") { showInLibrary() }
-                        .buttonStyle(.link)
+                        .linkButton()
                         .font(.caption)
                 }
             }

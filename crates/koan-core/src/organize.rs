@@ -388,11 +388,15 @@ struct DestinationLedger {
 }
 
 impl DestinationLedger {
-    /// macOS and Windows filesystems are case-insensitive by default, so `Rain.flac`
-    /// and `RAIN.flac` are one file there and must collide here too.
+    /// macOS, iOS and Windows filesystems are case-insensitive by default, so
+    /// `Rain.flac` and `RAIN.flac` are one file there and must collide here too.
     fn key(path: &Path) -> String {
         let key = path.to_string_lossy().into_owned();
-        if cfg!(any(target_os = "macos", target_os = "windows")) {
+        if cfg!(any(
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "windows"
+        )) {
             key.to_lowercase()
         } else {
             key
@@ -2059,7 +2063,7 @@ mod tests {
         assert_eq!(std::fs::read(&from).unwrap(), b"source".to_vec());
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     #[test]
     fn case_only_difference_collides_on_a_case_insensitive_filesystem() {
         let db = test_db();
@@ -2087,6 +2091,12 @@ mod tests {
 
     /// A rename that only changes case has to go via a temporary name: reserving the
     /// destination would otherwise open the source file itself.
+    /// Not on iOS: the simulator's sandboxed filesystem answers `stat` for
+    /// `Rain.flac` with ENOENT while `open(O_CREAT|O_EXCL)` on the same name
+    /// answers EEXIST — measured, both, in one directory. `paths_equal` reads
+    /// `stat`, so the case-only rename it exists to catch cannot be detected
+    /// there. Unverified on a device, where the volume is ordinary APFS.
+    #[cfg(not(target_os = "ios"))]
     #[test]
     fn case_only_rename_keeps_the_file() {
         let tmp = TempDir::new().unwrap();

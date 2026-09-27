@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import CryptoKit
 import ImageIO
 import KoanFFI
@@ -51,8 +55,8 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// target.
     private static let memoryBudget = 256 * 1024 * 1024
 
-    private let memory: NSCache<NSString, NSImage> = {
-        let cache = NSCache<NSString, NSImage>()
+    private let memory: NSCache<NSString, PlatformImage> = {
+        let cache = NSCache<NSString, PlatformImage>()
         cache.totalCostLimit = CoverArtCache.memoryBudget
         return cache
     }()
@@ -72,7 +76,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// One byte fetch per record, shared by every size that wants it.
     private var loads: [String: Task<Fetched, Never>] = [:]
     /// One decode per record and size, shared by everyone on screen asking.
-    private var decodes: [String: Task<NSImage?, Never>] = [:]
+    private var decodes: [String: Task<PlatformImage?, Never>] = [:]
 
     /// Which records produced each image, by content hash.
     ///
@@ -106,7 +110,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Views call this first so a cover that has been seen appears in the same
     /// frame rather than after an await, which is what made a scrolled-back grid
     /// flash grey.
-    func cached(_ source: AlbumArtwork.Source, size: AlbumArtwork.Size) -> NSImage? {
+    func cached(_ source: AlbumArtwork.Source, size: AlbumArtwork.Size) -> PlatformImage? {
         guard !locked({ absent.contains(Self.key(source)) }) else { return nil }
         return memory.object(forKey: Self.key(source, size) as NSString)
     }
@@ -128,12 +132,12 @@ final class CoverArtCache: Observable, @unchecked Sendable {
     /// Concurrent callers share work at both layers — a grid and a transport
     /// bar showing the same record at different sizes is one round trip and two
     /// decodes, and forty tiles of the same record is one of each.
-    func image(for source: AlbumArtwork.Source, size: AlbumArtwork.Size) async -> NSImage? {
+    func image(for source: AlbumArtwork.Source, size: AlbumArtwork.Size) async -> PlatformImage? {
         if let ready = cached(source, size: size) { return ready }
         let key = Self.key(source, size)
         if let running = locked({ decodes[key] }) { return await running.value }
 
-        let task = Task<NSImage?, Never> { [weak self] in
+        let task = Task<PlatformImage?, Never> { [weak self] in
             guard let self else { return nil }
             let data = await self.bytes(for: source)
             guard let data, !Task.isCancelled else { return nil }
@@ -318,11 +322,12 @@ final class CoverArtCache: Observable, @unchecked Sendable {
 
     /// Decode off the main actor, downsampled to what the caller will draw.
     ///
-    /// `NSImage(data:)` defers the decode until the image is drawn, which puts
-    /// it on the main thread in the middle of a scroll — and stored artwork is
-    /// a thousand pixels square for a row that shows it at twenty-eight points.
+    /// A platform image built from `Data` defers the decode until it is drawn,
+    /// which puts it on the main thread in the middle of a scroll — and stored
+    /// artwork is a thousand pixels square for a row that shows it at
+    /// twenty-eight points.
     /// Every size but `.full` comes back as a thumbnail sized for its use.
-    private nonisolated static func decode(_ data: Data, to size: AlbumArtwork.Size) -> NSImage? {
+    private nonisolated static func decode(_ data: Data, to size: AlbumArtwork.Size) -> PlatformImage? {
         guard let cgSource = CGImageSourceCreateWithData(data as CFData, nil) else {
             return nil
         }
@@ -333,9 +338,7 @@ final class CoverArtCache: Observable, @unchecked Sendable {
             guard let full = CGImageSourceCreateImageAtIndex(
                 cgSource, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary
             ) else { return nil }
-            return NSImage(
-                cgImage: full, size: NSSize(width: full.width, height: full.height)
-            )
+            return .decoded(full, pixelSize: CGSize(width: full.width, height: full.height))
         }
 
         guard let scaled = CGImageSourceCreateThumbnailAtIndex(
@@ -347,16 +350,21 @@ final class CoverArtCache: Observable, @unchecked Sendable {
                 kCGImageSourceThumbnailMaxPixelSize: limit,
             ] as CFDictionary
         ) else { return nil }
-        return NSImage(
-            cgImage: scaled, size: NSSize(width: scaled.width, height: scaled.height)
-        )
+        return .decoded(scaled, pixelSize: CGSize(width: scaled.width, height: scaled.height))
     }
 
     /// What holding this costs, so the budget is in bytes rather than in
     /// entries — a grid tile is sixteen row thumbnails and should count as it.
-    private nonisolated static func cost(_ image: NSImage) -> Int {
+    private nonisolated static func cost(_ image: PlatformImage) -> Int {
+        // Read out of the representation rather than through `bitmap`, which on
+        // AppKit is allowed to rasterise to answer.
+        #if canImport(AppKit)
         guard let rep = image.representations.first else { return 0 }
         return rep.pixelsWide * rep.pixelsHigh * 4
+        #else
+        guard let bitmap = image.cgImage else { return 0 }
+        return bitmap.width * bitmap.height * 4
+        #endif
     }
 
     // MARK: - Disk

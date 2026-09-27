@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import SwiftUI
 
 /// The cover, blurred out to a wash of the record's colour behind a header.
@@ -28,7 +32,7 @@ struct ArtworkBleed: View {
     @AppStorage("graphics") private var graphics = Graphics.full
     /// The last cover that had to be fetched, and the record it was for. Only
     /// consulted when the cache cannot answer.
-    @State private var fetched: (source: AlbumArtwork.Source, image: NSImage?)?
+    @State private var fetched: (source: AlbumArtwork.Source, image: PlatformImage?)?
 
     /// What this record's sleeve is — read straight through the cache on every
     /// pass, the way `AlbumArtwork` reads its bitmap. Held in `@State` and
@@ -41,7 +45,7 @@ struct ArtworkBleed: View {
     /// the room as it is until the sleeve arrives, the second empties it. Told
     /// apart, a record whose art is still being fetched no longer wipes the
     /// wash grey and then fades the new one in over two seconds.
-    private var answered: NSImage?? {
+    private var answered: PlatformImage?? {
         guard let source else { return .some(nil) }
         if let held = cache.cached(source, size: .tile) { return .some(held) }
         guard let fetched, fetched.source == source else { return nil }
@@ -50,7 +54,8 @@ struct ArtworkBleed: View {
 
     /// Whether the wash is actually moving: something to breathe to, a setting
     /// that allows it, and a system that has not asked for less motion.
-    private var breathes: Bool { drifts && graphics.drifts && !reduceMotion }
+    @Environment(\.powerSaving) private var powerSaving
+    private var breathes: Bool { drifts && graphics.drifts && !reduceMotion && !powerSaving }
 
     var body: some View {
         // Below `reduced` this is nothing at all rather than a transparent

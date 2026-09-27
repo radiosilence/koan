@@ -80,12 +80,14 @@ struct AlbumGridCell: View {
         }
         // ⌘-click starts a selection with this one in it. Over the art's own
         // tap, which would otherwise play the record as well.
+        #if os(macOS)
         .highPriorityGesture(
             TapGesture().modifiers(.command).onEnded {
                 library.selection.begin(with: album.id)
             },
             including: selectable && !selecting ? .all : .subviews
         )
+        #endif
         .contextMenu { PlayableMenu(playable: .album(album)) }
         .modifier(AlbumDrag(album: album, inContainer: selectable))
     }
@@ -149,10 +151,17 @@ private struct AlbumDrag: ViewModifier {
     let inContainer: Bool
 
     func body(content: Content) -> some View {
+        // A drag container is the Mac's: the iOS SDKs koan builds against mark
+        // it unavailable or newer than the target. On a phone a tile drags
+        // itself, which is all a touch drag ever carries anyway.
+        #if os(macOS)
         if inContainer {
             content.draggable(containerItemID: album.id)
         } else {
             content.draggablePlayable(.album(album))
         }
+        #else
+        content.draggablePlayable(.album(album))
+        #endif
     }
 }

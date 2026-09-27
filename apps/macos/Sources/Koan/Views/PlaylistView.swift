@@ -80,7 +80,9 @@ struct PlaylistView: View {
                     play(rowIds: selection)
                     return .handled
                 }
+                #if os(macOS)
                 .onDeleteCommand { removeSelected() }
+                #endif
                 .clearsSelection($selection)
                 .onChange(of: ui.selectAllToken) { _, _ in
                     selection = Set(rows.map(\.id))
@@ -224,6 +226,7 @@ struct PlaylistView: View {
         case .entry(let entry, let position):
             PlaylistEntryRow(entry: entry, position: position, artwork: !grouped)
                 .rowBehaviour()
+                .primaryTap { play(rowIds: [row.id]) }
             // Carries where it came from, so dropping it back into this
             // playlist is a move of *this* row rather than of its track — and
             // dropping it anywhere else is just a track.

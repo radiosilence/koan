@@ -11,6 +11,7 @@ struct ArtistBrowser: View {
     var body: some View {
         List(library.visibleArtists, id: \.id, selection: $selection) { artist in
             ArtistRow(artist: artist)
+                .primaryTap { nav.open(artist: artist.id) }
         }
         .clearsSelection($selection)
         .washedGround()
@@ -133,17 +134,8 @@ struct ArtistDetailView: View {
                             .foregroundStyle(.secondary)
                         if let artist {
                             let playable = Playable.artist(id: artist.id, name: artist.name)
-                            HStack(spacing: 10) {
-                                QueueButtons(playable: playable)
-                                Button {
-                                    shufflePlay()
-                                } label: {
-                                    Label("Shuffle", systemImage: Icon.shuffle)
-                                }
-                                ShareButton(playable: playable)
-                                FavouriteHeaderButton(playable: playable)
-                            }
-                            .padding(.top, 4)
+                            HeaderActions(playable: playable, shuffle: shufflePlay)
+                                .padding(.top, 4)
                         }
                     }
                 }

@@ -41,6 +41,8 @@ struct HistoryView: View {
                         Section(day.key) {
                             ForEach(day.entries, id: \.id) { entry in
                                 HistoryRow(entry: entry)
+                                    .primaryTap { play([entry.id]) }
+                                    .washedRow()
                                     .tag(entry.id)
                             }
                         }
@@ -58,7 +60,9 @@ struct HistoryView: View {
                     play(selection)
                     return .handled
                 }
+                #if os(macOS)
                 .onDeleteCommand { forgetSelected() }
+                #endif
             }
         }
         .alert("Clear History?", isPresented: $confirmingClear) {

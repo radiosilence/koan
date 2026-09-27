@@ -1,4 +1,6 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import KoanFFI
 import SwiftUI
 
@@ -7,6 +9,14 @@ import SwiftUI
 /// The stage defaults to the queue rather than the library — koan is a player
 /// you build a queue in, and the TUI opens the same way. The library is
 /// somewhere you go to feed it.
+///
+/// The wide layout: sidebar, stage, transport across the top.
+///
+/// Not "the macOS one" — it is the layout for anything with the room for it, and
+/// an iPad running full screen has the room. What decides is
+/// `horizontalSizeClass`, in `AdaptiveRootView`; a phone and an iPad in Slide
+/// Over get the tab bar instead, because they are the same width and the same
+/// answer suits both.
 ///
 /// `NavigationSplitView` is the root and stays the root. Wrapping it in a stack
 /// or putting an `HSplitView` in its detail column breaks width propagation:
@@ -21,7 +31,12 @@ import SwiftUI
 /// with a linear history — and a stack navigates a hierarchy that does not
 /// exist here.
 struct RootView: View {
+    /// Single-key shortcuts belong to a machine with a keyboard always attached
+    /// — the split view itself does not, which is why this is the only thing in
+    /// here the phone cannot have.
+    #if os(macOS)
     let hotkeys: Hotkeys
+    #endif
 
     @Environment(UIState.self) private var ui
     @Environment(LibraryModel.self) private var library
@@ -100,15 +115,21 @@ struct RootView: View {
         // keeps rows legible as they pass under.
         // Restored at `bare`: the ground it paints is opaque, so nothing behind
         // it is sampled and a page switch does not redraw it.
+        #if os(macOS)
         .toolbarBackgroundVisibility(
             graphics.usesWindowGlass ? .hidden : .automatic, for: .windowToolbar
         )
-        .onSubmit(of: .search) { handleSubmit() }
+        #else
+        .toolbarBackgroundVisibility(
+            graphics.usesWindowGlass ? .hidden : .automatic, for: .navigationBar
+        )
+        #endif
+        .onSubmit(of: .search) { search.submit() }
         // Backgrounding is the last dependable moment before termination. A
         // notification rather than `scenePhase`: reading that re-ran whatever
         // read it — it was the whole Scene — each time the app lost focus.
         .onReceive(
-            NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
+            NotificationCenter.default.publisher(for: .appResignsActive)
         ) { _ in
             Task { await player.saveSession() }
         }
@@ -228,39 +249,15 @@ struct RootView: View {
                 )
             }
         }
+        #if os(macOS)
         .sheet(isPresented: $ui.showingShortcuts) {
             ShortcutsSheet(hotkeys: hotkeys.all)
         }
+        #endif
         .overlay(alignment: .bottom) {
             // Above the transport, not behind it.
             Toasts().padding(.bottom, transportHeight + 10)
         }
-    }
-
-    /// Return either picks a suggestion — in which case the field holds a token
-    /// naming exactly what was chosen — or it means "show me everything".
-    private func handleSubmit() {
-        // Emptying the field submits it again. Acting on that sent you to the
-        // results page for a search you had not asked for — and since clearing
-        // the query then forgets that page, you landed on whatever list was
-        // behind it, one keystroke after picking an album.
-        let query = search.query.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return }
-
-        guard let selection = SearchModel.Selection(token: query) else {
-            nav.show(.searchResults)
-            return
-        }
-        switch selection {
-        case .track(let id, let albumId):
-            // A track lives on its album; that's where you'd play it from.
-            if let albumId { nav.open(album: albumId, highlighting: id) }
-        case .album(let id):
-            nav.open(album: id)
-        case .artist(let id):
-            nav.open(artist: id)
-        }
-        search.reset()
     }
 }
 
@@ -307,7 +304,7 @@ extension EnvironmentValues {
 /// particular, so it answers with the one playing. The room is coloured by the
 /// music wherever you have wandered off to, and only a page that disagrees
 /// says otherwise.
-private struct RecordRoom: ViewModifier {
+struct RecordRoom: ViewModifier {
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
     @Environment(CoverArtCache.self) private var art
@@ -360,6 +357,14 @@ private struct RecordRoom: ViewModifier {
         let player = player
         let artCache = art
         let tint = recordTint ?? .koanAccent
+        // Over an opaque ground, because this *replaces* the window's own
+        // background rather than sitting on it — a half-transparent wash on its
+        // own leaves you looking through the app at the desktop.
+        let washLayer = ZStack {
+            Rectangle().fill(.background)
+            WindowWash(source: wash, player: player)
+                .environment(artCache)
+        }
 
         content
             // The queue is a list of names, and the record playing is the only
@@ -368,17 +373,13 @@ private struct RecordRoom: ViewModifier {
             // toolbar's inset, and a wash that stops in a line under the
             // toolbar is worse than none. An album page washes its own header,
             // so the window stays out of its way.
-            .containerBackground(for: .window) {
-                // Over an opaque ground, because this *replaces* the window's
-                // own background rather than sitting on it — a half-transparent
-                // wash on its own leaves you looking through the app at the
-                // desktop.
-                ZStack {
-                    Rectangle().fill(.background)
-                    WindowWash(source: wash, player: player)
-                        .environment(artCache)
-                }
-            }
+            // A window on the Mac, the navigation container on iOS: the same
+            // intent, and neither platform has the other's container.
+            #if os(macOS)
+            .containerBackground(for: .window) { washLayer }
+            #else
+            .containerBackground(for: .navigation) { washLayer }
+            #endif
             // Only for a record whose colour is not already known. The usual
             // path is answered above, in the same pass as the page —
             // navigating warms this alongside the rows, see
@@ -604,13 +605,6 @@ private extension View {
             .accessibilityHidden(!onStage)
             .environment(\.onStage, onStage)
     }
-}
-
-extension EnvironmentValues {
-    /// Whether the page this view belongs to is the one on screen. False only
-    /// for the queue while you are somewhere else — see `StageView`. Anything
-    /// that animates or subscribes to keep itself current reads it.
-    @Entry var onStage = true
 }
 
 /// Engine errors are informational — a device disappearing shouldn't take a

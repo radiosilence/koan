@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 /// The played extent and the head of the seek bar, as layers the render server
@@ -14,7 +13,7 @@ import SwiftUI
 ///
 /// Nothing here is a clock either. `remaining` is how much of the track is
 /// left, so the animation ends as the track does.
-struct SeekProgress: NSViewRepresentable {
+struct SeekProgress: PlatformViewRepresentable {
     /// Where the head is now, 0...1.
     let fraction: Double
     /// Seconds until the animation should reach the end. Zero for a bar that
@@ -22,17 +21,19 @@ struct SeekProgress: NSViewRepresentable {
     let remaining: TimeInterval
     let thickness: CGFloat
 
-    func makeNSView(context: Context) -> ProgressView {
+    typealias PlatformViewType = ProgressView
+
+    func makeView(context: Context) -> ProgressView {
         ProgressView(thickness: thickness)
     }
 
-    func updateNSView(_ view: ProgressView, context: Context) {
+    func updateView(_ view: ProgressView, context: Context) {
         view.apply(fraction: fraction, remaining: remaining)
     }
 
     /// Two layers: the capsule of what has played, and the head that marks
     /// where that is on a track too long for the capsule to show it.
-    final class ProgressView: NSView {
+    final class ProgressView: LayerView {
         private let played = CALayer()
         private let head = CALayer()
         private let thickness: CGFloat
@@ -42,7 +43,6 @@ struct SeekProgress: NSViewRepresentable {
         init(thickness: CGFloat) {
             self.thickness = thickness
             super.init(frame: .zero)
-            wantsLayer = true
             // Grown from its leading edge, so widening it is one animatable
             // number rather than a width and a position that must agree.
             played.anchorPoint = CGPoint(x: 0, y: 0.5)
@@ -50,16 +50,12 @@ struct SeekProgress: NSViewRepresentable {
             head.cornerRadius = thickness
             for sublayer in [played, head] {
                 sublayer.actions = ["bounds": NSNull(), "position": NSNull()]
-                layer?.addSublayer(sublayer)
+                hostLayer.addSublayer(sublayer)
             }
             paint()
         }
 
-        @available(*, unavailable)
-        required init?(coder: NSCoder) { fatalError("not from a nib") }
-
-        override func layout() {
-            super.layout()
+        override func layoutLayers() {
             // The fraction is from the last anchor; re-placing on an unrelated
             // pass would pull the running animation back to it.
             guard bounds.size != laidOut else { return }
@@ -69,10 +65,7 @@ struct SeekProgress: NSViewRepresentable {
 
         private var laidOut: CGSize?
 
-        override func viewDidChangeEffectiveAppearance() {
-            super.viewDidChangeEffectiveAppearance()
-            paint()
-        }
+        override func appearanceChanged() { paint() }
 
         func apply(fraction: Double, remaining: TimeInterval) {
             self.fraction = fraction.clamped()
@@ -81,7 +74,7 @@ struct SeekProgress: NSViewRepresentable {
         }
 
         private func paint() {
-            let colour = NSColor.labelColor.cgColor
+            let colour = resolved(.label)
             played.backgroundColor = colour
             head.backgroundColor = colour
         }

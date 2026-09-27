@@ -41,7 +41,9 @@ struct LinkText: View {
                 )
                 .lineLimit(1)
                 .contentShape(.rect)
+                #if os(macOS)
                 .pointerStyle(.link)
+                #endif
                 .onHover { hovering = $0 }
                 // A row that scrolls or filters away while hovered never sees
                 // the exit, so it would come back still underlined.

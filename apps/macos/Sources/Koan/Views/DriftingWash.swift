@@ -1,4 +1,3 @@
-import AppKit
 import CoreImage
 import SwiftUI
 
@@ -31,10 +30,10 @@ import SwiftUI
 ///
 /// This is not what made a tap slow — that survives at plain graphics, where no
 /// wash is rendered at all (koan#380). Baking is simply the cheaper of the two.
-struct DriftingWash: NSViewRepresentable {
+struct DriftingWash: PlatformViewRepresentable {
     /// Nothing playing, or a record with no art, means no wash rather than a
     /// grey one.
-    let image: NSImage?
+    let image: PlatformImage?
     /// Whether nothing is an answer. A sleeve still being fetched is not a
     /// record without one, and clearing the wash for it wipes the room grey and
     /// then fades the new colour in over two seconds. While it is pending the
@@ -43,9 +42,11 @@ struct DriftingWash: NSViewRepresentable {
     /// Whether the room is breathing. False settles it where it stands.
     let drifts: Bool
 
-    func makeNSView(context: Context) -> WashView { WashView() }
+    typealias PlatformViewType = WashView
 
-    func updateNSView(_ view: WashView, context: Context) {
+    func makeView(context: Context) -> WashView { WashView(frame: .zero) }
+
+    func updateView(_ view: WashView, context: Context) {
         if !(pending && image == nil) { view.show(image) }
         view.drift(drifts)
     }
@@ -53,7 +54,7 @@ struct DriftingWash: NSViewRepresentable {
 
 /// One layer holding the current cover, one holding the one before it, and a
 /// crossfade between them. All three animations live in the render server.
-final class WashView: NSView {
+final class WashView: LayerView {
     /// The cover is blurred to mush, so it is rendered small and magnified
     /// afterwards — blurring a 360pt texture and scaling the result costs a
     /// fraction of blurring one the width of the window.
@@ -81,23 +82,19 @@ final class WashView: NSView {
 
     private let current = CALayer()
     private let previous = CALayer()
-    private var shown: NSImage?
+    private var shown: PlatformImage?
     private var drifting = false
 
-    override init(frame: NSRect) {
+    override init(frame: CGRect) {
         super.init(frame: frame)
-        wantsLayer = true
-        layer?.masksToBounds = true
+        hostLayer.masksToBounds = true
         for texture in [previous, current] {
             texture.contentsGravity = .resizeAspectFill
             texture.masksToBounds = false
-            layer?.addSublayer(texture)
+            hostLayer.addSublayer(texture)
         }
         previous.opacity = 0
     }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not from a nib") }
 
     /// The layers fill the window, with room to move.
     ///
@@ -113,8 +110,7 @@ final class WashView: NSView {
     /// offset carries the texture 12% of the window sideways and the rotation
     /// eats about another 3.5%, so the layer has to be wide enough that its own
     /// edge stays out of frame throughout.
-    override func layout() {
-        super.layout()
+    override func layoutLayers() {
         let box = bounds.insetBy(
             dx: -bounds.width * (Self.near - 1) / 2,
             dy: -bounds.height * (Self.near - 1) / 2
@@ -140,7 +136,7 @@ final class WashView: NSView {
     /// The *new* layer fades in, on top of the old one holding station
     /// underneath. Fading the old one out instead does nothing visible: the new
     /// one is above it and already opaque, so the change lands as a cut.
-    func show(_ image: NSImage?) {
+    func show(_ image: PlatformImage?) {
         guard image !== shown else { return }
         shown = image
         generation &+= 1
@@ -189,10 +185,8 @@ final class WashView: NSView {
     /// blurs *after* magnification, so 14 points there is a fifth of this blur
     /// and a different picture — matching it would take a radius around 70, and
     /// the live filter costs more at that radius, not less.
-    private nonisolated static func bake(_ image: NSImage) -> CGImage? {
-        var rect = NSRect(origin: .zero, size: image.size)
-        guard let source = image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
-        else { return nil }
+    private nonisolated static func bake(_ image: PlatformImage) -> CGImage? {
+        guard let source = image.bitmap else { return nil }
         let extent = CGRect(x: 0, y: 0, width: source.width, height: source.height)
         let radius = 14 * Double(source.width) / Double(side)
         let output = CIImage(cgImage: source)
@@ -214,7 +208,7 @@ final class WashView: NSView {
     /// The keys the drift is installed under.
     ///
     /// Named, and removed by name. `removeAllAnimations` also took the dissolve
-    /// between two records with it — and `start()` runs from `layout()`, which a
+    /// between two records with it — and `start()` runs from `layoutLayers()`, which a
     /// page switch triggers, so the fade was wiped a frame or two after it began
     /// and the room changed colour in a cut.
     nonisolated fileprivate static let driftKeys = ["scale", "rotation", "position"]
@@ -255,14 +249,14 @@ final class WashView: NSView {
             texture.add(
                 Self.breathe(
                     "position",
-                    from: NSValue(point: CGPoint(
+                    from: CGPoint(
                         x: centre.x - bounds.width * Self.reach,
                         y: centre.y - bounds.height * Self.rise
-                    )),
-                    to: NSValue(point: CGPoint(
+                    ),
+                    to: CGPoint(
                         x: centre.x + bounds.width * Self.reach,
                         y: centre.y + bounds.height * Self.rise
-                    )),
+                    ),
                     period: Self.periods.position
                 ),
                 forKey: "position"

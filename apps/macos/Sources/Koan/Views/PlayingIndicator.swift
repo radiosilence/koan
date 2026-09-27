@@ -1,4 +1,3 @@
-import AppKit
 import SwiftUI
 
 /// The bars that mark whatever is playing: a three-column spectrum analyser,
@@ -24,26 +23,31 @@ struct PlayingIndicator: View {
     /// AppKit view — see `EnvironmentValues.roomTint`.
     @Environment(\.roomTint) private var tint
     @AppStorage("graphics") private var graphics = Graphics.full
+    @Environment(\.powerSaving) private var powerSaving
 
     /// Whether the bars follow the music. Reduce Motion asks them not to, and
     /// so does the bottom of the graphics ladder; off stage nobody is looking.
-    private var live: Bool { onStage && !reduceMotion && graphics.animatesIndicators }
+    private var live: Bool {
+        onStage && !reduceMotion && !powerSaving && graphics.animatesIndicators
+    }
 
     var body: some View {
-        PlayingBars(live: live, tint: NSColor(tint), levels: levels)
+        PlayingBars(live: live, tint: PlatformColor(tint), levels: levels)
             .frame(width: PlayingBarsView.width, height: PlayingBarsView.maxHeight)
             .accessibilityLabel(isPlaying ? "Playing" : "Paused")
     }
 }
 
-private struct PlayingBars: NSViewRepresentable {
+private struct PlayingBars: PlatformViewRepresentable {
     let live: Bool
-    let tint: NSColor
+    let tint: PlatformColor
     let levels: PlayingLevels
 
-    func makeNSView(context: Context) -> PlayingBarsView { PlayingBarsView() }
+    typealias PlatformViewType = PlayingBarsView
 
-    func updateNSView(_ view: PlayingBarsView, context: Context) {
+    func makeView(context: Context) -> PlayingBarsView { PlayingBarsView() }
+
+    func updateView(_ view: PlayingBarsView, context: Context) {
         view.tint = tint
         view.source = levels
         if live {
@@ -54,7 +58,7 @@ private struct PlayingBars: NSViewRepresentable {
         }
     }
 
-    static func dismantleNSView(_ view: PlayingBarsView, coordinator: ()) {
+    static func dismantleView(_ view: PlayingBarsView, coordinator: ()) {
         view.source?.detach(view)
     }
 }
@@ -62,7 +66,7 @@ private struct PlayingBars: NSViewRepresentable {
 /// Three capsules, moved by their bounds. Nothing else about them ever
 /// changes, and a bounds change with actions disabled is the cheapest thing a
 /// layer can be asked to do.
-final class PlayingBarsView: NSView {
+final class PlayingBarsView: LayerView {
     /// The shape a still indicator holds — staggered, so it reads as bars
     /// rather than as a broken one. Nothing moving needs an analyser.
     private static let resting = [0.75, 0.35, 0.6]
@@ -78,16 +82,20 @@ final class PlayingBarsView: NSView {
     /// Who is feeding this, so being torn down can say so.
     weak var source: PlayingLevels?
 
-    var tint: NSColor = .labelColor {
+    var tint: PlatformColor = .label {
         didSet {
             guard tint != oldValue else { return }
             paint()
         }
     }
 
-    override init(frame: NSRect) {
+    override init(frame: CGRect) {
         super.init(frame: frame)
-        wantsLayer = true
+        // Bars stand on the floor. AppKit's origin is already there; UIKit's is
+        // at the top, and would hang them from the ceiling.
+        #if !canImport(AppKit)
+        hostLayer.isGeometryFlipped = true
+        #endif
         for (index, bar) in bars.enumerated() {
             bar.cornerRadius = Self.barWidth / 2
             // Grown from the foot, so a height is one number rather than a
@@ -98,17 +106,14 @@ final class PlayingBarsView: NSView {
                 y: 0
             )
             bar.actions = ["bounds": NSNull(), "position": NSNull(), "backgroundColor": NSNull()]
-            layer?.addSublayer(bar)
+            hostLayer.addSublayer(bar)
         }
         paint()
         rest()
     }
 
-    @available(*, unavailable)
-    required init?(coder: NSCoder) { fatalError("not from a nib") }
-
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: Self.width, height: Self.maxHeight)
+    override var intrinsicContentSize: CGSize {
+        CGSize(width: Self.width, height: Self.maxHeight)
     }
 
     /// A frame. Clamped because a bar is a drawn rectangle: the level keeps
@@ -127,7 +132,10 @@ final class PlayingBarsView: NSView {
     /// Hold still.
     func rest() { apply(Self.resting) }
 
+    override func appearanceChanged() { paint() }
+
     private func paint() {
-        for bar in bars { bar.backgroundColor = tint.cgColor }
+        let colour = resolved(tint)
+        for bar in bars { bar.backgroundColor = colour }
     }
 }

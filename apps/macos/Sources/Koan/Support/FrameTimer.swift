@@ -1,4 +1,8 @@
+#if canImport(AppKit)
 import AppKit
+#else
+import UIKit
+#endif
 import OSLog
 import QuartzCore
 
@@ -66,8 +70,12 @@ final class FrameTimer: NSObject {
                 id: Trace.signposter.makeSignpostID()
             )
         )
+        #if canImport(AppKit)
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
         let link = window.displayLink(target: self, selector: #selector(tick))
+        #else
+        let link = CADisplayLink(target: self, selector: #selector(tick))
+        #endif
         link.add(to: .main, forMode: .common)
         self.link = link
     }

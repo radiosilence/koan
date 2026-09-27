@@ -624,12 +624,12 @@ impl Config {
         Ok(())
     }
 
-    /// Resolved cache directory — uses explicit setting or defaults to config_dir/cache.
+    /// Resolved cache directory — the explicit setting, or `default_cache_dir`.
     pub fn cache_dir(&self) -> PathBuf {
         self.remote
             .cache_dir
             .clone()
-            .unwrap_or_else(|| config_dir().join("cache"))
+            .unwrap_or_else(default_cache_dir)
     }
 
     /// Parsed cache limit in bytes, or None if unlimited.
@@ -789,7 +789,8 @@ fn to_edit_value(value: &toml::Value) -> toml_edit::Value {
 
 /// Where koan keeps its configuration, library database and cache.
 ///
-/// `~/.config/koan/` unless pointed elsewhere. `KOAN_CONFIG_DIR` is the
+/// `~/.config/koan/` (on iOS, `Library/Application Support/koan`) unless
+/// pointed elsewhere. `KOAN_CONFIG_DIR` is the
 /// user-facing way to do that — one machine, more than one library — and
 /// `set_config_dir` is the in-process one, which is what tests need: without
 /// it they read whatever configuration belongs to whoever ran them, right down
@@ -801,10 +802,44 @@ pub fn config_dir() -> PathBuf {
     if let Some(dir) = std::env::var_os("KOAN_CONFIG_DIR") {
         return PathBuf::from(dir);
     }
+    platform_config_dir()
+}
+
+#[cfg(not(target_os = "ios"))]
+fn platform_config_dir() -> PathBuf {
     dirs::home_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join(".config")
         .join("koan")
+}
+
+/// An iOS app may write inside its container's `Documents`, `Library` and
+/// `tmp`, and nowhere else: `~/.config` is refused on a device, though the
+/// simulator allows it. Application Support is where an app's own state goes.
+#[cfg(target_os = "ios")]
+fn platform_config_dir() -> PathBuf {
+    ios_library().join("Application Support").join("koan")
+}
+
+#[cfg(target_os = "ios")]
+fn ios_library() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Library")
+}
+
+/// Where downloads are kept when the config names nowhere.
+///
+/// Beside the config everywhere but iOS. There it is `Library/Caches`, which
+/// is not backed up to iCloud — a cache of lossless files would otherwise count
+/// against someone's iCloud storage — and which iOS may clear when the device
+/// is short of space, which is what a cache is for.
+fn default_cache_dir() -> PathBuf {
+    #[cfg(target_os = "ios")]
+    if CONFIG_DIR.read().is_none() && std::env::var_os("KOAN_CONFIG_DIR").is_none() {
+        return ios_library().join("Caches").join("koan");
+    }
+    config_dir().join("cache")
 }
 
 /// Point koan's configuration at `dir` for the life of the process.

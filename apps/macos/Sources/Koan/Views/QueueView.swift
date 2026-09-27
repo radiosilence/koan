@@ -8,6 +8,12 @@ import SwiftUI
 /// runs* rather than sorting: queue order is the user's, and collapsing two
 /// separate visits to the same record into one heading would misrepresent it.
 struct QueueView: View {
+    #if os(macOS)
+    private static let emptyDetail = "Press ⌘K to find something to play."
+    #else
+    private static let emptyDetail = "Find something to play from Albums or Artists."
+    #endif
+
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
     @Environment(Navigator.self) private var nav
@@ -59,7 +65,7 @@ struct QueueView: View {
                 EmptyState(
                     icon: "list.bullet",
                     title: "Queue is empty",
-                    detail: "Press ⌘K to find something to play."
+                    detail: Self.emptyDetail
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -91,12 +97,14 @@ struct QueueView: View {
                         playSelection()
                         return .handled
                     }
+                    #if os(macOS)
                     .onDeleteCommand { removeSelected() }
                     .onChange(of: ui.selectAllToken) { _, _ in
                         guard onStage else { return }
                         selection = Set(rows.map(\.id))
                     }
                     .clearsSelection($selection)
+                    #endif
                 }
             }
         }
@@ -166,10 +174,14 @@ struct QueueView: View {
             .fixedSize()
             .help("Group by album, or one row per track")
 
+            // Undo is a keyboard's idea of a control. The buttons exist to show
+            // ⌘Z is available, and there is no ⌘Z on a phone.
+            #if os(macOS)
             Button { player.undo() } label: { Image(systemName: Icon.undo) }
                 .help("Undo (⌘Z)")
             Button { player.redo() } label: { Image(systemName: Icon.redo) }
                 .help("Redo (⇧⌘Z)")
+            #endif
 
             Menu {
                 Button {
@@ -232,6 +244,7 @@ struct QueueView: View {
                 artwork: !grouped
             )
             .rowBehaviour()
+            .primaryTap { play(rowIds: [item.queueItemId]) }
         }
     }
 

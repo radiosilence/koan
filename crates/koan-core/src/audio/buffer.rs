@@ -637,6 +637,8 @@ fn decode_queue_loop<N>(
     wait_for_drain(&producer, stop);
 }
 
+const FULL_RING_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
+
 /// Block until the audio engine has consumed everything in the ring buffer.
 ///
 /// A session ends only once its audio has been heard, so the player can tear
@@ -931,7 +933,12 @@ fn decode_single(
 
             let slots = producer.slots();
             if slots == 0 {
-                thread::sleep(std::time::Duration::from_micros(500));
+                // A full ring is the steady state, so this is the wait playback
+                // spends nearly all its time in. The ring holds a second or more
+                // of audio at any rate koan plays, and 10ms is still fine enough
+                // for the viz delay line; half a millisecond was two thousand
+                // wakes a second for the length of every track.
+                thread::sleep(FULL_RING_WAIT);
                 continue;
             }
 

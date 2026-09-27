@@ -7,9 +7,12 @@ pub mod coreaudio_backend;
 pub mod cpal_backend;
 #[cfg(target_os = "macos")]
 pub mod device;
-#[cfg(target_os = "macos")]
+// AUHAL on macOS, RemoteIO on iOS — one engine, two output components.
+#[cfg(any(target_os = "macos", target_os = "ios"))]
 pub mod engine;
 pub mod fade;
+#[cfg(target_os = "ios")]
+pub mod ios_backend;
 pub mod opus;
 pub mod replaygain;
 pub mod streaming;
@@ -26,6 +29,10 @@ pub fn platform_backend() -> Box<dyn AudioBackend> {
     #[cfg(target_os = "linux")]
     {
         Box::new(cpal_backend::CpalBackend::new())
+    }
+    #[cfg(target_os = "ios")]
+    {
+        Box::new(ios_backend::IosAudioBackend)
     }
 }
 

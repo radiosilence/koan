@@ -14,7 +14,7 @@ Plus **apps/macos** — SwiftUI app (SwiftPM, Swift 6, macOS 26+). Links koan-ff
 
 Dependency rules (compiler-enforced): koan-tui, koan-server and koan-ffi cannot import each other; all three depend only on koan-core. Native clients import koan-core through koan-ffi.
 
-**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web SPA, iOS, jukebox remotes. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
+**Local UI goes through FFI, not GraphQL.** The macOS app links the engine in-process — a daemon, a port and an auth surface buy nothing when the UI is sitting on top of the audio engine. GraphQL is the surface for clients that genuinely can't link the core: the web UI, jukebox remotes. The iOS app links the core like the Mac app does. When adding a capability to one, consider whether the other needs it too — both are thin shims over the same koan-core helpers.
 
 ## Architecture overview
 
@@ -73,12 +73,17 @@ No resampling. Device sample rate switched to match source (bit-perfect). Float3
 ## Build & check
 
 ```bash
-just check      # cargo test + clippy -D warnings
-just fmt        # cargo fmt
-just cli        # cargo run --release -p koan-cli -- <args>
-just build      # cargo build --release
-just macos-run  # build + launch the macOS app
-just macos-dmg  # package the app for release
+just check          # cargo test + clippy -D warnings
+just fmt            # cargo fmt
+just cli            # cargo run --release -p koan-cli -- <args>
+just build          # cargo build --release
+just macos-run      # build + launch the macOS app
+just macos-dmg      # package the app for release
+just ios-typecheck  # the shared SwiftUI sources still build for iOS
+just ios-run        # build and launch on a booted simulator
+just ios-smoke FILE # play a file through the real Player on the simulator
+just ios-phone      # install on the plugged-in iPhone (personal team)
+just ios-walk       # UI test that screenshots every page, into target/ios-walk
 ```
 
 The macOS app needs `just macos-ffi` to have run at least once — it generates the Swift bindings that `swift build` compiles against. `macos-build` does this for you.
@@ -97,8 +102,9 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 |--------|------|
 | `audio/backend.rs` | `AudioBackend` + `AudioEngineHandle` traits — platform-agnostic audio output |
 | `audio/coreaudio_backend.rs` | macOS `CoreAudioBackend` impl (wraps engine.rs + device.rs) |
+| `audio/ios_backend.rs` | iOS `IosAudioBackend` impl — the route is the only device; the session belongs to the app |
 | `audio/cpal_backend.rs` | Linux `CpalBackend` impl (ALSA/PipeWire/PulseAudio via cpal) |
-| `audio/engine.rs` | CoreAudio AUHAL setup, render callback (macOS only) |
+| `audio/engine.rs` | CoreAudio output setup, render callback. AUHAL on macOS, RemoteIO on iOS — two properties apart |
 | `audio/buffer.rs` | `PlaybackTimeline`, track boundaries, decode thread entry points (`start_decode`, `decode_queue_loop`, `decode_single`) |
 | `audio/device.rs` | CoreAudio device enumeration, sample rate get/set (macOS only) |
 | `audio/replaygain.rs` | EBU R128 loudness scanning, gain application via lofty |
@@ -162,7 +168,18 @@ Pre-push hook (`.claude/settings.json`) runs `cargo fmt --all` + `cargo clippy -
 
 Swift bindings are generated, not checked in — `just macos-ffi` builds the lib and regenerates them.
 
-### apps/macos (`apps/macos/Sources/Koan/`)
+### apps/macos (`apps/macos/Sources/`)
+
+`Koan/` is the app: models, pages and rows, shared by both platforms. `KoanIOS/`
+is the iOS scene root and audio session — the phone's shell over the same state.
+The directory is still called `macos` because the macOS app is what it builds
+with SwiftPM. iOS device builds and the UI walk go through an Xcode project that
+XcodeGen generates from `apps/ios/project.yml` (`just ios-project`); it is not
+checked in.
+
+On iOS each tab is a `NavigationStack` with its own path of `Route`s. Pages draw
+from the route that pushed them, never from `nav.current`, and the navigator
+follows the top of the stack in front — see `TabShell`.
 
 | Module | What |
 |--------|------|
@@ -176,6 +193,7 @@ Swift bindings are generated, not checked in — `just macos-ffi` builds the lib
 | `Support/AlbumSelection.swift` | Albums picked out of the grid to play or queue together. A mode, because a click on a tile already plays it. Held in tick order, so a pick can span several filters |
 | `Support/CoverArtCache.swift` | Album-keyed art cache: bytes once per record on disk, bitmaps per record and draw size in a bounded `NSCache`. Deliberately off the main actor — see the note there. Each miss is an HTTP round trip on remote libraries |
 | `Support/ImageWork.swift` | The two lanes image work runs in, neither of them the cooperative pool: a wide one for blocking file reads, a bounded one for decoding |
+| `Support/Platform.swift` | The few types AppKit and UIKit disagree about. `KoanApp`, `RootView`, `Hotkeys`, `TextFocus`, `EditCommands`, `MenuShortcuts` and `ShortcutsSheet` are the macOS shell and have no iOS counterpart; everything else builds for both |
 | `Views/DriftingWash.swift` | The window's wash, as Core Animation. Drift, blur and dissolve belong to the compositor; nothing here costs a main-thread frame |
 | `Support/FrameTimer.swift` | Times a tap against the display link, so the region after a body evaluation — layout, the commit, the render server — is measurable at all. See CONTRIBUTING |
 | `Support/PlayingLevels.swift` | One analyser subscription for every playing indicator on screen, handing each frame straight to the bars as layer geometry — nothing observable, nothing SwiftUI re-runs. Reads the stream only while a bar is attached, which is what lets the analyser park |

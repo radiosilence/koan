@@ -1,4 +1,6 @@
+#if canImport(AppKit)
 import AppKit
+#endif
 import KoanFFI
 import Observation
 
@@ -40,13 +42,15 @@ final class AlbumSelection {
     }
 
     /// A click on a tile: ⇧ extends from the last one clicked, anything else
-    /// flips just this one.
+    /// flips just this one. A tap has no ⇧, so it always flips.
     func click(_ id: Int64, in grid: [Album]) {
+        #if canImport(AppKit)
         if NSEvent.modifierFlags.contains(.shift), let anchor {
             extend(from: anchor, to: id, in: grid)
-        } else {
-            toggle(id)
+            return
         }
+        #endif
+        toggle(id)
     }
 
     func selectAll(_ grid: [Album]) {

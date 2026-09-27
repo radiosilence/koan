@@ -267,7 +267,7 @@ struct TransportBar: View {
 /// however long is left of it. That is one animation per anchor rather than a
 /// redraw per tick, and it runs where animations run rather than on this
 /// thread. The elapsed figure is a system-drawn timer for the same reason.
-private struct SeekBar: View {
+struct SeekBar: View {
     @Environment(PlayerModel.self) private var player
 
     var body: some View {
@@ -319,7 +319,7 @@ private struct SeekBar: View {
                         }
                 )
             }
-            .frame(height: 14)
+            .frame(height: Self.reach)
 
             Text(Format.duration(player.durationMs))
                 .font(.caption2.monospacedDigit())
@@ -330,6 +330,13 @@ private struct SeekBar: View {
     }
 
     private static let thickness = 4.0
+    /// How tall a target the bar is. A pointer finds four points; a thumb
+    /// wants a good deal more, and the layers centre themselves either way.
+    #if os(macOS)
+    private static let reach = 14.0
+    #else
+    private static let reach = 32.0
+    #endif
 
     /// A capsule covering `fraction` of the bar, centred vertically. Shorter
     /// than its own thickness it would draw as a squashed dot, so it doesn't.

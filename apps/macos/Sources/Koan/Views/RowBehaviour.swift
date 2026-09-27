@@ -18,6 +18,7 @@ struct RowBehaviour: ViewModifier {
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
             .modifier(OptionalDrag(playable: playable))
+            .washedRow()
     }
 }
 

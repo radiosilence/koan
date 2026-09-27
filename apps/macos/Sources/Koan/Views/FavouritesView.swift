@@ -157,6 +157,7 @@ struct FavouritesView: View {
                     allTrackIds: allTrackIds
                 )
                 .rowBehaviour(playable: .track(track))
+                .primaryTap { play([track.id]) }
             }
         }
     }

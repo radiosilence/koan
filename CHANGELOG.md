@@ -6,6 +6,27 @@
 
 - The web UI shows the server's version under the account controls (the sidebar on a desktop, the footer on a phone), linked to its release notes.
 
+### Added
+
+- **koan runs on iOS.** The same engine, models and pages as the Mac app, in a phone's shell: a tab bar (Queue, Library, Settings, Search), a mini player above it, and a full-screen Now Playing with the seek bar, lyrics in place of the sleeve, radio, the output format and an AirPlay picker. Every page stands in the playing record's wash, as the Mac's window does. An iPad with room for a sidebar gets the Mac's layout instead; the choice follows the width, not the device. `just ios-run` builds it for a simulator. iOS 26 or later.
+
+  Output goes through RemoteIO, from the same `engine.rs` the Mac uses; the two differ only in which output unit they open and whether a device can be named. The decode pipeline, timeline, gapless cursor and teardown are shared rather than rewritten. What iOS costs is the bit-perfect claim: everything crosses the system mixer, so koan plays at whatever rate the session settles on.
+
+  Built for a battery. The spectrum analyser behind the playing bars stops while the app is in the background, runs at no more than 60fps on a phone, and at 30 in Low Power Mode, which also stills the wash's drift and the bars. RemoteIO is asked for a 93ms buffer, so the render thread wakes a twentieth as often as the default.
+
+  A phone call pauses playback, and so does unplugging headphones. After an interruption koan resumes only when iOS says it should.
+
+### Changed
+
+- **The decode thread sleeps 10ms, not half a millisecond, while the ring buffer is full.** A full ring is where playback spends nearly all its time, so the old wait was two thousand wakes a second for the length of every track, on every platform. The ring holds a second or more of audio at any rate koan plays.
+
+### Internal
+
+- **koan-core's suite runs on the iOS simulator.** It found `DestinationLedger` treating iOS as a case-sensitive filesystem. `case_only_rename_keeps_the_file` is macOS-only: the simulator's sandbox answers `stat` and `open(O_EXCL)` inconsistently for a case-only rename, so it cannot be detected there.
+
+- **The shared SwiftUI sources build for iOS, and CI checks it** (`just ios-typecheck`). Images go through a `PlatformImage` alias. The views that move layers in the render server (the wash, the playing bars, the seek bar) share a `LayerView` base and a `PlatformViewRepresentable` bridge, so AppKit and UIKit run the same code. Startup, search scheduling and search submission moved out of the macOS scene root into `AppState` and `SearchModel`, where any shell reaches them.
+
+## Unreleased
 ### Changed
 
 - The README and koan.rocks describe koan as a server: web UI, share links, OpenSubsonic, accounts and API keys, MCP over HTTP.

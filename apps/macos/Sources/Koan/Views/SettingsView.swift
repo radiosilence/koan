@@ -14,11 +14,33 @@ struct SettingsView: View {
     @Environment(ActivityModel.self) private var activity
 
     @State private var model: SettingsModel?
+    #if os(macOS)
     @Environment(\.controlActiveState) private var controlActive
+    #else
+    @Environment(\.scenePhase) private var scenePhase
+    #endif
+
+    #if !os(macOS)
+    /// A settings section: a row that goes into the pane it names.
+    @ViewBuilder private func pane<Content: View>(
+        _ title: String,
+        _ symbol: String,
+        @ViewBuilder _ content: @escaping () -> Content
+    ) -> some View {
+        NavigationLink {
+            content().navigationTitle(title)
+        } label: {
+            Label(title, systemImage: symbol)
+        }
+    }
+    #endif
 
     var body: some View {
         Group {
             if let model {
+                #if os(macOS)
+                // Four panes side by side in a window sized to hold the largest
+                // of them, which is what a settings window is on macOS.
                 TabView {
                     LibrarySettings(model: model)
                         .tabItem { Label("Library", systemImage: "music.note.house") }
@@ -32,11 +54,30 @@ struct SettingsView: View {
                         .tabItem { Label("Appearance", systemImage: "paintpalette") }
                 }
                 .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                #else
+                // A phone has no room for a second row of tabs — and it already
+                // has one at the bottom of the screen. Settings on iOS is a list
+                // you go into, so these become pages rather than panes.
+                List {
+                    // No Library pane. It is folders to scan, a scan to run and
+                    // an index to clear — all of it about music sitting on a
+                    // disk koan can walk. Inside the iOS sandbox there is no
+                    // such disk, and koan is a Subsonic client and nothing else.
+                    pane("Server", "server.rack") { RemoteSettings(model: model) }
+                    pane("Playback", "hifispeaker") { PlaybackSettings(model: model) }
+                    pane("Radio", "dot.radiowaves.left.and.right") { RadioSettings(model: model) }
+                }
+                .navigationTitle("Settings")
+                .safeAreaInset(edge: .bottom) { StatusLine(model: model) }
+                #endif
             } else {
                 ProgressView()
             }
         }
+        // The size of a settings window. A phone gets whatever it has.
+        #if os(macOS)
         .frame(width: 560, height: 460)
+        #endif
         .task {
             if model == nil {
                 model = await SettingsModel(engine: library.engine, activity: activity, art: library.art)
@@ -44,9 +85,15 @@ struct SettingsView: View {
         }
         // The CLI and TUI write the same file; coming back to this window is
         // the moment to notice they did.
+        #if os(macOS)
         .onChange(of: controlActive) { _, state in
             if state != .inactive { model?.reload() }
         }
+        #else
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { model?.reload() }
+        }
+        #endif
     }
 }
 
@@ -130,6 +177,7 @@ private struct LibrarySettings: View {
                     Button("Rescan Everything") { model.scan(force: true) }
                         .help("Re-read every file's tags, ignoring the scan cache")
                 }
+                .rowButtons()
                 // One pass over your files at a time. A sync or a download
                 // clear is welcome to run alongside; another scan, a drop or a
                 // file move would be reading and writing the same things.
@@ -239,18 +287,22 @@ private struct RemoteSettings: View {
                         Spacer()
                         Button("Sign Out", role: .destructive) { confirmingSignOut = true }
                     }
+                    .rowButtons()
                 }
             } else {
                 Section {
                     // Label on the left, example inside the field. Passing the
                     // example as the title made the URL the label.
                     TextField("Server", text: $url, prompt: Text("https://music.example.com"))
+                        .verbatimEntry(.url)
                     TextField("Username", text: $username, prompt: Text("your account"))
+                        .verbatimEntry()
                     SecureField(
                         "Password",
                         text: Binding(get: { model.password }, set: { model.password = $0 }),
                         prompt: Text("hunter2")
                     )
+                    .verbatimEntry()
                     Button("Sign In") { model.signIn(url: url, username: username) }
                         .disabled(url.isEmpty || username.isEmpty || model.password.isEmpty)
                 } header: {
@@ -300,6 +352,7 @@ private struct RemoteSettings: View {
                     get: { cacheLimit ?? model.settings.cacheLimit },
                     set: { cacheLimit = $0 }
                 ))
+                .verbatimEntry()
                 .focused($cacheLimitFocused)
                 .onSubmit(commitCacheLimit)
                 .onChange(of: cacheLimitFocused) { _, focused in

@@ -1,0 +1,198 @@
+import KoanFFI
+import SwiftUI
+
+/// The narrow layout: a tab bar, and the transport above it.
+///
+/// Not a burger menu. A drawer hides the thing koan is mostly about behind a
+/// tap, and Apple's own guidance has argued against them for a decade — the
+/// answer to "the sidebar does not fit" is a tab bar.
+///
+/// Reached when there is no room for `RootView`'s sidebar, which is a question
+/// about width rather than about which OS this is: an iPad in Slide Over lands
+/// here and the same iPad full screen does not. `AdaptiveRootView` decides.
+///
+/// The navigator stays authoritative either way — the tab bar sets a section,
+/// and going deeper inside a tab leaves the selection where it is, which is
+/// what a tab bar is for.
+struct TabShell: View {
+    @Environment(Navigator.self) private var nav
+    @Environment(PlayerModel.self) private var player
+    @Environment(LibraryModel.self) private var library
+    @Environment(PlaylistsModel.self) private var playlists
+    @Environment(ActivityModel.self) private var activity
+    @State private var showingNowPlaying = false
+    /// Which tab is showing. Held rather than derived from the navigator: a
+    /// record belongs to whichever tab it was opened from, and the navigator
+    /// cannot say which that was.
+    @State private var selection: TabID = .queue
+
+    var body: some View {
+        // The record's colour: the tint here, for everything below, and the wash
+        // as each tab's navigation background — see `roomBackground()`. A phone
+        // has no window to hang one wash on, and a stack paints its own ground
+        // over anything placed behind it.
+        TabView(selection: tab) {
+            Tab("Queue", systemImage: Icon.queueSection, value: TabID.queue) {
+                stack(.queue) { QueueView() }
+            }
+            Tab("Library", systemImage: "music.note.house", value: TabID.library) {
+                stack(.library) { LibraryTab() }
+            }
+            Tab("Settings", systemImage: "gearshape", value: TabID.settings) {
+                stack(.settings) { SettingsView() }
+            }
+            Tab(value: TabID.search, role: .search) {
+                stack(.search) { IOSSearchView() }
+            }
+        }
+        .tabViewStyle(.sidebarAdaptable)
+        .toggleStyle(SystemSwitch())
+        // Above the tab bar rather than below it — `safeAreaInset` would put
+        // the transport where the tab bar goes, which is to say on top of it.
+        .tabViewBottomAccessory {
+            MiniPlayer(showingNowPlaying: $showingNowPlaying)
+        }
+        // What the app is busy with. The Mac stacks these at the foot of the
+        // sidebar; with no sidebar they float above the transport, which is
+        // the one part of the screen that is the same wherever you are.
+        // Absent when idle, so this is not furniture.
+        .overlay(alignment: .bottom) {
+            // The card, not only its rows: an empty list inside a material
+            // still draws the material.
+            if !activity.tasks.isEmpty {
+                ActivityList()
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.regularMaterial, in: .rect(cornerRadius: 16))
+                    .padding(.horizontal, 12)
+                    // Clear of the mini player and the tab bar under it.
+                    .padding(.bottom, 150)
+                    .transition(.opacity)
+            }
+        }
+        // Something other than the stacks can move the navigator: a link on a
+        // page, a search result, Now Playing, playback showing the queue.
+        .onChange(of: nav.current) { _, page in arrive(at: page) }
+        .sheet(isPresented: $showingNowPlaying) {
+            NowPlayingSheet()
+                .presentationDetents([.large])
+        }
+        .modifier(RecordRoom())
+        // What `RootView` does for the wide layout: the one place a library
+        // change reaches the app's own lists, and the last dependable moment
+        // to save the queue before iOS suspends the app.
+        .reloading(on: 0) {
+            library.libraryChanged()
+            playlists.load()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .appResignsActive)) { _ in
+            Task { await player.saveSession() }
+        }
+        .alert(
+            "Something went wrong",
+            isPresented: Binding(
+                get: { player.lastError != nil },
+                set: { if !$0 { player.lastError = nil } }
+            ),
+            actions: { Button("OK") { player.lastError = nil } },
+            message: { Text(player.lastError ?? "") }
+        )
+    }
+
+    /// A tab's navigation stack. Pages are drawn from their routes — see
+    /// `RouteView` — and the navigator follows whatever is on top.
+    private func stack<Root: View>(
+        _ tab: TabID, @ViewBuilder root: () -> Root
+    ) -> some View {
+        let routes = paths[tab] ?? []
+        // On stage is the top of the tab in front, and nothing else. A stack
+        // keeps every page it pushed and a tab view keeps every tab, and a
+        // playing indicator on any of them would keep the analyser running for
+        // bars nobody can see.
+        let showing = tab == selection
+        return NavigationStack(path: path(tab)) {
+            root()
+                .environment(\.onStage, showing && routes.isEmpty)
+                .washedGround()
+                .roomBackground()
+                .navigationDestination(for: Route.self) { route in
+                    RouteView(route: route)
+                        .environment(\.onStage, showing && route == routes.last)
+                }
+        }
+    }
+
+    /// Four, deliberately. Five is where iOS starts folding tabs into More,
+    /// and More brings a navigation stack of its own.
+    enum TabID: Hashable {
+        case queue, library, settings, search
+
+        /// The page the tab itself is, under anything pushed onto it. The
+        /// library is a list of sections rather than one, and settings is not
+        /// somewhere the navigator goes.
+        var root: Navigator.Page? {
+            switch self {
+            case .queue: .section(.queue)
+            case .search: .section(.searchResults)
+            case .library, .settings: nil
+            }
+        }
+    }
+
+    /// What each tab has pushed. Held per tab, so leaving one and coming back
+    /// finds it where it was.
+    @State private var paths: [TabID: [Route]] = [:]
+
+    private func path(_ tab: TabID) -> Binding<[Route]> {
+        Binding(
+            get: { paths[tab] ?? [] },
+            set: { routes in
+                paths[tab] = routes
+                follow(tab)
+            }
+        )
+    }
+
+    /// The page on top of a tab: the last navigator page pushed, else the tab's
+    /// own.
+    private func top(of tab: TabID) -> Navigator.Page? {
+        (paths[tab] ?? []).reversed().lazy.compactMap(\.page).first ?? tab.root
+    }
+
+    /// Bring the navigator to what the stack now shows — after a push, a pop, a
+    /// swipe back, or a change of tab. The library's listings load by moving
+    /// it, so a page that did not move it would draw the last one's rows.
+    private func follow(_ tab: TabID) {
+        guard tab == selection, let page = top(of: tab), page != nav.current else { return }
+        nav.go(to: page)
+    }
+
+    /// The navigator moved on its own account; show where it went. A tab's own
+    /// page brings that tab forward, back at its root. Anything else is pushed
+    /// on the tab in front, or popped back to if it is already in the stack.
+    private func arrive(at page: Navigator.Page) {
+        if let owner = [TabID.queue, .search].first(where: { $0.root == page }) {
+            paths[owner] = []
+            selection = owner
+            return
+        }
+        guard top(of: selection) != page else { return }
+        var routes = paths[selection] ?? []
+        if let index = routes.lastIndex(of: .page(page)) {
+            routes.removeSubrange((index + 1)...)
+        } else {
+            routes.append(.page(page))
+        }
+        paths[selection] = routes
+    }
+
+    private var tab: Binding<TabID> {
+        Binding(
+            get: { selection },
+            set: { chosen in
+                selection = chosen
+                follow(chosen)
+            }
+        )
+    }
+}
