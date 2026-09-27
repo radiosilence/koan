@@ -35,6 +35,24 @@
   };
   const decodable = (i) => tracks[i] && tracks[i].dur > 0 && tracks[i].dur <= LONG;
 
+  // Must run inside the tap itself. iOS lets a page start audio only in the
+  // gesture: a context created or resumed after an await stays silent. And
+  // Web Audio obeys the ring/silent switch unless the page says it is a
+  // media player, which an <audio> element never had to.
+  let elUnlocked = false;
+  function unlock(target) {
+    if (navigator.audioSession) navigator.audioSession.type = "playback";
+    if (!ctx && window.AudioContext) ctx = new AudioContext();
+    if (ctx && ctx.state !== "running") ctx.resume();
+    // The streaming element needs the same blessing: once it has started in
+    // a gesture it may start again later, after a fetch or at a track change.
+    if (!elUnlocked && tracks[target]) {
+      elUnlocked = true;
+      el.src = tracks[target].src;
+      el.play().catch(() => {});
+    }
+  }
+
   function buffer(i) {
     if (!decodable(i)) return Promise.resolve(null);
     if (!buffers.has(i)) {
@@ -143,7 +161,7 @@
   }
 
   async function toggle() {
-    if (!ctx && window.AudioContext) ctx = new AudioContext();
+    unlock(cur < 0 ? 0 : cur);
     if (cur < 0) return go(0, 0);
     if (playing) {
       if (mode === "buffer") await ctx.suspend(); else el.pause();
@@ -155,11 +173,11 @@
   }
 
   play.addEventListener("click", toggle);
-  prev.addEventListener("click", () => go(position() > 3 ? cur : cur - 1, 0));
-  next.addEventListener("click", () => go(cur + 1, 0));
-  seek.addEventListener("change", () => { if (cur >= 0) go(cur, Number(seek.value)); });
+  prev.addEventListener("click", () => { unlock(cur); go(position() > 3 ? cur : cur - 1, 0); });
+  next.addEventListener("click", () => { unlock(cur); go(cur + 1, 0); });
+  seek.addEventListener("change", () => { unlock(cur); if (cur >= 0) go(cur, Number(seek.value)); });
   rows.forEach((li, i) => {
-    const pick = () => { if (!ctx && window.AudioContext) ctx = new AudioContext(); go(i, 0); };
+    const pick = () => { unlock(i); go(i, 0); };
     li.addEventListener("click", pick);
     li.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
   });
