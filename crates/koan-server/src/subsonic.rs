@@ -1661,136 +1661,109 @@ async fn search3(
                 .as_deref()
                 .ok_or_else(|| SubsonicError::missing_param("query"))?;
 
-        let artist_count = params.artist_count.unwrap_or(20).min(SEARCH_PAGE_MAX);
-        let album_count = params.album_count.unwrap_or(20).min(SEARCH_PAGE_MAX);
-        let song_count = params.song_count.unwrap_or(20).min(SEARCH_PAGE_MAX);
-        let artist_offset = params.artist_offset.unwrap_or(0);
-        let album_offset = params.album_offset.unwrap_or(0);
-        let song_offset = params.song_offset.unwrap_or(0);
-        let internal =
-            |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
+            let artist_count = params.artist_count.unwrap_or(20).min(SEARCH_PAGE_MAX);
+            let album_count = params.album_count.unwrap_or(20).min(SEARCH_PAGE_MAX);
+            let song_count = params.song_count.unwrap_or(20).min(SEARCH_PAGE_MAX);
+            let artist_offset = params.artist_offset.unwrap_or(0);
+            let album_offset = params.album_offset.unwrap_or(0);
+            let song_offset = params.song_offset.unwrap_or(0);
+            let internal =
+                |e: koan_core::db::connection::DbError| SubsonicError::internal(e.to_string());
 
-        let (artists, albums, songs): (
-            Vec<(i64, String)>,
-            Vec<queries::AlbumRow>,
-            Vec<queries::TrackRow>,
-        ) = if lists_everything(query) {
-            // Every kind in id order, straight off the primary keys, so an
-            // offset walk is exact: nothing added mid-walk can shift a page
-            // that has already been read.
-            let artists = if artist_count == 0 {
-                Vec::new()
-            } else {
-                queries::list_artists(
-                    &db.conn,
-                    &queries::ArtistQuery {
-                        order: queries::ArtistOrder::Id,
-                        limit: Some(artist_count),
-                        offset: artist_offset,
-                        ..Default::default()
-                    },
-                )
-                .map_err(internal)?
-                .into_iter()
-                .map(|a| (a.id, a.name))
-                .collect()
-            };
-            let albums = if album_count == 0 {
-                Vec::new()
-            } else {
-                queries::list_albums(
-                    &db.conn,
-                    &queries::AlbumQuery {
-                        order: queries::AlbumOrder::Id,
-                        limit: Some(album_count),
-                        offset: album_offset,
-                        ..Default::default()
-                    },
-                )
-                .map_err(internal)?
-            };
-            let songs = if song_count == 0 {
-                Vec::new()
-            } else {
-                queries::tracks_page(&db.conn, song_count, song_offset).map_err(internal)?
-            };
-            (artists, albums, songs)
-        } else {
-            let songs = if song_count == 0 {
-                Vec::new()
-            } else {
-                queries::search_tracks_paged(&db.conn, query, song_count, song_offset)
+            let (artists, albums, songs): (
+                Vec<(i64, String)>,
+                Vec<queries::AlbumRow>,
+                Vec<queries::TrackRow>,
+            ) = if lists_everything(query) {
+                // Every kind in id order, straight off the primary keys, so an
+                // offset walk is exact: nothing added mid-walk can shift a page
+                // that has already been read.
+                let artists = if artist_count == 0 {
+                    Vec::new()
+                } else {
+                    queries::list_artists(
+                        &db.conn,
+                        &queries::ArtistQuery {
+                            order: queries::ArtistOrder::Id,
+                            limit: Some(artist_count),
+                            offset: artist_offset,
+                            ..Default::default()
+                        },
+                    )
                     .map_err(internal)?
-            };
-            // Artists and albums are the distinct ones among the matching
-            // tracks, read from enough of them to cover the page asked for.
-            let reach = (artist_offset + artist_count)
-                .max(album_offset + album_count)
-                .saturating_mul(5)
-                .clamp(100, 5 * SEARCH_PAGE_MAX);
-            let pool = if artist_count == 0 && album_count == 0 {
-                Vec::new()
-            } else {
-                queries::search_tracks_paged(&db.conn, query, reach, 0).map_err(internal)?
-            };
-            let artists = {
-                let mut seen = std::collections::HashSet::new();
-                pool.iter()
-                    .filter_map(|t| Some((t.artist_id?, t.artist_name.clone())))
-                    .filter(|(id, _)| seen.insert(*id))
-                    .skip(artist_offset as usize)
-                    .take(artist_count as usize)
+                    .into_iter()
+                    .map(|a| (a.id, a.name))
                     .collect()
-            };
-            let albums = {
-                let mut seen = std::collections::HashSet::new();
-                pool.iter()
-                    .filter_map(|t| t.album_id)
-                    .filter(|id| seen.insert(*id))
-                    .skip(album_offset as usize)
-                    .take(album_count as usize)
-                    .map(|id| queries::get_album(&db.conn, id))
-                    .filter_map(Result::transpose)
-                    .collect::<Result<_, _>>()
+                };
+                let albums = if album_count == 0 {
+                    Vec::new()
+                } else {
+                    queries::list_albums(
+                        &db.conn,
+                        &queries::AlbumQuery {
+                            order: queries::AlbumOrder::Id,
+                            limit: Some(album_count),
+                            offset: album_offset,
+                            ..Default::default()
+                        },
+                    )
                     .map_err(internal)?
+                };
+                let songs = if song_count == 0 {
+                    Vec::new()
+                } else {
+                    queries::tracks_page(&db.conn, song_count, song_offset).map_err(internal)?
+                };
+                (artists, albums, songs)
+            } else {
+                let songs = if song_count == 0 {
+                    Vec::new()
+                } else {
+                    queries::search_tracks_paged(&db.conn, query, song_count, song_offset)
+                        .map_err(internal)?
+                };
+                // Artists and albums are the distinct ones among the matching
+                // tracks, read from enough of them to cover the page asked for.
+                let reach = (artist_offset + artist_count)
+                    .max(album_offset + album_count)
+                    .saturating_mul(5)
+                    .clamp(100, 5 * SEARCH_PAGE_MAX);
+                let pool = if artist_count == 0 && album_count == 0 {
+                    Vec::new()
+                } else {
+                    queries::search_tracks_paged(&db.conn, query, reach, 0).map_err(internal)?
+                };
+                let artists = {
+                    let mut seen = std::collections::HashSet::new();
+                    pool.iter()
+                        .filter_map(|t| Some((t.artist_id?, t.artist_name.clone())))
+                        .filter(|(id, _)| seen.insert(*id))
+                        .skip(artist_offset as usize)
+                        .take(artist_count as usize)
+                        .collect()
+                };
+                let albums = {
+                    let mut seen = std::collections::HashSet::new();
+                    pool.iter()
+                        .filter_map(|t| t.album_id)
+                        .filter(|id| seen.insert(*id))
+                        .skip(album_offset as usize)
+                        .take(album_count as usize)
+                        .map(|id| queries::get_album(&db.conn, id))
+                        .filter_map(Result::transpose)
+                        .collect::<Result<_, _>>()
+                        .map_err(internal)?
+                };
+                (artists, albums, songs)
             };
-            (artists, albums, songs)
-        };
 
-        let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
-        let album_extras = album_extras(db, &albums)?;
-        let song_extras = song_extras(db, &songs)?;
-        let result_node = XmlNode::new("searchResult3")
-            .list(
-                "artist",
-                artists
-                    .iter()
-                    .filter_map(|t| Some((t.artist_id?, t.artist_name.as_str())))
-                    .filter(|(id, _)| seen.insert(*id))
-                    .take(artist_count as usize)
-                    .collect()
-            };
-            let albums: Vec<queries::AlbumRow> = {
-                let mut seen = std::collections::HashSet::new();
-                tracks
-                    .iter()
-                    .filter_map(|t| t.album_id)
-                    .filter(|id| seen.insert(*id))
-                    .take(album_count as usize)
-                    .map(|id| queries::get_album(&db.conn, id))
-                    .filter_map(Result::transpose)
-                    .collect::<Result<_, _>>()
-                    .map_err(|e| SubsonicError::internal(e.to_string()))?
-            };
-            let songs: Vec<&queries::TrackRow> = tracks.iter().take(song_count as usize).collect();
-
-            let artist_extras = artist_extras(db, artist_ids.iter().map(|(id, _)| *id))?;
+            let artist_extras = artist_extras(db, artists.iter().map(|(id, _)| *id))?;
             let album_extras = album_extras(db, &albums)?;
-            let song_extras = song_extras(db, songs.iter().copied())?;
+            let song_extras = song_extras(db, &songs)?;
             let result_node = XmlNode::new("searchResult3")
                 .list(
                     "artist",
-                    artist_ids
+                    artists
                         .iter()
                         .map(|(id, name)| artist_id3_node(*id, name, &artist_extras)),
                 )
