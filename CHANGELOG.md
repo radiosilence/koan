@@ -29,6 +29,7 @@
 - **Subsonic `search3` pages.** `artistOffset`, `albumOffset` and `songOffset` were ignored, so every page repeated the first. An empty query (`query=` or `query=""`) lists the whole library in id order, straight off the primary keys, so an offset walk neither skips nor repeats. Counts are capped at 1,000 per kind.
 - **Empty OpenSubsonic ids no longer pair unrelated tracks.** A koan server sends `musicBrainzId: ""` and `sortName: ""` where it has no value, and the client kept them as present. Every untagged remote track then matched every other on the MusicBrainz dedup (recording `""` on release `""`), which could fold a remote track into an unrelated local file with the same track number and made each insert scan the whole table, so a 50,000-track sync slowed as it went. The client now reads empty ids as absent, and the dedup ignores an empty id.
 - **The macOS app shows the automatic sync and the startup scan.** The engine never published the `Tasks` slice, so neither row ever appeared.
+- **iOS launches to the icon's ensō rather than a blank screen and a spinner.** The launch screen was empty; it now draws the ensō on its ground, and the app draws the same image in the same place until the engine is up. The mini player's sleeve and buttons also clear the capsule's curved ends.
 
 ### Internal
 

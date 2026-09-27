@@ -4102,7 +4102,7 @@ mod tests {
 
     /// Seven tracks over three albums, for the paging tests.
     fn seed_library(state: &AppState) -> Vec<i64> {
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         (0..7)
             .map(|i| {
                 queries::upsert_track(
@@ -4208,7 +4208,7 @@ mod tests {
     async fn test_search3_song_count_is_capped() {
         let (state, _dir) = test_state();
         {
-            let db = Database::open(&state.db_path).unwrap();
+            let db = Database::open(state.pool.path()).unwrap();
             db.conn.execute_batch("BEGIN").unwrap();
             for i in 0..(SEARCH_PAGE_MAX + 5) {
                 queries::upsert_track(
