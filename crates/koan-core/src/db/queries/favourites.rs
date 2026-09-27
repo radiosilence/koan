@@ -58,6 +58,37 @@ pub fn toggle_favourite(conn: &Connection, path: &Path) -> rusqlite::Result<bool
 // consequence is that two albums sharing a title and an artist are one
 // favourite, which is the same thing to anyone looking at the library.
 
+/// Make an album a favourite, or stop it being one. Idempotent either way.
+pub fn set_favourite_album(
+    conn: &Connection,
+    artist: &str,
+    album: &str,
+    favourite: bool,
+) -> rusqlite::Result<()> {
+    let sql = if favourite {
+        "INSERT OR IGNORE INTO favourite_albums (artist_name, album_title) VALUES (?1, ?2)"
+    } else {
+        "DELETE FROM favourite_albums WHERE artist_name = ?1 AND album_title = ?2"
+    };
+    conn.execute(sql, [artist, album])?;
+    Ok(())
+}
+
+/// Make an artist a favourite, or stop them being one. Idempotent either way.
+pub fn set_favourite_artist(
+    conn: &Connection,
+    artist: &str,
+    favourite: bool,
+) -> rusqlite::Result<()> {
+    let sql = if favourite {
+        "INSERT OR IGNORE INTO favourite_artists (artist_name) VALUES (?1)"
+    } else {
+        "DELETE FROM favourite_artists WHERE artist_name = ?1"
+    };
+    conn.execute(sql, [artist])?;
+    Ok(())
+}
+
 /// Toggle an album favourite. Returns true if the album is now a favourite.
 pub fn toggle_favourite_album(
     conn: &Connection,
