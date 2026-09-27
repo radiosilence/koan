@@ -31,10 +31,10 @@ koan logs to `~/.config/koan/koan.log` in daemon mode. The GraphQL API is availa
 |------|--------|
 | `--headless` | No TUI, API only |
 | `--playground` | Enable GraphiQL web IDE at `GET /graphql` |
-| `--subsonic PORT` | Serve the Subsonic REST API on its own port (requires `koan subsonic setup`) |
+| `--subsonic PORT` | Serve the Subsonic REST API on its own port as well |
 | `--port PORT` | Custom GraphQL port (default: 4000) |
 | `--bind ADDR` | Bind address (default: 127.0.0.1) |
-| `--mcp-bind ADDR:PORT` | Also serve MCP over HTTP at `/mcp` (env `KOAN_MCP_BIND`). No credential check: only an authenticating gateway may reach it |
+| `--mcp-bind ADDR:PORT` | Also serve MCP over HTTP at `/mcp` (env `KOAN_MCP_BIND`). It trusts the `x-koan-username` / `x-koan-password` a gateway sends, so only that gateway may reach it; `KOAN_MCP_REQUIRE_LOGIN=1` refuses requests without them |
 | `-d` | Detach and run as background daemon |
 
 A headless server indexes the library folders when it starts and again whenever they change, as the macOS app does.
