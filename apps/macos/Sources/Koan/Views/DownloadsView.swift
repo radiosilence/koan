@@ -25,6 +25,7 @@ struct DownloadsView: View {
                 List {
                     ForEach(mirror.transfers, id: \.queueItemId) { transfer in
                         DownloadRow(transfer: transfer)
+                            .washedRow()
                     }
                 }
                 .listStyle(.inset)

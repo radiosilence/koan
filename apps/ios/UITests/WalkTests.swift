@@ -61,6 +61,14 @@ final class WalkTests: XCTestCase {
         tab("Settings")
         pause(1)
         snap("09-settings")
+        if open(app.buttons["Server"]) {
+            pause(1)
+            app.swipeUp(velocity: .fast)
+            app.swipeUp(velocity: .fast)
+            pause(1)
+            snap("09b-server-end")
+            back()
+        }
 
         tab("Queue")
         pause(1)

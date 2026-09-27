@@ -298,3 +298,33 @@ extension View {
         #endif
     }
 }
+
+extension View {
+    /// A row that gives up its own ground so the wash shows through it.
+    ///
+    /// An AppKit row is already clear. A UIKit one paints the system background
+    /// behind every row, which on a phone put a black band across the record's
+    /// colour wherever there was a list.
+    func washedRow() -> some View {
+        #if os(macOS)
+        self
+        #else
+        listRowBackground(Color.clear)
+        #endif
+    }
+}
+
+#if !os(macOS)
+/// A switch in the system's green, whatever the tint.
+///
+/// A switch that is on draws its track in the tint, and koan's tint is the
+/// playing record's colour or, with nothing playing, the primary text colour:
+/// white, in dark mode, under a white knob.
+struct SystemSwitch: ToggleStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Toggle(configuration)
+            .toggleStyle(.switch)
+            .tint(.green)
+    }
+}
+#endif

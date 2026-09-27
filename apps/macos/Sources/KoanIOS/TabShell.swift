@@ -46,6 +46,7 @@ struct TabShell: View {
             }
         }
         .tabViewStyle(.sidebarAdaptable)
+        .toggleStyle(SystemSwitch())
         // Above the tab bar rather than below it — `safeAreaInset` would put
         // the transport where the tab bar goes, which is to say on top of it.
         .tabViewBottomAccessory {
