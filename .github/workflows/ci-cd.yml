@@ -303,6 +303,11 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
       - uses: docker/build-push-action@v6
+        env:
+          # The build record is uploaded as an artifact of this run, and the
+          # release jobs download every artifact in it: that one fails their
+          # digest check and takes the release with it.
+          DOCKER_BUILD_RECORD_UPLOAD: false
         with:
           context: .
           platforms: linux/amd64
