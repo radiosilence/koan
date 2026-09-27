@@ -26,6 +26,13 @@ li.playing .t { color: var(--accent); }
 .t small { display: block; color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
 .d { color: var(--dim); font-size: 13px; font-variant-numeric: tabular-nums; }
 noscript a { color: var(--accent); }
+.note { margin: -6px 0 14px; color: var(--text); font-style: italic; overflow-wrap: anywhere; }
+.album { margin-top: 28px; }
+.album header { display: flex; gap: 14px; align-items: center; margin-bottom: 10px; }
+.album .art { width: 64px; height: 64px; flex: none; object-fit: cover; border-radius: 6px; background: var(--panel); border: 1px solid var(--line); }
+.album .art.missing { visibility: hidden; }
+.album h2 { font-size: 17px; margin: 0; overflow-wrap: anywhere; }
+.album .sub { margin: 2px 0 0; font-size: 13px; }
 @media (max-width: 560px) {
   .hero { flex-direction: column; align-items: stretch; }
   .cover { width: 100%; height: auto; aspect-ratio: 1; }

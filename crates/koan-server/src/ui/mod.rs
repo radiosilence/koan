@@ -12,6 +12,8 @@
 //! `/auth/resume`, which spends the refresh cookie (scoped to `/auth`, so only
 //! that route sees it) for fresh cookies, or on to the sign-in form.
 
+mod browse;
+mod keys;
 mod pages;
 mod session;
 #[cfg(test)]
@@ -32,6 +34,7 @@ use koan_core::db::queries;
 
 use crate::auth::AuthUser;
 use crate::auth::routes::{AuthRouteState, login_rate_limit};
+use crate::covers::Covers;
 use crate::share::{asset, blocking, not_found};
 
 /// `'unsafe-eval'` because Datastar compiles its attribute expressions.
@@ -50,13 +53,23 @@ const DATASTAR_JS: &str = include_str!("../../assets/datastar.js");
 #[derive(Clone)]
 pub struct UiState {
     pool: Arc<Pool>,
+    covers: Arc<Covers>,
+    /// The codecs and genres the filters offer, with when they were read.
+    options: Arc<std::sync::Mutex<Option<(std::time::Instant, pages::Options)>>>,
     auth: AuthRouteState,
     auth_enabled: bool,
 }
 
-pub fn router(db_path: PathBuf, auth: AuthRouteState, auth_enabled: bool) -> axum::Router {
+pub fn router(
+    db_path: PathBuf,
+    auth: AuthRouteState,
+    auth_enabled: bool,
+    covers: Arc<Covers>,
+) -> axum::Router {
     let state = UiState {
         pool: Arc::new(Pool::new(db_path)),
+        covers,
+        options: Arc::default(),
         auth,
         auth_enabled,
     };
@@ -65,13 +78,16 @@ pub fn router(db_path: PathBuf, auth: AuthRouteState, auth_enabled: bool) -> axu
         .route("/albums", get(pages::albums))
         .route("/albums/more", get(pages::albums_more))
         .route("/album/{id}", get(pages::album))
-        .route("/album/{id}/share", post(pages::share))
+        .route("/album/{id}/share", post(pages::share_album))
+        .route("/artist/{id}/share", post(pages::share_artist))
         .route("/artists", get(pages::artists))
         .route("/artists/more", get(pages::artists_more))
         .route("/artist/{id}", get(pages::artist))
         .route("/search", get(pages::search))
         .route("/search/results", get(pages::search_results))
         .route("/queue", get(pages::queue))
+        .route("/keys", get(keys::page).post(keys::create))
+        .route("/keys/{id}/revoke", post(keys::revoke))
         .route("/ui/stream/{id}", get(stream))
         .route("/ui/cover/{id}", get(cover))
         .layer(from_fn(require_datastar_on_post))
@@ -264,17 +280,27 @@ async fn stream(State(s): State<UiState>, Path(id): Path<i64>, headers: HeaderMa
 }
 
 /// An album's cover, from the art embedded in the first of its tracks that has any.
-async fn cover(State(s): State<UiState>, Path(id): Path<i64>) -> Response {
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct CoverQuery {
+    size: Option<u32>,
+    /// The album's cover version, from `pages::cover_url`. With it the URL
+    /// names these exact bytes, so the browser may keep them for good.
+    v: Option<String>,
+}
+
+/// An album's cover at one of `covers::SIZES`, from the art embedded in the
+/// first of its tracks that has any.
+async fn cover(
+    State(s): State<UiState>,
+    Path(id): Path<i64>,
+    axum::extract::Query(q): axum::extract::Query<CoverQuery>,
+) -> Response {
+    let size = crate::covers::snap(q.size);
     let art = blocking(move || {
-        let db = open(&s.pool)?;
-        queries::tracks_for_album(&db.conn, id)
-            .ok()?
-            .iter()
-            .find_map(|t| {
-                let path = crate::subsonic::track_file_path(t)?;
-                koan_core::index::metadata::extract_cover_art(std::path::Path::new(path))
-            })
+        let tracks = queries::tracks_for_album(&open(&s.pool)?.conn, id).ok()?;
+        s.covers.cover(&tracks, size)
     })
     .await;
-    crate::share::image(art)
+    crate::share::jpeg(art, q.v.is_some())
 }

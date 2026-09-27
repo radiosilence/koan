@@ -1997,15 +1997,20 @@ impl KoanEngine {
         offload::offload(move || {
             let db = self.db()?;
             let cfg = Config::load().unwrap_or_default();
-            koan_core::helpers::create_share(&db, &cfg, &track_ids, description.as_deref())
-                .map(|outcome| Share {
-                    url: outcome.url,
-                    shared: outcome.shared as u32,
-                    skipped: outcome.skipped as u32,
-                })
-                .map_err(|e| KoanError::BadArgument {
-                    message: e.to_string(),
-                })
+            koan_core::helpers::create_share(
+                &db,
+                &cfg,
+                &koan_core::helpers::ShareTarget::Tracks(track_ids),
+                description.as_deref(),
+            )
+            .map(|outcome| Share {
+                url: outcome.url,
+                shared: outcome.shared as u32,
+                skipped: outcome.skipped as u32,
+            })
+            .map_err(|e| KoanError::BadArgument {
+                message: e.to_string(),
+            })
         })
         .await
     }

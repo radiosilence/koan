@@ -3,7 +3,7 @@ use rusqlite::Connection;
 /// Create all tables. Idempotent — safe to call on every startup.
 /// Bumped whenever the schema changes. Stored in `PRAGMA user_version` so an
 /// older build refuses a database it does not understand rather than writing to it.
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 6;
 
 pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
     // Before any DDL: the ORDER BY clauses that use it are everywhere, and a
@@ -276,6 +276,20 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
 
+        -- Subsonic API keys. Only `sha256(key)` is kept: a key is 32 random
+        -- bytes, so a fast hash is enough, and a database read yields nothing
+        -- that signs in.
+        CREATE TABLE IF NOT EXISTS api_keys (
+            id           INTEGER PRIMARY KEY,
+            user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            name         TEXT NOT NULL,
+            key_hash     TEXT NOT NULL UNIQUE,
+            created_at   INTEGER NOT NULL,
+            last_used_at INTEGER
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_api_keys_user ON api_keys(user_id);
+
         -- Share links this koan serves itself. The tracks are an explicit list,
         -- not a query: what a link names is all an anonymous visitor can play,
         -- so it must not grow when the library does.
@@ -313,6 +327,9 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 /// `organize_log.size_bytes`/`mtime` are checked against the file before undo
 /// moves it back, so a file replaced since the organize is left alone.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    // The password sealed under the server's Subsonic key, since token auth
+    // needs the plaintext and `password_hash` cannot give it back.
+    ("users", "sealed_password", "BLOB"),
     ("tracks", "cache_size_bytes", "INTEGER"),
     ("tracks", "cache_download_date", "INTEGER"),
     (
@@ -348,6 +365,12 @@ const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
     // The server's own sort key, which is what it orders by. Artists already
     // had this column and nothing ever filled it.
     ("albums", "sort_name", "TEXT"),
+    // What a share is a slice of, so its page shows an album or an artist as
+    // one. The track list stays authoritative; shares made before are loose
+    // tracks.
+    ("shares", "kind", "TEXT NOT NULL DEFAULT 'tracks'"),
+    ("shares", "subject_id", "INTEGER"),
+    ("shares", "start_track_id", "INTEGER"),
 ];
 
 fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
@@ -812,7 +835,10 @@ mod tests {
                 .execute_batch(
                     "ALTER TABLE tracks DROP COLUMN cache_size_bytes;
                      ALTER TABLE tracks DROP COLUMN cache_download_date;
-                     ALTER TABLE similar_artists DROP COLUMN relationship;",
+                     ALTER TABLE similar_artists DROP COLUMN relationship;
+                     ALTER TABLE shares DROP COLUMN kind;
+                     ALTER TABLE shares DROP COLUMN subject_id;
+                     ALTER TABLE shares DROP COLUMN start_track_id;",
                 )
                 .unwrap();
         }
@@ -822,6 +848,9 @@ mod tests {
             ("tracks", "cache_size_bytes"),
             ("tracks", "cache_download_date"),
             ("similar_artists", "relationship"),
+            ("shares", "kind"),
+            ("shares", "subject_id"),
+            ("shares", "start_track_id"),
         ] {
             let found: i64 = db
                 .conn

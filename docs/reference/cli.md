@@ -188,6 +188,9 @@ koan auth login --server http://localhost:4000 --username admin  # login (stores
 koan auth logout --server http://localhost:4000  # logout (revoke token)
 koan auth reset-password admin        # reset password (revokes all tokens for that user)
 koan auth set-role alice admin        # change role
+koan auth api-key create --username alice --name phone  # Subsonic API key, printed once
+koan auth api-key list [--username alice]               # keys with created / last used
+koan auth api-key revoke 3            # revoke a key by id
 koan auth regenerate-keys             # regenerate Ed25519 keypair (invalidates all tokens)
 koan auth reset                       # nuclear: delete all keys, users, tokens
 ```

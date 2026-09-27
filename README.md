@@ -2,6 +2,8 @@
 
 # kōan
 
+[koan.rocks](https://koan.rocks)
+
 It's a music player. Designed for both local and remote collections (subsonic/navidrome). Remote works with a fairly aggressive local cache. It is super fast and handles 1TB+ libraries with ease and has all the things you'd want like gapless, queue management, "bit-perfect" (so much as the audio stack allows), combined search...etc. Built from 25 years of experience messing about with music and being annoyed with pretty much everything and wanting my dream application. There are some organisational features such as file renaming, which is compatible with fb2k syntax, and I plan to add a decent well thought out tagger once I have pondered the UX more.
 
 > Originally built as a Rust TUI and core, I've now added a beautiful macOS SwiftUI app (no Electron) that uses FFI to bridge to the rust. It's fast, it's pretty, it has these lush transitions, and the point is to do all the basics properly and well before adding features, I'm really proud of it. The UX is somewhat inspired by taking the things I like about Apple Music and fb2k, but also fixing things I thought were dumb.
@@ -107,13 +109,14 @@ Local and remote tracks merge into one library. Local files take playback priori
 - **Full-screen TUI** -- transport bar with album art, album-grouped queue, fuzzy picker, library browser, track info modal, visualizer, lyrics panel, mouse support
 - **Authentication** -- Ed25519 JWT tokens, three roles (admin/user/readonly), 1Password CLI integration
 - **Subsonic/Navidrome** -- incremental sync, unified local+remote browsing, streaming playback, two-way sync of favourites and playlists
+- **Music server** -- run headless and koan serves the library itself: a mobile-first web UI with gapless browser playback, share links (a track shares its album cued to it) that unfurl with their cover, and an OpenSubsonic API for Subsonic apps, signed in with a koan account by password, token or API key. See [Headless Server](docs/guide/headless-server.md)
 - **Playlists** -- ordered, named, reorderable; synced both ways with Navidrome, exportable as M3U8
 - **Radio mode** -- infinite play, scored from your own library: acoustic similarity over bliss-audio feature vectors (once you have run `koan scan --analyze`), genre and era matching, same-artist, and a random tail. It does not query anyone for recommendations -- [the guide says why](docs/guide/radio-mode.md#what-it-does-not-use)
 - **ReplayGain** -- track and album modes with peak limiting and configurable pre-amp
 - **Format strings** -- fb2k-compatible `%field%`, `[conditionals]`, `$functions()` — 59 of them — for display and file organization
 - **File organization** -- rename/reorganize your library from the macOS app or the TUI using format string patterns
 - **GraphQL API** -- full programmatic control alongside the app and TUI, or headless. Relay pagination, rich filters, mutations for everything
-- **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol
+- **MCP server** -- `koan mcp` exposes the player to Claude Desktop via Model Context Protocol, and a server serves it over HTTP behind an authenticating gateway, acting as the signed-in account
 - **Queue management** -- undo/redo (100-deep), multi-select, drag-reorder, Finder drag & drop, session persistence
 - **SQLite FTS5 search** -- full-text search across your entire library
 - **Media keys** -- macOS Control Center and Linux MPRIS (play/pause, next/prev, now playing info)

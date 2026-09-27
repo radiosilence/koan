@@ -3,11 +3,61 @@
 //!
 //! A share is the only public surface a server has. What it names is what an
 //! anonymous visitor can play, so it is stored as an explicit list of tracks
-//! rather than as a query that could grow to include more.
+//! rather than as a query that could grow to include more. What it is a slice
+//! of (an album, an artist, or loose tracks) is recorded beside that list so
+//! the page can show it the way the app would; it never widens the list.
 
 use rusqlite::{Connection, OptionalExtension, params};
 
 use crate::db::connection::DbError;
+
+/// What a share is a slice of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShareKind {
+    /// Loose tracks, in the order given.
+    #[default]
+    Tracks,
+    /// An album, possibly cued to one of its tracks.
+    Album,
+    /// An artist's albums, in release order.
+    Artist,
+}
+
+impl ShareKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tracks => "tracks",
+            Self::Album => "album",
+            Self::Artist => "artist",
+        }
+    }
+
+    fn parse(s: &str) -> Self {
+        match s {
+            "album" => Self::Album,
+            "artist" => Self::Artist,
+            _ => Self::Tracks,
+        }
+    }
+}
+
+/// The slice, fixed when the share is made.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Slice {
+    pub kind: ShareKind,
+    /// The album or artist id; `None` for loose tracks.
+    pub subject_id: Option<i64>,
+    /// The track playback is cued to.
+    pub start_track_id: Option<i64>,
+}
+
+impl Slice {
+    pub const TRACKS: Self = Self {
+        kind: ShareKind::Tracks,
+        subject_id: None,
+        start_track_id: None,
+    };
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ShareRow {
@@ -19,6 +69,7 @@ pub struct ShareRow {
     pub expires_at: Option<i64>,
     pub visits: i64,
     pub last_visited: Option<i64>,
+    pub slice: Slice,
     /// In the order they were shared.
     pub track_ids: Vec<i64>,
 }
@@ -42,6 +93,7 @@ fn new_id() -> Result<String, DbError> {
 
 pub fn create_share(
     conn: &Connection,
+    slice: Slice,
     track_ids: &[i64],
     description: Option<&str>,
     created_at: i64,
@@ -50,8 +102,17 @@ pub fn create_share(
     let id = new_id()?;
     let tx = conn.unchecked_transaction()?;
     tx.execute(
-        "INSERT INTO shares (id, description, created_at, expires_at) VALUES (?1, ?2, ?3, ?4)",
-        params![id, description, created_at, expires_at],
+        "INSERT INTO shares (id, description, created_at, expires_at, kind, subject_id, start_track_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        params![
+            id,
+            description,
+            created_at,
+            expires_at,
+            slice.kind.as_str(),
+            slice.subject_id,
+            slice.start_track_id
+        ],
     )?;
     {
         let mut insert = tx.prepare(
@@ -69,6 +130,7 @@ pub fn create_share(
         expires_at,
         visits: 0,
         last_visited: None,
+        slice,
         track_ids: track_ids.to_vec(),
     })
 }
@@ -88,11 +150,16 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<ShareRow> {
         expires_at: r.get(3)?,
         visits: r.get(4)?,
         last_visited: r.get(5)?,
+        slice: Slice {
+            kind: ShareKind::parse(&r.get::<_, String>(6)?),
+            subject_id: r.get(7)?,
+            start_track_id: r.get(8)?,
+        },
         track_ids: Vec::new(),
     })
 }
 
-const COLUMNS: &str = "id, description, created_at, expires_at, visits, last_visited";
+const COLUMNS: &str = "id, description, created_at, expires_at, visits, last_visited, kind, subject_id, start_track_id";
 
 pub fn get_share(conn: &Connection, id: &str) -> Result<Option<ShareRow>, DbError> {
     let Some(mut share) = conn
@@ -164,8 +231,8 @@ mod tests {
     #[test]
     fn a_share_keeps_its_tracks_in_order_and_goes_when_deleted() {
         let (conn, [t1, t2, t3]) = test_conn();
-        let a = create_share(&conn, &[t3, t1, t2], Some("mix"), 100, None).unwrap();
-        let b = create_share(&conn, &[t1], None, 200, Some(300)).unwrap();
+        let a = create_share(&conn, Slice::TRACKS, &[t3, t1, t2], Some("mix"), 100, None).unwrap();
+        let b = create_share(&conn, Slice::TRACKS, &[t1], None, 200, Some(300)).unwrap();
         assert_eq!(a.id.len(), 32);
         assert_ne!(a.id, b.id);
         assert_eq!(
@@ -194,9 +261,23 @@ mod tests {
     }
 
     #[test]
+    fn the_slice_is_kept_with_the_share() {
+        let (conn, [t1, t2, _]) = test_conn();
+        let slice = Slice {
+            kind: ShareKind::Album,
+            subject_id: Some(7),
+            start_track_id: Some(t2),
+        };
+        let s = create_share(&conn, slice, &[t1, t2], None, 100, None).unwrap();
+        let back = get_share(&conn, &s.id).unwrap().unwrap();
+        assert_eq!(back.slice, slice);
+        assert_eq!(back.track_ids, [t1, t2]);
+    }
+
+    #[test]
     fn expiry_and_visits() {
         let (conn, [t1, ..]) = test_conn();
-        let s = create_share(&conn, &[t1], None, 100, Some(200)).unwrap();
+        let s = create_share(&conn, Slice::TRACKS, &[t1], None, 100, Some(200)).unwrap();
         assert!(s.is_live(199) && !s.is_live(200));
         record_visit(&conn, &s.id, 150).unwrap();
         let s = get_share(&conn, &s.id).unwrap().unwrap();
