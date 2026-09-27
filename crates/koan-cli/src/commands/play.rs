@@ -221,7 +221,7 @@ pub fn cmd_play(
 }
 
 pub fn cmd_play_remote(server_url: &str, jukebox: bool) {
-    eprintln!("connecting to koan server at {}...", server_url);
+    eprintln!("connecting to kōan server at {}...", server_url);
 
     let client = koan_core::graphql_client::GraphQLClient::new(server_url);
     match client.library_stats() {

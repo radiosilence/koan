@@ -676,7 +676,7 @@ pub fn cmd_serve_daemon(
         let _ = child.wait();
     });
 
-    eprintln!("koan daemon started (pid {}) on port {}", pid, port_val);
+    eprintln!("kōan daemon started (pid {}) on port {}", pid, port_val);
     if let Some(sp) = subsonic_port {
         eprintln!("  Subsonic REST on port {}", sp);
     }

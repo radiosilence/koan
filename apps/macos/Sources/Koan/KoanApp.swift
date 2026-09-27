@@ -8,7 +8,7 @@ struct KoanApp: App {
     @State private var startupError: String?
 
     var body: some Scene {
-        Window("koan", id: MainWindow.id) {
+        Window("kōan", id: MainWindow.id) {
             Group {
                 if let state {
                     RootView(hotkeys: state.hotkeys)

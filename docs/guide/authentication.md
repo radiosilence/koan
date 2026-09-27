@@ -1,6 +1,6 @@
 # Authentication
 
-koan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default.
+kōan uses Ed25519 JWT tokens for API authentication. Auth is enabled by default.
 
 ## Quick start
 
@@ -196,11 +196,11 @@ Refresh tokens are stored in the database as `sha256(token)`, so a database read
 
 ## Subsonic API
 
-`/rest/*` is koan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`). Clients sign in one of three ways:
+`/rest/*` is kōan's Subsonic REST API, with the OpenSubsonic extensions `apiKeyAuthentication`, `formPost` and `songLyrics` (listed, without sign-in, by `getOpenSubsonicExtensions`). Clients sign in one of three ways:
 
 - **API key** (`apiKey=`) — preferred. A key acts as the account that made it, at that account's current role, until revoked; it is sent without `u`, and sending it with `u` or any other credential is error 43. Keys are 32 random bytes and only `sha256(key)` is stored, so a key is shown once, when it is made.
 - **Account password** (`p=`, plain or `enc:` hex) — checked against the account's argon2 hash; a successful check is remembered for ten minutes. The protocol sends the password with every request, so use it only over HTTPS.
-- **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret, for clients that only speak token auth. Token auth needs the plaintext on the server, which koan does not keep for accounts, so a token for any other username gets error 41 and a client falls back to a password or a key.
+- **Shared secret** (`u` + `t` + `s`, or `p=`) — the optional `[subsonic]` secret, for clients that only speak token auth. Token auth needs the plaintext on the server, which kōan does not keep for accounts, so a token for any other username gets error 41 and a client falls back to a password or a key.
 
 ```bash
 koan auth api-key create --username alice --name phone   # prints the key once
