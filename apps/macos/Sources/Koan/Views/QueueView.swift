@@ -156,9 +156,17 @@ struct QueueView: View {
 
             VStack(alignment: .leading, spacing: 1) {
                 if let name = lockedName {
+                    // On a phone the label leaves the name a few letters; the
+                    // sleeve beside it already says the queue follows it.
+                    #if os(iOS)
+                    Text(Format.title(name))
+                        .font(.headline)
+                        .lineLimit(1)
+                    #else
                     Text("Playing \(name)")
                         .font(.headline)
                         .lineLimit(1)
+                    #endif
                 } else {
                     Text("Queue")
                         .font(.headline)
@@ -257,6 +265,17 @@ struct QueueView: View {
                 // No playable: a queue album is a run of queue items, not a
                 // library album, so its actions are its own.
                 .rowBehaviour()
+        // A record that is only this track: one row, with its own sleeve and
+        // artist, rather than a heading and a row repeating it.
+        case .single(let item):
+            QueueRow(
+                item: QueueRowContent(item: item),
+                isCurrent: item.status == .playing,
+                showArtist: true,
+                artwork: true
+            )
+            .rowBehaviour()
+            .primaryTap { play(rowIds: [item.queueItemId]) }
         case .track(let item):
             QueueRow(
                 item: QueueRowContent(item: item),
@@ -428,7 +447,7 @@ struct QueueView: View {
         if ids.count == 1, let row = rows.first(where: { ids.contains($0.id) }) {
             switch row {
             case .album(_, let group): albumMenu(group)
-            case .track(let item): trackMenu(item)
+            case .track(let item), .single(let item): trackMenu(item)
             }
         } else {
             Button { player.remove(itemIds: itemIds(in: ids)) } label: {
@@ -513,11 +532,13 @@ extension QueueView {
     enum Row: Identifiable {
         case album(id: String, group: QueueGroup)
         case track(QueueItem)
+        /// A track that is its whole record, folded into one row.
+        case single(QueueItem)
 
         var id: String {
             switch self {
             case .album(let id, _): id
-            case .track(let item): item.queueItemId
+            case .track(let item), .single(let item): item.queueItemId
             }
         }
 
@@ -525,7 +546,7 @@ extension QueueView {
         var itemIds: [String] {
             switch self {
             case .album(_, let group): group.items.map(\.queueItemId)
-            case .track(let item): [item.queueItemId]
+            case .track(let item), .single(let item): [item.queueItemId]
             }
         }
 
@@ -550,6 +571,14 @@ extension QueueView {
                 }
                 let run = queue[index...].prefix {
                     $0.album == first.album && $0.albumArtist == first.albumArtist
+                }
+                if run.count == 1,
+                   first.title.trimmingCharacters(in: .whitespaces)
+                       .caseInsensitiveCompare(first.album.trimmingCharacters(in: .whitespaces))
+                       == .orderedSame {
+                    rows.append(.single(first))
+                    index += 1
+                    continue
                 }
                 rows.append(.album(
                     id: "album:\(first.queueItemId)",
@@ -693,10 +722,10 @@ private struct QueueAlbumHeader: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(Format.title(title))
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(.primary)
-                    .lineLimit(1)
+                    .lineLimit(Format.titleLines)
 
                 // Only when the line above is the record: a group with no album
                 // title already leads with the artist.
