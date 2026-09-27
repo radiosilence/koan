@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **The Subsonic API, share pages, sign-in and token refresh reuse database connections.** Each request opened its own, which applied the schema DDL and ran a WAL checkpoint first, and a Subsonic client syncing a library makes thousands of requests. They now share one connection pool per server, as GraphQL and the web UI already did; account password and token checks for Subsonic and MCP over HTTP use it too. The radio's top-ups, background playlist pushes and organize by path use pooled connections as well.
 - The README and koan.rocks describe koan as a server: web UI, share links, OpenSubsonic, accounts and API keys, MCP over HTTP.
 
 ## 0.36.0

@@ -20,6 +20,7 @@ use axum::routing::get;
 use koan_core::auth::Role;
 use koan_core::config::Config;
 use koan_core::db::connection::Database;
+use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries;
 use koan_core::index::metadata::extract_cover_art;
 use koan_core::remote::client::SubsonicAuth;
@@ -66,7 +67,7 @@ const IGNORED_ARTICLES: &str = "The El La Los Las Le Les";
 // ---------------------------------------------------------------------------
 
 struct AppState {
-    db_path: PathBuf,
+    pool: Arc<Pool>,
     username: String,
     /// The `[subsonic]` shared secret; without one, only accounts sign in.
     password: Option<String>,
@@ -92,8 +93,10 @@ struct CachedCover {
 }
 
 impl AppState {
-    fn open_db(&self) -> Result<Database, SubsonicError> {
-        Database::open(&self.db_path).map_err(|e| SubsonicError::from(e.to_string()))
+    fn open_db(&self) -> Result<Handle<'_>, SubsonicError> {
+        self.pool
+            .get()
+            .map_err(|e| SubsonicError::from(e.to_string()))
     }
 }
 
@@ -741,7 +744,7 @@ fn respond(
 
 /// Prologue for the two endpoints that answer with bytes rather than a
 /// document, and so cannot go through `respond_db`.
-fn authed_db(state: &AppState, auth: &SubsonicParams) -> Result<Database, SubsonicError> {
+fn authed_db<'a>(state: &'a AppState, auth: &SubsonicParams) -> Result<Handle<'a>, SubsonicError> {
     validate_auth(auth, state)?;
     state.open_db()
 }
@@ -2943,7 +2946,7 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
 /// Returns `None` unless `[subsonic]` is enabled and has its own credentials.
 /// `/rest/*` carries no JWT layer, so these credentials alone guard every byte
 /// of the library — they must never be the upstream `[remote]` password.
-pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
+pub fn subsonic_router(pool: Arc<Pool>) -> Option<axum::Router> {
     let cfg = Config::load().unwrap_or_default();
 
     if !cfg.subsonic.enabled {
@@ -2957,8 +2960,8 @@ pub fn subsonic_router(db_path: PathBuf) -> Option<axum::Router> {
     }
 
     let state = Arc::new(AppState {
-        users: crate::auth::password::PasswordVerifier::new(db_path.clone()),
-        db_path,
+        users: crate::auth::password::PasswordVerifier::new(pool.clone()),
+        pool,
         username: cfg.subsonic.username.clone(),
         password,
         upstream: koan_core::helpers::subsonic_auth(&cfg),
@@ -2999,9 +3002,10 @@ mod tests {
         koan_core::db::queries::auth::create_user(&db.conn, "owner", "sesame", Role::Admin)
             .unwrap();
 
+        let pool = Arc::new(Pool::new(db_path));
         let state = Arc::new(AppState {
-            users: crate::auth::password::PasswordVerifier::new(db_path.clone()),
-            db_path,
+            users: crate::auth::password::PasswordVerifier::new(pool.clone()),
+            pool,
             username: "testuser".into(),
             password: Some("testpass".into()),
             upstream: None,
@@ -3060,7 +3064,7 @@ mod tests {
     }
 
     fn seed_data(state: &AppState) {
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         queries::upsert_track(
             &db.conn,
             &track_meta("/music/test.flac", "Test Song", "Test Album", 1),
@@ -3073,7 +3077,7 @@ mod tests {
     fn seed_local_file(state: &AppState, dir: &std::path::Path, bytes: &[u8]) -> i64 {
         let path = dir.join("real.flac");
         std::fs::write(&path, bytes).unwrap();
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         queries::upsert_track(
             &db.conn,
             &track_meta(path.to_str().unwrap(), "Test Song", "Test Album", 1),
@@ -3125,7 +3129,7 @@ mod tests {
     fn create_share_picks_the_slice_from_what_was_picked() {
         use koan_core::helpers::ShareTarget;
         let (state, _dir) = test_state();
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let a = queries::upsert_track(&db.conn, &track_meta("/m/a.flac", "A", "One", 1)).unwrap();
         let b = queries::upsert_track(&db.conn, &track_meta("/m/b.flac", "B", "One", 2)).unwrap();
         let album = queries::tracks_by_ids(&db.conn, &[a]).unwrap()[0]
@@ -3419,7 +3423,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let artists = queries::all_artists(&db.conn).unwrap();
         let artist = &artists[0];
 
@@ -3438,7 +3442,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let albums = queries::all_albums(&db.conn).unwrap();
         let album = &albums[0];
 
@@ -3452,12 +3456,46 @@ mod tests {
         assert!(body.contains("Test Song"));
     }
 
+    /// Sequential requests, the shape of a client syncing a library. Ignored:
+    /// a timing to read, not an assertion. `cargo test -p koan-server --release
+    /// -- --ignored --nocapture sequential_request_timing`.
+    #[tokio::test]
+    #[ignore]
+    async fn sequential_request_timing() {
+        const N: usize = 500;
+        let (state, dir) = test_state();
+        seed_data(&state);
+        let db = Database::open(&dir.path().join("test.db")).unwrap();
+        let album = queries::all_albums(&db.conn).unwrap()[0].id;
+        drop(db);
+        let app = build_test_router(state);
+
+        for (label, auth) in [
+            ("shared secret", auth_query("")),
+            ("account", "u=mate&p=hunter22&v=1.16.1&c=test".to_string()),
+        ] {
+            let uri = format!("/rest/getAlbum?{auth}&id={album}");
+            let (status, body) = get_response(app.clone(), &uri).await;
+            assert_eq!(status, StatusCode::OK);
+            assert!(body.contains("Test Album"), "{body}");
+            let start = std::time::Instant::now();
+            for _ in 0..N {
+                get_response(app.clone(), &uri).await;
+            }
+            let elapsed = start.elapsed();
+            println!(
+                "{N} x getAlbum ({label}): {elapsed:?}, {:?} per request",
+                elapsed / N as u32
+            );
+        }
+    }
+
     #[tokio::test]
     async fn test_get_song_by_id() {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let albums = queries::all_albums(&db.conn).unwrap();
         let tracks = queries::tracks_for_album(&db.conn, albums[0].id).unwrap();
         let track = &tracks[0];
@@ -3479,7 +3517,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
 
         let app = build_test_router(state);
@@ -3534,7 +3572,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
 
         let app = build_test_router(state);
@@ -3564,7 +3602,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let album_id = queries::all_albums(&db.conn).unwrap()[0].id;
 
         let app = build_test_router(state);
@@ -3645,7 +3683,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let albums = queries::all_albums(&db.conn).unwrap();
 
         let app = build_test_router(state);
@@ -3728,7 +3766,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let artist_id = queries::all_artists(&db.conn).unwrap()[0].id;
         let album_id = queries::all_albums(&db.conn).unwrap()[0].id;
 
@@ -3805,7 +3843,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let tracks = queries::all_tracks(&db.conn).unwrap();
         let track_id = tracks[0].id;
 
@@ -3827,7 +3865,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
 
         // Two `songId` values — the shape every client sends, and the one
@@ -3930,7 +3968,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let a = queries::upsert_track(&db.conn, &track_meta("/music/a.flac", "A", "Test Album", 1))
             .unwrap();
         let b = queries::upsert_track(&db.conn, &track_meta("/music/b.flac", "B", "Test Album", 2))
@@ -3961,7 +3999,7 @@ mod tests {
         .await;
         assert!(body.contains("status=\"ok\""), "updatePlaylist: {}", body);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let left = queries::playlist_track_ids(&db.conn, id.parse().unwrap()).unwrap();
         assert_eq!(left, vec![c, a]);
     }
@@ -3971,7 +4009,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let tracks = queries::all_tracks(&db.conn).unwrap();
 
         let app = build_test_router(state);
@@ -3988,7 +4026,7 @@ mod tests {
         let (state, _dir) = test_state();
         seed_data(&state);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let track_id = queries::all_tracks(&db.conn).unwrap()[0].id;
 
         let app = build_test_router(state);
@@ -4014,7 +4052,7 @@ mod tests {
         let (_, body) = get_response(app, &format!("/rest/star?{}&id=al-1", auth_query(""))).await;
         assert!(body.contains("status=\"failed\""), "{}", body);
 
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         assert!(queries::load_favourites(&db.conn).unwrap().is_empty());
     }
 
@@ -4094,7 +4132,7 @@ mod tests {
     #[test]
     fn test_cover_art_id_namespacing() {
         let (state, dir) = test_state();
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         for (n, album) in [(1, "Album One"), (2, "Album One"), (3, "Album Two")] {
             let path = dir.path().join(format!("t{}.flac", n));
             queries::upsert_track(
@@ -4185,7 +4223,7 @@ mod tests {
     }
 
     fn api_key(state: &AppState, username: &str) -> String {
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let user = koan_core::db::queries::auth::get_user_by_username(&db.conn, username)
             .unwrap()
             .unwrap();
@@ -4278,7 +4316,7 @@ mod tests {
         seed_data(&state);
         let second = seed_local_file(&state, dir.path(), b"x");
         let first = {
-            let db = Database::open(&state.db_path).unwrap();
+            let db = Database::open(state.pool.path()).unwrap();
             queries::track_id_by_path(&db.conn, "/music/test.flac")
                 .unwrap()
                 .unwrap()
@@ -4348,7 +4386,7 @@ mod tests {
     async fn test_lyrics_by_song_id() {
         let (state, _dir) = test_state();
         seed_data(&state);
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let id = queries::all_tracks(&db.conn).unwrap()[0].id;
         let uri = format!("/rest/getLyricsBySongId?{}&id={id}", auth_query("f=json"));
 
@@ -4389,7 +4427,7 @@ mod tests {
     #[tokio::test]
     async fn test_opensubsonic_fields() {
         let (state, _dir) = test_state();
-        let db = Database::open(&state.db_path).unwrap();
+        let db = Database::open(state.pool.path()).unwrap();
         let mut meta = track_meta("/music/a.flac", "Song", "Record", 1);
         meta.date = Some("2020-05-17".into());
         meta.mbid = Some("rec-mbid".into());

@@ -2,7 +2,6 @@
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axum::Json;
@@ -14,7 +13,7 @@ use axum::routing::post;
 use serde::{Deserialize, Serialize};
 
 use koan_core::auth;
-use koan_core::db::connection::Database;
+use koan_core::db::pool::{Handle, Pool};
 use koan_core::db::queries::auth as auth_queries;
 
 /// Name of the cookie carrying the refresh token. Scoped to `/auth` so it
@@ -68,7 +67,7 @@ impl LoginRateLimiter {
 
 #[derive(Clone)]
 pub struct AuthRouteState {
-    pub db_path: PathBuf,
+    pub pool: Arc<Pool>,
     pub private_pem: Arc<Vec<u8>>,
     pub public_pem: Arc<Vec<u8>>,
     pub access_ttl_secs: u64,
@@ -188,8 +187,8 @@ pub(crate) async fn login_rate_limit(
 }
 
 impl AuthRouteState {
-    fn open_db(&self) -> Result<Database, (StatusCode, String)> {
-        Database::open(&self.db_path).map_err(|e| {
+    fn open_db(&self) -> Result<Handle<'_>, (StatusCode, String)> {
+        self.pool.get().map_err(|e| {
             log::error!("auth db open error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -618,7 +617,7 @@ mod tests {
     #[test]
     fn cookies_are_lax_and_only_secure_when_tls_is_in_play() {
         let state = |cookie_secure| AuthRouteState {
-            db_path: PathBuf::from("/nonexistent"),
+            pool: Arc::new(Pool::new("/nonexistent".into())),
             private_pem: Arc::new(Vec::new()),
             public_pem: Arc::new(Vec::new()),
             access_ttl_secs: 900,
