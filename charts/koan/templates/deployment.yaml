@@ -1,0 +1,144 @@
+{{- $stateMountPath := "/config" -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "koan.fullname" . }}
+  labels:
+    {{- include "koan.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  # Host paths and one index: two pods would share neither safely.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "koan.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "koan.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # The image runs as uid 1000; the library is readable through its
+      # group or other bits, but the state directory is made 1000's below.
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      {{- if and .Values.initPermissions.enabled .Values.state.hostPath }}
+      # kubelet creates a missing hostPath as root, and koan cannot write
+      # what root owns. Only the state directory is mounted here.
+      initContainers:
+        - name: state
+          image: {{ .Values.initPermissions.image }}
+          command:
+            - sh
+            - -c
+            - "chown 1000:1000 {{ $stateMountPath }} && chmod 700 {{ $stateMountPath }}"
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "FOWNER"]
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              memory: 32Mi
+          volumeMounts:
+            - name: state
+              mountPath: {{ $stateMountPath }}
+      {{- end }}
+      containers:
+        - name: koan
+          image: {{ include "koan.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--port", {{ .Values.api.port | quote }}]
+          env:
+            {{- if .Values.mcp.enabled }}
+            - name: KOAN_MCP_BIND
+              value: "0.0.0.0:{{ .Values.mcp.port }}"
+            # The gateway forwards each user's koan account; a request
+            # without one is refused rather than run at a default role.
+            - name: KOAN_MCP_REQUIRE_LOGIN
+              value: "1"
+            {{- end }}
+            - name: KOAN_LIBRARY__FOLDERS
+              value: '["/music"]'
+            # koan refuses a Host it was not told about.
+            - name: KOAN_GRAPHQL__ALLOWED_HOSTS
+              value: '["{{ .Values.hostname }}"]'
+            # Served over HTTPS in front of the Service.
+            - name: KOAN_GRAPHQL__COOKIE_SECURE
+              value: "true"
+            # Share links are built on the address strangers reach.
+            - name: KOAN_SHARING__PUBLIC_URL
+              value: "https://{{ .Values.hostname }}"
+          ports:
+            - name: api
+              containerPort: {{ .Values.api.port }}
+            {{- if .Values.mcp.enabled }}
+            - name: mcp
+              containerPort: {{ .Values.mcp.port }}
+            {{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: api
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: api
+            initialDelaySeconds: 30
+            periodSeconds: 30
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: music
+              mountPath: /music
+              readOnly: true
+            - name: state
+              mountPath: {{ $stateMountPath }}
+            # Caches (artwork, lyrics) go under $HOME; they are rebuilt on
+            # demand, so they need not outlive the pod.
+            - name: home
+              mountPath: /home/koan
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: music
+          {{- if .Values.library.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.library.existingClaim }}
+          {{- else }}
+          hostPath:
+            path: {{ .Values.library.hostPath | required "library.hostPath or library.existingClaim is required" }}
+            type: Directory
+          {{- end }}
+        - name: state
+          {{- if .Values.state.existingClaim }}
+          persistentVolumeClaim:
+            claimName: {{ .Values.state.existingClaim }}
+          {{- else if .Values.state.hostPath }}
+          hostPath:
+            path: {{ .Values.state.hostPath }}
+            type: DirectoryOrCreate
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}

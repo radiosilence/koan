@@ -1,0 +1,50 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "koan.fullname" . }}
+  labels:
+    {{- include "koan.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "koan.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # GraphQL and Subsonic, through whatever fronts the Service.
+    - from:
+        {{- toYaml .Values.networkPolicy.api.from | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.port }}
+    {{- if .Values.mcp.enabled }}
+    # MCP has no credential check of its own: the gateway only.
+    - from:
+        {{- toYaml .Values.networkPolicy.mcp.from | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.mcp.port }}
+    {{- end }}
+    {{- with .Values.networkPolicy.extraIngress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Artwork, lyrics and similar-artist lookups are public services;
+    # nothing inside the cluster or a private network is koan's business.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- toYaml .Values.networkPolicy.privateCidrs | nindent 14 }}
+{{- end }}
