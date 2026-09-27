@@ -79,12 +79,12 @@ impl Covers {
         if let Some(hit) = self.memory.lock().ok()?.get(&first_key).cloned() {
             return hit;
         }
-        let found = self.from_disk(&first_key).or_else(|| {
+        let found = self.read_disk(&first_key).or_else(|| {
             let art = sources.iter().find_map(|(p, _)| {
                 koan_core::index::metadata::extract_cover_art(p)
                     .and_then(|bytes| encode(&bytes, size))
             });
-            self.to_disk(&first_key, art.as_deref());
+            self.write_disk(&first_key, art.as_deref());
             Some(art.map(Bytes::from))
         })?;
         if let Ok(mut memory) = self.memory.lock() {
@@ -94,14 +94,14 @@ impl Covers {
     }
 
     /// `Some(None)` is a remembered miss.
-    fn from_disk(&self, key: &str) -> Option<Option<Bytes>> {
+    fn read_disk(&self, key: &str) -> Option<Option<Bytes>> {
         let bytes = std::fs::read(self.dir.join(key)).ok()?;
         Some((!bytes.is_empty()).then(|| Bytes::from(bytes)))
     }
 
     /// An empty file records that there is no art. Failure to write is only a
     /// lost cache entry.
-    fn to_disk(&self, key: &str, art: Option<&[u8]>) {
+    fn write_disk(&self, key: &str, art: Option<&[u8]>) {
         let _ = std::fs::create_dir_all(&self.dir);
         let tmp = self.dir.join(format!("{key}.tmp"));
         if std::fs::write(&tmp, art.unwrap_or_default()).is_ok() {
