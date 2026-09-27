@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **iOS: the queue header in selection mode fits a phone.** The count, Clear and Remove were squeezed by the rest of the header and wrapped a few letters to a line. Each now keeps its own width, and on iOS Clear and Remove are icons.
 - **iOS: queue rows give the title the width.** A duration of an hour or more wrapped onto two lines in its fixed column, and the codec repeated what the album heading says. The duration keeps one line at whatever width it needs, and the codec is left off on iOS.
 
 ## 0.36.6

@@ -153,6 +153,7 @@ struct QueueView: View {
                 Text(summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
             Spacer()
@@ -600,11 +601,27 @@ private struct QueueSelectionHeader: View {
 
     var body: some View {
         if !selection.isEmpty {
+            // Each at its own width: squeezed by the rest of the header on a
+            // phone, they wrapped a few letters to a line.
             Text("\(QueueView.Row.itemIds(in: selection, of: rows).count) selected")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Button("Clear") { selection = [] }
-            Button("Remove", role: .destructive, action: remove)
+                .lineLimit(1)
+                .fixedSize()
+            Group {
+                Button { selection = [] } label: {
+                    Label("Clear", systemImage: Icon.deselect)
+                }
+                Button(role: .destructive, action: remove) {
+                    Label("Remove", systemImage: Icon.remove)
+                }
+            }
+            .fixedSize()
+            #if os(iOS)
+            .labelStyle(.iconOnly)
+            #else
+            .labelStyle(.titleOnly)
+            #endif
         }
         // Mirrored to the model for the Edit menu, which cannot reach a view's
         // state. The *queue item* ids, not the row ids: an album heading's id
