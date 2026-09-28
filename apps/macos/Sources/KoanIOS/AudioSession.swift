@@ -19,9 +19,11 @@ final class AudioSession {
     /// Wired to the player rather than acting on its own — what "resume" means
     /// is the player's business.
     var onInterrupted: (() -> Void)?
-    /// The interruption is over, whether or not the system says to resume.
-    /// The session is active again; the output needs building again.
-    var onInterruptionEnded: (() -> Void)?
+    /// The interruption is over and the session active again; the output
+    /// needs building again. `shouldResume` is the system's word on whether
+    /// playing on is expected: set after a call or Siri, not when the user
+    /// has started something else.
+    var onInterruptionEnded: ((_ shouldResume: Bool) -> Void)?
     /// The route went away underneath us — headphones unplugged, a dock removed.
     var onRouteLost: (() -> Void)?
 
@@ -93,7 +95,7 @@ final class AudioSession {
             ) { [weak self] _ in
                 MainActor.assumeIsolated {
                     self?.configure()
-                    self?.onInterruptionEnded?()
+                    self?.onInterruptionEnded?(false)
                 }
             }
         )
@@ -119,11 +121,11 @@ final class AudioSession {
             onInterrupted?()
         case .ended:
             // The output unit iOS stopped for the interruption will not start
-            // again, so it is rebuilt either way. Whether to resume is a
-            // separate question, answered no: coming back from a call should
-            // not start the music in your pocket.
+            // again, so it is rebuilt whether or not playback resumes.
             try? AVAudioSession.sharedInstance().setActive(true)
-            onInterruptionEnded?()
+            let resume = AVAudioSession.InterruptionOptions(rawValue: options)
+                .contains(.shouldResume)
+            onInterruptionEnded?(resume)
         @unknown default:
             break
         }

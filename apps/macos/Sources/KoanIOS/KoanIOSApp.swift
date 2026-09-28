@@ -74,14 +74,22 @@ struct KoanIOSApp: App {
                     // a RemoteIO unit on an inactive session produces silence
                     // and reports success, which is the worst of both.
                     session.activate()
-                    session.onInterrupted = { [weak built] in built?.player.pause() }
+                    // Whether the music was playing when the interruption
+                    // began, which the pause below makes unreadable after.
+                    var interruptedPlaying = false
+                    session.onInterrupted = { [weak built] in
+                        interruptedPlaying = built?.player.isPlaying ?? false
+                        built?.player.pause()
+                    }
                     session.onRouteLost = { [weak built] in built?.player.pause() }
-                    // Rebuild the output, paused: coming back from a call
-                    // should not start the music in your pocket, but pressing
-                    // play afterwards must work.
-                    session.onInterruptionEnded = { [weak built] in
+                    session.onInterruptionEnded = { [weak built] shouldResume in
                         guard let engine = built?.player.engine else { return }
-                        Task { try? await engine.restartOutput() }
+                        let resume = shouldResume && interruptedPlaying
+                        interruptedPlaying = false
+                        Task {
+                            try? await engine.restartOutput()
+                            if resume { try? await engine.resume() }
+                        }
                     }
                     state = built
                 } catch {
