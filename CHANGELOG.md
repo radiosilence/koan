@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **An hourly sync picks up albums changed on the server.** An incremental sync fetched only albums created since the last one, and a retag keeps an album's creation date (and can give it a new id), so the client kept the old tags until a Full Sync. It now also fetches any album it does not hold, or holds with another title, artist, track count or length than the server lists. The album list is already fetched every sync, so this costs no extra requests to decide. Above 200 changed albums it pages every song instead, about a hundred requests for the whole library.
 - **iOS: the queue gives titles room.** Track and album titles wrap to two lines instead of truncating to a date. A record that is a single track of the same name (a mix, a single) is one row with its sleeve and artist, not a heading and a row saying the same thing twice. The header names what is playing on its own, without "Playing" taking half its width. A leading date ("2022-03-12: ") is left off displayed titles, since the year is shown beside them; the tags keep it.
 
 ## 0.36.7
