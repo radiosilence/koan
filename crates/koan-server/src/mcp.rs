@@ -196,6 +196,11 @@ impl ServerHandler for KoanMcpServer {
                `saveQueueAsPlaylist`, `addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, \
                `deletePlaylist`, `playPlaylist`. Synced to Subsonic/Navidrome\n\
              - **Radio**: `enableRadio`, `disableRadio` — auto-queues similar tracks\n\
+             - **Play on the user's phone or Mac**: query `clients` for the koan apps \
+               linked to this server, then `playOnClient(trackIds, client)` to replace its \
+               queue (or `enqueue: true` to append), and `controlClient` to pause, resume or \
+               skip. Build the list with the library queries first; the music plays on that \
+               device, not on the server\n\
              - **Devices**: query `devices`; `setDevice`/`clearDevice` need `KOAN_MCP_ADMIN=1`\n\
              - **History**: query `playHistory`, `similarArtists`\n\
              - **Sharing**: `createShare(trackIds, description)` returns a public link anyone can \

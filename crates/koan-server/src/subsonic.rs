@@ -3121,11 +3121,87 @@ async fn form_post(req: Request, next: Next) -> Response {
         .await
 }
 
+/// A koan client linking itself to this server: authenticated like any other
+/// call, then held open for as long as the client stays, so the server can
+/// send it `LinkCommand`s.
+async fn koan_link(
+    State(state): State<Arc<AppState>>,
+    RawQuery(raw): RawQuery,
+    ws: axum::extract::WebSocketUpgrade,
+) -> Response {
+    let params = RawParams::parse(raw.as_deref());
+    let json = params.auth().wants_json();
+    let caller = {
+        let auth = params.auth();
+        match tokio::task::spawn_blocking(move || validate_auth(&auth, &state)).await {
+            Ok(Ok(caller)) => caller,
+            Ok(Err(e)) => return SubsonicResponse::error(json, &e),
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        }
+    };
+    let name = params.get("client").unwrap_or("koan").to_owned();
+    let platform = params.get("platform").unwrap_or("").to_owned();
+    // Without a device id every connection is its own device.
+    let device = params
+        .get("device")
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+    ws.on_upgrade(move |socket| link_session(socket, caller.username, name, platform, device))
+}
+
+const LINK_CHECK: Duration = Duration::from_secs(15);
+/// Over twice the client's idle ping interval.
+const LINK_SILENCE: Duration = Duration::from_secs(100);
+
+async fn link_session(
+    mut socket: axum::extract::ws::WebSocket,
+    username: String,
+    name: String,
+    platform: String,
+    device: String,
+) {
+    use axum::extract::ws::Message;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let registry = crate::clients::registry();
+    let id = registry.register(&username, &name, &platform, &device, tx);
+    log::info!("link: {name} ({platform}) linked for {username}");
+    // A client pings when it has heard nothing for a while. A phone the OS
+    // has suspended never closes its socket, so one that goes quiet is gone.
+    let mut last_heard = tokio::time::Instant::now();
+    let mut check = tokio::time::interval(LINK_CHECK);
+    loop {
+        tokio::select! {
+            _ = check.tick() => {
+                if last_heard.elapsed() > LINK_SILENCE {
+                    break;
+                }
+            }
+            cmd = rx.recv() => {
+                // None: a newer connection from the same device replaced this one.
+                let Some(cmd) = cmd else { break };
+                let Ok(text) = serde_json::to_string(&cmd) else { continue };
+                if socket.send(Message::Text(text.into())).await.is_err() {
+                    break;
+                }
+            }
+            msg = socket.recv() => match msg {
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
+                Some(Ok(_)) => last_heard = tokio::time::Instant::now(),
+            },
+        }
+    }
+    registry.unregister(&id);
+    log::info!("link: {name} ({platform}) unlinked for {username}");
+}
+
 /// Register all Subsonic REST routes on the given router.
 fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router<Arc<AppState>> {
     router
         // Browsing (ID3)
         .route("/rest/ping", get(ping).post(ping))
+        // koan's own: a koan client's standing connection, for the server to
+        // command it. See `crate::clients`.
+        .route("/rest/koanLink", get(koan_link))
         .route("/rest/ping.view", get(ping).post(ping))
         // Sharing
         .route("/rest/createShare", get(create_share).post(create_share))

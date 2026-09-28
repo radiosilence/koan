@@ -111,6 +111,20 @@ A share is a slice of the library, shown the way the app shows it: one track sha
 
 The page and its audio answer for the share's own tracks and nothing else, addressed by position in the share rather than by library id. An expired, revoked or made-up id is the same 404. List shares with `shares`, set an expiry with `updateShare`, revoke with `deleteShare`. A kōan TUI or macOS app whose remote server is this kōan shares through it.
 
+## Playing on a linked app
+
+The macOS and iOS apps, signed in to a kōan server, hold a WebSocket open to it at `/rest/koanLink` (authenticated like any other `/rest` call; a kōan extension, not part of OpenSubsonic). The server lists them in the GraphQL `clients` query and can tell one what to play:
+
+```graphql
+{ clients { id name platform } }
+mutation { playOnClient(trackIds: ["812", "813"], client: "iPhone") { ok message } }
+mutation { controlClient(action: PAUSE) { ok message } }
+```
+
+`client` is an id or name from `clients`; without it, the most recently linked app of the caller's account. `enqueue: true` appends instead of replacing the queue. Track ids are the server's; the app syncs first if it has not seen one yet. This is what lets an assistant on the server's MCP build a playlist from the library and have it start on a phone.
+
+An app only stays linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds.
+
 ## In a container
 
 The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, keeps config, database and auth keys in `/config`, and needs no sound card. `latest` and `vX.Y.Z` are releases; `main` and a commit sha follow the main branch between them. Mount the library read-only, list it under `[library] folders` in `/config/config.toml`, and add the public hostname to `allowed_hosts`. Create the first user with `koan auth setup` inside the container, and `koan subsonic setup` to enable the Subsonic API.

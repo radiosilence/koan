@@ -1,6 +1,7 @@
 pub mod client;
 pub mod download;
 pub mod downloads;
+pub mod link;
 pub mod listenbrainz;
 pub mod lrclib;
 pub mod musicbrainz;

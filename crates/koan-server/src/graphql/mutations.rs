@@ -9,6 +9,7 @@ use koan_core::player::commands::PlayerCommand;
 use koan_core::player::state::{PlaybackState, PlaylistItem, QueueItemId, SharedPlayerState};
 
 use koan_core::auth::Role;
+use koan_core::remote::link::LinkCommand;
 
 use super::helpers::{spawn_downloads, sync_favourite_to_remote};
 use super::jobs::{JobHandle, JobRegistry, JobState};
@@ -78,6 +79,57 @@ impl MutationRoot {
         let id = parse_queue_item_id(&queue_item_id)?;
         send_cmd(ctx, PlayerCommand::Play(id))?;
         Ok(GqlStatus::success("playing"))
+    }
+
+    /// Play tracks on a linked koan app rather than on the server: replace
+    /// its queue with `trackIds` and start at `startAt`, or append them with
+    /// `enqueue`. `client` is a client's id or name from `clients`; without
+    /// it, the most recently linked one.
+    async fn play_on_client(
+        &self,
+        ctx: &Context<'_>,
+        track_ids: Vec<async_graphql::ID>,
+        client: Option<String>,
+        start_at: Option<u32>,
+        enqueue: Option<bool>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        if track_ids.is_empty() {
+            return Err(async_graphql::Error::new("no tracks"));
+        }
+        let count = track_ids.len();
+        let track_ids: Vec<String> = track_ids.into_iter().map(|id| id.0).collect();
+        let cmd = if enqueue.unwrap_or(false) {
+            LinkCommand::Enqueue { track_ids }
+        } else {
+            LinkCommand::Play {
+                track_ids,
+                start_at: start_at.unwrap_or(0),
+            }
+        };
+        let sent = send_to_client(ctx, client.as_deref(), cmd)?;
+        Ok(GqlStatus::success(format!(
+            "sent {count} tracks to {}",
+            sent.name
+        )))
+    }
+
+    /// Pause, resume or skip on a linked koan app; see `playOnClient`.
+    async fn control_client(
+        &self,
+        ctx: &Context<'_>,
+        action: GqlClientAction,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let cmd = match action {
+            GqlClientAction::Pause => LinkCommand::Pause,
+            GqlClientAction::Resume => LinkCommand::Resume,
+            GqlClientAction::Next => LinkCommand::Next,
+            GqlClientAction::Previous => LinkCommand::Previous,
+        };
+        let sent = send_to_client(ctx, client.as_deref(), cmd)?;
+        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
     }
 
     async fn pause(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
@@ -969,4 +1021,20 @@ where
     }
 
     Ok(job.into())
+}
+
+fn send_to_client(
+    ctx: &Context<'_>,
+    client: Option<&str>,
+    cmd: LinkCommand,
+) -> async_graphql::Result<crate::clients::ClientInfo> {
+    let scope = super::client_scope(ctx);
+    crate::clients::registry()
+        .send(scope.as_deref(), client, cmd)
+        .ok_or_else(|| {
+            async_graphql::Error::new(match client {
+                Some(c) => format!("no linked client {c}; see `clients`"),
+                None => "no koan app is linked to this server; open koan on the device".into(),
+            })
+        })
 }

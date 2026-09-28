@@ -379,6 +379,17 @@ impl QueryRoot {
         .await
     }
 
+    /// koan apps linked to this server (a phone, a Mac), newest first. Any
+    /// of them can be told what to play with `playOnClient`.
+    async fn clients(&self, ctx: &Context<'_>) -> Vec<GqlClient> {
+        let scope = super::client_scope(ctx);
+        crate::clients::registry()
+            .list(scope.as_deref())
+            .into_iter()
+            .map(GqlClient::from)
+            .collect()
+    }
+
     async fn devices(&self) -> async_graphql::Result<Vec<GqlDevice>> {
         blocking(|| {
             let devices =
