@@ -409,6 +409,16 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         [],
     )?;
 
+    // Syncs before 0.36.2 stored a server's "no id" (`musicBrainzId: ""`) as
+    // an empty string, which everything downstream took for an id: artist
+    // info looked "" up instead of resolving one, and never showed anything.
+    // Idempotent, and cheap once there are none.
+    conn.execute_batch(
+        "UPDATE artists SET mbid = NULL WHERE mbid = '';
+         UPDATE albums SET mbid = NULL WHERE mbid = '';
+         UPDATE tracks SET mbid = NULL WHERE mbid = '';",
+    )?;
+
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
     // Once: `upsert_track` stores no new zeros, and the sweep reads every track.
@@ -572,6 +582,26 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Resu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn empty_musicbrainz_ids_are_cleared_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            super::create_tables(&conn).unwrap();
+            conn.execute("INSERT INTO artists (name, mbid) VALUES ('Crass', '')", [])
+                .unwrap();
+        }
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        super::create_tables(&conn).unwrap();
+        let mbid: Option<String> = conn
+            .query_row("SELECT mbid FROM artists WHERE name = 'Crass'", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(mbid, None);
+    }
+
     use super::*;
     use crate::db::connection::Database;
 
