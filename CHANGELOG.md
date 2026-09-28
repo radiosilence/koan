@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.39.3
+
+### Fixed
+
+- **A playlist's page fits a phone.** Its header was the Mac's, side by side: wider than the screen, so the title and Shuffle wrapped a letter at a time, the artwork was clipped, and every row below was laid out at the header's width and cut off on the right. On a narrow screen the artwork, title and controls now stack, as a record's page does, with Shuffle as an icon beside the queue buttons.
+
 ## 0.39.2
 
 ### Added

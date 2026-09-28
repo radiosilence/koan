@@ -15,6 +15,7 @@ import SwiftUI
 struct PlaylistView: View {
     let playlistId: Int64
 
+    @Environment(\.horizontalSizeClass) private var width
     @Environment(PlayerModel.self) private var player
     @Environment(EngineMirror.self) private var mirror
     @Environment(PlaylistsModel.self) private var playlists
@@ -117,75 +118,111 @@ struct PlaylistView: View {
         playlist.map { .playlist(id: $0.id, name: $0.name) }
     }
 
-    private func header(_ rows: [Row]) -> some View {
-        HStack(alignment: .bottom, spacing: 18) {
-            PlaylistArtwork(sources: playlists.covers[playlistId] ?? [], cornerRadius: 8)
-                .frame(width: 132, height: 132)
-                .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
-
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) {
-                    if let playable {
-                        PlayableHeaderButton(playable: playable)
-                    }
-                    Text(playlist?.name ?? "Playlist")
-                        .font(.system(size: 26, weight: .semibold))
-                        .lineLimit(2)
-                }
-                Text(summary)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-
+    /// Side by side where there is room, stacked where there is not, as a
+    /// record's page is: on a phone the side-by-side header was wider than the
+    /// screen, so the title and Shuffle wrapped a letter at a time and every
+    /// row below was laid out at the header's width and clipped.
+    @ViewBuilder private func header(_ rows: [Row]) -> some View {
+        if width == .compact {
+            VStack(alignment: .leading, spacing: 14) {
+                artwork
+                titleBlock
                 HStack(spacing: 10) {
                     QueueButtons(playable: playable)
-                    Button {
-                        playlists.shuffle(id: playlistId)
-                    } label: {
-                        Label("Shuffle", systemImage: "shuffle")
-                    }
-                    .help("Reorder the playlist itself, for good")
-                    .disabled(entries.count < 2)
+                    shuffleButton.labelStyle(.iconOnly)
+                    Spacer(minLength: 0)
+                    layoutControls
                 }
-                .padding(.top, 4)
-            }
-
-            Spacer(minLength: 0)
-
-            VStack(alignment: .trailing, spacing: 10) {
                 PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            HStack(alignment: .bottom, spacing: 18) {
+                artwork
 
-                HStack(spacing: 10) {
-                    // Both modes shown with the active one lit, the way the
-                    // queue does it: a single icon has to choose between naming
-                    // the mode you are in and the mode you would get.
-                    Picker("Playlist layout", selection: groupedBinding) {
-                        Image(systemName: "square.stack").tag(true)
-                        Image(systemName: "list.bullet").tag(false)
+                VStack(alignment: .leading, spacing: 6) {
+                    titleBlock
+                    HStack(spacing: 10) {
+                        QueueButtons(playable: playable)
+                        shuffleButton
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                    .help("Group by album, or one row per track — remembered for this playlist")
+                    .padding(.top, 4)
+                }
 
-                    Menu {
-                        Button("Rename…") {
-                            renameTo = playlist?.name ?? ""
-                            renaming = true
-                        }
-                        Divider()
-                        Button("Delete Playlist", role: .destructive) {
-                            playlists.delete(id: playlistId)
-                            nav.forget(.playlist(playlistId))
-                            nav.show(.queue)
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                    }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .frame(width: 22)
+                Spacer(minLength: 0)
+
+                VStack(alignment: .trailing, spacing: 10) {
+                    PlaylistSelectionHeader(selection: $selection, rows: rows) { removeSelected() }
+                    layoutControls
                 }
             }
+        }
+    }
+
+    private var artwork: some View {
+        PlaylistArtwork(sources: playlists.covers[playlistId] ?? [], cornerRadius: 8)
+            .frame(width: 132, height: 132)
+            .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+    }
+
+    private var titleBlock: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 12) {
+                if let playable {
+                    PlayableHeaderButton(playable: playable)
+                }
+                Text(playlist?.name ?? "Playlist")
+                    .font(.system(size: 26, weight: .semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(summary)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var shuffleButton: some View {
+        Button {
+            playlists.shuffle(id: playlistId)
+        } label: {
+            Label("Shuffle", systemImage: "shuffle")
+        }
+        .help("Reorder the playlist itself, for good")
+        .disabled(entries.count < 2)
+    }
+
+    private var layoutControls: some View {
+        HStack(spacing: 10) {
+            // Both modes shown with the active one lit, the way the
+            // queue does it: a single icon has to choose between naming
+            // the mode you are in and the mode you would get.
+            Picker("Playlist layout", selection: groupedBinding) {
+                Image(systemName: "square.stack").tag(true)
+                Image(systemName: "list.bullet").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("Group by album, or one row per track — remembered for this playlist")
+
+            Menu {
+                Button("Rename…") {
+                    renameTo = playlist?.name ?? ""
+                    renaming = true
+                }
+                Divider()
+                Button("Delete Playlist", role: .destructive) {
+                    playlists.delete(id: playlistId)
+                    nav.forget(.playlist(playlistId))
+                    nav.show(.queue)
+                }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .frame(width: 22)
         }
     }
 
