@@ -18,7 +18,7 @@ jobs:
     outputs:
       code: ${{ steps.filter.outputs.code }}
       docker: ${{ steps.filter.outputs.docker }}
-      chart: ${{ steps.filter.outputs.chart }}
+      package: ${{ steps.filter.outputs.package }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,7 +35,7 @@ jobs:
         run: |
           code=true
           docker=true
-          chart=true
+          package=true
           if [ "$EVENT" = "pull_request" ]; then
             # HEAD is the merge commit GitHub built for this PR and its first
             # parent is the base branch, so this is exactly the PR's diff. If it
@@ -55,8 +55,8 @@ jobs:
               if ! printf '%s\n' "$files" | grep -qE '^(Dockerfile|\.dockerignore)$'; then
                 docker=false
               fi
-              if ! printf '%s\n' "$files" | grep -qE '^charts/'; then
-                chart=false
+              if ! printf '%s\n' "$files" | grep -qE '^deploy/'; then
+                package=false
               fi
               printf '%s\n' "$files" | sed 's/^/  /'
             fi
@@ -64,7 +64,7 @@ jobs:
           {
             echo "code=$code"
             echo "docker=$docker"
-            echo "chart=$chart"
+            echo "package=$package"
           } >> "$GITHUB_OUTPUT"
 
   fmt:
@@ -316,17 +316,25 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  chart:
-    name: Helm chart
+  pulumi-package:
+    name: Pulumi package
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.chart == 'true'
+    if: needs.changes.outputs.package == 'true'
     timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: deploy/pulumi
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
-      - run: helm lint charts/koan
-      - run: helm template koan charts/koan --set hostname=koan.example.com --set library.hostPath=/music > /dev/null
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: deploy/pulumi/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - run: npm run build
 
   check-version:
     name: Check Version
@@ -362,13 +370,12 @@ jobs:
             echo "$BAD"
             exit 1
           fi
-          # The chart is published at the app's own version, so the two must
-          # move together or the chart ships pointing at the wrong image.
-          BAD_CHART=$(grep -hn '^\(version\|appVersion\):' charts/koan/Chart.yaml \
-                      | grep -v "\"\?${CURRENT_VERSION}\"\?$" || true)
-          if [ -n "$BAD_CHART" ]; then
-            echo "charts/koan/Chart.yaml out of sync with ${CURRENT_VERSION}:"
-            echo "$BAD_CHART"
+          # The package is published at the app's own version, so the two must
+          # move together or it ships pointing at the wrong image.
+          PKG_VERSION=$(node -p "require('./deploy/pulumi/package.json').version")
+          PKG_APP_VERSION=$(sed -n 's/^export const APP_VERSION = "\(.*\)";/\1/p' deploy/pulumi/src/versions.ts)
+          if [ "$PKG_VERSION" != "$CURRENT_VERSION" ] || [ "$PKG_APP_VERSION" != "$CURRENT_VERSION" ]; then
+            echo "::error::deploy/pulumi out of sync with ${CURRENT_VERSION}: package.json $PKG_VERSION, versions.ts $PKG_APP_VERSION"
             exit 1
           fi
 
@@ -495,7 +502,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, check-version, publish-crate]
+    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, check-version, publish-crate, publish-package]
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       contents: write
@@ -684,21 +691,31 @@ jobs:
           git commit -m "Update koan to v${VERSION}"
           git push
 
-  publish-chart:
-    name: Publish Helm chart
+  # After the container image and the release: a published package promises
+  # an image that exists, and never names a release that never happened.
+  publish-package:
+    name: Publish Pulumi package
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [chart, check-version, publish-release]
+    # Before the release: the updater that deploys koan follows releases, and
+    # a release it finds must already have its package.
+    needs: [fmt, clippy, test, build, container, check-version]
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       packages: write
       contents: read
-    env:
-      VERSION: ${{ needs.check-version.outputs.version }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        working-directory: deploy/pulumi
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
-      - run: echo "$GITHUB_TOKEN" | helm registry login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - run: helm package charts/koan
-      - run: helm push "koan-${VERSION}.tgz" oci://ghcr.io/radiosilence/charts
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://npm.pkg.github.com
+          cache: npm
+          cache-dependency-path: deploy/pulumi/package-lock.json
+      - run: npm ci
+      - run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

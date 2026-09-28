@@ -1,7 +1,0 @@
-koan is running, but refuses every request until a user exists. Create the
-first one with:
-
-  kubectl exec -n {{ .Release.Namespace }} -it deploy/{{ include "koan.fullname" . }} -- koan auth setup
-
-See docs/guide/headless-server.md in the koan repository for the rest of
-authentication and Subsonic setup.
