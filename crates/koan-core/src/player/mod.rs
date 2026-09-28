@@ -1490,6 +1490,10 @@ impl Player {
                 }
             }
             PlayerCommand::SetOutputDevice(name) => self.set_output_device(name),
+            PlayerCommand::RestartOutput => {
+                log::info!("restarting audio output");
+                self.restart_on_current_track();
+            }
             PlayerCommand::ClearOutputDevice => self.clear_output_device(),
         }
     }

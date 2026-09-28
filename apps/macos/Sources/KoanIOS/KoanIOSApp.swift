@@ -76,8 +76,13 @@ struct KoanIOSApp: App {
                     session.activate()
                     session.onInterrupted = { [weak built] in built?.player.pause() }
                     session.onRouteLost = { [weak built] in built?.player.pause() }
-                    // Deliberately not resuming on `onResumable`: coming back
-                    // from a call should not start the music in your pocket.
+                    // Rebuild the output, paused: coming back from a call
+                    // should not start the music in your pocket, but pressing
+                    // play afterwards must work.
+                    session.onInterruptionEnded = { [weak built] in
+                        guard let engine = built?.player.engine else { return }
+                        Task { try? await engine.restartOutput() }
+                    }
                     state = built
                 } catch {
                     startupError = String(describing: error)

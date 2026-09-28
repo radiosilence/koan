@@ -1641,6 +1641,43 @@ impl KoanEngine {
         offload::sequenced(move || self.send(PlayerCommand::SetOutputDevice(name))).await
     }
 
+    /// Albums, artists and tracks deleted since `after` (a `seq` this returned
+    /// before; 0 the first time), for a cache keyed by their ids: SQLite reuses
+    /// a freed id, and art cached under it would show for another record.
+    pub async fn art_evictions(self: Arc<Self>, after: i64) -> Result<ArtEvictions, KoanError> {
+        offload::offload(move || {
+            let db = self.db()?;
+            let rows: Vec<(i64, String, i64)> = db
+                .conn
+                .prepare("SELECT seq, kind, id FROM art_evictions WHERE seq > ?1 ORDER BY seq")
+                .and_then(|mut s| {
+                    s.query_map([after], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                        .collect()
+                })
+                .map_err(db_err)?;
+            let mut out = ArtEvictions {
+                seq: rows.last().map_or(after, |r| r.0),
+                ..Default::default()
+            };
+            for (_, kind, id) in rows {
+                match kind.as_str() {
+                    "album" => out.albums.push(id),
+                    "artist" => out.artists.push(id),
+                    _ => out.tracks.push(id),
+                }
+            }
+            Ok(out)
+        })
+        .await
+    }
+
+    /// Rebuild the audio output where playback is, keeping it paused if it
+    /// was: after iOS stops the output for an interruption, the old unit will
+    /// not start again.
+    pub async fn restart_output(self: Arc<Self>) -> Result<(), KoanError> {
+        offload::sequenced(move || self.send(PlayerCommand::RestartOutput)).await
+    }
+
     pub async fn clear_device(self: Arc<Self>) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::ClearOutputDevice)).await
     }

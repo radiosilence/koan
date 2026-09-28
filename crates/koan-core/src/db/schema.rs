@@ -157,8 +157,21 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             UNIQUE(track_id)
         );
 
-        -- One row per artist looked up, misses included: an empty row is the
-        -- answer that nothing was found, which stops a page asking again.
+        -- Rows deleted from albums, artists and tracks, for front ends that
+        -- cache by id: SQLite hands a freed id to the next row, and a cover
+        -- cached under it would be shown for the wrong record.
+        CREATE TABLE IF NOT EXISTS art_evictions (
+            seq   INTEGER PRIMARY KEY AUTOINCREMENT,
+            kind  TEXT NOT NULL,
+            id    INTEGER NOT NULL
+        );
+        CREATE TRIGGER IF NOT EXISTS evict_album_art AFTER DELETE ON albums
+            BEGIN INSERT INTO art_evictions (kind, id) VALUES ('album', old.id); END;
+        CREATE TRIGGER IF NOT EXISTS evict_artist_art AFTER DELETE ON artists
+            BEGIN INSERT INTO art_evictions (kind, id) VALUES ('artist', old.id); END;
+        CREATE TRIGGER IF NOT EXISTS evict_track_art AFTER DELETE ON tracks
+            BEGIN INSERT INTO art_evictions (kind, id) VALUES ('track', old.id); END;
+
         -- A server's record of the koan apps that have linked to it, and what
         -- waits for each while it is away: see koan-server's clients.rs.
         CREATE TABLE IF NOT EXISTS link_devices (
@@ -184,6 +197,8 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
             created_at  INTEGER NOT NULL
         );
 
+        -- One row per artist looked up, misses included: an empty row is the
+        -- answer that nothing was found, which stops a page asking again.
         CREATE TABLE IF NOT EXISTS artist_info (
             artist_id     INTEGER PRIMARY KEY REFERENCES artists(id) ON DELETE CASCADE,
             bio           TEXT,
@@ -459,6 +474,11 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     )?;
 
     merge_case_duplicate_artists(conn)?;
+    // A client more than this far behind purges its whole cache instead.
+    conn.execute(
+        "DELETE FROM art_evictions WHERE seq < (SELECT MAX(seq) FROM art_evictions) - 50000",
+        [],
+    )?;
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
     // Once: `upsert_track` stores no new zeros, and the sweep reads every track.
@@ -754,6 +774,24 @@ mod tests {
             2,
             "Habits once, holding both copies' tracks"
         );
+    }
+
+    #[test]
+    fn deleted_ids_are_logged_for_caches() {
+        let conn = Connection::open_in_memory().unwrap();
+        create_tables(&conn).unwrap();
+        conn.execute_batch(
+            "INSERT INTO artists (id, name) VALUES (7, 'A');
+             INSERT INTO albums (id, title, artist_id) VALUES (9, 'B', 7);
+             DELETE FROM albums WHERE id = 9;",
+        )
+        .unwrap();
+        let logged: (String, i64) = conn
+            .query_row("SELECT kind, id FROM art_evictions", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(logged, ("album".to_string(), 9));
     }
 
     #[test]

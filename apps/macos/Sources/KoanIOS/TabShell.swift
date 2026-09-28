@@ -17,6 +17,7 @@ import SwiftUI
 struct TabShell: View {
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
+    @Environment(CoverArtCache.self) private var art
     @Environment(LibraryModel.self) private var library
     @Environment(PlaylistsModel.self) private var playlists
     @Environment(ActivityModel.self) private var activity
@@ -82,6 +83,9 @@ struct TabShell: View {
         // change reaches the app's own lists, and the last dependable moment
         // to save the queue before iOS suspends the app.
         .reloading(on: 0) {
+            // First, so nothing redrawn below picks up a cover cached under an
+            // id the library has since given to another record.
+            await art.applyEvictions()
             library.libraryChanged()
             playlists.load()
         }

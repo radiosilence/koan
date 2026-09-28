@@ -408,6 +408,34 @@ final class CoverArtCache: Observable, @unchecked Sendable {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    /// Forget what is cached for records the library has deleted since last
+    /// asked. SQLite gives a freed id to the next row it inserts, so a cover
+    /// cached under an old album's id would otherwise be shown for a new one.
+    func applyEvictions() async {
+        let mark = "artEvictionSeq"
+        let after = Int64(UserDefaults.standard.integer(forKey: mark))
+        guard let gone = try? await engine.artEvictions(after: after) else { return }
+        let sources: [AlbumArtwork.Source] =
+            gone.albums.map { .album($0) } + gone.artists.map { .artist($0) }
+            + gone.tracks.map { .track($0) }
+        for source in sources { evict(source) }
+        UserDefaults.standard.set(Int(gone.seq), forKey: mark)
+    }
+
+    private func evict(_ source: AlbumArtwork.Source) {
+        let key = Self.key(source)
+        for size in [AlbumArtwork.Size.thumb, .tile, .full] {
+            memory.removeObject(forKey: Self.key(source, size) as NSString)
+        }
+        locked {
+            absent.remove(key)
+            colours.removeValue(forKey: key)
+        }
+        if let file = directory?.appendingPathComponent(Self.filename(for: key)) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
     /// Drop everything. Exposed for settings; the system may also reclaim the
     /// directory on its own.
     func purge() {
