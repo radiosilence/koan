@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>kōan: a music player for macOS and Linux</title>
-  <meta name="description" content="A fast music player for local and Subsonic/Navidrome libraries: a native SwiftUI app on macOS and a terminal UI on macOS and Linux, on one Rust core. Gapless, bit-perfect where the device allows, no Electron.">
+  <title>kōan: a music player for macOS, iOS and Linux</title>
+  <meta name="description" content="A fast music player for local and Subsonic/Navidrome libraries: native SwiftUI apps on macOS and iOS, a terminal UI on macOS and Linux, and a server with a web UI and a Subsonic API, on one Rust core. Gapless, bit-perfect where the device allows, no Electron.">
   <meta name="color-scheme" content="dark light">
   <meta name="theme-color" content="#1e1e1e" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
@@ -12,14 +12,14 @@
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://koan.rocks/">
   <meta property="og:title" content="kōan">
-  <meta property="og:description" content="A music player for local and Subsonic/Navidrome libraries. Native SwiftUI on macOS, a terminal UI on macOS and Linux, one Rust core.">
+  <meta property="og:description" content="A music player for local and Subsonic/Navidrome libraries. Native SwiftUI on macOS and iOS, a terminal UI, and a server for the rest, on one Rust core.">
   <meta property="og:image" content="https://koan.rocks/og.jpg">
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:image:alt" content="An album open in the kōan macOS app">
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="kōan">
-  <meta name="twitter:description" content="A music player for local and Subsonic/Navidrome libraries. Native SwiftUI on macOS, a terminal UI on macOS and Linux, one Rust core.">
+  <meta name="twitter:description" content="A music player for local and Subsonic/Navidrome libraries. Native SwiftUI on macOS and iOS, a terminal UI, and a server for the rest, on one Rust core.">
   <meta name="twitter:image" content="https://koan.rocks/og.jpg">
   <link rel="icon" href="/icon-32.png" sizes="32x32">
   <link rel="icon" href="/icon-192.png" sizes="192x192">
@@ -33,7 +33,9 @@
   <header class="mx-auto flex max-w-2xl items-center justify-between gap-4 px-5 py-5">
     <a class="flex items-center gap-3 text-ink no-underline" href="/"><img class="rounded-md" src="/icon-32.png" width="32" height="32" alt="">kōan</a>
     <nav class="flex gap-5 text-sm [&>a]:text-muted [&>a]:no-underline [&>a:hover]:text-ink" aria-label="Site">
+      <a href="#pieces">Pieces</a>
       <a href="#install">Install</a>
+      <a href="#setup">Set up</a>
       <a href="#features">Features</a>
       <a href="https://github.com/radiosilence/koan">GitHub</a>
     </nav>
@@ -53,13 +55,31 @@
       <p class="mt-8 flex flex-wrap items-center gap-x-4 gap-y-3">
         <a class="rounded-full bg-brand px-4 py-2 font-semibold text-bg no-underline hover:text-bg hover:opacity-90" href="#install">Install</a>
         <a class="rounded-full border border-rule px-4 py-2 text-ink no-underline hover:border-muted hover:text-ink" href="https://github.com/radiosilence/koan/releases/latest">Latest release</a>
-        <span class="text-sm text-muted">macOS 26+ app · macOS and Linux terminal UI · MIT</span>
+        <span class="text-sm text-muted">macOS and iOS 26+ apps · macOS and Linux terminal UI · server · MIT</span>
       </p>
     </section>
 
     <figure class="mx-auto my-8 max-w-5xl px-5">
       <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/queue.webp" width="1600" height="1028" fetchpriority="high" alt="The queue in the macOS app, grouped by album, with the now-playing bar at the foot">
     </figure>
+
+    <section id="pieces" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
+      <h2>The pieces</h2>
+      <p>Every part of kōan is the same Rust core with a different front on it. The apps link the core in-process; nothing between the interface and the audio engine is a network hop.</p>
+      <ul>
+        <li><strong>macOS app.</strong> SwiftUI, for the machine you listen at. Plays local folders, a server, or both merged into one library.</li>
+        <li><strong>iOS app.</strong> The same SwiftUI app in a phone's shell. A phone has no music folder, so it plays from a server, and keeps what it has played in a local cache.</li>
+        <li><strong>Terminal UI and CLI.</strong> <code>koan</code> on macOS and Linux: the player in a terminal, plus scanning, search, file organisation and the server itself.</li>
+        <li><strong>Server.</strong> <code>koan --headless</code>, or the container image, on the machine that holds the music. It serves a web UI, share links, an OpenSubsonic API and MCP.</li>
+      </ul>
+      <p>For a single computer with the music on it, the app on its own is enough. To listen from a phone, another computer or a browser, run the server where the music lives and point everything else at it. The apps sync its library, stream what they play and cache it, so a record played once plays again with no signal. Any Subsonic client works against it as well.</p>
+      <pre><code>          ┌─────────── kōan server ───────────┐
+music ──► │ library · web UI · shares · MCP   │
+          │ OpenSubsonic API                  │
+          └──┬──────────┬──────────┬──────────┘
+             │          │          │
+         macOS app   iOS app   TUI · Play:Sub · …</code></pre>
+    </section>
 
     <section id="install" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
       <h2>Install</h2>
@@ -70,6 +90,12 @@
       <p class="text-muted">The app is signed but not notarised, because notarisation needs a paid Apple developer account. macOS therefore refuses the first open and offers only “Move to Trash”. Drag the app to Applications and run this once; the cask does it for you:</p>
       <pre><code>xattr -dr com.apple.quarantine /Applications/kōan.app</code></pre>
       <p>Requires macOS 26 or later.</p>
+
+      <h3>iOS app</h3>
+      <p>Not on the App Store or TestFlight yet. Build it from source with Xcode and install it on a phone plugged into the Mac, signed with your own (free) Apple developer team:</p>
+      <pre><code>git clone https://github.com/radiosilence/koan.git &amp;&amp; cd koan
+just ios-phone</code></pre>
+      <p>Requires iOS 26 or later, and a kōan, Navidrome or other Subsonic server to play from.</p>
 
       <h3>Command line and terminal UI</h3>
       <pre><code><span class="c"># mise (recommended)</span>
@@ -95,9 +121,11 @@ sudo dnf install alsa-lib-devel dbus-devel
 sudo pacman -S alsa-lib dbus</code></pre>
     </section>
 
-    <section id="start" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
-      <h2>Getting started</h2>
-      <p>In the app, everything is in Settings. <strong>Library</strong> points kōan at your music and scans it, <strong>Server</strong> signs in to Navidrome or Subsonic, and playback, output device and radio have their own panes. No terminal is needed.</p>
+    <section id="setup" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
+      <h2>Setting it up</h2>
+
+      <h3>One computer</h3>
+      <p>In the macOS app, everything is in Settings: <strong>Library</strong> points kōan at your music and scans it, and playback, output device and radio have their own panes. No terminal is needed.</p>
       <p>From the command line:</p>
       <pre><code>koan config init   <span class="c"># create the config dir and a commented template</span>
 <span class="c"># edit ~/.config/koan/config.local.toml:</span>
@@ -106,11 +134,47 @@ sudo pacman -S alsa-lib dbus</code></pre>
 koan scan          <span class="c"># index your library</span>
 koan               <span class="c"># launch the TUI</span></code></pre>
       <p><kbd>space</kbd> pauses, <kbd>&lt;</kbd> and <kbd>&gt;</kbd> skip, <kbd>p</kbd> picks tracks, <kbd>a</kbd> picks albums, <kbd>q</kbd> quits.</p>
-      <p>With a Navidrome or Subsonic server:</p>
-      <pre><code>koan remote login https://music.example.com admin
-koan remote sync
-koan</code></pre>
-      <p>Local and remote tracks merge into one library. Local files take priority for playback; remote tracks stream while they download and stay in the cache.</p>
+
+      <h3>A server for everything else</h3>
+      <p>Run the container on the machine with the music. It needs no sound card, keeps its config, index and keys in <code>/config</code>, and only ever reads the library.</p>
+      <pre><code>docker run -d --name koan -p 4000:4000 \
+  -v koan-config:/config \
+  -v /path/to/music:/music:ro \
+  -e 'KOAN_LIBRARY__FOLDERS=["/music"]' \
+  -e 'KOAN_GRAPHQL__ALLOWED_HOSTS=["music.example.com"]' \
+  -e KOAN_SHARING__PUBLIC_URL=https://music.example.com \
+  ghcr.io/radiosilence/koan:latest
+
+docker exec -it koan koan auth setup       <span class="c"># signing keys and the admin account</span>
+docker exec -it koan koan subsonic setup   <span class="c"># turn on the Subsonic API</span></code></pre>
+      <p>Put it behind a reverse proxy with TLS at the hostname you listed. The server refuses any <code>Host</code> it was not given, and share links are built on <code>public_url</code>. Add accounts for other people with <code>koan auth create-user</code>. Without a container, <code>koan --headless --bind 0.0.0.0</code> does the same with the config in <code>~/.config/koan</code>; the <a href="https://github.com/radiosilence/koan/blob/main/docs/guide/headless-server.md">headless server guide</a> has the details.</p>
+      <p>Then sign in from each client with a kōan account:</p>
+      <ul>
+        <li><strong>Browser:</strong> open the hostname.</li>
+        <li><strong>macOS and iOS apps:</strong> Settings → Server.</li>
+        <li><strong>Terminal:</strong> <code>koan remote login https://music.example.com &lt;user&gt;</code>, then <code>koan remote sync</code>.</li>
+        <li><strong>Other Subsonic apps:</strong> the same URL and account.</li>
+      </ul>
+      <p>A Navidrome or other Subsonic server works in the kōan server's place, for the apps and terminal UI; the web UI, share pages and MCP are kōan's own. Local and remote tracks merge into one library, local files take priority for playback, and remote tracks stream while they download.</p>
+
+      <h3>On Kubernetes</h3>
+      <p>Each release publishes a Pulumi component at the same version, <a href="https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi"><code>@radiosilence/koan-pulumi</code></a>, on GitHub Packages. It builds the Deployment, its Services and a NetworkPolicy that admits only your ingress to the API and only your MCP gateway to MCP:</p>
+      <pre><code><span class="c"># .npmrc (GitHub Packages wants a token even for public packages)</span>
+@radiosilence:registry=https://npm.pkg.github.com</code></pre>
+      <pre><code>import { createKoan } from "@radiosilence/koan-pulumi";
+
+createKoan(provider, "media", {
+  hostname: "music.example.com",
+  library: { hostPath: "/mnt/music" },
+  state: { hostPath: "/var/lib/koan" },
+  nodeSelector: { "kubernetes.io/hostname": "media-node" },
+});</code></pre>
+      <p>Route the hostname to the <code>koan</code> Service with whatever ingress you run. Pin the package version and the server follows it: the image tag is the package's version.</p>
+
+      <h3>Filing new music</h3>
+      <p>kōan reads tags as they are and does not rewrite them. <a href="https://github.com/radiosilence/sift">sift</a>, a separate tool, matches a download against MusicBrainz, tags it, embeds the cover and files it into the library, reading an existing beets config. A server watching that folder picks the album up on its own.</p>
+      <pre><code>mise use -g github:radiosilence/sift
+sift import ~/Downloads/some-album</code></pre>
     </section>
 
     <div class="mx-auto my-8 grid max-w-5xl items-start gap-6 px-5 md:grid-cols-2">
@@ -165,6 +229,15 @@ koan</code></pre>
 
     <figure class="mx-auto my-8 max-w-5xl px-5">
       <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/search.webp" width="1600" height="1186" loading="lazy" decoding="async" alt="Search in the macOS app, with matching artists, albums and tracks">
+    </figure>
+
+    <section id="ios" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
+      <h2>The iOS app</h2>
+      <p>The macOS app's pages and engine in a phone's shell: a tab bar for the queue, the library, search and settings, and Now Playing with synced lyrics, radio and AirPlay over the playing record's colour. It plays from a server and caches what it plays, so the rest of an album or queue carries on underground. On an iPad with room for a sidebar it takes the Mac's layout. Output goes through the system mixer, so bit-perfect is a claim for the Mac and Linux only.</p>
+    </section>
+
+    <figure class="mx-auto my-8 max-w-5xl px-5">
+      <img class="h-auto w-full rounded-xl shadow-2xl shadow-black/40" src="/screens/ios.webp" width="1600" height="817" loading="lazy" decoding="async" alt="Now Playing, lyrics, a record and the queue on iPhone">
     </figure>
 
     <section id="tui" class="mx-auto max-w-2xl scroll-mt-4 border-t border-rule px-5 py-12">
