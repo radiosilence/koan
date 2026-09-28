@@ -48,6 +48,7 @@ targets:
           - Support/MenuShortcuts.swift
           - Views/ShortcutsSheet.swift
       - path: ../macos/Resources/Assets.xcassets
+      - path: PrivacyInfo.xcprivacy
     dependencies:
       - target: KoanFFI
     settings:
