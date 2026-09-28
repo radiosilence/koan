@@ -318,20 +318,23 @@ struct PlaylistView: View {
     ///
     /// Stays put afterwards: the playing row is lit on this page, so there is
     /// nothing the queue would show that this does not.
-    private func start(at position: Int?, shuffled: Bool = false) {
+    /// From the entry, not its position: see `playPlaylist`.
+    private func start(at entry: Int64?, shuffled: Bool = false) {
         let engine = playlists.engine
         Task {
             _ = try? await engine.playPlaylist(
                 playlistId: playlistId,
-                startAt: position.map(UInt32.init),
+                startEntry: entry,
                 shuffled: shuffled
             )
         }
     }
 
     private func play(rowIds: Set<String>) {
-        guard let first = positions(in: rowIds).min() else { return }
-        start(at: first)
+        guard let first = positions(in: rowIds).min(), let entry = entries[safe: first] else {
+            return
+        }
+        start(at: entry.id)
     }
 
     /// Expand a set of row ids to the playlist positions they stand for. An

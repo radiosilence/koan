@@ -233,6 +233,88 @@ pub fn rebuild_index(db: &Database) -> Result<RebuildSummary, crate::db::connect
     Ok(summary)
 }
 
+/// Remove whole albums from the download cache, least recently played first,
+/// until it is under the configured limit. Never an album with a favourite
+/// in it, nor one with a track in `keep`: the queue, whose files the player
+/// may be reading. Returns the bytes freed.
+pub fn evict_cache(
+    db: &Database,
+    cfg: &Config,
+    keep: &std::collections::HashSet<i64>,
+    verbose: bool,
+) -> u64 {
+    let Some(limit) = cfg.cache_limit_bytes().map(|l| l as i64) else {
+        return 0;
+    };
+    let mut current = match queries::total_cache_size(&db.conn) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("cache eviction: failed to query cache size: {e}");
+            return 0;
+        }
+    };
+    if current <= limit {
+        if verbose {
+            log::info!("cache within limit: {current} / {limit} bytes");
+        }
+        return 0;
+    }
+    let albums = match queries::cached_albums_lru(&db.conn) {
+        Ok(a) => a,
+        Err(e) => {
+            log::warn!("cache eviction: failed to query cached albums: {e}");
+            return 0;
+        }
+    };
+    let mut freed: i64 = 0;
+    for album in &albums {
+        if current <= limit {
+            break;
+        }
+        if album.track_ids.iter().any(|id| keep.contains(id)) {
+            continue;
+        }
+        for path in &album.cached_paths {
+            match std::fs::remove_file(path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => log::warn!("cache eviction: failed to delete {path}: {e}"),
+            }
+        }
+        if let Err(e) = queries::clear_cache_for_tracks(&db.conn, &album.track_ids) {
+            log::warn!("cache eviction: failed to clear DB for album: {e}");
+        }
+        log::info!(
+            "evicted: {} — {} ({} bytes)",
+            album.artist_name,
+            album.album_title,
+            album.total_size
+        );
+        current -= album.total_size;
+        freed += album.total_size;
+    }
+    remove_empty_dirs(&cfg.cache_dir());
+    if freed > 0 {
+        log::info!("cache eviction freed {freed} bytes");
+    }
+    freed as u64
+}
+
+/// Remove empty directories under `dir`, leaving `dir` itself.
+fn remove_empty_dirs(dir: &Path) {
+    if !dir.is_dir() {
+        return;
+    }
+    for entry in walkdir::WalkDir::new(dir)
+        .contents_first(true)
+        .into_iter()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_type().is_dir() && e.path() != dir)
+    {
+        let _ = std::fs::remove_dir(entry.path());
+    }
+}
+
 /// Bytes currently held in the download cache.
 pub fn cache_size_bytes(cfg: &Config) -> u64 {
     walkdir::WalkDir::new(cfg.cache_dir())

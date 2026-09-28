@@ -1433,14 +1433,20 @@ impl KoanEngine {
         .await
     }
 
-    /// Replace the queue with the playlist and start playing at `start_at`.
+    /// Replace the queue with the playlist and start playing at the entry
+    /// `start_entry`, or at the top.
+    ///
+    /// By entry, not position: the page asking holds its own copy of the
+    /// playlist, which a sync may have changed underneath it, and the queue
+    /// built here leaves out entries whose track the library has lost. A
+    /// position means something different on each side of either.
     ///
     /// `shuffled` orders the queue, not the playlist — the playlist on disk is
     /// untouched.
     pub async fn play_playlist(
         self: Arc<Self>,
         playlist_id: i64,
-        start_at: Option<u32>,
+        start_entry: Option<i64>,
         shuffled: bool,
     ) -> Result<Vec<String>, KoanError> {
         offload::sequenced(move || {
@@ -1472,15 +1478,18 @@ impl KoanEngine {
                 return Ok(Vec::new());
             }
 
+            // The entry asked for, or if its track is gone, the next one that
+            // is still there.
+            let start = match start_entry.filter(|_| !shuffled) {
+                Some(entry) => entries
+                    .iter()
+                    .skip_while(|e| e.id != entry)
+                    .find_map(|e| items.iter().position(|i| i.playlist_entry_id == Some(e.id)))
+                    .unwrap_or(0),
+                None => 0,
+            };
             let ids: Vec<String> = items.iter().map(|i| i.id.0.to_string()).collect();
-            self.send(PlayerCommand::ReplacePlaylist {
-                items,
-                start: if shuffled {
-                    0
-                } else {
-                    start_at.unwrap_or(0) as usize
-                },
-            })?;
+            self.send(PlayerCommand::ReplacePlaylist { items, start })?;
             self.start_downloads(pending);
 
             Ok(ids)
