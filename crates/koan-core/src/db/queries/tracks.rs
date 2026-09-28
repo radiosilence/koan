@@ -668,6 +668,76 @@ fn absorb_remote_row(conn: &Connection, loser: i64, winner: i64) -> rusqlite::Re
 /// rows carry a remote id. The library shows every track twice, and the file's
 /// link points at nothing. Only a complete full sync has seen every id the
 /// server knows, so only one may call this.
+/// Delete the remote-only tracks the server no longer lists, and the albums
+/// and artists that leaves empty. `gone` picks them: tracks whose
+/// `remote_id` is not in `live_tracks`, or whose album's `remote_id` is not in
+/// `live_albums`. A track with a local file is left to
+/// [`relink_vanished_remote_ids`]; the file is what it stands for.
+pub fn remove_vanished_remote(
+    conn: &Connection,
+    live_tracks: Option<&HashSet<String>>,
+    live_albums: Option<&HashSet<String>>,
+) -> rusqlite::Result<usize> {
+    conn.execute_batch(
+        "SAVEPOINT remove_vanished;
+         CREATE TEMP TABLE IF NOT EXISTS live_ids (kind TEXT, id TEXT, PRIMARY KEY (kind, id));
+         DELETE FROM live_ids;",
+    )?;
+    let removed = (|| {
+        let mut insert =
+            conn.prepare("INSERT OR IGNORE INTO live_ids (kind, id) VALUES (?1, ?2)")?;
+        for (kind, ids) in [("track", live_tracks), ("album", live_albums)] {
+            for id in ids.into_iter().flatten() {
+                insert.execute(params![kind, id])?;
+            }
+        }
+        let track_gone = if live_tracks.is_some() {
+            "t.remote_id NOT IN (SELECT id FROM live_ids WHERE kind = 'track')"
+        } else {
+            "0"
+        };
+        let album_gone = if live_albums.is_some() {
+            "al.remote_id IS NOT NULL
+             AND al.remote_id NOT IN (SELECT id FROM live_ids WHERE kind = 'album')"
+        } else {
+            "0"
+        };
+        let gone: Vec<(i64, Option<i64>, Option<i64>)> = conn
+            .prepare(&format!(
+                "SELECT t.id, t.album_id, t.artist_id FROM tracks t
+                   LEFT JOIN albums al ON al.id = t.album_id
+                  WHERE t.path IS NULL AND t.remote_id IS NOT NULL
+                    AND ({track_gone} OR {album_gone})"
+            ))?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<rusqlite::Result<_>>()?;
+        for (id, album, artist) in &gone {
+            for table in [
+                "tracks_fts WHERE rowid",
+                "lyrics_cache WHERE track_id",
+                "play_history WHERE track_id",
+                "track_vectors WHERE track_id",
+                "scan_cache WHERE track_id",
+            ] {
+                conn.execute(&format!("DELETE FROM {table} = ?1"), params![id])?;
+            }
+            conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
+            prune_if_empty(conn, *album, *artist)?;
+        }
+        Ok(gone.len())
+    })();
+    match removed {
+        Ok(n) => {
+            conn.execute_batch("RELEASE remove_vanished")?;
+            Ok(n)
+        }
+        Err(e) => {
+            conn.execute_batch("ROLLBACK TO remove_vanished; RELEASE remove_vanished")?;
+            Err(e)
+        }
+    }
+}
+
 pub fn relink_vanished_remote_ids(
     conn: &Connection,
     live: &HashSet<String>,
@@ -2727,6 +2797,49 @@ mod tests {
             err
         );
         assert_eq!(library_stats(&db.conn).unwrap().total_tracks, before);
+    }
+
+    #[test]
+    fn server_deletions_reach_the_client() {
+        use std::collections::HashSet;
+        let db = test_db();
+        let remote = |title: &str, album: &str, rid: &str, album_rid: &str| {
+            let mut m = sample_meta(title, "Tove Lo", album);
+            m.path = None;
+            m.remote_id = Some(rid.into());
+            let id = upsert_track(&db.conn, &m).unwrap();
+            db.conn
+                .execute(
+                    "UPDATE albums SET remote_id = ?1 WHERE id = (SELECT album_id FROM tracks WHERE id = ?2)",
+                    params![album_rid, id],
+                )
+                .unwrap();
+        };
+        remote("Habits", "Queen of the Clouds", "t1", "al-1");
+        remote("Talking Body", "Queen of the Clouds", "t2", "al-1");
+        remote("Habits", "Habits (single)", "t3", "al-2");
+        let count = |sql: &str| -> i64 { db.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+
+        // An incremental sync: the single's album is gone from the listing.
+        let albums: HashSet<String> = ["al-1".to_string()].into();
+        assert_eq!(
+            remove_vanished_remote(&db.conn, None, Some(&albums)).unwrap(),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM albums WHERE title = 'Habits (single)'"),
+            0
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM tracks"), 2);
+
+        // A full sync: one track gone from an album that stays.
+        let tracks: HashSet<String> = ["t1".to_string()].into();
+        assert_eq!(
+            remove_vanished_remote(&db.conn, Some(&tracks), Some(&albums)).unwrap(),
+            1
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM tracks"), 1);
+        assert_eq!(count("SELECT COUNT(*) FROM albums"), 1);
     }
 
     #[test]

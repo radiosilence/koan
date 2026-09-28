@@ -30,6 +30,8 @@ pub struct SyncResult {
     /// Pages of songs that could not be fetched, on the bulk path. Counts
     /// against completeness the same way.
     pub pages_failed: usize,
+    /// Tracks removed because the server no longer has them.
+    pub tracks_removed: usize,
 }
 
 impl SyncResult {
@@ -277,6 +279,26 @@ pub fn sync_library(
             Ok(0) => {}
             Ok(n) => log::info!("{n} files had ids the server no longer knows; relinked"),
             Err(e) => log::warn!("failed to relink tracks with vanished remote ids: {e}"),
+        }
+    }
+
+    // What the server deleted goes here too. Every sync lists every album, so
+    // an album gone from that list goes on any sync; a single track deleted
+    // from an album only shows on a full one, which lists every track. Both
+    // are held to the same guards as above: an empty or short listing is a
+    // fault, not a deletion.
+    let live_albums: std::collections::HashSet<String> =
+        albums.iter().map(|a| a.id.clone()).collect();
+    let live_tracks = (full && result.is_complete() && !song_ids.is_empty() && listed_everything)
+        .then_some(&song_ids);
+    if result.is_complete() && !live_albums.is_empty() {
+        match queries::remove_vanished_remote(&db.conn, live_tracks, Some(&live_albums)) {
+            Ok(0) => {}
+            Ok(n) => {
+                result.tracks_removed = n;
+                log::info!("{n} tracks the server no longer has; removed");
+            }
+            Err(e) => log::warn!("failed to remove tracks the server deleted: {e}"),
         }
     }
 

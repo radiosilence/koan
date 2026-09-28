@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.38.3
+
+### Fixed
+
+- **What the server deletes, clients delete.** A sync only ever unlinked tracks that had a local file, so a remote-only track deleted on the server stayed on every client, unplayable, until its database was wiped. An album gone from the server's listing now goes on any sync (every sync lists every album), and a single track gone from an album goes on a full sync, which lists every track; the albums and artists that leaves empty go with them. An empty or short listing is still treated as a fault, not a deletion.
+
 ## 0.38.2
 
 ### Fixed
