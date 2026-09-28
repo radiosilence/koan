@@ -137,8 +137,8 @@ struct QueueRow: View {
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.title)
-                    .lineLimit(1)
+                Text(Format.title(item.title))
+                    .lineLimit(Format.titleLines)
                     .foregroundStyle(titleStyle)
                 // Only worth a second line when it differs from the album
                 // artist — compilations and features, not every track.
@@ -200,7 +200,12 @@ struct QueueRow: View {
         // The same 34pt sleeve in the same 44pt row as an album's tracklist —
         // a cover crammed into a row sized for a number reads as cramped
         // however much padding is put around it.
+        #if os(iOS)
+        // At least that height, and taller for a title on two lines.
+        .frame(minHeight: artwork ? 44 : 34)
+        #else
         .frame(height: artwork ? 44 : 34)
+        #endif
         // Ungrouped, the row carries a sleeve and two lines of text, and the
         // frame around them left the cover all but touching the separators.
         // The same six points the album heading gives its own cover — the two

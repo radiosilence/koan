@@ -2,6 +2,24 @@ import Foundation
 import KoanFFI
 
 enum Format {
+    /// A title without the leading date DJ-mix uploads carry ("2022-03-12:
+    /// BBC Radio 1 Essential Mix"), whose year is shown beside it anyway.
+    /// Display only: the tags keep it.
+    static func title(_ raw: String) -> String {
+        guard let r = raw.range(of: #"^\d{4}-\d{2}-\d{2}\s*[:\-–]\s*"#, options: .regularExpression)
+        else { return raw }
+        let rest = raw[r.upperBound...]
+        return rest.isEmpty ? raw : String(rest)
+    }
+
+    /// How many lines a title may take in a list. A phone is narrow enough
+    /// that one line cuts most mix and live-set titles down to their date.
+    #if os(iOS)
+    static let titleLines = 2
+    #else
+    static let titleLines = 1
+    #endif
+
     /// `m:ss`, or `h:mm:ss` once it earns the hour.
     static func duration(_ ms: Int64?) -> String {
         guard let ms, ms > 0 else { return "--:--" }
