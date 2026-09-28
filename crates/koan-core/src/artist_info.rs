@@ -121,6 +121,8 @@ fn look_up(
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
         )
         .optional()?
+        // An empty id is no id: resolve one rather than look "" up.
+        .map(|(name, mbid)| (name, mbid.filter(|m| !m.is_empty())))
     else {
         return Ok(None);
     };

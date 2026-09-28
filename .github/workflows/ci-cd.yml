@@ -502,7 +502,7 @@ jobs:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, check-version, publish-crate]
+    needs: [fmt, clippy, test, build, macos-app, create-release, create-macos-app, check-version, publish-crate, publish-package]
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       contents: write
@@ -697,7 +697,9 @@ jobs:
     name: Publish Pulumi package
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    needs: [container, check-version, publish-release]
+    # Before the release: the updater that deploys koan follows releases, and
+    # a release it finds must already have its package.
+    needs: [fmt, clippy, test, build, container, check-version]
     if: ${{ !cancelled() && !failure() && needs.check-version.outputs.should_release == 'true' }}
     permissions:
       packages: write
