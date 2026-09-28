@@ -325,6 +325,9 @@ final class LibraryModel {
         let stamp: UInt64
         var artist: Artist?
         var albums: [Album]
+        /// For an artist who owns no albums (a guest, a compilation track):
+        /// the tracks credited to them, which are then the whole page.
+        var appearances: [Track] = []
         var similar: [SimilarArtist]
         /// Biography and photograph, as cached. Filled in from the network
         /// after the page is up — see `enrich(artist:)`.
@@ -350,11 +353,21 @@ final class LibraryModel {
                 async let similar = try? await engine.similarArtists(artistId: id)
                 async let info = try? await engine.artistInfo(artistId: id)
                 let cached = await info ?? nil
+                let owned = await albums ?? []
+                // Read only when there is nothing else to show: an artist
+                // with albums has their tracks one tap away on each.
+                let appearances =
+                    owned.isEmpty
+                    ? (try? await engine.tracks(
+                        albumId: nil, artistId: id, sort: .album, limit: 500, offset: 0
+                    )) ?? []
+                    : []
                 return ArtistRecord(
                     artistId: id,
                     stamp: stamp,
                     artist: await artist ?? nil,
-                    albums: await albums ?? [],
+                    albums: owned,
+                    appearances: appearances,
                     similar: await similar ?? [],
                     info: cached,
                     infoLoading: cached == nil

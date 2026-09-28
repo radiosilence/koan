@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.38.5
+
+### Fixed
+
+- **Artist names that differ only in case are one artist.** Tags spell an act "The Squire Of Gothos" on one record and "of" on the next, and each spelling was its own artist, so a track's artist link could open a page owning none of the albums. New spellings now join the existing artist, and duplicates already in the library are merged when it opens, onto the spelling that owns the most albums.
+- **An artist with tracks but no albums has a page.** A guest or compilation credit opened a blank "Artist · 0 albums"; it now lists the tracks they appear on, each with its album.
+- **The library catches up with moves the file watcher misses.** A scan that runs while a folder is half moved sees both the new files and the old, and with no later event the old paths stayed in the library, unplayable, until a restart. The watcher now also rescans every 15 minutes; unchanged files are skipped on mtime and size, so an idle rescan costs about a second.
+
 ## 0.38.4
 
 ### Added

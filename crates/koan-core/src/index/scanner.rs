@@ -596,6 +596,55 @@ mod tests {
     }
 
     #[test]
+    fn a_renamed_file_leaves_no_row_at_its_old_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let music = dir.path().join("music");
+        let album = music.join("Squire Of Gothos").join("Album");
+        std::fs::create_dir_all(&album).unwrap();
+        for i in 1..=3 {
+            test_utils::generate_wav(
+                &album.join(format!("0{i}. Squire Of Gothos - T{i}.wav")),
+                44100,
+                1,
+                0.5 + i as f32 * 0.1,
+                16,
+            );
+        }
+        let db = test_db(dir.path());
+        scan_folder(&db, &music, ScanOptions::default(), None);
+
+        // What a retag that re-files does: the artist folder and file names
+        // change case.
+        let moved = music.join("The Squire of Gothos").join("Album");
+        std::fs::create_dir_all(moved.parent().unwrap()).unwrap();
+        std::fs::rename(&album, &moved).unwrap();
+        std::fs::remove_dir(music.join("Squire Of Gothos")).unwrap();
+        for i in 1..=3 {
+            std::fs::rename(
+                moved.join(format!("0{i}. Squire Of Gothos - T{i}.wav")),
+                moved.join(format!("0{i}. The Squire of Gothos - T{i}.wav")),
+            )
+            .unwrap();
+        }
+        let result = scan_folder(&db, &music, ScanOptions::default(), None);
+
+        let paths: Vec<String> = db
+            .conn
+            .prepare("SELECT path FROM tracks ORDER BY path")
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!((result.added, result.removed), (3, 3));
+        assert_eq!(paths.len(), 3, "{paths:#?}");
+        assert!(
+            paths.iter().all(|p| std::path::Path::new(p).exists()),
+            "{paths:#?}"
+        );
+    }
+
+    #[test]
     fn import_paths_indexes_files_where_they_lie() {
         let dir = tempfile::tempdir().unwrap();
         // Deliberately nothing to do with a library folder — this is the

@@ -93,12 +93,22 @@ pub fn spawn_library_watch(
             // Copying an album in is a burst of events. Wait for it to stop
             // before scanning, rather than scanning per file.
             const SETTLE: std::time::Duration = std::time::Duration::from_secs(5);
-            while let Ok(first) = rx.recv() {
-                if first.is_err() {
-                    continue;
+            // Events alone are not enough: a scan that runs while a folder is
+            // half moved sees the new files and the old ones both, and when no
+            // later event arrives the old paths stay in the library, unplayable,
+            // until the next restart. A scan skips unchanged files on their
+            // mtime and size, so an idle one is a second's work.
+            const RESCAN: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+            loop {
+                match rx.recv_timeout(RESCAN) {
+                    Ok(Err(_)) => continue,
+                    Ok(Ok(_)) => {
+                        while rx.recv_timeout(SETTLE).is_ok() {}
+                        scan_now("watched change");
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => scan_now("periodic"),
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
                 }
-                while rx.recv_timeout(SETTLE).is_ok() {}
-                scan_now("watched change");
             }
         })
         .ok()

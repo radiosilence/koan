@@ -131,6 +131,23 @@ struct ArtistDetailView: View {
     private let columns = [GridItem(.adaptive(minimum: 150, maximum: 210), spacing: 18)]
 
     var body: some View {
+        if let record, record.albums.isEmpty, !record.appearances.isEmpty {
+            // Credited only on other people's records: the tracks, each with
+            // the album it is on, rather than an empty grid.
+            TrackListView(
+                title: artist?.name ?? "",
+                subtitle: "Appears on \(Set(record.appearances.map(\.albumId)).count) "
+                    + (Set(record.appearances.map(\.albumId)).count == 1 ? "album" : "albums"),
+                tracks: record.appearances,
+                mixedAlbums: true
+            )
+            .reloading(on: artistId) { await library.prepare(artist: artistId) }
+        } else {
+            discography
+        }
+    }
+
+    private var discography: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 // The play button reads as part of the title, so it sits on the
