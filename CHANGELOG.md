@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.38.2
+
+### Fixed
+
+- **An assistant pauses when asked, whatever the device last reported.** An app older than 0.38.0 reports nothing, so `clients` showed it idle and an assistant told to pause it answered that nothing was playing. `clients.playing` is null for an app that has not reported, and the MCP instructions say to send pause, skip and resume as asked rather than judge them from reported state.
+
 ## 0.38.1
 
 ### Fixed

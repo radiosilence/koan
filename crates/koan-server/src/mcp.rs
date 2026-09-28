@@ -211,6 +211,10 @@ against `clients` names and platforms). Without it the server picks the device t
 playing, else the one played most recently; if it answers that it cannot tell, ask the user \
 which device.
 
+**Act on what the user asks; do not second-guess it from reported state.** \"Pause\", \
+\"skip\" and \"resume\" go straight to `controlClient`: the user can hear the device and you \
+cannot, and a report can be stale or, from an older app (`playing: null`), absent.
+
 **Never use the server's own player for the user's music.** `play`, `pause`, `resume`, \
 `next`, `previous`, `seek`, `nowPlaying`, `queue`, `addToQueue`, `replaceQueue`, \
 `playPlaylist` and the radio mutations drive a headless player on the server that nobody \

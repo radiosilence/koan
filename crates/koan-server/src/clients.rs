@@ -27,6 +27,9 @@ pub struct ClientInfo {
     pub last_played_at: Option<i64>,
     /// When `state` was reported, in Unix milliseconds.
     pub state_at: i64,
+    /// Whether the client has reported its state at all. An app older than
+    /// the reports never does, and its `state` then says nothing about it.
+    pub reports: bool,
 }
 
 impl ClientInfo {
@@ -110,6 +113,7 @@ impl Registry {
                 state: LinkState::default(),
                 last_played_at: None,
                 state_at: chrono::Utc::now().timestamp_millis(),
+                reports: false,
             },
             device: device.to_string(),
             tx,
@@ -126,6 +130,7 @@ impl Registry {
             }
             e.info.state = state;
             e.info.state_at = chrono::Utc::now().timestamp_millis();
+            e.info.reports = true;
         }
     }
 
