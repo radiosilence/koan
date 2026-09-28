@@ -1380,12 +1380,7 @@ mod tests {
             album_remote_id: None,
             artist_remote_id: None,
             mbid: None,
-            ..remote_track_meta(
-                "s-before-rescan",
-                "Song a0000",
-                "Stub Artist",
-                "Album 0000",
-            )
+            ..remote_track_meta("s-before-rescan", "Song a0000", "Stub Artist", "Album 0000")
         };
         queries::upsert_track(&db.conn, &file).unwrap();
 
@@ -1421,12 +1416,7 @@ mod tests {
             album_remote_id: None,
             artist_remote_id: None,
             mbid: None,
-            ..remote_track_meta(
-                "s-before-rescan",
-                "Song a0000",
-                "Stub Artist",
-                "Album 0000",
-            )
+            ..remote_track_meta("s-before-rescan", "Song a0000", "Stub Artist", "Album 0000")
         };
         let ghost_id = queries::upsert_track(&db.conn, &ghost).unwrap();
         let ghost_url = ghost.remote_url.clone().unwrap();
