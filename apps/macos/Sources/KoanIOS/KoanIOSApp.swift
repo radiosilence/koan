@@ -13,6 +13,8 @@ struct KoanIOSApp: App {
     @State private var state: AppState?
     @State private var startupError: String?
     @State private var session = AudioSession()
+    @State private var keepalive = Keepalive()
+    @Environment(\.scenePhase) private var scenePhase
     @State private var powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
 
     var body: some Scene {
@@ -52,6 +54,16 @@ struct KoanIOSApp: App {
                     .receive(on: RunLoop.main)
             ) { _ in
                 powerSaving = ProcessInfo.processInfo.isLowPowerModeEnabled
+            }
+            .onChange(of: scenePhase) { _, phase in
+                keepalive.setBackground(phase == .background)
+                // Suspended in the background, the link to the server went
+                // with the rest of the app; link again now rather than when
+                // its retry comes round.
+                if phase == .active { state?.player.engine.linkNudge() }
+            }
+            .onChange(of: state?.player.isPlaying ?? false) { _, playing in
+                keepalive.setPlaying(playing)
             }
             .task {
                 guard state == nil, startupError == nil else { return }

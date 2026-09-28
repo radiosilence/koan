@@ -258,6 +258,12 @@ impl KoanEngine {
         offload::sequenced(move || self.send(PlayerCommand::Play(parse_qid(&queue_item_id)?))).await
     }
 
+    /// Link to the server again now, if the link is down. For an app coming
+    /// back to the foreground; see `koan_core::remote::link::nudge`.
+    pub fn link_nudge(&self) {
+        koan_core::remote::link::nudge();
+    }
+
     pub async fn pause(self: Arc<Self>) -> Result<(), KoanError> {
         offload::sequenced(move || self.send(PlayerCommand::Pause)).await
     }
@@ -2849,12 +2855,37 @@ impl KoanEngine {
         });
         engine.spawn_watcher();
         // A koan server this app syncs from can then tell it what to play.
-        let weak = Arc::downgrade(&engine);
+        let (weak, state) = (Arc::downgrade(&engine), engine.state.clone());
         koan_core::remote::link::spawn(
             koan_core::remote::link::LinkIdentity::this_device(None),
             move |cmd| {
                 if let Some(engine) = weak.upgrade() {
                     engine.handle_link(cmd);
+                }
+            },
+            {
+                // The queue is read again only when it has changed: this runs
+                // every few seconds, and naming its tracks is a query.
+                let held = std::sync::Mutex::new(
+                    None::<(u64, Vec<koan_core::remote::link::LinkQueueEntry>)>,
+                );
+                move || {
+                    let item = state.cursor().and_then(|c| state.get_item(c));
+                    let version = state.playlist_version();
+                    let mut held = held.lock().unwrap_or_else(|e| e.into_inner());
+                    if held.as_ref().is_none_or(|(v, _)| *v != version) {
+                        *held = Some((version, link_queue(&state)));
+                    }
+                    koan_core::remote::link::LinkState {
+                        playing: state.playback_state() == PlaybackState::Playing,
+                        title: item.as_ref().map(|i| i.title.clone()),
+                        artist: item.as_ref().map(|i| i.artist.clone()),
+                        album: item.as_ref().map(|i| i.album.clone()),
+                        position_ms: state.position_ms(),
+                        duration_ms: state.duration_ms(),
+                        radio: state.radio_mode(),
+                        queue: held.as_ref().map(|(_, q)| q.clone()).unwrap_or_default(),
+                    }
                 }
             },
         );
@@ -3057,7 +3088,16 @@ impl KoanEngine {
     /// What the server asked of this app over the link. Runs on the link's
     /// thread, which may block: resolving an id the library lacks syncs first.
     fn handle_link(&self, cmd: koan_core::remote::link::LinkCommand) {
-        use koan_core::remote::link::{LinkCommand, resolve_tracks};
+        use koan_core::remote::link::LinkCommand;
+        // Resolving a track the library lacks syncs first; what that brought
+        // in has to reach the pages too.
+        let resolve_tracks = |db: &Database, ids: &[String]| {
+            let (found, synced) = koan_core::remote::link::resolve_tracks(db, ids);
+            if synced {
+                self.library_changed();
+            }
+            found
+        };
         let result = match cmd {
             LinkCommand::Play {
                 track_ids,
@@ -3093,6 +3133,67 @@ impl KoanEngine {
                 self.start_downloads(pending);
                 Ok(())
             }),
+            LinkCommand::JumpTo { track_id } => self.db().and_then(|db| {
+                let Some(&local) = resolve_tracks(&db, std::slice::from_ref(&track_id)).first()
+                else {
+                    log::warn!("link: track {track_id} is not in the library");
+                    return Ok(());
+                };
+                let (items, cursor) = self.state.snapshot_playlist();
+                if let Some(item) = items.iter().find(|i| i.db_id == Some(local)) {
+                    return self.send(PlayerCommand::Play(item.id));
+                }
+                let (mut new, pending) = self.build_items(&db, &[local]);
+                let Some(item) = new.pop() else { return Ok(()) };
+                let id = item.id;
+                match cursor {
+                    Some(after) => self.send(PlayerCommand::InsertInPlaylist {
+                        items: vec![item],
+                        after,
+                    })?,
+                    None => self.send(PlayerCommand::AddToPlaylist(vec![item]))?,
+                }
+                self.send(PlayerCommand::Play(id))?;
+                self.start_downloads(pending);
+                Ok(())
+            }),
+            LinkCommand::PlayNext { track_ids } => self.db().and_then(|db| {
+                let ids = resolve_tracks(&db, &track_ids);
+                let (items, pending) = self.build_items(&db, &ids);
+                if items.is_empty() {
+                    return Ok(());
+                }
+                match self.state.cursor() {
+                    Some(after) => self.send(PlayerCommand::InsertInPlaylist { items, after })?,
+                    None => self.send(PlayerCommand::AddToPlaylist(items))?,
+                }
+                self.start_downloads(pending);
+                Ok(())
+            }),
+            LinkCommand::Remove { track_ids } => self.db().and_then(|db| {
+                let ids: std::collections::HashSet<i64> =
+                    resolve_tracks(&db, &track_ids).into_iter().collect();
+                let (items, _) = self.state.snapshot_playlist();
+                let gone: Vec<QueueItemId> = items
+                    .iter()
+                    .filter(|i| i.db_id.is_some_and(|id| ids.contains(&id)))
+                    .map(|i| i.id)
+                    .collect();
+                if gone.is_empty() {
+                    return Ok(());
+                }
+                self.send(PlayerCommand::RemoveFromPlaylistBatch(gone))
+            }),
+            LinkCommand::Clear => self.send(PlayerCommand::ClearPlaylist),
+            LinkCommand::Sync => self.db().map(|db| {
+                koan_core::remote::link::sync(&db);
+                self.library_changed();
+            }),
+            LinkCommand::Radio { enabled } => {
+                self.state.set_radio_mode(enabled);
+                Ok(())
+            }
+            LinkCommand::Seek { position_ms } => self.send(PlayerCommand::Seek(position_ms)),
             LinkCommand::Pause => self.send(PlayerCommand::Pause),
             LinkCommand::Resume => self.send(PlayerCommand::Resume),
             LinkCommand::Next => self.send(PlayerCommand::NextTrack),
@@ -3101,6 +3202,14 @@ impl KoanEngine {
         if let Err(e) = result {
             log::warn!("link: {e}");
         }
+    }
+
+    /// Rows arrived by some route the UI did not start; have its pages read
+    /// them.
+    fn library_changed(&self) {
+        self.library_version
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        koan_core::signal::engine_changed().bump();
     }
 
     fn start_downloads(&self, pending: Vec<(i64, QueueItemId)>) {
@@ -3274,6 +3383,40 @@ fn fav_err(e: rusqlite::Error) -> KoanError {
     KoanError::Database {
         message: e.to_string(),
     }
+}
+
+/// The queue as the server is told it, with each track's id on the server. At
+/// most `LINK_QUEUE_MAX` entries, from a few before the current one.
+fn link_queue(state: &SharedPlayerState) -> Vec<koan_core::remote::link::LinkQueueEntry> {
+    const LINK_QUEUE_MAX: usize = 300;
+    let (items, cursor) = state.snapshot_playlist();
+    let at = cursor
+        .and_then(|c| items.iter().position(|i| i.id == c))
+        .unwrap_or(0);
+    let start = at.saturating_sub(20);
+    let window = &items[start..items.len().min(start + LINK_QUEUE_MAX)];
+
+    let remote: std::collections::HashMap<i64, String> = koan_core::db::pool::shared()
+        .get()
+        .ok()
+        .and_then(|db| {
+            let ids: Vec<i64> = window.iter().filter_map(|i| i.db_id).collect();
+            queries::tracks_by_ids(&db.conn, &ids).ok()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|t| t.remote_id.map(|r| (t.id, r)))
+        .collect();
+
+    window
+        .iter()
+        .map(|i| koan_core::remote::link::LinkQueueEntry {
+            track_id: i.db_id.and_then(|id| remote.get(&id).cloned()),
+            title: i.title.clone(),
+            artist: i.artist.clone(),
+            current: Some(i.id) == cursor,
+        })
+        .collect()
 }
 
 #[cfg(test)]

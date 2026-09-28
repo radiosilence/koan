@@ -436,6 +436,10 @@ private struct PlaybackSettings: View {
                     .foregroundStyle(.tertiary)
             }
 
+            #if os(iOS)
+            ReachableSection()
+            #endif
+
             Section {
                 Picker("ReplayGain", selection: Binding(
                     get: { model.settings.replaygain },
@@ -467,6 +471,36 @@ private struct PlaybackSettings: View {
         .formStyle(.grouped)
     }
 }
+
+#if os(iOS)
+/// Whether a paused phone stays reachable by the server it syncs from, and for
+/// how long on battery. See `Keepalive`.
+private struct ReachableSection: View {
+    @AppStorage("stayReachable") private var enabled = true
+    @AppStorage("stayReachableMinutes") private var minutes = 30
+
+    var body: some View {
+        Section {
+            Toggle("Stay reachable when paused", isOn: $enabled)
+            if enabled {
+                Picker("On battery", selection: $minutes) {
+                    Text("15 minutes").tag(15)
+                    Text("30 minutes").tag(30)
+                    Text("1 hour").tag(60)
+                    Text("2 hours").tag(120)
+                    Text("Always").tag(0)
+                }
+            }
+        } header: {
+            Text("Server")
+        } footer: {
+            Text("Keeps kōan running in the background after you pause, so the server can start music on this phone. On the charger it stays reachable; on battery, for as long as chosen here, since it keeps the audio hardware awake.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+    }
+}
+#endif
 
 // MARK: - Appearance
 

@@ -3186,7 +3186,15 @@ async fn link_session(
             }
             msg = socket.recv() => match msg {
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
-                Some(Ok(_)) => last_heard = tokio::time::Instant::now(),
+                Some(Ok(msg)) => {
+                    last_heard = tokio::time::Instant::now();
+                    if let Message::Text(text) = msg
+                        && let Ok(koan_core::remote::link::LinkReport::State(state)) =
+                            serde_json::from_str(&text)
+                    {
+                        registry.report(&id, state);
+                    }
+                }
             },
         }
     }

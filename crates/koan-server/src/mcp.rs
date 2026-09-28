@@ -121,10 +121,10 @@ fn mcp_role() -> koan_core::auth::Role {
 #[tool_router]
 impl KoanMcpServer {
     #[tool(
-        description = "Get the full GraphQL schema in SDL format. CALL THIS FIRST to learn all \
-        available queries, mutations, types, and filter parameters. The schema is the complete \
-        reference for everything koan can do — library discovery, playback control, queue \
-        management, favourites, playlists, radio mode, device switching, and more."
+        description = "The GraphQL schema for the user's music (kōan): their library and the \
+        players they listen on. Call this first, before `graphql`. It covers playing, pausing, \
+        skipping and queueing music on the user's phone and computers, what is playing now, \
+        and searching, browsing and making playlists from the music they own."
     )]
     fn schema_sdl(&self) -> Json<GraphqlResponse> {
         let sdl = self.graphql_schema.sdl();
@@ -134,20 +134,19 @@ impl KoanMcpServer {
     }
 
     #[tool(
-        description = "Execute a GraphQL query or mutation against the koan music player. \
-        This is the primary interface for ALL operations — library browsing, playback control, \
-        queue management, favourites, playlists, radio, devices.\n\n\
-        Call schema_sdl first to learn the full schema.\n\n\
-        Quick examples:\n\
-        - Search: { tracks(search: \"aphex\") { edges { node { id title artist album } } } }\n\
-        - Filter: { albums(yearEnd: 1995, codec: \"FLAC\") { edges { node { title artistName date } } } }\n\
-        - Now playing: { nowPlaying { state positionMs track { title artist codec sampleRate } } }\n\
-        - Queue tracks: mutation { addToQueue(trackIds: [42, 43]) { ok addedCount } }\n\
-        - Play/pause: mutation { pause { ok } } / mutation { resume { ok } }\n\
-        - Playlist: mutation { saveQueueAsPlaylist(name: \"techno\") { id name } }\n\
-        - Radio: mutation { enableRadio { ok } }\n\n\
-        Track IDs are integers from the library. Queue item IDs are UUIDs from the queue.\n\
-        All string filters are case-insensitive substrings."
+        description = "Control the user's music and search their music library (kōan). Use it \
+        for any request about music they listen to or own: play something, pause, resume, skip, \
+        what's playing, what's next, add to or change the queue, find or recommend from their \
+        collection, playlists, favourites. \"Pause the music on my desktop\", \"play some \
+        jazz on my phone\" and \"what is this song\" are all this tool.\n\n\
+        Call schema_sdl first for the full schema. The user's phones and computers running \
+        kōan are `clients`; commands for them end in `OnClient`.\n\n\
+        Examples:\n\
+        - What's playing, where: { clients { name playing nowPlaying positionMs } }\n\
+        - Pause: mutation { controlClient(action: PAUSE) { ok message } }\n\
+        - Find music: { tracks(search: \"aphex\", first: 20) { edges { node { id title artist album } } } }\n\
+        - Play it: mutation { playOnClient(trackIds: [\"42\", \"43\"]) { ok message } }\n\n\
+        String filters are case-insensitive substrings."
     )]
     fn graphql(
         &self,
@@ -173,49 +172,91 @@ impl KoanMcpServer {
 #[rmcp::tool_handler]
 impl ServerHandler for KoanMcpServer {
     fn get_info(&self) -> ServerConfig {
+        // Over HTTP this is a server: its own player is headless and nobody
+        // hears it, and what the user listens to is the apps linked to it. On
+        // stdio it is the user's own machine, and its player is the music.
+        let instructions = if self.users.is_some() {
+            SERVER_INSTRUCTIONS
+        } else {
+            LOCAL_INSTRUCTIONS
+        };
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(rmcp::model::Implementation::new(
                 "koan",
                 env!("CARGO_PKG_VERSION"),
             ))
-            .with_instructions(
-                "koan is a bit-perfect music player. You control it entirely via GraphQL.\n\n\
-             ## How to use\n\
-             1. Call `schema_sdl` to get the full GraphQL schema\n\
-             2. Use the `graphql` tool for ALL queries and mutations\n\n\
-             ## What you can do\n\
-             - **Discover music**: query `artists`, `albums`, `tracks` with rich filters \
-               (genre, year range, codec, sample rate, bit depth, duration, favourites)\n\
-             - **Control playback**: mutations `play`, `pause`, `resume`, `stop`, `next`, \
-               `previous`, `seek`\n\
-             - **Manage queue**: `addToQueue`, `replaceQueue`, `removeFromQueue`, `moveInQueue`, \
-               `clearQueue`, `undo`, `redo`\n\
-             - **Favourites**: `favourite`, `unfavourite`, `toggleFavourite` (auto-syncs to \
-               Subsonic/Navidrome). Filter any query with `favouritesOnly: true`\n\
-             - **Playlists**: query `playlists`/`playlistTracks`; `createPlaylist`, \
-               `saveQueueAsPlaylist`, `addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, \
-               `deletePlaylist`, `playPlaylist`. Synced to Subsonic/Navidrome\n\
-             - **Radio**: `enableRadio`, `disableRadio` — auto-queues similar tracks\n\
-             - **Play on the user's phone or Mac**: query `clients` for the koan apps \
-               linked to this server, then `playOnClient(trackIds, client)` to replace its \
-               queue (or `enqueue: true` to append), and `controlClient` to pause, resume or \
-               skip. Build the list with the library queries first; the music plays on that \
-               device, not on the server\n\
-             - **Devices**: query `devices`; `setDevice`/`clearDevice` need `KOAN_MCP_ADMIN=1`\n\
-             - **History**: query `playHistory`, `similarArtists`\n\
-             - **Sharing**: `createShare(trackIds, description)` returns a public link anyone can \
-               open without an account; query `shares` to list them, `updateShare` to set an \
-               expiry, `deleteShare` to revoke one. A link is public, so confirm with the user \
-               before making one\n\n\
-             ## Not available\n\
-             Admin mutations — `organize*` (moves files on disk), `updateConfig`, \
-             `triggerScan` — are refused unless `KOAN_MCP_ADMIN=1` is set.\n\n\
-             ## ID conventions\n\
-             - Track IDs: integers from the library database\n\
-             - Queue item IDs: UUIDs assigned when tracks enter the queue",
-            )
+            .with_instructions(instructions)
     }
 }
+
+const SERVER_INSTRUCTIONS: &str = "kōan is the user's music: their whole music library, and the \
+phones and computers they listen on. Use it for anything about music they are playing or own — \
+\"pause the music\", \"play something like Polar Bear on my phone\", \"what's this song\", \
+\"skip to the Phace remix\", \"add their new album when it's downloaded\". Call `schema_sdl` \
+once, then do everything through `graphql`.
+
+## Where the music plays
+The user listens in kōan apps on their devices, linked to this server. Query \
+`clients { name platform playing nowPlaying album positionMs durationMs radio queue { trackId \
+title artist current } }` to see each device, what it is playing and what it has queued. Every \
+command about the user's music goes to a device:
+- `controlClient(action: PAUSE|RESUME|NEXT|PREVIOUS)`, `seekOnClient(positionMs)`
+- `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends
+- `playNextOnClient(trackIds)`, `jumpOnClient(trackId)` (skip to a track, queued or not), \
+`removeFromClient(trackIds)`, `clearClient`, `setClientRadio(enabled)`, `syncClient`
+- `queueOnClientWhenAdded(artist, album)` queues an album once it reaches the library, e.g. \
+one being downloaded with slsk's `grab`; `clientOrders` lists those waiting
+Leave `client` out unless the user named a device (\"my phone\", \"the desktop\": match it \
+against `clients` names and platforms). Without it the server picks the device that is \
+playing, else the one played most recently; if it answers that it cannot tell, ask the user \
+which device.
+
+**Never use the server's own player for the user's music.** `play`, `pause`, `resume`, \
+`next`, `previous`, `seek`, `nowPlaying`, `queue`, `addToQueue`, `replaceQueue`, \
+`playPlaylist` and the radio mutations drive a headless player on the server that nobody \
+hears; `nowPlaying` there reports nothing about what the user is listening to.
+
+## The library
+- `artists`, `albums`, `tracks` with filters (genre, year range, codec, sample rate, bit depth, \
+duration, favourites), `randomTracks`, `similarArtists`, `similarTracks`, `fuzzySearch`
+- Build a set from these, then send its track ids to a device with `playOnClient`. Track ids are \
+integers in queries; pass them to the client mutations as strings.
+- Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
+- Playlists: `playlists`, `playlistTracks`, `createPlaylist`, `addToPlaylist`, \
+`setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`
+- History: `playHistory`
+- Sharing: `createShare(trackIds, description)` makes a public link anyone can open without an \
+account; confirm with the user first. `shares`, `updateShare`, `deleteShare` manage them.
+
+## Not available
+`organize*` (moves files on disk), `updateConfig` and `triggerScan` are refused unless \
+`KOAN_MCP_ADMIN=1` is set.";
+
+const LOCAL_INSTRUCTIONS: &str = "kōan is the user's music player on this machine and their \
+music library. Use it for anything about music they are playing or own — \"pause the music\", \
+\"play something like Polar Bear\", \"what's this song\". Call `schema_sdl` once, then do \
+everything through `graphql`.
+
+## Playback
+This player is what the user hears: `play`, `pause`, `resume`, `stop`, `next`, `previous`, \
+`seek`, `nowPlaying`; the queue with `queue`, `addToQueue`, `replaceQueue`, `removeFromQueue`, \
+`moveInQueue`, `clearQueue`, `undo`, `redo`; radio with `enableRadio`, `disableRadio`.
+
+## The library
+- `artists`, `albums`, `tracks` with filters (genre, year range, codec, sample rate, bit depth, \
+duration, favourites), `randomTracks`, `similarArtists`, `similarTracks`, `fuzzySearch`
+- Favourites: `favourite`, `unfavourite`, `toggleFavourite`, `favouritesOnly: true` on queries
+- Playlists: `playlists`, `playlistTracks`, `createPlaylist`, `saveQueueAsPlaylist`, \
+`addToPlaylist`, `setPlaylistTracks`, `renamePlaylist`, `deletePlaylist`, `playPlaylist`
+- History: `playHistory`
+- Sharing: `createShare(trackIds, description)` makes a public link; confirm with the user first.
+
+## Not available
+`organize*` (moves files on disk), `updateConfig`, `triggerScan` and `setDevice` are refused \
+unless `KOAN_MCP_ADMIN=1` is set.
+
+## IDs
+Track IDs are integers from the library; queue item IDs are UUIDs from the queue.";
 
 /// Serve MCP over streamable HTTP at `addr`/mcp, on a thread of its own.
 ///
