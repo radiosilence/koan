@@ -56,6 +56,25 @@ private struct ArtistRow: View {
             .frame(width: 18, height: 18)
             // The name is the way in — a link, so a single click opens the
             // artist while the rest of the row selects.
+            #if os(iOS)
+            // Too narrow for count columns: they would take the name's room.
+            VStack(alignment: .leading, spacing: 2) {
+                LinkText(
+                    text: artist.name,
+                    target: .artist(artist.id),
+                    font: .body,
+                    prominent: true
+                )
+                Text(
+                    "\(Format.count(artist.albumCount, "album")) · \(Format.count(artist.trackCount, "track"))"
+                )
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            ArtistHeart(artistId: artist.id, showing: hovered, size: .caption)
+                .frame(width: 16)
+            #else
             LinkText(
                 text: artist.name,
                 target: .artist(artist.id),
@@ -73,9 +92,14 @@ private struct ArtistRow: View {
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.tertiary)
                 .frame(width: 78, alignment: .trailing)
+            #endif
         }
         .onHover { hovered = $0 }
+        #if os(iOS)
+        .frame(minHeight: 44)
+        #else
         .frame(height: 24)
+        #endif
         .rowBehaviour(playable: playable)
     }
 
@@ -150,6 +174,16 @@ struct ArtistDetailView: View {
                 if let info, let bio = info.bio {
                     Divider()
                     ArtistBio(bio: bio, source: info.bioUrl, imageCredit: info.imageCredit)
+                        .transition(.opacity)
+                } else if record?.infoLoading == true {
+                    Divider()
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Text("Looking up biography…")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                    .transition(.opacity)
                 }
 
                 if !similar.isEmpty {
@@ -165,6 +199,8 @@ struct ArtistDetailView: View {
                 }
             }
             .padding(22)
+            .animation(.easeOut(duration: 0.2), value: info?.bio)
+            .animation(.easeOut(duration: 0.2), value: record?.infoLoading)
         }
         // Only for a library change — the artist arrived before the page did.
         .reloading(on: artistId) { await library.prepare(artist: artistId) }

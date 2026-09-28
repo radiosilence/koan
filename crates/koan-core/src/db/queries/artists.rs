@@ -47,7 +47,7 @@ pub fn get_or_create_artist(
 /// How to order the artist listing.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ArtistOrder {
-    /// By sort name, falling back to the name.
+    /// By name, as it reads. Sort names from tags are too erratic to order by.
     #[default]
     Name,
     /// Most albums first.
@@ -61,13 +61,9 @@ pub enum ArtistOrder {
 impl ArtistOrder {
     fn clause(self) -> &'static str {
         match self {
-            Self::Name => "COALESCE(a.sort_name, a.name) COLLATE LIBRARY",
-            Self::AlbumCount => {
-                "COUNT(DISTINCT al.id) DESC, COALESCE(a.sort_name, a.name) COLLATE LIBRARY"
-            }
-            Self::RecentlyAdded => {
-                "COALESCE(MAX(al.added_at), '') DESC, COALESCE(a.sort_name, a.name) COLLATE LIBRARY"
-            }
+            Self::Name => "a.name COLLATE LIBRARY",
+            Self::AlbumCount => "COUNT(DISTINCT al.id) DESC, a.name COLLATE LIBRARY",
+            Self::RecentlyAdded => "COALESCE(MAX(al.added_at), '') DESC, a.name COLLATE LIBRARY",
             Self::Id => "a.id",
         }
     }

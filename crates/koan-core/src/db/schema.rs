@@ -412,9 +412,16 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
     // Syncs before 0.36.2 stored a server's "no id" (`musicBrainzId: ""`) as
     // an empty string, which everything downstream took for an id: artist
     // info looked "" up instead of resolving one, and never showed anything.
-    // Idempotent, and cheap once there are none.
+    // Sort names, labels and genres came through the same way. Found-nothing
+    // artist info is no longer cached, and what was is dropped. Idempotent,
+    // and cheap once there are none.
     conn.execute_batch(
-        "UPDATE artists SET mbid = NULL WHERE mbid = '';
+        "DELETE FROM artist_info WHERE bio IS NULL AND image_url IS NULL;
+         UPDATE artists SET mbid = NULL WHERE mbid = '';
+         UPDATE artists SET sort_name = NULL WHERE sort_name = '';
+         UPDATE albums SET sort_name = NULL WHERE sort_name = '';
+         UPDATE albums SET label = NULL WHERE label = '';
+         UPDATE tracks SET genre = NULL WHERE genre = '';
          UPDATE albums SET mbid = NULL WHERE mbid = '';
          UPDATE tracks SET mbid = NULL WHERE mbid = '';",
     )?;
@@ -591,6 +598,12 @@ mod tests {
             super::create_tables(&conn).unwrap();
             conn.execute("INSERT INTO artists (name, mbid) VALUES ('Crass', '')", [])
                 .unwrap();
+            conn.execute(
+                "INSERT INTO artist_info (artist_id, fetched_at)
+                   SELECT id, 1 FROM artists WHERE name = 'Crass'",
+                [],
+            )
+            .unwrap();
         }
         let conn = rusqlite::Connection::open(&path).unwrap();
         super::create_tables(&conn).unwrap();
@@ -600,6 +613,10 @@ mod tests {
             })
             .unwrap();
         assert_eq!(mbid, None);
+        let misses: i64 = conn
+            .query_row("SELECT COUNT(*) FROM artist_info", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(misses, 0, "cached misses are dropped");
     }
 
     use super::*;

@@ -714,7 +714,11 @@ fn write_albums(
             album.music_brainz_id.as_deref(),
             album.sort_name.as_deref(),
             album.song_count,
-            album.record_labels.first().map(|l| l.name.as_str()),
+            album
+                .record_labels
+                .iter()
+                .map(|l| l.name.as_str())
+                .find(|l| !l.is_empty()),
         ) {
             log::warn!("failed to record album metadata for {}: {}", album.name, e);
         }

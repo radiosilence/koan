@@ -5,9 +5,9 @@
 //! and the Commons image. A name search picks the wrong one of several bands
 //! sharing a name, and a biography of the wrong band is worse than none.
 //!
-//! Cached per artist, misses included, so a page draws from the database and
-//! never waits on the network, and an artist with no article is not asked
-//! about again on every visit. What was found is refreshed after a month.
+//! What was found is cached per artist, so a page draws from the database and
+//! never waits on the network, and refreshed after a month. A miss is not
+//! cached: the id may resolve, or the article appear, by the next visit.
 
 use std::sync::LazyLock;
 use std::time::{Duration, Instant};
@@ -83,6 +83,8 @@ pub fn fetch(conn: &Connection, artist_id: i64) -> Result<Option<ArtistInfo>, Ar
     }
 
     match look_up(conn, artist_id, now) {
+        // Found nothing: not stored, so the next visit asks again.
+        Ok(Some(info)) if info.bio.is_none() && info.image_url.is_none() => Ok(held.or(Some(info))),
         Ok(Some(info)) => {
             store(conn, artist_id, &info)?;
             Ok(Some(info))
@@ -322,18 +324,6 @@ mod tests {
 
         // No network in a test: a fresh row must be answered without one.
         assert_eq!(fetch(&conn, id).unwrap(), Some(info));
-    }
-
-    #[test]
-    fn a_cached_miss_is_an_answer_too() {
-        let conn = test_db();
-        let id = get_or_create_artist(&conn, "Nobody In Particular", None).unwrap();
-        let miss = ArtistInfo {
-            fetched_at: now(),
-            ..Default::default()
-        };
-        store(&conn, id, &miss).unwrap();
-        assert_eq!(fetch(&conn, id).unwrap(), Some(miss));
     }
 
     #[test]

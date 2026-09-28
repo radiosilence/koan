@@ -643,6 +643,7 @@ pub struct SubsonicAlbum {
     #[serde(default)]
     pub duration: Option<i64>,
     pub year: Option<i32>,
+    #[serde(default, deserialize_with = "non_empty")]
     pub genre: Option<String>,
     pub created: Option<String>,
     // OpenSubsonic. All of these arrive in `getAlbumList2`, which the sync
@@ -670,6 +671,7 @@ pub struct SubsonicAlbumFull {
     pub artist: Option<String>,
     pub artist_id: Option<String>,
     pub year: Option<i32>,
+    #[serde(default, deserialize_with = "non_empty")]
     pub genre: Option<String>,
     pub song_count: Option<i32>,
     pub created: Option<String>,
@@ -693,6 +695,7 @@ pub struct SubsonicSong {
     pub track: Option<i32>,
     pub disc_number: Option<i32>,
     pub year: Option<i32>,
+    #[serde(default, deserialize_with = "non_empty")]
     pub genre: Option<String>,
     pub duration: Option<i64>,
     pub bit_rate: Option<i32>,
