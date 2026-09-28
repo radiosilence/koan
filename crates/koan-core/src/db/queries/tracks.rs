@@ -3441,6 +3441,54 @@ mod tests {
     }
 
     #[test]
+    fn eviction_keeps_what_the_queue_holds() {
+        crate::config::isolate_config_for_tests();
+        let db = test_db();
+        let mut ids = Vec::new();
+        for (album, played_at) in &[("OldAlbum", 1000), ("NewAlbum", 9000)] {
+            let mut meta = sample_meta("Track", "Artist", album);
+            meta.source = "remote".into();
+            meta.path = None;
+            meta.remote_id = Some(format!("r-{}", album));
+            let id = upsert_track(&db.conn, &meta).unwrap();
+            db.conn
+                .execute(
+                    "UPDATE tracks SET cached_path = ?1, cache_size_bytes = 10000000 WHERE id = ?2",
+                    params![format!("/nonexistent/{album}/Track.flac"), id],
+                )
+                .unwrap();
+            db.conn
+                .execute(
+                    "INSERT INTO play_history (track_id, played_at) VALUES (?1, ?2)",
+                    params![id, played_at],
+                )
+                .unwrap();
+            ids.push(id);
+        }
+        let mut cfg = crate::config::Config::default();
+        cfg.remote.cache_limit = Some("15MB".into());
+
+        // The older album would go first, but it is queued.
+        let keep = std::collections::HashSet::from([ids[0]]);
+        crate::helpers::evict_cache(&db, &cfg, &keep, false);
+
+        let cached: Vec<i64> = ids
+            .iter()
+            .copied()
+            .filter(|id| {
+                db.conn
+                    .query_row(
+                        "SELECT cached_path IS NOT NULL FROM tracks WHERE id = ?1",
+                        params![id],
+                        |r| r.get(0),
+                    )
+                    .unwrap()
+            })
+            .collect();
+        assert_eq!(cached, vec![ids[0]]);
+    }
+
+    #[test]
     fn test_cached_albums_lru_sorted_by_last_play() {
         let db = test_db();
 

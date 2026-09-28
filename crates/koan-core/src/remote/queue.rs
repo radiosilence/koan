@@ -37,6 +37,8 @@ struct Inner {
     cfg: config::Config,
     /// `None` when remote is not configured — nothing is downloadable.
     client: Option<Arc<SubsonicClient>>,
+    /// When the cache was last trimmed to its limit.
+    last_evicted: Mutex<Option<std::time::Instant>>,
 }
 
 /// Queue state and the in-flight bookkeeping that keeps a track from being
@@ -134,6 +136,7 @@ impl DownloadQueue {
             log_buf,
             cfg,
             client,
+            last_evicted: Mutex::new(None),
         });
 
         for i in 0..num_workers {
@@ -145,6 +148,11 @@ impl DownloadQueue {
                 log::error!("failed to spawn download worker {}: {}", i, e);
             }
         }
+
+        let trimmer = inner.clone();
+        let _ = std::thread::Builder::new()
+            .name("koan-dl-trim".into())
+            .spawn(move || trim_cache(&trimmer));
 
         let watcher_inner = inner.clone();
         if let Err(e) = std::thread::Builder::new()
@@ -289,6 +297,42 @@ fn run_download(inner: &Arc<Inner>, (db_id, queue_id): (i64, QueueItemId)) {
     // Before the claim is released, while the waiting entries are still
     // recorded against this track.
     settle_waiters(inner, db_id, queue_id);
+    trim_cache(inner);
+}
+
+/// How often the cache is checked against its limit, at most: each download
+/// adds to it, and a check reads the whole cache's size from the database.
+const EVICT_EVERY: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Trim the cache to its configured limit, keeping everything in the queue:
+/// the player may be reading those files, and they are what is wanted next.
+/// The limit is read afresh, so one set in Settings applies without a
+/// restart.
+fn trim_cache(inner: &Inner) {
+    {
+        let mut last = inner.last_evicted.lock();
+        if last.is_some_and(|t| t.elapsed() < EVICT_EVERY) {
+            return;
+        }
+        *last = Some(std::time::Instant::now());
+    }
+    let cfg = config::Config::load().unwrap_or_else(|_| inner.cfg.clone());
+    if cfg.cache_limit_bytes().is_none() {
+        return;
+    }
+    let keep = inner
+        .state
+        .snapshot_playlist()
+        .0
+        .iter()
+        .filter_map(|i| i.db_id)
+        .collect();
+    match crate::db::connection::Database::open_default() {
+        Ok(db) => {
+            crate::helpers::evict_cache(&db, &cfg, &keep, false);
+        }
+        Err(e) => log::warn!("cache eviction: could not open the database: {e}"),
+    }
 }
 
 /// Worker loop: wait for work, download, repeat.

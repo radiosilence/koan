@@ -254,7 +254,7 @@ struct SidebarView: View {
         let engine = playlists.engine
         Task {
             _ = try? await engine.playPlaylist(
-                playlistId: playlist.id, startAt: nil, shuffled: shuffled
+                playlistId: playlist.id, startEntry: nil, shuffled: shuffled
             )
         }
     }

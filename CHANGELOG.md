@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.39.4
+
+### Fixed
+
+- **The cache limit is enforced.** Settings' cache limit was read only by `koan cache evict`, run by hand, so the apps' caches grew without bound: an iPhone reached 29 GiB and ran out of space. Once a limit is set, the download queue trims the cache after downloads (at most once a minute) and at launch, least recently played albums first, never an album with a favourite or a track in the queue. The limit is read afresh each time, so a change in Settings applies at once.
+- **Playing a playlist from a row plays that row** ([#417](https://github.com/radiosilence/koan/issues/417)). The page sent the row's position, and the engine applied it to the playlist as it re-read it, keeping only entries whose track the library still has. After a sync changed the playlist, or with a track the server no longer has earlier in it, the two disagreed and a different track played. `playPlaylist` now takes the entry id.
+
 ## 0.39.3
 
 ### Fixed
