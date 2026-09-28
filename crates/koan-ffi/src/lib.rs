@@ -3196,8 +3196,8 @@ impl KoanEngine {
                 self.library_changed();
                 Ok(())
             }),
-            LinkCommand::Sync => self.db().map(|db| {
-                koan_core::remote::link::sync(&db);
+            LinkCommand::Sync { full } => self.db().map(|db| {
+                koan_core::remote::link::sync(&db, full);
                 self.library_changed();
             }),
             LinkCommand::Radio { enabled } => {

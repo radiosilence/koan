@@ -177,8 +177,27 @@ impl MutationRoot {
         client: Option<String>,
     ) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
-        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Sync)?;
+        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Sync { full: false })?;
         Ok(GqlStatus::success(format!("syncing {}", sent.name)))
+    }
+
+    /// Have every device of this account pull what the server has changed,
+    /// now if linked, else when it next links. Playlist edits and library
+    /// changes already do this on their own.
+    async fn sync_clients(
+        &self,
+        ctx: &Context<'_>,
+        full: Option<bool>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let scope = super::client_scope(ctx);
+        let (sent, queued) = crate::clients::registry().deliver(
+            scope.as_deref(),
+            LinkCommand::Sync {
+                full: full.unwrap_or(false),
+            },
+        );
+        Ok(GqlStatus::success(reach(&sent, &queued)))
     }
 
     /// Have every linked koan app delete its downloaded copies of these
@@ -193,17 +212,14 @@ impl MutationRoot {
         require_role(ctx, Role::User)?;
         let track_ids = track_ids.into_iter().map(|id| id.0).collect();
         let scope = super::client_scope(ctx);
-        let reached = crate::clients::registry()
-            .broadcast(scope.as_deref(), LinkCommand::Evict { track_ids });
-        if reached.is_empty() {
+        let (reached, queued) =
+            crate::clients::registry().deliver(scope.as_deref(), LinkCommand::Evict { track_ids });
+        if reached.is_empty() && queued.is_empty() {
             return Err(async_graphql::Error::new(
-                "no koan app is linked to this server",
+                "no koan app has ever linked to this server",
             ));
         }
-        Ok(GqlStatus::success(format!(
-            "evicted on {}",
-            reached.join(", ")
-        )))
+        Ok(GqlStatus::success(reach(&reached, &queued)))
     }
 
     /// Empty a linked koan app's queue.
@@ -251,6 +267,43 @@ impl MutationRoot {
             artist,
             album,
             play_next: play_next.unwrap_or(false),
+            playlist: None,
+            titles: Vec::new(),
+            created_at: chrono::Utc::now().timestamp(),
+        };
+        crate::clients::registry().add_order(order.clone());
+        super::blocking(|| {
+            crate::clients::fulfil_from(&koan_core::config::db_path());
+            Ok(())
+        })
+        .await?;
+        Ok(order.into())
+    }
+
+    /// Add an album to a playlist once it is in the library: for one being
+    /// downloaded now (slsk's `grab`). `titles` narrows it to those tracks
+    /// (title substrings, in that order); empty or absent adds the whole
+    /// album. Matched after each library scan, and at once if already here.
+    /// The playlist then reaches every device like any edit. Orders are kept
+    /// across restarts and lapse after a day.
+    async fn add_to_playlist_when_added(
+        &self,
+        ctx: &Context<'_>,
+        playlist_id: i64,
+        artist: String,
+        album: String,
+        titles: Option<Vec<String>>,
+    ) -> async_graphql::Result<GqlClientOrder> {
+        require_role(ctx, Role::User)?;
+        let order = crate::clients::Order {
+            id: uuid::Uuid::now_v7().to_string(),
+            username: super::client_scope(ctx),
+            client: None,
+            artist,
+            album,
+            play_next: false,
+            playlist: Some(playlist_id),
+            titles: titles.unwrap_or_default(),
             created_at: chrono::Utc::now().timestamp(),
         };
         crate::clients::registry().add_order(order.clone());
@@ -609,6 +662,7 @@ impl MutationRoot {
                     .map_err(|e| super::internal_error("db", e))?;
             }
             koan_core::playlists::push_to_remote(id);
+            crate::clients::changed();
             queries::get_playlist(&db.conn, id)
                 .map_err(|e| super::internal_error("db", e))?
                 .map(GqlPlaylist::from)
@@ -652,6 +706,7 @@ impl MutationRoot {
                 )));
             }
             koan_core::playlists::push_to_remote(id);
+            crate::clients::changed();
             Ok(GqlStatus::success(format!("renamed playlist to '{name}'")))
         })
         .await
@@ -680,6 +735,7 @@ impl MutationRoot {
             if let Some(remote_id) = remote_id {
                 koan_core::playlists::delete_on_remote(remote_id);
             }
+            crate::clients::changed();
             Ok(GqlStatus::success(format!("deleted playlist {id}")))
         })
         .await
@@ -696,6 +752,7 @@ impl MutationRoot {
             let added = queries::add_tracks(&db.conn, id, &track_ids)
                 .map_err(|e| super::internal_error("db", e))?;
             koan_core::playlists::push_to_remote(id);
+            crate::clients::changed();
             Ok(GqlStatus::success(format!(
                 "added {} track(s)",
                 added.len()
@@ -717,6 +774,7 @@ impl MutationRoot {
             queries::set_playlist_tracks(&db.conn, id, &track_ids)
                 .map_err(|e| super::internal_error("db", e))?;
             koan_core::playlists::push_to_remote(id);
+            crate::clients::changed();
             Ok(GqlStatus::success(format!(
                 "playlist {id} now holds {} track(s)",
                 track_ids.len()
@@ -1216,4 +1274,20 @@ fn send_to_client(
     crate::clients::registry()
         .send(scope.as_deref(), client, cmd)
         .map_err(async_graphql::Error::new)
+}
+
+/// "sent to X; waiting for Y" for a delivery.
+fn reach(sent: &[String], queued: &[String]) -> String {
+    let mut parts = Vec::new();
+    if !sent.is_empty() {
+        parts.push(format!("sent to {}", sent.join(", ")));
+    }
+    if !queued.is_empty() {
+        parts.push(format!("waiting for {} to open", queued.join(", ")));
+    }
+    if parts.is_empty() {
+        "no devices".into()
+    } else {
+        parts.join("; ")
+    }
 }

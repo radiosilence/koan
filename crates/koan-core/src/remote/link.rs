@@ -49,8 +49,12 @@ pub enum LinkCommand {
     Radio {
         enabled: bool,
     },
-    /// Pull what the server has added since the last sync.
-    Sync,
+    /// Pull what the server has changed: library, favourites and playlists.
+    /// `full` walks every track rather than what changed.
+    Sync {
+        #[serde(default)]
+        full: bool,
+    },
     /// Delete the downloaded copies of these tracks, so the next play fetches
     /// them again: for a copy that was cached while the server's was bad.
     #[serde(rename_all = "camelCase")]
@@ -378,18 +382,19 @@ pub fn resolve_tracks(
     if found.iter().all(Option::is_some) {
         return (found.into_iter().flatten().collect(), false);
     }
-    sync(db);
+    sync(db, false);
     (lookup(db).into_iter().flatten().collect(), true)
 }
 
-/// An incremental sync from the configured server.
-pub fn sync(db: &crate::db::connection::Database) {
+/// A sync from the configured server, as the app runs its own: the library,
+/// then favourites and playlists.
+pub fn sync(db: &crate::db::connection::Database, full: bool) {
     let cfg = Config::load().unwrap_or_default();
     if let Some(client) = subsonic_client(&cfg)
-        && let Err(e) = crate::remote::sync::sync_library(
+        && let Err(e) = crate::helpers::sync_remote(
             db,
             &client,
-            false,
+            full,
             &cfg.remote.url,
             &cfg.remote.username,
             &|_| {},

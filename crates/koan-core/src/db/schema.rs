@@ -159,6 +159,31 @@ pub fn create_tables(conn: &Connection) -> rusqlite::Result<()> {
 
         -- One row per artist looked up, misses included: an empty row is the
         -- answer that nothing was found, which stops a page asking again.
+        -- A server's record of the koan apps that have linked to it, and what
+        -- waits for each while it is away: see koan-server's clients.rs.
+        CREATE TABLE IF NOT EXISTS link_devices (
+            device     TEXT NOT NULL,
+            username   TEXT NOT NULL,
+            name       TEXT NOT NULL,
+            platform   TEXT NOT NULL,
+            last_seen  INTEGER NOT NULL,
+            PRIMARY KEY (device, username)
+        );
+
+        CREATE TABLE IF NOT EXISTS link_orders (
+            id          TEXT PRIMARY KEY,
+            body        TEXT NOT NULL,
+            created_at  INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS link_outbox (
+            id          INTEGER PRIMARY KEY,
+            device      TEXT NOT NULL,
+            username    TEXT NOT NULL,
+            command     TEXT NOT NULL,
+            created_at  INTEGER NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS artist_info (
             artist_id     INTEGER PRIMARY KEY REFERENCES artists(id) ON DELETE CASCADE,
             bio           TEXT,
