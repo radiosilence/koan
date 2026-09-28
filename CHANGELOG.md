@@ -7,6 +7,10 @@
 - **iOS releases go to TestFlight.** Each release archives the iOS app, signs it and uploads it to App Store Connect, so a build reaches the phone over the air with no cable and no seven-day expiry. Signing is cloud-managed through the App Store Connect API key the macOS release notarises with, so no certificate or profile is kept in a secret. Without the key or the `APPLE_TEAM_ID` variable (a fork) the upload is skipped rather than failing the release. `just ios-testflight BUILD` does the same from a Mac.
 - **Privacy manifest and policy for the App Store.** The iOS app ships a `PrivacyInfo.xcprivacy` declaring no tracking, no data collected, and the reasons for the file-timestamp, disk-space and `UserDefaults` APIs it calls; App Review rejects an app without one. koan.rocks has a privacy page, which the App Store listing links to.
 
+### Changed
+
+- **App Store builds cannot stay reachable by playing silence.** The iOS keepalive plays silent audio so a paused, backgrounded phone keeps its link to the server; App Review rejects background audio that plays nothing (guideline 2.5.4). Builds archived for TestFlight and the App Store are compiled with `KOAN_STORE`, which turns it off and hides its setting. Development builds keep it; push notifications (#520) are what replaces it.
+
 ## 0.39.4
 
 ### Fixed
