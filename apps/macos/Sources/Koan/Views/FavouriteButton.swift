@@ -20,8 +20,14 @@ struct FavouriteButton: View {
                 .font(size)
                 .foregroundStyle(isOn ? AnyShapeStyle(.red) : AnyShapeStyle(.tertiary))
                 .contentTransition(.symbolEffect(.replace))
+                // A little jump on every change, and on a phone a tap in the
+                // hand when something becomes a favourite.
+                .symbolEffect(.bounce.up.byLayer, options: .speed(1.4), value: isOn)
         }
         .buttonStyle(.plain)
+        #if os(iOS)
+        .sensoryFeedback(trigger: isOn) { _, on in on ? .impact(weight: .light) : nil }
+        #endif
         .opacity(isOn || showing ? 1 : 0)
         .help(help)
         .accessibilityLabel(isOn ? "Remove favourite" : "Favourite")

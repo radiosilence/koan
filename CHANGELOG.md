@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- **The album page gives titles room, and the heart bounces.** A title beside the play button was held to one line although two were allowed, and the page's track titles truncated to their date. The header wraps to two lines, track titles do too on iOS, and a leading date is left off both. Favouriting bounces the heart, and on a phone taps the hand.
 - **iOS: the queue gives titles room.** Track and album titles wrap to two lines instead of truncating to a date. A record that is a single track of the same name (a mix, a single) is one row with its sleeve and artist, not a heading and a row saying the same thing twice. The header names what is playing on its own, without "Playing" taking half its width. A leading date ("2022-03-12: ") is left off displayed titles, since the year is shown beside them; the tags keep it.
 
 ## 0.36.7
