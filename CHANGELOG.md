@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.38.6
+
+### Fixed
+
+- **kōan starts on a library where two spellings of an artist share an album title.** 0.38.5's merge of case-duplicate artists moved every album onto the kept spelling, and an album both spellings held under the same title broke the one-album-per-title rule, so the database refused to open and the app would not start. The second copy's tracks now join the kept album instead.
+
 ## 0.38.5
 
 ### Fixed
