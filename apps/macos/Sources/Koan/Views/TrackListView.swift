@@ -167,9 +167,12 @@ struct TrackListView: View {
                     if let playable {
                         PlayableHeaderButton(playable: playable)
                     }
-                    Text(title)
+                    Text(Format.title(title))
                         .font(.system(size: 26, weight: .semibold))
                         .lineLimit(2)
+                        // Beside the play button the row offers one line's
+                        // height; asked for two, it has to be let grow.
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 if let artistLink {
                     HStack(spacing: 5) {
@@ -260,8 +263,8 @@ struct TrackRow: View {
             }
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(track.title)
-                    .lineLimit(1)
+                Text(Format.title(track.title))
+                    .lineLimit(Format.titleLines)
                     // Tinted to mark the playing track — but not when the row
                     // is selected, where accent-on-accent is unreadable.
                     .foregroundStyle(
@@ -311,7 +314,11 @@ struct TrackRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 48, alignment: .trailing)
         }
+        #if os(iOS)
+        .frame(minHeight: showsAlbum ? 44 : 34)
+        #else
         .frame(height: showsAlbum ? 44 : 34)
+        #endif
         // The row is only clickable where a view sits; the Spacer would
         // otherwise be a dead zone.
         .contentShape(Rectangle())
