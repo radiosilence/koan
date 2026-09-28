@@ -204,6 +204,14 @@ command about the user's music goes to a device:
 - `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends
 - `playNextOnClient(trackIds)`, `jumpOnClient(trackId)` (skip to a track, queued or not), \
 `removeFromClient(trackIds)`, `clearClient`, `setClientRadio(enabled)`, `syncClient`
+- **Making a playlist the user asked for** (\"make me a cyberpunk playlist\"): research what \
+fits, find each track in the library, `createPlaylist` with those in order. For picks the \
+library lacks, fetch the album with slsk's `grab`, then `addToPlaylistWhenAdded(playlistId, \
+artist, album, titles)` to add the wanted tracks once it is imported. Tell the user what is \
+there now and what is on its way.
+- Playlists made or edited here (`createPlaylist`, `setPlaylistTracks`…) reach every device \
+by themselves: linked ones sync at once, others when next opened. `syncClients` does the same \
+on request.
 - `evictOnClients(trackIds)` makes every linked device drop its downloaded copies of those \
 tracks: when a track plays as noise or glitches, after the file on the server is replaced
 - `queueOnClientWhenAdded(artist, album)` queues an album once it reaches the library, e.g. \

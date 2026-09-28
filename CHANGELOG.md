@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.39.0
+
+### Added
+
+- **What the server changes reaches every device by itself.** The server now remembers each app that has linked to it, per account, and keeps an outbox for each: a command for a device that is away waits and is delivered the moment it links again (an iPhone brought to the foreground, a Mac app opened). Creating or editing a playlist, and a library scan that adds or removes albums, queue a sync for every device; syncs waiting for one device collapse into one. `syncClients(full)` does the same on request, and `evictOnClients` now reaches devices that are away. Playback commands never wait: "play this" delivered tomorrow would be wrong.
+- **A link sync is a whole sync.** It pulled the library only; it now also reconciles favourites and playlists, as the app's own sync does, so a playlist made on the server appears.
+- **`addToPlaylistWhenAdded(playlistId, artist, album, titles)`.** Adds an album, or the named tracks from it, to a playlist once it is in the library, for music being fetched with slsk. With the above, "make me a cyberpunk playlist" can start with what is in the library and grow as the rest downloads, on every device, without anyone asking again.
+
+### Changed
+
+- **Standing orders survive restarts.** `queueOnClientWhenAdded` and the new playlist orders were held in memory, and every deploy dropped them; they are kept in the database now.
+
 ## 0.38.6
 
 ### Fixed

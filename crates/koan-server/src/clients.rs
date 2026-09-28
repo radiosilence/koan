@@ -58,7 +58,7 @@ struct Entry {
 
 /// "When this album is in the library, queue it on my device": a request made
 /// before the album exists, fulfilled by the scan that finds it.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Order {
     pub id: String,
     /// Whose devices it may go to.
@@ -69,6 +69,13 @@ pub struct Order {
     pub album: String,
     /// Insert after the current track rather than at the end.
     pub play_next: bool,
+    /// Add to this playlist rather than a device's queue.
+    #[serde(default)]
+    pub playlist: Option<i64>,
+    /// Only these tracks of the album (title substrings, in this order);
+    /// empty for all of it.
+    #[serde(default)]
+    pub titles: Vec<String>,
     /// Unix seconds.
     pub created_at: i64,
 }
@@ -85,7 +92,11 @@ pub struct Registry {
 /// One registry per process: the WebSocket route and the GraphQL schema are
 /// built in different places and both need it.
 pub fn registry() -> &'static Registry {
-    static REGISTRY: LazyLock<Registry> = LazyLock::new(Registry::default);
+    static REGISTRY: LazyLock<Registry> = LazyLock::new(|| {
+        let registry = Registry::default();
+        *registry.orders.lock() = outbox::load_orders();
+        registry
+    });
     &REGISTRY
 }
 
@@ -101,6 +112,11 @@ impl Registry {
         tx: UnboundedSender<LinkCommand>,
     ) -> String {
         let id = uuid::Uuid::now_v7().to_string();
+        // What waited for this device while it was away goes down the new
+        // link first.
+        for cmd in outbox::take_and_remember(username, device, name, platform) {
+            let _ = tx.send(cmd);
+        }
         let mut entries = self.entries.lock();
         entries.retain(|e| !(e.device == device && e.info.username == username));
         entries.push(Entry {
@@ -184,6 +200,7 @@ impl Registry {
 
 impl Registry {
     pub fn add_order(&self, order: Order) {
+        outbox::save_order(&order);
         self.orders.lock().push(order);
     }
 
@@ -201,7 +218,16 @@ impl Registry {
         let before = orders.len();
         orders
             .retain(|o| !(o.id == id && (username.is_none() || o.username.as_deref() == username)));
-        orders.len() != before
+        let gone = orders.len() != before;
+        if gone {
+            outbox::drop_order(id);
+        }
+        gone
+    }
+
+    fn done(&self, id: &str) {
+        self.orders.lock().retain(|o| o.id != id);
+        outbox::drop_order(id);
     }
 
     /// Send every order whose album the library now holds, and drop it.
@@ -210,10 +236,13 @@ impl Registry {
         let now = chrono::Utc::now().timestamp();
         let pending: Vec<Order> = {
             let mut orders = self.orders.lock();
+            for o in orders.iter().filter(|o| now - o.created_at >= ORDER_TTL) {
+                outbox::drop_order(&o.id);
+            }
             orders.retain(|o| now - o.created_at < ORDER_TTL);
             orders.clone()
         };
-        for order in pending {
+        for order in pending.into_iter().filter(|o| o.playlist.is_none()) {
             let Some(ids) = find(&order).filter(|ids| !ids.is_empty()) else {
                 continue;
             };
@@ -231,7 +260,7 @@ impl Registry {
                         order.album,
                         c.name
                     );
-                    self.orders.lock().retain(|o| o.id != order.id);
+                    self.done(&order.id);
                 }
                 // No device to send to yet: kept, and tried after the next scan.
                 Err(e) => log::info!("link: {} — {} arrived but {e}", order.artist, order.album),
@@ -249,12 +278,75 @@ pub fn fulfil_from(db_path: &std::path::Path) {
     let Ok(db) = koan_core::db::connection::Database::open(db_path) else {
         return;
     };
-    registry.fulfil_orders(|order| album_tracks(&db.conn, &order.artist, &order.album));
+    // Playlist orders are the server's own to carry out: add the tracks, and
+    // the playlist reaches every device like any other edit.
+    let for_playlists: Vec<Order> = registry
+        .orders
+        .lock()
+        .iter()
+        .filter(|o| o.playlist.is_some())
+        .cloned()
+        .collect();
+    let mut edited = false;
+    for order in for_playlists {
+        let Some(playlist) = order.playlist else {
+            continue;
+        };
+        let Some(ids) = order_tracks(&db.conn, &order) else {
+            continue;
+        };
+        match koan_core::db::queries::add_tracks(&db.conn, playlist, &ids) {
+            Ok(_) => {
+                // Tests would push to whatever server this machine signs in to.
+                if !cfg!(test) {
+                    koan_core::playlists::push_to_remote(playlist);
+                }
+                log::info!(
+                    "link: {} — {} arrived; added {} tracks to playlist {playlist}",
+                    order.artist,
+                    order.album,
+                    ids.len()
+                );
+                registry.done(&order.id);
+                edited = true;
+            }
+            Err(e) => log::warn!("link: could not add to playlist {playlist}: {e}"),
+        }
+    }
+    if edited {
+        changed();
+    }
+    registry.fulfil_orders(|order| order_tracks(&db.conn, order));
 }
 
-/// The newest album whose artist and title contain these, as track ids in
+/// The tracks an order asks for, once its album is in the library: all of
+/// it, or the named ones in the order named. `None` until they are there.
+fn order_tracks(conn: &rusqlite::Connection, order: &Order) -> Option<Vec<i64>> {
+    let tracks = album_tracks(conn, &order.artist, &order.album)?;
+    if order.titles.is_empty() {
+        return Some(tracks.into_iter().map(|(id, _)| id).collect());
+    }
+    let picked: Vec<i64> = order
+        .titles
+        .iter()
+        .filter_map(|want| {
+            let want = want.to_lowercase();
+            tracks
+                .iter()
+                .find(|(_, t)| t.to_lowercase().contains(&want))
+                .map(|(id, _)| *id)
+        })
+        .collect();
+    (!picked.is_empty()).then_some(picked)
+}
+
+/// The newest album whose artist and title contain these, as its tracks in
 /// disc and track order.
-pub fn album_tracks(conn: &rusqlite::Connection, artist: &str, album: &str) -> Option<Vec<i64>> {
+pub fn album_tracks(
+    conn: &rusqlite::Connection,
+    artist: &str,
+    album: &str,
+) -> Option<Vec<(i64, String)>> {
     let like = |s: &str| format!("%{}%", s.replace(['%', '_'], ""));
     let album_id: i64 = conn
         .query_row(
@@ -266,14 +358,14 @@ pub fn album_tracks(conn: &rusqlite::Connection, artist: &str, album: &str) -> O
         )
         .ok()?;
     let mut stmt = conn
-        .prepare("SELECT id FROM tracks WHERE album_id = ?1 ORDER BY disc, track_number, id")
+        .prepare("SELECT id, title FROM tracks WHERE album_id = ?1 ORDER BY disc, track_number, id")
         .ok()?;
-    let ids = stmt
-        .query_map([album_id], |r| r.get(0))
+    let tracks = stmt
+        .query_map([album_id], |r| Ok((r.get(0)?, r.get(1)?)))
         .ok()?
         .filter_map(Result::ok)
         .collect();
-    Some(ids)
+    Some(tracks)
 }
 
 impl Registry {
@@ -287,6 +379,189 @@ impl Registry {
             .filter(|e| ids.contains(&e.info.id) && e.tx.send(cmd.clone()).is_ok())
             .map(|e| e.info.name.clone())
             .collect()
+    }
+}
+
+impl Registry {
+    /// Send to every device `username` may command: at once to those linked,
+    /// and to those that have linked before but are away now, when they next
+    /// link. For commands still right hours later (`Sync`, `Evict`), never
+    /// playback. The names reached now, and the names it waits for.
+    pub fn deliver(&self, username: Option<&str>, cmd: LinkCommand) -> (Vec<String>, Vec<String>) {
+        let sent = self.broadcast(username, cmd.clone());
+        let live: Vec<(String, String)> = self
+            .entries
+            .lock()
+            .iter()
+            .map(|e| (e.device.clone(), e.info.username.clone()))
+            .collect();
+        let queued = outbox::queue_for_absent(username, &live, &cmd);
+        (sent, queued)
+    }
+}
+
+/// Have every device pull what the server just changed (a playlist edited,
+/// albums added): at once where linked, on next link where not. Syncs waiting
+/// for a device collapse into one.
+pub fn changed() {
+    registry().deliver(None, LinkCommand::Sync { full: false });
+}
+
+/// After a library scan: if the library holds different tracks or albums from
+/// the last scan, tell every device. A scan that found nothing new, which is
+/// most of them, sends nothing.
+pub fn changed_if_library_moved(db_path: &std::path::Path) {
+    static LAST: parking_lot::Mutex<Option<(i64, i64, i64)>> = parking_lot::Mutex::new(None);
+    let Ok(db) = koan_core::db::connection::Database::open(db_path) else {
+        return;
+    };
+    let Ok(now) = db.conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM tracks), (SELECT COALESCE(MAX(id), 0) FROM tracks),
+                (SELECT COUNT(*) FROM albums)",
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+    ) else {
+        return;
+    };
+    let before = LAST.lock().replace(now);
+    if before.is_some_and(|b| b != now) {
+        changed();
+    }
+}
+
+/// The server-side record of devices and their waiting commands, in the
+/// library database so it outlives a restart.
+mod outbox {
+    use koan_core::remote::link::LinkCommand;
+
+    /// Dropped undelivered after this long: a device away a month re-syncs
+    /// on its own when opened.
+    const KEEP_SECS: i64 = 30 * 24 * 60 * 60;
+
+    /// Tests keep to memory: the configured database is whoever ran them.
+    fn db() -> Option<koan_core::db::connection::Database> {
+        if cfg!(test) {
+            return None;
+        }
+        koan_core::db::connection::Database::open(&koan_core::config::db_path()).ok()
+    }
+
+    pub fn load_orders() -> Vec<super::Order> {
+        let Some(db) = db() else { return Vec::new() };
+        db.conn
+            .prepare("SELECT body FROM link_orders ORDER BY created_at")
+            .and_then(|mut s| {
+                s.query_map([], |r| r.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|b| serde_json::from_str(&b).ok())
+            .collect()
+    }
+
+    pub fn save_order(order: &super::Order) {
+        let (Some(db), Ok(body)) = (db(), serde_json::to_string(order)) else {
+            return;
+        };
+        let _ = db.conn.execute(
+            "INSERT OR REPLACE INTO link_orders (id, body, created_at) VALUES (?1, ?2, ?3)",
+            rusqlite::params![order.id, body, order.created_at],
+        );
+    }
+
+    pub fn drop_order(id: &str) {
+        if let Some(db) = db() {
+            let _ = db
+                .conn
+                .execute("DELETE FROM link_orders WHERE id = ?1", [id]);
+        }
+    }
+
+    pub fn take_and_remember(
+        username: &str,
+        device: &str,
+        name: &str,
+        platform: &str,
+    ) -> Vec<LinkCommand> {
+        let Some(db) = db() else { return Vec::new() };
+        let now = chrono::Utc::now().timestamp();
+        let _ = db.conn.execute(
+            "INSERT INTO link_devices (device, username, name, platform, last_seen) VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (device, username) DO UPDATE SET name = ?3, platform = ?4, last_seen = ?5",
+            rusqlite::params![device, username, name, platform, now],
+        );
+        let _ = db.conn.execute(
+            "DELETE FROM link_outbox WHERE created_at < ?1",
+            [now - KEEP_SECS],
+        );
+        let waiting: Vec<(i64, String)> = db
+            .conn
+            .prepare("SELECT id, command FROM link_outbox WHERE device = ?1 AND username = ?2 ORDER BY id")
+            .and_then(|mut s| {
+                s.query_map([device, username], |r| Ok((r.get(0)?, r.get(1)?)))?
+                    .collect()
+            })
+            .unwrap_or_default();
+        let _ = db.conn.execute(
+            "DELETE FROM link_outbox WHERE device = ?1 AND username = ?2",
+            [device, username],
+        );
+        if !waiting.is_empty() {
+            log::info!("link: {} waiting commands for {name}", waiting.len());
+        }
+        waiting
+            .into_iter()
+            .filter_map(|(_, c)| serde_json::from_str(&c).ok())
+            .collect()
+    }
+
+    /// Queue `cmd` for each known device in scope that is not in `live`.
+    pub fn queue_for_absent(
+        username: Option<&str>,
+        live: &[(String, String)],
+        cmd: &LinkCommand,
+    ) -> Vec<String> {
+        let Some(db) = db() else { return Vec::new() };
+        let known: Vec<(String, String, String)> = db
+            .conn
+            .prepare("SELECT device, username, name FROM link_devices")
+            .and_then(|mut s| {
+                s.query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+                    .collect()
+            })
+            .unwrap_or_default();
+        let Ok(text) = serde_json::to_string(cmd) else {
+            return Vec::new();
+        };
+        let is_sync = matches!(cmd, LinkCommand::Sync { .. });
+        let now = chrono::Utc::now().timestamp();
+        let mut queued = Vec::new();
+        for (device, user, name) in known {
+            if username.is_some_and(|u| u != user)
+                || live.iter().any(|(d, u)| *d == device && *u == user)
+            {
+                continue;
+            }
+            if is_sync {
+                // One pending sync is enough; a full one covers an incremental.
+                let _ = db.conn.execute(
+                    "DELETE FROM link_outbox WHERE device = ?1 AND username = ?2 AND command LIKE '{\"type\":\"sync\"%'",
+                    [&device, &user],
+                );
+            }
+            if db
+                .conn
+                .execute(
+                    "INSERT INTO link_outbox (device, username, command, created_at) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![device, user, text, now],
+                )
+                .is_ok()
+            {
+                queued.push(name);
+            }
+        }
+        queued
     }
 }
 
@@ -321,6 +596,52 @@ fn pick(clients: &[ClientInfo], now: i64) -> Result<&ClientInfo, String> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_playlist_order_adds_the_named_tracks_once_they_arrive() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let db = koan_core::db::connection::Database::open(&path).unwrap();
+        let playlist =
+            koan_core::db::queries::create_playlist(&db.conn, "cyberpunk", None).unwrap();
+        let order = Order {
+            id: "o1".into(),
+            username: None,
+            client: None,
+            artist: "Perturbator".into(),
+            album: "Dangerous Days".into(),
+            play_next: false,
+            playlist: Some(playlist),
+            titles: vec!["Future Club".into()],
+            created_at: chrono::Utc::now().timestamp(),
+        };
+        registry().add_order(order);
+
+        // Not in the library yet: nothing happens, and the order waits.
+        fulfil_from(&path);
+        assert!(registry().orders(None).iter().any(|o| o.id == "o1"));
+
+        db.conn
+            .execute_batch(
+                "INSERT INTO artists (id, name) VALUES (1, 'Perturbator');
+                 INSERT INTO albums (id, title, artist_id) VALUES (1, 'Dangerous Days', 1);
+                 INSERT INTO tracks (id, title, album_id, artist_id, track_number, path) VALUES
+                   (1, 'Welcome Back', 1, 1, 1, '/1.flac'), (2, 'Future Club', 1, 1, 2, '/2.flac');",
+            )
+            .unwrap();
+        fulfil_from(&path);
+        let held: Vec<i64> = db
+            .conn
+            .prepare("SELECT track_id FROM playlist_tracks WHERE playlist_id = ?1")
+            .unwrap()
+            .query_map([playlist], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(held, [2]);
+        assert!(!registry().orders(None).iter().any(|o| o.id == "o1"));
+    }
+
     use super::*;
 
     #[test]

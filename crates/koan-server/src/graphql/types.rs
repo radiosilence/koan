@@ -607,6 +607,9 @@ pub(super) struct GqlClientOrder {
     pub album: String,
     pub client: Option<String>,
     pub play_next: bool,
+    /// The playlist it adds to, for `addToPlaylistWhenAdded`.
+    pub playlist_id: Option<i64>,
+    pub titles: Vec<String>,
     /// Unix seconds.
     pub created_at: i64,
 }
@@ -619,6 +622,8 @@ impl From<crate::clients::Order> for GqlClientOrder {
             album: o.album,
             client: o.client,
             play_next: o.play_next,
+            playlist_id: o.playlist,
+            titles: o.titles,
             created_at: o.created_at,
         }
     }
