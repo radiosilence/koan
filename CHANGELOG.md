@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.38.0
+
+### Added
+
+- **A linked app is a full remote.** Each app now reports what it is playing, where in the track, whether radio is on, and its queue; `clients` shows all of it, so "what's playing on my phone" has an answer. New mutations skip to a track (`jumpOnClient`, from the queue or slotted in), seek, play next, remove, clear, toggle radio and sync the app's library.
+- **Queue an album once it has downloaded.** `queueOnClientWhenAdded(artist, album)` waits for an album to reach the library (after slsk's `grab`, say) and then queues it on the device, so "play them, and add their latest album when it lands" needs no one to come back and check.
+- **The server works out which device is meant.** Without a `client`, a command goes to the app that is playing, else the one that played in the last six hours; with several linked and none of them recent, it answers with the choices so an assistant asks.
+- **iOS: stay reachable when paused.** A backgrounded app that is not playing is suspended by iOS, which cuts its link. With this on (the default), it keeps running after a pause by playing silence: indefinitely on the charger, and for a chosen time on battery. Opening the app relinks at once rather than at the next retry.
+
+### Changed
+
+- **The MCP says what it is for.** Its tools and instructions described a music player and led with `pause` and `nowPlaying`, which on a server drive a headless player nobody hears, so an assistant asked to pause the music paused that, found nothing playing and blamed the browser. Served over HTTP, the instructions now lead with the linked devices and say outright that the server's own player is never the user's music; on stdio, where it is, they still lead with it. The tool descriptions name the requests they answer ("pause the music on my desktop"), so an assistant picks kōan without being told to.
+
+### Fixed
+
+- **The time labels no longer wrap** for tracks of an hour or more ("9:02:03").
+- **An app's library pages show what a push brought in.** A pushed track the app had not synced yet triggered a sync, but the pages did not know to read again.
+
 ## 0.37.0
 
 ### Added

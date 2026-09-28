@@ -113,17 +113,28 @@ The page and its audio answer for the share's own tracks and nothing else, addre
 
 ## Playing on a linked app
 
-The macOS and iOS apps, signed in to a kōan server, hold a WebSocket open to it at `/rest/koanLink` (authenticated like any other `/rest` call; a kōan extension, not part of OpenSubsonic). The server lists them in the GraphQL `clients` query and can tell one what to play:
+The macOS and iOS apps, signed in to a kōan server, hold a WebSocket open to it at `/rest/koanLink` (authenticated like any other `/rest` call; a kōan extension, not part of OpenSubsonic). Down it the server sends commands; up it each app reports what it is playing, where it is in the track, whether radio is on, and its queue.
 
 ```graphql
-{ clients { id name platform } }
-mutation { playOnClient(trackIds: ["812", "813"], client: "iPhone") { ok message } }
-mutation { controlClient(action: PAUSE) { ok message } }
+{ clients { name platform playing nowPlaying positionMs queue { trackId title current } } }
+mutation { playOnClient(trackIds: ["812", "813"]) { ok message } }
+mutation { queueOnClientWhenAdded(artist: "Rilo Kiley", album: "Under the Blacklight") { id } }
 ```
 
-`client` is an id or name from `clients`; without it, the most recently linked app of the caller's account. `enqueue: true` appends instead of replacing the queue. Track ids are the server's; the app syncs first if it has not seen one yet. This is what lets an assistant on the server's MCP build a playlist from the library and have it start on a phone.
+| Mutation | Does |
+|---|---|
+| `playOnClient(trackIds, startAt, enqueue)` | Replace the queue and play, or append with `enqueue: true` |
+| `playNextOnClient(trackIds)` | Insert after the current track |
+| `jumpOnClient(trackId)` | Play that track: from the queue, or slotted in after the current one |
+| `removeFromClient(trackIds)`, `clearClient` | Edit the queue |
+| `controlClient(action)`, `seekOnClient(positionMs)` | Pause, resume, next, previous; seek |
+| `setClientRadio(enabled)` | Radio on or off |
+| `syncClient` | Pull what the server has added since the app last synced |
+| `queueOnClientWhenAdded(artist, album, playNext)` | Queue an album once it is in the library, e.g. one slsk is downloading. Checked after every library scan; lapses after a day. `clientOrders` lists them, `cancelClientOrder` withdraws one |
 
-An app only stays linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds.
+Every mutation takes an optional `client`, an id or name from `clients`. Without it the server picks the app that is playing, else the one that played in the last six hours, else the only one linked, and otherwise answers with the choices so the caller can ask. Track ids are the server's; an app that has not seen one syncs first, and its pages show what the sync brought in. A user sees and commands their own account's apps; an admin sees everyone's.
+
+An app is linked while it runs. iOS suspends a backgrounded app that is not playing, and the server drops a link it has not heard from in 100 seconds. The iOS app's **Stay reachable when paused** setting (Settings → Playback) keeps it running after a pause by playing silence: indefinitely on the charger, and for a chosen time on battery, since it keeps the audio hardware awake. Opening the app relinks at once.
 
 ## In a container
 

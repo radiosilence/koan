@@ -352,6 +352,9 @@ impl QueryRoot {
         .await
     }
 
+    /// What this process's own player is doing. On a server that player is
+    /// headless and nobody hears it; what the user is listening to is in
+    /// `clients`.
     async fn now_playing(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlNowPlaying> {
         let state = ctx.data::<Arc<SharedPlayerState>>()?;
         Ok(GqlNowPlaying::capture(state))
@@ -387,6 +390,17 @@ impl QueryRoot {
             .list(scope.as_deref())
             .into_iter()
             .map(GqlClient::from)
+            .collect()
+    }
+
+    /// Albums waiting to be queued on a device when they arrive; see
+    /// `queueOnClientWhenAdded`.
+    async fn client_orders(&self, ctx: &Context<'_>) -> Vec<GqlClientOrder> {
+        let scope = super::client_scope(ctx);
+        crate::clients::registry()
+            .orders(scope.as_deref())
+            .into_iter()
+            .map(GqlClientOrder::from)
             .collect()
     }
 

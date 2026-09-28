@@ -9,8 +9,9 @@
 
 use std::net::TcpStream;
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
+use parking_lot::{Condvar, Mutex};
 use serde::{Deserialize, Serialize};
 use tungstenite::stream::MaybeTlsStream;
 
@@ -34,10 +35,95 @@ pub enum LinkCommand {
     Enqueue {
         track_ids: Vec<String>,
     },
+    /// Insert these tracks after the current one.
+    #[serde(rename_all = "camelCase")]
+    PlayNext {
+        track_ids: Vec<String>,
+    },
+    /// Take every queue entry for these tracks out of the queue.
+    #[serde(rename_all = "camelCase")]
+    Remove {
+        track_ids: Vec<String>,
+    },
+    Clear,
+    Radio {
+        enabled: bool,
+    },
+    /// Pull what the server has added since the last sync.
+    Sync,
+    /// Play this track: from where it sits in the queue, or slotted in after
+    /// the current one when the queue does not hold it.
+    #[serde(rename_all = "camelCase")]
+    JumpTo {
+        track_id: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    Seek {
+        position_ms: u64,
+    },
     Pause,
     Resume,
     Next,
     Previous,
+}
+
+/// What a linked client tells the server about itself, as it changes.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkState {
+    pub playing: bool,
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    #[serde(default)]
+    pub album: Option<String>,
+    /// Into the current track, as of when this was sent.
+    #[serde(default)]
+    pub position_ms: u64,
+    #[serde(default)]
+    pub duration_ms: u64,
+    #[serde(default)]
+    pub radio: bool,
+    /// The queue, or the part of it around the current track when it is long.
+    #[serde(default)]
+    pub queue: Vec<LinkQueueEntry>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkQueueEntry {
+    /// The server's id for the track; `None` for a file only this device has.
+    pub track_id: Option<String>,
+    pub title: String,
+    pub artist: String,
+    pub current: bool,
+}
+
+impl LinkState {
+    /// Whether `self` says something `sent`, reported `elapsed` ago, did not.
+    /// A playhead moving at one second per second is not news; a seek, a
+    /// pause, another track or an edited queue is.
+    pub fn differs(&self, sent: &LinkState, elapsed: Duration) -> bool {
+        let strip = |s: &LinkState| LinkState {
+            position_ms: 0,
+            ..s.clone()
+        };
+        if strip(self) != strip(sent) {
+            return true;
+        }
+        let expected = if sent.playing {
+            sent.position_ms + elapsed.as_millis() as u64
+        } else {
+            sent.position_ms
+        };
+        self.position_ms.abs_diff(expected) > 3000
+    }
+}
+
+/// A message from a client, up the same socket.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum LinkReport {
+    State(LinkState),
 }
 
 /// How a client describes itself when it links.
@@ -74,36 +160,44 @@ impl LinkIdentity {
 }
 
 /// Keep a link open to the configured server for as long as the process runs,
-/// handing each command to `on_command` on the link's own thread.
+/// handing each command to `on_command` on the link's own thread, and telling
+/// the server what `state` says whenever it changes: which of a person's
+/// devices is the one playing is how the server picks where to send music.
 ///
 /// Reads the config before every attempt, so signing in later links without a
 /// restart. A server that is not koan is checked once per sign-in and left
 /// alone: Navidrome has no such endpoint.
-pub fn spawn(identity: LinkIdentity, on_command: impl Fn(LinkCommand) + Send + 'static) {
+pub fn spawn(
+    identity: LinkIdentity,
+    on_command: impl Fn(LinkCommand) + Send + 'static,
+    state: impl Fn() -> LinkState + Send + 'static,
+) {
     std::thread::Builder::new()
         .name("koan-link".into())
-        .spawn(move || run(identity, on_command))
+        .spawn(move || run(identity, on_command, state))
         .expect("failed to spawn the link thread");
 }
 
 const RETRY_MIN: Duration = Duration::from_secs(2);
 const RETRY_MAX: Duration = Duration::from_secs(60);
-/// A read that sees nothing for this long pings, so a dead connection is
+/// A link that has heard nothing for this long pings, so a dead connection is
 /// noticed rather than waited on forever.
 const IDLE: Duration = Duration::from_secs(45);
+/// How often the link looks at the player's state between messages.
+const TICK: Duration = Duration::from_secs(3);
 
-fn run(identity: LinkIdentity, on_command: impl Fn(LinkCommand)) {
+fn run(identity: LinkIdentity, on_command: impl Fn(LinkCommand), state: impl Fn() -> LinkState) {
     let mut wait = RETRY_MIN;
     // The credentials last found not to be a koan server.
     let mut not_koan: Option<SubsonicAuth> = None;
     loop {
         let cfg = Config::load().unwrap_or_default();
         let Some(auth) = subsonic_auth(&cfg) else {
-            std::thread::sleep(RETRY_MAX);
+            rest(RETRY_MAX);
             continue;
         };
         if not_koan.as_ref() == Some(&auth) {
-            std::thread::sleep(RETRY_MAX);
+            rest(RETRY_MAX);
             continue;
         }
         match subsonic_client(&cfg).map(|c| c.server_type()) {
@@ -114,7 +208,7 @@ fn run(identity: LinkIdentity, on_command: impl Fn(LinkCommand)) {
                 continue;
             }
             _ => {
-                std::thread::sleep(wait);
+                rest(wait);
                 wait = (wait * 2).min(RETRY_MAX);
                 continue;
             }
@@ -124,15 +218,39 @@ fn run(identity: LinkIdentity, on_command: impl Fn(LinkCommand)) {
             Ok(socket) => {
                 log::info!("link: connected to {}", auth.base_url);
                 wait = RETRY_MIN;
-                if let Err(e) = serve(socket, &on_command) {
+                if let Err(e) = serve(socket, &on_command, &state) {
                     log::info!("link: closed: {e}");
                 }
             }
             Err(e) => log::warn!("link: {e}"),
         }
-        std::thread::sleep(wait);
+        if rest(wait) {
+            wait = RETRY_MIN;
+            continue;
+        }
         wait = (wait * 2).min(RETRY_MAX);
     }
+}
+
+static NUDGE: (Mutex<bool>, Condvar) = (Mutex::new(false), Condvar::new());
+
+/// Try to link again now, rather than when the backoff runs out.
+///
+/// For an app coming back to the foreground: iOS suspends a backgrounded app,
+/// its link dies with it, and the retry it was sleeping towards can be a minute
+/// away. Does nothing to a link that is up.
+pub fn nudge() {
+    *NUDGE.0.lock() = true;
+    NUDGE.1.notify_all();
+}
+
+/// Wait `d`, or less if nudged. True when nudged.
+fn rest(d: Duration) -> bool {
+    let mut nudged = NUDGE.0.lock();
+    if !*nudged {
+        NUDGE.1.wait_for(&mut nudged, d);
+    }
+    std::mem::replace(&mut *nudged, false)
 }
 
 type Socket = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
@@ -146,7 +264,7 @@ fn connect(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<Socket, Strin
         _ => return Ok(socket),
     };
     stream
-        .set_read_timeout(Some(IDLE))
+        .set_read_timeout(Some(TICK))
         .map_err(|e| e.to_string())?;
     Ok(socket)
 }
@@ -174,44 +292,69 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
     Ok(format!("{base}/rest/koanLink?{query}"))
 }
 
-fn serve(mut socket: Socket, on_command: &impl Fn(LinkCommand)) -> Result<(), String> {
+fn serve(
+    mut socket: Socket,
+    on_command: &impl Fn(LinkCommand),
+    state: &impl Fn() -> LinkState,
+) -> Result<(), String> {
+    let mut heard = Instant::now();
     let mut pinged = false;
+    let mut sent: Option<(LinkState, Instant)> = None;
     loop {
+        let now = state();
+        if sent
+            .as_ref()
+            .is_none_or(|(s, at)| now.differs(s, at.elapsed()))
+        {
+            let text = serde_json::to_string(&LinkReport::State(now.clone()))
+                .map_err(|e| e.to_string())?;
+            socket
+                .send(tungstenite::Message::Text(text.into()))
+                .map_err(|e| e.to_string())?;
+            sent = Some((now, Instant::now()));
+        }
         match socket.read() {
             Ok(tungstenite::Message::Text(text)) => {
-                pinged = false;
+                (heard, pinged) = (Instant::now(), false);
                 match serde_json::from_str::<LinkCommand>(&text) {
                     Ok(cmd) => on_command(cmd),
                     Err(e) => log::warn!("link: not a command ({e}): {text}"),
                 }
             }
             Ok(tungstenite::Message::Close(_)) => return Err("closed by the server".into()),
-            Ok(_) => pinged = false,
+            Ok(_) => (heard, pinged) = (Instant::now(), false),
             Err(tungstenite::Error::Io(e))
                 if matches!(
                     e.kind(),
                     std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
                 ) =>
             {
+                if heard.elapsed() < IDLE {
+                    continue;
+                }
                 if pinged {
                     return Err("no answer to a ping".into());
                 }
                 socket
                     .send(tungstenite::Message::Ping(Vec::new().into()))
                     .map_err(|e| e.to_string())?;
-                pinged = true;
+                (heard, pinged) = (Instant::now(), true);
             }
             Err(e) => return Err(e.to_string()),
         }
     }
 }
 
-/// This library's tracks for the server's ids, in the order given.
+/// This library's tracks for the server's ids, in the order given, and
+/// whether a sync ran to find them.
 ///
 /// A server can name a track added since the last sync; if any are missing, an
 /// incremental sync runs first, and whatever is still missing after it is left
 /// out.
-pub fn resolve_tracks(db: &crate::db::connection::Database, remote_ids: &[String]) -> Vec<i64> {
+pub fn resolve_tracks(
+    db: &crate::db::connection::Database,
+    remote_ids: &[String],
+) -> (Vec<i64>, bool) {
     let lookup = |db: &crate::db::connection::Database| {
         let mut stmt = db
             .conn
@@ -227,8 +370,14 @@ pub fn resolve_tracks(db: &crate::db::connection::Database, remote_ids: &[String
     };
     let found = lookup(db);
     if found.iter().all(Option::is_some) {
-        return found.into_iter().flatten().collect();
+        return (found.into_iter().flatten().collect(), false);
     }
+    sync(db);
+    (lookup(db).into_iter().flatten().collect(), true)
+}
+
+/// An incremental sync from the configured server.
+pub fn sync(db: &crate::db::connection::Database) {
     let cfg = Config::load().unwrap_or_default();
     if let Some(client) = subsonic_client(&cfg)
         && let Err(e) = crate::remote::sync::sync_library(
@@ -240,9 +389,8 @@ pub fn resolve_tracks(db: &crate::db::connection::Database, remote_ids: &[String
             &|_| {},
         )
     {
-        log::warn!("link: sync before playing failed: {e}");
+        log::warn!("link: sync failed: {e}");
     }
-    lookup(db).into_iter().flatten().collect()
 }
 
 /// A random id kept in the config directory.
@@ -306,6 +454,35 @@ mod tests {
             serde_json::from_str::<LinkCommand>(r#"{"type":"pause"}"#).unwrap(),
             LinkCommand::Pause
         );
+        let report = LinkReport::State(LinkState {
+            playing: true,
+            title: Some("Portions for Foxes".into()),
+            ..Default::default()
+        });
+        let json = serde_json::to_string(&report).unwrap();
+        assert!(json.starts_with(r#"{"type":"state","playing":true,"title":"Portions for Foxes""#));
+        assert_eq!(serde_json::from_str::<LinkReport>(&json).unwrap(), report);
+    }
+
+    #[test]
+    fn a_playhead_moving_on_time_is_not_news() {
+        let sent = LinkState {
+            playing: true,
+            position_ms: 10_000,
+            ..Default::default()
+        };
+        let later = |pos| LinkState {
+            position_ms: pos,
+            ..sent.clone()
+        };
+        let five = Duration::from_secs(5);
+        assert!(!later(15_000).differs(&sent, five));
+        assert!(later(60_000).differs(&sent, five), "a seek");
+        let paused = LinkState {
+            playing: false,
+            ..later(15_000)
+        };
+        assert!(paused.differs(&sent, five));
     }
 
     #[test]

@@ -534,16 +534,91 @@ pub(super) struct GqlClient {
     pub username: String,
     /// Unix seconds.
     pub connected_at: i64,
+    /// Whether it is playing right now.
+    pub playing: bool,
+    /// "Artist — Title" of what it has loaded, if anything.
+    pub now_playing: Option<String>,
+    pub album: Option<String>,
+    /// Into the current track, now: reported, and run on since if playing.
+    pub position_ms: u64,
+    pub duration_ms: u64,
+    /// Whether radio is topping its queue up.
+    pub radio: bool,
+    /// Unix seconds; when it was last seen playing since it linked.
+    pub last_played_at: Option<i64>,
+    /// Its queue, or the part around the current track when it is long.
+    pub queue: Vec<GqlClientQueueEntry>,
+}
+
+#[derive(SimpleObject)]
+#[graphql(name = "ClientQueueEntry")]
+pub(super) struct GqlClientQueueEntry {
+    /// This server's id for the track, for `jumpOnClient`; null for a file
+    /// only the device has.
+    pub track_id: Option<String>,
+    pub title: String,
+    pub artist: String,
+    /// The track the device is on.
+    pub current: bool,
 }
 
 impl From<crate::clients::ClientInfo> for GqlClient {
     fn from(c: crate::clients::ClientInfo) -> Self {
+        let position_ms = c.position_ms();
         Self {
             id: c.id,
             name: c.name,
             platform: c.platform,
             username: c.username,
             connected_at: c.connected_at,
+            playing: c.state.playing,
+            now_playing: match (c.state.artist, c.state.title) {
+                (Some(a), Some(t)) => Some(format!("{a} — {t}")),
+                (None, Some(t)) => Some(t),
+                _ => None,
+            },
+            last_played_at: c.last_played_at,
+            album: c.state.album.clone(),
+            position_ms,
+            duration_ms: c.state.duration_ms,
+            radio: c.state.radio,
+            queue: c
+                .state
+                .queue
+                .into_iter()
+                .map(|q| GqlClientQueueEntry {
+                    track_id: q.track_id,
+                    title: q.title,
+                    artist: q.artist,
+                    current: q.current,
+                })
+                .collect(),
+        }
+    }
+}
+
+/// An album to queue on a device once it is in the library.
+#[derive(SimpleObject)]
+#[graphql(name = "ClientOrder")]
+pub(super) struct GqlClientOrder {
+    pub id: String,
+    pub artist: String,
+    pub album: String,
+    pub client: Option<String>,
+    pub play_next: bool,
+    /// Unix seconds.
+    pub created_at: i64,
+}
+
+impl From<crate::clients::Order> for GqlClientOrder {
+    fn from(o: crate::clients::Order) -> Self {
+        Self {
+            id: o.id,
+            artist: o.artist,
+            album: o.album,
+            client: o.client,
+            play_next: o.play_next,
+            created_at: o.created_at,
         }
     }
 }

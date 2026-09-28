@@ -36,7 +36,14 @@ pub fn cmd_serve(
 
     // A server has no one to press "scan": index at start and whenever the
     // library folders change, as the macOS app does.
-    koan_core::helpers::spawn_library_watch(db_path, |_| {});
+    let watched = db_path.clone();
+    koan_core::helpers::spawn_library_watch(db_path, move |running| {
+        // A scan that just finished may have brought in an album someone asked
+        // to have queued when it arrived.
+        if !running {
+            crate::clients::fulfil_from(&watched);
+        }
+    });
 
     if let Some(addr) = mcp_bind {
         match crate::mcp::spawn_http(addr, state.clone(), cmd_tx.clone(), pool.clone()) {

@@ -275,7 +275,11 @@ struct SeekBar: View {
             elapsed
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .trailing)
+                // At least the width of "0:00", and wider for an hour or more
+                // rather than wrapping.
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 40, alignment: .trailing)
 
             GeometryReader { geo in
                 // Drawn rather than sized. Capsules whose `frame(width:)`
@@ -324,7 +328,9 @@ struct SeekBar: View {
             Text(Format.duration(player.durationMs))
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .leading)
+                .lineLimit(1)
+                .fixedSize()
+                .frame(minWidth: 40, alignment: .leading)
         }
         .disabled(player.durationMs == 0)
     }

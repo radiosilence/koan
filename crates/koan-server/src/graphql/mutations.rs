@@ -70,6 +70,9 @@ pub struct MutationRoot;
 impl MutationRoot {
     // -- Playback --
 
+    /// This process's own player. On a server nobody hears it: for the
+    /// music the user is listening to, use `controlClient` and the other
+    /// `...OnClient` mutations.
     async fn play(
         &self,
         ctx: &Context<'_>,
@@ -84,7 +87,9 @@ impl MutationRoot {
     /// Play tracks on a linked koan app rather than on the server: replace
     /// its queue with `trackIds` and start at `startAt`, or append them with
     /// `enqueue`. `client` is a client's id or name from `clients`; without
-    /// it, the most recently linked one.
+    /// it, the one playing, else the one that played most recently. With
+    /// several linked and none of them playing lately it is an error naming
+    /// them: ask the person which.
     async fn play_on_client(
         &self,
         ctx: &Context<'_>,
@@ -114,6 +119,151 @@ impl MutationRoot {
         )))
     }
 
+    /// Play one track on a linked koan app: from where it is in that app's
+    /// queue (see `clients { queue }`), or slotted in after the current track
+    /// when the queue does not hold it. `client` as for `playOnClient`.
+    async fn jump_on_client(
+        &self,
+        ctx: &Context<'_>,
+        track_id: async_graphql::ID,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let sent = send_to_client(
+            ctx,
+            client.as_deref(),
+            LinkCommand::JumpTo {
+                track_id: track_id.0,
+            },
+        )?;
+        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
+    }
+
+    /// Insert tracks after the current one on a linked koan app.
+    async fn play_next_on_client(
+        &self,
+        ctx: &Context<'_>,
+        track_ids: Vec<async_graphql::ID>,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let track_ids: Vec<String> = track_ids.into_iter().map(|id| id.0).collect();
+        let count = track_ids.len();
+        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::PlayNext { track_ids })?;
+        Ok(GqlStatus::success(format!(
+            "{count} tracks next on {}",
+            sent.name
+        )))
+    }
+
+    /// Take tracks out of a linked koan app's queue (every entry for each).
+    async fn remove_from_client(
+        &self,
+        ctx: &Context<'_>,
+        track_ids: Vec<async_graphql::ID>,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let track_ids = track_ids.into_iter().map(|id| id.0).collect();
+        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Remove { track_ids })?;
+        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
+    }
+
+    /// Have a linked koan app pull what this server has added since it last
+    /// synced. Pushing tracks it has not seen does this on its own.
+    async fn sync_client(
+        &self,
+        ctx: &Context<'_>,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Sync)?;
+        Ok(GqlStatus::success(format!("syncing {}", sent.name)))
+    }
+
+    /// Empty a linked koan app's queue.
+    async fn clear_client(
+        &self,
+        ctx: &Context<'_>,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Clear)?;
+        Ok(GqlStatus::success(format!("cleared {}", sent.name)))
+    }
+
+    /// Turn radio (the queue topping itself up with similar tracks) on or off
+    /// on a linked koan app.
+    async fn set_client_radio(
+        &self,
+        ctx: &Context<'_>,
+        enabled: bool,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Radio { enabled })?;
+        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
+    }
+
+    /// Queue an album on a linked koan app once it is in the library: for
+    /// one being downloaded now (slsk's `grab`). Matched by artist and title
+    /// substrings after each library scan; if it is already here it is sent
+    /// at once. Unfulfilled orders lapse after a day. `client` as for
+    /// `playOnClient`, resolved when the album arrives.
+    async fn queue_on_client_when_added(
+        &self,
+        ctx: &Context<'_>,
+        artist: String,
+        album: String,
+        client: Option<String>,
+        play_next: Option<bool>,
+    ) -> async_graphql::Result<GqlClientOrder> {
+        require_role(ctx, Role::User)?;
+        let order = crate::clients::Order {
+            id: uuid::Uuid::now_v7().to_string(),
+            username: super::client_scope(ctx),
+            client,
+            artist,
+            album,
+            play_next: play_next.unwrap_or(false),
+            created_at: chrono::Utc::now().timestamp(),
+        };
+        crate::clients::registry().add_order(order.clone());
+        super::blocking(|| {
+            crate::clients::fulfil_from(&koan_core::config::db_path());
+            Ok(())
+        })
+        .await?;
+        Ok(order.into())
+    }
+
+    /// Withdraw an order made with `queueOnClientWhenAdded`.
+    async fn cancel_client_order(
+        &self,
+        ctx: &Context<'_>,
+        id: String,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let scope = super::client_scope(ctx);
+        if crate::clients::registry().cancel_order(scope.as_deref(), &id) {
+            Ok(GqlStatus::success("cancelled"))
+        } else {
+            Err(async_graphql::Error::new("no such order"))
+        }
+    }
+
+    /// Seek within the current track on a linked koan app.
+    async fn seek_on_client(
+        &self,
+        ctx: &Context<'_>,
+        position_ms: u64,
+        client: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let sent = send_to_client(ctx, client.as_deref(), LinkCommand::Seek { position_ms })?;
+        Ok(GqlStatus::success(format!("sent to {}", sent.name)))
+    }
+
     /// Pause, resume or skip on a linked koan app; see `playOnClient`.
     async fn control_client(
         &self,
@@ -132,18 +282,27 @@ impl MutationRoot {
         Ok(GqlStatus::success(format!("sent to {}", sent.name)))
     }
 
+    /// This process's own player. On a server nobody hears it: for the
+    /// music the user is listening to, use `controlClient` and the other
+    /// `...OnClient` mutations.
     async fn pause(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::Pause)?;
         Ok(GqlStatus::success("paused"))
     }
 
+    /// This process's own player. On a server nobody hears it: for the
+    /// music the user is listening to, use `controlClient` and the other
+    /// `...OnClient` mutations.
     async fn resume(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::Resume)?;
         Ok(GqlStatus::success("resumed"))
     }
 
+    /// This process's own player. On a server nobody hears it: for the
+    /// music the user is listening to, use `controlClient` and the other
+    /// `...OnClient` mutations.
     async fn stop(&self, ctx: &Context<'_>) -> async_graphql::Result<GqlStatus> {
         require_role(ctx, Role::User)?;
         send_cmd(ctx, PlayerCommand::Stop)?;
@@ -1031,10 +1190,5 @@ fn send_to_client(
     let scope = super::client_scope(ctx);
     crate::clients::registry()
         .send(scope.as_deref(), client, cmd)
-        .ok_or_else(|| {
-            async_graphql::Error::new(match client {
-                Some(c) => format!("no linked client {c}; see `clients`"),
-                None => "no koan app is linked to this server; open koan on the device".into(),
-            })
-        })
+        .map_err(async_graphql::Error::new)
 }
