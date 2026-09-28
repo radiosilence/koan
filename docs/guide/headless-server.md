@@ -117,4 +117,4 @@ The image at `ghcr.io/radiosilence/koan` runs `koan --headless --bind 0.0.0.0`, 
 
 MCP over HTTP (`KOAN_MCP_BIND=0.0.0.0:8081`) carries no credential of its own, like the stdio transport: put an authenticating gateway in front of it and let nothing else reach that port.
 
-On Kubernetes, a Helm chart is published alongside each release at `oci://ghcr.io/radiosilence/charts/koan`. See [charts/koan/README.md](../../charts/koan/README.md) for install instructions and values.
+On Kubernetes, a versioned Pulumi component package, [`@radiosilence/koan-pulumi`](https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi), is published to GitHub Packages alongside each release. It exports `createKoan`, which builds the Deployment, its init container, Services and NetworkPolicy from a config object validated against `KoanConfSchema`.

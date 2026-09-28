@@ -1,0 +1,44 @@
+{
+  "name": "@radiosilence/koan-pulumi",
+  "version": "0.36.8",
+  "description": "Pulumi component that deploys koan, a bit-perfect music server, into Kubernetes",
+  "license": "MIT",
+  "author": "James Cleveland <jc@blit.cc>",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/radiosilence/koan.git",
+    "directory": "deploy/pulumi"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json && vitest run",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "@pulumi/kubernetes": "^4",
+    "@pulumi/pulumi": "^3",
+    "zod": "^4"
+  },
+  "devDependencies": {
+    "@pulumi/kubernetes": "4.30.0",
+    "@pulumi/pulumi": "3.239.0",
+    "typescript": "6.0.3",
+    "vitest": "^4",
+    "zod": "4.4.3"
+  }
+}

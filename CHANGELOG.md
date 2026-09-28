@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **The Helm chart is replaced by a Pulumi component package, published to GitHub Packages with each release at the app's version.** The estate this server deploys into is managed with Pulumi, and its updater follows npm packages rather than an OCI-hosted Helm chart.
+
 ## 0.36.8
 
 ### Fixed
