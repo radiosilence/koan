@@ -329,6 +329,8 @@ final class LibraryModel {
         /// Biography and photograph, as cached. Filled in from the network
         /// after the page is up — see `enrich(artist:)`.
         var info: ArtistInfo?
+        /// A network lookup is under way and nothing is cached to show yet.
+        var infoLoading = false
     }
 
     /// Read an artist and everything their page draws, at once and off the main
@@ -347,13 +349,15 @@ final class LibraryModel {
                 )
                 async let similar = try? await engine.similarArtists(artistId: id)
                 async let info = try? await engine.artistInfo(artistId: id)
+                let cached = await info ?? nil
                 return ArtistRecord(
                     artistId: id,
                     stamp: stamp,
                     artist: await artist ?? nil,
                     albums: await albums ?? [],
                     similar: await similar ?? [],
-                    info: await info ?? nil
+                    info: cached,
+                    infoLoading: cached == nil
                 )
             }.value
         }
@@ -370,8 +374,9 @@ final class LibraryModel {
         let engine = self.engine
         Task {
             let fetched = try? await engine.fetchArtistInfo(artistId: id)
-            guard let fetched, detailArtist?.artistId == id, detailArtist?.info != fetched
-            else { return }
+            guard detailArtist?.artistId == id else { return }
+            detailArtist?.infoLoading = false
+            guard let fetched, detailArtist?.info != fetched else { return }
             detailArtist?.info = fetched
         }
     }

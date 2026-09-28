@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.36.10
+
+### Fixed
+
+- **Artists sort by name.** The listing ordered by the artist's sort name where it had one, and syncs before 0.36.2 stored a server's missing sort name as an empty string, so 1,800 artists sorted as blank, in no order, ahead of the rest. It orders by the name as it reads; tag sort names are too erratic to order by. Empty sort names, labels and genres left by those syncs are cleared when the database opens, and a sync no longer stores an empty genre or label.
+- **An artist with no biography found is asked about again.** A lookup that found nothing was cached for a month, so an artist that could not be resolved then (as with the empty ids fixed in 0.36.9) stayed blank. Misses are no longer cached, and those already cached are dropped. The page says it is looking the artist up while it does.
+- **iOS: artist rows give the name room.** The album and track counts sit under the name instead of in two columns beside it, which cut names to four letters.
+
 ## 0.36.9
 
 ### Changed
