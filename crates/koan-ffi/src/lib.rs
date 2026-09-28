@@ -3185,6 +3185,17 @@ impl KoanEngine {
                 self.send(PlayerCommand::RemoveFromPlaylistBatch(gone))
             }),
             LinkCommand::Clear => self.send(PlayerCommand::ClearPlaylist),
+            LinkCommand::Evict { track_ids } => self.db().and_then(|db| {
+                let ids = resolve_tracks(&db, &track_ids);
+                let rows = queries::tracks_by_ids(&db.conn, &ids).unwrap_or_default();
+                for path in rows.iter().filter_map(|t| t.cached_path.as_deref()) {
+                    let _ = std::fs::remove_file(path);
+                }
+                queries::clear_cached_paths_for(&db.conn, &ids).map_err(db_err)?;
+                log::info!("link: evicted {} cached tracks", ids.len());
+                self.library_changed();
+                Ok(())
+            }),
             LinkCommand::Sync => self.db().map(|db| {
                 koan_core::remote::link::sync(&db);
                 self.library_changed();

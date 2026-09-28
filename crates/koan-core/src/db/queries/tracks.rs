@@ -702,16 +702,23 @@ pub fn remove_vanished_remote(
         } else {
             "0"
         };
-        let gone: Vec<(i64, Option<i64>, Option<i64>)> = conn
+        // Track, album, artist, and where it was downloaded to.
+        type Gone = (i64, Option<i64>, Option<i64>, Option<String>);
+        let gone: Vec<Gone> = conn
             .prepare(&format!(
-                "SELECT t.id, t.album_id, t.artist_id FROM tracks t
+                "SELECT t.id, t.album_id, t.artist_id, t.cached_path FROM tracks t
                    LEFT JOIN albums al ON al.id = t.album_id
                   WHERE t.path IS NULL AND t.remote_id IS NOT NULL
                     AND ({track_gone} OR {album_gone})"
             ))?
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)))?
             .collect::<rusqlite::Result<_>>()?;
-        for (id, album, artist) in &gone {
+        for (id, album, artist, cached) in &gone {
+            // The downloaded copy goes with the row; nothing would ever play
+            // or clean it up otherwise.
+            if let Some(path) = cached {
+                let _ = std::fs::remove_file(path);
+            }
             for table in [
                 "tracks_fts WHERE rowid",
                 "lyrics_cache WHERE track_id",

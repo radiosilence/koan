@@ -181,6 +181,31 @@ impl MutationRoot {
         Ok(GqlStatus::success(format!("syncing {}", sent.name)))
     }
 
+    /// Have every linked koan app delete its downloaded copies of these
+    /// tracks, so the next play fetches them from the server again: after a
+    /// damaged file on the server has been replaced, since a device keeps the
+    /// copy it downloaded. Apps that are not linked now are not reached.
+    async fn evict_on_clients(
+        &self,
+        ctx: &Context<'_>,
+        track_ids: Vec<async_graphql::ID>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let track_ids = track_ids.into_iter().map(|id| id.0).collect();
+        let scope = super::client_scope(ctx);
+        let reached = crate::clients::registry()
+            .broadcast(scope.as_deref(), LinkCommand::Evict { track_ids });
+        if reached.is_empty() {
+            return Err(async_graphql::Error::new(
+                "no koan app is linked to this server",
+            ));
+        }
+        Ok(GqlStatus::success(format!(
+            "evicted on {}",
+            reached.join(", ")
+        )))
+    }
+
     /// Empty a linked koan app's queue.
     async fn clear_client(
         &self,

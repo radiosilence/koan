@@ -51,6 +51,12 @@ pub enum LinkCommand {
     },
     /// Pull what the server has added since the last sync.
     Sync,
+    /// Delete the downloaded copies of these tracks, so the next play fetches
+    /// them again: for a copy that was cached while the server's was bad.
+    #[serde(rename_all = "camelCase")]
+    Evict {
+        track_ids: Vec<String>,
+    },
     /// Play this track: from where it sits in the queue, or slotted in after
     /// the current one when the queue does not hold it.
     #[serde(rename_all = "camelCase")]
