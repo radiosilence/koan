@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::rc::Rc;
 
-use rusqlite::Connection;
 use rusqlite::functions::FunctionFlags;
+use rusqlite::{Connection, OpenFlags};
 use thiserror::Error;
 
 use super::schema;
@@ -65,6 +65,28 @@ impl Database {
         let _ = conn.execute_batch("PRAGMA optimize");
 
         Ok(Self { conn })
+    }
+
+    /// Apply this build's schema and migrations to a snapshot of the database
+    /// at `path`, to learn whether it would open. The original is only read,
+    /// so this is safe beside a server that has it open: it is how a deploy
+    /// finds a migration that fails on the real library before replacing the
+    /// running version.
+    pub fn check_upgrade(path: &Path) -> Result<(), DbError> {
+        let snapshot = std::env::temp_dir().join(format!("koan-check-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&snapshot);
+        let result = (|| {
+            let source = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+            source.execute("VACUUM INTO ?1", [snapshot.to_string_lossy()])?;
+            drop(source);
+            Self::open(&snapshot).map(drop)
+        })();
+        for suffix in ["", "-wal", "-shm"] {
+            let mut file = snapshot.clone().into_os_string();
+            file.push(suffix);
+            let _ = std::fs::remove_file(file);
+        }
+        result
     }
 
     /// Open an additional connection to a database whose schema is already
@@ -304,5 +326,41 @@ mod collation_tests {
             sorted(&["kraftwerk", "Kraftwerk"]),
             ["Kraftwerk", "kraftwerk"]
         );
+    }
+}
+
+#[cfg(test)]
+mod check_upgrade_tests {
+    use super::*;
+
+    #[test]
+    fn leaves_the_original_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch("CREATE TABLE marker (x); INSERT INTO marker VALUES (1);")
+            .unwrap();
+        drop(conn);
+
+        Database::check_upgrade(&path).unwrap();
+
+        let conn = Connection::open(&path).unwrap();
+        let tables: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            tables, 1,
+            "the schema went into the snapshot, not the original"
+        );
+    }
+
+    #[test]
+    fn a_missing_database_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Database::check_upgrade(&dir.path().join("absent.db")).is_err());
     }
 }
