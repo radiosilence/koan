@@ -12,6 +12,10 @@ pub(super) fn escape_like(s: &str) -> String {
 }
 
 /// Get or create an artist by name. Returns the artist ID.
+///
+/// Names that differ only in letter case are one artist: tags spell the same
+/// act "The Squire Of Gothos" on one record and "of" on the next, and two rows
+/// split its albums from its tracks. An exact match wins over a case-folded one.
 pub fn get_or_create_artist(
     conn: &Connection,
     name: &str,
@@ -20,7 +24,8 @@ pub fn get_or_create_artist(
     // Try to find existing.
     let existing: Option<i64> = conn
         .query_row(
-            "SELECT id FROM artists WHERE name = ?1",
+            "SELECT id FROM artists WHERE name = ?1 COLLATE NOCASE
+             ORDER BY name = ?1 DESC, id LIMIT 1",
             params![name],
             |row| row.get(0),
         )
@@ -137,17 +142,19 @@ fn artist_row(row: &rusqlite::Row) -> rusqlite::Result<ArtistRow> {
     })
 }
 
-/// One artist, with its counts. `None` if it owns no albums.
+/// One artist, with its counts. An artist credited only on other people's
+/// albums (a feature, a compilation track) owns none, and is still an artist:
+/// its track count is every track credited to it or on its albums.
 pub fn get_artist(conn: &Connection, artist_id: i64) -> Result<Option<ArtistRow>, DbError> {
     Ok(conn
         .query_row(
             "SELECT a.id, a.name, a.sort_name, a.remote_id,
-                    COUNT(DISTINCT al.id), COUNT(t.id)
+                    (SELECT COUNT(*) FROM albums WHERE artist_id = a.id),
+                    (SELECT COUNT(*) FROM tracks
+                      WHERE artist_id = a.id
+                         OR album_id IN (SELECT id FROM albums WHERE artist_id = a.id))
              FROM artists a
-             INNER JOIN albums al ON al.artist_id = a.id
-             LEFT JOIN tracks t ON t.album_id = al.id
-             WHERE a.id = ?1
-             GROUP BY a.id",
+             WHERE a.id = ?1",
             params![artist_id],
             artist_row,
         )
@@ -258,6 +265,34 @@ mod tests {
             rows.iter().map(|a| a.name.as_str()).collect::<Vec<_>>(),
             ["Coil"]
         );
+    }
+
+    #[test]
+    fn spellings_that_differ_only_in_case_are_one_artist() {
+        let db = stocked_db();
+        let a = get_or_create_artist(&db.conn, "The Squire of Gothos", None).unwrap();
+        let b = get_or_create_artist(&db.conn, "The Squire Of Gothos", None).unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn an_artist_with_tracks_but_no_albums_is_still_an_artist() {
+        let db = stocked_db();
+        let guest = get_or_create_artist(&db.conn, "A Guest", None).unwrap();
+        let album: i64 = db
+            .conn
+            .query_row("SELECT id FROM albums LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        db.conn
+            .execute(
+                "INSERT INTO tracks (title, album_id, artist_id, path) VALUES ('Feature', ?1, ?2, '/f.flac')",
+                params![album, guest],
+            )
+            .unwrap();
+        let artist = get_artist(&db.conn, guest)
+            .unwrap()
+            .expect("credited on a track");
+        assert_eq!((artist.album_count, artist.track_count), (0, 1));
     }
 
     #[test]

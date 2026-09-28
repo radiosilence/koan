@@ -433,6 +433,7 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
         [],
     )?;
 
+    merge_case_duplicate_artists(conn)?;
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
     // Once: `upsert_track` stores no new zeros, and the sweep reads every track.
@@ -532,6 +533,64 @@ fn table_exists(conn: &Connection, table: &str) -> rusqlite::Result<bool> {
 /// the history first. One caller does; the constraint should not depend on the
 /// next one remembering. SQLite cannot alter a constraint in place, so the
 /// table is rebuilt.
+/// Fold artists whose names differ only in letter case into one: the row that
+/// owns the most albums, then the most tracks. Tags spell one act differently
+/// from record to record, and the split left an artist's page without the
+/// albums its tracks belong to. Idempotent; a single query when there are none.
+fn merge_case_duplicate_artists(conn: &Connection) -> rusqlite::Result<()> {
+    let groups: Vec<String> = conn
+        .prepare("SELECT lower(name) FROM artists GROUP BY lower(name) HAVING COUNT(*) > 1")?
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<_>>()?;
+    for key in groups {
+        let ids: Vec<i64> = conn
+            .prepare(
+                "SELECT a.id FROM artists a WHERE lower(a.name) = ?1
+                 ORDER BY (SELECT COUNT(*) FROM albums WHERE artist_id = a.id) DESC,
+                          (SELECT COUNT(*) FROM tracks WHERE artist_id = a.id) DESC,
+                          a.id",
+            )?
+            .query_map([&key], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?;
+        let Some((&keep, rest)) = ids.split_first() else {
+            continue;
+        };
+        for &gone in rest {
+            conn.execute(
+                "UPDATE albums SET artist_id = ?1 WHERE artist_id = ?2",
+                [keep, gone],
+            )?;
+            conn.execute(
+                "UPDATE tracks SET artist_id = ?1 WHERE artist_id = ?2",
+                [keep, gone],
+            )?;
+            conn.execute(
+                "UPDATE artists SET
+                     remote_id = COALESCE(remote_id, (SELECT remote_id FROM artists WHERE id = ?2)),
+                     mbid = COALESCE(mbid, (SELECT mbid FROM artists WHERE id = ?2)),
+                     sort_name = COALESCE(sort_name, (SELECT sort_name FROM artists WHERE id = ?2))
+                 WHERE id = ?1",
+                [keep, gone],
+            )?;
+            conn.execute("DELETE FROM artist_info WHERE artist_id = ?1", [gone])?;
+            conn.execute(
+                "UPDATE OR IGNORE similar_artists SET artist_id = ?1 WHERE artist_id = ?2",
+                [keep, gone],
+            )?;
+            conn.execute(
+                "UPDATE OR IGNORE similar_artists SET similar_id = ?1 WHERE similar_id = ?2",
+                [keep, gone],
+            )?;
+            conn.execute(
+                "DELETE FROM similar_artists WHERE artist_id = ?1 OR similar_id = ?1 OR artist_id = similar_id",
+                [gone],
+            )?;
+            conn.execute("DELETE FROM artists WHERE id = ?1", [gone])?;
+        }
+    }
+    Ok(())
+}
+
 fn cascade_play_history(conn: &Connection) -> rusqlite::Result<()> {
     if fk_cascades(conn, "play_history")? {
         return Ok(());
@@ -596,6 +655,31 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> rusqlite::Resu
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn case_duplicate_artists_are_merged_on_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            super::create_tables(&conn).unwrap();
+            conn.execute_batch(
+                "INSERT INTO artists (id, name) VALUES (1, 'The Squire of Gothos'), (2, 'The Squire Of Gothos');
+                 INSERT INTO albums (id, title, artist_id) VALUES (1, 'We Do Scorpion Things', 1);
+                 INSERT INTO tracks (title, album_id, artist_id, path) VALUES ('Dark Ting', 1, 2, '/a.flac');",
+            )
+            .unwrap();
+        }
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        super::create_tables(&conn).unwrap();
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM artists"), 1);
+        assert_eq!(
+            count("SELECT artist_id FROM tracks"),
+            1,
+            "onto the album owner's spelling"
+        );
+    }
+
     #[test]
     fn empty_musicbrainz_ids_are_cleared_on_open() {
         let dir = tempfile::tempdir().unwrap();
