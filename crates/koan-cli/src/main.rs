@@ -201,6 +201,12 @@ enum Commands {
     },
     /// Show library statistics
     Library,
+    /// Check that this build can open the database: its migrations are run
+    /// on a snapshot, leaving the original untouched. Exits non-zero if not.
+    CheckDb {
+        /// Database to check (defaults to the configured one)
+        path: Option<PathBuf>,
+    },
     /// Probe a file and show format info
     Probe {
         /// Path to audio file
@@ -453,6 +459,20 @@ fn main() {
         Some(Commands::Analyze) => commands::cmd_analyze(),
         Some(Commands::Search { query }) => commands::cmd_search(&query),
         Some(Commands::Library) => commands::cmd_library(),
+        Some(Commands::CheckDb { path }) => {
+            let path = path.unwrap_or_else(koan_core::config::db_path);
+            if !path.exists() {
+                println!("{}: no database yet, nothing to migrate", path.display());
+                return;
+            }
+            match koan_core::db::connection::Database::check_upgrade(&path) {
+                Ok(()) => println!("{}: opens with this build", path.display()),
+                Err(e) => {
+                    eprintln!("{}: {e}", path.display());
+                    std::process::exit(1);
+                }
+            }
+        }
         Some(Commands::Probe { path }) => commands::cmd_probe(&path),
         Some(Commands::Devices) => commands::cmd_devices(),
         Some(Commands::Config { command }) => match command {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.39.2
+
+### Added
+
+- **A release that cannot open the library is never rolled out.** The Pulumi package runs a Job with the new image before touching the Deployment: `koan check-db` snapshots the live database with `VACUUM INTO` and applies the new build's schema and migrations to the snapshot, leaving the original untouched. The Deployment is Recreate, so a migration failing on the real library (as 0.38.5's did) used to stop the old server with nothing to replace it; now the Job fails, the deploy stops, and the running version keeps serving. A fresh install with no database passes.
+
 ## 0.39.1
 
 ### Fixed
