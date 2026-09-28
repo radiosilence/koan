@@ -534,8 +534,9 @@ pub(super) struct GqlClient {
     pub username: String,
     /// Unix seconds.
     pub connected_at: i64,
-    /// Whether it is playing right now.
-    pub playing: bool,
+    /// Whether it is playing right now; null when the app does not say (an
+    /// older build). Commands work either way.
+    pub playing: Option<bool>,
     /// "Artist — Title" of what it has loaded, if anything.
     pub now_playing: Option<String>,
     pub album: Option<String>,
@@ -571,7 +572,7 @@ impl From<crate::clients::ClientInfo> for GqlClient {
             platform: c.platform,
             username: c.username,
             connected_at: c.connected_at,
-            playing: c.state.playing,
+            playing: c.reports.then_some(c.state.playing),
             now_playing: match (c.state.artist, c.state.title) {
                 (Some(a), Some(t)) => Some(format!("{a} — {t}")),
                 (None, Some(t)) => Some(t),
