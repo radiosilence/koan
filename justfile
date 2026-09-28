@@ -634,10 +634,13 @@ ios-testflight build: (ios-ffi "iphoneos") (ios-project build)
         -authenticationKeyID "$APPLE_API_KEY_ID"
         -authenticationKeyIssuerID "$APPLE_API_ISSUER_ID"
     )
+    # KOAN_STORE leaves out what App Review would reject, such as the silent
+    # keepalive; development builds keep it.
     xcodebuild archive \
         -project apps/ios/Koan.xcodeproj -scheme Koan \
         -destination 'generic/platform=iOS' \
         -archivePath "$out/koan.xcarchive" \
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) KOAN_STORE' \
         "${auth[@]}" | tail -n 20
     # `upload` sends the export straight to App Store Connect, where it
     # appears under TestFlight once processed.

@@ -436,7 +436,7 @@ private struct PlaybackSettings: View {
                     .foregroundStyle(.tertiary)
             }
 
-            #if os(iOS)
+            #if os(iOS) && !KOAN_STORE
             ReachableSection()
             #endif
 
