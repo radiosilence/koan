@@ -1,0 +1,73 @@
+name: iOS
+
+# Builds the iOS app for a device, signs it and uploads it to TestFlight.
+#
+# Called by CI/CD when a release goes out, rather than listening for the
+# release event: releases are published with the workflow token, and events
+# raised by that token start no other workflows. Runnable by hand for a build
+# between releases.
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  # Until the App Store Connect key and the team exist there is nothing to sign
+  # with. This answers that on a cheap runner, and the upload is skipped rather
+  # than failing the release.
+  signable:
+    name: Signing configured
+    runs-on: ubuntu-latest
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - id: check
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+        run: |
+          if [ -n "$APPLE_API_KEY_P8" ] && [ -n "$APPLE_TEAM_ID" ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::No App Store Connect key or team configured; skipping TestFlight."
+          fi
+
+  testflight:
+    name: TestFlight
+    needs: signable
+    if: needs.signable.outputs.ready == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    concurrency:
+      group: testflight
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ios
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - run: brew install xcodegen
+      # The key is the one the macOS release notarises with: one App Store
+      # Connect key serves both, and it needs the Admin role for the
+      # cloud-managed signing `ios-testflight` relies on.
+      - name: Stage the App Store Connect key
+        env:
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+        run: |
+          key="$RUNNER_TEMP/AuthKey.p8"
+          printf '%s' "$APPLE_API_KEY_P8" | base64 --decode > "$key"
+          echo "APPLE_API_KEY_PATH=$key" >> "$GITHUB_ENV"
+      # A build number has to rise with every upload of a version. The run
+      # number cannot: called from CI/CD it is that workflow's, dispatched by
+      # hand it is this one's. The time always rises.
+      - run: just ios-testflight "$(date -u +%s)"
+        env:
+          APPLE_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/AuthKey.p8"
