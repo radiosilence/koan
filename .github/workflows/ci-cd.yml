@@ -498,6 +498,13 @@ jobs:
           name: koan-macos-app
           path: apps/macos/.build/pkg/Koan.dmg
 
+  testflight:
+    name: Release (TestFlight)
+    needs: [check-version]
+    if: needs.check-version.outputs.should_release == 'true'
+    uses: ./.github/workflows/ios.yml
+    secrets: inherit
+
   publish-release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest

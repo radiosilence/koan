@@ -611,3 +611,53 @@ ios-phone config="Debug": (ios-ffi "iphoneos")
     xcrun devicectl device install app --device "$phone" \
         "target/ios-build/Build/Products/{{config}}-iphoneos/koan.app"
     xcrun devicectl device process launch --device "$phone" {{bundle_id}}
+
+# Archive for a device, sign, and upload to TestFlight.
+#
+# Signing is cloud-managed: xcodebuild asks App Store Connect for the
+# distribution certificate and profile with the API key, so there is no
+# certificate or profile to keep in a secret or a keychain. That needs a key
+# with the Admin role. The build number has to rise with every upload of a
+# version; CI passes the time in seconds.
+#
+# Needs APPLE_TEAM_ID, APPLE_API_KEY_PATH (the .p8), APPLE_API_KEY_ID and
+# APPLE_API_ISSUER_ID in the environment.
+ios-testflight build: (ios-ffi "iphoneos") (ios-project build)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    : "${APPLE_TEAM_ID:?}" "${APPLE_API_KEY_PATH:?}" "${APPLE_API_KEY_ID:?}" "${APPLE_API_ISSUER_ID:?}"
+    out=target/ios-archive
+    rm -rf "$out" && mkdir -p "$out"
+    auth=(
+        -allowProvisioningUpdates
+        -authenticationKeyPath "$APPLE_API_KEY_PATH"
+        -authenticationKeyID "$APPLE_API_KEY_ID"
+        -authenticationKeyIssuerID "$APPLE_API_ISSUER_ID"
+    )
+    xcodebuild archive \
+        -project apps/ios/Koan.xcodeproj -scheme Koan \
+        -destination 'generic/platform=iOS' \
+        -archivePath "$out/koan.xcarchive" \
+        "${auth[@]}" | tail -n 20
+    # `upload` sends the export straight to App Store Connect, where it
+    # appears under TestFlight once processed.
+    cat > "$out/ExportOptions.plist" <<PLIST
+    <?xml version="1.0" encoding="UTF-8"?>
+    <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+    <plist version="1.0">
+    <dict>
+        <key>method</key><string>app-store-connect</string>
+        <key>destination</key><string>upload</string>
+        <key>signingStyle</key><string>automatic</string>
+        <key>teamID</key><string>$APPLE_TEAM_ID</string>
+        <key>uploadSymbols</key><true/>
+        <key>manageAppVersionAndBuildNumber</key><false/>
+    </dict>
+    </plist>
+    PLIST
+    xcodebuild -exportArchive \
+        -archivePath "$out/koan.xcarchive" \
+        -exportOptionsPlist "$out/ExportOptions.plist" \
+        -exportPath "$out/export" \
+        "${auth[@]}"
+    echo "uploaded build {{build}} to App Store Connect"
