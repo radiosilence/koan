@@ -639,6 +639,9 @@ pub struct SubsonicAlbum {
     pub artist: Option<String>,
     pub artist_id: Option<String>,
     pub song_count: Option<i32>,
+    /// Seconds, summed over the album's songs.
+    #[serde(default)]
+    pub duration: Option<i64>,
     pub year: Option<i32>,
     pub genre: Option<String>,
     pub created: Option<String>,
