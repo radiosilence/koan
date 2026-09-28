@@ -425,6 +425,13 @@ fn apply_migrations(conn: &Connection, found: i64) -> rusqlite::Result<()> {
          UPDATE albums SET mbid = NULL WHERE mbid = '';
          UPDATE tracks SET mbid = NULL WHERE mbid = '';",
     )?;
+    // Stale-track removal once left the album of a moved or deleted record
+    // behind with nothing in it, and a server lists it to everyone who syncs.
+    conn.execute(
+        "DELETE FROM albums WHERE NOT EXISTS
+           (SELECT 1 FROM tracks WHERE tracks.album_id = albums.id)",
+        [],
+    )?;
 
     cascade_play_history(conn)?;
     snapshots_to_playlists(conn)?;
@@ -712,7 +719,9 @@ mod tests {
              INSERT INTO albums (id, title, artist_id, added_at)
                VALUES (1, 'Local', 1, '2026-08-23 12:14:57'),
                       (2, 'Remote', 1, '2026-08-06T22:53:14.851697506Z'),
-                      (3, 'Neither', 1, NULL);",
+                      (3, 'Neither', 1, NULL);
+             INSERT INTO tracks (title, album_id, artist_id, path)
+               VALUES ('a', 1, 1, '/a'), ('b', 2, 1, '/b'), ('c', 3, 1, '/c');",
         )
         .unwrap();
 

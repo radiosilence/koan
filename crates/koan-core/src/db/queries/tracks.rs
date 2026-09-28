@@ -930,22 +930,25 @@ pub fn remove_stale_tracks(
     // nothing — so this catches every track with a local path regardless of its
     // `source` flag, which a merged local+remote row may still call 'remote'.
     let mut stmt = conn.prepare(
-        "SELECT t.id, t.path, t.remote_id FROM tracks t
+        "SELECT t.id, t.path, t.remote_id, t.album_id, t.artist_id FROM tracks t
          WHERE t.path >= ?1 AND t.path < ?2",
     )?;
 
-    let stale: Vec<(i64, String, Option<String>)> = stmt
+    type Stale = (i64, String, Option<String>, Option<i64>, Option<i64>);
+    let stale: Vec<Stale> = stmt
         .query_map(params![lower, upper], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, Option<String>>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
             ))
         })?
         .filter_map(|r| r.ok())
         // `Ok(false)` only: a permission error or an ailing mount reports Err,
         // which is "cannot tell", not "deleted".
-        .filter(|(_, path, _)| matches!(Path::new(path).try_exists(), Ok(false)))
+        .filter(|(_, path, ..)| matches!(Path::new(path).try_exists(), Ok(false)))
         .collect();
 
     let count = stale.len();
@@ -973,7 +976,7 @@ pub fn remove_stale_tracks(
         );
     }
 
-    for (id, path, remote_id) in &stale {
+    for (id, path, remote_id, album_id, artist_id) in &stale {
         // Match on track_id as well as path: a row whose path changed since it was
         // cached leaves an orphan that would otherwise block the delete below.
         conn.execute(
@@ -995,10 +998,13 @@ pub fn remove_stale_tracks(
             conn.execute("DELETE FROM play_history WHERE track_id = ?1", params![id])?;
             conn.execute("DELETE FROM track_vectors WHERE track_id = ?1", params![id])?;
             conn.execute("DELETE FROM tracks WHERE id = ?1", params![id])?;
+            // An album moved or deleted on disk leaves its row behind otherwise,
+            // listed with nothing in it and served to every client that syncs.
+            prune_if_empty(conn, *album_id, *artist_id)?;
         }
     }
 
-    Ok(stale.into_iter().map(|(_, path, _)| path).collect())
+    Ok(stale.into_iter().map(|(_, path, ..)| path).collect())
 }
 
 /// Get all tracks for an artist, ordered chronologically (album date, disc, track#).
@@ -2721,6 +2727,40 @@ mod tests {
             err
         );
         assert_eq!(library_stats(&db.conn).unwrap().total_tracks, before);
+    }
+
+    #[test]
+    fn test_stale_removal_drops_the_album_and_artist_it_empties() {
+        let db = test_db();
+        let tmp = tempfile::tempdir().unwrap();
+        let keep = tmp.path().join("keep.flac");
+        std::fs::write(&keep, b"x").unwrap();
+        let mut kept = sample_meta("Kept", "Artist", "Staying");
+        kept.path = Some(keep.to_string_lossy().into_owned());
+        upsert_track(&db.conn, &kept).unwrap();
+        let mut moved = sample_meta("Moved", "Other Credit", "Moved Away");
+        moved.path = Some(tmp.path().join("gone.flac").to_string_lossy().into_owned());
+        upsert_track(&db.conn, &moved).unwrap();
+
+        assert_eq!(
+            remove_stale_tracks(&db.conn, tmp.path(), false)
+                .unwrap()
+                .len(),
+            1
+        );
+        let count = |sql: &str| -> i64 { db.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(
+            count("SELECT COUNT(*) FROM albums WHERE title = 'Moved Away'"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM artists WHERE name = 'Other Credit'"),
+            0
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM albums WHERE title = 'Staying'"),
+            1
+        );
     }
 
     #[test]
