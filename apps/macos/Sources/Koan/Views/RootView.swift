@@ -39,6 +39,7 @@ struct RootView: View {
     #endif
 
     @Environment(UIState.self) private var ui
+    @Environment(CoverArtCache.self) private var art
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
     @Environment(SearchModel.self) private var search
@@ -105,6 +106,9 @@ struct RootView: View {
         // drawn — see `View.reloading(on:)` — so nothing here decides which
         // model hears what.
         .reloading(on: 0) {
+            // First, so nothing redrawn below picks up a cover cached under an
+            // id the library has since given to another record.
+            await art.applyEvictions()
             library.libraryChanged()
             playlists.load()
         }

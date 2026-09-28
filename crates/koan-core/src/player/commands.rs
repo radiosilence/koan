@@ -100,6 +100,11 @@ pub enum PlayerCommand {
     SetOutputDevice(String),
     /// Clear the configured output device, reverting to system default.
     ClearOutputDevice,
+    /// Build the output again on the same device and carry on from where the
+    /// current track is, paused if it was. For an output the system stopped
+    /// underneath us: an iOS interruption (a call, Siri) or a reset of its
+    /// media services leaves the old unit unable to start again.
+    RestartOutput,
 }
 
 /// Bounded SPSC command channel.

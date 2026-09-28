@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.39.1
+
+### Fixed
+
+- **Playback on iOS recovers from an interruption.** After a phone call, Siri or another app taking the audio, the output unit was left stopped and nothing played until the app was killed. When an interruption ends, and when iOS resets its media services, the audio session is reconfigured and the output rebuilt on the current track. Playback resumes when it was playing before and iOS marks the interruption as one to resume from (a call or Siri ending); otherwise it waits, paused, for play.
+- **Covers no longer show for the wrong album** ([#526](https://github.com/radiosilence/koan/issues/526)). The cover cache is keyed by album, artist and track id, and SQLite hands a deleted row's id to the next one inserted, so a removed album's cover could appear on whatever took its id. The database now logs deleted ids, and the apps evict exactly those entries whenever the library changes and at launch.
+
 ## 0.39.0
 
 ### Added

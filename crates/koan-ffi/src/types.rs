@@ -927,3 +927,13 @@ impl From<koan_core::audio::viz::VizLevels> for VizLevels {
         }
     }
 }
+
+/// See `KoanEngine::art_evictions`.
+#[derive(uniffi::Record, Debug, Clone, Default)]
+pub struct ArtEvictions {
+    /// Pass back as `after` next time.
+    pub seq: i64,
+    pub albums: Vec<i64>,
+    pub artists: Vec<i64>,
+    pub tracks: Vec<i64>,
+}

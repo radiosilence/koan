@@ -509,6 +509,9 @@ fn command_loop(
                     .send(PlayerCommand::SetOutputDevice(name.clone()))
                     .ok();
             }
+            PlayerCommand::RestartOutput => {
+                local_tx.send(PlayerCommand::RestartOutput).ok();
+            }
             PlayerCommand::ClearOutputDevice => {
                 local_tx.send(PlayerCommand::ClearOutputDevice).ok();
             }

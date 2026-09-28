@@ -19,7 +19,11 @@ final class AudioSession {
     /// Wired to the player rather than acting on its own — what "resume" means
     /// is the player's business.
     var onInterrupted: (() -> Void)?
-    var onResumable: (() -> Void)?
+    /// The interruption is over and the session active again; the output
+    /// needs building again. `shouldResume` is the system's word on whether
+    /// playing on is expected: set after a call or Siri, not when the user
+    /// has started something else.
+    var onInterruptionEnded: ((_ shouldResume: Bool) -> Void)?
     /// The route went away underneath us — headphones unplugged, a dock removed.
     var onRouteLost: (() -> Void)?
 
@@ -31,6 +35,13 @@ final class AudioSession {
     private let observers = Tokens()
 
     func activate(preferredSampleRate: Double? = nil) {
+        configure(preferredSampleRate: preferredSampleRate)
+        observe()
+    }
+
+    /// Category, buffer size and activation: also what a media services
+    /// reset undoes.
+    private func configure(preferredSampleRate: Double? = nil) {
         let session = AVAudioSession.sharedInstance()
         do {
             // `.playback` is what keeps producing audio with the screen locked
@@ -53,7 +64,6 @@ final class AudioSession {
         } catch {
             NSLog("koan: audio session refused activation: \(error)")
         }
-        observe()
     }
 
     /// What the session actually settled on, as against what was asked for.
@@ -74,6 +84,19 @@ final class AudioSession {
                     return
                 }
                 MainActor.assumeIsolated { self?.handleInterruption(type, options: options) }
+            }
+        )
+        // A reset of the system's media services invalidates every audio
+        // object the app holds: set the session up again and rebuild.
+        observers.held.append(
+            centre.addObserver(
+                forName: AVAudioSession.mediaServicesWereResetNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.configure()
+                    self?.onInterruptionEnded?(false)
+                }
             }
         )
         observers.held.append(
@@ -97,12 +120,12 @@ final class AudioSession {
         case .began:
             onInterrupted?()
         case .ended:
-            // Only resume when told to. An interruption that ends without the
-            // shouldResume option is one where something else is still talking.
-            if AVAudioSession.InterruptionOptions(rawValue: options).contains(.shouldResume) {
-                try? AVAudioSession.sharedInstance().setActive(true)
-                onResumable?()
-            }
+            // The output unit iOS stopped for the interruption will not start
+            // again, so it is rebuilt whether or not playback resumes.
+            try? AVAudioSession.sharedInstance().setActive(true)
+            let resume = AVAudioSession.InterruptionOptions(rawValue: options)
+                .contains(.shouldResume)
+            onInterruptionEnded?(resume)
         @unknown default:
             break
         }

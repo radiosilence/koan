@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/koan-core", "crates/koan-ffi", "crates/koan-server", "crates/koan-tui", "crates/koan-cli"]
 
 [workspace.package]
-version = "0.39.0"
+version = "0.39.1"
 edition = "2024"
 rust-version = "1.89"
 homepage = "https://github.com/radiosilence/koan"
