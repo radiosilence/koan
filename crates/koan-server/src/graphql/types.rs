@@ -522,6 +522,42 @@ pub(super) struct GqlLibraryStats {
     pub total_artists: i64,
 }
 
+/// A koan app linked to this server, which `playOnClient` can command.
+#[derive(SimpleObject)]
+#[graphql(name = "Client")]
+pub(super) struct GqlClient {
+    pub id: String,
+    /// What the device calls itself, e.g. "James's iPhone".
+    pub name: String,
+    /// `ios`, `macos` or `linux`.
+    pub platform: String,
+    pub username: String,
+    /// Unix seconds.
+    pub connected_at: i64,
+}
+
+impl From<crate::clients::ClientInfo> for GqlClient {
+    fn from(c: crate::clients::ClientInfo) -> Self {
+        Self {
+            id: c.id,
+            name: c.name,
+            platform: c.platform,
+            username: c.username,
+            connected_at: c.connected_at,
+        }
+    }
+}
+
+/// Transport commands for a linked client.
+#[derive(async_graphql::Enum, Copy, Clone, Eq, PartialEq)]
+#[graphql(name = "ClientAction")]
+pub(super) enum GqlClientAction {
+    Pause,
+    Resume,
+    Next,
+    Previous,
+}
+
 #[derive(SimpleObject)]
 #[graphql(name = "Device")]
 pub(super) struct GqlDevice {

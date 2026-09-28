@@ -63,6 +63,7 @@ walkdir = { workspace = true }
 # without being asked. Default features so each platform gets its own backend
 # (FSEvents on macOS, inotify on Linux).
 notify = "8"
+tungstenite = { version = "0.30.0", features = ["rustls-tls-webpki-roots"] }
 
 [target.'cfg(unix)'.dependencies]
 # statvfs, for the free-space check before an organize run

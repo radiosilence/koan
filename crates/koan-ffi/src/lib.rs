@@ -2848,6 +2848,16 @@ impl KoanEngine {
             library_version: library_version.clone(),
         });
         engine.spawn_watcher();
+        // A koan server this app syncs from can then tell it what to play.
+        let weak = Arc::downgrade(&engine);
+        koan_core::remote::link::spawn(
+            koan_core::remote::link::LinkIdentity::this_device(None),
+            move |cmd| {
+                if let Some(engine) = weak.upgrade() {
+                    engine.handle_link(cmd);
+                }
+            },
+        );
         log::info!(
             "startup: db {:?}, sweep {:?}, player {:?}, built {:?}",
             t_db,
@@ -3041,6 +3051,55 @@ impl KoanEngine {
             .collect();
         if !order.is_empty() {
             let _ = self.send(PlayerCommand::ReorderPlaylist(order));
+        }
+    }
+
+    /// What the server asked of this app over the link. Runs on the link's
+    /// thread, which may block: resolving an id the library lacks syncs first.
+    fn handle_link(&self, cmd: koan_core::remote::link::LinkCommand) {
+        use koan_core::remote::link::{LinkCommand, resolve_tracks};
+        let result = match cmd {
+            LinkCommand::Play {
+                track_ids,
+                start_at,
+            } => self.db().and_then(|db| {
+                let ids = resolve_tracks(&db, &track_ids);
+                let (items, pending) = self.build_items(&db, &ids);
+                if items.is_empty() {
+                    log::warn!(
+                        "link: none of {} tracks are in the library",
+                        track_ids.len()
+                    );
+                    return Ok(());
+                }
+                self.send(PlayerCommand::ReplacePlaylist {
+                    items,
+                    start: start_at as usize,
+                })?;
+                self.start_downloads(pending);
+                Ok(())
+            }),
+            LinkCommand::Enqueue { track_ids } => self.db().and_then(|db| {
+                let ids = resolve_tracks(&db, &track_ids);
+                let (items, pending) = self.build_items(&db, &ids);
+                let Some(first) = items.first().map(|i| i.id) else {
+                    return Ok(());
+                };
+                let was_stopped = self.state.playback_state() == PlaybackState::Stopped;
+                self.send(PlayerCommand::AddToPlaylist(items))?;
+                if was_stopped {
+                    self.send(PlayerCommand::Play(first))?;
+                }
+                self.start_downloads(pending);
+                Ok(())
+            }),
+            LinkCommand::Pause => self.send(PlayerCommand::Pause),
+            LinkCommand::Resume => self.send(PlayerCommand::Resume),
+            LinkCommand::Next => self.send(PlayerCommand::NextTrack),
+            LinkCommand::Previous => self.send(PlayerCommand::PrevTrack),
+        };
+        if let Err(e) = result {
+            log::warn!("link: {e}");
         }
     }
 

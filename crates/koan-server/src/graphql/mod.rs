@@ -331,6 +331,13 @@ fn get_auth_user(ctx: &Context<'_>) -> AuthUser {
         .unwrap_or_else(|_| AuthUser::anonymous_admin())
 }
 
+/// Whose linked clients the current user may see and command: their own, or
+/// every account's for an admin.
+fn client_scope(ctx: &Context<'_>) -> Option<String> {
+    let user = get_auth_user(ctx);
+    (user.role != Role::Admin).then_some(user.username)
+}
+
 /// Check that the current user has at least the required role.
 /// Returns an error suitable for GraphQL if the check fails.
 fn require_role(ctx: &Context<'_>, required: Role) -> async_graphql::Result<()> {

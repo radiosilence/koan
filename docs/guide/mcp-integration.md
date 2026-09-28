@@ -36,6 +36,10 @@ If kōan isn't on Claude Desktop's PATH (common with Homebrew or mise), use the 
 
 4. Make sure you've run `koan scan` at least once so your library is indexed.
 
+## Playing on a phone
+
+With kōan running as a server (`koan --headless`, MCP over HTTP behind a gateway), the assistant can play music on the koan apps linked to it rather than on the server: it lists them with `clients`, builds a track list with the library queries, and calls `playOnClient`. Ask for "something chill like Polar Bear on my phone" and the queue starts on the iPhone. See [Playing on a linked app](headless-server.md#playing-on-a-linked-app).
+
 ## Tools exposed
 
 | Tool | Purpose |

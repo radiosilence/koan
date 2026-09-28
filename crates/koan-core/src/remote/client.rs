@@ -71,17 +71,23 @@ impl SubsonicAuth {
         Ok(params)
     }
 
-    /// Build the streaming URL for a track (doesn't make a request).
-    pub fn stream_url(&self, track_id: &str) -> Result<String, SubsonicError> {
-        let query: String = self
+    /// The auth params as a query string. Every value is URL-safe as built.
+    pub fn query(&self) -> Result<String, SubsonicError> {
+        Ok(self
             .params()?
             .iter()
             .map(|(k, v)| format!("{}={}", k, v))
             .collect::<Vec<_>>()
-            .join("&");
+            .join("&"))
+    }
+
+    /// Build the streaming URL for a track (doesn't make a request).
+    pub fn stream_url(&self, track_id: &str) -> Result<String, SubsonicError> {
         Ok(format!(
             "{}/rest/stream?id={}&{}",
-            self.base_url, track_id, query
+            self.base_url,
+            track_id,
+            self.query()?
         ))
     }
 }
