@@ -7,6 +7,10 @@
 - **iOS releases go to TestFlight.** Each release archives the iOS app, signs it and uploads it to App Store Connect, so a build reaches the phone over the air with no cable and no seven-day expiry. Signing is cloud-managed through the App Store Connect API key the macOS release notarises with, so no certificate or profile is kept in a secret. Without the key or the `APPLE_TEAM_ID` variable (a fork) the upload is skipped rather than failing the release. `just ios-testflight BUILD` does the same from a Mac.
 - **Privacy manifest and policy for the App Store.** The iOS app ships a `PrivacyInfo.xcprivacy` declaring no tracking, no data collected, and the reasons for the file-timestamp, disk-space and `UserDefaults` APIs it calls; App Review rejects an app without one. koan.rocks has a privacy page, which the App Store listing links to.
 
+### Fixed
+
+- **iOS builds carry koan's version.** The generated `Info.plist` had XcodeGen's defaults, 1.0 (1), whatever the build settings said, so every TestFlight upload claimed version 1.0 and could not be attached to the App Store version it was built for. It now reads `MARKETING_VERSION` (the workspace version) and `CURRENT_PROJECT_VERSION` (the build number).
+
 ## 0.39.4
 
 ### Fixed
