@@ -141,6 +141,11 @@ const FETCH_LANES: usize = 4;
 /// Attempts at one song page before it counts as failed.
 const PAGE_ATTEMPTS: u32 = 3;
 
+/// Changed albums above which an incremental sync pages every song rather
+/// than fetching each album: about a hundred requests for the whole library,
+/// against one per album.
+const PAGED_ABOVE: usize = 200;
+
 /// Pull the Navidrome/Subsonic library into the local DB.
 ///
 /// The album list is always walked in `alphabeticalByName` order: it is the one
@@ -189,17 +194,23 @@ pub fn sync_library(
 
     let albums = list_albums(client, progress)?;
 
-    // Skip albums the server says predate the last sync. An unparseable
-    // `created` is treated as new: re-fetching is cheap, missing is not.
+    // An incremental sync fetches albums created since the last one, and any
+    // the client holds differently from how the server lists them: a retag
+    // on the server keeps an album's `created` and can give it a new id, and
+    // neither would otherwise ever be read again. An unparseable `created` is
+    // treated as new: re-fetching is cheap, missing is not.
+    let held = last_sync.and_then(|_| held_albums(db));
     let wanted: Vec<&SubsonicAlbum> = albums
         .iter()
         .filter(|a| match last_sync {
             None => true,
-            Some(ts) => a
-                .created
-                .as_deref()
-                .and_then(parse_iso8601_to_unix)
-                .is_none_or(|created| created >= ts),
+            Some(ts) => {
+                a.created
+                    .as_deref()
+                    .and_then(parse_iso8601_to_unix)
+                    .is_none_or(|created| created >= ts)
+                    || held.as_ref().is_some_and(|h| differs(a, h.get(&a.id)))
+            }
         })
         .collect();
     let expected: u64 = wanted
@@ -210,7 +221,7 @@ pub fn sync_library(
 
     let mut song_ids: HashSet<String> = HashSet::new();
     let mut total = (expected > 0).then_some(expected);
-    let walked = if last_sync.is_none() && !wanted.is_empty() {
+    let walked = if (last_sync.is_none() || wanted.len() > PAGED_ABOVE) && !wanted.is_empty() {
         if total.is_none() {
             total = client.song_count().ok().flatten();
         }
@@ -290,6 +301,61 @@ pub fn sync_library(
     db.optimize();
 
     Ok(result)
+}
+
+/// An album as this client holds it: what a listing of the server's albums
+/// can be checked against.
+struct HeldAlbum {
+    title: String,
+    artist: String,
+    tracks: i64,
+    seconds: i64,
+}
+
+/// Every album this client holds from the server, by the server's id. `None`
+/// if it cannot be read, which leaves an incremental sync to go by `created`
+/// alone rather than fetching everything.
+fn held_albums(db: &Database) -> Option<HashMap<String, HeldAlbum>> {
+    let read = || -> rusqlite::Result<HashMap<String, HeldAlbum>> {
+        let mut stmt = db.conn.prepare(
+            "SELECT al.remote_id, al.title, COALESCE(ar.name, ''),
+                    COUNT(t.id), COALESCE(SUM(t.duration_ms), 0) / 1000
+             FROM albums al
+             LEFT JOIN artists ar ON ar.id = al.artist_id
+             LEFT JOIN tracks t ON t.album_id = al.id AND t.remote_id IS NOT NULL
+             WHERE al.remote_id IS NOT NULL
+             GROUP BY al.id",
+        )?;
+        stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                HeldAlbum {
+                    title: r.get(1)?,
+                    artist: r.get(2)?,
+                    tracks: r.get(3)?,
+                    seconds: r.get(4)?,
+                },
+            ))
+        })?
+        .collect()
+    };
+    read()
+        .inspect_err(|e| log::warn!("could not read held albums; syncing by date alone: {e}"))
+        .ok()
+}
+
+/// Whether the server lists an album differently from how it is held: not
+/// held at all, renamed, credited to someone else, or with other tracks.
+fn differs(listed: &SubsonicAlbum, held: Option<&HeldAlbum>) -> bool {
+    let Some(held) = held else { return true };
+    listed.name != held.title
+        || listed.artist.as_deref().is_some_and(|a| a != held.artist)
+        || listed
+            .song_count
+            .is_some_and(|n| i64::from(n) != held.tracks)
+        || listed
+            .duration
+            .is_some_and(|d| (d - held.seconds).abs() > 2)
 }
 
 /// Every album on the server, once each.
@@ -1163,9 +1229,9 @@ mod tests {
                         .iter()
                         .skip(offset)
                         .take(size)
-                        .map(|(id, _, _)| {
+                        .map(|(id, name, _)| {
                             format!(
-                                r#"{{"id":"s{id}","title":"Song {id}","albumId":"{id}","album":"Album {id}","track":1,"suffix":"flac"}}"#
+                                r#"{{"id":"s{id}","title":"Song {id}","albumId":"{id}","album":"{name}","track":1,"suffix":"flac"}}"#
                             )
                         })
                         .collect()
@@ -1189,7 +1255,14 @@ mod tests {
                     (
                         200,
                         format!(
-                            r#"{{"subsonic-response":{{"status":"ok","album":{{"id":"{id}","name":"Album {id}","artist":"Stub Artist","song":[{{"id":"s{id}","title":"Song {id}","track":1,"suffix":"flac"}}]}}}}}}"#
+                            r#"{{"subsonic-response":{{"status":"ok","album":{{"id":"{id}","name":"{name}","artist":"Stub Artist","song":[{{"id":"s{id}","title":"Song {id}","track":1,"suffix":"flac"}}]}}}}}}"#,
+                            name = state
+                                .albums
+                                .lock()
+                                .unwrap()
+                                .iter()
+                                .find(|(a, _, _)| a == id)
+                                .map_or_else(|| format!("Album {id}"), |(_, n, _)| n.clone())
                         ),
                     )
                 }
@@ -1307,12 +1380,7 @@ mod tests {
             album_remote_id: None,
             artist_remote_id: None,
             mbid: None,
-            ..remote_track_meta(
-                "s-before-rescan",
-                "Song a0000",
-                "Stub Artist",
-                "Album a0000",
-            )
+            ..remote_track_meta("s-before-rescan", "Song a0000", "Stub Artist", "Album 0000")
         };
         queries::upsert_track(&db.conn, &file).unwrap();
 
@@ -1348,12 +1416,7 @@ mod tests {
             album_remote_id: None,
             artist_remote_id: None,
             mbid: None,
-            ..remote_track_meta(
-                "s-before-rescan",
-                "Song a0000",
-                "Stub Artist",
-                "Album a0000",
-            )
+            ..remote_track_meta("s-before-rescan", "Song a0000", "Stub Artist", "Album 0000")
         };
         let ghost_id = queries::upsert_track(&db.conn, &ghost).unwrap();
         let ghost_url = ghost.remote_url.clone().unwrap();
@@ -1414,7 +1477,10 @@ mod tests {
         let server = StubServer::start(state.clone());
         let client = SubsonicClient::new(&server.url(), "u", "p");
 
-        // Watermark between the two vintages.
+        // Everything held as the server lists it, then the watermark put
+        // between the two vintages.
+        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+        state.album_calls.lock().unwrap().clear();
         let watermark = parse_iso8601_to_unix("2025-01-01T00:00:00Z").unwrap();
         update_last_sync(&db, &server.url(), "u", watermark).unwrap();
 
@@ -1424,6 +1490,74 @@ mod tests {
         assert_eq!(
             *state.album_calls.lock().unwrap(),
             vec!["a0002".to_string()]
+        );
+    }
+
+    /// A retag on the server keeps an album's `created`. Going by the date
+    /// alone, the client would hold the old tags until a full sync.
+    #[test]
+    fn incremental_sync_fetches_an_album_the_server_now_lists_differently() {
+        let (db, _dir) = test_db();
+        let mut albums = stub_albums(3);
+        for a in &mut albums {
+            a.2 = "2020-01-01T00:00:00Z".into();
+        }
+        let state = Arc::new(StubState {
+            albums: Mutex::new(albums),
+            ..Default::default()
+        });
+        let server = StubServer::start(state.clone());
+        let client = SubsonicClient::new(&server.url(), "u", "p");
+        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+        state.album_calls.lock().unwrap().clear();
+
+        state.albums.lock().unwrap()[1].1 = "Album 0001 (Retitled)".into();
+        let result = sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
+
+        assert_eq!(
+            *state.album_calls.lock().unwrap(),
+            vec!["a0001".to_string()]
+        );
+        assert_eq!(result.albums_synced, 1);
+        let title: String = db
+            .conn
+            .query_row(
+                "SELECT title FROM albums WHERE remote_id = 'a0001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "Album 0001 (Retitled)");
+    }
+
+    /// An album the client has never held is fetched however old the server
+    /// says it is: a retag can move tracks to a new album id with an old date.
+    #[test]
+    fn incremental_sync_fetches_an_album_it_does_not_hold() {
+        let (db, _dir) = test_db();
+        let mut albums = stub_albums(2);
+        for a in &mut albums {
+            a.2 = "2020-01-01T00:00:00Z".into();
+        }
+        let state = Arc::new(StubState {
+            albums: Mutex::new(albums),
+            ..Default::default()
+        });
+        let server = StubServer::start(state.clone());
+        let client = SubsonicClient::new(&server.url(), "u", "p");
+        sync_library(&db, &client, true, &server.url(), "u", &|_| {}).unwrap();
+        state.album_calls.lock().unwrap().clear();
+
+        state.albums.lock().unwrap().push((
+            "a0099".into(),
+            "Album 0099".into(),
+            "2020-01-01T00:00:00Z".into(),
+        ));
+        sync_library(&db, &client, false, &server.url(), "u", &|_| {}).unwrap();
+
+        assert_eq!(
+            *state.album_calls.lock().unwrap(),
+            vec!["a0099".to_string()]
         );
     }
 
