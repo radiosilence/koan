@@ -276,6 +276,20 @@ pub fn album_tracks(conn: &rusqlite::Connection, artist: &str, album: &str) -> O
     Some(ids)
 }
 
+impl Registry {
+    /// Send to every client `username` may command. The names of those it
+    /// reached.
+    pub fn broadcast(&self, username: Option<&str>, cmd: LinkCommand) -> Vec<String> {
+        let ids: Vec<String> = self.list(username).into_iter().map(|c| c.id).collect();
+        let entries = self.entries.lock();
+        entries
+            .iter()
+            .filter(|e| ids.contains(&e.info.id) && e.tx.send(cmd.clone()).is_ok())
+            .map(|e| e.info.name.clone())
+            .collect()
+    }
+}
+
 /// How long ago a client can have stopped playing and still be the obvious
 /// one to send music to.
 const RECENT: i64 = 6 * 60 * 60;

@@ -204,6 +204,8 @@ command about the user's music goes to a device:
 - `playOnClient(trackIds, startAt)` replaces the queue and plays; `enqueue: true` appends
 - `playNextOnClient(trackIds)`, `jumpOnClient(trackId)` (skip to a track, queued or not), \
 `removeFromClient(trackIds)`, `clearClient`, `setClientRadio(enabled)`, `syncClient`
+- `evictOnClients(trackIds)` makes every linked device drop its downloaded copies of those \
+tracks: when a track plays as noise or glitches, after the file on the server is replaced
 - `queueOnClientWhenAdded(artist, album)` queues an album once it reaches the library, e.g. \
 one being downloaded with slsk's `grab`; `clientOrders` lists those waiting
 Leave `client` out unless the user named a device (\"my phone\", \"the desktop\": match it \

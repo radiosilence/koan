@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.38.4
+
+### Added
+
+- **`evictOnClients(trackIds)`: have every linked app drop its downloaded copies of some tracks.** A device keeps the copy it downloaded, so a track cached while the server's file was damaged kept playing as noise after the file was replaced. This sends the linked apps a new `Evict` link command; each deletes its cached files for those tracks and fetches them again on the next play.
+
+### Fixed
+
+- **A track removed because the server deleted it takes its downloaded file with it.** The row went and the file stayed in the cache, where nothing would play or clean it up.
+
 ## 0.38.3
 
 ### Fixed
