@@ -1,6 +1,6 @@
 {
   "name": "@radiosilence/koan-pulumi",
-  "version": "0.39.2",
+  "version": "0.39.3",
   "description": "Pulumi component that deploys koan, a bit-perfect music server, into Kubernetes",
   "license": "MIT",
   "author": "James Cleveland <jc@blit.cc>",
