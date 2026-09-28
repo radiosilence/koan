@@ -556,6 +556,24 @@ fn merge_case_duplicate_artists(conn: &Connection) -> rusqlite::Result<()> {
             continue;
         };
         for &gone in rest {
+            // An album both spellings hold under one title is one album: its
+            // tracks join the kept artist's copy. Moving the row would break
+            // `UNIQUE(title, artist_id)`.
+            conn.execute(
+                "UPDATE tracks SET album_id = (SELECT k.id FROM albums k, albums g
+                                                WHERE g.id = tracks.album_id
+                                                  AND k.artist_id = ?1 AND k.title = g.title)
+                  WHERE album_id IN (SELECT g.id FROM albums g
+                                      WHERE g.artist_id = ?2
+                                        AND EXISTS (SELECT 1 FROM albums k
+                                                     WHERE k.artist_id = ?1 AND k.title = g.title))",
+                [keep, gone],
+            )?;
+            conn.execute(
+                "DELETE FROM albums WHERE artist_id = ?2
+                   AND EXISTS (SELECT 1 FROM albums k WHERE k.artist_id = ?1 AND k.title = albums.title)",
+                [keep, gone],
+            )?;
             conn.execute(
                 "UPDATE albums SET artist_id = ?1 WHERE artist_id = ?2",
                 [keep, gone],
@@ -677,6 +695,39 @@ mod tests {
             count("SELECT artist_id FROM tracks"),
             1,
             "onto the album owner's spelling"
+        );
+    }
+
+    #[test]
+    fn an_album_both_spellings_hold_becomes_one_album() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("koan.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            super::create_tables(&conn).unwrap();
+            conn.execute_batch(
+                "INSERT INTO artists (id, name) VALUES (101, 'Tove Lo'), (102, 'TOVE LO');
+                 INSERT INTO albums (id, title, artist_id) VALUES (101, 'Habits', 101), (102, 'Habits', 102), (103, 'Other', 102);
+                 INSERT INTO tracks (title, album_id, artist_id, path) VALUES
+                   ('a', 101, 101, '/a.flac'), ('b', 102, 102, '/b.flac'), ('c', 103, 102, '/c.flac');",
+            )
+            .unwrap();
+        }
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        super::create_tables(&conn).expect("opens despite the clash");
+        let count = |sql: &str| -> i64 { conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(
+            count("SELECT COUNT(*) FROM artists WHERE lower(name) = 'tove lo'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM albums WHERE title IN ('Habits', 'Other')"),
+            2
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM tracks WHERE album_id = 102"),
+            2,
+            "Habits once, holding both copies' tracks"
         );
     }
 
