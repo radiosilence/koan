@@ -4,7 +4,7 @@
 
 ### Added
 
-- **Invite links and account management** ([#572](https://github.com/radiosilence/koan/issues/572)). Admins create accounts, pick their access level, change it and delete accounts from the web UI's Users page, over GraphQL (so from MCP too), with `koan auth invite`, and through koan endpoints the apps will use. Creating or inviting an account produces an invite: a koan.rocks link carrying the server, username and password in its fragment, and an email to send it in (copy as rich text, `mailto:`, or the share sheet; the server sends no mail). The details are shown in plain text for other Subsonic apps. An invite reuses the account's password, recovered from its sealed copy, so its other devices keep working.
+- **Invite links and account management** ([#572](https://github.com/radiosilence/koan/issues/572)). Admins create accounts, pick their access level, change it and delete accounts from the web UI's Users page, over GraphQL (so from MCP too), with `koan auth invite`, and through koan-specific Subsonic endpoints (`koanUsers`, `koanCreateUser`, `koanInvite`, `koanSetUserRole`, `koanDeleteUser`). Creating or inviting an account produces an invite: a koan.rocks link carrying the server, username and password in its fragment, and an email to send it in (copy as rich text, `mailto:`, or the share sheet; the server sends no mail). The details are shown in plain text for other Subsonic apps. An invite reuses the account's password, recovered from its sealed copy, so its other devices keep working.
 - **koan.rocks/join** is the page an invite opens where the app is not installed, and koan.rocks serves the app-site association that makes `/join/` a universal link into the iOS app.
 
 ### Fixed
