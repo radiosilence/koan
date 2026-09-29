@@ -155,7 +155,7 @@ docker exec -it koan koan subsonic setup   <span class="c"># turn on the Subsoni
         <li><strong>Terminal:</strong> <code>koan remote login https://music.example.com &lt;user&gt;</code>, then <code>koan remote sync</code>.</li>
         <li><strong>Other Subsonic apps:</strong> the same URL and account.</li>
       </ul>
-      <p>A Navidrome or other Subsonic server works in the kōan server's place, for the apps and terminal UI; the web UI, share pages and MCP are kōan's own. Local and remote tracks merge into one library, local files take priority for playback, and remote tracks stream while they download.</p>
+      <p>A Navidrome or other Subsonic server works in the kōan server's place, for the apps and terminal UI; the web UI, share pages, linked apps and MCP are kōan's own. Local and remote tracks merge into one library, local files take priority for playback, and remote tracks stream while they download.</p>
 
       <h3>On Kubernetes</h3>
       <p>Each release publishes a Pulumi component at the same version, <a href="https://github.com/radiosilence/koan/pkgs/npm/koan-pulumi"><code>@radiosilence/koan-pulumi</code></a>, on GitHub Packages. It builds the Deployment, its Services and a NetworkPolicy that admits only your ingress to the API and only your MCP gateway to MCP:</p>
@@ -262,7 +262,8 @@ sift import ~/Downloads/some-album</code></pre>
         <li><strong>Share links.</strong> Sharing a track shares its album, cued to that track. An album shares the album, and an artist their albums. The page plays without an account, and a pasted link unfurls with its cover.</li>
         <li><strong>OpenSubsonic API.</strong> Subsonic apps such as Play:Sub, and kōan's own app and terminal UI on other machines, connect with a kōan account: by password, by token auth or with an API key.</li>
         <li><strong>Accounts.</strong> Admin, user and read-only roles, and API keys that can be revoked from the web UI.</li>
-        <li><strong>MCP.</strong> Over HTTP, behind a gateway that signs people in, so an assistant can browse the library and drive playback as that person.</li>
+        <li><strong>Linked apps.</strong> kōan's Mac and iPhone apps keep a connection open to a kōan server, which makes each one a remote the server can drive: see what it is playing and its queue, start an album on it, queue, pause and skip. Playlist edits and library changes reach every device without a sync, and one that is away receives them when it next connects. A plain Subsonic server can only answer what an app asks.</li>
+        <li><strong>MCP.</strong> Over HTTP, behind a gateway that signs people in, so an assistant can browse the library and drive playback as that person, on any of their linked devices: "play this album on my phone", or a playlist that fills as the albums for it arrive.</li>
       </ul>
     </section>
 
