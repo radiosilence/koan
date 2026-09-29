@@ -12,6 +12,8 @@
 
 ### Fixed
 
+- koan.rocks no longer scrolls sideways on narrow phones: the header nav wraps under the logo instead of pushing the page wider than the screen.
+
 - **A failed release can be re-run.** The release job created the tag first, so re-running it after a failed upload failed on the tag it had already made. It now skips a tag that exists and goes on to the uploads.
 
 ## 0.40.0
