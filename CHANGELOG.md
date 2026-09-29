@@ -1,25 +1,25 @@
 # Changelog
 
-## Unreleased
+## 0.40.0
 
 ### Added
 
-- **iOS releases go to TestFlight.** Each release archives the iOS app, signs it and uploads it to App Store Connect, so a build reaches the phone over the air with no cable and no seven-day expiry. Signing is cloud-managed through the App Store Connect API key the macOS release notarises with, so no certificate or profile is kept in a secret. Without the key or the `APPLE_TEAM_ID` variable (a fork) the upload is skipped rather than failing the release. `just ios-testflight BUILD` does the same from a Mac.
-- **Privacy manifest and policy for the App Store.** The iOS app ships a `PrivacyInfo.xcprivacy` declaring no tracking, no data collected, and the reasons for the file-timestamp, disk-space and `UserDefaults` APIs it calls; App Review rejects an app without one. koan.rocks has a privacy page, which the App Store listing links to.
-- **The App Store listing is kept in the repository.** `apps/ios/store/listing.toml` holds the listing text and App Review notes; `just ios-store` pushes it, screenshots and the newest processed build through the App Store Connect API, and never submits. `just ios-signin` signs a simulator in through Settings as App Review would, which is how the store screenshots get a library of Creative Commons music rather than anyone's own. `ios-walk` and `ios-signin` shut their simulator down when they finish; a booted simulator left behind is a running copy of iOS.
+- **iOS releases go to TestFlight** ([#540](https://github.com/radiosilence/koan/pull/540)). Each release archives the iOS app, signs it and uploads it to App Store Connect, so a build reaches the phone over the air with no cable and no seven-day expiry. Signing is cloud-managed through the App Store Connect API key the macOS release notarises with, so no certificate or profile is kept in a secret. Without the key or the `APPLE_TEAM_ID` variable (a fork) the upload is skipped rather than failing the release. `just ios-testflight BUILD` does the same from a Mac.
+- **Privacy manifest and policy for the App Store** ([#541](https://github.com/radiosilence/koan/pull/541)). The iOS app ships a `PrivacyInfo.xcprivacy` declaring no tracking, no data collected, and the reasons for the file-timestamp, disk-space and `UserDefaults` APIs it calls; App Review rejects an app without one. koan.rocks has a privacy page, which the App Store listing links to.
+- **The App Store listing is kept in the repository** ([#544](https://github.com/radiosilence/koan/pull/544)). `apps/ios/store/listing.toml` holds the listing text and App Review notes; `just ios-store` pushes it, screenshots and the newest processed build through the App Store Connect API, and never submits. `just ios-signin` signs a simulator in through Settings as App Review would, which is how the store screenshots get a library of Creative Commons music rather than anyone's own. `ios-walk` and `ios-signin` shut their simulator down when they finish; a booted simulator left behind is a running copy of iOS.
 - **A spinner while a track arrives.** Playing a track that is not on the phone yet parks the engine until the first of it has downloaded; the play button in the mini player and Now Playing now shows that wait instead of a play button that looks as if the tap did nothing.
 - **Framed App Store screenshots.** `just ios-store-shots` puts each screen of a walk on a blur of its own colours with a caption from `apps/ios/store/captions.toml` (or `captions-ipad.toml`), at the size App Store Connect asks for. `just ios-store` retries App Store Connect's occasional server errors.
 - **`just ios-use`** uses the app on a simulator as a listener does and checks each step: browse, play, pause, skip, favourite, queue, Now Playing, lyrics, playlists, search, playing on in the background, and seeking far into a track still downloading. What to run before an App Store submission, on an iPhone and an iPad.
 
 ### Changed
 
-- **App Store builds cannot stay reachable by playing silence.** The iOS keepalive plays silent audio so a paused, backgrounded phone keeps its link to the server; App Review rejects background audio that plays nothing (guideline 2.5.4). Builds archived for TestFlight and the App Store are compiled with `KOAN_STORE`, which turns it off and hides its setting. Development builds keep it; push notifications (#520) are what replaces it.
+- **App Store builds cannot stay reachable by playing silence** ([#542](https://github.com/radiosilence/koan/pull/542)). The iOS keepalive plays silent audio so a paused, backgrounded phone keeps its link to the server; App Review rejects background audio that plays nothing (guideline 2.5.4). Builds archived for TestFlight and the App Store are compiled with `KOAN_STORE`, which turns it off and hides its setting. Development builds keep it; push notifications (#520) are what replaces it.
 - **iPad uses the tab layout.** The iPad took the Mac's split view, built for a pointer: its lyrics inspector could not be closed by touch and choosing a page in its sidebar did not navigate. It now uses the same shell as the iPhone, whose sidebar-adaptable tab bar is iPadOS's own layout, a bar across the top that opens into a sidebar.
 - **An empty library on iOS says how to fill it.** The queue's empty state points to Settings → Server when there is no library yet, which is what anyone opening the app for the first time sees.
 
 ### Fixed
 
-- **iOS builds carry koan's version.** The generated `Info.plist` had XcodeGen's defaults, 1.0 (1), whatever the build settings said, so every TestFlight upload claimed version 1.0 and could not be attached to the App Store version it was built for. It now reads `MARKETING_VERSION` (the workspace version) and `CURRENT_PROJECT_VERSION` (the build number).
+- **iOS builds carry koan's version** ([#543](https://github.com/radiosilence/koan/pull/543)). The generated `Info.plist` had XcodeGen's defaults, 1.0 (1), whatever the build settings said, so every TestFlight upload claimed version 1.0 and could not be attached to the App Store version it was built for. It now reads `MARKETING_VERSION` (the workspace version) and `CURRENT_PROJECT_VERSION` (the build number).
 - **Organize Files is not offered on iOS.** The long-press menus offered it on a phone, where it opened nothing.
 
 ## 0.39.4
