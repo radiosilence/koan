@@ -22,9 +22,15 @@ final class LibraryModel {
     typealias Section = Navigator.Section
 
     let engine: KoanEngine
-    /// A constant, so reaching it subscribes nothing; what it holds is
+    /// The album browser's pick and the artist page's, each over its own grid.
+    /// Unobserved, so reaching one subscribes nothing; what it holds is
     /// observed where it is drawn.
-    let selection = AlbumSelection()
+    @ObservationIgnored private(set) lazy var selection = AlbumSelection { [unowned self] in
+        visibleAlbums
+    }
+    @ObservationIgnored private(set) lazy var artistSelection = AlbumSelection { [unowned self] in
+        detailArtist?.albums ?? []
+    }
 
     /// What is on screen. Written only by the navigator, which owns it — the
     /// library follows where you are, it does not decide it.

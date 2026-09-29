@@ -8,12 +8,12 @@ struct AlbumGridCell: View {
     let album: Album
     /// An artist's own page already says whose records these are.
     var showArtist: Bool = true
-    /// Takes part in picking several records at once — see `AlbumSelection`.
-    var selectable = false
+    /// The grid's pick, when it takes part in picking several records at once
+    /// — see `AlbumSelection`.
+    var selection: AlbumSelection?
 
     @Environment(PlayerModel.self) private var player
     @Environment(Navigator.self) private var nav
-    @Environment(LibraryModel.self) private var library
 
     @State private var titleHovering = false
     @State private var hovering = false
@@ -23,7 +23,9 @@ struct AlbumGridCell: View {
             PlayableArtwork(albumId: album.id)
                 .shadow(color: .black.opacity(0.28), radius: 7, y: 3)
                 .overlay {
-                    if selecting { SelectionMark(albumId: album.id) }
+                    if selecting, let selection {
+                        SelectionMark(albumId: album.id, selection: selection)
+                    }
                 }
                 .overlay(alignment: .topTrailing) {
                     if let codec = album.codec {
@@ -70,12 +72,10 @@ struct AlbumGridCell: View {
         // While selecting, the whole tile is one target that ticks it — the art
         // does not play and the links do not go anywhere.
         .overlay {
-            if selecting {
+            if selecting, let selection {
                 Color.clear
                     .contentShape(.rect)
-                    .onTapGesture {
-                        library.selection.click(album.id, in: library.visibleAlbums)
-                    }
+                    .onTapGesture { selection.click(album.id) }
             }
         }
         // ⌘-click starts a selection with this one in it. Over the art's own
@@ -83,18 +83,18 @@ struct AlbumGridCell: View {
         #if os(macOS)
         .highPriorityGesture(
             TapGesture().modifiers(.command).onEnded {
-                library.selection.begin(with: album.id)
+                selection?.begin(with: album.id)
             },
-            including: selectable && !selecting ? .all : .subviews
+            including: selection != nil && !selecting ? .all : .subviews
         )
         #endif
         .contextMenu { PlayableMenu(playable: .album(album)) }
-        .modifier(AlbumDrag(album: album, inContainer: selectable))
+        .modifier(AlbumDrag(album: album, inContainer: selection != nil))
     }
 
     /// Read here and nowhere else in the tile: it flips entering and leaving
     /// the mode, not on every tick.
-    private var selecting: Bool { selectable && library.selection.isActive }
+    private var selecting: Bool { selection?.isActive ?? false }
 
 }
 
@@ -126,10 +126,10 @@ private struct AlbumTileHeart: View {
 /// tick re-runs these and nothing else in the grid.
 private struct SelectionMark: View {
     let albumId: Int64
-    @Environment(LibraryModel.self) private var library
+    let selection: AlbumSelection
 
     var body: some View {
-        let selected = library.selection.contains(albumId)
+        let selected = selection.contains(albumId)
         RoundedRectangle(cornerRadius: 6)
             .strokeBorder(selected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), lineWidth: 3)
             .overlay(alignment: .topLeading) {

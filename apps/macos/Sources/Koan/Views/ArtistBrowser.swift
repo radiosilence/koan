@@ -114,6 +114,9 @@ struct ArtistDetailView: View {
     @Environment(LibraryModel.self) private var library
     @Environment(Navigator.self) private var nav
     @Environment(PlayerModel.self) private var player
+    @Environment(UIState.self) private var ui
+    /// Off stage while a page is pushed over it on a phone — see `StageView`.
+    @Environment(\.onStage) private var onStage
 
     /// Whatever the navigator loaded before it brought us here, so the first
     /// body evaluation already has the whole page. Guarded on the id because
@@ -184,9 +187,10 @@ struct ArtistDetailView: View {
 
                 LazyVGrid(columns: columns, spacing: 22) {
                     ForEach(albums, id: \.id) { album in
-                        AlbumGridCell(album: album, showArtist: false)
+                        AlbumGridCell(album: album, showArtist: false, selection: library.artistSelection)
                     }
                 }
+                .modifier(SelectionDrag(selection: library.artistSelection))
 
                 if let info, let bio = info.bio {
                     Divider()
@@ -221,6 +225,17 @@ struct ArtistDetailView: View {
         }
         // Only for a library change — the artist arrived before the page did.
         .reloading(on: artistId) { await library.prepare(artist: artistId) }
+        // The same pick as the album browser's, over this artist's records
+        // alone. It ends with the page — including when a similar artist
+        // replaces it in place.
+        .onChange(of: ui.selectAllToken) { _, _ in
+            guard onStage else { return }
+            library.artistSelection.selectAll()
+        }
+        .onChange(of: ui.clearSelectionToken) { _, _ in library.artistSelection.end() }
+        .onChange(of: onStage) { _, now in if !now { library.artistSelection.end() } }
+        .onChange(of: artistId) { _, _ in library.artistSelection.end() }
+        .onDisappear { library.artistSelection.end() }
     }
 
     private func shufflePlay() {
