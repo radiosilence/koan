@@ -39,7 +39,7 @@ struct KoanIOSApp: App {
                         .environment(state.ui)
                         .environment(state.mirror)
                         .environment(\.powerSaving, powerSaving)
-                        .modifier(InviteConfirmation())
+                        .modifier(InviteConfirmation(state: state))
                         .tint(.koanAccent)
                 } else if let startupError {
                     ContentUnavailableView(
