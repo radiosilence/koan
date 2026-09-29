@@ -15,9 +15,10 @@ use crate::audio::{
     buffer, streaming,
     viz::{VizBuffer, VizSnapshot},
 };
+use crate::remote::client::PlaybackReportState;
 use buffer::PlaybackTimeline;
 use commands::{CommandChannel, PlayerCommand};
-use history::{InFlight, PlayEvent, PlayRecorder};
+use history::{InFlight, PlayEvent, PlayRecorder, PlaybackReport};
 use state::{
     ItemState, LoadState, PlaybackSource, PlaybackState, QueueItemId, SharedPlayerState, TrackInfo,
 };
@@ -378,12 +379,14 @@ impl Player {
                 // Stop what is playing and park here. The probe answers on its
                 // own thread; if it cannot, TrackReady starts the track once
                 // the whole file has landed.
+                self.report(PlaybackReportState::Stopped);
                 self.stop_engine();
                 self.shared_state.set_playback_state(PlaybackState::Stopped);
                 self.probe_stream_for_playback(id, &path, bytes_written, total);
             }
             None => {
                 // Item not ready — stop current playback, wait for TrackReady.
+                self.report(PlaybackReportState::Stopped);
                 self.stop_engine();
                 self.shared_state.set_playback_state(PlaybackState::Stopped);
                 log::info!("play: item {:?} not ready, waiting for TrackReady", id);
@@ -437,7 +440,7 @@ impl Player {
             duration_ms: info.duration_ms,
         }));
         self.shared_state.set_position_ms(seek_ms);
-        self.on_track_changed(id);
+        self.on_track_changed(id, seek_ms);
         log::info!(
             "playing: {} ({:?}) — {} {}Hz/{}ch, {}ms{}",
             path.display(),
@@ -768,7 +771,7 @@ impl Player {
             duration_ms: info.duration_ms,
         }));
         self.shared_state.set_position_ms(seek_ms);
-        self.on_track_changed(id);
+        self.on_track_changed(id, seek_ms);
         log::info!(
             "streaming: {} ({:?}) — {} {}Hz/{}ch, {}ms{}",
             path.display(),
@@ -926,6 +929,11 @@ impl Player {
         if was_paused {
             self.pause_now();
         }
+        self.report(if was_paused {
+            PlaybackReportState::Paused
+        } else {
+            PlaybackReportState::Playing
+        });
         Ok(())
     }
 
@@ -972,6 +980,7 @@ impl Player {
         } else {
             self.pause_now();
         }
+        self.report(PlaybackReportState::Paused);
     }
 
     /// Pause without a fade — for a restart that should come back paused,
@@ -1001,6 +1010,7 @@ impl Player {
             }
             self.shared_state.set_playback_state(PlaybackState::Playing);
             self.wake_analyzer();
+            self.report(PlaybackReportState::Playing);
         }
     }
 
@@ -1049,6 +1059,7 @@ impl Player {
 
     /// Full stop: tear down engine + clear all display state.
     fn stop_playback_and_clear_state(&mut self) {
+        self.report(PlaybackReportState::Stopped);
         self.finish_play();
         self.stop_engine();
         self.timeline.reset();
@@ -1215,7 +1226,7 @@ impl Player {
     /// A seek restarts playback of the same track, so identity is checked
     /// rather than closing unconditionally — otherwise scrubbing around a
     /// track would enter it into history once per seek.
-    fn on_track_changed(&mut self, id: QueueItemId) {
+    fn on_track_changed(&mut self, id: QueueItemId, position_ms: u64) {
         if self.in_flight.as_ref().is_some_and(|f| f.item == id) {
             return;
         }
@@ -1223,7 +1234,26 @@ impl Player {
         let track_id = self.shared_state.item_db_id(id);
         self.in_flight = Some(InFlight::new(id, track_id));
         if let (Some(track_id), Some(recorder)) = (track_id, self.history.as_ref()) {
-            recorder.record(PlayEvent::Started { track_id });
+            recorder.record(PlayEvent::Started {
+                track_id,
+                position_ms,
+            });
+        }
+    }
+
+    /// Tell the remote server where the track playing now stands. A track
+    /// starting is reported by `on_track_changed`; this covers what happens
+    /// to it afterwards.
+    fn report(&self, state: PlaybackReportState) {
+        let Some(track_id) = self.in_flight.as_ref().and_then(InFlight::track_id) else {
+            return;
+        };
+        if let Some(recorder) = self.history.as_ref() {
+            recorder.record(PlayEvent::Playback(PlaybackReport {
+                track_id,
+                state,
+                position_ms: self.shared_state.position_ms(),
+            }));
         }
     }
 
@@ -1259,7 +1289,7 @@ impl Player {
 
             // A gapless transition moves the needle without anything on this
             // thread having asked it to, so the play is banked from here.
-            self.on_track_changed(id);
+            self.on_track_changed(id, position_ms);
             if let Some(f) = self.in_flight.as_mut() {
                 f.advance(position_ms);
             }
@@ -1783,7 +1813,7 @@ mod tests {
 
     fn start(player: &mut Player, track_id: i64) -> QueueItemId {
         let id = QueueItemId::new();
-        player.on_track_changed(id);
+        player.on_track_changed(id, 0);
         // The item is not in a playlist here, so there is no db_id to find.
         player
             .in_flight
@@ -1800,7 +1830,7 @@ mod tests {
         listen(&mut player, 0, 200_000);
 
         let b = QueueItemId::new();
-        player.on_track_changed(b);
+        player.on_track_changed(b, 0);
         let f = player
             .in_flight
             .as_ref()
@@ -1844,7 +1874,7 @@ mod tests {
         listen(&mut player, 0, 120_000);
 
         // A seek restarts playback of the same item.
-        player.on_track_changed(id);
+        player.on_track_changed(id, 30_000);
         assert_eq!(
             player.in_flight.as_ref().unwrap().listened_ms(),
             120_000,
@@ -1863,7 +1893,7 @@ mod tests {
     fn a_track_that_is_not_in_the_library_is_not_recorded() {
         let mut player = Player::new();
         let id = QueueItemId::new();
-        player.on_track_changed(id);
+        player.on_track_changed(id, 0);
         listen(&mut player, 0, 200_000);
         assert!(player.finish_play().is_none());
     }
@@ -1876,6 +1906,62 @@ mod tests {
 
         player.stop_playback_and_clear_state();
         assert!(player.in_flight.is_none(), "the stop consumed it");
+    }
+
+    #[test]
+    fn the_server_hears_each_turn_playback_takes() {
+        use PlaybackReportState::{Paused, Playing, Stopped};
+        use history::PlaybackReport;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.wav");
+        crate::test_utils::generate_wav(&path, 8_000, 1, 10.0, 16);
+
+        let mut player = Player::new();
+        player.backend = Box::new(StuckBackend {
+            rate: 8_000.0,
+            asked: Default::default(),
+        });
+        let (recorder, events) = PlayRecorder::capture();
+        player.history = Some(recorder);
+
+        let item = PlaylistItem {
+            db_id: Some(5),
+            path,
+            ..make_item("t")
+        };
+        let id = item.id;
+        player.process_command(PlayerCommand::AddToPlaylist(vec![item]));
+        player.process_command(PlayerCommand::Play(id));
+        player.process_command(PlayerCommand::Pause);
+        player.process_command(PlayerCommand::Seek(4_000));
+        player.process_command(PlayerCommand::Resume);
+        player.process_command(PlayerCommand::Stop);
+
+        let report = |state, position_ms| {
+            PlayEvent::Playback(PlaybackReport {
+                track_id: 5,
+                state,
+                position_ms,
+            })
+        };
+        assert_eq!(
+            events.try_iter().collect::<Vec<_>>(),
+            vec![
+                PlayEvent::Started {
+                    track_id: 5,
+                    position_ms: 0
+                },
+                report(Paused, 0),
+                report(Paused, 4_000),
+                report(Playing, 4_000),
+                report(Stopped, 4_000),
+                PlayEvent::Finished {
+                    track_id: 5,
+                    listened_ms: 0
+                },
+            ]
+        );
     }
 
     #[test]
