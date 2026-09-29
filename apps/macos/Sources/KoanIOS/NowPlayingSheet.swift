@@ -150,6 +150,9 @@ struct NowPlayingSheet: View {
 
             Spacer()
 
+            DevicePickerButton(labelled: player.isControllingAnother)
+                .font(.subheadline)
+
             if let format = player.currentFormat {
                 Text(Format.quality(format))
                     .font(.caption.monospaced())
@@ -160,8 +163,12 @@ struct NowPlayingSheet: View {
                     .background(.quaternary, in: Capsule())
             }
 
-            RoutePicker()
-                .frame(width: 28, height: 28)
+            // This phone's own output; nothing it chooses reaches another
+            // device.
+            if !player.isControllingAnother {
+                RoutePicker()
+                    .frame(width: 28, height: 28)
+            }
         }
         .font(.title3)
         .buttonStyle(.plain)

@@ -250,7 +250,13 @@ struct TransportBar: View {
             .buttonStyle(.glass)
             .help("Radio (⌥⌘R) — when the queue runs low, keep it topped up with similar tracks")
 
-            DeviceMenu()
+            DevicePickerButton(labelled: !compact)
+                .font(.caption)
+
+            // This Mac's own output; nothing it chooses reaches another device.
+            if !player.isControllingAnother {
+                DeviceMenu()
+            }
         }
         // Natural size, always. What does not fit is dropped above rather than
         // compressed — a badge and a menu squeezed to a few points wide is what

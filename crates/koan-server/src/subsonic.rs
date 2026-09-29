@@ -48,6 +48,9 @@ const EXTENSIONS: &[(&str, &[i64])] = &[
     ("apiKeyAuthentication", &[1]),
     ("formPost", &[1]),
     ("songLyrics", &[1]),
+    // koan's own. See `koan_core::remote::profile`.
+    (koan_core::remote::profile::LINK, &[1]),
+    (koan_core::remote::profile::DEVICES, &[1]),
 ];
 const MIN_COVER_SIZE: u32 = 16;
 const MAX_COVER_SIZE: u32 = 2048;
@@ -2287,6 +2290,14 @@ async fn set_starred(state: Arc<AppState>, raw: Option<String>, star: bool) -> R
             for (kind, id) in targets {
                 set_star(db, kind, id, star)?;
             }
+            // The caller's other apps show hearts too: a track favourited on
+            // a phone while it plays on the Mac should light up there.
+            if let Ok(caller) = validate_auth(&auth, &state) {
+                crate::clients::registry().broadcast(
+                    Some(&caller.username),
+                    koan_core::remote::link::LinkCommand::Sync { full: false },
+                );
+            }
             Ok(b)
         })
     })
@@ -3146,24 +3157,69 @@ async fn koan_link(
         .get("device")
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
-    ws.on_upgrade(move |socket| link_session(socket, caller.username, name, platform, device))
+    let wants_devices = params.get("devices") == Some("1");
+    ws.on_upgrade(move |socket| {
+        link_session(
+            socket,
+            caller.username,
+            LinkPeer {
+                name,
+                platform,
+                device,
+                wants_devices,
+            },
+        )
+    })
+}
+
+/// Who is at the far end of a link.
+struct LinkPeer {
+    name: String,
+    platform: String,
+    device: String,
+    wants_devices: bool,
+}
+
+/// Hand a link command to another of the caller's devices, in one request:
+/// what a phone has when iOS has taken its link down and a button on its lock
+/// screen is pressed. `to` is the device's id, `command` the command as the
+/// link carries it.
+async fn koan_command(State(state): State<Arc<AppState>>, RawQuery(raw): RawQuery) -> Response {
+    offload_response(move || {
+        let params = RawParams::parse(raw.as_deref());
+        let auth = params.auth();
+        respond(&state, &auth, |caller, b| {
+            let to = params
+                .get("to")
+                .ok_or_else(|| SubsonicError::missing_param("to"))?;
+            let command = params
+                .get("command")
+                .and_then(|c| koan_core::remote::link::parse_command(c).ok())
+                .ok_or_else(|| SubsonicError::bad_param("command"))?;
+            crate::clients::registry()
+                .relay(&caller.username, to, command)
+                .map_err(|e| SubsonicError::not_found(&e))?;
+            Ok(b)
+        })
+    })
+    .await
 }
 
 const LINK_CHECK: Duration = Duration::from_secs(15);
 /// Over twice the client's idle ping interval.
 const LINK_SILENCE: Duration = Duration::from_secs(100);
 
-async fn link_session(
-    mut socket: axum::extract::ws::WebSocket,
-    username: String,
-    name: String,
-    platform: String,
-    device: String,
-) {
+async fn link_session(mut socket: axum::extract::ws::WebSocket, username: String, peer: LinkPeer) {
     use axum::extract::ws::Message;
+    let LinkPeer {
+        name,
+        platform,
+        device,
+        wants_devices,
+    } = peer;
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
     let registry = crate::clients::registry();
-    let id = registry.register(&username, &name, &platform, &device, tx);
+    let id = registry.register(&username, &name, &platform, &device, tx, wants_devices);
     log::info!("link: {name} ({platform}) linked for {username}");
     // A client pings when it has heard nothing for a while. A phone the OS
     // has suspended never closes its socket, so one that goes quiet is gone.
@@ -3195,7 +3251,23 @@ async fn link_session(
                             Ok(LinkReport::Push { token, sandbox }) => {
                                 registry.set_push(&username, &device, &token, sandbox);
                             }
-                            Err(_) => {}
+                            Ok(LinkReport::Command { to, command }) => {
+                                // Relaying may push to a phone, which blocks.
+                                let username = username.clone();
+                                tokio::task::spawn_blocking(move || {
+                                    if let Err(e) = registry.relay(&username, &to, command) {
+                                        log::info!("link: relay to {to}: {e}");
+                                    }
+                                });
+                            }
+                            Ok(LinkReport::Activity { token, device: shown, sandbox }) => {
+                                let activity = token.zip(shown).map(|(t, d)| (t, d, sandbox));
+                                let (username, device) = (username.clone(), device.clone());
+                                tokio::task::spawn_blocking(move || {
+                                    registry.set_activity(&username, &device, activity);
+                                });
+                            }
+                            Ok(LinkReport::Hello(_)) | Err(_) => {}
                         }
                     }
                 }
@@ -3214,6 +3286,11 @@ fn register_subsonic_routes(router: axum::Router<Arc<AppState>>) -> axum::Router
         // koan's own: a koan client's standing connection, for the server to
         // command it. See `crate::clients`.
         .route("/rest/koanLink", get(koan_link))
+        .route("/rest/koanCommand", get(koan_command).post(koan_command))
+        .route(
+            "/rest/koanCommand.view",
+            get(koan_command).post(koan_command),
+        )
         .route("/rest/ping.view", get(ping).post(ping))
         // Sharing
         .route("/rest/createShare", get(create_share).post(create_share))

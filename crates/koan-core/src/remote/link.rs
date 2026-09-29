@@ -8,7 +8,9 @@
 //! track's `remote_id`.
 
 use std::net::TcpStream;
+use std::os::fd::RawFd;
 use std::path::Path;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::{Condvar, Mutex};
@@ -18,17 +20,22 @@ use tungstenite::stream::MaybeTlsStream;
 use crate::config::{self, Config};
 use crate::helpers::{subsonic_auth, subsonic_client};
 use crate::remote::client::SubsonicAuth;
+use crate::remote::profile;
+use crate::remote::wire::{self, Waker};
 
 /// What a server asks a linked client to do.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum LinkCommand {
-    /// Replace the queue with these tracks and play from `start_at`.
+    /// Replace the queue with these tracks and play from `start_at`,
+    /// `position_ms` into it.
     #[serde(rename_all = "camelCase")]
     Play {
         track_ids: Vec<String>,
         #[serde(default)]
         start_at: u32,
+        #[serde(default, skip_serializing_if = "is_zero")]
+        position_ms: u64,
     },
     /// Append these tracks to the queue.
     #[serde(rename_all = "camelCase")]
@@ -75,6 +82,72 @@ pub enum LinkCommand {
     Resume,
     Next,
     Previous,
+    /// Play this queue entry, by the id the device reported it under. Unlike
+    /// `JumpTo` it names one entry of a track queued twice, and reaches a file
+    /// only that device has.
+    PlayItem {
+        id: String,
+    },
+    RemoveItems {
+        ids: Vec<String>,
+    },
+    /// Move these queue entries before or after `target`, in the order given.
+    MoveItems {
+        ids: Vec<String>,
+        target: String,
+        after: bool,
+    },
+    /// Insert these tracks after the queue entry `after`.
+    #[serde(rename_all = "camelCase")]
+    Insert {
+        track_ids: Vec<String>,
+        after: String,
+    },
+    Undo,
+    Redo,
+    /// Send this device's queue and playhead to the device `to`, as a `play`,
+    /// and pause here. The device holding the queue does it, so taking music
+    /// from another device and sending it there are one command.
+    HandOff {
+        to: String,
+    },
+    /// The account's other devices, as they are now. News rather than a
+    /// command: sent whenever one of them changes, to links that asked for it.
+    Devices {
+        devices: Vec<LinkDevice>,
+    },
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
+}
+
+impl LinkCommand {
+    /// Whether a device on the same network, which may belong to anyone, may
+    /// send this. Playback and the queue; nothing that touches the library or
+    /// the files on disk.
+    pub fn allowed_nearby(&self) -> bool {
+        !matches!(
+            self,
+            Self::Sync { .. } | Self::Evict { .. } | Self::Devices { .. }
+        )
+    }
+}
+
+/// Another device on the same account, as the server sends it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkDevice {
+    /// The device's own id: stable across its reconnects.
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+    /// Linked now. A device that is not is one iOS has suspended: a command
+    /// wakes it, and music reaches it as a notification to tap.
+    pub linked: bool,
+    /// What it last reported, with the playhead placed as of sending. `None`
+    /// until it has reported at all.
+    pub state: Option<LinkState>,
 }
 
 /// What a linked client tells the server about itself, as it changes.
@@ -101,10 +174,17 @@ pub struct LinkState {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LinkQueueEntry {
+    /// The queue entry's own id on that device, for `playItem` and the rest.
+    #[serde(default)]
+    pub id: Option<String>,
     /// The server's id for the track; `None` for a file only this device has.
     pub track_id: Option<String>,
     pub title: String,
     pub artist: String,
+    #[serde(default)]
+    pub album: String,
+    #[serde(default)]
+    pub duration_ms: u64,
     pub current: bool,
 }
 
@@ -141,11 +221,63 @@ pub enum LinkReport {
         token: String,
         sandbox: bool,
     },
+    /// Send `command` to the device `to` on the same account.
+    Command {
+        to: String,
+        command: LinkCommand,
+    },
+    /// Where to push updates to a Live Activity showing the device `device`;
+    /// `None` for both when the activity has ended.
+    Activity {
+        token: Option<String>,
+        device: Option<String>,
+        #[serde(default)]
+        sandbox: bool,
+    },
+    /// Who is at the other end of a connection made on the local network.
+    Hello(LinkHello),
+}
+
+/// How a device introduces itself to one that connected to it over the local
+/// network, before anything else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LinkHello {
+    pub id: String,
+    pub name: String,
+    pub platform: String,
+    /// Which library it plays from, as `library_fingerprint` gives it; `None`
+    /// when it is signed in to none. Two devices with the same one share track
+    /// ids, so music can be handed between them.
+    pub library: Option<String>,
+}
+
+/// The server this client plays from, as something two devices can compare
+/// without either saying its address to the network.
+pub fn library_fingerprint(cfg: &Config) -> Option<String> {
+    let auth = subsonic_auth(cfg)?;
+    let url = auth.base_url.trim_end_matches('/').to_ascii_lowercase();
+    Some(format!("{:x}", md5::compute(url.as_bytes())))
 }
 
 /// This device's push token, once the OS has issued one. Set by the app; sent
 /// up each link as it opens, and again if it changes.
 static PUSH_TOKEN: Mutex<Option<(String, bool)>> = Mutex::new(None);
+
+/// A Live Activity on this device showing another: its push token, the device
+/// it shows, and whether the token is the sandbox's. Sent up each link as it
+/// opens, and again when it changes; `None` once the activity has ended.
+type ActivityToken = (String, String, bool);
+static ACTIVITY: Mutex<Option<Option<ActivityToken>>> = Mutex::new(None);
+
+/// Record where the server should push updates to this device's Live
+/// Activity, or that there is none now.
+pub fn set_activity(activity: Option<ActivityToken>) {
+    *ACTIVITY.lock() = Some(activity);
+    if let Some(up) = LINK.lock().as_ref() {
+        up.waker.wake();
+    }
+}
 
 /// A command as a push notification carries it: the same JSON as over the
 /// link.
@@ -157,6 +289,9 @@ pub fn parse_command(json: &str) -> Result<LinkCommand, String> {
 pub fn set_push_token(token: String, sandbox: bool) {
     *PUSH_TOKEN.lock() = Some((token, sandbox));
     nudge();
+    if let Some(up) = LINK.lock().as_ref() {
+        up.waker.wake();
+    }
 }
 
 /// How a client describes itself when it links.
@@ -192,68 +327,67 @@ impl LinkIdentity {
     }
 }
 
+/// What this device offers whatever controls it: who it is, what it is doing,
+/// and what to do with a command. The link to the server and the connections
+/// made on the local network all serve the same one.
+#[derive(Clone)]
+pub struct Local {
+    pub identity: LinkIdentity,
+    pub state: Arc<dyn Fn() -> LinkState + Send + Sync>,
+    pub on_command: Arc<dyn Fn(LinkCommand) + Send + Sync>,
+}
+
 /// Keep a link open to the configured server for as long as the process runs,
 /// handing each command to `on_command` on the link's own thread, and telling
 /// the server what `state` says whenever it changes: which of a person's
 /// devices is the one playing is how the server picks where to send music.
 ///
 /// Reads the config before every attempt, so signing in later links without a
-/// restart. A server that is not koan is checked once per sign-in and left
-/// alone: Navidrome has no such endpoint.
-pub fn spawn(
-    identity: LinkIdentity,
-    on_command: impl Fn(LinkCommand) + Send + 'static,
-    state: impl Fn() -> LinkState + Send + 'static,
-) {
+/// restart. Links only to a server whose profile says it can: Navidrome has no
+/// such endpoint.
+pub fn spawn(local: Local) {
     std::thread::Builder::new()
         .name("koan-link".into())
-        .spawn(move || run(identity, on_command, state))
+        .spawn(move || run(local))
         .expect("failed to spawn the link thread");
 }
 
 const RETRY_MIN: Duration = Duration::from_secs(2);
 const RETRY_MAX: Duration = Duration::from_secs(60);
-/// A link that has heard nothing for this long pings, so a dead connection is
-/// noticed rather than waited on forever.
-const IDLE: Duration = Duration::from_secs(45);
-/// How often the link looks at the player's state between messages.
-const TICK: Duration = Duration::from_secs(3);
 
-fn run(identity: LinkIdentity, on_command: impl Fn(LinkCommand), state: impl Fn() -> LinkState) {
+fn run(local: Local) {
     let mut wait = RETRY_MIN;
-    // The credentials last found not to be a koan server.
-    let mut not_koan: Option<SubsonicAuth> = None;
     loop {
         let cfg = Config::load().unwrap_or_default();
         let Some(auth) = subsonic_auth(&cfg) else {
             rest(RETRY_MAX);
             continue;
         };
-        if not_koan.as_ref() == Some(&auth) {
-            rest(RETRY_MAX);
-            continue;
-        }
-        match subsonic_client(&cfg).map(|c| c.server_type()) {
-            Some(Ok(Some(kind))) if kind == "koan" => {}
-            Some(Ok(_)) => {
-                log::info!("link: {} is not a koan server", auth.base_url);
-                not_koan = Some(auth);
+        match profile::for_auth(&auth) {
+            Some(p) if p.links() => {}
+            // Not a server that links; asked again when the sign-in changes.
+            Some(_) => {
+                rest(RETRY_MAX);
                 continue;
             }
-            _ => {
+            None => {
                 rest(wait);
                 wait = (wait * 2).min(RETRY_MAX);
                 continue;
             }
         }
 
-        match connect(&auth, &identity) {
-            Ok(socket) => {
+        match connect(&auth, &local.identity) {
+            Ok((mut socket, fd)) => {
                 log::info!("link: connected to {}", auth.base_url);
                 wait = RETRY_MIN;
-                if let Err(e) = serve(socket, &on_command, &state) {
+                if let Err(e) = serve(&mut socket, fd, &local) {
                     log::info!("link: closed: {e}");
                 }
+                *LINK.lock() = None;
+                crate::remote::devices::set_linked(false);
+                // The server may have been upgraded while the link was down.
+                profile::forget();
             }
             Err(e) => log::warn!("link: {e}"),
         }
@@ -286,20 +420,37 @@ fn rest(d: Duration) -> bool {
     std::mem::replace(&mut *nudged, false)
 }
 
+/// The link while it is up: what waits to go up it, and how to wake it.
+struct Up {
+    waker: Arc<Waker>,
+    outbox: Vec<LinkReport>,
+}
+
+static LINK: Mutex<Option<Up>> = Mutex::new(None);
+
+/// Send `report` up the link. False when the link is down.
+pub fn report(report: LinkReport) -> bool {
+    let mut link = LINK.lock();
+    let Some(up) = link.as_mut() else {
+        return false;
+    };
+    up.outbox.push(report);
+    up.waker.wake();
+    true
+}
+
+/// Whether the link to the server is up.
+pub fn is_up() -> bool {
+    LINK.lock().is_some()
+}
+
 type Socket = tungstenite::WebSocket<MaybeTlsStream<TcpStream>>;
 
-fn connect(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<Socket, String> {
+fn connect(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<(Socket, RawFd), String> {
     let url = link_url(auth, identity)?;
     let (socket, _) = tungstenite::connect(url).map_err(|e| e.to_string())?;
-    let stream = match socket.get_ref() {
-        MaybeTlsStream::Plain(s) => s,
-        MaybeTlsStream::Rustls(s) => s.get_ref(),
-        _ => return Ok(socket),
-    };
-    stream
-        .set_read_timeout(Some(TICK))
-        .map_err(|e| e.to_string())?;
-    Ok(socket)
+    let fd = wire::prepare(socket.get_ref())?;
+    Ok((socket, fd))
 }
 
 /// `/rest/koanLink` with the same credentials every other call carries.
@@ -316,6 +467,9 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
         ("client", identity.name.as_str()),
         ("platform", identity.platform.as_str()),
         ("device", identity.device_id.as_str()),
+        // Send this link the account's other devices. A server that predates
+        // them ignores it.
+        ("devices", "1"),
     ] {
         query.push('&');
         query.push_str(k);
@@ -325,66 +479,77 @@ fn link_url(auth: &SubsonicAuth, identity: &LinkIdentity) -> Result<String, Stri
     Ok(format!("{base}/rest/koanLink?{query}"))
 }
 
-fn serve(
-    mut socket: Socket,
-    on_command: &impl Fn(LinkCommand),
-    state: &impl Fn() -> LinkState,
-) -> Result<(), String> {
-    let mut heard = Instant::now();
-    let mut pinged = false;
-    let mut sent: Option<(LinkState, Instant)> = None;
-    let mut sent_push: Option<(String, bool)> = None;
-    loop {
+fn serve(socket: &mut Socket, fd: RawFd, local: &Local) -> Result<(), String> {
+    let waker = Waker::new().map_err(|e| e.to_string())?;
+    wire::wake_on_engine_change(&waker);
+    *LINK.lock() = Some(Up {
+        waker: waker.clone(),
+        outbox: Vec::new(),
+    });
+    crate::remote::devices::set_linked(true);
+    let mut session = LinkSession {
+        local,
+        sent: None,
+        sent_push: None,
+        sent_activity: None,
+    };
+    wire::drive(socket, fd, &waker, &mut session)
+}
+
+struct LinkSession<'a> {
+    local: &'a Local,
+    sent: Option<(LinkState, Instant)>,
+    sent_push: Option<(String, bool)>,
+    sent_activity: Option<Option<ActivityToken>>,
+}
+
+impl wire::Session for LinkSession<'_> {
+    fn outgoing(&mut self) -> Vec<String> {
+        let mut out = Vec::new();
         let push = PUSH_TOKEN.lock().clone();
-        if push.is_some() && push != sent_push {
-            let (token, sandbox) = push.clone().unwrap_or_default();
-            let text = serde_json::to_string(&LinkReport::Push { token, sandbox })
-                .map_err(|e| e.to_string())?;
-            socket
-                .send(tungstenite::Message::Text(text.into()))
-                .map_err(|e| e.to_string())?;
-            sent_push = push;
+        if let Some((token, sandbox)) = push.clone()
+            && push != self.sent_push
+        {
+            out.push(LinkReport::Push { token, sandbox });
+            self.sent_push = push;
         }
-        let now = state();
-        if sent
+        let activity = ACTIVITY.lock().clone();
+        if activity.is_some() && activity != self.sent_activity {
+            let (token, device, sandbox) = match activity.clone().flatten() {
+                Some((t, d, s)) => (Some(t), Some(d), s),
+                None => (None, None, false),
+            };
+            out.push(LinkReport::Activity {
+                token,
+                device,
+                sandbox,
+            });
+            self.sent_activity = activity;
+        }
+        if let Some(up) = LINK.lock().as_mut() {
+            out.append(&mut up.outbox);
+        }
+        let now = (self.local.state)();
+        if self
+            .sent
             .as_ref()
             .is_none_or(|(s, at)| now.differs(s, at.elapsed()))
         {
-            let text = serde_json::to_string(&LinkReport::State(now.clone()))
-                .map_err(|e| e.to_string())?;
-            socket
-                .send(tungstenite::Message::Text(text.into()))
-                .map_err(|e| e.to_string())?;
-            sent = Some((now, Instant::now()));
+            out.push(LinkReport::State(now.clone()));
+            self.sent = Some((now, Instant::now()));
         }
-        match socket.read() {
-            Ok(tungstenite::Message::Text(text)) => {
-                (heard, pinged) = (Instant::now(), false);
-                match serde_json::from_str::<LinkCommand>(&text) {
-                    Ok(cmd) => on_command(cmd),
-                    Err(e) => log::warn!("link: not a command ({e}): {text}"),
-                }
+        out.iter()
+            .filter_map(|r| serde_json::to_string(r).ok())
+            .collect()
+    }
+
+    fn incoming(&mut self, text: &str) {
+        match serde_json::from_str::<LinkCommand>(text) {
+            Ok(LinkCommand::Devices { devices }) => {
+                crate::remote::devices::set_account(devices);
             }
-            Ok(tungstenite::Message::Close(_)) => return Err("closed by the server".into()),
-            Ok(_) => (heard, pinged) = (Instant::now(), false),
-            Err(tungstenite::Error::Io(e))
-                if matches!(
-                    e.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                if heard.elapsed() < IDLE {
-                    continue;
-                }
-                if pinged {
-                    return Err("no answer to a ping".into());
-                }
-                socket
-                    .send(tungstenite::Message::Ping(Vec::new().into()))
-                    .map_err(|e| e.to_string())?;
-                (heard, pinged) = (Instant::now(), true);
-            }
-            Err(e) => return Err(e.to_string()),
+            Ok(cmd) => (self.local.on_command)(cmd),
+            Err(e) => log::warn!("link: not a command ({e}): {text}"),
         }
     }
 }
@@ -499,6 +664,7 @@ mod tests {
         let play = LinkCommand::Play {
             track_ids: vec!["12".into(), "34".into()],
             start_at: 1,
+            position_ms: 0,
         };
         let json = serde_json::to_string(&play).unwrap();
         assert_eq!(
@@ -556,11 +722,43 @@ mod tests {
         assert!(url.starts_with("wss://music.example.com/rest/koanLink?"));
         assert!(url.contains("client=J%27s%20iPhone"));
         assert!(url.contains("device=abc"));
+        assert!(url.contains("devices=1"));
         assert!(
             link_url(&SubsonicAuth::new("http://h:4000", "j", "pw"), &identity)
                 .unwrap()
                 .starts_with("ws://h:4000/")
         );
+    }
+
+    #[test]
+    fn a_relayed_command_nests_the_command() {
+        let report = LinkReport::Command {
+            to: "phone".into(),
+            command: LinkCommand::HandOff { to: "mac".into() },
+        };
+        let json = serde_json::to_string(&report).unwrap();
+        assert_eq!(
+            json,
+            r#"{"type":"command","to":"phone","command":{"type":"handOff","to":"mac"}}"#
+        );
+        assert_eq!(serde_json::from_str::<LinkReport>(&json).unwrap(), report);
+    }
+
+    #[test]
+    fn an_older_queue_entry_still_reads() {
+        let e: LinkQueueEntry =
+            serde_json::from_str(r#"{"trackId":"7","title":"t","artist":"a","current":true}"#)
+                .unwrap();
+        assert_eq!(e.id, None);
+        assert_eq!(e.duration_ms, 0);
+    }
+
+    #[test]
+    fn strangers_cannot_touch_the_library() {
+        assert!(LinkCommand::Pause.allowed_nearby());
+        assert!(LinkCommand::HandOff { to: "x".into() }.allowed_nearby());
+        assert!(!LinkCommand::Sync { full: true }.allowed_nearby());
+        assert!(!LinkCommand::Evict { track_ids: vec![] }.allowed_nearby());
     }
 
     #[test]

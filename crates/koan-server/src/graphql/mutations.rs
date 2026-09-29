@@ -110,11 +110,38 @@ impl MutationRoot {
             LinkCommand::Play {
                 track_ids,
                 start_at: start_at.unwrap_or(0),
+                position_ms: 0,
             }
         };
         let sent = send_to_client(ctx, client.as_deref(), cmd)?;
         Ok(GqlStatus::success(format!(
             "sent {count} tracks to {}",
+            reached(&sent)
+        )))
+    }
+
+    /// Move what one linked koan app is playing to another: its queue and
+    /// playhead are sent to `to` and it pauses. "Take the music with me":
+    /// from the Mac to the phone. `from` and `to` as `client` for
+    /// `playOnClient`; `from` defaults to the one playing.
+    async fn hand_off_client(
+        &self,
+        ctx: &Context<'_>,
+        to: String,
+        from: Option<String>,
+    ) -> async_graphql::Result<GqlStatus> {
+        require_role(ctx, Role::User)?;
+        let scope = super::client_scope(ctx);
+        let target = crate::clients::registry()
+            .list(scope.as_deref())
+            .into_iter()
+            .find(|c| c.id == to || c.device == to || c.name.eq_ignore_ascii_case(&to))
+            .map(|c| c.device)
+            // Not linked: a phone iOS has suspended, reached by its id.
+            .unwrap_or_else(|| to.clone());
+        let sent = send_to_client(ctx, from.as_deref(), LinkCommand::HandOff { to: target })?;
+        Ok(GqlStatus::success(format!(
+            "{} is handing its queue to {to}",
             reached(&sent)
         )))
     }

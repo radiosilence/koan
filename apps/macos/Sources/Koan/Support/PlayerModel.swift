@@ -381,6 +381,51 @@ final class PlayerModel {
 
     func setRadio(_ enabled: Bool) { engine.setRadio(enabled: enabled) }
 
+    // MARK: - Where music plays
+
+    /// The other device being controlled; `nil` while it is this one.
+    var controlled: DeviceInfo? {
+        guard let target = mirror.target else { return nil }
+        return mirror.devices.first { $0.id == target }
+    }
+
+    /// Any other device to play on is known of.
+    var hasOtherDevices: Bool { !mirror.devices.isEmpty }
+
+    /// Controlling another device, whether or not it is still listed.
+    var isControllingAnother: Bool { mirror.target != nil }
+
+    /// Show and command `id`, or this device with `nil`. Nothing moves.
+    func control(_ id: String?) {
+        attempt { try await self.engine.controlDevice(id: id) }
+    }
+
+    /// Send what the controlled device is playing to `id` (this device with
+    /// `nil`), and control it there.
+    func moveMusic(to id: String?) {
+        attempt {
+            let left = try await self.engine.moveMusic(to: id)
+            if left > 0 {
+                self.lastNotice = left == 1
+                    ? "1 track only on this device stayed behind"
+                    : "\(left) tracks only on this device stayed behind"
+            }
+        }
+    }
+
+    /// Whether `destination` (this device for `nil`) can take the music the
+    /// controlled device has: both must play from the same library, and
+    /// there must be something to move.
+    func canMoveMusic(to destination: DeviceInfo?) -> Bool {
+        if destination?.id == mirror.target { return false }
+        if let source = controlled {
+            guard source.sameLibrary, source.state != .stopped else { return false }
+        } else if queue.isEmpty {
+            return false
+        }
+        return destination?.sameLibrary ?? true
+    }
+
     /// Flips it without the caller having to read the current value — menus
     /// that read observable state rebuild themselves constantly.
     func toggleRadio() { setRadio(!radioEnabled) }
